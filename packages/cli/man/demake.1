@@ -1,0 +1,57 @@
+.TH DEMAKE 1 "" "" "hardware\-compliant retro art & code from any image"
+.SH NAME
+demake \- hardware\-compliant retro art & code from any image
+.SH SYNOPSIS
+\fBdemake\fR \fIcommand\fR [\fIoptions\fR] [\fIinput\fR]
+.SH DESCRIPTION
+demake converts arbitrary images into hardware\-compliant art and code for retro consoles.
+.SH COMMANDS
+.TP
+\fBprep\fR
+Convert any image into a hardware\-compliant image for a console
+.TP
+\fBgen\fR
+Convert an image into console data/code/ROM (Phase 2) (planned)
+.TP
+\fBconsoles\fR
+List supported consoles and their constraints
+.TP
+\fBinspect\fR
+Analyze an image: is it compliant, for which consoles, and why not
+.TP
+\fBcompletion\fR
+Emit shell completion (bash/zsh/fish) (planned)
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Show help and exit.
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version and exit.
+.SH EXIT STATUS
+.TP
+\fB0\fR
+Success.
+.TP
+\fB1\fR
+A conversion ran but failed.
+.TP
+\fB2\fR
+Wrong flags or bad command line.
+.TP
+\fB65\fR
+Input data was malformed (EX_DATAERR).
+.TP
+\fB66\fR
+A required input was missing (EX_NOINPUT).
+.TP
+\fB69\fR
+A requested feature is not available yet.
+.TP
+\fB70\fR
+An internal invariant broke (EX_SOFTWARE).
+.TP
+\fB73\fR
+The output could not be created (EX_CANTCREAT).
+.SH SEE ALSO
+\fBdemake-prep\fR(1), \fBdemake-consoles\fR(1), \fBdemake-inspect\fR(1)

@@ -21,9 +21,11 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc --build"
+    "build": "tsc --build",
+    "gen:man": "node dist/generate-man.js"
   },
   "dependencies": {
+    "@demake/cli-spec": "workspace:*",
     "@demake/core": "workspace:*"
   },
   "publishConfig": {

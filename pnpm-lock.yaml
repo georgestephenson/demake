@@ -44,9 +44,14 @@ importers:
 
   packages/cli:
     dependencies:
+      '@demake/cli-spec':
+        specifier: workspace:*
+        version: link:../cli-spec
       '@demake/core':
         specifier: workspace:*
         version: link:../core
+
+  packages/cli-spec: {}
 
   packages/core: {}
 

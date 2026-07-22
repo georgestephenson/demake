@@ -1,0 +1,21 @@
+{
+  "name": "@demake/cli-spec",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Single source of truth for the demake CLI: one typed definition of every command, flag, type, default, error code, and example. Generates the parser, --help, and man pages.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc --build"
+  }
+}
