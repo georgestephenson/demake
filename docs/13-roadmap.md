@@ -96,7 +96,8 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
 - In-browser ROM assembly for more families; WASM-accelerated hot kernels if
   profiling asks; palette-cycling & per-scanline tricks as opt-in "expert" flags;
   sprite/animation mode (the reserved schema slot); home-computer specs if demand
-  appears.
+  appears; tiny fixed-weight learned perceptual metric as a judge input
+  (doc 04 §Aesthetics — admissible only if byte-deterministic and browser-sized).
 
 ## Standing decision log
 

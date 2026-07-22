@@ -71,7 +71,11 @@ critical component:
 
 - **Metric unit tests**: each fidelity metric against analytic fixtures with known
   scores (identical images → perfect; inverted → floor; synthetic banding/noise/
-  edge-loss images → move exactly the intended metric).
+  edge-loss images → move exactly the intended metric). The aesthetic metrics get
+  targeted fixtures: a sprite with its specular highlights erased must crater
+  highlight-retention while barely moving mean ΔE (the exact failure of naive
+  quantizers this metric exists to catch); broken outlines and scrambled ramps
+  likewise move only their own metric.
 - **Glitch-gate tests**: hand-built defective outputs (torn attribute cell,
   duplicate palette slots, over-budget tilesets) must be disqualified with the
   right reason code — and never win by scoring well.
@@ -79,10 +83,13 @@ critical component:
   disagrees with human judgment (heavy dither that flatters mean ΔE but looks like
   static; oversmoothing that flatters SSIM but kills detail). The aggregate must
   rank them the way the human-calibration set says.
-- **Calibration set**: a small corpus of (source, candidate outputs, human ranking)
-  triples collected in Phase 2. Judge weights are fit to it once, frozen, and this
-  suite pins the ranking forever after — any weight change must re-justify against
-  it (and bumps a minor, doc 09 §Stability).
+- **Calibration set**: a corpus of (source, candidate outputs, human ranking)
+  triples collected in Phase 2, deliberately over-representing the hard aesthetic
+  cases — cel-shaded characters, highlight-heavy sprites, subtle-shading portraits
+  (the predecessor corpus), dark-outline art — alongside photos and flat-color art.
+  Judge weights are fit to it once, frozen, and this suite pins the ranking forever
+  after — any weight change must re-justify against it (and bumps a minor,
+  doc 09 §Stability).
 - **Tournament regression**: for the golden corpus, the *winning strategy id* per
   (fixture, console) is itself a golden value — an algorithm tweak that flips a
   winner is visible in review, not silent.

@@ -120,7 +120,8 @@ retroart prep photo.jpg -c nes --strategy photo-lanczos-fs -o out.png
 | `--strategy auto\|<name>\|list` | `auto` (default) runs the doc-04 tournament: parallel candidate algorithms, multi-metric judge picks the winner. `<name>` runs exactly one candidate. `list` enumerates candidates for the console. Explicit stage flags below constrain the portfolio rather than disabling the tournament |
 | `--size WxH` / `--fit contain\|cover\|stretch\|pad` | Target geometry (doc 04 §2); omit for auto behavior |
 | `--mode <name>\|auto` | Video mode where applicable (snes: mode1/mode3/mode7…) |
-| `--dither <alg>[:strength]` | none/bayer2/4/8/floyd-steinberg/atkinson/riemersma |
+| `--dither <alg>[:strength]` | none/bayer2/4/8/floyd-steinberg/atkinson/riemersma/ramp (artist-style shading dither, doc 04 §Stage 5) |
+| `--protect <colors>` | Comma-separated colors guaranteed to survive quantization (lattice-snapped); auto highlight/outline protection is on by default (doc 04 §Stage 3), `--no-protect` disables |
 | `--scale <kernel>` | majority/lanczos3/mitchell/box/nearest (default auto) |
 | `--profile art\|photo\|auto` | Force source-analysis profile |
 | `--effort fast\|default\|max` | Optimizer budget (restarts/annealing) |

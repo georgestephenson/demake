@@ -37,7 +37,8 @@ const res: PrepResult = await prep(inputBytes, {
   mode?: string | "auto",
   profile?: "art" | "photo" | "auto",
   scale?: "majority" | "lanczos3" | "mitchell" | "box" | "nearest" | "auto",
-  dither?: { alg: "none"|"bayer2"|"bayer4"|"bayer8"|"floyd-steinberg"|"atkinson"|"riemersma"; strength?: number },
+  dither?: { alg: "none"|"bayer2"|"bayer4"|"bayer8"|"floyd-steinberg"|"atkinson"|"riemersma"|"ramp"; strength?: number },
+  protect?: string[] | false,        // pinned colors; false disables auto highlight/outline protection
   effort?: "fast" | "default" | "max",
   metric?: "oklab" | "wrgb",
   seed?: number,

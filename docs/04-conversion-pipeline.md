@@ -92,6 +92,9 @@ the color it simulates, not just penalized as noise:
 | Flat-region noise energy | dither speckle where the source was smooth |
 | Banding index (false-contour detector on smooth ramps) | posterization |
 | High-frequency energy ratio | fine detail/text survival |
+| **Highlight retention** | detect distinct extreme features in the source (local L/chroma maxima, small area, high local contrast — specular dots, rim light, catchlights); score their *existence and contrast* in the output, area-independent, so losing a 6-pixel highlight costs as much as losing a large region |
+| **Outline preservation** | dark contour lines (pixel art's signature) stay connected and stay darkest-in-neighborhood |
+| **Ramp coherence** | output palettes organize into clean luminance ramps (monotone L steps, stable hue drift) the way hand-built pixel-art palettes do — a proxy for "reads as deliberately shaded" vs "reads as quantized" |
 
 **3. Aggregation.** Metrics are normalized to [0,1] against fixed anchor values and
 combined by **weighted geometric mean** — geometric, so one catastrophic metric
@@ -106,6 +109,37 @@ The judge is exposed, not internal: `retroart inspect <result> --source <src>
 --json` scores any image pair with the same metrics (doc 05), and the library
 exports `judge()` (doc 09) — so tests, agents, and users can measure exactly what
 the tournament measured.
+
+## Aesthetics is a first-class requirement, not an emergent property
+
+Position statement, because it shapes the whole doc: *minimizing average error is
+not the goal; producing output a pixel artist would accept is.* "Looks best" is
+hard to define, so the plan attacks it from four directions rather than pretending
+one number captures it:
+
+1. **Structural mechanisms** that encode known pixel-art craft directly in the
+   pipeline: distinctiveness-weighted quantization + protected seats (highlights,
+   outlines, accents survive by construction, not by luck — Stage 3/4), and
+   ramp-constrained shading dither (Stage 5). These make aesthetically-correct
+   outputs *reachable*; no metric can select a candidate that was never generated.
+2. **Aesthetic metrics** in the judge (highlight retention, outline preservation,
+   ramp coherence) that measure the qualities artists actually name, alongside the
+   information-loss metrics. Weighted geometric aggregation means a candidate that
+   nukes the highlights loses even with excellent mean ΔE.
+3. **Human-anchored calibration**: judge weights are fit to a human-ranked corpus
+   (doc 10) that deliberately over-represents the hard aesthetic cases —
+   cel-shaded characters, highlight-heavy sprites, subtle-shading portraits (the
+   predecessor corpus is exactly this), alongside photos and flat-color art. The
+   metrics serve the human ranking, never the reverse.
+4. **Human-in-the-loop escape hatch**: the web/desktop scoreboard previews every
+   candidate — when taste and judge disagree, one click picks the other candidate
+   and pins its `--strategy`. The judge is a very good default, not an authority.
+
+Post-1.0 research item (decision log, doc 13): a tiny fixed-weight learned
+perceptual metric (LPIPS-class, distilled, WASM) as an additional judge input —
+attractive because learned metrics track human aesthetic judgment better than
+analytic ones, admissible only if it preserves byte-determinism (fixed weights do)
+and stays small enough for the browser.
 
 ## The stage library
 
@@ -167,9 +201,21 @@ ever show (e.g. GBC bg: up to 32; NES: up to 13; MD: up to 61; SNES mode 3: 256)
   centers *are* master entries by construction. Perceptual distance uses the
   console's DAC model (NES NTSC decode, TMS levels) so we match what the screen
   shows, not the naive RGB triplets.
-- Importance weighting: saliency map (contrast + center-prior, cheap) multiplies
-  pixel weights so faces/subjects keep color fidelity over backgrounds;
-  `--no-saliency` disables.
+- Importance weighting — and this is where naive quantizers fail pixel art:
+  **frequency is not importance**. A six-pixel specular highlight, a rim-light
+  edge, or an eye catchlight is often the least frequent color in the image and
+  the one that makes it read as cel-shaded. Pixel weight is therefore
+  `frequency × distinctiveness × saliency`:
+  - *distinctiveness*: colors far (in Oklab) from their spatial neighbors and at
+    luminance/chroma extremes get super-linear weight, so rare-but-distinct
+    clusters survive clustering instead of being absorbed into their surroundings;
+  - *saliency*: contrast + center-prior map, favors subjects over backgrounds
+    (`--no-saliency` disables);
+  - **protected seats**: the top distinct extreme clusters (brightest highlight,
+    darkest outline, most saturated accent) are detected and guaranteed palette
+    slots before error minimization begins — they can be merged only with each
+    other, never averaged into midtones. `--protect '#fff,#e04040'` pins
+    user-chosen colors (lattice-snapped) explicitly.
 
 ## Stage 4 — Layout fitting (the hard part)
 
@@ -194,6 +240,9 @@ Generic tiled solver (GBC, NES, SNES m1, MD, PCE, WSC, NGPC, GBA m0…):
 5. Shared-color rules from the spec are honored inside the fit: NES's single shared
    backdrop color is chosen globally (most-used dark/background candidate) before
    per-palette fitting; transparent index 0 on MD/SMS/GBC-obj reserves a slot.
+   Protected-seat colors from Stage 3 are carried through: the cell(s) containing a
+   protected color must be assigned a palette that keeps it, and refitting may not
+   drift a protected slot away (it stays lattice-pinned).
 6. **Index-order post-pass**: within each palette, order colors dark→light (the
    `gen-portraits.py` DMG-coherence trick, generalized: stable cross-palette
    luminance ordering helps consoles with shared-index semantics and makes
@@ -209,8 +258,15 @@ Mode selection: when a console has several modes (SNES 1/3/7, GBA 0/4/3, ANTIC),
   original tools' channel-weighted RGB kept as `--metric wrgb` for reproducing old
   outputs).
 - Dither options: `none` (art default), `bayer2|4|8` (ordered, retro-authentic),
-  `floyd-steinberg` serpentine (photo default), `atkinson`, `riemersma`; strength
-  0–100. Error diffusion is **cell-aware**: error never diffuses across a palette
+  `floyd-steinberg` serpentine (photo default), `atkinson`, `riemersma`, and
+  **`ramp`** — artist-style shading dither: ordered patterns allowed only between
+  *luminance-adjacent colors of the same palette ramp*, and only inside smooth-
+  gradient regions (never across detected edges/outlines). This is dithering as a
+  shading technique — the checkerboard an artist lays between two cel shades to
+  fake a midtone — not as broadband error correction: no random speckle, no
+  off-ramp color pairs, flat regions stay flat. `ramp` candidates are seeded into
+  the tournament for `art`-profile sources automatically. Strength 0–100 for all.
+- Error diffusion is **cell-aware**: error never diffuses across a palette
   boundary into a cell that can't represent it (prevents the classic smearing
   artifact at attribute edges).
 
