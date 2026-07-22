@@ -8,6 +8,16 @@ console could actually display, plus the data and source code to display it:
 palettes, tile maps, and assembly/C/binary — verified on emulated hardware, not
 merely asserted.
 
+## Why
+
+One of the main motivations for this tool is enabling a fully AI-agent-driven
+retro game workflow. Coding agents can already write code for retro consoles,
+and image models can generate art — but art that fits precise hardware
+constraints (master palettes, per-tile color limits, attribute grids, tile
+budgets) has been the missing piece. `demake` closes that gap, so an AI agent
+can create a retro game end to end: generate art, convert it into
+hardware-compliant data and display code, and build a running ROM.
+
 > **Status: Phase 0 (foundations).** The repository is being scaffolded. The
 > conversion engine (`prep`) and code generator (`gen`) land in Phase 1+. The
 > full design lives in [`docs/`](docs/README.md); the milestone plan is

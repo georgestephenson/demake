@@ -1,7 +1,6 @@
 # demake — Project Plan
 
-This directory is the complete planning document set for **demake**
-(repo rename from `retro-game-art-maker` pending, Phase 0), a tool that
+This directory is the complete planning document set for **demake**, a tool that
 converts arbitrary modern images into
 hardware-compliant art — and displayable code — for every major game console of the
 8/16-bit home era and every handheld up to and including the Nintendo DS.
