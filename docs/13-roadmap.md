@@ -39,6 +39,10 @@ determinism (Node 3-OS) green.
   manifest sidecar; `gen` CLI with implicit-prep.
 - `rom` format: GB harness ROM, RGBDS toolchain container, SameBoy headless capture,
   **first pixel-perfect E2E test green** — the moment the credo is real.
+- **Tournament + judge** (doc 04): candidate portfolio framework over the Phase-1
+  stage library, worker-pool parallel execution with stage-DAG memoization, the
+  multi-metric judge (validity/glitch gates, fidelity metrics, aggregation),
+  `--strategy` surface, human-calibration set collection and weight freeze.
 - Quality bench: fixture corpus + error-metric tracking + prior-art comparison
   (doc 04); `--effort max` annealing pass; tile-budget merge stage.
 - Roll Tier 1 breadth, one console at a time, each = spec + backend + harness +
@@ -99,5 +103,6 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
 Decisions this plan defers, each becoming an ADR when made:
 DS emulator choice (melonDS vs DeSmuME automation, Phase 4/2 spike) · Node SEA vs
 Bun compile (Phase 1 spike) · final name confirmation (Phase 0) · MD 32X/Sega CD
-"extended spec" inclusion (post-1.0) · Oklab L-weight calibration values (Phase 2,
-frozen thereafter).
+"extended spec" inclusion (post-1.0) · Oklab L-weight and judge metric-weight
+calibration values (Phase 2, frozen thereafter) · initial candidate-portfolio
+composition per console class (Phase 2, revisited per tier rollout).

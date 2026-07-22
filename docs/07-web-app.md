@@ -42,7 +42,10 @@ Single screen, three panes:
 3. **Preview pane** — side-by-side or A/B-slider source vs result, at integer zoom
    with optional CRT-ish PAR-corrected view (uses the spec's `pixelAspect` and DAC
    model); a palette strip showing fitted sub-palettes; fit-error and tile-budget
-   stats from the manifest.
+   stats from the manifest; and the tournament scoreboard — which strategy won,
+   per-candidate scores, with click-to-preview of any candidate's output (this
+   doubles as a strategy picker: choosing one sets `--strategy <name>` in the
+   equivalent-command line).
 
 Conversion re-runs debounced on option changes (fast path: cached analysis +
 geometry; the fitter reruns). `--effort max` is behind an explicit "High effort"

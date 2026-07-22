@@ -3,14 +3,111 @@
 This is the heart of the product: any image → the best image the target hardware can
 display. It generalizes the predecessor `prep-portraits.py` pipeline (denoise → majority
 downscale → constrained palette fit → RGB snap) with modern color science and a
-constraint-driven optimizer. Every stage is deterministic (seeded) and individually
-overridable from the CLI; defaults are chosen automatically from source analysis.
+constraint-driven optimizer.
+
+There is no single algorithm that wins on every (image, console) pair — a majority-
+vote downscale that's perfect for pixel art destroys a photo; dithering that rescues
+a gradient on the NES ruins flat-color art on the GBC. So the default behavior is a
+**tournament**: run several locally-optimal candidate strategies in parallel, score
+every output with a multi-metric judge against the source, disqualify anything
+invalid or glitchy, and keep the winner. (Where a constraint subproblem *does* have
+a globally optimal algorithm — e.g. exhaustive TMS9918 row-pair selection, optimal
+per-line color choice on the 2600 — there is exactly one candidate for that
+dimension and no tournament is wasted on it.)
 
 ```
-decode → analyze → geometry (crop/scale) → global quantize (master palette / lattice)
-       → layout fit (sub-palettes × tiles/cells/scanlines) → dither+remap
-       → tile-budget enforcement → DAC snap → encode (+manifest)
+decode → analyze ─┬─ candidate A ─ (geometry → quantize → fit → dither → budget → DAC) ─┐
+                  ├─ candidate B ─ ( … different stage choices … )                      ├─ judge ─ winner → encode (+manifest)
+                  └─ candidate N ─ ( … )                                                ┘
 ```
+
+Every stage and the judge are deterministic (seeded); the candidate set is a pure
+function of (source analysis, console, options), so the tournament as a whole is
+deterministic too. The stages below are the **stage library** candidates are
+composed from; each is individually forcible from the CLI.
+
+## The tournament
+
+**Candidates.** A candidate = a named, complete assignment of stage choices: scale
+kernel × quantizer × fitter variant × dither (alg, strength) × video mode × metric
+params. Candidates are drawn from a curated portfolio (not the full cross-product):
+each entry exists because it wins somewhere, e.g. `art-majority-flat` (majority
+scale, no dither, hard palette fit — the predecessor recipe), `photo-lanczos-fs`
+(Lanczos, Wu init, serpentine Floyd–Steinberg), `photo-bayer-crt` (ordered dither
+tuned for CRT-era look), `gradient-scanline` (per-scanline palette scheduling where
+hardware allows), plus console-specific entries (NES: backdrop-dark vs
+backdrop-dominant seeding; SNES/GBA: one candidate per plausible video mode).
+Portfolio size scales with `--effort`: `fast` = single analysis-picked candidate
+(no tournament), `default` = pruned portfolio (~4–8), `max` = full portfolio plus
+annealing refinement of the top finishers.
+
+**Execution.** Two rounds keep cost sane: every candidate runs a cheap seed pass →
+judge scores → bottom half pruned → survivors run full refinement (restarts,
+annealing) → final judging. Candidates share work via stage-DAG memoization (same
+decode/analysis always; same geometry or quantize results reused when choices
+coincide). Candidates run on a worker pool (Node `worker_threads` / Web Workers);
+scheduling order cannot affect results (pure functions + deterministic final
+ranking).
+
+**User control** (doc 05 has the flag table):
+
+- `--strategy auto` — the tournament. Default.
+- `--strategy <name>` — run exactly one named candidate, no judging overhead.
+- `--strategy list` — enumerate candidates for a console (also in `consoles --json`).
+- Explicit stage flags (`--dither`, `--scale`, `--mode`, …) don't disable the
+  tournament — they **constrain the portfolio** to candidates matching the pinned
+  choice. Pinning every dimension degenerates to a single candidate naturally.
+
+**Reporting.** The winner, per-candidate scores, and per-metric breakdown appear in
+`--json` and `-v` output. An agent (or user) can inspect the scoreboard and pin
+`--strategy <winner>` for fast reproducible re-runs.
+
+## The judge
+
+Scores each candidate's output against the source. Three parts, in order:
+
+**1. Validity gates (disqualification, not scoring).** The doc-10 compliance oracle
+(`inspect`) must pass — palette/cell/budget violations disqualify. Glitch detectors
+also disqualify: degenerate palettes (duplicate/unused slots when colors were
+dropped), NaN/out-of-lattice values, empty output, attribute-cell tearing (a cell
+whose remap error is a statistical outlier vs its neighbors — the classic "one tile
+went wrong" artifact), and tile-merge overrun beyond the requested budget. A
+disqualified candidate is reported with its reason; if *all* candidates are
+disqualified that's an internal error (`E_NO_VALID_CANDIDATE`), never a silent bad
+output.
+
+**2. Fidelity metrics.** Computed between the **DAC-decoded** result and a fixed
+reference: the source downscaled to output dimensions with Lanczos3 in linear light
+— fixed regardless of the candidate's own kernel, so no candidate can game the
+reference. Each metric is also computed on a σ=0.5px Gaussian-integrated variant of
+both images ("viewing distance" pass) so ordered/diffused dither is credited for
+the color it simulates, not just penalized as noise:
+
+| Metric | Captures |
+|---|---|
+| Mean + p95 Oklab ΔE | overall + worst-region color loss |
+| MS-SSIM (L channel) | structural preservation |
+| Gradient-map correlation (Sobel, L) | edge/silhouette clarity |
+| Hue/chroma histogram EMD | gamut retention (did we lose the reds?) |
+| Flat-region noise energy | dither speckle where the source was smooth |
+| Banding index (false-contour detector on smooth ramps) | posterization |
+| High-frequency energy ratio | fine detail/text survival |
+
+**3. Aggregation.** Metrics are normalized to [0,1] against fixed anchor values and
+combined by **weighted geometric mean** — geometric, so one catastrophic metric
+tanks the aggregate and can't be averaged away. Weight sets are per-profile
+(`art` weights edges/flatness; `photo` weights ΔE/SSIM/gamut) and per-console-class
+(mono ramps re-weight to L-only metrics). Weights are calibrated once in Phase 2
+against a human-ranked fixture set, then frozen and versioned; changing them is an
+output-affecting minor release like any algorithm change. Ties break
+deterministically by candidate ID order.
+
+The judge is exposed, not internal: `retroart inspect <result> --source <src>
+--json` scores any image pair with the same metrics (doc 05), and the library
+exports `judge()` (doc 09) — so tests, agents, and users can measure exactly what
+the tournament measured.
+
+## The stage library
 
 ## Stage 0 — Decode & normalize
 
@@ -21,10 +118,11 @@ decode → analyze → geometry (crop/scale) → global quantize (master palette
   All resampling and averaging happens in **linear light**; all perceptual distance
   happens in **Oklab** (see §Color distance).
 
-## Stage 1 — Source analysis (drives defaults)
+## Stage 1 — Source analysis (seeds the portfolio)
 
-Cheap statistics decide the default strategy; every decision is printed with
-`--verbose` and overridable:
+Cheap statistics seed the tournament — they select and order the candidate
+portfolio (and under `--effort fast`, pick the single candidate). Every decision is
+printed with `--verbose` and overridable:
 
 - **Pixel-art detector**: unique-color count, edge-alignment autocorrelation
   (detects upscaled pixel art and its scale factor), gradient histogram. Result:
@@ -102,8 +200,8 @@ Generic tiled solver (GBC, NES, SNES m1, MD, PCE, WSC, NGPC, GBA m0…):
    deterministic diffs readable).
 
 Mode selection: when a console has several modes (SNES 1/3/7, GBA 0/4/3, ANTIC),
-`--mode auto` runs the cheap seed fit for each candidate, scores perceptual error +
-budget feasibility, and picks; `--mode <name>` forces.
+`--mode auto` simply contributes one candidate per plausible mode to the tournament
+— the judge picks, like any other strategy dimension; `--mode <name>` pins it.
 
 ## Stage 5 — Dithering & remap
 
@@ -169,8 +267,10 @@ the merge count in the manifest; `--strict` errors instead of merging.
 
 ## Performance targets
 
-- 4K photo → any Tier 1 console, default effort: **< 1 s** in Node on a laptop,
-  < 3 s in-browser (worker). `--effort max`: < 15 s.
+- 4K photo → any Tier 1 console: `--effort fast` (single candidate) **< 1 s** in
+  Node on a laptop; `default` (pruned tournament, parallel workers) **< 3 s** Node,
+  < 6 s in-browser; `max` (full portfolio + annealing) < 20 s. Judge overhead per
+  candidate is milliseconds (metrics run at output resolution, which is tiny).
 - Implementation rules: `Float32Array`/`Uint8Array` throughout, histograms not
   per-pixel loops where possible, no allocation inside inner loops, benchmarks in CI
   (doc 11) with regression thresholds.

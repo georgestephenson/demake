@@ -16,6 +16,7 @@ Commands:
   gen        Convert an image (raw or prepped) into console data/code/ROM
   consoles   List supported consoles and their constraints
   inspect    Analyze an image: is it compliant? for which consoles? why not?
+             With --source, also judge it: fidelity metrics vs the source image
   completion Emit shell completion (bash/zsh/fish)
   help       Help for any command
 ```
@@ -47,6 +48,13 @@ curl -s $URL | retroart prep - -c snes | retroart gen - -c snes --format asm > i
 # Agent introspection
 retroart consoles --json
 retroart inspect out.png --json
+
+# Score any result against its source with the tournament's own judge (doc 04)
+retroart inspect out.png --source photo.jpg --json
+
+# See / pin the algorithm choice
+retroart prep photo.jpg -c nes --strategy list
+retroart prep photo.jpg -c nes --strategy photo-lanczos-fs -o out.png
 ```
 
 ## UNIX compliance checklist (each item is a tested requirement)
@@ -83,7 +91,10 @@ retroart inspect out.png --json
 - **`--json` on every command**: single JSON object on stdout (product goes to
   `-o` file in JSON mode), stable schema, versioned via `"schemaVersion"`. Includes
   everything an agent needs to decide next steps: chosen defaults (size, mode,
-  dither), fit error metrics, tile merge counts, warnings, output paths.
+  dither), fit error metrics, tile merge counts, warnings, output paths — and the
+  tournament scoreboard: winning strategy, per-candidate aggregate + per-metric
+  scores, and disqualifications with reasons, so a follow-up run can pin
+  `--strategy <winner>` deterministically.
 - **Structured errors**: on failure with `--json`, stderr carries
   `{"error": {"code": "E_SIZE_TOO_LARGE", "message": ..., "hint": ..., "docs": ...}}`.
   Error codes are enumerated and stable; every error has a `hint` with the likely
@@ -106,6 +117,7 @@ retroart inspect out.png --json
 | Flag | Meaning |
 |---|---|
 | `-c, --console <id>` | Target console (id or alias; required) |
+| `--strategy auto\|<name>\|list` | `auto` (default) runs the doc-04 tournament: parallel candidate algorithms, multi-metric judge picks the winner. `<name>` runs exactly one candidate. `list` enumerates candidates for the console. Explicit stage flags below constrain the portfolio rather than disabling the tournament |
 | `--size WxH` / `--fit contain\|cover\|stretch\|pad` | Target geometry (doc 04 §2); omit for auto behavior |
 | `--mode <name>\|auto` | Video mode where applicable (snes: mode1/mode3/mode7…) |
 | `--dither <alg>[:strength]` | none/bayer2/4/8/floyd-steinberg/atkinson/riemersma |

@@ -10,6 +10,7 @@ supported console. Everything else supports that.
 ```
         E2E hardware-proof (ROM in emulator, screenshot compare)   ← per console, CI-gating
         Determinism matrix (Node × OS × browsers, byte-identical)
+        Judge & tournament tests (metrics, glitch gates, anti-gaming, calibration)
         Golden-output tests (prep/gen fixtures, byte-exact)
         Property & invariant tests (compliance checker as oracle)
         Unit tests (color math, codecs, fitters, emitters)
@@ -34,6 +35,10 @@ lattice membership, check budgets) so it can act as an oracle:
   (decode(emitted tiles+palettes) == input pixels).
 - prep is idempotent: `prep(prep(x)) == prep(x)` (same options).
 - Determinism: same seed → same bytes; different seeds → valid outputs.
+- Tournament invariants: the winner is never a disqualified candidate;
+  `prep(strategy: winner)` reproduces the tournament's bytes exactly; pinning a
+  stage flag only ever removes candidates (never changes a surviving candidate's
+  output); worker-pool size/scheduling never changes the result.
 - Auto-size: output dims ≤ console max, aspect preserved within 1 tile rounding,
   never upscaled.
 
@@ -59,14 +64,37 @@ alongside byte goldens, we record fit-error metrics (Oklab MSE, SSIM vs source) 
 fail if error worsens > ε without an explicit baseline bump — this catches
 "different bytes AND worse" during algorithm work.
 
-## 4. Determinism matrix
+## 4. Judge & tournament tests
+
+The doc-04 judge picks what users see, so it is tested like any other output-
+critical component:
+
+- **Metric unit tests**: each fidelity metric against analytic fixtures with known
+  scores (identical images → perfect; inverted → floor; synthetic banding/noise/
+  edge-loss images → move exactly the intended metric).
+- **Glitch-gate tests**: hand-built defective outputs (torn attribute cell,
+  duplicate palette slots, over-budget tilesets) must be disqualified with the
+  right reason code — and never win by scoring well.
+- **Anti-gaming fixtures**: adversarial candidate pairs where a single metric
+  disagrees with human judgment (heavy dither that flatters mean ΔE but looks like
+  static; oversmoothing that flatters SSIM but kills detail). The aggregate must
+  rank them the way the human-calibration set says.
+- **Calibration set**: a small corpus of (source, candidate outputs, human ranking)
+  triples collected in Phase 2. Judge weights are fit to it once, frozen, and this
+  suite pins the ranking forever after — any weight change must re-justify against
+  it (and bumps a minor, doc 09 §Stability).
+- **Tournament regression**: for the golden corpus, the *winning strategy id* per
+  (fixture, console) is itself a golden value — an algorithm tweak that flips a
+  winner is visible in review, not silent.
+
+## 5. Determinism matrix
 
 The same fixture conversions run on ubuntu/macos/windows Node, and in headless
 Chromium/Firefox/WebKit via Playwright loading the actual web build. All six
 environments must produce byte-identical PNGs and artifacts. Runs on every PR
 (subset) and nightly (full corpus).
 
-## 5. E2E hardware-proof tests (the flagship)
+## 6. E2E hardware-proof tests (the flagship)
 
 Per console: `hd-many-colors.png` → `prep` → `gen --format rom` → build in the
 pinned toolchain container → boot in a headless emulator → capture the frame →
@@ -123,7 +151,7 @@ scheduled workflow from `toolchains/` and used both by CI and by users' local
 - Shifted image → harness scroll/overscan init bug.
 - Garbage → build or upload-order bug (VRAM writes during active display, etc.).
 
-## 6. Surface tests
+## 7. Surface tests
 
 - CLI: `--help`/`--version`/exit codes/stdin-stdout/signals via integration harness
   (execa); man page lints (`mandoc -Tlint`); JSON outputs validated against the

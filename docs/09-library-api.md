@@ -31,6 +31,7 @@ import {
 // --- prep --------------------------------------------------------------------
 const res: PrepResult = await prep(inputBytes, {
   console: "gbc",                    // id or alias
+  strategy?: "auto" | string,        // "auto" (default) = tournament; name = single candidate
   size?: { w: 128, h: 112 },         // omit → auto (keep dims or largest aspect-fit)
   fit?: "contain" | "cover" | "stretch" | "pad",
   mode?: string | "auto",
@@ -46,7 +47,11 @@ const res: PrepResult = await prep(inputBytes, {
   signal?: AbortSignal,
 });
 // res: { png: Uint8Array; image: CompliantImage; manifest: Manifest;
-//        decisions: AutoDecisions; stats: FitStats; warnings: Warning[] }
+//        decisions: AutoDecisions; stats: FitStats; warnings: Warning[];
+//        tournament: { winner: string; candidates: CandidateScore[] } }
+//   CandidateScore = { strategy: string; aggregate: number;
+//                      metrics: Record<MetricId, number>;
+//                      disqualified?: { reason: string } }
 
 // --- gen ---------------------------------------------------------------------
 const out: GenResult = await gen(inputBytesOrCompliantImage, {
@@ -64,7 +69,11 @@ const out: GenResult = await gen(inputBytesOrCompliantImage, {
 
 // --- introspection -----------------------------------------------------------
 consoles(): ConsoleSpec[];                          // all specs, data-only
+strategies(consoleId): StrategyInfo[];              // candidate portfolio for a console
 inspect(bytes, { console? }): InspectResult;        // compliant? for which consoles? violations list
+judge(sourceBytes, resultBytes, { console, profile? }): JudgeResult;
+  // the tournament's own scorer, public: validity gates + fidelity metrics +
+  // aggregate (doc 04 §The judge) — what prep used to pick the winner
 ```
 
 Design rules:
