@@ -5,7 +5,7 @@ no upload, no accounts, no telemetry. If GitHub Pages is up, the app works.
 
 ## Principles
 
-- **Parity is a contract**: the web app calls the identical `@retroart/core` build
+- **Parity is a contract**: the web app calls the identical `@demake/core` build
   the CLI uses; CI verifies byte-identical PNG output between Node and browser for
   the fixture corpus (doc 10 §Determinism).
 - **Everything client-side**: image decode (WASM codecs), pipeline, PNG/asm/c
@@ -19,12 +19,12 @@ no upload, no accounts, no telemetry. If GitHub Pages is up, the app works.
 
 - Vite + TypeScript + Preact (small, fast, no framework lock-in for a one-page
   tool). State in a single store; no router beyond hash-permalinks.
-- `@retroart/core` in a Worker via Comlink-style RPC; transfers use
+- `@demake/core` in a Worker via Comlink-style RPC; transfers use
   `ArrayBuffer`s (zero-copy).
 - Styling: hand-rolled CSS with light/dark via `prefers-color-scheme`. Pixel
   preview uses `image-rendering: pixelated` canvases.
 - Static deploy: `packages/web` → `dist/` → GitHub Pages via Actions (doc 11).
-  Base path configured for `https://georgestephenson.github.io/retro-game-art-maker/`
+  Base path configured for `https://georgestephenson.github.io/demake/`
   (plus custom domain support if ever wanted).
 
 ## UX specification
@@ -37,7 +37,7 @@ Single screen, three panes:
    constraint summary per console: "GBC · 160×144 · 8 palettes × 4 colors"); then
    the doc-05 options: size (auto/preset/custom), mode, dither, scale kernel,
    effort, background. Advanced options collapsed by default. Live "equivalent
-   command" line: `retroart prep img.png -c gbc --dither bayer4 …` with a copy
+   command" line: `demake prep img.png -c gbc --dither bayer4 …` with a copy
    button.
 3. **Preview pane** — side-by-side or A/B-slider source vs result, at integer zoom
    with optional CRT-ish PAR-corrected view (uses the spec's `pixelAspect` and DAC

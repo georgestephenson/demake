@@ -107,7 +107,7 @@ against a human-ranked fixture set, then frozen and versioned; changing them is 
 output-affecting minor release like any algorithm change. Ties break
 deterministically by candidate ID order.
 
-The judge is exposed, not internal: `retroart inspect <result> --source <src>
+The judge is exposed, not internal: `demake inspect <result> --source <src>
 --json` scores any image pair with the same metrics (doc 05), and the library
 exports `judge()` (doc 09) — so tests, agents, and users can measure exactly what
 the tournament measured.

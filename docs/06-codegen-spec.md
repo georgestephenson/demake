@@ -75,7 +75,7 @@ interface CodegenBackend {
   emitC(img: CompliantImage, opts): { c: string; h: string };
   romHarness: {                      // doc 10 uses this
     templateDir: string;             // rom-harness/<family>/
-    toolchainImage: string;          // ghcr.io/<owner>/retroart-tc-<family>:<tag>
+    toolchainImage: string;          // ghcr.io/<owner>/demake-tc-<family>:<tag>
     build(blobs: NamedBlob[]): RomBuildPlan;   // file placements + build cmd
   };
 }
@@ -89,7 +89,7 @@ The CLI itself does **not** bundle assemblers. `--format rom` works in two ways:
    allow-listed), `gen` writes the harness project to a temp dir, builds, and emits
    the ROM. Errors clearly name the missing tool + install hint (`E_TOOLCHAIN_MISSING`).
 2. **Docker fallback** (`--rom-builder docker`): uses our published
-   `retroart-tc-<family>` images — the exact ones CI uses — for a zero-setup,
+   `demake-tc-<family>` images — the exact ones CI uses — for a zero-setup,
    reproducible build. Recommended path; documented as the default suggestion.
 
 The **web app** cannot run toolchains: it offers `bin`/`asm`/`c` downloads for all

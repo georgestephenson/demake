@@ -7,7 +7,7 @@
 | `README.md` | The shop window: one-paragraph pitch, animated demo GIF (source → GBC/NES/MD side-by-side), install matrix (npm / binaries / web / desktop), 5 copy-paste examples, console support table (auto-generated from ConsoleSpecs — CI-checked, never stale), links into `docs/`. Badges: CI, npm version, Pages. |
 | `AGENTS.md` | See below — the agent-onboarding contract for *developing this repo*. The canonical project-memory file, following the cross-tool agents.md standard so Codex, Cursor, etc. read it natively. |
 | `CLAUDE.md` | A one-line shim containing only `@AGENTS.md`. Claude Code reads `CLAUDE.md` (not `AGENTS.md`) but supports imports, so this makes every tool consume the identical instructions with zero duplication. Never holds content of its own; a CI check enforces it stays a pure import. |
-| `docs/agent-guide.md` | The contract for *using the installed tool* (doc 05): commands, JSON schemas, error codes, examples. Generated from `cli-spec`; mirrored by `retroart help --agents`. |
+| `docs/agent-guide.md` | The contract for *using the installed tool* (doc 05): commands, JSON schemas, error codes, examples. Generated from `cli-spec`; mirrored by `demake help --agents`. |
 | `CONTRIBUTING.md` | Dev setup (pnpm, Node 20, optional Docker for E2E), test commands, changeset requirement, "adding a console" walkthrough (the doc-02 two-files-plus-fixtures recipe, step by step), PR checklist. |
 | `SECURITY.md` | Private reporting via GitHub advisories; supported-versions table. |
 | `CODE_OF_CONDUCT.md` | Contributor Covenant. |

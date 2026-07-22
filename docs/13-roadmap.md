@@ -9,8 +9,8 @@ phases order the work; they don't trim it.
 
 Repo scaffolding: pnpm workspaces, strict TS config, eslint/prettier + custom rules,
 Vitest, CI skeleton (lint + unit on 3 OSes), changesets, README/CLAUDE.md/
-CONTRIBUTING/SECURITY stubs, name check + npm scope reservation (`retroart`,
-`@retroart/*`).
+CONTRIBUTING/SECURITY stubs, name check + npm scope reservation (`demake`,
+`@demake/*`).
 
 **Done means**: green CI on a hello-world core function imported by a stub CLI that
 passes `--help`/`--version`/exit-code tests; npm names secured.

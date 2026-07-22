@@ -20,7 +20,7 @@ grids, or console color DACs — so their output is not actually hardware-compli
 
 One engine, four faces:
 
-1. **CLI** (`retroart`) — a first-class UNIX citizen. Composable, scriptable,
+1. **CLI** (`demake`) — a first-class UNIX citizen. Composable, scriptable,
    pipe-friendly, man-paged, versioned, with machine-readable output. Designed so
    that Claude Code, Codex, and other coding agents can drive it without friction.
 2. **Web app** — the same engine compiled for the browser, hosted free on
@@ -29,7 +29,7 @@ One engine, four faces:
 3. **Desktop app** — a deliberately simple GUI (Tauri) that bundles the CLI as a
    sidecar binary and shells out to it, so GUI behavior is *by construction*
    identical to CLI behavior.
-4. **Library** — an npm package (`retroart` / `@retroart/core`) exposing the engine
+4. **Library** — an npm package (`demake` / `@demake/core`) exposing the engine
    programmatically for build pipelines, game engines, and other tools.
 
 Two core operations (mirroring the predecessor tools):
@@ -58,7 +58,7 @@ Two core operations (mirroring the predecessor tools):
   maturity (doc 03), with the constraint model designed so adding a console is
   writing one declarative spec file plus one codegen backend.
 - **G5 — Agent-native UX.** Structured `--json` everywhere, self-describing
-  capabilities (`retroart consoles --json`), precise machine-parseable errors,
+  capabilities (`demake consoles --json`), precise machine-parseable errors,
   exhaustive `--help`, an `AGENTS.md` contract file. An LLM should be able to learn
   the whole tool from its own output.
 - **G6 — Exemplary engineering.** Full CI, automated releases, semver, man pages,
@@ -77,23 +77,25 @@ Two core operations (mirroring the predecessor tools):
 
 ## Naming
 
-Recommended name: **`demake`** (binary, npm package, repo). A *demake* is the
-beloved fan practice of remaking a modern game for retro hardware — which is
-exactly, literally what this tool does to an image. It's a verb, so CLI usage
-reads as a sentence (`demake photo.jpg --console gbc`), it's short, memorable,
-and npm-free (verified 2026-07; `retroart`, `retropix`, `retrofy`, `tilepress`
-also free as runners-up). Plan documents use `retroart` as the placeholder until
-the rename decision; Phase 0 finalizes it after the full collision check
-(npm / GitHub / Homebrew / PyPI-squatting / trademark scan) and reserves the
-scope fallback (`@demake/*`).
+The name is **`demake`** (binary, npm package, product) — decided 2026-07. A
+*demake* is the beloved fan practice of remaking a modern game for retro
+hardware — which is exactly, literally what this tool does to an image. It's a
+verb, so CLI usage reads as a sentence (`demake photo.jpg --console gbc`), it's
+short, memorable, and was npm-free at decision time.
+
+Phase 0 executes the securing steps: publish placeholder `demake` +
+`@demake/core` npm packages immediately (npm has no reservations — only
+publishes hold a name), rename the GitHub repo to `demake` (GitHub redirects
+the old URLs), and run the wider collision scan (Homebrew, PyPI squatting,
+trademark) before any public release.
 
 ## Success criteria for v1.0
 
-1. `retroart prep photo.jpg --console gbc -o out.png` produces a compliant GBC image
-   from any input, and `retroart gen out.png --console gbc --format asm` produces
+1. `demake prep photo.jpg --console gbc -o out.png` produces a compliant GBC image
+   from any input, and `demake gen out.png --console gbc --format asm` produces
    RGBDS assembly at least as good as `gen-portraits.py` output.
 2. All Tier 1 consoles (doc 03) pass the full ROM-in-emulator screenshot test in CI.
 3. The web app on github.io produces byte-identical PNGs to the CLI for the same
    options.
-4. `npm i -g retroart` and the desktop app installers work on Linux/macOS/Windows.
-5. `man retroart` works and the docs site is generated from the same source of truth.
+4. `npm i -g demake` and the desktop app installers work on Linux/macOS/Windows.
+5. `man demake` works and the docs site is generated from the same source of truth.

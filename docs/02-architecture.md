@@ -21,10 +21,10 @@ no per-pixel object allocation) is plenty. See doc 04 §Performance.
 pnpm workspaces + a single TypeScript project-references build. One repo, one CI.
 
 ```
-retro-game-art-maker/
+demake/          # repo (rename pending, Phase 0)
 ├── docs/                    # This plan, then living design docs
 ├── packages/
-│   ├── core/                # @retroart/core — the engine (zero Node/DOM deps)
+│   ├── core/                # @demake/core — the engine (zero Node/DOM deps)
 │   │   ├── src/
 │   │   │   ├── image/       # decode/encode, pixel buffers, color spaces
 │   │   │   ├── pipeline/    # scaling, quantization, palette fitting, dithering
@@ -32,7 +32,7 @@ retro-game-art-maker/
 │   │   │   ├── codegen/     # one backend per console family (asm/C/binary emit)
 │   │   │   └── index.ts     # public API (doc 09)
 │   │   └── test/
-│   ├── cli/                 # retroart — thin wrapper over core (doc 05)
+│   ├── cli/                 # demake — thin wrapper over core (doc 05)
 │   │   ├── src/
 │   │   └── man/             # generated roff, checked in per release
 │   ├── web/                 # Vite app → GitHub Pages (doc 07)
@@ -130,8 +130,8 @@ instance among thirty.
 
 | Surface | Artifact | Channel |
 |---------|----------|---------|
-| Library | `@retroart/core` (ESM + types) | npm |
-| CLI | `retroart` (bin wrapper on npm) | npm (`npm i -g`, `npx retroart`) |
+| Library | `@demake/core` (ESM + types) | npm |
+| CLI | `demake` (bin wrapper on npm) | npm (`npm i -g`, `npx demake`) |
 | CLI | standalone single-file binaries (Node SEA or Bun compile), linux-x64/arm64, macos-x64/arm64, windows-x64 | GitHub Releases; Homebrew tap later |
 | Web | static site | GitHub Pages via Actions |
 | Desktop | Tauri bundles (.dmg, .msi/.exe, .AppImage/.deb) with CLI sidecar | GitHub Releases |

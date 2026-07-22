@@ -1,7 +1,8 @@
-# Retro Game Art Maker — Project Plan
+# demake — Project Plan
 
-This directory is the complete planning document set for **Retro Game Art Maker**
-(working CLI name: `retroart`), a tool that converts arbitrary modern images into
+This directory is the complete planning document set for **demake**
+(repo rename from `retro-game-art-maker` pending, Phase 0), a tool that
+converts arbitrary modern images into
 hardware-compliant art — and displayable code — for every major game console of the
 8/16-bit home era and every handheld up to and including the Nintendo DS.
 
@@ -40,5 +41,5 @@ an earlier project by the same author project:
   BGR555 palettes, per-tile palette map, and 2bpp tile data, with an *exact* lossless
   path for compliant inputs and a lossy fallback for anything else.
 
-`retroart prep` and `retroart gen` are those two tools, generalized to a declarative
+`demake prep` and `demake gen` are those two tools, generalized to a declarative
 per-console constraint model, a smarter perceptual pipeline, and ~30 target platforms.

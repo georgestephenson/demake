@@ -9,9 +9,9 @@
 | `lint` | eslint (incl. custom rules: no `Math.random`/`Date.now`/platform APIs in core), prettier check, typecheck (project references), `cli-spec` regeneration diff check | fast-fail |
 | `test-unit` | Vitest unit + property + golden suites, coverage upload | matrix: ubuntu/macos/windows × Node 20/22 |
 | `test-browser` | Playwright: web build determinism + functional | Chromium/Firefox/WebKit, ubuntu |
-| `test-e2e-rom` | Doc-10 emulator suite, **Tier-1 consoles**, flagship fixture | ubuntu, pulls pinned `retroart-tc-*` images; ~parallel per console via matrix |
+| `test-e2e-rom` | Doc-10 emulator suite, **Tier-1 consoles**, flagship fixture | ubuntu, pulls pinned `demake-tc-*` images; ~parallel per console via matrix |
 | `bench` | benchmark action vs. baseline | regression >25% fails |
-| `build-artifacts` | build core/cli/web + smoke (`retroart --version`, `prep` one fixture) | artifacts retained for the PR |
+| `build-artifacts` | build core/cli/web + smoke (`demake --version`, `prep` one fixture) | artifacts retained for the PR |
 | `docs` | man page lint, docs-site build, link check | |
 
 Full-corpus determinism + all-tier E2E run **nightly** (`nightly.yml`) rather than
@@ -43,7 +43,7 @@ Versioning via **Changesets**: every user-visible PR adds a changeset; a bot PR
 ("Version Packages") accumulates them; merging it tags `vX.Y.Z` and triggers:
 
 1. **Verify**: full CI including all-tier E2E on the tag.
-2. **npm**: publish `@retroart/core` + `retroart` with `--provenance` (OIDC trusted
+2. **npm**: publish `@demake/core` + `demake` with `--provenance` (OIDC trusted
    publishing, no long-lived npm token).
 3. **Binaries**: Node SEA builds for linux-x64/arm64, darwin-x64/arm64, win-x64;
    SHA256SUMS; SLSA provenance attestation (`actions/attest-build-provenance`).

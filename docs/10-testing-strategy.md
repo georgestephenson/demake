@@ -151,7 +151,7 @@ one automation surface for many systems. Prototyping this harness early (Phase 1
 de-risks the entire tier rollout.
 
 All toolchains + emulators live in per-family Docker images
-(`ghcr.io/<owner>/retroart-tc-<family>`), version-pinned by digest, built by a
+(`ghcr.io/<owner>/demake-tc-<family>`), version-pinned by digest, built by a
 scheduled workflow from `toolchains/` and used both by CI and by users' local
 `--rom-builder docker` (doc 06) — CI and users share bit-identical builders.
 

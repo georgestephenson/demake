@@ -15,7 +15,7 @@ behind the scenes") adopted as a guarantee, not a shortcut.
 
 The UI layer **reuses the web app's frontend** (same Preact components) with a
 different backend adapter: where the web build calls the core in a worker, the
-desktop build invokes the sidecar CLI (`retroart prep … --json`) and reads its
+desktop build invokes the sidecar CLI (`demake prep … --json`) and reads its
 structured output. One frontend codebase, two adapters, both exercising doc-05's
 JSON contract — the desktop app is a permanent integration test of agent-facing
 output.

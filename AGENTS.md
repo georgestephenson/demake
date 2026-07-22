@@ -1,6 +1,6 @@
 # AGENTS.md — working in this repository
 
-Guidance for coding agents (and humans) contributing to Retro Game Art Maker.
+Guidance for coding agents (and humans) contributing to demake.
 This file is the canonical project-memory file; `CLAUDE.md` is a one-line import
 shim so Claude Code reads the same instructions. Keep all guidance here — never
 add content to `CLAUDE.md` directly.

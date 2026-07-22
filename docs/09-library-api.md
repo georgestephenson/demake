@@ -1,4 +1,4 @@
-# 09 — Library API (`@retroart/core` on npm)
+# 09 — Library API (`@demake/core` on npm)
 
 The engine is a normal npm package usable from Node ≥ 20, Bun, Deno, and bundlers
 targeting evergreen browsers. The CLI, web app, and desktop app are all consumers of
@@ -8,8 +8,8 @@ this exact API — nothing they can do is unavailable to library users.
 
 | Package | Contents |
 |---|---|
-| `@retroart/core` | The engine: pipeline, console specs, codegen. Zero platform deps; ESM; ships types. |
-| `retroart` | The CLI (`bin`). Depends on core. Also re-exports core so `npm i retroart` alone suffices for scripting. |
+| `@demake/core` | The engine: pipeline, console specs, codegen. Zero platform deps; ESM; ships types. |
+| `demake` | The CLI (`bin`). Depends on core. Also re-exports core so `npm i demake` alone suffices for scripting. |
 
 Publishing: both from the monorepo on each release tag, with npm provenance
 (`--provenance`), `sideEffects: false`, exports map with proper `types` conditions.
@@ -26,7 +26,7 @@ import {
   decodeImage, encodePng,
   type PrepOptions, type GenOptions, type PrepResult, type GenResult,
   type ConsoleSpec, type CompliantImage, type Manifest,
-} from "@retroart/core";
+} from "@demake/core";
 
 // --- prep --------------------------------------------------------------------
 const res: PrepResult = await prep(inputBytes, {
@@ -87,7 +87,7 @@ Design rules:
 - **Async by default** with `AbortSignal` + progress callbacks (long `effort: max`
   runs must be cancelable in UIs).
 - **No throw for quality issues**: hardware-impossible requests throw typed
-  `RetroartError` (with `code` matching CLI error codes); quality degradations
+  `DemakeError` (with `code` matching CLI error codes); quality degradations
   (tile merges, palette compromise) are `warnings` + stats, or errors under
   `strict` — same semantics as the CLI because it *is* the CLI's semantics.
 

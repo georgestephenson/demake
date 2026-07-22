@@ -1,6 +1,6 @@
 # 05 — CLI Specification
 
-`retroart` is designed to be a *model* UNIX citizen and the primary interface for
+`demake` is designed to be a *model* UNIX citizen and the primary interface for
 both humans and coding agents. The GUI and web app are skins over exactly this.
 
 ## Command shape
@@ -9,7 +9,7 @@ Subcommand style (git/ffmpeg convention), because prep and gen are genuinely
 different operations with different flags — mirroring the two original tools:
 
 ```
-retroart <command> [options] [input]
+demake <command> [options] [input]
 
 Commands:
   prep       Convert any image into a hardware-compliant image for a console
@@ -30,31 +30,31 @@ and `--strict` refuses non-compliant input instead of prepping.
 
 ```sh
 # Any image → compliant GBC image, auto-sized (keep dims, or largest aspect-fit)
-retroart prep photo.jpg --console gbc -o portrait.png
+demake prep photo.jpg --console gbc -o portrait.png
 
 # Explicit size, explicit technique choices
-retroart prep art.png -c nes --size 128x128 --dither bayer4 --effort max -o out.png
+demake prep art.png -c nes --size 128x128 --dither bayer4 --effort max -o out.png
 
 # Straight from HD source to RGBDS assembly (implicit prep)
-retroart gen photo.jpg -c gbc --format asm -o portrait.asm
+demake gen photo.jpg -c gbc --format asm -o portrait.asm
 
 # Prepped image → C arrays for SGDK; then → a bootable ROM
-retroart gen out.png -c md --format c -o image.c
-retroart gen out.png -c md --format rom -o show.bin
+demake gen out.png -c md --format c -o image.c
+demake gen out.png -c md --format rom -o show.bin
 
 # UNIX composition: stdin/stdout streams, quiet by default
-curl -s $URL | retroart prep - -c snes | retroart gen - -c snes --format asm > img.asm
+curl -s $URL | demake prep - -c snes | demake gen - -c snes --format asm > img.asm
 
 # Agent introspection
-retroart consoles --json
-retroart inspect out.png --json
+demake consoles --json
+demake inspect out.png --json
 
 # Score any result against its source with the tournament's own judge (doc 04)
-retroart inspect out.png --source photo.jpg --json
+demake inspect out.png --source photo.jpg --json
 
 # See / pin the algorithm choice
-retroart prep photo.jpg -c nes --strategy list
-retroart prep photo.jpg -c nes --strategy photo-lanczos-fs -o out.png
+demake prep photo.jpg -c nes --strategy list
+demake prep photo.jpg -c nes --strategy photo-lanczos-fs -o out.png
 ```
 
 ## UNIX compliance checklist (each item is a tested requirement)
@@ -65,8 +65,8 @@ retroart prep photo.jpg -c nes --strategy photo-lanczos-fs -o out.png
 - **One image in, one image out — the prime directive.** The default invocation is
   a pure filter: exactly one input, exactly one artifact, nothing else written
   anywhere. With no `-o`, the artifact goes to **stdout automatically when stdout
-  is a pipe or file** (`retroart prep a.jpg -c gbc > out.png` and
-  `… | retroart gen - …` just work — no `-` gymnastics required for output);
+  is a pipe or file** (`demake prep a.jpg -c gbc > out.png` and
+  `… | demake gen - …` just work — no `-` gymnastics required for output);
   binary to a TTY without `-o` is refused with a clear error. Everything else —
   tournament scoreboard, manifest, decisions, stats — exists only behind explicit
   flags (`--json`, `-v`, `--emit-manifest`) and never contaminates the artifact
@@ -80,14 +80,14 @@ retroart prep photo.jpg -c nes --strategy photo-lanczos-fs -o out.png
 - **Exit codes** (documented in the man page, stable, tested):
   `0` ok · `1` conversion failed · `2` usage error · `64–78` sysexits where they
   apply (`66` no input, `65` bad input data, `73` can't create output, `70` internal).
-- **`--version`**: `retroart X.Y.Z` on stdout, exit 0. **`--help`** everywhere,
+- **`--version`**: `demake X.Y.Z` on stdout, exit 0. **`--help`** everywhere,
   exit 0, ≤ 100 cols, examples included.
-- **Man pages**: `retroart(1)`, `retroart-prep(1)`, `retroart-gen(1)`,
-  `retroart-consoles(1)`, `retroart-inspect(1)`, plus `retroart-formats(5)` for the
+- **Man pages**: `demake(1)`, `demake-prep(1)`, `demake-gen(1)`,
+  `demake-consoles(1)`, `demake-inspect(1)`, plus `demake-formats(5)` for the
   manifest/JSON schemas. Generated (never hand-drifted) — §Single source of truth.
 - **Environment**: honors `NO_COLOR`, `CLICOLOR_FORCE`, `TERM=dumb`; no config file
   in v1 (explicit flags only — better for reproducibility and agents; revisit with
-  `RETROART_*` env prefix if ever needed).
+  `DEMAKE_*` env prefix if ever needed).
 - **Determinism & idempotence**: same inputs+options+version → identical bytes; no
   timestamps in outputs; `--seed` for the PRNG (default fixed).
 - **Filesystem hygiene**: writes only what `-o` names (plus `--emit-manifest`);
@@ -109,13 +109,13 @@ retroart prep photo.jpg -c nes --strategy photo-lanczos-fs -o out.png
   `{"error": {"code": "E_SIZE_TOO_LARGE", "message": ..., "hint": ..., "docs": ...}}`.
   Error codes are enumerated and stable; every error has a `hint` with the likely
   fix (e.g. `"maximum for nes is 256x240; pass --size 256x240 or omit --size"`).
-- **Self-description**: `retroart consoles --json` dumps every ConsoleSpec
+- **Self-description**: `demake consoles --json` dumps every ConsoleSpec
   (resolutions, palette shapes, formats, modes) — an agent can compute valid
-  invocations without external docs. `retroart help --json` dumps the full command/
+  invocations without external docs. `demake help --json` dumps the full command/
   flag schema (generated from the same spec as the parser).
 - **Agent guide** (`docs/agent-guide.md`, generated from `cli-spec`): the tool
   contract in ~1 page (commands, JSON schemas, error codes, examples), plus the
-  same content shipped via `retroart help --agents` so installed-tool discovery
+  same content shipped via `demake help --agents` so installed-tool discovery
   works offline. (Repo-root `AGENTS.md` is a different document — it's for agents
   *developing this repo*, per doc 12.)
 - **No interactivity, ever**: no prompts, no pagers, no "are you sure". Anything
@@ -163,9 +163,9 @@ A CI check regenerates all six and fails on diff.
 
 ## Distribution
 
-- npm: `retroart` package with `bin` entry → `npx retroart`, `npm i -g retroart`.
+- npm: `demake` package with `bin` entry → `npx demake`, `npm i -g demake`.
   Node ≥ 20 LTS.
 - Standalone binaries (no Node required): Node SEA (or Bun compile if SEA tooling
   disappoints) for linux-x64/arm64, darwin-x64/arm64, win-x64 — attached to GitHub
   Releases with checksums + provenance (doc 11).
-- Homebrew tap (`georgestephenson/tap/retroart`) and Scoop manifest post-1.0.
+- Homebrew tap (`georgestephenson/tap/demake`) and Scoop manifest post-1.0.
