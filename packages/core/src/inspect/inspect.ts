@@ -68,6 +68,10 @@ function validColorSet(spec: ConsoleSpec): Set<number> {
     for (const c of spec.color.dac.shades) {
       set.add(colorKeyRgb(c.r, c.g, c.b));
     }
+  } else if (spec.color.model === "fixed-master" && spec.color.masterPalette) {
+    for (const c of spec.color.masterPalette) {
+      set.add(colorKeyRgb(c.r, c.g, c.b));
+    }
   }
   VALID_COLOR_CACHE.set(spec.id, set);
   return set;
@@ -114,6 +118,25 @@ export function checkCompliantImage(image: CompliantImage, spec: ConsoleSpec): V
         violations.push({
           code: "E_OFF_LATTICE",
           message: `palette ${p} has a color not on the ${spec.id} lattice`,
+        });
+        break;
+      }
+    }
+  }
+
+  // Shared index-0 backdrop (NES): color 0 of every non-empty sub-palette must be
+  // the same universal backdrop, or a pixel of value 0 could not render uniformly.
+  if (layout.subPalettes.sharedIndex0) {
+    let backdrop: string | undefined;
+    for (let p = 0; p < image.palettes.length; p += 1) {
+      const first = image.palettes[p]!.colors[0];
+      if (!first) continue;
+      const key = first.codes.join(",");
+      if (backdrop === undefined) backdrop = key;
+      else if (key !== backdrop) {
+        violations.push({
+          code: "E_SHARED_BACKDROP",
+          message: `sub-palettes must share color 0 (the ${spec.id} backdrop)`,
         });
         break;
       }

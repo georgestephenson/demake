@@ -13,7 +13,7 @@ import { DemakeError } from "../errors.js";
 import { makePrng } from "../math/prng.js";
 import { decodeImage } from "../image/decode.js";
 import { getConsole } from "../consoles/registry.js";
-import type { ConsoleSpec } from "../consoles/types.js";
+import type { ConsoleSpec, TileLayout } from "../consoles/types.js";
 import { checkCompliantImage } from "../inspect/inspect.js";
 import { referenceLab, scoreLab, labFromRgba } from "../inspect/judge.js";
 
@@ -22,7 +22,7 @@ import { enforceBudget } from "./budget.js";
 import { encodeCompliantPng, renderCompliant } from "./encode-image.js";
 import { fitTiled, type FitParams } from "./fit-tiled.js";
 import { chooseAutoSize, resize, snapExplicitSize } from "./geometry.js";
-import { makeHwColorSpace } from "./hwcolor.js";
+import { makeColorSpace, type HwColor, type HwColorSpace } from "./hwcolor.js";
 import { fitMono } from "./mono.js";
 import { normalize } from "./normalize.js";
 import { buildPortfolio, effortParams, type Candidate } from "./portfolio.js";
@@ -70,8 +70,10 @@ function runCandidate(
     refineRounds: eff.refineRounds,
     lWeight: profile === "art" ? 1.2 : 1,
   };
-  const space = makeHwColorSpace(spec);
-  const fit = fitTiled(work, spec, space, prng, params);
+  const space = makeColorSpace(spec);
+  const layout = spec.layout as TileLayout;
+  const reserved = layout.subPalettes.sharedIndex0 ? computeBackdrop(work, space) : null;
+  const fit = fitTiled(work, spec, space, prng, params, reserved);
   const image = remap(
     fit,
     spec,
@@ -88,6 +90,35 @@ function runCandidate(
     merges: budget.merges,
     budget: budget.budget,
   };
+}
+
+/**
+ * The shared backdrop for a `sharedIndex0` console: the single displayable color
+ * the most pixels snap to (deterministic mode, lowest-code tiebreak). Forced into
+ * index 0 of every sub-palette so the whole frame shares one universal backdrop.
+ */
+function computeBackdrop(work: ReturnType<typeof normalize>, space: HwColorSpace): HwColor {
+  const counts = new Map<string, { color: HwColor; n: number }>();
+  const n = work.width * work.height;
+  for (let i = 0; i < n; i += 1) {
+    const o = i * 3;
+    const c = space.snapLinear(work.data[o]!, work.data[o + 1]!, work.data[o + 2]!);
+    const k = c.codes.join(",");
+    const e = counts.get(k);
+    if (e) e.n += 1;
+    else counts.set(k, { color: c, n: 1 });
+  }
+  let best: HwColor | null = null;
+  let bestN = -1;
+  let bestKey = "";
+  for (const [k, v] of counts) {
+    if (v.n > bestN || (v.n === bestN && k < bestKey)) {
+      bestN = v.n;
+      best = v.color;
+      bestKey = k;
+    }
+  }
+  return best ?? space.snapLinear(0, 0, 0);
 }
 
 /** Convert an arbitrary source image into a hardware-compliant image (doc 09). */

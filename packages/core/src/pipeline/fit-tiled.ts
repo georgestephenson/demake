@@ -146,13 +146,18 @@ function pixelPaletteError(
   return best * pre.weight[pixel]!;
 }
 
-/** Fit sub-palettes and cell assignments for a tiled console. */
+/** Fit sub-palettes and cell assignments for a tiled console.
+ *
+ * `reserved`, when given, is forced into index 0 of every sub-palette — the
+ * shared backdrop of consoles whose `subPalettes.sharedIndex0` is set (NES): all
+ * palettes then share color 0, so backdrop pixels map to index 0 everywhere. */
 export function fitTiled(
   img: LinImage,
   spec: ConsoleSpec,
   space: HwColorSpace,
   prng: Prng,
   params: FitParams,
+  reserved: HwColor | null = null,
 ): TiledFit {
   const layout = spec.layout as TileLayout;
   const cellW = layout.attribute.w;
@@ -202,7 +207,19 @@ export function fitTiled(
   let best: Omit<TiledFit, "pixelLab"> | undefined;
   const effectiveRestarts = Math.max(1, params.restarts);
   for (let r = 0; r < effectiveRestarts; r += 1) {
-    const fit = runOnce(pre, cellPixels, cellMean, cellsX, cellsY, P, K, space, prng, params);
+    const fit = runOnce(
+      pre,
+      cellPixels,
+      cellMean,
+      cellsX,
+      cellsY,
+      P,
+      K,
+      space,
+      prng,
+      params,
+      reserved,
+    );
     if (!best || fit.totalError < best.totalError) {
       best = fit;
     }
@@ -223,6 +240,7 @@ function runOnce(
   space: HwColorSpace,
   prng: Prng,
   params: FitParams,
+  reserved: HwColor | null,
 ): Omit<TiledFit, "pixelLab"> {
   const cellCount = cellsX * cellsY;
   const cellPalette = new Uint16Array(cellCount);
@@ -238,7 +256,7 @@ function runOnce(
     cellPalette[c] = nearestGroup(cellMean, c, groupCenters, params.lWeight);
   }
 
-  let palettes = refitPalettes(pre, cellPixels, cellPalette, P, K, space, prng, params);
+  let palettes = refitPalettes(pre, cellPixels, cellPalette, P, K, space, prng, params, reserved);
 
   for (let round = 0; round < params.refineRounds; round += 1) {
     // Assignment step.
@@ -260,7 +278,7 @@ function runOnce(
       if (cellPalette[c] !== best) moved = true;
       cellPalette[c] = best;
     }
-    palettes = refitPalettes(pre, cellPixels, cellPalette, P, K, space, prng, params);
+    palettes = refitPalettes(pre, cellPixels, cellPalette, P, K, space, prng, params, reserved);
     if (!moved && round > 0) break;
   }
 
@@ -355,8 +373,12 @@ function refitPalettes(
   space: HwColorSpace,
   prng: Prng,
   params: FitParams,
+  reserved: HwColor | null,
 ): HwColor[][] {
   const palettes: HwColor[][] = [];
+  // With a reserved backdrop, k-means fits the other K−1 colors; the backdrop is
+  // forced into index 0, so every palette shares it.
+  const freeK = reserved ? Math.max(1, K - 1) : K;
   for (let p = 0; p < P; p += 1) {
     const members: number[] = [];
     for (let c = 0; c < cellPalette.length; c += 1) {
@@ -365,11 +387,23 @@ function refitPalettes(
       }
     }
     if (members.length === 0) {
-      palettes.push([]);
+      palettes.push(reserved ? [reserved] : []);
       continue;
     }
     const points = pointsFor(pre, Int32Array.from(members), members.length);
-    palettes.push(latticeKmeans(points, K, space, prng, params.kmeansIters, params.lWeight));
+    const fitted = latticeKmeans(points, freeK, space, prng, params.kmeansIters, params.lWeight);
+    palettes.push(reserved ? withReserved(reserved, fitted, K) : fitted);
   }
   return palettes;
+}
+
+/** Prepend the reserved backdrop at index 0, dedupe, and cap at K colors. */
+function withReserved(reserved: HwColor, fitted: HwColor[], K: number): HwColor[] {
+  const key = reserved.codes.join(",");
+  const out: HwColor[] = [reserved];
+  for (const c of fitted) {
+    if (out.length >= K) break;
+    if (c.codes.join(",") !== key) out.push(c);
+  }
+  return out;
 }

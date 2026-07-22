@@ -11,7 +11,7 @@
  */
 
 import { channelCode, expandChannel, type ChannelBits, type Rgb8 } from "../color/lattice.js";
-import { linearToOklab, type Oklab } from "../color/oklab.js";
+import { deltaESq, linearToOklab, type Oklab } from "../color/oklab.js";
 import { linearToSrgb8, srgb8ToLinear } from "../color/srgb.js";
 import { dacDecodeCodes, type DacModel } from "../image/dac.js";
 import type { ConsoleSpec } from "../consoles/types.js";
@@ -68,6 +68,52 @@ function buildHwColor(codes: [number, number, number], bits: ChannelBits, dac: D
     srgb8ToLinear(display.b),
   );
   return { codes, raw, display, lab };
+}
+
+/**
+ * Construct the hardware color space for a `fixed-master` console (NES/TMS): the
+ * displayable colors are a fixed list, so "snapping" is a nearest-entry search
+ * in Oklab. A color's code is its master-palette index.
+ */
+export function makeFixedMasterColorSpace(spec: ConsoleSpec): HwColorSpace {
+  if (spec.color.model !== "fixed-master" || !spec.color.masterPalette) {
+    throw new Error(`makeFixedMasterColorSpace requires a fixed-master console (got ${spec.id})`);
+  }
+  const master = spec.color.masterPalette;
+  const entries: HwColor[] = master.map((c, i) => ({
+    codes: [i],
+    display: { ...c },
+    raw: { ...c },
+    lab: linearToOklab(srgb8ToLinear(c.r), srgb8ToLinear(c.g), srgb8ToLinear(c.b)),
+  }));
+  const nearest = (lab: Oklab): HwColor => {
+    let best = entries[0]!;
+    let bestD = Infinity;
+    for (const e of entries) {
+      const d = deltaESq(lab, e.lab, 1);
+      if (d < bestD) {
+        bestD = d;
+        best = e;
+      }
+    }
+    return best;
+  };
+  return {
+    bits: [8, 8, 8],
+    snapLinear(r, g, b) {
+      return nearest(linearToOklab(r, g, b));
+    },
+    fromCodes(codes) {
+      return entries[codes[0]] ?? entries[0]!;
+    },
+  };
+}
+
+/** Construct the hardware color space appropriate to a console's color model. */
+export function makeColorSpace(spec: ConsoleSpec): HwColorSpace {
+  return spec.color.model === "fixed-master"
+    ? makeFixedMasterColorSpace(spec)
+    : makeHwColorSpace(spec);
 }
 
 /** A stable string key for a palette color (its raw codes). */

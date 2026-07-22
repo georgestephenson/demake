@@ -10,9 +10,10 @@ import { DemakeError } from "../errors.js";
 
 import { dmg } from "./dmg.js";
 import { gbc } from "./gbc.js";
+import { nes } from "./nes.js";
 import type { ConsoleSpec } from "./types.js";
 
-const ALL: readonly ConsoleSpec[] = [dmg, gbc];
+const ALL: readonly ConsoleSpec[] = [dmg, gbc, nes];
 
 const BY_KEY = (() => {
   const map = new Map<string, ConsoleSpec>();
