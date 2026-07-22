@@ -21,8 +21,11 @@ exact-path detector, a manifest sidecar (pinned palette order), or implicit
 `prep`. The `demake gen` CLI is live, and **`--format rom` builds a bootable
 `.gb`/`.gbc`** via the on-disk `rom-harness/gb/` harness and the local RGBDS
 toolchain (provisioned by `pnpm toolchains` — source build, cached, no Docker).
-Still to come in Phase 2: the headless-emulator pixel-perfect E2E (doc 10) and
-Tier-1 breadth (NES → SMS → MD → SNES → GBA → NDS).
+The **pixel-perfect emulator E2E is real for the `gb` family**: the doc-10 loop
+(prep→gen→ROM→SameBoy→framebuffer) matches demake's DAC reference byte-for-byte,
+via the on-disk `emu-harness/gb/` capturer (`pnpm emulator`). Still to come in
+Phase 2: Tier-1 breadth (NES → SMS → MD → SNES → GBA → NDS), each extending the
+same rom + emulator harnesses.
 
 ## Layout map
 
@@ -37,13 +40,17 @@ packages/core/       @demake/core — the engine (zero platform deps; ESM; ships
   src/inspect/       compliance oracle (inspect) + fidelity judge
 packages/cli-spec/   @demake/cli-spec — single source of truth: spec → parser, help, man
 packages/cli/        demake — thin CLI over core; re-exports core for scripting
+  src/rom/           edge: assemble `--format rom` via the local RGBDS toolchain
   man/               generated roff man pages (never hand-edited)
+rom-harness/gb/      the RGBDS display program `gen --format rom` assembles
+emu-harness/gb/      SameBoy headless capturer for the pixel-perfect E2E (doc 10)
+tools/toolchains/    provisioners: RGBDS + SameBoy (pinned source build, cached)
 tools/eslint-rules/  custom ESLint rules: platform-purity + determinism
 docs/                the design plan; source of truth for decisions
 ```
 
-Packages not yet created (web, desktop, rom-harness, toolchains, testdata)
-arrive in later phases per doc 02.
+Packages not yet created (web, desktop, testdata) arrive in later phases per
+doc 02.
 
 ## Golden commands
 
@@ -57,6 +64,7 @@ pnpm changeset     # add a changeset for a user-visible change
 pnpm cli -- --help # run the built CLI from source (build first)
 pnpm gen:man       # regenerate man pages from cli-spec (build first; CI checks staleness)
 pnpm toolchains    # provision RGBDS (source build, cached) for `gen --format rom`
+pnpm emulator      # provision the headless SameBoy capturer for the pixel-perfect E2E
 ```
 
 ## Iron rules
@@ -84,10 +92,12 @@ Two files plus fixtures (doc 02 §Extensibility):
    register it in `consoles/registry.ts`. This alone makes the console work for
    `prep`/`inspect` today (the generic tiled fitter or the mono path consumes
    the spec). Cite primary hardware sources in `docs.sources` (doc 03).
-2. `packages/core/src/codegen/<family>.ts` — native data + display source
-   (Phase 2).
-3. `rom-harness/<id>/` + a toolchain Dockerfile + golden fixtures — the console
-   is only "supported" when its emulator screenshot test passes (Phase 2, doc 10).
+2. `packages/core/src/codegen/<family>.ts` — native data + display source, then
+   register it in `codegen/registry.ts` (Phase 2). The `gb` family is the model.
+3. `rom-harness/<family>/` (display program), `emu-harness/<family>/` (headless
+   capturer), and a pinned source-build provisioner in `tools/toolchains/`
+   (Docker not required — see the RGBDS/SameBoy scripts) — the console is only
+   "supported" when its pixel-perfect emulator E2E passes (Phase 2, doc 10).
 
 ## Testing truths
 
@@ -97,8 +107,12 @@ Two files plus fixtures (doc 02 §Extensibility):
   `pnpm toolchains` first to exercise it. RGBDS is provisioned by a source build
   (`tools/toolchains/install-rgbds.sh`), and web sessions get it automatically
   via the `.claude/` SessionStart hook.
-- The headless-emulator screenshot suite (doc 10, pixel-perfect vs the DAC
-  reference) is the remaining Phase-2 E2E step.
+- The pixel-perfect emulator E2E (`packages/cli/test/emu.e2e.test.ts`, doc 10)
+  boots the ROM in SameBoy and asserts the framebuffer matches the DAC reference
+  byte-for-byte; it self-skips without the capturer, so run `pnpm emulator`
+  (which needs `pnpm toolchains` first) to exercise it. The capturer is built
+  from `emu-harness/gb/capture.c` against `libsameboy`; web sessions get it via
+  the `.claude/` SessionStart hook.
 - CLI tests exercise both the pure `run()` function and the spawned built binary;
   the binary test skips when `dist` is absent, so run `pnpm build` first to
   include it (CI always does).

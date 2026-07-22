@@ -39,6 +39,16 @@ console model:
   managed/web sessions. Missing toolchain yields a clear `E_TOOLCHAIN_MISSING`;
   `bin`/`asm`/`c` never need it.
 
+- **Pixel-perfect emulator E2E (doc 10 — the credo)**: the full loop
+  prep→gen→ROM→emulator→framebuffer now proves out for the `gb` family. An
+  on-disk `emu-harness/gb/capture.c` boots the ROM in SameBoy (the accuracy
+  reference) via its public `libsameboy` API with color correction disabled, and
+  the framebuffer matches `renderCompliant` **byte-for-byte** for both DMG and
+  GBC. SameBoy is provisioned like RGBDS — pinned source build, cached, no Docker
+  (`tools/toolchains/install-sameboy.sh`, `pnpm emulator`) — and the SessionStart
+  hook installs it. `packages/cli/test/emu.e2e.test.ts` runs the comparison and
+  self-skips without the toolchains.
+
 `prep --emit-manifest` now also records the image hash so `gen --manifest` can
-verify it. The remaining Phase-2 steps are the headless-emulator pixel-perfect
-E2E (doc 10) and Tier-1 console breadth.
+verify it. The remaining Phase-2 step is Tier-1 console breadth (NES → SMS → MD →
+SNES → GBA → NDS), each extending the same rom + emulator harnesses.

@@ -20,7 +20,8 @@
     "changeset": "changeset",
     "cli": "node packages/cli/dist/index.js",
     "gen:man": "pnpm --filter demake gen:man",
-    "toolchains": "bash tools/toolchains/install-rgbds.sh"
+    "toolchains": "bash tools/toolchains/install-rgbds.sh",
+    "emulator": "bash tools/toolchains/install-sameboy.sh"
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.1",

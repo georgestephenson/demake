@@ -22,6 +22,10 @@ pnpm build
 # bin/asm/c; only --format rom needs it).
 bash tools/toolchains/install-rgbds.sh || true
 
+# --- SameBoy headless capturer for the pixel-perfect E2E (doc 10) ------------
+# Also best-effort; the emulator E2E test self-skips if it is absent.
+bash tools/toolchains/install-sameboy.sh || true
+
 # Persist the toolchain on PATH for the whole session, even if /usr/local/bin
 # was not writable when the installer ran.
 if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
