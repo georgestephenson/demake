@@ -11,7 +11,7 @@ and the first to exercise three schema features the Game Boy did not:
   fitter and k-means already consumed the color space abstractly, so they gained
   it for free. `inspect` learns the master palette as the valid color set.
 - **16×16 attribute cells.** Geometry now snaps output dimensions to the
-  *attribute-cell* size rather than the tile size (they coincide on the GB), so
+  _attribute-cell_ size rather than the tile size (they coincide on the GB), so
   every pixel belongs to a fully-covered palette cell — the NES chooses one
   sub-palette per 16×16 cell over 8×8 tiles.
 - **Shared backdrop.** The fitter accepts a reserved color forced into index 0 of

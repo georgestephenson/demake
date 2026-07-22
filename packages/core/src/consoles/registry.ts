@@ -9,11 +9,52 @@
 import { DemakeError } from "../errors.js";
 
 import { dmg } from "./dmg.js";
+import { gamecom } from "./gamecom.js";
+import { gba } from "./gba.js";
 import { gbc } from "./gbc.js";
+import { gg } from "./gg.js";
+import { md } from "./md.js";
+import { megaduck } from "./megaduck.js";
+import { nds } from "./nds.js";
+import { neogeo } from "./neogeo.js";
 import { nes } from "./nes.js";
+import { ngp } from "./ngp.js";
+import { ngpc } from "./ngpc.js";
+import { pce } from "./pce.js";
+import { pokemini } from "./pokemini.js";
+import { sms } from "./sms.js";
+import { snes } from "./snes.js";
+import { supervision } from "./supervision.js";
+import { vb } from "./vb.js";
+import { ws } from "./ws.js";
+import { wsc } from "./wsc.js";
 import type { ConsoleSpec } from "./types.js";
 
-const ALL: readonly ConsoleSpec[] = [dmg, gbc, nes];
+const ALL: readonly ConsoleSpec[] = [
+  // Tier 1
+  dmg,
+  gbc,
+  nes,
+  snes,
+  md,
+  sms,
+  gba,
+  nds,
+  // Tier 2
+  pce,
+  gg,
+  neogeo,
+  ws,
+  wsc,
+  ngp,
+  ngpc,
+  // Tier 3
+  vb,
+  pokemini,
+  supervision,
+  gamecom,
+  megaduck,
+];
 
 const BY_KEY = (() => {
   const map = new Map<string, ConsoleSpec>();
