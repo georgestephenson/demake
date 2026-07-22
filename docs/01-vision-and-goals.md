@@ -77,10 +77,15 @@ Two core operations (mirroring the predecessor tools):
 
 ## Naming
 
-Working name: **`retroart`** (binary, npm package, everything). Short, memorable,
-type-able, and unclaimed enough on npm to secure with a scope fallback
-(`@retroart/cli`). Final name is confirmed in Phase 0 (roadmap) after an npm /
-crates / Homebrew collision check.
+Recommended name: **`demake`** (binary, npm package, repo). A *demake* is the
+beloved fan practice of remaking a modern game for retro hardware — which is
+exactly, literally what this tool does to an image. It's a verb, so CLI usage
+reads as a sentence (`demake photo.jpg --console gbc`), it's short, memorable,
+and npm-free (verified 2026-07; `retroart`, `retropix`, `retrofy`, `tilepress`
+also free as runners-up). Plan documents use `retroart` as the placeholder until
+the rename decision; Phase 0 finalizes it after the full collision check
+(npm / GitHub / Homebrew / PyPI-squatting / trademark scan) and reserves the
+scope fallback (`@demake/*`).
 
 ## Success criteria for v1.0
 

@@ -93,6 +93,15 @@ libraries (sharp). Therefore:
   used identically on both platforms. WASM is bit-deterministic by spec.
 - All randomized algorithms (k-means init, annealing) use a seeded PRNG
   (PCG32/xoshiro, our implementation) with a fixed default seed; `--seed` overrides.
+- **Floating-point discipline**: IEEE-754 basic ops (+, −, ×, ÷, sqrt) are
+  bit-exact across engines, but `Math.pow/exp/log/cbrt/sin…` are *not* — JS engines
+  ship different transcendental implementations. The Oklab transform needs `cbrt`,
+  gamma needs `pow`. The core therefore ships its own deterministic math kernels
+  for every transcendental it uses (correctly-rounded or fixed-polynomial
+  implementations), and the lint rules ban `Math.*` transcendentals in `core`
+  alongside `Math.random`/`Date.now`. Without this, "byte-identical across
+  browsers" is a lie at the 1-ulp level that k-means then amplifies into different
+  palettes.
 
 Determinism is enforced by CI: the same conversion runs on Node (Linux/macOS/
 Windows) and in headless Chromium + Firefox, and outputs must be byte-identical

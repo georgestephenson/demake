@@ -19,7 +19,11 @@ supported console. Everything else supports that.
 ## 1. Unit tests (Vitest)
 
 Color-space round-trips (sRGB↔linear↔Oklab, lattice snapping, DAC models against
-hand-computed vectors), PNG encode/decode round-trips, PRNG stability, per-stage
+hand-computed vectors), the in-house math kernels against reference values at full
+precision (doc 02 §Floating-point discipline), PNG encode/decode round-trips,
+**decoder fuzzing** (structured fuzz of malformed/truncated/hostile PNG/JPEG inputs
+— decoders must error cleanly, never hang or corrupt; runs continuously via a
+scheduled workflow with a seed corpus), PRNG stability, per-stage
 pipeline tests with tiny synthetic images (e.g. a 16×16 two-color image must survive
 prep for every console unchanged where hardware allows). Codegen emitters tested
 against hand-assembled expected bytes for minimal inputs (one-tile images).

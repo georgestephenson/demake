@@ -58,9 +58,11 @@ ranking).
   tournament — they **constrain the portfolio** to candidates matching the pinned
   choice. Pinning every dimension degenerates to a single candidate naturally.
 
-**Reporting.** The winner, per-candidate scores, and per-metric breakdown appear in
-`--json` and `-v` output. An agent (or user) can inspect the scoreboard and pin
-`--strategy <winner>` for fast reproducible re-runs.
+**Reporting.** The tournament is **invisible by default**: the CLI contract stays
+one image in, one image out (doc 05), and only the winner is emitted. The
+scoreboard — winner, per-candidate scores, per-metric breakdown — appears only
+under `--json` / `-v` (and in the web/desktop UI). An agent (or user) can inspect
+it and pin `--strategy <winner>` for fast reproducible re-runs.
 
 ## The judge
 
@@ -171,6 +173,7 @@ printed with `--verbose` and overridable:
 
 - **Explicit size** (`--size WxH`): scale to fit exactly (policy: `--fit
   contain|cover|stretch|pad`, default `contain` with padding color/transparent).
+  `cover` crops around `--focus` (explicit point, or saliency-driven `auto`).
 - **No size given** (the specified default behavior):
   1. If source dimensions are displayable on the console (≤ max res, satisfies any
      width-granularity rules), keep them 1:1.
@@ -216,6 +219,12 @@ ever show (e.g. GBC bg: up to 32; NES: up to 13; MD: up to 61; SNES mode 3: 256)
     slots before error minimization begins — they can be merged only with each
     other, never averaged into midtones. `--protect '#fff,#e04040'` pins
     user-chosen colors (lattice-snapped) explicitly.
+- **Palette lock** (`--palette`): when the user supplies a palette (.gpl/JASC/
+  Lospec/inline — the artist-workflow case where a project palette already
+  exists), Stage 3 is skipped in favor of the given colors (lattice-snapped, with
+  a warning listing any that moved) and Stage 4 only solves the assignment
+  problem. Fitted palettes are exportable in the same formats (`--export-palette`)
+  so a first run's result can seed a whole art set.
 
 ## Stage 4 — Layout fitting (the hard part)
 

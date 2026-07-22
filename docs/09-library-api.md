@@ -39,6 +39,8 @@ const res: PrepResult = await prep(inputBytes, {
   scale?: "majority" | "lanczos3" | "mitchell" | "box" | "nearest" | "auto",
   dither?: { alg: "none"|"bayer2"|"bayer4"|"bayer8"|"floyd-steinberg"|"atkinson"|"riemersma"|"ramp"; strength?: number },
   protect?: string[] | false,        // pinned colors; false disables auto highlight/outline protection
+  palette?: string[],                // palette lock: quantize only to these colors (lattice-snapped)
+  focus?: { x: number; y: number } | "auto",  // cover-crop focal point / saliency anchor
   effort?: "fast" | "default" | "max",
   metric?: "oklab" | "wrgb",
   seed?: number,

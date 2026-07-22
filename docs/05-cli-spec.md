@@ -62,8 +62,18 @@ retroart prep photo.jpg -c nes --strategy photo-lanczos-fs -o out.png
 - **POSIX/GNU conventions**: short `-c`/long `--console` flags, `--` end-of-options,
   bundled short flags, `=`-or-space option values. Flag parsing via a spec-driven
   parser (see §Single source of truth).
-- **stdin/stdout**: `-` means stdin/stdout for image and code streams; binary-safe;
-  output to a TTY without `-o` is refused for binary formats with a clear error.
+- **One image in, one image out — the prime directive.** The default invocation is
+  a pure filter: exactly one input, exactly one artifact, nothing else written
+  anywhere. With no `-o`, the artifact goes to **stdout automatically when stdout
+  is a pipe or file** (`retroart prep a.jpg -c gbc > out.png` and
+  `… | retroart gen - …` just work — no `-` gymnastics required for output);
+  binary to a TTY without `-o` is refused with a clear error. Everything else —
+  tournament scoreboard, manifest, decisions, stats — exists only behind explicit
+  flags (`--json`, `-v`, `--emit-manifest`) and never contaminates the artifact
+  stream. Multi-output conveniences (`--console all --out-dir d/` for a
+  per-console batch, `--emit-manifest`) are strictly opt-in departures.
+- **stdin/stdout**: `-` means stdin explicitly; input is auto-detected from a pipe
+  when no path is given; binary-safe throughout.
 - **Quiet by default, chatty on request**: nothing on stdout except the product;
   diagnostics to **stderr**; `-v/--verbose` (repeatable), `-q/--quiet` suppresses
   warnings. `--progress` only when stderr is a TTY, never in pipes.
@@ -124,6 +134,9 @@ retroart prep photo.jpg -c nes --strategy photo-lanczos-fs -o out.png
 | `--mode <name>\|auto` | Video mode where applicable (snes: mode1/mode3/mode7…) |
 | `--dither <alg>[:strength]` | none/bayer2/4/8/floyd-steinberg/atkinson/riemersma/ramp (artist-style shading dither, doc 04 §Stage 5) |
 | `--protect <colors>` | Comma-separated colors guaranteed to survive quantization (lattice-snapped); auto highlight/outline protection is on by default (doc 04 §Stage 3), `--no-protect` disables |
+| `--palette <file\|list>` | Lock quantization to a given palette (GIMP/Aseprite `.gpl`, JASC `.pal`, Lospec hex list, or inline `#aab,#ccd,…`), lattice-snapped then hardware-fitted — for artists with an established palette. `--export-palette <file>` writes the fitted palettes in the same formats |
+| `--focus x,y\|auto` | Focal point for `--fit cover` crops and saliency weighting (`auto` = saliency-driven, default) |
+| `--preview <file>[@N]` | Also write an N× nearest-neighbor upscaled, DAC/PAR-corrected preview PNG (tiny outputs are hard to eyeball at 1×); never the primary artifact |
 | `--scale <kernel>` | majority/lanczos3/mitchell/box/nearest (default auto) |
 | `--profile art\|photo\|auto` | Force source-analysis profile |
 | `--effort fast\|default\|max` | Optimizer budget (restarts/annealing) |

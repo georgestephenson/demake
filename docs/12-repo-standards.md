@@ -26,7 +26,8 @@ AGENTS.md must exist in package.json scripts).
    `pnpm lint:fix`, `pnpm changeset`, how to run one fixture through the CLI from
    source (`pnpm cli -- prep …`).
 4. **Iron rules** — core stays platform-pure (lint enforces); determinism (no
-   wall-clock/random; seeded PRNG only); output-byte changes require golden
+   wall-clock/random; seeded PRNG only; no `Math.*` transcendentals — use the
+   in-house math kernels, doc 02); output-byte changes require golden
    re-baseline + changeset `minor` + release-note line; `cli-spec` is the only
    place flags are defined; never hand-edit generated man pages.
 5. **How to add a console** — condensed recipe with file paths.

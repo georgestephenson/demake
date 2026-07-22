@@ -24,6 +24,13 @@ pinned), pushes to GHCR by digest, and opens a PR bumping the digests consumed b
 and `--rom-builder docker`. Emulator/toolchain upgrades are therefore ordinary
 reviewed PRs that must pass the whole E2E suite.
 
+License compliance: these images redistribute GPL/LGPL emulators and toolchains, so
+each image embeds the license texts and exact source URLs/commits for every included
+tool, and the Dockerfiles build-from-source where a project's license requires
+source availability. A `LICENSES.md` per image is generated at build time; nothing
+with a no-redistribution clause ships in an image (such tools stay local-install
+only, detected via `PATH`).
+
 ### `pages.yml` — deploy web app
 
 On push to `main` affecting `packages/{web,core}`: build → deploy to GitHub Pages
