@@ -10,21 +10,33 @@ add content to `CLAUDE.md` directly.
 A tool that converts any image into hardware-compliant art — and displayable
 code — for 8/16-bit-era consoles and handhelds up to the Nintendo DS. The full
 design lives in [`docs/`](docs/README.md); the milestone plan is
-[`docs/13-roadmap.md`](docs/13-roadmap.md). **Current status: Phase 0** — the
-repo is scaffolded (workspace, tooling, CI) with a hello-world core and a stub
-CLI; the conversion engine lands in Phase 1+.
+[`docs/13-roadmap.md`](docs/13-roadmap.md). **Current status: Phase 1** — the
+engine spine is live: the deterministic image layer (our PNG codec, color
+spaces, DAC models, seeded PRNG, math kernels), the `ConsoleSpec` schema with
+the `gbc` and `dmg` specs, the tiled-and-mono conversion pipeline (stages 0–7 +
+tournament + judge), the `inspect` compliance oracle, and a spec-driven CLI
+(`prep`/`inspect`/`consoles`) with generated man pages. Codegen (`gen`), the
+emulator ROM harness, and Tier-1 breadth land in Phase 2.
 
 ## Layout map
 
 ```
-packages/core/   @demake/core — the engine (zero platform deps; ESM; ships types)
-packages/cli/    demake — thin CLI over core; re-exports core for scripting
+packages/core/       @demake/core — the engine (zero platform deps; ESM; ships types)
+  src/math/          deterministic kernels (exp/log/pow/cbrt/sin) + PCG32 PRNG
+  src/color/         sRGB/linear/Oklab, hardware-lattice snapping, color parsing
+  src/image/         PNG codec (inflate/deflate/decode/encode), DAC models, decode dispatch
+  src/consoles/      ConsoleSpec schema + one declarative spec per console (gbc, dmg)
+  src/pipeline/      stages 0–7, the tiled fitter, mono path, tournament (prep)
+  src/inspect/       compliance oracle (inspect) + fidelity judge
+packages/cli-spec/   @demake/cli-spec — single source of truth: spec → parser, help, man
+packages/cli/        demake — thin CLI over core; re-exports core for scripting
+  man/               generated roff man pages (never hand-edited)
 tools/eslint-rules/  custom ESLint rules: platform-purity + determinism
-docs/            the design plan; source of truth for decisions
+docs/                the design plan; source of truth for decisions
 ```
 
-Packages not yet created (web, desktop, cli-spec, rom-harness, toolchains,
-testdata) arrive in later phases per doc 02.
+Packages not yet created (web, desktop, rom-harness, toolchains, testdata)
+arrive in later phases per doc 02.
 
 ## Golden commands
 
@@ -36,6 +48,7 @@ pnpm lint          # ESLint (incl. custom core rules) + Prettier check
 pnpm lint:fix      # autofix ESLint + Prettier
 pnpm changeset     # add a changeset for a user-visible change
 pnpm cli -- --help # run the built CLI from source (build first)
+pnpm gen:man       # regenerate man pages from cli-spec (build first; CI checks staleness)
 ```
 
 ## Iron rules
@@ -43,25 +56,30 @@ pnpm cli -- --help # run the built CLI from source (build first)
 - **`core` stays platform-pure**: no `fs`/`Buffer`/DOM, no Node built-ins.
   I/O lives at the edges (CLI/web/desktop). Lint enforces (doc 02).
 - **`core` stays deterministic**: no wall clock (`Date.now`, `new Date`), no
-  `Math.random`, and no `Math.*` transcendentals — use the in-house math
-  kernels once they exist. Lint enforces (doc 02 §Determinism).
+  `Math.random`, and no `Math.*` transcendentals — use the in-house math kernels
+  (`packages/core/src/math/kernels.ts`). Lint enforces (doc 02 §Determinism).
 - **Output-byte changes** require re-baselined goldens **+ a `minor` changeset +
   a release-note line, all in the same PR** (doc 09 §Stability). Patch releases
   never change output bytes.
-- **`cli-spec` will be the only place flags are defined** (doc 05); generated
-  man pages are never hand-edited (neither exists yet — Phase 1).
+- **`packages/cli-spec` is the only place flags are defined** (doc 05); the
+  parser, `--help`, and man pages are generated from it. Man pages are never
+  hand-edited — run `pnpm gen:man` and a test enforces they match the spec.
 - **`CLAUDE.md` stays a pure `@AGENTS.md` import** (CI-checked, doc 12).
 - **Commands named in this file must exist as `package.json` scripts** (CI
   staleness check, doc 12) — update both together.
 
-## How to add a console (once the engine exists)
+## How to add a console
 
 Two files plus fixtures (doc 02 §Extensibility):
 
-1. `packages/core/src/consoles/<id>.ts` — a declarative `ConsoleSpec`.
-2. `packages/core/src/codegen/<family>.ts` — native data + display source.
+1. `packages/core/src/consoles/<id>.ts` — a declarative `ConsoleSpec`, then
+   register it in `consoles/registry.ts`. This alone makes the console work for
+   `prep`/`inspect` today (the generic tiled fitter or the mono path consumes
+   the spec). Cite primary hardware sources in `docs.sources` (doc 03).
+2. `packages/core/src/codegen/<family>.ts` — native data + display source
+   (Phase 2).
 3. `rom-harness/<id>/` + a toolchain Dockerfile + golden fixtures — the console
-   is only "supported" when its emulator screenshot test passes (doc 10).
+   is only "supported" when its emulator screenshot test passes (Phase 2, doc 10).
 
 ## Testing truths
 

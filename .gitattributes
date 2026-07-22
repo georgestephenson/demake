@@ -1,0 +1,20 @@
+# Line-ending policy — determinism first (doc 02 §Determinism, doc 05/10).
+#
+# The engine and its checked-in generated artifacts (roff man pages) are
+# compared byte-for-byte across Linux/macOS/Windows in CI. Without this, git on
+# Windows checks the LF-committed files out as CRLF, and byte-exact tests such as
+# the man-page staleness guard fail on the trailing \r. Force LF in the working
+# tree on every platform so what CI reads matches what the generator produces.
+* text=auto eol=lf
+
+# Man pages are text and must stay LF regardless of extension heuristics.
+*.1 text eol=lf
+
+# Binary assets must never be line-ending normalized (future golden fixtures).
+*.png binary
+*.jpg binary
+*.gif binary
+*.webp binary
+*.bmp binary
+*.woff binary
+*.woff2 binary

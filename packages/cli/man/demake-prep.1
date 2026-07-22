@@ -1,0 +1,91 @@
+.TH DEMAKE\-PREP 1 "" "" "Convert any image into a hardware\-compliant image for a console"
+.SH NAME
+demake-prep \- Convert any image into a hardware\-compliant image for a console
+.SH SYNOPSIS
+\fBdemake prep\fR [\fIoptions\fR] [\fIinput\fR]
+.SH DESCRIPTION
+Convert any image into a hardware\-compliant image for a console.
+.SH OPTIONS
+.TP
+\fB\-c\fR, \fB\-\-console\fR \fI<id>\fR
+Target console id or alias (e.g. gbc, dmg). [required]
+.TP
+\fB\-\-strategy\fR \fIauto|<name>|list\fR
+Tournament control: auto (default), a candidate name, or list. (default: auto)
+.TP
+\fB\-\-size\fR \fIWxH\fR
+Target size (omit for auto: keep dims or largest aspect\-fit).
+.TP
+\fB\-\-fit\fR \fIvalue\fR
+How to fit an explicit \-\-size. (default: contain)
+.TP
+\fB\-\-scale\fR \fIvalue\fR
+Downscale kernel. (default: auto)
+.TP
+\fB\-\-dither\fR \fI<alg>[:strength]\fR
+none/bayer2/4/8/floyd\-steinberg/atkinson/riemersma/ramp[:0\-100].
+.TP
+\fB\-\-profile\fR \fIvalue\fR
+Force the source\-analysis profile. (default: auto)
+.TP
+\fB\-\-effort\fR \fIvalue\fR
+Optimizer budget (restarts / refinement). (default: default)
+.TP
+\fB\-\-protect\fR \fI<colors>\fR
+Comma\-separated colors guaranteed to survive quantization.
+.TP
+\fB\-\-no-protect\fR
+Disable automatic highlight/outline protection.
+.TP
+\fB\-\-metric\fR \fIvalue\fR
+Perceptual metric (wrgb is planned). (default: oklab)
+.TP
+\fB\-\-seed\fR \fIN\fR
+PRNG seed for reproducible restarts (default fixed).
+.TP
+\fB\-\-background\fR \fI<color>\fR
+Matte color for compositing transparency. (default: #000000)
+.TP
+\fB\-\-raw-colors\fR
+Store naive\-expansion colors instead of DAC\-decoded.
+.TP
+\fB\-\-strict\fR
+Fail rather than degrade (no tile merging).
+.TP
+\fB\-\-preview\fR \fI<file>[@N]\fR
+Also write an N× nearest\-neighbor preview PNG.
+.TP
+\fB\-\-emit-manifest\fR \fI[path]\fR
+Write a sidecar JSON of palettes/assignments/provenance.
+.TP
+\fB\-o\fR, \fB\-\-output\fR \fI<file>\fR
+Write the artifact to <file> (default: stdout when piped).
+.TP
+\fB\-\-json\fR
+Emit a single JSON object on stdout (product goes to \-o).
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Increase diagnostic detail (repeatable).
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Suppress warnings.
+.TP
+\fB\-f\fR, \fB\-\-force\fR
+Overwrite an existing output file.
+.SH EXAMPLES
+.PP
+demake prep photo.jpg \-\-console gbc \-o portrait.png
+.br
+auto\-sized GBC image
+.PP
+demake prep art.png \-c dmg \-\-dither floyd\-steinberg \-o out.png
+.PP
+demake prep photo.png \-c gbc \-\-strategy list
+.br
+see the candidates
+.PP
+curl \-s $URL | demake prep \- \-c gbc > out.png
+.br
+stdin → stdout filter
+.SH SEE ALSO
+\fBdemake\fR(1)

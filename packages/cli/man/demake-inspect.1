@@ -1,0 +1,29 @@
+.TH DEMAKE\-INSPECT 1 "" "" "Analyze an image: is it compliant, for which consoles, and why not"
+.SH NAME
+demake-inspect \- Analyze an image: is it compliant, for which consoles, and why not
+.SH SYNOPSIS
+\fBdemake inspect\fR [\fIoptions\fR] [\fIinput\fR]
+.SH DESCRIPTION
+Analyze an image: is it compliant, for which consoles, and why not.
+.SH OPTIONS
+.TP
+\fB\-c\fR, \fB\-\-console\fR \fI<id>\fR
+Check compliance for one console (default: all).
+.TP
+\fB\-s\fR, \fB\-\-source\fR \fI<file>\fR
+Also judge fidelity metrics vs this source image.
+.TP
+\fB\-\-json\fR
+Emit a single JSON object on stdout.
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Increase diagnostic detail (repeatable).
+.SH EXAMPLES
+.PP
+demake inspect out.png \-\-json
+.PP
+demake inspect out.png \-\-source photo.jpg \-\-json
+.br
+also score fidelity
+.SH SEE ALSO
+\fBdemake\fR(1)

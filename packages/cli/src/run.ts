@@ -1,83 +1,106 @@
+/**
+ * The CLI dispatcher (doc 05).
+ *
+ * Routes the argument vector to a command handler using the generated
+ * {@link CLI_SPEC} and its parser — there is no hand-written flag handling here.
+ * Global `--help`/`--version`, per-command `--help`, `help <cmd>`, unknown
+ * commands, planned-but-unavailable commands, and parse/usage errors are all
+ * mapped to the stable exit codes. Everything runs against an injectable
+ * {@link CliEnv}, so the whole surface is unit-testable without a real process.
+ */
+
+import {
+  commandHelp,
+  findCommand,
+  missingRequired,
+  ParseError,
+  parseCommand,
+  topHelp,
+} from "@demake/cli-spec";
 import { CORE_VERSION } from "@demake/core";
 
+import { runConsoles } from "./commands/consoles.js";
+import { runInspect } from "./commands/inspect.js";
+import { runPrep } from "./commands/prep.js";
+import type { CliEnv } from "./env.js";
 import { EXIT, type ExitCode } from "./exit-codes.js";
-import { CLI_VERSION, PLANNED_COMMANDS } from "./meta.js";
-
-/**
- * Output sink for a CLI run. Injecting the streams keeps {@link run} a pure,
- * synchronous function of its arguments — trivial to unit-test without spawning
- * a process or capturing global stdio.
- */
-export interface Io {
-  /** Write to standard output (the product stream). */
-  out: (text: string) => void;
-  /** Write to standard error (diagnostics only — never the product). */
-  err: (text: string) => void;
-}
-
-const HELP = `demake — hardware-compliant retro art & code from any image
-
-Usage:
-  demake <command> [options] [input]
-
-Commands (arriving in Phase 1 — not yet implemented):
-  prep        Convert any image into a hardware-compliant image for a console
-  gen         Convert an image into console data/code/ROM
-  consoles    List supported consoles and their constraints
-  inspect     Analyze an image: is it compliant, for which consoles, and why not
-  completion  Emit shell completion (bash/zsh/fish)
-
-Options:
-  -h, --help     Show this help and exit
-  -V, --version  Print version and exit
-
-Examples (planned surface, see docs/05-cli-spec.md):
-  demake prep photo.jpg --console gbc -o portrait.png
-  demake gen out.png -c md --format c -o image.c
-  demake consoles --json
-
-This is a Phase 0 scaffold: only --help and --version are wired up so far.
-`;
+import { CliError, reportError } from "./io.js";
+import { CLI_VERSION } from "./meta.js";
 
 function versionLine(): string {
   return `demake ${CLI_VERSION} (core ${CORE_VERSION})`;
 }
 
-function isPlanned(command: string): boolean {
-  return (PLANNED_COMMANDS as readonly string[]).includes(command);
+function hasHelpFlag(args: readonly string[]): boolean {
+  return args.includes("-h") || args.includes("--help");
 }
 
-/**
- * Execute the CLI against a pre-sliced argument vector (no `node`/script path).
- *
- * @param argv - Arguments, e.g. `["prep", "photo.jpg", "-c", "gbc"]`.
- * @param io - Where to send stdout/stderr text.
- * @returns The process exit code to use (see {@link EXIT}).
- */
-export function run(argv: readonly string[], io: Io): ExitCode {
-  // Absorb a single leading `--` end-of-options separator. This is what the
-  // documented `pnpm cli -- <args>` workflow (doc 12) forwards to the binary.
+/** Execute the CLI against a pre-sliced argument vector. */
+export async function run(argv: readonly string[], env: CliEnv): Promise<ExitCode> {
   const args = argv[0] === "--" ? argv.slice(1) : argv;
   const first = args[0];
 
-  if (first === undefined || first === "-h" || first === "--help" || first === "help") {
-    io.out(HELP);
+  if (first === undefined || first === "-h" || first === "--help") {
+    env.out(topHelp());
     return EXIT.OK;
   }
-
   if (first === "-V" || first === "--version") {
-    io.out(`${versionLine()}\n`);
+    env.out(`${versionLine()}\n`);
+    return EXIT.OK;
+  }
+  if (first === "help") {
+    const target = args[1] ? findCommand(args[1]) : undefined;
+    env.out(target ? commandHelp(target) : topHelp());
     return EXIT.OK;
   }
 
-  if (isPlanned(first)) {
-    io.err(
-      `demake: '${first}' is not available yet — the conversion engine lands in ` +
-        `Phase 1.\nSee docs/13-roadmap.md for status.\n`,
+  const command = findCommand(first);
+  if (!command) {
+    env.errOut(`demake: unknown command '${first}'\nRun 'demake --help' for usage.\n`);
+    return EXIT.USAGE;
+  }
+
+  const rest = args.slice(1);
+  if (hasHelpFlag(rest)) {
+    env.out(commandHelp(command));
+    return EXIT.OK;
+  }
+  if (command.planned) {
+    env.errOut(
+      `demake: '${command.name}' is not available yet — it lands in a later phase.\n` +
+        `See docs/13-roadmap.md for status.\n`,
     );
     return EXIT.UNAVAILABLE;
   }
 
-  io.err(`demake: unknown command '${first}'\nRun 'demake --help' for usage.\n`);
-  return EXIT.USAGE;
+  const json = rest.includes("--json");
+  try {
+    const parsed = parseCommand(command, rest);
+    const missing = missingRequired(command, parsed.values);
+    if (missing.length > 0) {
+      throw new CliError(
+        EXIT.USAGE,
+        "E_MISSING_OPTION",
+        `missing required option(s): ${missing.map((m) => `--${m}`).join(", ")}`,
+        `run 'demake ${command.name} --help' for usage.`,
+      );
+    }
+    switch (command.name) {
+      case "consoles":
+        return runConsoles(env, parsed.values.json === true);
+      case "inspect":
+        return runInspect(env, parsed.values, parsed.positionals);
+      case "prep":
+        return await runPrep(env, parsed.values, parsed.positionals);
+      default:
+        env.errOut(`demake: '${command.name}' is not implemented.\n`);
+        return EXIT.UNAVAILABLE;
+    }
+  } catch (error) {
+    if (error instanceof ParseError) {
+      env.errOut(`demake: ${error.message}\nRun 'demake ${command.name} --help' for usage.\n`);
+      return EXIT.USAGE;
+    }
+    return reportError(env, error, json);
+  }
 }
