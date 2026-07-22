@@ -98,6 +98,20 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   sprite/animation mode (the reserved schema slot); home-computer specs if demand
   appears; tiny fixed-weight learned perceptual metric as a judge input
   (doc 04 §Aesthetics — admissible only if byte-deterministic and browser-sized).
+- **Audio demake (new domain, exploratory)**: extend beyond images — convert
+  modern music and sound effects into hardware-compliant chip audio and playable
+  driver data for the same consoles (GB pulse/wave/noise, NES 2A03, SNES SPC700
+  BRR samples, MD YM2612 FM patches). Same shape as the image pipeline:
+  constrain → fit → emit → prove in an emulator, with audio-capture E2E standing
+  in for pixel-perfect. Starts as a spike plus its own design doc before any
+  tier commitment.
+- **3D asset demake (new domain, exploratory)**: apply the same treatment to the
+  32/64-bit 3D era — take a common modern 3D asset and emit PS1/N64/Saturn-
+  compatible ones: polygon budgets and retopology, texture quantization through
+  the existing image pipeline (palettes/CLUTs, N64's 4 KB TMEM tiling), and
+  per-platform geometry quirks (PS1 fixed-point vertices and affine texturing,
+  Saturn quads). Doc 03's generation cutoff stands for 2D image conversion;
+  these platforms enter scope only for this separate 3D domain.
 
 ## Standing decision log
 

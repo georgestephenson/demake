@@ -68,7 +68,7 @@ GBATEK) and its values are locked in by emulator tests, not by this table.
 |---|---|
 | Vectrex | Vector display; raster conversion is meaningless (a raster→vector plotter is a different product) |
 | Home computers (C64, MSX, Amiga, ZX…) | Consoles-only per product definition. The TMS9918 and mono pipelines would make several trivial to add later; the spec schema deliberately doesn't preclude them |
-| 32X / Sega CD / N64 / PS1 / Saturn / Jaguar / 3DO / CD-i | Past the generation cutoff (32X/Sega CD are MD add-ons past the constraint-interesting era; note as possible future "extended MD" specs) |
+| 32X / Sega CD / N64 / PS1 / Saturn / Jaguar / 3DO / CD-i | Past the generation cutoff (32X/Sega CD are MD add-ons past the constraint-interesting era; note as possible future "extended MD" specs). N64/PS1/Saturn reappear only in the exploratory 3D-asset demake direction (doc 13, Phase 7+) — a separate domain, not raster image conversion |
 | PSP / post-DS handhelds | Past the handheld cutoff |
 
 ## The `ConsoleSpec` schema (what the table compiles into)
