@@ -44,7 +44,10 @@ export const dmg = {
     subPalettes: { count: 1, size: 4 },
     attribute: { w: 8, h: 8 },
     tileBudget: 256,
-    flip: true,
+    // The original DMG background map has no per-tile attribute bits, so BG tiles
+    // cannot be H/V flipped (unlike the CGB, whose bank-1 attribute map can). Tile
+    // dedup must therefore be exact, not flip-aware.
+    flip: false,
   },
   codegen: { family: "gb", formats: ["bin", "asm", "c", "rom"] },
   docs: {

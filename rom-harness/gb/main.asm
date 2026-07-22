@@ -36,22 +36,37 @@ Entry:
     xor a
     ld [rLCDC], a
 
-    ; --- tile data -> $8000 (VRAM bank 0) -----------------------------------
+    ; --- tile data -> VRAM --------------------------------------------------
+    ; Up to 256 tiles live in bank 0 at $8000; on CGB, tiles 256..511 spill into
+    ; bank 1 (the map's attribute byte carries the per-tile bank bit). DMG has a
+    ; single bank and the budget stage keeps it within 256 tiles.
 IF DEF(demake_pal)
     xor a
     ld [rVBK], a
-ENDC
+    ld hl, demake_tiles
+    ld de, VRAM_TILES
+  IF demake_TILE_COUNT > 256
+    ld bc, 256 * 16
+  ELSE
+    ld bc, demake_TILE_COUNT * 16
+  ENDC
+    call CopyBytes
+  IF demake_TILE_COUNT > 256
+    ld a, 1
+    ld [rVBK], a
+    ld hl, demake_tiles + 256 * 16
+    ld de, VRAM_TILES
+    ld bc, (demake_TILE_COUNT - 256) * 16
+    call CopyBytes
+    xor a
+    ld [rVBK], a
+  ENDC
+ELSE
     ld hl, demake_tiles
     ld de, VRAM_TILES
     ld bc, demake_TILE_COUNT * 16
-.copytiles:
-    ld a, [hli]
-    ld [de], a
-    inc de
-    dec bc
-    ld a, b
-    or c
-    jr nz, .copytiles
+    call CopyBytes
+ENDC
 
 IF DEF(demake_pal)
     ; --- GBC: attribute map -> $9800 (VRAM bank 1) --------------------------
@@ -109,4 +124,15 @@ CopyMap:
     pop hl
     dec d
     jr nz, .row
+    ret
+
+; Copy BC bytes from HL to DE.
+CopyBytes:
+    ld a, [hli]
+    ld [de], a
+    inc de
+    dec bc
+    ld a, b
+    or c
+    jr nz, CopyBytes
     ret

@@ -132,41 +132,51 @@ export function enforceBudget(
 
   const txCount = Math.floor(image.width / TILE);
   const tyCount = Math.floor(image.height / TILE);
-  let merges = 0;
-  // Greedy: repeatedly find the closest distinct pair of tile positions whose
-  // patterns differ and copy one pattern onto the other, until within budget.
-  // Bounded by tile count; adequate for the small overflows crops produce.
-  let guard = txCount * tyCount * 2;
-  while (unique > budget && guard-- > 0) {
-    let bestDist = Infinity;
-    let best: [number, number, number, number] | null = null;
-    const seen = new Map<string, [number, number]>();
-    for (let ty = 0; ty < tyCount; ty += 1) {
-      for (let tx = 0; tx < txCount; tx += 1) {
-        const key = tileKey(image, tx, ty, flip);
-        const prev = seen.get(key);
-        if (!prev) seen.set(key, [tx, ty]);
-      }
+  const before = unique;
+
+  // Keep the `budget` most-used tile patterns (frequency desc, first-occurrence
+  // tiebreak) and remap every position whose pattern is not kept onto its nearest
+  // kept representative. One pass → guaranteed within budget, deterministic, and
+  // O(positions × budget) rather than the O(n³) of iterated nearest-pair merging.
+  interface Group {
+    rep: [number, number];
+    key: string;
+    count: number;
+    order: number;
+  }
+  const groups = new Map<string, Group>();
+  let order = 0;
+  for (let ty = 0; ty < tyCount; ty += 1) {
+    for (let tx = 0; tx < txCount; tx += 1) {
+      const key = tileKey(image, tx, ty, flip);
+      const g = groups.get(key);
+      if (g) g.count += 1;
+      else groups.set(key, { rep: [tx, ty], key, count: 1, order: (order += 1) });
     }
-    const reps = [...seen.values()];
-    for (let i = 0; i < reps.length; i += 1) {
-      for (let j = i + 1; j < reps.length; j += 1) {
-        const [ax, ay] = reps[i]!;
-        const [bx, by] = reps[j]!;
-        const d = tileDistance(image, ax, ay, bx, by);
+  }
+  const kept = [...groups.values()]
+    .sort((a, b) => b.count - a.count || a.order - b.order)
+    .slice(0, budget);
+  const keptKeys = new Set(kept.map((g) => g.key));
+
+  for (let ty = 0; ty < tyCount; ty += 1) {
+    for (let tx = 0; tx < txCount; tx += 1) {
+      if (keptKeys.has(tileKey(image, tx, ty, flip))) continue;
+      let bestDist = Infinity;
+      let bestRep: [number, number] = kept[0]!.rep;
+      for (const g of kept) {
+        const d = tileDistance(image, g.rep[0], g.rep[1], tx, ty);
         if (d < bestDist) {
           bestDist = d;
-          best = [ax, ay, bx, by];
+          bestRep = g.rep;
         }
       }
+      copyTilePattern(image, bestRep[0], bestRep[1], tx, ty);
     }
-    if (!best) break;
-    copyTilePattern(image, best[2], best[3], best[0], best[1]);
-    merges += 1;
-    unique = countUniqueTiles(image, flip);
   }
 
-  return { image, uniqueTiles: unique, budget, merges };
+  unique = countUniqueTiles(image, flip);
+  return { image, uniqueTiles: unique, budget, merges: before - unique };
 }
 
 /** Copy tile (sx,sy)'s index pattern over every tile position matching (dx,dy). */
