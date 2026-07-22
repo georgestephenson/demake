@@ -47,6 +47,11 @@ function harness(
     stdoutIsTTY: () => opts.stdoutTTY ?? false,
     stdinIsTTY: () => opts.stdin === undefined,
     env: {},
+    which: () => null,
+    run: () => ({ code: 127, stdout: "", stderr: "" }),
+    makeTempDir: () => "/tmp/demake-test",
+    removeDir: () => {},
+    harnessDir: () => null,
   };
   return { env, out: () => out, err: () => err, stdoutBytes: () => stdoutBytes, files };
 }

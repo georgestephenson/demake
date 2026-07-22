@@ -10,6 +10,7 @@
 
 import {
   gen,
+  getConsole,
   sourceHash,
   type CodegenFormat,
   type GenArtifact,
@@ -20,6 +21,7 @@ import type { ParsedValue } from "@demake/cli-spec";
 import type { CliEnv } from "../env.js";
 import { EXIT, type ExitCode } from "../exit-codes.js";
 import { CliError, resolveInput } from "../io.js";
+import { buildGbRom } from "../rom/gb.js";
 
 function str(values: Record<string, ParsedValue>, key: string): string | undefined {
   return typeof values[key] === "string" ? (values[key] as string) : undefined;
@@ -79,11 +81,20 @@ export async function runGen(
     }
   }
 
+  // `rom` is assembled at this edge from the generated `asm` (the harness needs
+  // the fixed `demake` symbol prefix); core produces the data, RGBDS the ROM.
+  const wantRom = format === "rom";
+  const coreFormat: CodegenFormat = wantRom ? "asm" : format;
+  const userSymbol = str(values, "symbol");
+  if (wantRom && userSymbol !== undefined && !quiet) {
+    env.errOut("demake: warning: --symbol is ignored for --format rom (the harness pins it).\n");
+  }
+
   const optionString = buildOptionString(consoleId, format, values);
   const result: GenResult = await gen(bytes, {
     console: consoleId,
-    format,
-    ...(str(values, "symbol") !== undefined ? { symbol: str(values, "symbol")! } : {}),
+    format: coreFormat,
+    ...(wantRom ? { symbol: "demake" } : userSymbol !== undefined ? { symbol: userSymbol } : {}),
     strict: values.strict === true,
     ...(int(values, "tile-base") !== undefined ? { tileBase: int(values, "tile-base")! } : {}),
     ...(int(values, "map-base") !== undefined ? { mapBase: int(values, "map-base")! } : {}),
@@ -93,7 +104,28 @@ export async function runGen(
     command: `demake gen ${source === "<stdin>" ? "-" : source} ${optionString}`,
   });
 
-  const written = writeArtifacts(env, result.artifacts, output, source, force, json);
+  let artifacts = result.artifacts;
+  if (wantRom) {
+    const spec = getConsole(consoleId);
+    if (!spec.codegen.formats.includes("rom")) {
+      throw new CliError(
+        EXIT.USAGE,
+        "E_UNSUPPORTED_OUTPUT",
+        `${spec.id} does not support --format rom`,
+      );
+    }
+    if (spec.codegen.family !== "gb") {
+      throw new CliError(
+        EXIT.UNAVAILABLE,
+        "E_TOOLCHAIN_MISSING",
+        `rom building for the '${spec.codegen.family}' family is not implemented yet`,
+      );
+    }
+    const rom = buildGbRom(env, spec, result.artifacts[0]!.bytes);
+    artifacts = [{ suffix: spec.color.model === "rgb" ? ".gbc" : ".gb", kind: "rom", bytes: rom }];
+  }
+
+  const written = writeArtifacts(env, artifacts, output, source, force, json);
 
   if (json) {
     env.out(
@@ -101,7 +133,7 @@ export async function runGen(
         {
           schemaVersion: 1,
           console: consoleId,
-          format: result.format,
+          format,
           path: result.path,
           stats: result.stats,
           files: written,

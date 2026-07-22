@@ -28,8 +28,14 @@ console model:
   output stays byte-deterministic.
 - **CLI**: `demake gen` is live (was advertised-but-planned), with `--json`
   reporting every file written with byte sizes and content hashes.
+- **`--format rom`**: builds a bootable `.gb`/`.gbc` from the generated data via
+  an on-disk `rom-harness/gb/` harness (one source, DMG + GBC by conditional
+  assembly) and the local RGBDS toolchain (`rgbasm`→`rgblink`→`rgbfix`). RGBDS is
+  provisioned by a pinned, cached source build (`tools/toolchains/install-rgbds.sh`,
+  `pnpm toolchains`) — no Docker — and a `.claude/` SessionStart hook installs it
+  automatically in managed/web sessions. Missing toolchain yields a clear
+  `E_TOOLCHAIN_MISSING`; `bin`/`asm`/`c` never need it.
 
 `prep --emit-manifest` now also records the image hash so `gen --manifest` can
-verify it. The `rom` format is recognized but deferred to the toolchain edge
-(clear `E_TOOLCHAIN_MISSING`); the emulator ROM harness and the remaining Tier-1
-consoles are the next Phase-2 steps.
+verify it. The remaining Phase-2 steps are the headless-emulator pixel-perfect
+E2E (doc 10) and Tier-1 console breadth.

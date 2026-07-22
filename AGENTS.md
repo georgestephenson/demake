@@ -18,9 +18,11 @@ conversion pipeline with tournament + judge; the `inspect` compliance oracle),
 and Phase 2's **code generation** has landed: the `codegen/` framework + the `gb`
 family backend emit `bin`/`asm`/`c` from a compliant image, reached via an
 exact-path detector, a manifest sidecar (pinned palette order), or implicit
-`prep`. The `demake gen` CLI is live. Still to come in Phase 2: the emulator ROM
-harness (`--format rom` + toolchain images + pixel-perfect E2E) and Tier-1
-breadth (NES → SMS → MD → SNES → GBA → NDS).
+`prep`. The `demake gen` CLI is live, and **`--format rom` builds a bootable
+`.gb`/`.gbc`** via the on-disk `rom-harness/gb/` harness and the local RGBDS
+toolchain (provisioned by `pnpm toolchains` — source build, cached, no Docker).
+Still to come in Phase 2: the headless-emulator pixel-perfect E2E (doc 10) and
+Tier-1 breadth (NES → SMS → MD → SNES → GBA → NDS).
 
 ## Layout map
 
@@ -54,6 +56,7 @@ pnpm lint:fix      # autofix ESLint + Prettier
 pnpm changeset     # add a changeset for a user-visible change
 pnpm cli -- --help # run the built CLI from source (build first)
 pnpm gen:man       # regenerate man pages from cli-spec (build first; CI checks staleness)
+pnpm toolchains    # provision RGBDS (source build, cached) for `gen --format rom`
 ```
 
 ## Iron rules
@@ -89,8 +92,13 @@ Two files plus fixtures (doc 02 §Extensibility):
 ## Testing truths
 
 - `pnpm test` runs the Vitest unit suite locally with no Docker (< 2 min target).
-- The emulator-based end-to-end suite (`pnpm test:e2e`, doc 10) needs Docker and
-  arrives in Phase 2.
+- The ROM-build E2E (`packages/cli/test/rom.e2e.test.ts`) assembles a real
+  `.gb`/`.gbc` through RGBDS; it self-skips when the toolchain is absent, so run
+  `pnpm toolchains` first to exercise it. RGBDS is provisioned by a source build
+  (`tools/toolchains/install-rgbds.sh`), and web sessions get it automatically
+  via the `.claude/` SessionStart hook.
+- The headless-emulator screenshot suite (doc 10, pixel-perfect vs the DAC
+  reference) is the remaining Phase-2 E2E step.
 - CLI tests exercise both the pure `run()` function and the spawned built binary;
   the binary test skips when `dist` is absent, so run `pnpm build` first to
   include it (CI always does).
