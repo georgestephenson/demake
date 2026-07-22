@@ -21,7 +21,7 @@ no per-pixel object allocation) is plenty. See doc 04 §Performance.
 pnpm workspaces + a single TypeScript project-references build. One repo, one CI.
 
 ```
-demake/          # repo (rename pending, Phase 0)
+demake/          # repo
 ├── docs/                    # This plan, then living design docs
 ├── packages/
 │   ├── core/                # @demake/core — the engine (zero Node/DOM deps)

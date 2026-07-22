@@ -85,9 +85,8 @@ short, memorable, and was npm-free at decision time.
 
 Phase 0 executes the securing steps: publish placeholder `demake` +
 `@demake/core` npm packages immediately (npm has no reservations — only
-publishes hold a name), rename the GitHub repo to `demake` (GitHub redirects
-the old URLs), and run the wider collision scan (Homebrew, PyPI squatting,
-trademark) before any public release.
+publishes hold a name) and run the wider collision scan (Homebrew, PyPI
+squatting, trademark) before any public release.
 
 ## Success criteria for v1.0
 
