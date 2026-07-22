@@ -21,6 +21,10 @@ export type DemakeErrorCode =
   | "E_NO_VALID_CANDIDATE"
   | "E_TILE_BUDGET_EXCEEDED"
   | "E_STRICT_NONCOMPLIANT"
+  | "E_UNSUPPORTED_FAMILY"
+  | "E_UNSUPPORTED_OUTPUT"
+  | "E_MANIFEST_MISMATCH"
+  | "E_TOOLCHAIN_MISSING"
   | "E_INTERNAL";
 
 /** A structured, agent-actionable error. */

@@ -47,6 +47,11 @@ function harness(
     stdoutIsTTY: () => opts.stdoutTTY ?? false,
     stdinIsTTY: () => opts.stdin === undefined,
     env: {},
+    which: () => null,
+    run: () => ({ code: 127, stdout: "", stderr: "" }),
+    makeTempDir: () => "/tmp/demake-test",
+    removeDir: () => {},
+    harnessDir: () => null,
   };
   return { env, out: () => out, err: () => err, stdoutBytes: () => stdoutBytes, files };
 }
@@ -95,7 +100,7 @@ describe("global flags", () => {
 
   it("planned commands exit UNAVAILABLE", async () => {
     const h = harness();
-    expect(await run(["gen"], h.env)).toBe(EXIT.UNAVAILABLE);
+    expect(await run(["completion"], h.env)).toBe(EXIT.UNAVAILABLE);
   });
 });
 

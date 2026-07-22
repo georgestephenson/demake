@@ -65,3 +65,12 @@ export type { JudgeResult, MetricId } from "./inspect/judge.js";
 
 // --- strategies (candidate portfolio for a console) --------------------------
 export { strategies, type StrategyInfo } from "./strategies.js";
+
+// --- codegen (gen): image → console data / source ----------------------------
+export { gen } from "./codegen/gen.js";
+export type { GenOptions, GenResult, GenPath } from "./codegen/gen.js";
+export type { GenArtifact, CodegenBackend, EmitOptions } from "./codegen/types.js";
+export { detectCompliant } from "./codegen/detect.js";
+export { backendFor, codegenFamilies } from "./codegen/registry.js";
+export { parseManifest, applyManifest, type CodegenManifest } from "./codegen/manifest.js";
+export { sourceHash } from "./codegen/provenance.js";

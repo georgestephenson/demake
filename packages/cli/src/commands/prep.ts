@@ -12,6 +12,7 @@ import {
   decodePng,
   encodeRgbaPng,
   prep,
+  sourceHash,
   strategies,
   type DitherAlg,
   type PrepOptions,
@@ -128,7 +129,7 @@ export async function runPrep(
   if (previewSpec) writePreview(env, result.image, result.png, previewSpec, values.force === true);
   const manifestPath = manifestTarget(values);
   if (manifestPath !== undefined) {
-    const manifest = buildManifest(result);
+    const manifest = buildManifest(result, sourceHash(result.png));
     env.writeFileAtomic(
       manifestPath || defaultManifestPath(output),
       new TextEncoder().encode(JSON.stringify(manifest, null, 2)),
@@ -177,12 +178,13 @@ function defaultManifestPath(output: string | undefined): string {
   return "manifest.json";
 }
 
-function buildManifest(result: Awaited<ReturnType<typeof prep>>): unknown {
+function buildManifest(result: Awaited<ReturnType<typeof prep>>, imageHash: string): unknown {
   return {
     schemaVersion: 1,
     console: result.image.consoleId,
     width: result.image.width,
     height: result.image.height,
+    imageHash,
     grid: result.image.grid,
     palettes: result.image.palettes.map((p) =>
       p.colors.map((c) => ({ codes: c.codes, display: c.display })),
