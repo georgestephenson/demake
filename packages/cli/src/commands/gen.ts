@@ -23,6 +23,7 @@ import { EXIT, type ExitCode } from "../exit-codes.js";
 import { CliError, resolveInput } from "../io.js";
 import { buildGbRom } from "../rom/gb.js";
 import { buildNesRom } from "../rom/nes.js";
+import { buildSmsRom } from "../rom/sms.js";
 
 function str(values: Record<string, ParsedValue>, key: string): string | undefined {
   return typeof values[key] === "string" ? (values[key] as string) : undefined;
@@ -87,7 +88,11 @@ export async function runGen(
   // NES harness consumes the `bin` blobs.
   const wantRom = format === "rom";
   const romFamily = wantRom ? getConsole(consoleId).codegen.family : "";
-  const coreFormat: CodegenFormat = wantRom ? (romFamily === "nes" ? "bin" : "asm") : format;
+  const coreFormat: CodegenFormat = wantRom
+    ? romFamily === "nes" || romFamily === "sms"
+      ? "bin"
+      : "asm"
+    : format;
   const userSymbol = str(values, "symbol");
   if (wantRom && userSymbol !== undefined && !quiet) {
     env.errOut("demake: warning: --symbol is ignored for --format rom (the harness pins it).\n");
@@ -125,6 +130,9 @@ export async function runGen(
     } else if (spec.codegen.family === "nes") {
       const rom = buildNesRom(env, spec, result);
       artifacts = [{ suffix: ".nes", kind: "rom", bytes: rom }];
+    } else if (spec.codegen.family === "sms") {
+      const rom = buildSmsRom(env, spec, result);
+      artifacts = [{ suffix: spec.id === "gg" ? ".gg" : ".sms", kind: "rom", bytes: rom }];
     } else {
       throw new CliError(
         EXIT.UNAVAILABLE,

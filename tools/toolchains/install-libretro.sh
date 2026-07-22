@@ -20,6 +20,7 @@ RUNNER_SRC="$REPO_ROOT/emu-harness/libretro/retrorun.c"
 # Cores to build: "name|git-url|branch|make-recipe|output.so". Extend per console.
 CORES=(
   "fceumm|https://github.com/libretro/libretro-fceumm.git|master|make -f Makefile.libretro|fceumm_libretro.so"
+  "genesis_plus_gx|https://github.com/libretro/Genesis-Plus-GX.git|master|make -f Makefile.libretro|genesis_plus_gx_libretro.so"
 )
 # Which cores to (re)build this run (default: all). Pass names as args to subset.
 WANT=("$@")

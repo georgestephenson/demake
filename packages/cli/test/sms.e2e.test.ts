@@ -1,13 +1,14 @@
 /**
- * Pixel-perfect NES emulator E2E (doc 10) via libretro.
+ * Pixel-perfect SMS emulator E2E (doc 10) via libretro / genesis-plus-gx.
  *
- * The full loop across extreme images: gen → NROM ROM (cc65) → boot in fceumm
- * (libretro, the accuracy core) → capture the framebuffer → assert it is
- * byte-identical to demake's DAC reference. The core is pointed at demake's
- * master palette (written as `nes.pal` in the system dir), so its output matches
- * `renderCompliant` exactly — the same "calibrate the emulator to the model"
- * approach as the GB E2E. Self-skips unless cc65 + the libretro runner/core are
- * provisioned (`pnpm toolchains && pnpm emulator`). No Docker.
+ * gen → SMS ROM (WLA-DX) → boot in genesis-plus-gx → capture the framebuffer →
+ * assert it matches demake's DAC reference. genesis-plus-gx renders into a 16-bit
+ * framebuffer (it has no 32-bit path), so the comparison is in the emulator's
+ * native RGB565 precision — the ground truth of what it can display. demake's
+ * `expandChannel` (full bit-replication, code*85 for RGB222) matches the core's
+ * SMS color pipeline, so the 565-reduced colors agree exactly. Self-skips unless
+ * WLA-DX + the libretro runner/core are provisioned (`pnpm toolchains && pnpm
+ * emulator`). No Docker.
  */
 
 import { execFileSync } from "node:child_process";
@@ -15,7 +16,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { encodeRgbaPng, gen, getConsole, renderCompliant } from "@demake/core";
+import { encodeRgbaPng, gen, renderCompliant } from "@demake/core";
 import { describe, expect, it } from "vitest";
 
 import { makeNodeEnv, type CliEnv } from "../src/env.js";
@@ -24,12 +25,12 @@ import { run } from "../src/run.js";
 
 const TC = join(homedir(), ".cache", "demake", "toolchains");
 const RETRORUN = join(TC, "libretro", "retrorun");
-const CORE = join(TC, "libretro", "cores", "fceumm_libretro.so");
-const FRAMES = 120;
+const CORE = join(TC, "libretro", "cores", "genesis_plus_gx_libretro.so");
+const FRAMES = 60;
 
-const hasCc65 = makeNodeEnv().which("ca65") !== null && makeNodeEnv().which("ld65") !== null;
+const hasWla = makeNodeEnv().which("wla-z80") !== null && makeNodeEnv().which("wlalink") !== null;
 const hasEmu = existsSync(RETRORUN) && existsSync(CORE);
-const maybe = hasCc65 && hasEmu ? it : it.skip;
+const maybe = hasWla && hasEmu ? it : it.skip;
 
 const clamp = (v: number): number => (v < 0 ? 0 : v > 255 ? 255 : v | 0);
 
@@ -61,11 +62,11 @@ function lcg(seed: number): () => number {
 }
 
 const CASES: Record<string, Uint8Array> = {
-  gradient: image(128, 128, (x, y) => [clamp(x * 2), clamp(y * 2), 128]),
+  gradient: image(96, 96, (x, y) => [clamp(x * 2.6), clamp(y * 2.6), 128]),
   flat: image(64, 64, () => [80, 140, 200]),
   noise: (() => {
-    const r = lcg(11);
-    return image(96, 96, () => [(r() * 255) | 0, (r() * 255) | 0, (r() * 255) | 0]);
+    const r = lcg(13);
+    return image(72, 72, () => [(r() * 255) | 0, (r() * 255) | 0, (r() * 255) | 0]);
   })(),
 };
 
@@ -87,63 +88,41 @@ function readPpm(bytes: Uint8Array): { w: number; data: Uint8Array } {
   return { w: Number(tokens[1]), data: bytes.subarray(pos) };
 }
 
-/** Write demake's NES master palette as a 192-byte libretro `nes.pal`. */
-function writeNesPal(dir: string): void {
-  const master = getConsole("nes").color.masterPalette!;
-  const pal = new Uint8Array(192);
-  master.forEach((c, i) => {
-    pal[i * 3] = c.r;
-    pal[i * 3 + 1] = c.g;
-    pal[i * 3 + 2] = c.b;
-  });
-  writeFileSync(join(dir, "nes.pal"), pal);
-}
-
-describe("pixel-perfect NES E2E (needs cc65 + libretro/fceumm)", () => {
+describe("pixel-perfect SMS E2E (needs WLA-DX + libretro/genesis-plus-gx)", () => {
   for (const [name, png] of Object.entries(CASES)) {
     maybe(
-      `nes/${name}: NROM boots in fceumm and matches the DAC reference`,
+      `sms/${name}: ROM boots in genesis-plus-gx and matches the DAC reference (RGB565)`,
       async () => {
-        const dir = mkdtempSync(join(tmpdir(), "demake-nes-e2e-"));
+        const dir = mkdtempSync(join(tmpdir(), "demake-sms-e2e-"));
         try {
           const inPath = join(dir, "in.png");
-          const romPath = join(dir, "out.nes");
+          const romPath = join(dir, "out.sms");
           writeFileSync(inPath, png);
 
           const code = await run(
-            ["gen", inPath, "-c", "nes", "--format", "rom", "-o", romPath],
+            ["gen", inPath, "-c", "sms", "--format", "rom", "-o", romPath],
             nodeEnvCapturing(),
           );
           expect(code).toBe(EXIT.OK);
 
-          writeNesPal(dir);
           const ppmPath = join(dir, "frame.ppm");
-          execFileSync(RETRORUN, [
-            CORE,
-            romPath,
-            String(FRAMES),
-            ppmPath,
-            dir,
-            "fceumm_palette=custom",
-          ]);
+          execFileSync(RETRORUN, [CORE, romPath, String(FRAMES), ppmPath, dir]);
           const frame = readPpm(readFileSync(ppmPath));
 
-          // The reference: the exact image the ROM encoded, in master colors.
-          const result = await gen(png, { console: "nes", format: "bin", symbol: "demake" });
+          const result = await gen(png, { console: "sms", format: "bin", symbol: "demake" });
           const ref = renderCompliant(result.image, false);
 
+          // Compare in the core's native RGB565 precision.
+          const to565 = (r: number, g: number, b: number): number =>
+            ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
           let mismatches = 0;
           for (let y = 0; y < ref.height; y += 1) {
             for (let x = 0; x < ref.width; x += 1) {
               const p = (y * frame.w + x) * 3;
               const r = (y * ref.width + x) * 4;
-              if (
-                frame.data[p] !== ref.data[r] ||
-                frame.data[p + 1] !== ref.data[r + 1] ||
-                frame.data[p + 2] !== ref.data[r + 2]
-              ) {
-                mismatches += 1;
-              }
+              const emu = to565(frame.data[p]!, frame.data[p + 1]!, frame.data[p + 2]!);
+              const want = to565(ref.data[r]!, ref.data[r + 1]!, ref.data[r + 2]!);
+              if (emu !== want) mismatches += 1;
             }
           }
           expect(mismatches).toBe(0);
