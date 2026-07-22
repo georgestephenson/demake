@@ -1,0 +1,33 @@
+{
+  "name": "demake",
+  "version": "0.0.0",
+  "description": "Convert any image into hardware-compliant art and displayable code for 8/16-bit-era consoles and handhelds up to the Nintendo DS.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "demake": "./dist/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/lib.d.ts",
+      "import": "./dist/lib.js"
+    }
+  },
+  "files": [
+    "dist",
+    "man"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "@demake/core": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+pnpm-lock.yaml
+*.tsbuildinfo
+
+# Design docs are hand-authored prose (tables, deliberate wrapping); Prettier's
+# Markdown reflow is not wanted here. They remain the source of truth as written.
+docs/
