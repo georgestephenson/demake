@@ -30,8 +30,10 @@ that an engineer (human or agent) can pick up a section and implement it.
 
 ## Provenance
 
-The design generalizes two proven single-purpose tools from the
-an earlier project by the same author project:
+The design generalizes two proven single-purpose tools (referred to throughout
+these docs as "the predecessor tools") from an earlier Game Boy Color game
+project by the same author — deliberately not named in this repository, per the
+AGENTS.md provenance rule:
 
 - `tools/prep-portraits.py` — quantizes a 112×112 source to a small master palette
   (median cut + weighted k-means), downscales 2× by per-block majority vote, then fits

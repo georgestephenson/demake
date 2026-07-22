@@ -18,9 +18,11 @@ file must grow into once implementation starts.
 - **No AI attribution of any kind in commits**: no `Co-Authored-By` trailers, no
   `Generated with` lines, no session links, no model names — in commit messages,
   PR titles/bodies, or code comments.
-- **Do not mention other repositories or prior personal projects by name in
-  commit messages** (e.g. the projects this tool's design originated from).
-  Design provenance belongs in `docs/`, not in git history.
+- **Never name other repositories or prior personal projects anywhere in this
+  repository** — not in commit messages, docs, code, comments, or fixtures.
+  This includes the earlier project this tool's design originated from: refer
+  to it only generically (the docs use "the predecessor tools"). No project
+  names, no links to it.
 - Write commit messages about the change itself: imperative subject ≤ 72 chars,
   body explaining what and why.
 - Develop on the designated feature branch; never push to `main` directly.

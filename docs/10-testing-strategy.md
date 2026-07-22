@@ -57,7 +57,7 @@ Fixture corpus in `testdata/sources/`:
 - photographic samples (public domain), pixel-art samples at 1× and pre-upscaled 3×
   (exercises the pixel-art detector), transparency cases, extreme aspect ratios,
   1×1 and max-res edge cases.
-- the predecessor portrait corpus (with permission — it's the user's own project):
+- the predecessor portrait corpus (the author's own work, used with permission):
   prep output must meet-or-beat the original tools' error metrics on it, and
   `--metric wrgb --quantizer mediancut` must reproduce the legacy pipeline class.
 
