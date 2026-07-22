@@ -1,0 +1,32 @@
+name: Console request
+description: Request support for a console or handheld.
+labels: ["console-request"]
+body:
+  - type: input
+    id: console
+    attributes:
+      label: Console / handheld
+      description: Which system?
+      placeholder: e.g. Neo Geo Pocket Color
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Hardware constraints
+      description: >
+        Resolution(s), color depth / master palette, tile geometry, sub-palette
+        shape, attribute granularity, VRAM/tile budgets — with primary sources
+        where possible (doc 03).
+    validations:
+      required: true
+  - type: textarea
+    id: toolchain
+    attributes:
+      label: Toolchain & emulator
+      description: Known assembler/compiler and a headless-capable emulator for the hardware-proof test (doc 10).
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Anything else relevant (quirks, references, homebrew examples).

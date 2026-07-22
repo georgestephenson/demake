@@ -1,0 +1,11 @@
+{
+  "name": "@demake/eslint-rules",
+  "version": "0.0.0",
+  "description": "Custom ESLint rules enforcing demake's core invariants: platform purity and determinism (doc 02).",
+  "type": "module",
+  "private": true,
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js"
+  }
+}

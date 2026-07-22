@@ -1,0 +1,7 @@
+# Default owner for everything in the repo.
+*                       @georgestephenson
+
+# Focused review for load-bearing areas (doc 11 §protections).
+/docs/                  @georgestephenson
+/packages/core/         @georgestephenson
+/toolchains/            @georgestephenson

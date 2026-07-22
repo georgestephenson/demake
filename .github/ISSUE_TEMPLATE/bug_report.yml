@@ -1,0 +1,45 @@
+name: Bug report
+description: Something in demake behaves incorrectly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please include the machine-readable details below
+        so we can reproduce deterministically.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and --json output
+      description: The exact command you ran and the full `--json` output (once the CLI exists).
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `demake --version`.
+      placeholder: demake 0.0.0 (core 0.0.0)
+    validations:
+      required: true
+  - type: textarea
+    id: input-image
+    attributes:
+      label: Input image
+      description: Attach the input image (or a minimal reproduction of it) if the bug is conversion-related.
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS and Node version.
+      placeholder: macOS 15 / Node 22
+    validations:
+      required: true

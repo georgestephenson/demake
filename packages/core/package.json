@@ -1,0 +1,28 @@
+{
+  "name": "@demake/core",
+  "version": "0.0.0",
+  "description": "The demake conversion engine: pipeline, console specs, and codegen. Zero platform dependencies; ESM; ships types.",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}
