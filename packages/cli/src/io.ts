@@ -142,7 +142,12 @@ function mapDemakeExit(code: string): ExitCode {
     case "E_INVALID_SIZE":
     case "E_SIZE_TOO_LARGE":
     case "E_INVALID_PALETTE":
+    case "E_UNSUPPORTED_FAMILY":
+    case "E_UNSUPPORTED_OUTPUT":
+    case "E_MANIFEST_MISMATCH":
       return EXIT.USAGE;
+    case "E_TOOLCHAIN_MISSING":
+      return EXIT.UNAVAILABLE;
     case "E_TILE_BUDGET_EXCEEDED":
     case "E_STRICT_NONCOMPLIANT":
       return EXIT.FAILURE;

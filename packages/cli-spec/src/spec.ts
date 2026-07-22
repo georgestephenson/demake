@@ -195,6 +195,56 @@ const PREP_FLAGS: readonly FlagSpec[] = [
   ...OUTPUT_FLAGS,
 ];
 
+const GEN_FLAGS: readonly FlagSpec[] = [
+  {
+    name: "console",
+    short: "c",
+    type: "string",
+    required: true,
+    metavar: "<id>",
+    help: "Target console id or alias (e.g. gbc, dmg).",
+  },
+  {
+    name: "format",
+    type: "enum",
+    values: ["bin", "asm", "c", "rom"],
+    default: "asm",
+    help: "Output format: raw blobs, assembler source, C arrays, or ROM.",
+  },
+  {
+    name: "symbol",
+    type: "string",
+    metavar: "<name>",
+    help: "Identifier/label prefix for asm/c (default: from the input name).",
+  },
+  {
+    name: "manifest",
+    type: "string",
+    metavar: "<file>",
+    help: "Pin palette order from a prep --emit-manifest sidecar.",
+  },
+  {
+    name: "strict",
+    type: "boolean",
+    help: "Require already-compliant input; do not implicitly prep.",
+  },
+  {
+    name: "tile-base",
+    type: "int",
+    metavar: "N",
+    default: 0,
+    help: "Add N to every emitted map tile index (VRAM tile offset).",
+  },
+  {
+    name: "map-base",
+    type: "int",
+    metavar: "N",
+    default: 0,
+    help: "Map origin offset (recorded in the header; used by the ROM harness).",
+  },
+  ...OUTPUT_FLAGS,
+];
+
 const INSPECT_FLAGS: readonly FlagSpec[] = [
   {
     name: "console",
@@ -244,26 +294,24 @@ export const CLI_SPEC: CliSpec = {
     },
     {
       name: "gen",
-      summary: "Convert an image into console data/code/ROM (Phase 2)",
-      positional: { name: "input", help: "Compliant or raw image.", optional: true },
-      flags: [
+      summary: "Convert an image into console data/code (bin/asm/c)",
+      positional: {
+        name: "input",
+        help: "Compliant or raw image (path, or - for stdin).",
+        optional: true,
+      },
+      flags: GEN_FLAGS,
+      examples: [
         {
-          name: "console",
-          short: "c",
-          type: "string",
-          required: true,
-          metavar: "<id>",
-          help: "Target console.",
+          cmd: "demake gen portrait.png -c gbc --format asm -o portrait.asm",
+          note: "RGBDS source",
         },
         {
-          name: "format",
-          type: "enum",
-          values: ["bin", "asm", "c", "rom"],
-          help: "Output format.",
+          cmd: "demake gen photo.jpg -c gbc --format c -o gfx",
+          note: "implicit prep, then C arrays",
         },
+        { cmd: "demake gen tiles.png -c dmg --format bin -o tiles", note: "raw blobs for incbin" },
       ],
-      examples: [{ cmd: "demake gen out.png -c gbc --format asm -o portrait.asm" }],
-      planned: true,
     },
     {
       name: "consoles",

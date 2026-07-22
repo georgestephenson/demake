@@ -10,13 +10,17 @@ add content to `CLAUDE.md` directly.
 A tool that converts any image into hardware-compliant art — and displayable
 code — for 8/16-bit-era consoles and handhelds up to the Nintendo DS. The full
 design lives in [`docs/`](docs/README.md); the milestone plan is
-[`docs/13-roadmap.md`](docs/13-roadmap.md). **Current status: Phase 1** — the
-engine spine is live: the deterministic image layer (our PNG codec, color
-spaces, DAC models, seeded PRNG, math kernels), the `ConsoleSpec` schema with
-the `gbc` and `dmg` specs, the tiled-and-mono conversion pipeline (stages 0–7 +
-tournament + judge), the `inspect` compliance oracle, and a spec-driven CLI
-(`prep`/`inspect`/`consoles`) with generated man pages. Codegen (`gen`), the
-emulator ROM harness, and Tier-1 breadth land in Phase 2.
+[`docs/13-roadmap.md`](docs/13-roadmap.md). **Current status: Phase 2 (in
+progress)** — the Phase-1 engine spine is live (the deterministic image layer:
+our PNG codec, color spaces, DAC models, seeded PRNG, math kernels; the
+`ConsoleSpec` schema with the `gbc` and `dmg` specs; the tiled-and-mono
+conversion pipeline with tournament + judge; the `inspect` compliance oracle),
+and Phase 2's **code generation** has landed: the `codegen/` framework + the `gb`
+family backend emit `bin`/`asm`/`c` from a compliant image, reached via an
+exact-path detector, a manifest sidecar (pinned palette order), or implicit
+`prep`. The `demake gen` CLI is live. Still to come in Phase 2: the emulator ROM
+harness (`--format rom` + toolchain images + pixel-perfect E2E) and Tier-1
+breadth (NES → SMS → MD → SNES → GBA → NDS).
 
 ## Layout map
 
@@ -27,6 +31,7 @@ packages/core/       @demake/core — the engine (zero platform deps; ESM; ships
   src/image/         PNG codec (inflate/deflate/decode/encode), DAC models, decode dispatch
   src/consoles/      ConsoleSpec schema + one declarative spec per console (gbc, dmg)
   src/pipeline/      stages 0–7, the tiled fitter, mono path, tournament (prep)
+  src/codegen/       gen: per-family backends (gb), exact-path detector, manifest
   src/inspect/       compliance oracle (inspect) + fidelity judge
 packages/cli-spec/   @demake/cli-spec — single source of truth: spec → parser, help, man
 packages/cli/        demake — thin CLI over core; re-exports core for scripting

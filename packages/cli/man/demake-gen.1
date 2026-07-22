@@ -1,0 +1,59 @@
+.TH DEMAKE\-GEN 1 "" "" "Convert an image into console data/code (bin/asm/c)"
+.SH NAME
+demake-gen \- Convert an image into console data/code (bin/asm/c)
+.SH SYNOPSIS
+\fBdemake gen\fR [\fIoptions\fR] [\fIinput\fR]
+.SH DESCRIPTION
+Convert an image into console data/code (bin/asm/c).
+.SH OPTIONS
+.TP
+\fB\-c\fR, \fB\-\-console\fR \fI<id>\fR
+Target console id or alias (e.g. gbc, dmg). [required]
+.TP
+\fB\-\-format\fR \fIvalue\fR
+Output format: raw blobs, assembler source, C arrays, or ROM. (default: asm)
+.TP
+\fB\-\-symbol\fR \fI<name>\fR
+Identifier/label prefix for asm/c (default: from the input name).
+.TP
+\fB\-\-manifest\fR \fI<file>\fR
+Pin palette order from a prep \-\-emit\-manifest sidecar.
+.TP
+\fB\-\-strict\fR
+Require already\-compliant input; do not implicitly prep.
+.TP
+\fB\-\-tile-base\fR \fIN\fR
+Add N to every emitted map tile index (VRAM tile offset). (default: 0)
+.TP
+\fB\-\-map-base\fR \fIN\fR
+Map origin offset (recorded in the header; used by the ROM harness). (default: 0)
+.TP
+\fB\-o\fR, \fB\-\-output\fR \fI<file>\fR
+Write the artifact to <file> (default: stdout when piped).
+.TP
+\fB\-\-json\fR
+Emit a single JSON object on stdout (product goes to \-o).
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Increase diagnostic detail (repeatable).
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Suppress warnings.
+.TP
+\fB\-f\fR, \fB\-\-force\fR
+Overwrite an existing output file.
+.SH EXAMPLES
+.PP
+demake gen portrait.png \-c gbc \-\-format asm \-o portrait.asm
+.br
+RGBDS source
+.PP
+demake gen photo.jpg \-c gbc \-\-format c \-o gfx
+.br
+implicit prep, then C arrays
+.PP
+demake gen tiles.png \-c dmg \-\-format bin \-o tiles
+.br
+raw blobs for incbin
+.SH SEE ALSO
+\fBdemake\fR(1)

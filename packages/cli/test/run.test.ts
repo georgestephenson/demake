@@ -95,7 +95,7 @@ describe("global flags", () => {
 
   it("planned commands exit UNAVAILABLE", async () => {
     const h = harness();
-    expect(await run(["gen"], h.env)).toBe(EXIT.UNAVAILABLE);
+    expect(await run(["completion"], h.env)).toBe(EXIT.UNAVAILABLE);
   });
 });
 
