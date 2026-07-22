@@ -8,9 +8,13 @@
  */
 
 import { gbBackend } from "./gb.js";
+import { nesBackend } from "./nes.js";
 import type { CodegenBackend } from "./types.js";
 
-const BACKENDS = new Map<string, CodegenBackend>([[gbBackend.family, gbBackend]]);
+const BACKENDS = new Map<string, CodegenBackend>([
+  [gbBackend.family, gbBackend],
+  [nesBackend.family, nesBackend],
+]);
 
 /** The backend for a family, or `undefined` if none is registered yet. */
 export function backendFor(family: string): CodegenBackend | undefined {
