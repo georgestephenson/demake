@@ -31,10 +31,13 @@ console model:
 - **`--format rom`**: builds a bootable `.gb`/`.gbc` from the generated data via
   an on-disk `rom-harness/gb/` harness (one source, DMG + GBC by conditional
   assembly) and the local RGBDS toolchain (`rgbasm`→`rgblink`→`rgbfix`). RGBDS is
-  provisioned by a pinned, cached source build (`tools/toolchains/install-rgbds.sh`,
-  `pnpm toolchains`) — no Docker — and a `.claude/` SessionStart hook installs it
-  automatically in managed/web sessions. Missing toolchain yields a clear
-  `E_TOOLCHAIN_MISSING`; `bin`/`asm`/`c` never need it.
+  provisioned by `tools/toolchains/install-rgbds.sh` (`pnpm toolchains`), which
+  resolves fastest-acceptable-first: reuse an rgbds already on PATH, else a
+  cached build, else an opt-in prebuilt tarball (`$RGBDS_PREBUILT_URL`), else a
+  pinned source build (git clone + cmake, ~13s, cached) — no Docker, only `git`
+  egress. A `.claude/` SessionStart hook installs it automatically in
+  managed/web sessions. Missing toolchain yields a clear `E_TOOLCHAIN_MISSING`;
+  `bin`/`asm`/`c` never need it.
 
 `prep --emit-manifest` now also records the image hash so `gen --manifest` can
 verify it. The remaining Phase-2 steps are the headless-emulator pixel-perfect
