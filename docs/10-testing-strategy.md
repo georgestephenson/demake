@@ -162,7 +162,8 @@ scheduled workflow from `toolchains/` and used both by CI and by users' local
 
 - CLI: `--help`/`--version`/exit codes/stdin-stdout/signals via integration harness
   (execa); man page lints (`mandoc -Tlint`); JSON outputs validated against the
-  generated schema; `AGENTS.md` examples executed verbatim (doctest-style).
+  generated schema; agent-guide examples executed verbatim (doctest-style);
+  `CLAUDE.md` remains a pure `@AGENTS.md` import (doc 12).
 - Web: Playwright functional flows + the determinism suite + Lighthouse budget.
 - Desktop: doc 08's parity E2E.
 - Benchmarks: doc 04's performance targets tracked with a benchmark action;

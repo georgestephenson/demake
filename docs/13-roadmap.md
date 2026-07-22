@@ -66,7 +66,7 @@ Chromium/Firefox/WebKit in CI; Lighthouse ≥ 95.
 
 Tauri app per doc 08 (sidecar CLI, shared frontend, batch mode); Node SEA binaries;
 `release.yml` end-to-end (npm provenance, signed installers, SLSA attestations,
-auto-update); library docs + Typedoc site; `AGENTS.md` + `help --agents`.
+auto-update); library docs + Typedoc site; generated agent guide + `help --agents`.
 
 **Done means**: a tagged release automatically ships npm + 5 binaries + 3 desktop
 installers + Pages + docs, all from one tag; desktop parity E2E green.

@@ -5,19 +5,20 @@
 | File | Contents |
 |---|---|
 | `README.md` | The shop window: one-paragraph pitch, animated demo GIF (source → GBC/NES/MD side-by-side), install matrix (npm / binaries / web / desktop), 5 copy-paste examples, console support table (auto-generated from ConsoleSpecs — CI-checked, never stale), links into `docs/`. Badges: CI, npm version, Pages. |
-| `CLAUDE.md` | See below — the agent-onboarding contract for *developing this repo*. |
-| `AGENTS.md` | The contract for *using the installed tool* (doc 05): commands, JSON schemas, error codes, examples. Mirrored by `retroart help --agents`. |
+| `AGENTS.md` | See below — the agent-onboarding contract for *developing this repo*. The canonical project-memory file, following the cross-tool agents.md standard so Codex, Cursor, etc. read it natively. |
+| `CLAUDE.md` | A one-line shim containing only `@AGENTS.md`. Claude Code reads `CLAUDE.md` (not `AGENTS.md`) but supports imports, so this makes every tool consume the identical instructions with zero duplication. Never holds content of its own; a CI check enforces it stays a pure import. |
+| `docs/agent-guide.md` | The contract for *using the installed tool* (doc 05): commands, JSON schemas, error codes, examples. Generated from `cli-spec`; mirrored by `retroart help --agents`. |
 | `CONTRIBUTING.md` | Dev setup (pnpm, Node 20, optional Docker for E2E), test commands, changeset requirement, "adding a console" walkthrough (the doc-02 two-files-plus-fixtures recipe, step by step), PR checklist. |
 | `SECURITY.md` | Private reporting via GitHub advisories; supported-versions table. |
 | `CODE_OF_CONDUCT.md` | Contributor Covenant. |
 | `LICENSE` | MIT (already present). |
 | `.github/` | PR template (checklist: tests, changeset, goldens rationale if bytes changed), issue forms (bug: needs `--json` output + input image + version; console-request form), CODEOWNERS. |
 
-## CLAUDE.md — contents specification
+## AGENTS.md — contents specification
 
 Written for an agent landing in the repo cold; kept under ~150 lines; updated in the
 same PR as any workflow it describes (CI has a staleness check: commands named in
-CLAUDE.md must exist in package.json scripts).
+AGENTS.md must exist in package.json scripts).
 
 1. **What this is** — two sentences + pointer to `docs/README.md`.
 2. **Layout map** — the doc-02 tree, one line per package.
@@ -33,6 +34,11 @@ CLAUDE.md must exist in package.json scripts).
    the doc-10 E2E triage table.
 7. **Gotchas** — NES attribute cells are 16×16 not 8×8; DAC models are load-bearing
    in tests; PNG encoder must stay deterministic (no libpng drift).
+8. **Commit rules** — no AI attribution of any kind (no `Co-Authored-By`, generator
+   lines, session links, or model names) in commit messages, PR bodies, or code
+   comments; no references to other repositories or prior personal projects in
+   commit messages (design provenance belongs in `docs/`); imperative
+   Conventional-Commits subjects about the change itself.
 
 ## Engineering conventions
 

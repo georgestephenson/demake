@@ -24,7 +24,7 @@ that an engineer (human or agent) can pick up a section and implement it.
 | 09 | [Library API](09-library-api.md) | The npm package: public API surface, determinism guarantees |
 | 10 | [Testing Strategy](10-testing-strategy.md) | Unit/property tests plus the ROM → headless emulator → pixel-perfect screenshot pipeline |
 | 11 | [CI & Releases](11-ci-and-releases.md) | GitHub Actions workflows, versioning, publish pipelines |
-| 12 | [Repo Standards](12-repo-standards.md) | CLAUDE.md, README, contribution standards, engineering conventions |
+| 12 | [Repo Standards](12-repo-standards.md) | AGENTS.md (with CLAUDE.md import shim), README, contribution standards, engineering conventions |
 | 13 | [Roadmap](13-roadmap.md) | Phased milestones with acceptance criteria |
 
 ## Provenance

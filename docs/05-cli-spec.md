@@ -103,9 +103,11 @@ retroart prep photo.jpg -c nes --strategy photo-lanczos-fs -o out.png
   (resolutions, palette shapes, formats, modes) — an agent can compute valid
   invocations without external docs. `retroart help --json` dumps the full command/
   flag schema (generated from the same spec as the parser).
-- **`AGENTS.md`** at repo root: the tool contract in ~1 page (commands, JSON
-  schemas, error codes, examples), plus the same content shipped via
-  `retroart help --agents` so installed-tool discovery works offline.
+- **Agent guide** (`docs/agent-guide.md`, generated from `cli-spec`): the tool
+  contract in ~1 page (commands, JSON schemas, error codes, examples), plus the
+  same content shipped via `retroart help --agents` so installed-tool discovery
+  works offline. (Repo-root `AGENTS.md` is a different document — it's for agents
+  *developing this repo*, per doc 12.)
 - **No interactivity, ever**: no prompts, no pagers, no "are you sure". Anything
   destructive requires an explicit flag.
 - **Predictable defaults, loudly reported**: every auto-decision (profile detected,
