@@ -5,7 +5,7 @@ import { prep } from "../src/pipeline/prep.js";
 import { renderCompliant, encodeCompliantPng } from "../src/pipeline/encode-image.js";
 import { gen } from "../src/codegen/gen.js";
 import { detectCompliant } from "../src/codegen/detect.js";
-import { extractTiles, packPlanar } from "../src/codegen/tiles.js";
+import { extractTiles, packPacked4, packPlanar } from "../src/codegen/tiles.js";
 import { decodeImage } from "../src/image/decode.js";
 import { getConsole } from "../src/consoles/registry.js";
 import type { TileLayout } from "../src/consoles/types.js";
@@ -48,6 +48,47 @@ describe("planar tile packing (GB 2bpp)", () => {
     expect(bytes[0]).toBe(0x80); // low plane, bit 7
     expect(bytes[1]).toBe(0x80); // high plane, bit 7
     expect(bytes[2]).toBe(0x00);
+  });
+});
+
+describe("packed-nibble tile packing (MD 4bpp)", () => {
+  it("packs an 8×8 grid row-major with the left pixel in the high nibble", () => {
+    const grid = new Uint8Array(64);
+    grid[0] = 0xa; // row 0, col 0 → high nibble of byte 0
+    grid[1] = 0x3; // row 0, col 1 → low nibble of byte 0
+    grid[8] = 0x5; // row 1, col 0 → high nibble of byte 4
+    const bytes = packPacked4(grid, 8, 8);
+    expect(bytes.length).toBe(32); // 4 bytes/row × 8 rows
+    expect(bytes[0]).toBe(0xa3);
+    expect(bytes[4]).toBe(0x50);
+  });
+});
+
+describe("gen — md family (Mega Drive)", () => {
+  it("emits blank tile 0, palette-tagged big-endian map words, and BGR333 CRAM", async () => {
+    const png = encodeRgbaPng(64, 64, makeSource(64, 64));
+    const result = await gen(png, { console: "md", format: "bin", symbol: "demake" });
+    const tiles = result.artifacts.find((a) => a.suffix === ".tiles.bin")!.bytes;
+    const map = result.artifacts.find((a) => a.suffix === ".map.bin")!.bytes;
+    const pal = result.artifacts.find((a) => a.suffix === ".pal.bin")!.bytes;
+
+    // Tile 0 is reserved blank (all-zero), real tiles follow.
+    expect(tiles.length % 32).toBe(0);
+    expect([...tiles.slice(0, 32)].every((b) => b === 0)).toBe(true);
+
+    // Every map word references a real tile (index ≥ 1) and packs the 2-bit
+    // palette select into bits 14–13 of a big-endian word.
+    expect(pal.length).toBe(4 * 16 * 2);
+    for (let i = 0; i < map.length; i += 2) {
+      const word = (map[i]! << 8) | map[i + 1]!;
+      expect(word & 0x7ff).toBeGreaterThanOrEqual(1);
+      expect((word >> 13) & 3).toBeLessThan(4);
+    }
+    // CRAM color 0 of every sub-palette is the shared backdrop.
+    for (let p = 1; p < 4; p += 1) {
+      expect(pal[p * 16 * 2]).toBe(pal[0]);
+      expect(pal[p * 16 * 2 + 1]).toBe(pal[1]);
+    }
   });
 });
 

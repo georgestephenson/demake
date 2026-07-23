@@ -150,6 +150,24 @@ export function packPlanar(
 }
 
 /**
+ * Pack a `tileW*tileH` index grid into **row-major packed nibbles** — the Sega
+ * Mega Drive / VDP 4bpp tile layout: `tileW/2` bytes per row, each byte holding
+ * two horizontally-adjacent pixels with the *left* pixel in the high nibble. An
+ * 8×8 tile is 32 bytes.
+ */
+export function packPacked4(grid: Uint8Array, tileW: number, tileH: number): Uint8Array {
+  const out = new Uint8Array(tileH * (tileW >> 1));
+  let o = 0;
+  for (let y = 0; y < tileH; y += 1) {
+    for (let x = 0; x < tileW; x += 2) {
+      out[o] = ((grid[y * tileW + x]! & 0xf) << 4) | (grid[y * tileW + x + 1]! & 0xf);
+      o += 1;
+    }
+  }
+  return out;
+}
+
+/**
  * Pack an 8×8 grid into **plane-grouped** planar bytes: all `tileH` low-plane row
  * bytes, then all `tileH` high-plane row bytes (the NES/2C02 pattern-table
  * layout), MSB-first per row.

@@ -51,6 +51,8 @@ const nodeEnv = makeNodeEnv();
 const hasRgbds = nodeEnv.which("rgbasm") !== null;
 const hasCc65 = nodeEnv.which("ca65") !== null && nodeEnv.which("ld65") !== null;
 const hasWla = nodeEnv.which("wla-z80") !== null && nodeEnv.which("wlalink") !== null;
+const hasM68k =
+  nodeEnv.which("m68k-linux-gnu-as") !== null && nodeEnv.which("m68k-linux-gnu-objcopy") !== null;
 const maybe = hasRgbds ? it : it.skip;
 
 describe("gen --format rom (E2E, needs RGBDS)", () => {
@@ -129,5 +131,13 @@ describe("gen --format rom (E2E, needs WLA-DX)", () => {
   });
   romCliCase(hasWla, "gg", ".gg", (rom) => {
     expect(rom.length).toBe(32768);
+  });
+});
+
+describe("gen --format rom (E2E, needs m68k binutils)", () => {
+  romCliCase(hasM68k, "md", ".md", (rom) => {
+    expect(rom.length).toBe(1 << 17); // padded to 128 KiB
+    // The Mega Drive console signature the header carries at $100.
+    expect(String.fromCharCode(...rom.slice(0x100, 0x104))).toBe("SEGA");
   });
 });

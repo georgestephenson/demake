@@ -21,11 +21,15 @@ import { expandChannel } from "../color/lattice.js";
  * - `linear` — naive bit-replication expansion (an honest baseline; the CLI's
  *   `--raw-colors` selects this at encode time).
  * - `cgb` — the Game Boy Color LCD color-correction curve.
+ * - `md-vdp` — the Mega Drive VDP's Mode-5 normal-intensity color: each 3-bit
+ *   code is doubled and expanded to 5:6:5, exactly what genesis-plus-gx renders
+ *   (its `MAKE_PIXEL(2·code, …)`), so the emulator comparison is byte-exact.
  * - `mono-ramp` — a fixed shade→color ramp (DMG green, Virtual Boy red, …).
  */
 export type DacModel =
   | { readonly kind: "linear" }
   | { readonly kind: "cgb" }
+  | { readonly kind: "md-vdp" }
   | { readonly kind: "mono-ramp"; readonly shades: readonly Rgb8[] };
 
 /**
@@ -41,6 +45,8 @@ export function dacDecodeCodes(
   switch (model.kind) {
     case "cgb":
       return cgbCorrect(codes[0], codes[1], codes[2]);
+    case "md-vdp":
+      return { r: mdChannel(codes[0], 5), g: mdChannel(codes[1], 6), b: mdChannel(codes[2], 5) };
     case "linear":
     case "mono-ramp":
       return {
@@ -84,4 +90,21 @@ export function cgbCorrect(r5: number, g5: number, b5: number): Rgb8 {
 
 function clamp31(v: number): number {
   return v < 0 ? 0 : v > 31 ? 31 : v;
+}
+
+/**
+ * One Mega Drive VDP channel at normal intensity. genesis-plus-gx builds its
+ * Mode-5 color table as `MAKE_PIXEL(code<<1, …)` in 5:6:5 (the 3-bit code is
+ * doubled, then packed with bit-replication into a 5- or 6-bit field). We
+ * reproduce that field and expand it back to 8-bit, so the DAC-decoded color
+ * reduces to the exact RGB565 the core displays. `code` is 0–7.
+ */
+function mdChannel(code: number, targetBits: 5 | 6): number {
+  const v = (code & 7) << 1; // normal-intensity level (0, 2, …, 14)
+  if (targetBits === 6) {
+    const six = ((v << 2) | (v >> 2)) & 0x3f;
+    return (six << 2) | (six >> 4);
+  }
+  const five = ((v << 1) | (v >> 3)) & 0x1f;
+  return (five << 3) | (five >> 2);
 }
