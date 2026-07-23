@@ -1,15 +1,14 @@
 /**
- * Pixel-perfect SMS emulator E2E (doc 10) via libretro / genesis-plus-gx.
+ * Pixel-perfect Game Gear emulator E2E (doc 10) via libretro / genesis-plus-gx.
  *
- * gen → SMS ROM (WLA-DX) → boot in genesis-plus-gx → capture the framebuffer →
- * assert it matches demake's DAC reference, across the same extensive battery the
- * GB family uses (flat, full-screen gradient + noise, mirror, per-cell palettes,
- * the 8×8 minimum). genesis-plus-gx renders into a 16-bit framebuffer (no 32-bit
- * path), so the comparison is in the emulator's native RGB565 precision — the
- * ground truth of what it can display. demake's `expandChannel` (full
- * bit-replication, code*85 for RGB222) matches the core's SMS color pipeline, so
- * the 565-reduced colors agree exactly. Self-skips unless WLA-DX + the libretro
- * runner/core are provisioned (`pnpm toolchains && pnpm emulator`). No Docker.
+ * The GG shares the SMS VDP and codegen family but has an RGB444 LCD and a
+ * 160×144 viewport that is the *central crop* of the 256×192 VDP frame. The ROM
+ * builder offsets the image into the name table by that crop margin (6×3 tiles),
+ * so the image lands at the visible window's top-left and the emulator frame is
+ * directly comparable to `renderCompliant`. Same extensive battery as every other
+ * console. genesis-plus-gx renders 16-bit, so the comparison is in native RGB565.
+ * Self-skips unless WLA-DX + the libretro runner/core are provisioned
+ * (`pnpm toolchains && pnpm emulator`). No Docker.
  */
 
 import { execFileSync } from "node:child_process";
@@ -33,25 +32,25 @@ const hasWla = makeNodeEnv().which("wla-z80") !== null && makeNodeEnv().which("w
 const hasEmu = existsSync(RETRORUN) && existsSync(CORE);
 const maybe = hasWla && hasEmu ? it : it.skip;
 
-// The SMS renders the full 256×192 VDP frame.
-const CASES = makeBattery(256, 192);
+// The Game Gear shows the central 160×144 window of the VDP frame.
+const CASES = makeBattery(160, 144);
 
-describe("pixel-perfect SMS E2E (needs WLA-DX + libretro/genesis-plus-gx)", () => {
+describe("pixel-perfect GG E2E (needs WLA-DX + libretro/genesis-plus-gx)", () => {
   for (const [name, png] of Object.entries(CASES)) {
     maybe(
-      `sms/${name}: ROM boots in genesis-plus-gx and matches the DAC reference (RGB565)`,
+      `gg/${name}: ROM boots in genesis-plus-gx and matches the DAC reference (RGB565)`,
       async () => {
-        const dir = mkdtempSync(join(tmpdir(), "demake-sms-e2e-"));
+        const dir = mkdtempSync(join(tmpdir(), "demake-gg-e2e-"));
         try {
           // One gen result drives both the ROM and the reference (same prep run).
           const result = await gen(png, {
-            console: "sms",
+            console: "gg",
             format: "bin",
             symbol: "demake",
             prep: { effort: "fast" },
           });
-          const romPath = join(dir, "out.sms");
-          writeFileSync(romPath, buildSmsRom(makeNodeEnv(), getConsole("sms"), result));
+          const romPath = join(dir, "out.gg");
+          writeFileSync(romPath, buildSmsRom(makeNodeEnv(), getConsole("gg"), result));
 
           const ppmPath = join(dir, "frame.ppm");
           execFileSync(RETRORUN, [CORE, romPath, String(FRAMES), ppmPath, dir]);

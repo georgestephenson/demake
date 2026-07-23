@@ -47,7 +47,10 @@ function nodeEnvCapturing(): { env: CliEnv; out: () => string } {
   return { env, out: () => out };
 }
 
-const hasRgbds = makeNodeEnv().which("rgbasm") !== null;
+const nodeEnv = makeNodeEnv();
+const hasRgbds = nodeEnv.which("rgbasm") !== null;
+const hasCc65 = nodeEnv.which("ca65") !== null && nodeEnv.which("ld65") !== null;
+const hasWla = nodeEnv.which("wla-z80") !== null && nodeEnv.which("wlalink") !== null;
 const maybe = hasRgbds ? it : it.skip;
 
 describe("gen --format rom (E2E, needs RGBDS)", () => {
@@ -82,4 +85,49 @@ describe("gen --format rom (E2E, needs RGBDS)", () => {
       }
     });
   }
+});
+
+/** Assert the CLI `--format rom` path assembles a plausible ROM for a family. */
+function romCliCase(
+  gate: boolean,
+  consoleId: string,
+  ext: string,
+  check: (rom: Uint8Array) => void,
+): void {
+  (gate ? it : it.skip)(`assembles a bootable ${consoleId} ROM`, async () => {
+    const dir = mkdtempSync(join(tmpdir(), "demake-rom-e2e-"));
+    try {
+      const inPath = join(dir, "in.png");
+      const outPath = join(dir, `out${ext}`);
+      writeFileSync(inPath, samplePng());
+
+      const { env, out } = nodeEnvCapturing();
+      const code = await run(
+        ["gen", inPath, "-c", consoleId, "--format", "rom", "-o", outPath, "--json"],
+        env,
+      );
+      expect(code).toBe(EXIT.OK);
+      expect(JSON.parse(out()).format).toBe("rom");
+      check(readFileSync(outPath));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+describe("gen --format rom (E2E, needs cc65)", () => {
+  romCliCase(hasCc65, "nes", ".nes", (rom) => {
+    // iNES header magic + 16 KiB PRG + 8 KiB CHR (NROM-128).
+    expect(rom.length).toBe(16 + 16384 + 8192);
+    expect([rom[0], rom[1], rom[2], rom[3]]).toEqual([0x4e, 0x45, 0x53, 0x1a]);
+  });
+});
+
+describe("gen --format rom (E2E, needs WLA-DX)", () => {
+  romCliCase(hasWla, "sms", ".sms", (rom) => {
+    expect(rom.length).toBe(32768); // two 16 KiB banks
+  });
+  romCliCase(hasWla, "gg", ".gg", (rom) => {
+    expect(rom.length).toBe(32768);
+  });
 });
