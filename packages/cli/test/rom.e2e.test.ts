@@ -132,6 +132,9 @@ describe("gen --format rom (E2E, needs WLA-DX)", () => {
   romCliCase(hasWla, "gg", ".gg", (rom) => {
     expect(rom.length).toBe(32768);
   });
+  romCliCase(hasWla, "sg1000", ".sg", (rom) => {
+    expect(rom.length).toBeGreaterThan(0x100); // z80 reset vector + display code
+  });
 });
 
 describe("gen --format rom (E2E, needs m68k binutils)", () => {

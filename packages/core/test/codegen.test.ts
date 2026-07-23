@@ -92,6 +92,24 @@ describe("gen — md family (Mega Drive)", () => {
   });
 });
 
+describe("gen — sg1000 family (TMS9918 Graphics II)", () => {
+  it("emits 8-byte pattern + color tables with two colors per row", async () => {
+    const png = encodeRgbaPng(64, 64, makeSource(64, 64));
+    const result = await gen(png, { console: "sg1000", format: "bin", symbol: "demake" });
+    const pattern = result.artifacts.find((a) => a.suffix === ".pattern.bin")!.bytes;
+    const color = result.artifacts.find((a) => a.suffix === ".color.bin")!.bytes;
+
+    const tiles = (64 / 8) * (64 / 8);
+    expect(pattern.length).toBe(tiles * 8);
+    expect(color.length).toBe(tiles * 8);
+    // Every color byte packs two master indices (0..15) into fg<<4 | bg.
+    for (const b of color) {
+      expect(b >> 4).toBeLessThan(16);
+      expect(b & 0x0f).toBeLessThan(16);
+    }
+  });
+});
+
 describe("detectCompliant round-trips prep output", () => {
   it("recovers the exact displayed pixels for GBC", async () => {
     const result = await prep(source, { console: "gbc" });

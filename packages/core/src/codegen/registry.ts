@@ -10,6 +10,7 @@
 import { gbBackend } from "./gb.js";
 import { mdBackend } from "./md.js";
 import { nesBackend } from "./nes.js";
+import { sg1000Backend } from "./sg1000.js";
 import { smsBackend } from "./sms.js";
 import type { CodegenBackend } from "./types.js";
 
@@ -17,6 +18,7 @@ const BACKENDS = new Map<string, CodegenBackend>([
   [gbBackend.family, gbBackend],
   [mdBackend.family, mdBackend],
   [nesBackend.family, nesBackend],
+  [sg1000Backend.family, sg1000Backend],
   [smsBackend.family, smsBackend],
 ]);
 

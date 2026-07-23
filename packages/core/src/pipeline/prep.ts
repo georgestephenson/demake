@@ -21,6 +21,7 @@ import { analyze } from "./analyze.js";
 import { enforceBudget } from "./budget.js";
 import { encodeCompliantPng, renderCompliant } from "./encode-image.js";
 import { fitTiled, type FitParams } from "./fit-tiled.js";
+import { fitTms } from "./fit-tms.js";
 import { chooseAutoSize, resize, snapExplicitSize } from "./geometry.js";
 import { makeColorSpace, type HwColor, type HwColorSpace } from "./hwcolor.js";
 import { fitMono } from "./mono.js";
@@ -52,8 +53,11 @@ function runCandidate(
   const work = resize(srcLin, size.w, size.h, candidate.scale);
   const strict = opts.strict === true;
 
-  if (candidate.kind === "mono") {
-    const image = fitMono(work, spec, candidate.dither.alg, candidate.dither.strength);
+  if (candidate.kind === "mono" || candidate.kind === "tms") {
+    const image =
+      candidate.kind === "mono"
+        ? fitMono(work, spec, candidate.dither.alg, candidate.dither.strength)
+        : fitTms(work, spec, candidate.dither.alg, candidate.dither.strength);
     const budget = enforceBudget(image, spec, strict);
     return {
       image: budget.image,
