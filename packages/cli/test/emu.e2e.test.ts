@@ -1,56 +1,114 @@
 /**
  * Pixel-perfect emulator E2E (doc 10 — the credo).
  *
- * The whole loop, end to end: image → prep → gen → ROM → boot in SameBoy (the
- * accuracy reference) → capture the framebuffer → assert it is byte-identical to
- * demake's DAC-decoded reference. SameBoy runs with color correction disabled,
- * so its output is the raw hardware readout (CGB: RGB555 expanded exactly as
- * demake's `expandChannel`; DMG: the exact green ramp), directly comparable to
- * `renderCompliant`.
+ * The whole loop, end to end, across a battery of deliberately extreme images:
+ * gen → ROM → boot in SameBoy (the accuracy reference) → capture the framebuffer
+ * → assert it is byte-identical to demake's DAC reference. SameBoy runs with
+ * color correction disabled, so its output is the raw hardware readout (CGB:
+ * RGB555 expanded exactly as demake's `expandChannel`; DMG: the exact green
+ * ramp), directly comparable to `renderCompliant`.
  *
- * Self-skips unless both RGBDS and the SameBoy capturer are provisioned (`pnpm
- * toolchains && pnpm emulator`). Nothing here needs Docker.
+ * The ROM is assembled here from the same `gen` result the reference uses, so
+ * prep runs once per case (the CLI's `--format rom` wiring is covered separately
+ * by rom.e2e.test.ts). Self-skips unless RGBDS and the SameBoy capturer are
+ * provisioned (`pnpm toolchains && pnpm emulator`). No Docker.
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { encodeRgbaPng, gen, renderCompliant } from "@demake/core";
 import { describe, expect, it } from "vitest";
 
-import { makeNodeEnv, type CliEnv } from "../src/env.js";
-import { EXIT } from "../src/exit-codes.js";
-import { run } from "../src/run.js";
+import { makeNodeEnv } from "../src/env.js";
 
 const SAMEBOY_VERSION = "1.0.1";
 const EMU_DIR =
   process.env.DEMAKE_EMU_DIR ??
   join(homedir(), ".cache", "demake", "toolchains", `sameboy-${SAMEBOY_VERSION}`);
 const CAPTURE = join(EMU_DIR, "capture");
-const FRAMES = 300;
+const HARNESS = join(makeNodeEnv().harnessDir() ?? "", "gb", "main.asm");
+const FRAMES = 280;
 
 const hasToolchain = makeNodeEnv().which("rgbasm") !== null;
 const hasEmu = existsSync(CAPTURE) && existsSync(join(EMU_DIR, "dmg_boot.bin"));
-const maybe = hasToolchain && hasEmu ? it : it.skip;
+const maybe = hasToolchain && hasEmu && existsSync(HARNESS) ? it : it.skip;
 
-function samplePng(size = 32): Uint8Array {
-  const d = new Uint8Array(size * size * 4);
-  for (let y = 0; y < size; y += 1) {
-    for (let x = 0; x < size; x += 1) {
-      const o = (y * size + x) * 4;
-      d[o] = (x * 8) & 0xff;
-      d[o + 1] = (y * 8) & 0xff;
-      d[o + 2] = 100;
+const clamp = (v: number): number => (v < 0 ? 0 : v > 255 ? 255 : v | 0);
+
+/** Deterministic image builder (RGBA PNG). */
+function image(
+  w: number,
+  h: number,
+  fn: (x: number, y: number) => [number, number, number],
+): Uint8Array {
+  const d = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      const o = (y * w + x) * 4;
+      const [r, g, b] = fn(x, y);
+      d[o] = r;
+      d[o + 1] = g;
+      d[o + 2] = b;
       d[o + 3] = 255;
     }
   }
-  return encodeRgbaPng(size, size, d);
+  return encodeRgbaPng(w, h, d);
 }
 
-/** Parse a binary PPM (P6) into { w, h, data } (RGB, 3 bytes/px). */
-function readPpm(bytes: Uint8Array): { w: number; h: number; data: Uint8Array } {
+/** A deterministic LCG for the noise case (no Math.random → reproducible). */
+function lcg(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 2 ** 32;
+  };
+}
+
+/** Extreme cases: flat, full-screen smooth + full-screen noise (budget + bank 1),
+ *  mirror symmetry (flip dedup), per-cell palettes, and the 8×8 minimum. */
+const CASES: Record<string, Uint8Array> = {
+  flat: image(64, 64, () => [80, 140, 200]),
+  "gradient-full": image(160, 144, (x, y) => [clamp((x * 255) / 159), clamp((y * 255) / 143), 128]),
+  "noise-full": (() => {
+    const r = lcg(7);
+    return image(160, 144, () => [(r() * 255) | 0, (r() * 255) | 0, (r() * 255) | 0]);
+  })(),
+  hmirror: image(64, 64, (x, y) => [(x < 32 ? x : 63 - x) * 8, y * 4, 100]),
+  manycolors: image(64, 64, (x, y) => [
+    ((x >> 3) * 40) % 256,
+    ((y >> 3) * 40) % 256,
+    (((x >> 3) + (y >> 3)) * 30) % 256,
+  ]),
+  tiny: image(8, 8, (x, y) => [x * 32, y * 32, 0]),
+};
+
+/** Assemble the harness + generated data into a ROM via the local RGBDS. */
+function assemble(dir: string, asm: Uint8Array, isColor: boolean): string {
+  writeFileSync(join(dir, "demake.asm"), asm);
+  copyFileSync(HARNESS, join(dir, "main.asm"));
+  const opts = { cwd: dir, stdio: "pipe" as const };
+  execFileSync("rgbasm", ["-o", "main.o", "main.asm"], opts);
+  execFileSync("rgblink", ["-o", "out.gb", "main.o"], opts);
+  execFileSync(
+    "rgbfix",
+    isColor ? ["-v", "-C", "-p", "0xFF", "out.gb"] : ["-v", "-p", "0xFF", "out.gb"],
+    opts,
+  );
+  return join(dir, "out.gb");
+}
+
+/** Parse a binary PPM (P6). */
+function readPpm(bytes: Uint8Array): { w: number; data: Uint8Array } {
   const tokens: string[] = [];
   let pos = 0;
   const ws = (b: number): boolean => b === 0x20 || b === 0x0a || b === 0x09 || b === 0x0d;
@@ -60,63 +118,62 @@ function readPpm(bytes: Uint8Array): { w: number; h: number; data: Uint8Array } 
     while (pos < bytes.length && !ws(bytes[pos]!)) s += String.fromCharCode(bytes[pos++]!);
     tokens.push(s);
   }
-  pos += 1; // the single whitespace after maxval
-  return { w: Number(tokens[1]), h: Number(tokens[2]), data: bytes.subarray(pos) };
-}
-
-/** A real-fs env with captured stdio (TTY, so nothing binary hits stdout). */
-function nodeEnvCapturing(): CliEnv {
-  return { ...makeNodeEnv(), out: () => {}, errOut: () => {}, stdoutIsTTY: () => true };
+  pos += 1;
+  return { w: Number(tokens[1]), data: bytes.subarray(pos) };
 }
 
 describe("pixel-perfect emulator E2E (needs RGBDS + SameBoy)", () => {
-  for (const [consoleId, model, ext] of [
-    ["dmg", "dmg", ".gb"],
-    ["gbc", "cgb", ".gbc"],
+  for (const [consoleId, model] of [
+    ["dmg", "dmg"],
+    ["gbc", "cgb"],
   ] as const) {
-    maybe(`${consoleId}: ROM boots in SameBoy and matches the DAC reference`, async () => {
-      const dir = mkdtempSync(join(tmpdir(), "demake-emu-"));
-      try {
-        const png = samplePng();
-        const inPath = join(dir, "in.png");
-        const romPath = join(dir, `out${ext}`);
-        const ppmPath = join(dir, "frame.ppm");
-        writeFileSync(inPath, png);
+    for (const [name, png] of Object.entries(CASES)) {
+      maybe(
+        `${consoleId}/${name}: ROM boots in SameBoy and matches the DAC reference`,
+        async () => {
+          const dir = mkdtempSync(join(tmpdir(), "demake-emu-"));
+          try {
+            const isColor = consoleId === "gbc";
+            // One gen result drives both the ROM and the reference (same prep run).
+            const result = await gen(png, {
+              console: consoleId,
+              format: "asm",
+              symbol: "demake",
+              prep: { effort: "fast" },
+            });
+            const rom = assemble(dir, result.artifacts[0]!.bytes, isColor);
 
-        // Build the ROM through the real CLI.
-        const code = await run(
-          ["gen", inPath, "-c", consoleId, "--format", "rom", "-o", romPath],
-          nodeEnvCapturing(),
-        );
-        expect(code).toBe(EXIT.OK);
+            const ppmPath = join(dir, "frame.ppm");
+            execFileSync(CAPTURE, [
+              model,
+              join(EMU_DIR, `${model}_boot.bin`),
+              rom,
+              String(FRAMES),
+              ppmPath,
+            ]);
+            const frame = readPpm(readFileSync(ppmPath));
+            const ref = renderCompliant(result.image, isColor);
 
-        // Boot it in SameBoy and capture the framebuffer.
-        const boot = join(EMU_DIR, `${model}_boot.bin`);
-        execFileSync(CAPTURE, [model, boot, romPath, String(FRAMES), ppmPath]);
-        const frame = readPpm(readFileSync(ppmPath));
-
-        // The reference: the exact image the ROM encoded, raw-expanded on CGB.
-        const result = await gen(png, { console: consoleId, format: "asm", symbol: "demake" });
-        const ref = renderCompliant(result.image, consoleId === "gbc");
-
-        let mismatches = 0;
-        for (let y = 0; y < ref.height; y += 1) {
-          for (let x = 0; x < ref.width; x += 1) {
-            const p = (y * frame.w + x) * 3;
-            const r = (y * ref.width + x) * 4;
-            if (
-              frame.data[p] !== ref.data[r] ||
-              frame.data[p + 1] !== ref.data[r + 1] ||
-              frame.data[p + 2] !== ref.data[r + 2]
-            ) {
-              mismatches += 1;
+            let mismatches = 0;
+            for (let y = 0; y < ref.height; y += 1) {
+              for (let x = 0; x < ref.width; x += 1) {
+                const p = (y * frame.w + x) * 3;
+                const r = (y * ref.width + x) * 4;
+                if (
+                  frame.data[p] !== ref.data[r] ||
+                  frame.data[p + 1] !== ref.data[r + 1] ||
+                  frame.data[p + 2] !== ref.data[r + 2]
+                ) {
+                  mismatches += 1;
+                }
+              }
             }
+            expect(mismatches).toBe(0);
+          } finally {
+            rmSync(dir, { recursive: true, force: true });
           }
-        }
-        expect(mismatches).toBe(0);
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    });
+        },
+      );
+    }
   }
 });

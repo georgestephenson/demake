@@ -34,13 +34,25 @@ export function snapChannel(value: number, bits: number): number {
   return expandChannel(code, bits);
 }
 
-/** Expand a raw `bits`-wide channel code (0…2^bits−1) to an 8-bit value. */
+/**
+ * Expand a raw `bits`-wide channel code (0…2^bits−1) to an 8-bit value by **full
+ * bit-replication** — repeat the code across all 8 bits, the expansion real
+ * hardware and accuracy emulators use. For `bits ≥ 4` this is a single
+ * replication (e.g. 5-bit `abcde → abcdeabc`); for 2-bit it is `xy → xyxyxyxy`
+ * (so code 1 → 0x55 = 85, not the partial 0x50). Matters for RGB222/RGB333
+ * consoles, where a partial expansion would miss the emulator by a few LSBs.
+ */
 export function expandChannel(code: number, bits: number): number {
   if (bits >= 8) {
     return code & 0xff;
   }
-  const shifted = code << (8 - bits);
-  return (shifted | (shifted >> bits)) & 0xff;
+  let value = 0;
+  let filled = 0;
+  while (filled < 8) {
+    value = (value << bits) | (code & ((1 << bits) - 1));
+    filled += bits;
+  }
+  return (value >> (filled - 8)) & 0xff;
 }
 
 /** The raw `bits`-wide code for an 8-bit channel value (no re-expansion). */

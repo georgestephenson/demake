@@ -14,11 +14,17 @@ import type { ConsoleSpec, TileLayout } from "../consoles/types.js";
 
 import type { LinImage, ScaleKernel } from "./types.js";
 
-/** Tile granularity (px) the output width/height must be a multiple of. */
+/**
+ * Granularity (px) the output width/height must be a multiple of: the attribute
+ * *cell* size, so every pixel belongs to a fully-covered palette cell. The
+ * attribute size is always a multiple of the tile size (e.g. NES 16×16 cells
+ * over 8×8 tiles), so this also satisfies tile alignment. For the GB family
+ * (cell == tile) it is just the tile size.
+ */
 function tileGranularity(spec: ConsoleSpec): { w: number; h: number } {
   if (spec.layout.kind === "tiles") {
     const t = spec.layout as TileLayout;
-    return { w: t.tileW, h: t.tileH };
+    return { w: Math.max(t.tileW, t.attribute.w), h: Math.max(t.tileH, t.attribute.h) };
   }
   return { w: 1, h: 1 };
 }

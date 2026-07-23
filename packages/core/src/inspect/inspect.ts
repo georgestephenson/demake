@@ -68,6 +68,10 @@ function validColorSet(spec: ConsoleSpec): Set<number> {
     for (const c of spec.color.dac.shades) {
       set.add(colorKeyRgb(c.r, c.g, c.b));
     }
+  } else if (spec.color.model === "fixed-master" && spec.color.masterPalette) {
+    for (const c of spec.color.masterPalette) {
+      set.add(colorKeyRgb(c.r, c.g, c.b));
+    }
   }
   VALID_COLOR_CACHE.set(spec.id, set);
   return set;
@@ -114,6 +118,25 @@ export function checkCompliantImage(image: CompliantImage, spec: ConsoleSpec): V
         violations.push({
           code: "E_OFF_LATTICE",
           message: `palette ${p} has a color not on the ${spec.id} lattice`,
+        });
+        break;
+      }
+    }
+  }
+
+  // Shared index-0 backdrop (NES): color 0 of every non-empty sub-palette must be
+  // the same universal backdrop, or a pixel of value 0 could not render uniformly.
+  if (layout.subPalettes.sharedIndex0) {
+    let backdrop: string | undefined;
+    for (let p = 0; p < image.palettes.length; p += 1) {
+      const first = image.palettes[p]!.colors[0];
+      if (!first) continue;
+      const key = first.codes.join(",");
+      if (backdrop === undefined) backdrop = key;
+      else if (key !== backdrop) {
+        violations.push({
+          code: "E_SHARED_BACKDROP",
+          message: `sub-palettes must share color 0 (the ${spec.id} backdrop)`,
         });
         break;
       }
@@ -193,12 +216,27 @@ function checkImageBytes(image: RgbaImage, spec: ConsoleSpec): Violation[] {
     });
   }
 
-  // ≤P palette cover: each cell's color-set must be a subset of some palette of
-  // ≤K colors. First-fit fragments palettes, so use best-fit by *maximum
-  // overlap* over deduplicated, largest-first cell-sets — this reconstructs the
-  // fitter's palettes in practice. Finding a cover is a sound witness of
-  // compliance; failing to find one is reported rather than assumed compliant.
-  const uniqueSets = dedupeSets(cellSets).sort((a, b) => b.size - a.size);
+  // Shared index-0 (NES backdrop / MD·SNES transparent): one color is shared by
+  // every sub-palette, so subtract the most common color and cover the remainder
+  // into P palettes of K−1 — this is exactly how the fitter builds them, so the
+  // heuristic cover succeeds where a naive one fragments.
+  let coverK = K;
+  let sets = cellSets;
+  if (layout.subPalettes.sharedIndex0 !== undefined) {
+    const backdrop = mostCommonColor(image);
+    coverK = Math.max(1, K - 1);
+    sets = cellSets.map((s) => {
+      const t = new Set(s);
+      t.delete(backdrop);
+      return t;
+    });
+  }
+
+  // ≤P palette cover: each reduced cell-set must be a subset of some palette of
+  // ≤coverK colors. First-fit fragments palettes, so use best-fit by *maximum
+  // overlap* over deduplicated, largest-first cell-sets. Finding a cover is a
+  // sound witness of compliance; failing to find one is reported, not assumed.
+  const uniqueSets = dedupeSets(sets).sort((a, b) => b.size - a.size);
   const palettes: Set<number>[] = [];
   for (const set of uniqueSets) {
     let bestPal: Set<number> | null = null;
@@ -207,7 +245,7 @@ function checkImageBytes(image: RgbaImage, spec: ConsoleSpec): Violation[] {
       let overlap = 0;
       for (const c of set) if (pal.has(c)) overlap += 1;
       const unionSize = pal.size + set.size - overlap;
-      if (unionSize <= K) {
+      if (unionSize <= coverK) {
         const score = overlap * 100 - unionSize;
         if (score > bestScore) {
           bestScore = score;
@@ -229,6 +267,24 @@ function checkImageBytes(image: RgbaImage, spec: ConsoleSpec): Violation[] {
   }
 
   return violations;
+}
+
+/** The single most frequent packed color in an image (ties → lowest key). */
+function mostCommonColor(image: RgbaImage): number {
+  const counts = new Map<number, number>();
+  for (let i = 0; i < image.data.length; i += 4) {
+    const key = colorKeyRgb(image.data[i]!, image.data[i + 1]!, image.data[i + 2]!);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  let best = 0;
+  let bestN = -1;
+  for (const [key, n] of counts) {
+    if (n > bestN || (n === bestN && key < best)) {
+      bestN = n;
+      best = key;
+    }
+  }
+  return best;
 }
 
 /** Deduplicate color-sets by their canonical (sorted) key. */

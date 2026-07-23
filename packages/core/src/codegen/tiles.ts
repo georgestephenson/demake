@@ -148,3 +148,28 @@ export function packPlanar(
   }
   return out;
 }
+
+/**
+ * Pack an 8×8 grid into **plane-grouped** planar bytes: all `tileH` low-plane row
+ * bytes, then all `tileH` high-plane row bytes (the NES/2C02 pattern-table
+ * layout), MSB-first per row.
+ */
+export function packPlaneGrouped(
+  grid: Uint8Array,
+  tileW: number,
+  tileH: number,
+  bpp: number,
+): Uint8Array {
+  const out = new Uint8Array(tileH * bpp);
+  for (let plane = 0; plane < bpp; plane += 1) {
+    for (let y = 0; y < tileH; y += 1) {
+      let byte = 0;
+      for (let x = 0; x < tileW; x += 1) {
+        const bit = (grid[y * tileW + x]! >> plane) & 1;
+        byte |= bit << (tileW - 1 - x);
+      }
+      out[plane * tileH + y] = byte;
+    }
+  }
+  return out;
+}

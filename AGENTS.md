@@ -14,18 +14,25 @@ design lives in [`docs/`](docs/README.md); the milestone plan is
 progress)** — the Phase-1 engine spine is live (the deterministic image layer:
 our PNG codec, color spaces, DAC models, seeded PRNG, math kernels; the
 `ConsoleSpec` schema with the `gbc` and `dmg` specs; the tiled-and-mono
-conversion pipeline with tournament + judge; the `inspect` compliance oracle),
-and Phase 2's **code generation** has landed: the `codegen/` framework + the `gb`
-family backend emit `bin`/`asm`/`c` from a compliant image, reached via an
-exact-path detector, a manifest sidecar (pinned palette order), or implicit
-`prep`. The `demake gen` CLI is live, and **`--format rom` builds a bootable
-`.gb`/`.gbc`** via the on-disk `rom-harness/gb/` harness and the local RGBDS
-toolchain (provisioned by `pnpm toolchains` — source build, cached, no Docker).
-The **pixel-perfect emulator E2E is real for the `gb` family**: the doc-10 loop
-(prep→gen→ROM→SameBoy→framebuffer) matches demake's DAC reference byte-for-byte,
-via the on-disk `emu-harness/gb/` capturer (`pnpm emulator`). Still to come in
-Phase 2: Tier-1 breadth (NES → SMS → MD → SNES → GBA → NDS), each extending the
-same rom + emulator harnesses.
+conversion pipeline with tournament + judge; the `inspect` compliance oracle).
+Phase 2 is well advanced:
+
+- **`prep`/`inspect` for 20 consoles** — every RGB-lattice and mono raster
+  platform in doc 03 (GBC/DMG, NES, SNES, MD, SMS/GG, GBA, NDS, PCE, Neo Geo,
+  WS/WSC, NGP/NGPC, VB, Pokémon Mini, Supervision, Game.com, Mega Duck), all
+  through the one generic tiled fitter + mono path. NES added `fixed-master`
+  color, 16×16 attribute cells, and the shared-backdrop constraint.
+- **Codegen** (`bin`/`asm`/`c`) for the `gb`, `nes`, and `sms` families, reached
+  via an exact-path detector, a manifest sidecar, or implicit `prep`.
+- **`--format rom`** builds bootable ROMs for GB (RGBDS), NES (cc65 NROM), and
+  SMS (WLA-DX). Every assembler is a pinned source build (`pnpm toolchains`), no
+  Docker.
+- **Pixel-perfect emulator E2E** for GB (SameBoy), NES + SMS (libretro cores via
+  one generic `emu-harness/libretro/` runner), tested across extreme images.
+
+Still to come: codegen + rom + E2E for the remaining consoles (each = a codegen
+backend, a ROM harness + toolchain, and a libretro core + DAC calibration),
+plus the framebuffer/scanline layout paths (Lynx, GBA bitmap, TMS/2600/7800).
 
 ## Layout map
 
@@ -34,17 +41,19 @@ packages/core/       @demake/core — the engine (zero platform deps; ESM; ships
   src/math/          deterministic kernels (exp/log/pow/cbrt/sin) + PCG32 PRNG
   src/color/         sRGB/linear/Oklab, hardware-lattice snapping, color parsing
   src/image/         PNG codec (inflate/deflate/decode/encode), DAC models, decode dispatch
-  src/consoles/      ConsoleSpec schema + one declarative spec per console (gbc, dmg)
+  src/consoles/      ConsoleSpec schema + one declarative spec per console (20 of them)
   src/pipeline/      stages 0–7, the tiled fitter, mono path, tournament (prep)
-  src/codegen/       gen: per-family backends (gb), exact-path detector, manifest
+  src/codegen/       gen: per-family backends (gb, nes, sms), exact-path detector, manifest
   src/inspect/       compliance oracle (inspect) + fidelity judge
 packages/cli-spec/   @demake/cli-spec — single source of truth: spec → parser, help, man
 packages/cli/        demake — thin CLI over core; re-exports core for scripting
-  src/rom/           edge: assemble `--format rom` via the local RGBDS toolchain
+  src/rom/           edge: assemble `--format rom` per family (RGBDS / cc65 / WLA-DX)
   man/               generated roff man pages (never hand-edited)
-rom-harness/gb/      the RGBDS display program `gen --format rom` assembles
-emu-harness/gb/      SameBoy headless capturer for the pixel-perfect E2E (doc 10)
-tools/toolchains/    provisioners: RGBDS + SameBoy (pinned source build, cached)
+rom-harness/{gb,nes,sms}/  the display programs `gen --format rom` assembles
+emu-harness/gb/      SameBoy headless capturer for the GB pixel-perfect E2E (doc 10)
+emu-harness/libretro/  generic retrorun frontend — one capturer for every libretro core
+tools/toolchains/    provisioners (pinned source builds, cached): RGBDS, cc65, WLA-DX,
+                     SameBoy, and libretro cores (fceumm, genesis-plus-gx)
 tools/eslint-rules/  custom ESLint rules: platform-purity + determinism
 docs/                the design plan; source of truth for decisions
 ```

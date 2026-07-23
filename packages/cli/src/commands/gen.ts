@@ -22,6 +22,8 @@ import type { CliEnv } from "../env.js";
 import { EXIT, type ExitCode } from "../exit-codes.js";
 import { CliError, resolveInput } from "../io.js";
 import { buildGbRom } from "../rom/gb.js";
+import { buildNesRom } from "../rom/nes.js";
+import { buildSmsRom } from "../rom/sms.js";
 
 function str(values: Record<string, ParsedValue>, key: string): string | undefined {
   return typeof values[key] === "string" ? (values[key] as string) : undefined;
@@ -81,10 +83,16 @@ export async function runGen(
     }
   }
 
-  // `rom` is assembled at this edge from the generated `asm` (the harness needs
-  // the fixed `demake` symbol prefix); core produces the data, RGBDS the ROM.
+  // `rom` is assembled at this edge: core produces the data, the family's
+  // toolchain the ROM. The GB harness consumes `asm` (with a fixed symbol); the
+  // NES harness consumes the `bin` blobs.
   const wantRom = format === "rom";
-  const coreFormat: CodegenFormat = wantRom ? "asm" : format;
+  const romFamily = wantRom ? getConsole(consoleId).codegen.family : "";
+  const coreFormat: CodegenFormat = wantRom
+    ? romFamily === "nes" || romFamily === "sms"
+      ? "bin"
+      : "asm"
+    : format;
   const userSymbol = str(values, "symbol");
   if (wantRom && userSymbol !== undefined && !quiet) {
     env.errOut("demake: warning: --symbol is ignored for --format rom (the harness pins it).\n");
@@ -114,15 +122,24 @@ export async function runGen(
         `${spec.id} does not support --format rom`,
       );
     }
-    if (spec.codegen.family !== "gb") {
+    if (spec.codegen.family === "gb") {
+      const rom = buildGbRom(env, spec, result.artifacts[0]!.bytes);
+      artifacts = [
+        { suffix: spec.color.model === "rgb" ? ".gbc" : ".gb", kind: "rom", bytes: rom },
+      ];
+    } else if (spec.codegen.family === "nes") {
+      const rom = buildNesRom(env, spec, result);
+      artifacts = [{ suffix: ".nes", kind: "rom", bytes: rom }];
+    } else if (spec.codegen.family === "sms") {
+      const rom = buildSmsRom(env, spec, result);
+      artifacts = [{ suffix: spec.id === "gg" ? ".gg" : ".sms", kind: "rom", bytes: rom }];
+    } else {
       throw new CliError(
         EXIT.UNAVAILABLE,
         "E_TOOLCHAIN_MISSING",
         `rom building for the '${spec.codegen.family}' family is not implemented yet`,
       );
     }
-    const rom = buildGbRom(env, spec, result.artifacts[0]!.bytes);
-    artifacts = [{ suffix: spec.color.model === "rgb" ? ".gbc" : ".gb", kind: "rom", bytes: rom }];
   }
 
   const written = writeArtifacts(env, artifacts, output, source, force, json);
