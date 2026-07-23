@@ -1,0 +1,19 @@
+{
+  "name": "@demake/core",
+  "version": "0.0.1",
+  "description": "Name reserved for the demake conversion engine: pipeline, console specs, and codegen. Full release coming soon.",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "demake",
+    "retro",
+    "image-conversion",
+    "placeholder"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

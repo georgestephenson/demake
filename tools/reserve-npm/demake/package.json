@@ -1,0 +1,18 @@
+{
+  "name": "demake",
+  "version": "0.0.1",
+  "description": "Name reserved for the demake project — convert any image into hardware-compliant art and displayable code for 8/16-bit-era consoles and handhelds. Full release coming soon.",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "demake",
+    "retro",
+    "gameboy",
+    "nes",
+    "pixel-art",
+    "placeholder"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}
