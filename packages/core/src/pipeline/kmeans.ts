@@ -78,6 +78,13 @@ function kmeansppInit(points: Points, k: number, prng: Prng, lWeight: number): n
 /**
  * Cluster `points` into at most `k` lattice-snapped colors.
  *
+ * With `collapse`, each converged centroid is replaced by the *actual member
+ * color* (lattice-snapped) carrying the most weight in its cluster — the
+ * predecessor's "keep colours that exist in the art rather than mushy
+ * averages". A weighted mean of two distinct flat regions is a blend neither
+ * region contains; collapsing keeps flat art flat and saturated. Photos prefer
+ * the mean (smoother ramps), so the flag is profile-driven.
+ *
  * @returns the fitted palette (deduplicated hardware colors, ≤ k entries).
  */
 export function latticeKmeans(
@@ -87,6 +94,7 @@ export function latticeKmeans(
   prng: Prng,
   iterations: number,
   lWeight: number,
+  collapse = false,
 ): HwColor[] {
   if (points.count === 0) {
     return [space.snapLinear(0, 0, 0)];
@@ -154,7 +162,53 @@ export function latticeKmeans(
     if (!moved && iter > 0) break;
   }
 
+  if (collapse) {
+    centers = collapseToMembers(points, centers, space, lWeight);
+  }
   return dedupeColors(centers);
+}
+
+/** Replace each center with its cluster's highest-weight actual member color. */
+function collapseToMembers(
+  points: Points,
+  centers: HwColor[],
+  space: HwColorSpace,
+  lWeight: number,
+): HwColor[] {
+  // Accumulate member weight per (cluster, snapped lattice color).
+  const tallies: Map<string, { color: HwColor; weight: number }>[] = centers.map(() => new Map());
+  for (let i = 0; i < points.count; i += 1) {
+    const lab = labAt(points, i);
+    let best = 0;
+    let bestD = Infinity;
+    for (let c = 0; c < centers.length; c += 1) {
+      const d = deltaESq(lab, centers[c]!.lab, lWeight);
+      if (d < bestD) {
+        bestD = d;
+        best = c;
+      }
+    }
+    const lin = oklabToLinear(lab);
+    const snapped = space.snapLinear(lin.r, lin.g, lin.b);
+    const key = snapped.codes.join(",");
+    const tally = tallies[best]!;
+    const entry = tally.get(key);
+    if (entry) entry.weight += points.weight[i]!;
+    else tally.set(key, { color: snapped, weight: points.weight[i]! });
+  }
+  return centers.map((center, c) => {
+    let bestColor = center;
+    let bestWeight = -1;
+    let bestKey = "";
+    for (const [key, { color, weight }] of tallies[c]!) {
+      if (weight > bestWeight || (weight === bestWeight && key < bestKey)) {
+        bestWeight = weight;
+        bestColor = color;
+        bestKey = key;
+      }
+    }
+    return bestColor;
+  });
 }
 
 function worstFitPoint(points: Points, centers: HwColor[], lWeight: number): number {

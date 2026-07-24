@@ -13,7 +13,7 @@
 import { channelCode, expandChannel, type ChannelBits, type Rgb8 } from "../color/lattice.js";
 import { deltaESq, linearToOklab, type Oklab } from "../color/oklab.js";
 import { linearToSrgb8, srgb8ToLinear } from "../color/srgb.js";
-import { dacDecodeCodes, type DacModel } from "../image/dac.js";
+import { authorSpaceUsesRaw, dacDecodeCodes, type DacModel } from "../image/dac.js";
 import type { ConsoleSpec } from "../consoles/types.js";
 
 import type { PaletteColor } from "./types.js";
@@ -62,10 +62,14 @@ function buildHwColor(codes: [number, number, number], bits: ChannelBits, dac: D
     b: expandChannel(codes[2], bits[2]),
   };
   const display = dacDecodeCodes(dac, codes, bits);
+  // Distances are measured in the console's *author space*: the raw lattice
+  // expansion when the DAC model is a panel filter (cgb), the DAC-decoded color
+  // when the model is the hardware DAC itself (see `authorSpaceUsesRaw`).
+  const author = authorSpaceUsesRaw(dac) ? raw : display;
   const lab = linearToOklab(
-    srgb8ToLinear(display.r),
-    srgb8ToLinear(display.g),
-    srgb8ToLinear(display.b),
+    srgb8ToLinear(author.r),
+    srgb8ToLinear(author.g),
+    srgb8ToLinear(author.b),
   );
   return { codes, raw, display, lab };
 }
@@ -98,10 +102,22 @@ export function makeFixedMasterColorSpace(spec: ConsoleSpec): HwColorSpace {
     }
     return best;
   };
+  // Snapping is a full master-palette scan; quantize the input to 8-bit sRGB
+  // (far finer than any master palette's spacing) and memoize per 8-bit color,
+  // turning per-pixel snapping into a hash lookup with a canonical result.
+  const snapCache = new Map<number, HwColor>();
   return {
     bits: [8, 8, 8],
     snapLinear(r, g, b) {
-      return nearest(linearToOklab(r, g, b));
+      const r8 = linearToSrgb8(r);
+      const g8 = linearToSrgb8(g);
+      const b8 = linearToSrgb8(b);
+      const key = (r8 << 16) | (g8 << 8) | b8;
+      const hit = snapCache.get(key);
+      if (hit) return hit;
+      const c = nearest(linearToOklab(srgb8ToLinear(r8), srgb8ToLinear(g8), srgb8ToLinear(b8)));
+      snapCache.set(key, c);
+      return c;
     },
     fromCodes(codes) {
       return entries[codes[0]] ?? entries[0]!;

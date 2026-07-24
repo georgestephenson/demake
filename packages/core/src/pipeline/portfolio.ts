@@ -23,6 +23,12 @@ export interface Candidate {
   scale: ScaleKernel;
   dither: { alg: DitherAlg; strength: number };
   affinity: Profile;
+  /**
+   * Flat-art recovery: denoise to a master palette before the constrained fit
+   * and collapse k-means centroids to real member colors (doc 04 §Stage 3/4).
+   * On by the `art` candidates; photos keep the smoother mean centroids.
+   */
+  clean?: boolean;
   description: string;
 }
 
@@ -38,6 +44,7 @@ const TILED_PORTFOLIO: readonly Candidate[] = [
     scale: "majority",
     dither: { alg: "none", strength: 0 },
     affinity: "art",
+    clean: true,
     description: "Majority downscale, hard palette fit, no dither (the predecessor recipe).",
   },
   {
@@ -46,6 +53,7 @@ const TILED_PORTFOLIO: readonly Candidate[] = [
     scale: "majority",
     dither: { alg: "bayer2", strength: 60 },
     affinity: "art",
+    clean: true,
     description: "Majority downscale with a light ordered dither for subtle shading.",
   },
   {
@@ -194,6 +202,7 @@ export function buildPortfolio(
           ? { alg: opts.dither.alg, strength: opts.dither.strength ?? 80 }
           : { alg: "none", strength: 0 },
         affinity: profile,
+        clean: profile === "art",
         description: "Custom candidate from pinned stage flags.",
       },
     ];

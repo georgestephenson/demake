@@ -78,20 +78,27 @@ disqualified candidate is reported with its reason; if *all* candidates are
 disqualified that's an internal error (`E_NO_VALID_CANDIDATE`), never a silent bad
 output.
 
-**2. Fidelity metrics.** Computed between the **DAC-decoded** result and a fixed
-reference: the source downscaled to output dimensions with Lanczos3 in linear light
-— fixed regardless of the candidate's own kernel, so no candidate can game the
-reference. Each metric is also computed on a σ=0.5px Gaussian-integrated variant of
-both images ("viewing distance" pass) so ordered/diffused dither is credited for
-the color it simulates, not just penalized as noise:
+**2. Fidelity metrics.** Computed between the result rendered in the console's
+**author space** (see §Color distance) and a fixed reference: the source
+downscaled to output dimensions — fixed regardless of the candidate's own
+kernel, so no candidate can game the reference. The reference kernel is fixed
+*per profile*: `photo` uses Lanczos3 in linear light; `art` uses the blend-free
+majority kernel, because a low-pass reference would penalize exactly the
+crispness flat art wants (calibrated on the Phase-2 eval battery — AA'd pixel
+art judged against a Lanczos reference selects blurry winners). Each metric is
+also computed on a σ=0.5px Gaussian-integrated variant of both images ("viewing
+distance" pass) so ordered/diffused dither is credited for the color it
+simulates, not just penalized as noise:
 
 | Metric | Captures |
 |---|---|
 | Mean + p95 Oklab ΔE | overall + worst-region color loss |
 | MS-SSIM (L channel) | structural preservation |
 | Gradient-map correlation (Sobel, L) | edge/silhouette clarity |
-| Hue/chroma histogram EMD | gamut retention (did we lose the reds?) |
-| Flat-region noise energy | dither speckle where the source was smooth |
+| Chroma-weighted hue error | hue rotations (blue→teal, yellow→orange) a small ΔE can hide |
+| Symmetric chroma ratio | gamut retention — washout *and* over-saturation |
+| **Palette recall** | each dominant source color has a close match among the colors the output actually uses — "regions keep their color", even when per-pixel ΔE stays moderate |
+| Phantom-edge rate | dither speckle / fit seams on neighbor pairs the source keeps flat (real edges don't count) |
 | Banding index (false-contour detector on smooth ramps) | posterization |
 | High-frequency energy ratio | fine detail/text survival |
 | **Highlight retention** | detect distinct extreme features in the source (local L/chroma maxima, small area, high local contrast — specular dots, rim light, catchlights); score their *existence and contrast* in the output, area-independent, so losing a 6-pixel highlight costs as much as losing a large region |
@@ -200,6 +207,12 @@ ever show (e.g. GBC bg: up to 32; NES: up to 13; MD: up to 61; SNES mode 3: 256)
   the hardware lattice at every iteration (snap-to-RGB555/333/444 inside the loop,
   not after — avoids post-hoc drift, the same reason `prep-portraits.py` snaps then
   remaps).
+- **Centroid collapse (`art` profile)**: after convergence each centroid is replaced
+  by its cluster's highest-weight *actual member color* (lattice-snapped) — the
+  predecessor's "keep colours that exist in the art rather than mushy averages". A
+  weighted mean of two distinct flat regions is a blend neither region contains;
+  collapsing is what keeps flat art flat and saturated. Photos keep the mean
+  (smoother ramps), so the flag rides the candidate's profile affinity.
 - **Fixed-master consoles** (NES/TMS/2600/7800): k-medoids over the master palette —
   centers *are* master entries by construction. Perceptual distance uses the
   console's DAC model (NES NTSC decode, TMS levels) so we match what the screen
@@ -289,12 +302,15 @@ the merge count in the manifest; `--strict` errors instead of merging.
 
 ## Stage 7 — DAC snap & encode
 
-- Final palette values snapped to hardware lattice (already true by construction)
-  and *previewed* through the DAC model (GBC LCD curve — the CGB expansion the
-  original tool used —, NES NTSC decode, MD 3-bit DAC ramp). Output PNG stores
-  **DAC-decoded sRGB** by default (looks right everywhere) with the raw hardware
-  values in the manifest; `--raw-colors` stores naive expansion instead. The choice
-  is recorded, and doc 10's emulator comparison consumes the same DAC model.
+- Final palette values snapped to hardware lattice (already true by construction).
+  Output PNG stores the console's **author-space** colors by default (see §Color
+  distance): the raw lattice expansion on panel-filter consoles (GBC), the
+  DAC-decoded color where the DAC model *is* the hardware output (NES NTSC decode,
+  MD 3-bit DAC ramp, mono ramps). `--dac-colors` stores the full DAC/panel
+  simulation instead (the hardware-screen preview); `--raw-colors` forces raw
+  expansion everywhere. The raw hardware values always travel in the manifest,
+  `inspect`/`gen` accept a compliant PNG in either encoding, and doc 10's emulator
+  comparison consumes the same DAC model.
 - Encode indexed PNG (bit depth = smallest that fits), palettes ordered as fitted;
   optional `--emit-manifest out.json`.
 
@@ -325,8 +341,17 @@ the merge count in the manifest; `--strict` errors instead of merging.
   means). ΔE = weighted Euclidean in Oklab with L-weight slightly >1 for `art`
   profile (protects contrast/edges) — calibrated in Phase 2 against a small human-
   judged fixture set, then frozen.
-- All distances computed on **DAC-decoded** colors so "what the hardware shows" is
-  what we optimize.
+- All distances computed in the console's **author space** — the color encoding
+  the fit optimizes and the PNG stores. Where the DAC model describes the
+  console's *own output* (NES NTSC decode, MD VDP levels, mono ramps) that is the
+  DAC-decoded color: what the hardware emits is what we optimize. Where the model
+  describes a **panel filter** on top of an RGB DAC (the CGB LCD curve), author
+  space is the raw lattice expansion: period artists authored saturated RGB555
+  and let the panel mute it, emulators default to little/no correction, and the
+  doc-10 GB E2E captures SameBoy with color correction *disabled*. Fitting
+  through the panel filter bakes its washout into the chosen codes (yellow→
+  orange, blue→teal — the predecessor comparison that triggered this rule);
+  the filter stays available as an opt-in simulation (`--dac-colors`).
 - The predecessor weighted-RGB metric (R2/G4/B3) is retained as `--metric wrgb` for
   byte-reproducing legacy outputs in tests.
 

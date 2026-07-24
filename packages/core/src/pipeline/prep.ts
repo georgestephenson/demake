@@ -11,6 +11,7 @@
 
 import { DemakeError } from "../errors.js";
 import { makePrng } from "../math/prng.js";
+import { authorSpaceUsesRaw } from "../image/dac.js";
 import { decodeImage } from "../image/decode.js";
 import { getConsole } from "../consoles/registry.js";
 import type { ConsoleSpec, TileLayout } from "../consoles/types.js";
@@ -73,6 +74,8 @@ function runCandidate(
     kmeansIters: eff.kmeansIters,
     refineRounds: eff.refineRounds,
     lWeight: profile === "art" ? 1.2 : 1,
+    denoise: candidate.clean === true,
+    collapse: candidate.clean === true,
   };
   const space = makeColorSpace(spec);
   const layout = spec.layout as TileLayout;
@@ -142,6 +145,14 @@ export async function prep(input: Uint8Array, options: PrepOptions): Promise<Pre
     });
   }
 
+  // Output/judging color space: raw lattice expansion in the console's author
+  // space (panel-filter DACs like the CGB LCD are simulation-only), DAC-decoded
+  // otherwise; `--raw-colors` / `--dac-colors` force one or the other.
+  const useRaw =
+    options.dacColors === true
+      ? false
+      : options.rawColors === true || authorSpaceUsesRaw(spec.color.dac);
+
   const srcLin = normalize(source, options.background ?? "#000000");
   const candidates = buildPortfolio(spec, analysis, options);
   if (candidates.length === 0) {
@@ -154,7 +165,7 @@ export async function prep(input: Uint8Array, options: PrepOptions): Promise<Pre
     );
   }
 
-  const refLab = referenceLab(srcLin, size.w, size.h);
+  const refLab = referenceLab(srcLin, size.w, size.h, profile === "art" ? "art" : "photo");
   const scores: CandidateScore[] = [];
   let winner: {
     candidate: Candidate;
@@ -186,7 +197,7 @@ export async function prep(input: Uint8Array, options: PrepOptions): Promise<Pre
       continue;
     }
 
-    const rendered = renderCompliant(run.image, options.rawColors === true);
+    const rendered = renderCompliant(run.image, useRaw);
     const resLab = labFromRgba(rendered);
     const judged = scoreLab(refLab, resLab, size.w, size.h, profile === "art" ? "art" : "photo");
     scores.push({ strategy: candidate.id, aggregate: judged.aggregate, metrics: judged.metrics });
@@ -211,7 +222,7 @@ export async function prep(input: Uint8Array, options: PrepOptions): Promise<Pre
     });
   }
 
-  const png = encodeCompliantPng(winner.image, options.rawColors === true);
+  const png = encodeCompliantPng(winner.image, useRaw);
   const decisions: AutoDecisions = {
     profile: profile === "art" ? "art" : "photo",
     size,

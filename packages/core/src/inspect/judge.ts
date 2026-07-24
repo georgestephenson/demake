@@ -25,7 +25,8 @@ import { resize } from "../pipeline/geometry.js";
 import type { LinImage, Profile } from "../pipeline/types.js";
 
 /** Metric identifiers (a subset of doc 04's table; extended over time). */
-export type MetricId = "meanDeltaE" | "p95DeltaE" | "structure" | "gamut";
+export type MetricId =
+  "meanDeltaE" | "p95DeltaE" | "structure" | "gamut" | "hue" | "noise" | "palette";
 
 /** Judge output for one image pair. */
 export interface JudgeResult {
@@ -40,13 +41,37 @@ export interface JudgeResult {
   rawP95DeltaE: number;
 }
 
-/** Fixed normalization anchors (provisional; calibrated & frozen in Phase 2). */
-const ANCHORS = { meanDeltaE: 0.05, p95DeltaE: 0.16 };
+/** Fixed normalization anchors (calibrated on the Phase-2 eval battery). */
+const ANCHORS = { meanDeltaE: 0.05, p95DeltaE: 0.16, hue: 0.25, noise: 0.02, palette: 0.05 };
 
-/** Per-profile metric weights (provisional; calibrated & frozen in Phase 2). */
+/**
+ * Per-profile metric weights (calibrated on the Phase-2 eval battery).
+ *
+ * The `art` profile leans on the region-color metrics: `palette` (did each
+ * dominant source color survive into the output?), `noise` (phantom edges —
+ * dither speckle on regions the source keeps flat), and `hue` (chroma-weighted
+ * hue rotation). Photos tolerate dither and value smooth ramps, so `noise`
+ * barely counts there and mean ΔE dominates.
+ */
 const WEIGHTS: Record<"art" | "photo", Record<MetricId, number>> = {
-  art: { meanDeltaE: 1, p95DeltaE: 1.1, structure: 1.4, gamut: 0.7 },
-  photo: { meanDeltaE: 1.3, p95DeltaE: 1, structure: 1, gamut: 1 },
+  art: {
+    meanDeltaE: 1,
+    p95DeltaE: 1,
+    structure: 1.2,
+    gamut: 0.9,
+    hue: 1.2,
+    noise: 1.3,
+    palette: 1.4,
+  },
+  photo: {
+    meanDeltaE: 1.3,
+    p95DeltaE: 1,
+    structure: 1,
+    gamut: 1,
+    hue: 0.9,
+    noise: 0.4,
+    palette: 0.5,
+  },
 };
 
 /** Convert an RGBA raster to per-pixel Oklab (3 floats per pixel). */
@@ -133,6 +158,139 @@ function correlation01(a: Float32Array, b: Float32Array): number {
   return (r + 1) / 2;
 }
 
+/**
+ * Chroma-weighted hue error: the mean distance between *normalized* chroma
+ * vectors, weighted by how chromatic both pixels are. Catches hue rotations
+ * (blue→teal, yellow→orange) that a small ΔE can hide; desaturation is the
+ * gamut metric's job, so near-neutral pixels contribute nothing here.
+ */
+function hueError(refLab: Float32Array, resLab: Float32Array, n: number): number {
+  let sum = 0;
+  let weightSum = 0;
+  for (let i = 0; i < n; i += 1) {
+    const o = i * 3;
+    const ra = refLab[o + 1]!;
+    const rb = refLab[o + 2]!;
+    const ca = resLab[o + 1]!;
+    const cb = resLab[o + 2]!;
+    const refC = Math.sqrt(ra * ra + rb * rb);
+    const resC = Math.sqrt(ca * ca + cb * cb);
+    const w = Math.min(refC, resC);
+    if (w <= 0.02) continue; // neutral in either image → no defined hue
+    const dua = ra / refC - ca / resC;
+    const dub = rb / refC - cb / resC;
+    sum += Math.sqrt(dua * dua + dub * dub) * w;
+    weightSum += w;
+  }
+  return weightSum <= 1e-9 ? 0 : sum / weightSum;
+}
+
+/**
+ * Phantom-edge rate: the fraction of neighbor pairs the *reference* keeps flat
+ * where the *result* shows a strong step — dither speckle and fit seams on flat
+ * regions. Real edges (present in the reference) don't count against it.
+ */
+function phantomEdgeRate(
+  refLab: Float32Array,
+  resLab: Float32Array,
+  width: number,
+  height: number,
+): number {
+  const FLAT_SQ = 0.02 * 0.02;
+  const EDGE_SQ = 0.055 * 0.055;
+  let flat = 0;
+  let phantom = 0;
+  const pairSq = (lab: Float32Array, i: number, j: number): number => {
+    const oi = i * 3;
+    const oj = j * 3;
+    const dL = lab[oi]! - lab[oj]!;
+    const da = lab[oi + 1]! - lab[oj + 1]!;
+    const db = lab[oi + 2]! - lab[oj + 2]!;
+    return dL * dL + da * da + db * db;
+  };
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const i = y * width + x;
+      if (x < width - 1 && pairSq(refLab, i, i + 1) < FLAT_SQ) {
+        flat += 1;
+        if (pairSq(resLab, i, i + 1) > EDGE_SQ) phantom += 1;
+      }
+      if (y < height - 1 && pairSq(refLab, i, i + width) < FLAT_SQ) {
+        flat += 1;
+        if (pairSq(resLab, i, i + width) > EDGE_SQ) phantom += 1;
+      }
+    }
+  }
+  return flat === 0 ? 0 : phantom / flat;
+}
+
+/**
+ * Palette recall: cluster the reference into its dominant coarse colors and ask
+ * how close the *nearest color the result actually uses* comes to each, weighted
+ * by coverage. This is the "regions keep their color" metric — a wholesale
+ * region-color swap tanks it even when per-pixel ΔE stays moderate.
+ */
+function paletteRecall(refLab: Float32Array, resLab: Float32Array, n: number): number {
+  // Dominant reference colors: coarse Oklab buckets with mean lab + coverage.
+  const buckets = new Map<number, { L: number; a: number; b: number; count: number }>();
+  for (let i = 0; i < n; i += 1) {
+    const o = i * 3;
+    const L = refLab[o]!;
+    const a = refLab[o + 1]!;
+    const b = refLab[o + 2]!;
+    const key =
+      (Math.max(0, Math.min(24, Math.round(L * 24))) << 12) |
+      (Math.max(0, Math.min(63, Math.round((a + 0.5) * 48))) << 6) |
+      Math.max(0, Math.min(63, Math.round((b + 0.5) * 48)));
+    const e = buckets.get(key);
+    if (e) {
+      e.L += L;
+      e.a += a;
+      e.b += b;
+      e.count += 1;
+    } else {
+      buckets.set(key, { L, a, b, count: 1 });
+    }
+  }
+  const dominant = [...buckets.values()]
+    .filter((e) => e.count >= Math.max(4, n * 0.005))
+    .sort((x, y) => y.count - x.count)
+    .slice(0, 24);
+  if (dominant.length === 0) return 1;
+
+  // Distinct result colors (hardware palettes → few dozen at most).
+  const resColors: Oklab[] = [];
+  const seen = new Set<number>();
+  for (let i = 0; i < n; i += 1) {
+    const o = i * 3;
+    const key =
+      (Math.round(resLab[o]! * 512) << 20) ^
+      (Math.round((resLab[o + 1]! + 0.5) * 512) << 10) ^
+      Math.round((resLab[o + 2]! + 0.5) * 512);
+    if (!seen.has(key)) {
+      seen.add(key);
+      resColors.push(labAt(resLab, i));
+    }
+  }
+
+  let score = 0;
+  let weight = 0;
+  for (const d of dominant) {
+    const target: Oklab = { L: d.L / d.count, a: d.a / d.count, b: d.b / d.count };
+    let best = Infinity;
+    for (const c of resColors) {
+      const dL = target.L - c.L;
+      const da = target.a - c.a;
+      const db = target.b - c.b;
+      const dist = dL * dL + da * da + db * db;
+      if (dist < best) best = dist;
+    }
+    score += anchorGoodness(Math.sqrt(best), ANCHORS.palette) * d.count;
+    weight += d.count;
+  }
+  return weight <= 0 ? 1 : score / weight;
+}
+
 /** Score result Oklab against reference Oklab (same dimensions). */
 export function scoreLab(
   refLab: Float32Array,
@@ -166,13 +324,20 @@ export function scoreLab(
     gradientMag(refLab, width, height),
     gradientMag(resLab, width, height),
   );
-  const gamut = refChroma <= 1e-6 ? 1 : Math.min(1, resChroma / refChroma);
+  // Symmetric chroma fidelity: washing out *and* over-saturating both count.
+  const gamut =
+    refChroma <= 1e-6 && resChroma <= 1e-6
+      ? 1
+      : Math.min(refChroma, resChroma) / Math.max(refChroma, resChroma, 1e-6);
 
   const metrics: Record<MetricId, number> = {
     meanDeltaE: anchorGoodness(mean, ANCHORS.meanDeltaE),
     p95DeltaE: anchorGoodness(p95, ANCHORS.p95DeltaE),
     structure,
     gamut,
+    hue: anchorGoodness(hueError(refLab, resLab, n), ANCHORS.hue),
+    noise: anchorGoodness(phantomEdgeRate(refLab, resLab, width, height), ANCHORS.noise),
+    palette: paletteRecall(refLab, resLab, n),
   };
   const aggregate = weightedGeoMean(metrics, WEIGHTS[profile]);
   return { aggregate, metrics, profile, width, height, rawMeanDeltaE: mean, rawP95DeltaE: p95 };
@@ -206,16 +371,27 @@ export function judge(
   const result = decodeImage(resultBytes);
   const source = decodeImage(sourceBytes);
   const srcLin = normalize(source);
-  const refLin = resize(srcLin, result.width, result.height, "lanczos3");
-  const refLab = labFromLin(refLin);
-  const resLab = labFromRgba(result);
   const profile = options.profile && options.profile !== "auto" ? options.profile : "photo";
+  const refLab = referenceLab(srcLin, result.width, result.height, profile);
+  const resLab = labFromRgba(result);
   return scoreLab(refLab, resLab, result.width, result.height, profile);
 }
 
-/** Build the fixed reference Oklab for a source at output dimensions. */
-export function referenceLab(source: LinImage, width: number, height: number): Float32Array {
-  const ref = resize(source, width, height, "lanczos3");
+/**
+ * Build the fixed reference Oklab for a source at output dimensions. The
+ * reference is fixed *per profile* — no candidate can game it by choosing its
+ * own kernel: `art` uses the blend-free majority kernel (the reference is what
+ * the art's flat colors look like at output size — a soft Lanczos reference
+ * would penalize exactly the crispness flat art wants), `photo` uses Lanczos3
+ * in linear light.
+ */
+export function referenceLab(
+  source: LinImage,
+  width: number,
+  height: number,
+  profile: "art" | "photo" = "photo",
+): Float32Array {
+  const ref = resize(source, width, height, profile === "art" ? "majority" : "lanczos3");
   return labFromLin(ref);
 }
 

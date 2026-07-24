@@ -47,7 +47,10 @@ PRNG seed for reproducible restarts (default fixed).
 Matte color for compositing transparency. (default: #000000)
 .TP
 \fB\-\-raw-colors\fR
-Store naive\-expansion colors instead of DAC\-decoded.
+Force raw lattice\-expansion colors (the default on panel\-filter consoles like GBC).
+.TP
+\fB\-\-dac-colors\fR
+Store DAC\-simulated display colors (hardware screen preview) instead of raw.
 .TP
 \fB\-\-strict\fR
 Fail rather than degrade (no tile merging).

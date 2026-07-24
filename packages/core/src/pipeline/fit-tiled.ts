@@ -22,12 +22,20 @@ import type { HwColor, HwColorSpace } from "./hwcolor.js";
 import { latticeKmeans, type Points } from "./kmeans.js";
 import type { LinImage } from "./types.js";
 
-/** Tunable knobs derived from `--effort` and the profile. */
+/** Tunable knobs derived from `--effort`, the profile, and the candidate. */
 export interface FitParams {
   restarts: number;
   kmeansIters: number;
   refineRounds: number;
   lWeight: number;
+  /**
+   * Denoise to a global master palette before the constrained fit (the
+   * predecessor's step 1): collapses anti-aliasing halos and upscaler blur back
+   * to the art's intended flat colors, so tile fitting sees clean histograms.
+   */
+  denoise?: boolean;
+  /** Collapse k-means centroids to real member colors (see {@link latticeKmeans}). */
+  collapse?: boolean;
 }
 
 /** The fitter's raw output (pre-dither, pre-budget). */
@@ -169,6 +177,9 @@ export function fitTiled(
   const K = layout.subPalettes.size;
 
   const pre = precompute(img);
+  if (params.denoise) {
+    denoiseToMaster(pre, spec, space, prng, params);
+  }
 
   // Pixel index lists per cell (built once; cell membership is fixed).
   const cellPixels: Int32Array[] = [];
@@ -227,6 +238,53 @@ export function fitTiled(
 
   const result = best!;
   return { ...result, pixelLab: pre.lab };
+}
+
+/**
+ * Quantize the working labs to a small master palette (weighted, collapsed
+ * k-means over all pixels) in place. `pixelLab` downstream — cell fitting,
+ * remap, dither targets — then chases the art's flat colors, not the AA noise
+ * around them. The master size is generous (up to 2× the console's total slot
+ * count, capped at 32) so it denoises without pre-empting the constrained fit.
+ */
+function denoiseToMaster(
+  pre: Precomputed,
+  spec: ConsoleSpec,
+  space: HwColorSpace,
+  prng: Prng,
+  params: FitParams,
+): void {
+  const layout = spec.layout as TileLayout;
+  const slots = layout.subPalettes.count * layout.subPalettes.size;
+  const masterSize = Math.min(32, Math.max(8, slots * 2));
+  const n = pre.weight.length;
+  const points: Points = { lab: pre.lab, weight: pre.weight, count: n };
+  const master = latticeKmeans(
+    points,
+    masterSize,
+    space,
+    prng,
+    params.kmeansIters,
+    params.lWeight,
+    true,
+  );
+  if (master.length < 2) return;
+  for (let i = 0; i < n; i += 1) {
+    const o = i * 3;
+    const lab: Oklab = { L: pre.lab[o]!, a: pre.lab[o + 1]!, b: pre.lab[o + 2]! };
+    let best = master[0]!;
+    let bestD = Infinity;
+    for (const c of master) {
+      const d = deltaESq(lab, c.lab, params.lWeight);
+      if (d < bestD) {
+        bestD = d;
+        best = c;
+      }
+    }
+    pre.lab[o] = best.lab.L;
+    pre.lab[o + 1] = best.lab.a;
+    pre.lab[o + 2] = best.lab.b;
+  }
 }
 
 function runOnce(
@@ -391,7 +449,15 @@ function refitPalettes(
       continue;
     }
     const points = pointsFor(pre, Int32Array.from(members), members.length);
-    const fitted = latticeKmeans(points, freeK, space, prng, params.kmeansIters, params.lWeight);
+    const fitted = latticeKmeans(
+      points,
+      freeK,
+      space,
+      prng,
+      params.kmeansIters,
+      params.lWeight,
+      params.collapse === true,
+    );
     palettes.push(reserved ? withReserved(reserved, fitted, K) : fitted);
   }
   return palettes;
