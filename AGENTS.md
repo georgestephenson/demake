@@ -138,7 +138,7 @@ Two files plus fixtures (doc 02 §Extensibility):
 
 - **The prep objective is perceived equivalence, not per-pixel closeness**
   (doc 04 §The objective — a deliberate direction change): under palette
-  pressure, keeping regions *distinct* and exaggerating tone/chroma the way
+  pressure, keeping regions _distinct_ and exaggerating tone/chroma the way
   period artists did beats minimizing raw ΔE; a bounded coherent grade is
   nearly free to the judge. Never "improve" the judge back toward pure
   per-pixel ΔE, and keep round-trip idempotence on authored art as the
