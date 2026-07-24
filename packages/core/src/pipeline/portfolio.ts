@@ -19,11 +19,16 @@ import type { DitherAlg, Effort, PrepOptions, Profile, ScaleKernel } from "./typ
 /** A concrete candidate strategy. */
 export interface Candidate {
   id: string;
-  kind: "tiled" | "mono";
+  kind: "tiled" | "mono" | "tms";
   scale: ScaleKernel;
   dither: { alg: DitherAlg; strength: number };
   affinity: Profile;
   description: string;
+}
+
+/** Whether a spec uses the TMS9918 Graphics II ("row-pair") fit path. */
+export function isTms(spec: ConsoleSpec): boolean {
+  return spec.layout.kind === "scanline" && spec.layout.strategy === "tms-rowpair";
 }
 
 const TILED_PORTFOLIO: readonly Candidate[] = [
@@ -96,9 +101,38 @@ const MONO_PORTFOLIO: readonly Candidate[] = [
   },
 ];
 
+const TMS_PORTFOLIO: readonly Candidate[] = [
+  {
+    id: "tms-flat",
+    kind: "tms",
+    scale: "majority",
+    dither: { alg: "none", strength: 0 },
+    affinity: "art",
+    description: "Per-row two-color fit, no dither — flat cel shading.",
+  },
+  {
+    id: "tms-fs",
+    kind: "tms",
+    scale: "lanczos3",
+    dither: { alg: "floyd-steinberg", strength: 90 },
+    affinity: "photo",
+    description: "Per-row two-color fit with Floyd–Steinberg diffusion.",
+  },
+  {
+    id: "tms-bayer4",
+    kind: "tms",
+    scale: "box",
+    dither: { alg: "bayer4", strength: 80 },
+    affinity: "photo",
+    description: "Per-row two-color fit with ordered Bayer 4×4.",
+  },
+];
+
 /** The full candidate list for a console (for `--strategy list` / introspection). */
 export function portfolioFor(spec: ConsoleSpec): readonly Candidate[] {
-  return spec.color.model === "mono" ? MONO_PORTFOLIO : TILED_PORTFOLIO;
+  if (spec.color.model === "mono") return MONO_PORTFOLIO;
+  if (isTms(spec)) return TMS_PORTFOLIO;
+  return TILED_PORTFOLIO;
 }
 
 /** Optimizer knobs derived from `--effort`. */
@@ -149,7 +183,7 @@ export function buildPortfolio(
     candidates = [
       {
         id: `custom-${opts.scale ?? "auto"}-${opts.dither?.alg ?? "none"}`,
-        kind: spec.color.model === "mono" ? "mono" : "tiled",
+        kind: spec.color.model === "mono" ? "mono" : isTms(spec) ? "tms" : "tiled",
         scale:
           opts.scale && opts.scale !== "auto"
             ? opts.scale

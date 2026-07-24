@@ -1,15 +1,13 @@
 /**
- * Pixel-perfect SMS emulator E2E (doc 10) via libretro / genesis-plus-gx.
+ * Pixel-perfect SG-1000 emulator E2E (doc 10) via libretro / genesis-plus-gx.
  *
- * gen → SMS ROM (WLA-DX) → boot in genesis-plus-gx → capture the framebuffer →
- * assert it matches demake's DAC reference, across the same extensive battery the
- * GB family uses (flat, full-screen gradient + noise, mirror, per-cell palettes,
- * the 8×8 minimum). genesis-plus-gx renders into a 16-bit framebuffer (no 32-bit
- * path), so the comparison is in the emulator's native RGB565 precision — the
- * ground truth of what it can display. demake's `expandChannel` (full
- * bit-replication, code*85 for RGB222) matches the core's SMS color pipeline, so
- * the 565-reduced colors agree exactly. Self-skips unless WLA-DX + the libretro
- * runner/core are provisioned (`pnpm toolchains && pnpm emulator`). No Docker.
+ * gen → SG-1000 ROM (WLA-DX / Z80) → boot in genesis-plus-gx (SG-1000 mode) →
+ * capture the framebuffer → assert it matches demake's DAC reference, across the
+ * same extensive battery every console uses. The SG-1000's TMS9918 Graphics II
+ * puts two of the 16 fixed colors on each 8×1 row; the master palette is derived
+ * from the core's native RGB565 `tms_palette`, so the comparison is exact in
+ * RGB565. Self-skips unless WLA-DX + the libretro runner/core are provisioned
+ * (`pnpm toolchains && pnpm emulator`). No Docker.
  */
 
 import { execFileSync } from "node:child_process";
@@ -21,7 +19,7 @@ import { gen, getConsole, renderCompliant } from "@demake/core";
 import { describe, expect, it } from "vitest";
 
 import { makeNodeEnv } from "../src/env.js";
-import { buildSmsRom } from "../src/rom/sms.js";
+import { buildSg1000Rom } from "../src/rom/sg1000.js";
 import { countMismatches, makeBattery, readPpm, to565 } from "./_emu-battery.js";
 
 const TC = join(homedir(), ".cache", "demake", "toolchains");
@@ -33,25 +31,25 @@ const hasWla = makeNodeEnv().which("wla-z80") !== null && makeNodeEnv().which("w
 const hasEmu = existsSync(RETRORUN) && existsSync(CORE);
 const maybe = hasWla && hasEmu ? it : it.skip;
 
-// The SMS renders the full 256×192 VDP frame.
+// The SG-1000 renders the full 256×192 TMS9918 frame.
 const CASES = makeBattery(256, 192);
 
-describe("pixel-perfect SMS E2E (needs WLA-DX + libretro/genesis-plus-gx)", () => {
+describe("pixel-perfect SG-1000 E2E (needs WLA-DX + libretro/genesis-plus-gx)", () => {
   for (const [name, png] of Object.entries(CASES)) {
     maybe(
-      `sms/${name}: ROM boots in genesis-plus-gx and matches the DAC reference (RGB565)`,
+      `sg1000/${name}: ROM boots in genesis-plus-gx and matches the DAC reference (RGB565)`,
       async () => {
-        const dir = mkdtempSync(join(tmpdir(), "demake-sms-e2e-"));
+        const dir = mkdtempSync(join(tmpdir(), "demake-sg1000-e2e-"));
         try {
           // One gen result drives both the ROM and the reference (same prep run).
           const result = await gen(png, {
-            console: "sms",
+            console: "sg1000",
             format: "bin",
             symbol: "demake",
             prep: { effort: "fast" },
           });
-          const romPath = join(dir, "out.sms");
-          writeFileSync(romPath, buildSmsRom(makeNodeEnv(), getConsole("sms"), result));
+          const romPath = join(dir, "out.sg");
+          writeFileSync(romPath, buildSg1000Rom(makeNodeEnv(), getConsole("sg1000"), result));
 
           const ppmPath = join(dir, "frame.ppm");
           execFileSync(RETRORUN, [CORE, romPath, String(FRAMES), ppmPath, dir]);

@@ -17,22 +17,29 @@ our PNG codec, color spaces, DAC models, seeded PRNG, math kernels; the
 conversion pipeline with tournament + judge; the `inspect` compliance oracle).
 Phase 2 is well advanced:
 
-- **`prep`/`inspect` for 20 consoles** — every RGB-lattice and mono raster
+- **`prep`/`inspect` for 21 consoles** — every RGB-lattice and mono raster
   platform in doc 03 (GBC/DMG, NES, SNES, MD, SMS/GG, GBA, NDS, PCE, Neo Geo,
-  WS/WSC, NGP/NGPC, VB, Pokémon Mini, Supervision, Game.com, Mega Duck), all
-  through the one generic tiled fitter + mono path. NES added `fixed-master`
-  color, 16×16 attribute cells, and the shared-backdrop constraint.
-- **Codegen** (`bin`/`asm`/`c`) for the `gb`, `nes`, and `sms` families, reached
-  via an exact-path detector, a manifest sidecar, or implicit `prep`.
-- **`--format rom`** builds bootable ROMs for GB (RGBDS), NES (cc65 NROM), and
-  SMS (WLA-DX). Every assembler is a pinned source build (`pnpm toolchains`), no
-  Docker.
-- **Pixel-perfect emulator E2E** for GB (SameBoy), NES + SMS (libretro cores via
-  one generic `emu-harness/libretro/` runner), tested across extreme images.
+  WS/WSC, NGP/NGPC, VB, Pokémon Mini, Supervision, Game.com, Mega Duck) plus the
+  SG-1000, through the one generic tiled fitter + mono path + the TMS9918
+  Graphics II per-row two-color path (`pipeline/fit-tms.ts`). NES added
+  `fixed-master` color, 16×16 attribute cells, and the shared-backdrop constraint.
+- **Codegen** (`bin`/`asm`/`c`) for the `gb`, `nes`, `sms`, `md`, and `sg1000`
+  families, reached via an exact-path detector, a manifest sidecar, or implicit
+  `prep`.
+- **`--format rom`** builds bootable ROMs for GB (RGBDS), NES (cc65 NROM), SMS +
+  GG + SG-1000 (WLA-DX / Z80), and MD/Genesis (GNU m68k binutils). The z80/6502
+  assemblers are pinned source builds; the m68k binutils is a stock distro
+  package (apt, main archive) since a well-tested one ships there — all via
+  `pnpm toolchains`, no Docker.
+- **Pixel-perfect emulator E2E** for GB (SameBoy), NES + SMS + GG + MD + SG-1000
+  (libretro cores via one generic `emu-harness/libretro/` runner), all marching
+  through the same shared extensive image battery
+  (`packages/cli/test/_emu-battery.ts`).
 
 Still to come: codegen + rom + E2E for the remaining consoles (each = a codegen
 backend, a ROM harness + toolchain, and a libretro core + DAC calibration),
-plus the framebuffer/scanline layout paths (Lynx, GBA bitmap, TMS/2600/7800).
+plus the remaining framebuffer/scanline layout paths (Lynx, GBA bitmap,
+2600/7800).
 
 ## Layout map
 
@@ -41,19 +48,19 @@ packages/core/       @demake/core — the engine (zero platform deps; ESM; ships
   src/math/          deterministic kernels (exp/log/pow/cbrt/sin) + PCG32 PRNG
   src/color/         sRGB/linear/Oklab, hardware-lattice snapping, color parsing
   src/image/         PNG codec (inflate/deflate/decode/encode), DAC models, decode dispatch
-  src/consoles/      ConsoleSpec schema + one declarative spec per console (20 of them)
-  src/pipeline/      stages 0–7, the tiled fitter, mono path, tournament (prep)
-  src/codegen/       gen: per-family backends (gb, nes, sms), exact-path detector, manifest
+  src/consoles/      ConsoleSpec schema + one declarative spec per console (21 of them)
+  src/pipeline/      stages 0–7, the tiled fitter, mono + TMS row-pair paths, tournament
+  src/codegen/       gen: per-family backends (gb, nes, sms, md, sg1000), exact-path detector
   src/inspect/       compliance oracle (inspect) + fidelity judge
 packages/cli-spec/   @demake/cli-spec — single source of truth: spec → parser, help, man
 packages/cli/        demake — thin CLI over core; re-exports core for scripting
-  src/rom/           edge: assemble `--format rom` per family (RGBDS / cc65 / WLA-DX)
+  src/rom/           edge: assemble `--format rom` per family (RGBDS / cc65 / WLA-DX / m68k)
   man/               generated roff man pages (never hand-edited)
-rom-harness/{gb,nes,sms}/  the display programs `gen --format rom` assembles
+rom-harness/{gb,nes,sms,md,sg1000}/  the display programs `gen --format rom` assembles
 emu-harness/gb/      SameBoy headless capturer for the GB pixel-perfect E2E (doc 10)
 emu-harness/libretro/  generic retrorun frontend — one capturer for every libretro core
-tools/toolchains/    provisioners (pinned source builds, cached): RGBDS, cc65, WLA-DX,
-                     SameBoy, and libretro cores (fceumm, genesis-plus-gx)
+tools/toolchains/    provisioners (cached): RGBDS, cc65, WLA-DX, SameBoy source builds;
+                     GNU m68k binutils (apt); libretro cores (fceumm, genesis-plus-gx)
 tools/eslint-rules/  custom ESLint rules: platform-purity + determinism
 docs/                the design plan; source of truth for decisions
 ```
@@ -130,6 +137,23 @@ Two files plus fixtures (doc 02 §Extensibility):
 
 - NES attribute cells are 16×16, not 8×8 — a load-bearing detail for the fitter.
 - DAC models are tested artifacts: they decide pixel-perfect emulator comparisons.
+  The MD `md-vdp` model reproduces genesis-plus-gx's Mode-5 normal-intensity
+  color exactly (its `MAKE_PIXEL(2·code, …)` in 5:6:5); the SMS/GG cores render
+  16-bit, so their E2E compares in RGB565, not 8-bit.
+- MD tile 0 is reserved blank/transparent: color index 0 is transparent and
+  reveals the second scroll plane, so the `md` codegen shifts real tiles to
+  index 1 and the harness leaves plane B pointing at the (blank) tile 0 → the
+  backdrop shows through, not stray patterns. The SMS/GG harness terminates the
+  sprite list (Y=$D0) for the analogous reason.
+- The `sms`-family ROM builder offsets the image into the name table by the VDP
+  crop margin so the Game Gear's 160×144 window lands on the art; the MD harness
+  addresses its data with absolute (not PC-relative) loads because the tile blob
+  can exceed the 68000's ±32 KiB PC-relative range.
+- SG-1000 (TMS9918 Graphics II) is _not_ a tiled sub-palette layout: its rule is
+  two colors per 8×1 row, handled by `pipeline/fit-tms.ts` and validated by a
+  dedicated oracle branch (there is no `subPalettes` on a `scanline` spec — don't
+  cast it to `TileLayout`). Its Z80 harness reuses WLA-DX; the master palette is
+  derived from genesis-plus-gx's native RGB565 `tms_palette`, not the 32-bit one.
 - The PNG encoder must stay deterministic (no libpng drift) once it exists.
 - Source imports use explicit `.js` extensions (NodeNext ESM); Vitest resolves
   them to `.ts` via the workspace alias.

@@ -22,6 +22,7 @@ import { ngp } from "./ngp.js";
 import { ngpc } from "./ngpc.js";
 import { pce } from "./pce.js";
 import { pokemini } from "./pokemini.js";
+import { sg1000 } from "./sg1000.js";
 import { sms } from "./sms.js";
 import { snes } from "./snes.js";
 import { supervision } from "./supervision.js";
@@ -54,6 +55,7 @@ const ALL: readonly ConsoleSpec[] = [
   supervision,
   gamecom,
   megaduck,
+  sg1000,
 ];
 
 const BY_KEY = (() => {

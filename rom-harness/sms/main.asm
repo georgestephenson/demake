@@ -63,6 +63,15 @@ main:
   ld hl, screen
   ld bc, screen_end - screen
   call write_vram
+  ; terminate the sprite list: SAT (VRAM $3F00) Y[0] = $D0. Fresh VRAM leaves all
+  ; 64 sprites at Y=0/X=0 pointing at the sprite pattern base ($2000 = tile 256),
+  ; which draws garbage over the top-left once the image exceeds 256 tiles.
+  xor a
+  out ($bf), a
+  ld a, $7f
+  out ($bf), a
+  ld a, $d0
+  out ($be), a
   ; enable display: reg1 = $c0 (bit7 set, bit6 display on)
   ld a, $c0
   out ($bf), a

@@ -80,6 +80,9 @@ function validColorSet(spec: ConsoleSpec): Set<number> {
 /** Validate an engine {@link CompliantImage} against its console (sound). */
 export function checkCompliantImage(image: CompliantImage, spec: ConsoleSpec): Violation[] {
   const violations: Violation[] = [];
+  if (spec.layout.kind === "scanline" && spec.layout.strategy === "tms-rowpair") {
+    return checkTmsImage(image, spec);
+  }
   if (spec.layout.kind !== "tiles") {
     return [{ code: "E_UNSUPPORTED_LAYOUT", message: `no oracle for ${spec.layout.kind} layouts` }];
   }
@@ -137,6 +140,45 @@ export function checkCompliantImage(image: CompliantImage, spec: ConsoleSpec): V
         violations.push({
           code: "E_SHARED_BACKDROP",
           message: `sub-palettes must share color 0 (the ${spec.id} backdrop)`,
+        });
+        break;
+      }
+    }
+  }
+  return violations;
+}
+
+/**
+ * TMS9918 Graphics II oracle: 256×192 max, tile-aligned, and — the defining rule
+ * — every 8×1 cell shows at most two colors, drawn from the fixed master. There
+ * is no global palette-count cap (the color table stores two colors per tile
+ * row), so palettes are validated per-cell, not against a `subPalettes.count`.
+ */
+function checkTmsImage(image: CompliantImage, spec: ConsoleSpec): Violation[] {
+  const violations: Violation[] = [];
+  if (image.width > spec.display.width || image.height > spec.display.height) {
+    violations.push({
+      code: "E_SIZE",
+      message: `${image.width}×${image.height} exceeds ${spec.id} ${spec.display.width}×${spec.display.height}`,
+    });
+  }
+  if (image.width % 8 !== 0 || image.height % 8 !== 0) {
+    violations.push({ code: "E_GRANULARITY", message: "dimensions must be multiples of 8" });
+  }
+  const valid = validColorSet(spec);
+  for (let p = 0; p < image.palettes.length; p += 1) {
+    const pal = image.palettes[p]!;
+    if (pal.colors.length > 2) {
+      violations.push({
+        code: "E_PALETTE_SIZE",
+        message: `cell palette ${p} has ${pal.colors.length} colors (> 2 per row)`,
+      });
+    }
+    for (const color of pal.colors) {
+      if (!valid.has(colorKeyRgb(color.display.r, color.display.g, color.display.b))) {
+        violations.push({
+          code: "E_OFF_LATTICE",
+          message: `cell palette ${p} has a color not in the ${spec.id} master`,
         });
         break;
       }

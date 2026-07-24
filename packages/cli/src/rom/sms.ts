@@ -61,16 +61,25 @@ export function buildSmsRom(env: CliEnv, spec: ConsoleSpec, result: GenResult): 
     );
   }
 
-  // Place the image name table top-left into a full 32-wide screen (2 bytes/entry).
+  // Place the image name table into a full 32-wide screen (2 bytes/entry). The
+  // VDP always renders a 256×192 frame; a console whose display is a windowed
+  // crop of that (the Game Gear's 160×144 LCD) shows only the central region, so
+  // the image is offset into the name table by the crop margin ((VDP−display)/2,
+  // in tiles) to land at the visible window's top-left. The SMS is full-frame, so
+  // its margin is zero and the image stays top-left.
+  const VDP_W = 256;
+  const VDP_H = 192;
   const map = blob(result, ".map.bin");
   const layout = spec.layout as TileLayout;
   const tilesX = result.image.width / layout.tileW;
   const tilesY = result.image.height / layout.tileH;
-  const screen = new Uint8Array(32 * tilesY * 2);
+  const offX = Math.floor((VDP_W - spec.display.width) / 2 / layout.tileW);
+  const offY = Math.floor((VDP_H - spec.display.height) / 2 / layout.tileH);
+  const screen = new Uint8Array(32 * (offY + tilesY) * 2);
   for (let ty = 0; ty < tilesY; ty += 1) {
     for (let tx = 0; tx < tilesX; tx += 1) {
       const s = (ty * tilesX + tx) * 2;
-      const d = (ty * 32 + tx) * 2;
+      const d = ((ty + offY) * 32 + (tx + offX)) * 2;
       screen[d] = map[s]!;
       screen[d + 1] = map[s + 1]!;
     }

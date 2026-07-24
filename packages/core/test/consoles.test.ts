@@ -54,24 +54,29 @@ describe("every registered console produces compliant prep output", () => {
       it(`${spec.id}/${name} is sound-compliant`, async () => {
         const result = await prep(png, { console: spec.id, effort: "fast" });
         expect(checkCompliantImage(result.image, spec)).toEqual([]);
-        // Structural invariants from the spec.
-        const layout = spec.layout as TileLayout;
-        expect(result.image.palettes.length).toBeLessThanOrEqual(layout.subPalettes.count);
-        for (const p of result.image.palettes) {
-          expect(p.colors.length).toBeLessThanOrEqual(layout.subPalettes.size);
-        }
         // Dimensions land on the attribute grid.
-        expect(result.image.width % layout.attribute.w).toBe(0);
-        expect(result.image.height % layout.attribute.h).toBe(0);
+        expect(result.image.width % result.image.grid.attributeW).toBe(0);
+        expect(result.image.height % result.image.grid.attributeH).toBe(0);
+        if (spec.layout.kind === "tiles") {
+          // Structural invariants from a tiled spec.
+          const layout = spec.layout as TileLayout;
+          expect(result.image.palettes.length).toBeLessThanOrEqual(layout.subPalettes.count);
+          for (const p of result.image.palettes) {
+            expect(p.colors.length).toBeLessThanOrEqual(layout.subPalettes.size);
+          }
+        } else {
+          // TMS Graphics II: at most two colors per 8×1 row cell.
+          for (const p of result.image.palettes) expect(p.colors.length).toBeLessThanOrEqual(2);
+        }
       });
     }
   }
 });
 
 describe("console registry", () => {
-  it("registers 20 consoles across three tiers with unique ids", () => {
+  it("registers 21 consoles across three tiers with unique ids", () => {
     const all = consoles();
-    expect(all.length).toBe(20);
+    expect(all.length).toBe(21);
     expect(new Set(all.map((c) => c.id)).size).toBe(all.length);
     expect(all.filter((c) => c.tier === 1).length).toBeGreaterThanOrEqual(8);
   });

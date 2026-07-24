@@ -22,7 +22,9 @@ import type { CliEnv } from "../env.js";
 import { EXIT, type ExitCode } from "../exit-codes.js";
 import { CliError, resolveInput } from "../io.js";
 import { buildGbRom } from "../rom/gb.js";
+import { buildMdRom } from "../rom/md.js";
 import { buildNesRom } from "../rom/nes.js";
+import { buildSg1000Rom } from "../rom/sg1000.js";
 import { buildSmsRom } from "../rom/sms.js";
 
 function str(values: Record<string, ParsedValue>, key: string): string | undefined {
@@ -89,7 +91,7 @@ export async function runGen(
   const wantRom = format === "rom";
   const romFamily = wantRom ? getConsole(consoleId).codegen.family : "";
   const coreFormat: CodegenFormat = wantRom
-    ? romFamily === "nes" || romFamily === "sms"
+    ? romFamily === "nes" || romFamily === "sms" || romFamily === "md" || romFamily === "sg1000"
       ? "bin"
       : "asm"
     : format;
@@ -133,6 +135,12 @@ export async function runGen(
     } else if (spec.codegen.family === "sms") {
       const rom = buildSmsRom(env, spec, result);
       artifacts = [{ suffix: spec.id === "gg" ? ".gg" : ".sms", kind: "rom", bytes: rom }];
+    } else if (spec.codegen.family === "md") {
+      const rom = buildMdRom(env, spec, result);
+      artifacts = [{ suffix: ".md", kind: "rom", bytes: rom }];
+    } else if (spec.codegen.family === "sg1000") {
+      const rom = buildSg1000Rom(env, spec, result);
+      artifacts = [{ suffix: ".sg", kind: "rom", bytes: rom }];
     } else {
       throw new CliError(
         EXIT.UNAVAILABLE,

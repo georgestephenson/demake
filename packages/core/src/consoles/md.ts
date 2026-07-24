@@ -21,7 +21,7 @@ export const md = {
     // 320-wide NTSC pixels are narrow.
     pixelAspect: [32, 35],
   },
-  color: { model: "rgb", bitsPerChannel: [3, 3, 3], dac: { kind: "linear" } },
+  color: { model: "rgb", bitsPerChannel: [3, 3, 3], dac: { kind: "md-vdp" } },
   layout: {
     kind: "tiles",
     tileW: 8,
