@@ -1,0 +1,54 @@
+name: Pages
+
+# Deploy the web app to GitHub Pages (doc 11 §pages.yml): `main` is always live,
+# and releases tag what Pages already serves. Manual runs are allowed so a Pages
+# outage or a settings change can be re-deployed without an empty commit.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/web/**"
+      - "packages/core/**"
+      - "packages/cli-spec/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; never cancel a running one mid-publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the static site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build the engine, then the app
+        run: pnpm build && pnpm build:web
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: packages/web/dist
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

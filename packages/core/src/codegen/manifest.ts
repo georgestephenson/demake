@@ -17,7 +17,7 @@ import { DemakeError } from "../errors.js";
 import { expandChannel } from "../color/lattice.js";
 import type { RgbaImage } from "../image/rgba.js";
 import type { ConsoleSpec, RGB8, TileLayout } from "../consoles/types.js";
-import type { CompliantImage, Palette, PaletteColor } from "../pipeline/types.js";
+import type { CompliantImage, Palette, PaletteColor, PrepResult } from "../pipeline/types.js";
 
 import { sourceHash } from "./provenance.js";
 
@@ -189,4 +189,43 @@ function tryApply(
     }
   }
   return { cellPalette, pixelIndex };
+}
+
+/**
+ * Build the manifest sidecar for a `prep` result (`--emit-manifest`).
+ *
+ * This lives in core, not in the CLI, because every edge must emit the *same*
+ * sidecar bytes: the CLI writes it to disk, the web app offers it as a download,
+ * and `gen --manifest` reads it back. Palette order is exactly the fitted order,
+ * which is what pins symbol layouts across regenerations.
+ */
+export function buildManifest(
+  result: PrepResult,
+  imageHash: string,
+): CodegenManifest & {
+  grid: CompliantImage["grid"];
+  decisions: PrepResult["decisions"];
+  stats: PrepResult["stats"];
+} {
+  return {
+    schemaVersion: 1,
+    console: result.image.consoleId,
+    width: result.image.width,
+    height: result.image.height,
+    imageHash,
+    grid: result.image.grid,
+    palettes: result.image.palettes.map((p) =>
+      p.colors.map((c) => ({ codes: [...c.codes], display: c.display })),
+    ),
+    decisions: result.decisions,
+    stats: result.stats,
+  };
+}
+
+/** Serialize a manifest to the exact sidecar bytes every edge writes (2-space JSON). */
+export function encodeManifest(manifest: unknown): Uint8Array {
+  const text = JSON.stringify(manifest, null, 2);
+  const bytes = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i += 1) bytes[i] = text.charCodeAt(i) & 0xff;
+  return bytes;
 }

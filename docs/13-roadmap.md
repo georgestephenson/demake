@@ -79,6 +79,19 @@ equivalent-command display, PWA, Pages deploy, Playwright + browser-determinism 
 **Done means**: github.io live; browser output byte-identical to CLI across
 Chromium/Firefox/WebKit in CI; Lighthouse ≥ 95.
 
+**Status: built.** `packages/web` ships the three-pane app on a worker-hosted
+core: console picker grouped by tier with per-console constraint summaries, the
+full doc-05 option surface (advanced options collapsed), previews with the DAC
+model and pixel-aspect correction, the fitted palette strip, fit/tile-budget
+stats, the tournament scoreboard doubling as a strategy picker, exports for
+PNG/manifest/asm/C/bin, the live equivalent-command line, option permalinks, and
+an offline service worker. `pages.yml` deploys `main` to Pages; `test-browser`
+runs the Playwright functional + **byte-identity** suites in three engines, and a
+gzipped-JS budget check guards doc 07's 300 KB. In-browser ROM assembly (the
+GB/NES stretch goal) is not implemented: the ROM button explains that and points
+at the CLI, which is what doc 07 specifies for a console whose ROM the browser
+cannot build.
+
 ## Phase 4 — Desktop app + distribution
 
 Tauri app per doc 08 (sidecar CLI, shared frontend, batch mode); Node SEA binaries;

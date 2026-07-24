@@ -29,6 +29,21 @@ export default tseslint.config(
     },
   },
   {
+    // The web app is a browser edge: DOM + worker globals, JSX, and Node only in
+    // its Vite/Playwright config and its Playwright specs (which run in Node).
+    files: ["packages/web/**/*.ts", "packages/web/**/*.tsx"],
+    languageOptions: {
+      globals: { ...globals.browser, ...globals.worker },
+      parserOptions: { ecmaFeatures: { jsx: true } },
+    },
+  },
+  {
+    files: ["packages/web/*.ts", "packages/web/test/**/*.ts", "packages/web/public/sw.js"],
+    languageOptions: {
+      globals: { ...globals.node, ...globals.serviceworker },
+    },
+  },
+  {
     // The core engine is isomorphic and deterministic — enforce it mechanically.
     // Only ES globals are in scope here; anything platform-specific is a lint error.
     files: ["packages/core/src/**/*.ts"],

@@ -11,7 +11,7 @@ A tool that converts any image into hardware-compliant art — and displayable
 code — for 8/16-bit-era consoles and handhelds up to the Nintendo DS. The full
 design lives in [`docs/`](docs/README.md); the milestone plan is
 [`docs/13-roadmap.md`](docs/13-roadmap.md). **Current status: Phase 2 complete;
-Phase 3 (web app) in progress** — the Phase-1 engine spine is live (the
+Phase 3 (web app) shipped** — the Phase-1 engine spine is live (the
 deterministic image layer: our PNG codec, color spaces, DAC models, seeded PRNG,
 math kernels; the `ConsoleSpec` schema; the tiled-and-mono conversion pipeline
 with tournament + judge; the `inspect` compliance oracle). Phase 2 landed the
@@ -64,11 +64,11 @@ tools/toolchains/    provisioners (cached): RGBDS, cc65, WLA-DX, SameBoy source 
                      GNU m68k + arm-none-eabi binutils (apt); libretro cores
                      (fceumm, genesis-plus-gx, snes9x, mgba, desmume)
 tools/eslint-rules/  custom ESLint rules: platform-purity + determinism
+tools/ci/            CI guards: E2E prerequisites, web JS budget
 docs/                the design plan; source of truth for decisions
 ```
 
-Packages not yet created (web, desktop, testdata) arrive in later phases per
-doc 02.
+Packages not yet created (desktop, testdata) arrive in later phases per doc 02.
 
 ## Golden commands
 
@@ -82,6 +82,10 @@ pnpm changeset     # add a changeset for a user-visible change
 pnpm cli -- --help # run the built CLI from source (build first)
 pnpm gen:man       # regenerate man pages from cli-spec (build first; CI checks staleness)
 pnpm eval:prep     # prep quality battery: scoreboard + side-by-side sheets (build first)
+pnpm dev:web       # run the web app against the workspace core (build core first)
+pnpm build:web     # typecheck + bundle the web app into packages/web/dist
+pnpm test:browser  # Playwright: web functional + browser-vs-Node determinism
+pnpm check:web-budget  # assert the app's gzipped JS stays under the doc-07 budget
 pnpm toolchains    # provision every assembler `gen --format rom` needs (cached)
 pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
 ```
@@ -135,6 +139,14 @@ Two files plus fixtures (doc 02 §Extensibility):
 - CLI tests exercise both the pure `run()` function and the spawned built binary;
   the binary test skips when `dist` is absent, so run `pnpm build` first to
   include it (CI always does).
+- The web suite is Playwright, not Vitest: `pnpm test:browser` builds the app,
+  serves the _built_ bundle, and runs both specs in Chromium + Firefox + WebKit.
+  `packages/web/test/e2e/determinism.spec.ts` is the doc-07 parity contract —
+  it converts the bundled demo image in Node through `@demake/core` and in the
+  page through its worker, then compares the exported PNGs byte-for-byte. Narrow
+  the browsers with `DEMAKE_BROWSERS=chromium`, and point at a browser already on
+  the machine with `DEMAKE_CHROMIUM=/path/to/chrome` (managed containers ship
+  one; CI runs `playwright install`).
 
 ## Gotchas
 
@@ -195,6 +207,17 @@ Two files plus fixtures (doc 02 §Extensibility):
   dedicated oracle branch (there is no `subPalettes` on a `scanline` spec — don't
   cast it to `TileLayout`). Its Z80 harness reuses WLA-DX; the master palette is
   derived from genesis-plus-gx's native RGB565 `tms_palette`, not the 32-bit one.
+- **The web app must never grow conversion logic.** Everything it shows comes
+  from `@demake/core` through `src/worker/core.worker.ts` — console list,
+  strategy portfolio, palettes, stats, manifest bytes. A second implementation
+  of anything the CLI does (a manifest shape, a symbol-name rule, a console
+  summary table) is how parity dies; if the web needs it, it moves into core
+  first, as `buildManifest`/`encodeManifest` did.
+- Web determinism has one extra trap the CLI doesn't: anything the _page_ feeds
+  the engine must itself be engine-independent. That is why the bundled demo
+  image (`src/lib/demo-image.ts`) uses no `Math.sin`/`Math.random` — the
+  determinism spec converts it, so a transcendental there would turn a real byte
+  mismatch into an untraceable one.
 - The PNG encoder must stay deterministic (no libpng drift) once it exists.
 - Source imports use explicit `.js` extensions (NodeNext ESM); Vitest resolves
   them to `.ts` via the workspace alias.

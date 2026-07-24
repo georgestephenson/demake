@@ -20,3 +20,8 @@ tools/prep-eval/local/
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Playwright (web e2e) artifacts
+packages/web/test-results/
+packages/web/playwright-report/
+packages/web/dist/

@@ -50,6 +50,49 @@ jobs:
       - run: pnpm build
       - run: pnpm test
 
+  test-browser:
+    name: "Browser (Playwright: determinism + functional)"
+    runs-on: ubuntu-latest
+    # doc 07 §Principles + doc 10 §Determinism: the web app must produce
+    # byte-identical output to the CLI, in three independent engines.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Install browsers
+        run: pnpm --filter @demake/web exec playwright install --with-deps chromium firefox webkit
+      - run: pnpm test:browser
+      - name: JS budget (doc 07 §Quality bar)
+        run: pnpm build:web && node tools/ci/check-web-budget.mjs
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: packages/web/playwright-report
+          retention-days: 7
+
+  lighthouse:
+    name: Lighthouse budget (web)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Build + audit the static site
+        run: pnpm --filter @demake/web exec lhci autorun
+        env:
+          DEMAKE_BASE: /
+
   test-e2e:
     name: Pixel-perfect E2E (ROM → emulator)
     runs-on: ubuntu-latest

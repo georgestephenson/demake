@@ -18,35 +18,78 @@ budgets) has been the missing piece. `demake` closes that gap, so an AI agent
 can create a retro game end to end: generate art, convert it into
 hardware-compliant data and display code, and build a running ROM.
 
-> **Status: Phase 0 (foundations).** The repository is being scaffolded. The
-> conversion engine (`prep`) and code generator (`gen`) land in Phase 1+. The
-> full design lives in [`docs/`](docs/README.md); the milestone plan is
+> **Status: Phase 3.** The engine, the CLI and the web app are live. All eight
+> Tier 1 consoles go image → compliant art → native data → bootable ROM →
+> emulator frame, compared pixel-for-pixel in CI. The full design lives in
+> [`docs/`](docs/README.md); the milestone plan is
 > [`docs/13-roadmap.md`](docs/13-roadmap.md).
+
+## Try it
+
+- **In the browser** — the web app runs the identical engine client-side and
+  uploads nothing: <https://georgestephenson.github.io/demake/>
+- **On the command line**:
+
+```sh
+demake prep photo.jpg -c gbc -o photo.gbc.png     # hardware-compliant art
+demake gen photo.gbc.png -c gbc --format asm      # tiles, map, palettes as RGBDS asm
+demake gen photo.jpg -c nes --format rom -o out.nes   # a bootable ROM that displays it
+demake inspect photo.gbc.png                      # is this really compliant? which consoles?
+demake consoles                                   # every supported machine + its constraints
+```
+
+## Supported consoles
+
+`prep` and `inspect` cover every RGB-lattice and mono raster console in
+[doc 03](docs/03-console-matrix.md) — 21 machines from the Game Boy to the
+Nintendo DS. Beyond that, support deepens in two steps:
+
+| Capability                                        | Consoles                                                                                                                                                               |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prep` + `inspect` (compliant PNG)                | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, GBA, NDS, SG-1000, PC Engine, Neo Geo, WonderSwan/Color, NGP/NGPC, Virtual Boy, Pokémon Mini, Supervision, Game.com, Mega Duck |
+| `gen` (bin/asm/C data + display code)             | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, SG-1000, GBA, NDS                                                                                                              |
+| `--format rom` + **pixel-perfect emulator proof** | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, SG-1000, GBA, NDS                                                                                                              |
+
+"Pixel-perfect emulator proof" means what it says: CI assembles a real ROM,
+boots it in an emulator, and asserts the framebuffer matches demake's own output
+byte-for-byte across an extensive image battery.
 
 ## Packages
 
-| Package                         | What                                                       |
-| ------------------------------- | ---------------------------------------------------------- |
-| [`@demake/core`](packages/core) | The engine. Zero platform deps, ESM, ships types (doc 09). |
-| [`demake`](packages/cli)        | The CLI wrapper (doc 05). Re-exports core for scripting.   |
+| Package                         | What                                                            |
+| ------------------------------- | --------------------------------------------------------------- |
+| [`@demake/core`](packages/core) | The engine. Zero platform deps, ESM, ships types (doc 09).      |
+| [`demake`](packages/cli)        | The CLI wrapper (doc 05). Re-exports core for scripting.        |
+| [`@demake/web`](packages/web)   | The browser app (doc 07): the same core in a worker, no server. |
 
 ## Develop
 
 Requires Node ≥ 20 and [pnpm](https://pnpm.io) (pinned via `packageManager`).
 
 ```sh
-pnpm install     # install workspace deps
-pnpm build       # typecheck + build all packages (project references)
-pnpm test        # unit tests (Vitest)
-pnpm lint        # ESLint (incl. custom core rules) + Prettier check
-pnpm lint:fix    # autofix
+pnpm install       # install workspace deps
+pnpm build         # typecheck + build all packages (project references)
+pnpm test          # unit tests (Vitest)
+pnpm lint          # ESLint (incl. custom core rules) + Prettier check
+pnpm lint:fix      # autofix
+pnpm dev:web       # the web app, against the workspace engine
+pnpm test:browser  # Playwright: web flows + browser-vs-CLI byte identity
 ```
 
-Run the stub CLI from source after building:
+Run the CLI from source after building:
 
 ```sh
-pnpm cli -- --version
 pnpm cli -- --help
+pnpm cli -- prep photo.png -c gbc -o out.png
+```
+
+The ROM and emulator suites need their toolchains; both provisioners are cached
+and need no Docker:
+
+```sh
+pnpm toolchains  # RGBDS, cc65, WLA-DX, m68k + ARM binutils
+pnpm emulator    # SameBoy capturer + libretro cores (fceumm, genesis-plus-gx, snes9x, mGBA, DeSmuME)
+pnpm test        # now includes every ROM + pixel-perfect emulator E2E
 ```
 
 See [`AGENTS.md`](AGENTS.md) for the full contributor contract and
