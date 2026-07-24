@@ -79,6 +79,7 @@ pnpm lint:fix      # autofix ESLint + Prettier
 pnpm changeset     # add a changeset for a user-visible change
 pnpm cli -- --help # run the built CLI from source (build first)
 pnpm gen:man       # regenerate man pages from cli-spec (build first; CI checks staleness)
+pnpm eval:prep     # prep quality battery: scoreboard + side-by-side sheets (build first)
 pnpm toolchains    # provision RGBDS (source build, cached) for `gen --format rom`
 pnpm emulator      # provision the headless SameBoy capturer for the pixel-perfect E2E
 ```
@@ -135,7 +136,25 @@ Two files plus fixtures (doc 02 §Extensibility):
 
 ## Gotchas
 
+- **The prep objective is perceived equivalence, not per-pixel closeness**
+  (doc 04 §The objective — a deliberate direction change): under palette
+  pressure, keeping regions _distinct_ and exaggerating tone/chroma the way
+  period artists did beats minimizing raw ΔE; a bounded coherent grade is
+  nearly free to the judge. Never "improve" the judge back toward pure
+  per-pixel ΔE, and keep round-trip idempotence on authored art as the
+  zero-pressure guardrail.
 - NES attribute cells are 16×16, not 8×8 — a load-bearing detail for the fitter.
+- **`prep` works in the console's _author space_**: on the GBC the `cgb` DAC
+  model is an LCD _panel filter_, so fitting/judging/storage use raw RGB555
+  expansion (matching the E2E — SameBoy runs with color correction disabled);
+  the panel sim is opt-in via `--dac-colors`. Consoles whose DAC model is the
+  hardware's own output (NES NTSC, MD VDP, mono ramps) author in display
+  colors. `inspect`/`gen` accept a compliant PNG in either encoding (doc 04).
+- **Prep quality changes need eyes, not just numbers**: run `pnpm eval:prep`
+  and look at the side-by-side sheets in `tools/prep-eval/out/`; the behavioral
+  floors live in `packages/core/test/quality.test.ts`. Drop extra real-world
+  sources into `tools/prep-eval/local/` (gitignored — never commit assets that
+  aren't public domain).
 - DAC models are tested artifacts: they decide pixel-perfect emulator comparisons.
   The MD `md-vdp` model reproduces genesis-plus-gx's Mode-5 normal-intensity
   color exactly (its `MAKE_PIXEL(2·code, …)` in 5:6:5); the SMS/GG cores render

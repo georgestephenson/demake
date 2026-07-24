@@ -79,7 +79,15 @@ function buildOptions(values: Record<string, ParsedValue>): PrepOptions {
   if (Array.isArray(values.protect)) options.protect = values.protect;
   if (values["no-protect"] === true) options.protect = false;
   if (values.strict === true) options.strict = true;
+  if (values["raw-colors"] === true && values["dac-colors"] === true) {
+    throw new CliError(
+      EXIT.USAGE,
+      "E_INVALID_OPTION",
+      "--raw-colors and --dac-colors are mutually exclusive",
+    );
+  }
   if (values["raw-colors"] === true) options.rawColors = true;
+  if (values["dac-colors"] === true) options.dacColors = true;
   return options;
 }
 

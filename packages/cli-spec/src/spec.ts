@@ -177,7 +177,12 @@ const PREP_FLAGS: readonly FlagSpec[] = [
   {
     name: "raw-colors",
     type: "boolean",
-    help: "Store naive-expansion colors instead of DAC-decoded.",
+    help: "Force raw lattice-expansion colors (the default on panel-filter consoles like GBC).",
+  },
+  {
+    name: "dac-colors",
+    type: "boolean",
+    help: "Store DAC-simulated display colors (hardware screen preview) instead of raw.",
   },
   { name: "strict", type: "boolean", help: "Fail rather than degrade (no tile merging)." },
   {

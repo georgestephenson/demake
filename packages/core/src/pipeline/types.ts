@@ -22,9 +22,9 @@ export interface LinImage {
 export interface PaletteColor {
   /** Raw hardware codes: `[r,g,b]` lattice codes, or `[shade]` / `[masterIndex]`. */
   codes: readonly number[];
-  /** DAC-decoded sRGB — what the screen shows (the default PNG color). */
+  /** DAC-decoded sRGB — what the hardware screen shows (`--dac-colors`). */
   display: RGB8;
-  /** Naive-expansion sRGB — the `--raw-colors` alternative. */
+  /** Raw lattice-expansion sRGB — the author-space color (default PNG color for panel-filter consoles). */
   raw: RGB8;
 }
 
@@ -104,7 +104,10 @@ export interface PrepOptions {
   background?: string;
   keepTransparency?: boolean;
   strict?: boolean;
+  /** Force raw lattice-expansion colors in the output (the default for panel-filter consoles). */
   rawColors?: boolean;
+  /** Force DAC-simulated display colors in the output (`--dac-colors`). */
+  dacColors?: boolean;
   onProgress?: (stage: string, fraction: number) => void;
   signal?: AbortSignalLike;
 }
@@ -122,6 +125,8 @@ export interface AutoDecisions {
 export interface FitStats {
   meanDeltaE: number;
   p95DeltaE: number;
+  /** Palette pressure the judge weights were slid by (doc 04 §The objective). */
+  palettePressure: number;
   uniqueTiles: number;
   tileBudget: number | null;
   tileMerges: number;

@@ -16,7 +16,14 @@ export default tseslint.config(
     // root config files. Deliberately NOT applied to `packages/core/src` — that
     // is what lets the platform-purity rule see `Buffer`/`process`/DOM as
     // unresolved references and flag them.
-    files: ["packages/cli/**/*.ts", "**/*.test.ts", "tools/**/*.js", "*.js", "*.ts"],
+    files: [
+      "packages/cli/**/*.ts",
+      "**/*.test.ts",
+      "tools/**/*.js",
+      "tools/**/*.mjs",
+      "*.js",
+      "*.ts",
+    ],
     languageOptions: {
       globals: { ...globals.node },
     },

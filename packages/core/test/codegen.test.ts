@@ -117,8 +117,9 @@ describe("detectCompliant round-trips prep output", () => {
     const rgba = decodeImage(result.png);
     const detected = detectCompliant(rgba, spec);
     expect(detected).not.toBeNull();
-    // The reconstructed image renders to the same pixels as the PNG.
-    const rerender = renderCompliant(detected!);
+    // The reconstructed image renders to the same pixels as the PNG (which
+    // stores raw author-space colors on the GBC — its DAC is a panel filter).
+    const rerender = renderCompliant(detected!, true);
     expect(Array.from(rerender.data)).toEqual(Array.from(rgba.data));
     expect(detected!.palettes.length).toBeLessThanOrEqual(8);
   });

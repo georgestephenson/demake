@@ -105,10 +105,46 @@ export function applyManifest(
     fail(`manifest has ${palettes.length} palettes (> ${layout.subPalettes.count})`);
   }
 
-  // Display-color → index maps, per manifest palette (order pinned).
+  // The PNG may store either color encoding (raw author-space by default on
+  // panel-filter consoles, DAC-decoded under `--dac-colors`); try each, raw
+  // first, and require the whole image to resolve under a single encoding.
+  const encodings: Array<(c: PaletteColor) => RGB8> = [(c) => c.raw, (c) => c.display];
+  let resolved: { cellPalette: Uint16Array; pixelIndex: Uint8Array } | null = null;
+  for (const stored of encodings) {
+    resolved = tryApply(image, layout, palettes, stored);
+    if (resolved) break;
+  }
+  if (!resolved) fail(`a cell's colors are not covered by any manifest palette`);
+
+  const cellW = layout.attribute.w;
+  const cellH = layout.attribute.h;
+  return {
+    consoleId: spec.id,
+    width: image.width,
+    height: image.height,
+    grid: {
+      cellsX: image.width / cellW,
+      cellsY: image.height / cellH,
+      attributeW: cellW,
+      attributeH: cellH,
+    },
+    palettes,
+    cellPalette: resolved.cellPalette,
+    pixelIndex: resolved.pixelIndex,
+  };
+}
+
+/** Resolve cells/pixels against the manifest under one stored-color encoding. */
+function tryApply(
+  image: RgbaImage,
+  layout: TileLayout,
+  palettes: Palette[],
+  stored: (c: PaletteColor) => RGB8,
+): { cellPalette: Uint16Array; pixelIndex: Uint8Array } | null {
+  // Stored-color → index maps, per manifest palette (order pinned).
   const palMaps = palettes.map((p) => {
     const idx = new Map<number, number>();
-    p.colors.forEach((c, i) => idx.set(packRgb(c.display), i));
+    p.colors.forEach((c, i) => idx.set(packRgb(stored(c)), i));
     return idx;
   });
 
@@ -137,7 +173,7 @@ export function applyManifest(
           break;
         }
       }
-      if (chosen < 0) fail(`a cell's colors are not covered by any manifest palette`);
+      if (chosen < 0) return null;
       cellPalette[cy * cellsX + cx] = chosen;
       const pmap = palMaps[chosen]!;
       for (let y = 0; y < cellH; y += 1) {
@@ -152,14 +188,5 @@ export function applyManifest(
       }
     }
   }
-
-  return {
-    consoleId: spec.id,
-    width: image.width,
-    height: image.height,
-    grid: { cellsX, cellsY, attributeW: cellW, attributeH: cellH },
-    palettes,
-    cellPalette,
-    pixelIndex,
-  };
+  return { cellPalette, pixelIndex };
 }

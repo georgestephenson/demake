@@ -37,6 +37,14 @@ scale, no dither, hard palette fit — the predecessor recipe), `photo-lanczos-f
 tuned for CRT-era look), `gradient-scanline` (per-scanline palette scheduling where
 hardware allows), plus console-specific entries (NES: backdrop-dark vs
 backdrop-dominant seeding; SNES/GBA: one candidate per plausible video mode).
+**Grading is a candidate dimension, not a policy** (§The objective): variants
+that apply a bounded pre-quantization grade — L percentile stretch, chroma
+boost, optionally a hue-shifted ramp build — enter the portfolio alongside the
+ungraded ones, and the grade-aligned judge picks per image. The mono path's
+percentile auto-contrast is the long-standing special case of this, now
+generalized; on already-economical sources the ungraded candidate keeps winning
+by construction (grading gains nothing, absolute metrics prefer untouched), so
+round-trip idempotence is preserved without a special case.
 Portfolio size scales with `--effort`: `fast` = single analysis-picked candidate
 (no tournament), `default` = pruned portfolio (~4–8), `max` = full portfolio plus
 annealing refinement of the top finishers.
@@ -66,6 +74,59 @@ it and pin `--strategy <winner>` for fast reproducible re-runs.
 
 ## The judge
 
+### The objective: perceived equivalence, not per-pixel closeness
+
+The judge's job is to answer "does the output *read* as the original to human
+eyes within this console's palette budget?" — **not** "how far did each pixel
+move?" Those two objectives agree when the hardware is generous and diverge
+hard when it is not, and where they diverge, per-pixel closeness is the wrong
+one. This section is a deliberate reversal of the project's original
+per-pixel-ΔE framing, made after the Phase-2 eval battery showed metric/eye
+inversions (below).
+
+Three principles, in priority order:
+
+1. **Separation beats accuracy.** When N source colors must become K ≪ N, the
+   perceived loss is *regions that were distinct becoming indistinguishable* —
+   lost boundaries, lost shape, lost depth — not the absolute displacement of
+   any pixel. Given the choice between two palette entries that are each
+   individually closer to their regions but nearly identical to each other, and
+   two entries that are further from their regions but clearly distinct, the
+   distinct pair reads better. Every centroid-optimal quantizer picks the first
+   pair; period pixel artists always picked the second.
+2. **A coherent grade is (nearly) free.** Human vision adapts to bounded,
+   globally coherent transforms — a monotone lightness curve, a global chroma
+   gain, a smooth lightness-dependent hue drift (the pixel-art "hue shifting"
+   doctrine: shadows cooler, highlights warmer). Exaggerating tonal range and
+   saturation to spend a tiny palette well is exactly what period artists did,
+   and the mono path's percentile auto-contrast has always done it in this very
+   pipeline. The judge therefore scores outputs *modulo an allowed grade*:
+   a bounded coherent grade costs little; incoherent error (hue swaps, region
+   merges, banding, speckle) costs full price. The grade must stay bounded —
+   monotone L, limited gain, limited chroma boost, smooth limited hue drift —
+   so brand colors and reference-matched art can't silently walk away.
+3. **Pressure scales the tradeoff.** How much (1) and (2) matter is a function
+   of **palette pressure** — how far the console's affordable color count falls
+   short of the source's tonal/chromatic diversity. At high pressure (SMS
+   RGB222 from a photo, DMG's 4 shades) the relational metrics dominate and
+   absolute ΔE fades to a tie-breaker. At zero pressure (already-compliant or
+   authored-economical art) absolute fidelity dominates and grading is
+   disallowed — round-trips must stay idempotent. The weights slide with
+   pressure; they are not a fixed compromise.
+
+Evidence (Phase-2 eval battery, sheets in `tools/prep-eval/out/`): a bounded
+pre-quantization grade (L percentile stretch + chroma boost) produced clearly
+better conversions of photographic and gradient-heavy sources on SMS and GBC —
+while the per-pixel judge of the time scored them *lowest* of the candidates;
+the same grade visibly damaged already-authored pixel art, which is the
+zero-pressure case above. Research anchors for this objective: TMQI's
+structure-plus-naturalness scoring for tone-mapped HDR (fidelity measured
+tolerant of global tone change), the CIE 156 gamut-mapping evaluation
+tradition (observers prefer preserved saturation/contrast over minimum ΔE),
+SSIM's contrast component (normalized, hence tolerant of coherent contrast
+change), and pixel-art ramp doctrine (hue-shifted, contrast-exaggerated ramps
+as the craft's standard tool).
+
 Scores each candidate's output against the source. Three parts, in order:
 
 **1. Validity gates (disqualification, not scoring).** The doc-10 compliance oracle
@@ -78,20 +139,51 @@ disqualified candidate is reported with its reason; if *all* candidates are
 disqualified that's an internal error (`E_NO_VALID_CANDIDATE`), never a silent bad
 output.
 
-**2. Fidelity metrics.** Computed between the **DAC-decoded** result and a fixed
-reference: the source downscaled to output dimensions with Lanczos3 in linear light
-— fixed regardless of the candidate's own kernel, so no candidate can game the
-reference. Each metric is also computed on a σ=0.5px Gaussian-integrated variant of
-both images ("viewing distance" pass) so ordered/diffused dither is credited for
-the color it simulates, not just penalized as noise:
+**2. Perceptual metrics.** Computed between the result rendered in the console's
+**author space** (see §Color distance) and a fixed reference: the source
+downscaled to output dimensions — fixed regardless of the candidate's own
+kernel, so no candidate can game the reference. The reference kernel is fixed
+*per profile*: `photo` uses Lanczos3 in linear light; `art` uses the blend-free
+majority kernel, because a low-pass reference would penalize exactly the
+crispness flat art wants (calibrated on the Phase-2 eval battery — AA'd pixel
+art judged against a Lanczos reference selects blurry winners). Each metric is
+also computed on a σ=0.5px Gaussian-integrated variant of both images ("viewing
+distance" pass) so ordered/diffused dither is credited for the color it
+simulates, not just penalized as noise.
 
-| Metric | Captures |
+Metrics come in two groups, per §The objective. **Relational metrics** measure
+what the eye reads — separation, structure, ordering — and are invariant (or
+asymmetric: loss punished, bounded gain tolerated) under the allowed grade;
+they carry the weight at high palette pressure:
+
+| Relational metric | Captures |
 |---|---|
-| Mean + p95 Oklab ΔE | overall + worst-region color loss |
+| **Grade-aligned Oklab ΔE** (mean + p95) | residual error after fitting the best *allowed grade* (isotonic monotone L curve + single bounded chroma gain + smooth bounded L-dependent hue drift) from reference to output — a coherent exaggeration is nearly free, incoherent color error costs full price |
+| **Separation retention** (asymmetric) | for pairs of dominant source region colors: penalize when the output's pair distance *shrinks* (regions merging — the real quantization damage); expansion is free up to the naturalness bound |
+| Asymmetric local contrast (SSIM-style c-term) | flattening penalized (σ_out < σ_ref); bounded expansion tolerated |
+| Ordering / ramp monotonicity (rank correlation of local L) | shading ramps keep their light-to-dark ordering — invariant to any monotone tone curve by construction |
+| Gradient-map correlation (Sobel, L) | edge/silhouette clarity (correlation is scale-invariant, so already grade-tolerant) |
 | MS-SSIM (L channel) | structural preservation |
-| Gradient-map correlation (Sobel, L) | edge/silhouette clarity |
-| Hue/chroma histogram EMD | gamut retention (did we lose the reds?) |
-| Flat-region noise energy | dither speckle where the source was smooth |
+| Phantom-edge rate | dither speckle / fit seams on neighbor pairs the source keeps flat (real edges don't count) |
+
+**Absolute metrics** anchor the output to the source's actual colors and bound
+the grade; they dominate at low palette pressure and act as guardrails at high:
+
+| Absolute metric | Captures |
+|---|---|
+| Raw Oklab ΔE (mean + p95) | plain closeness — the tie-breaker, and the ruler at zero pressure (round-trip idempotence) |
+| Chroma-weighted hue error (residual after allowed drift) | hue rotations (blue→teal, yellow→orange) beyond the doctrine-style drift budget |
+| Symmetric chroma ratio | gamut retention — washout *and* garish over-saturation |
+| **Palette recall** | each dominant source color has a reasonably close match among the colors the output actually uses, in absolute space — brand colors and reference-matched art can't silently walk away |
+| Naturalness bounds | L clipping beyond a few percent, chroma gain beyond ~1.6×, grade curves hitting their bounds — the "this stopped being a grade" detectors |
+
+Implementation status: everything above is live except MS-SSIM and the
+σ=0.5px viewing-distance pass. The allowed-grade fit currently covers the
+monotone L curve + chroma gain; the bounded L-dependent *hue drift* is not yet
+fitted (the graded candidates don't build hue-shifted ramps yet, so there is
+nothing to forgive) — it lands with the hue-shifted-ramp candidate. The
+separation-aware *fitting* term (§Stage 3) is likewise still planned; today
+separation is enforced by the judge choosing between candidates.
 | Banding index (false-contour detector on smooth ramps) | posterization |
 | High-frequency energy ratio | fine detail/text survival |
 | **Highlight retention** | detect distinct extreme features in the source (local L/chroma maxima, small area, high local contrast — specular dots, rim light, catchlights); score their *existence and contrast* in the output, area-independent, so losing a 6-pixel highlight costs as much as losing a large region |
@@ -101,11 +193,17 @@ the color it simulates, not just penalized as noise:
 **3. Aggregation.** Metrics are normalized to [0,1] against fixed anchor values and
 combined by **weighted geometric mean** — geometric, so one catastrophic metric
 tanks the aggregate and can't be averaged away. Weight sets are per-profile
-(`art` weights edges/flatness; `photo` weights ΔE/SSIM/gamut) and per-console-class
-(mono ramps re-weight to L-only metrics). Weights are calibrated once in Phase 2
-against a human-ranked fixture set, then frozen and versioned; changing them is an
-output-affecting minor release like any algorithm change. Ties break
-deterministically by candidate ID order.
+(`art` weights separation/structure/flatness; `photo` weights ΔE/SSIM/gamut),
+per-console-class (mono ramps re-weight to L-only metrics), and — per §The
+objective — slide with **palette pressure**: a deterministic scalar computed
+from (source color diversity ÷ the layout's affordable distinct colors) that
+shifts weight from the absolute group to the relational group as the budget
+tightens. DMG-from-photo judges almost entirely on separation, ordering and
+structure; GBC round-tripping authored art judges almost entirely on absolute
+fidelity. Weights and the pressure curve are calibrated in Phase 2 against the
+eval battery (with human eyes on the sheets — `pnpm eval:prep`), then frozen
+and versioned; changing them is an output-affecting minor release like any
+algorithm change. Ties break deterministically by candidate ID order.
 
 The judge is exposed, not internal: `demake inspect <result> --source <src>
 --json` scores any image pair with the same metrics (doc 05), and the library
@@ -200,6 +298,18 @@ ever show (e.g. GBC bg: up to 32; NES: up to 13; MD: up to 61; SNES mode 3: 256)
   the hardware lattice at every iteration (snap-to-RGB555/333/444 inside the loop,
   not after — avoids post-hoc drift, the same reason `prep-portraits.py` snaps then
   remaps).
+- **Centroid collapse (`art` profile)**: after convergence each centroid is replaced
+  by its cluster's highest-weight *actual member color* (lattice-snapped) — the
+  predecessor's "keep colours that exist in the art rather than mushy averages". A
+  weighted mean of two distinct flat regions is a blend neither region contains;
+  collapsing is what keeps flat art flat and saturated. Photos keep the mean
+  (smoother ramps), so the flag rides the candidate's profile affinity.
+- **Separation-aware fitting (planned, §The objective)**: at high palette pressure
+  the fitter's objective gains a repulsion term between palette entries —
+  two near-duplicate entries are a wasted slot *and* a merged boundary, so
+  entries that centroid-optimality would place almost on top of each other get
+  pushed apart. Distinct-but-further beats closer-but-indistinguishable; the
+  eye reads separation, not residual ΔE.
 - **Fixed-master consoles** (NES/TMS/2600/7800): k-medoids over the master palette —
   centers *are* master entries by construction. Perceptual distance uses the
   console's DAC model (NES NTSC decode, TMS levels) so we match what the screen
@@ -289,12 +399,15 @@ the merge count in the manifest; `--strict` errors instead of merging.
 
 ## Stage 7 — DAC snap & encode
 
-- Final palette values snapped to hardware lattice (already true by construction)
-  and *previewed* through the DAC model (GBC LCD curve — the CGB expansion the
-  original tool used —, NES NTSC decode, MD 3-bit DAC ramp). Output PNG stores
-  **DAC-decoded sRGB** by default (looks right everywhere) with the raw hardware
-  values in the manifest; `--raw-colors` stores naive expansion instead. The choice
-  is recorded, and doc 10's emulator comparison consumes the same DAC model.
+- Final palette values snapped to hardware lattice (already true by construction).
+  Output PNG stores the console's **author-space** colors by default (see §Color
+  distance): the raw lattice expansion on panel-filter consoles (GBC), the
+  DAC-decoded color where the DAC model *is* the hardware output (NES NTSC decode,
+  MD 3-bit DAC ramp, mono ramps). `--dac-colors` stores the full DAC/panel
+  simulation instead (the hardware-screen preview); `--raw-colors` forces raw
+  expansion everywhere. The raw hardware values always travel in the manifest,
+  `inspect`/`gen` accept a compliant PNG in either encoding, and doc 10's emulator
+  comparison consumes the same DAC model.
 - Encode indexed PNG (bit depth = smallest that fits), palettes ordered as fitted;
   optional `--emit-manifest out.json`.
 
@@ -321,12 +434,26 @@ the merge count in the manifest; `--strict` errors instead of merging.
 
 ## Color distance — one section because it decides quality
 
+The prime directive here is §The objective's: distances serve *perceived
+equivalence*, and under palette pressure the question "which colors keep the
+image's regions distinct?" outranks "which colors minimize residual ΔE?".
+Everything below is in service of that.
+
 - Working space **Oklab** (cheap, perceptually uniform, well-behaved for k-means
   means). ΔE = weighted Euclidean in Oklab with L-weight slightly >1 for `art`
   profile (protects contrast/edges) — calibrated in Phase 2 against a small human-
   judged fixture set, then frozen.
-- All distances computed on **DAC-decoded** colors so "what the hardware shows" is
-  what we optimize.
+- All distances computed in the console's **author space** — the color encoding
+  the fit optimizes and the PNG stores. Where the DAC model describes the
+  console's *own output* (NES NTSC decode, MD VDP levels, mono ramps) that is the
+  DAC-decoded color: what the hardware emits is what we optimize. Where the model
+  describes a **panel filter** on top of an RGB DAC (the CGB LCD curve), author
+  space is the raw lattice expansion: period artists authored saturated RGB555
+  and let the panel mute it, emulators default to little/no correction, and the
+  doc-10 GB E2E captures SameBoy with color correction *disabled*. Fitting
+  through the panel filter bakes its washout into the chosen codes (yellow→
+  orange, blue→teal — the predecessor comparison that triggered this rule);
+  the filter stays available as an opt-in simulation (`--dac-colors`).
 - The predecessor weighted-RGB metric (R2/G4/B3) is retained as `--metric wrgb` for
   byte-reproducing legacy outputs in tests.
 

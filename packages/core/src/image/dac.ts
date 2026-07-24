@@ -61,6 +61,25 @@ export function dacDecodeCodes(
   }
 }
 
+/**
+ * Whether a console's *author space* — the colors `prep` fits, judges, and
+ * stores by default — is the raw lattice expansion rather than the DAC-decoded
+ * display color.
+ *
+ * The distinction: `md-vdp` and `mono-ramp` model the console's **DAC itself**
+ * (the voltages/shades the machine actually outputs), so their decoded colors
+ * *are* the hardware truth. `cgb` models the **LCD panel's** muting filter on
+ * top of an RGB555 DAC — period artists authored saturated RGB555 and let the
+ * panel mute it, emulators default to little or no correction, and doc 10's
+ * pixel-perfect E2E captures SameBoy with color correction disabled (raw
+ * readout). Fitting *through* the panel filter would bake its washout into the
+ * chosen codes and the stored PNG, so panel filters are simulation-only
+ * (`--dac-colors`), never the optimization target.
+ */
+export function authorSpaceUsesRaw(model: DacModel): boolean {
+  return model.kind === "cgb";
+}
+
 /** Decode a mono shade index (0 = lightest) to displayed sRGB. */
 export function dacDecodeShade(model: DacModel, shade: number): Rgb8 {
   if (model.kind !== "mono-ramp") {

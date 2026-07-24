@@ -8,6 +8,10 @@ dist/
 # Test / coverage
 coverage/
 
+# Prep quality battery output + local (possibly non-redistributable) sources
+tools/prep-eval/out/
+tools/prep-eval/local/
+
 # Logs & OS cruft
 *.log
 .DS_Store

@@ -41,8 +41,16 @@ determinism (Node 3-OS) green.
   **first pixel-perfect E2E test green** — the moment the credo is real.
 - **Tournament + judge** (doc 04): candidate portfolio framework over the Phase-1
   stage library, worker-pool parallel execution with stage-DAG memoization, the
-  multi-metric judge (validity/glitch gates, fidelity metrics, aggregation),
-  `--strategy` surface, human-calibration set collection and weight freeze.
+  multi-metric perceptual judge (validity/glitch gates, relational + absolute
+  metric groups per doc 04 §The objective, aggregation), `--strategy` surface,
+  human-calibration set collection and weight freeze.
+- **Perceived-equivalence judge increment** (doc 04 §The objective — the
+  post-eval-battery direction change): grade-aligned ΔE (isotonic monotone L +
+  bounded chroma gain + bounded hue drift), asymmetric separation retention,
+  asymmetric local contrast, ramp-ordering monotonicity, naturalness bounds,
+  palette-pressure-scaled weights; graded (`expand`/`punchy`) candidates in the
+  portfolio; separation-aware fitting term. Guardrails: round-trip idempotence
+  on authored art stays a hard test, absolute palette recall keeps weight.
 - Quality bench: fixture corpus + error-metric tracking + prior-art comparison
   (doc 04); `--effort max` annealing pass; tile-budget merge stage.
 - Roll Tier 1 breadth, one console at a time, each = spec + backend + harness +

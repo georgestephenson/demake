@@ -20,14 +20,24 @@ function packRgb(r: number, g: number, b: number): number {
   return (r << 16) | (g << 8) | b;
 }
 
-/** Reverse lookup from a displayed color to its hardware codes + raw expansion. */
+/** Reverse lookup from a stored color to its hardware codes + both expansions. */
 interface CodeEntry {
   codes: number[];
   raw: RGB8;
+  display: RGB8;
 }
 
-/** Build displayed-color → codes for every color the console can show. */
-function reverseColorMap(spec: ConsoleSpec): Map<number, CodeEntry> {
+/**
+ * The color *encodings* a compliant PNG may be stored in: the raw lattice
+ * expansion (author space — the `prep` default for panel-filter consoles like
+ * the GBC, and what period tooling stores) or the DAC-decoded display color
+ * (`--dac-colors`). An image must be provable under a single encoding; the
+ * detector tries each in turn.
+ */
+type ColorEncoding = "raw" | "display";
+
+/** Build stored-color → codes for every color the console can show, per encoding. */
+function reverseColorMap(spec: ConsoleSpec, encoding: ColorEncoding): Map<number, CodeEntry> {
   const map = new Map<number, CodeEntry>();
   const { color } = spec;
   if (color.model === "rgb" && color.bitsPerChannel) {
@@ -35,20 +45,24 @@ function reverseColorMap(spec: ConsoleSpec): Map<number, CodeEntry> {
     for (let r = 0; r < 1 << bits[0]; r += 1) {
       for (let g = 0; g < 1 << bits[1]; g += 1) {
         for (let b = 0; b < 1 << bits[2]; b += 1) {
-          const disp = dacDecodeCodes(color.dac, [r, g, b], bits);
-          const key = packRgb(disp.r, disp.g, disp.b);
+          const display = dacDecodeCodes(color.dac, [r, g, b], bits);
+          const raw = { r: expand(r, bits[0]), g: expand(g, bits[1]), b: expand(b, bits[2]) };
+          const stored = encoding === "raw" ? raw : display;
+          const key = packRgb(stored.r, stored.g, stored.b);
           if (!map.has(key)) {
-            map.set(key, {
-              codes: [r, g, b],
-              raw: { r: expand(r, bits[0]), g: expand(g, bits[1]), b: expand(b, bits[2]) },
-            });
+            map.set(key, { codes: [r, g, b], raw, display });
           }
         }
       }
     }
   } else if (color.model === "mono" && color.dac.kind === "mono-ramp") {
-    color.dac.shades.forEach((shade, i) => {
-      map.set(packRgb(shade.r, shade.g, shade.b), { codes: [i], raw: { ...shade } });
+    const shades = color.dac.shades;
+    shades.forEach((shade, i) => {
+      // Raw = the `--raw-colors` neutral grayscale ramp (see `monoPalette`).
+      const level = shades.length === 1 ? 255 : Math.round(255 * (1 - i / (shades.length - 1)));
+      const raw = { r: level, g: level, b: level };
+      const stored = encoding === "raw" ? raw : shade;
+      map.set(packRgb(stored.r, stored.g, stored.b), { codes: [i], raw, display: { ...shade } });
     });
   }
   return map;
@@ -80,11 +94,36 @@ export function detectCompliant(image: RgbaImage, spec: ConsoleSpec): CompliantI
   const cellW = layout.attribute.w;
   const cellH = layout.attribute.h;
   if (image.width % cellW !== 0 || image.height % cellH !== 0) return null;
+
+  // Try each stored-color encoding; a proof under either is a valid witness.
+  // Raw first: it is the author-space default. When the DAC is the identity
+  // (raw === display) the two maps coincide, so the second attempt is skipped.
+  const rawMap = reverseColorMap(spec, "raw");
+  const detected = detectWithMap(image, spec, rawMap);
+  if (detected) return detected;
+  const displayMap = reverseColorMap(spec, "display");
+  if (mapsEqual(rawMap, displayMap)) return null;
+  return detectWithMap(image, spec, displayMap);
+}
+
+function mapsEqual(a: Map<number, CodeEntry>, b: Map<number, CodeEntry>): boolean {
+  if (a.size !== b.size) return false;
+  for (const key of a.keys()) if (!b.has(key)) return false;
+  return true;
+}
+
+/** Attempt the reconstruction under one stored-color encoding. */
+function detectWithMap(
+  image: RgbaImage,
+  spec: ConsoleSpec,
+  rev: Map<number, CodeEntry>,
+): CompliantImage | null {
+  const layout = spec.layout as TileLayout;
+  const cellW = layout.attribute.w;
+  const cellH = layout.attribute.h;
   const cellsX = image.width / cellW;
   const cellsY = image.height / cellH;
   const { count: P, size: K } = layout.subPalettes;
-
-  const rev = reverseColorMap(spec);
   const pixelKey = new Uint32Array(image.width * image.height);
   for (let i = 0; i < pixelKey.length; i += 1) {
     const o = i * 4;
@@ -150,18 +189,13 @@ export function detectCompliant(image: RgbaImage, spec: ConsoleSpec): CompliantI
   const palettes: Palette[] = [];
   const palIndexOf: Map<number, number>[] = [];
   for (const set of palSets) {
-    const colors: PaletteColor[] = [...set]
-      .map((key): PaletteColor => {
-        const entry = rev.get(key)!;
-        return {
-          codes: entry.codes,
-          display: { r: (key >> 16) & 0xff, g: (key >> 8) & 0xff, b: key & 0xff },
-          raw: entry.raw,
-        };
-      })
-      .sort((a, b) => compareCodes(a.codes, b.codes));
+    const keys = [...set].sort((a, b) => compareCodes(rev.get(a)!.codes, rev.get(b)!.codes));
+    const colors: PaletteColor[] = keys.map((key): PaletteColor => {
+      const entry = rev.get(key)!;
+      return { codes: entry.codes, display: entry.display, raw: entry.raw };
+    });
     const index = new Map<number, number>();
-    colors.forEach((c, i) => index.set(packRgb(c.display.r, c.display.g, c.display.b), i));
+    keys.forEach((key, i) => index.set(key, i));
     palettes.push({ colors });
     palIndexOf.push(index);
   }
