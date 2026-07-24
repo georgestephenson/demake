@@ -16,7 +16,8 @@ import { decodeImage } from "../src/image/decode.js";
 import { prep } from "../src/pipeline/prep.js";
 import { analyze } from "../src/pipeline/analyze.js";
 import { inspect } from "../src/inspect/inspect.js";
-import { judge, scoreLab } from "../src/inspect/judge.js";
+import { judge, palettePressure, referenceLab, scoreLab } from "../src/inspect/judge.js";
+import { normalize } from "../src/pipeline/normalize.js";
 import { detectCompliant } from "../src/codegen/detect.js";
 import { getConsole } from "../src/consoles/registry.js";
 
@@ -117,6 +118,10 @@ describe("author-space color fidelity (GBC)", () => {
     const verdict = judge(first.png, second.png, { profile: "art" });
     expect(verdict.rawMeanDeltaE).toBeLessThan(0.004);
     expect(verdict.metrics.gamut).toBeGreaterThan(0.97);
+    // Zero-pressure guardrail: authored-economical art must never pick a
+    // graded candidate (doc 04 §The objective).
+    expect(second.stats.palettePressure).toBeLessThan(0.05);
+    expect(second.tournament.winner).not.toMatch(/expand|punchy/);
   });
 
   it("--dac-colors opts into the panel-filter simulation instead", { timeout: 20000 }, async () => {
@@ -197,6 +202,104 @@ describe("judge metrics (art profile)", () => {
       expect(verdict.metrics[id as keyof typeof verdict.metrics]).toBeGreaterThan(0.9);
     }
     expect(typeof scoreLab).toBe("function");
+  });
+});
+
+describe("perceived equivalence (doc 04 §The objective)", () => {
+  it("prefers distinct-but-exaggerated over closer-but-merged region colors", () => {
+    // Two mid-gray regions 0.1 L apart. A merges them onto one value (small
+    // per-pixel error, regions indistinguishable); B pushes them apart (larger
+    // per-pixel error, boundary preserved). The eye — and the judge — must
+    // prefer B.
+    const w = 32;
+    const h = 32;
+    const twoTone = makeImage(w, h, (x) => (x < 16 ? [110, 110, 110] : [146, 146, 146]));
+    const merged = makeImage(w, h, () => [128, 128, 128]);
+    const exaggerated = makeImage(w, h, (x) => (x < 16 ? [78, 78, 78] : [178, 178, 178]));
+    const mergedVerdict = judge(twoTone, merged, { profile: "art" });
+    const exaggeratedVerdict = judge(twoTone, exaggerated, { profile: "art" });
+    // Sanity: the merged output really is the per-pixel-closer one.
+    expect(mergedVerdict.rawMeanDeltaE).toBeLessThan(exaggeratedVerdict.rawMeanDeltaE);
+    expect(exaggeratedVerdict.metrics.separation).toBeGreaterThan(mergedVerdict.metrics.separation);
+    expect(exaggeratedVerdict.aggregate).toBeGreaterThan(mergedVerdict.aggregate);
+  });
+
+  it("treats a bounded coherent grade as nearly free", () => {
+    // A three-tone ramp, then the same ramp brightened/stretched monotonically
+    // with a mild chroma boost — a legal artist grade, not an error.
+    const w = 32;
+    const h = 33;
+    const ramp = makeImage(w, h, (_, y) =>
+      y < 11 ? [60, 44, 36] : y < 22 ? [140, 96, 72] : [208, 160, 120],
+    );
+    const graded = makeImage(w, h, (_, y) =>
+      y < 11 ? [44, 30, 24] : y < 22 ? [156, 102, 70] : [240, 186, 136],
+    );
+    const verdict = judge(ramp, graded, { profile: "art" });
+    // The grade-aligned residual must be far smaller than the raw error…
+    expect(verdict.metrics.alignedMean).toBeGreaterThan(0.8);
+    expect(verdict.metrics.alignedMean).toBeGreaterThan(verdict.metrics.meanDeltaE + 0.1);
+    // …and the coherent grade must not be mistaken for damage.
+    expect(verdict.metrics.ordering).toBeGreaterThan(0.9);
+    expect(verdict.metrics.separation).toBeGreaterThan(0.9);
+    expect(verdict.aggregate).toBeGreaterThan(0.6);
+  });
+
+  it("does not let grade alignment excuse a full tonal collapse", () => {
+    // Collapsing everything to one gray is monotone — isotonic alignment could
+    // absorb it. The relational metrics (separation, ordering, structure,
+    // contrast) must crater the aggregate anyway.
+    const w = 32;
+    const h = 32;
+    const varied = makeImage(w, h, (x, y) => [
+      60 + ((x * 6) % 160),
+      50 + ((y * 5) % 170),
+      70 + (((x + y) * 4) % 150),
+    ]);
+    const collapsed = makeImage(w, h, () => [128, 128, 128]);
+    const verdict = judge(varied, collapsed, { profile: "art" });
+    expect(verdict.aggregate).toBeLessThan(0.35);
+  });
+
+  it("palette pressure rises as the console budget falls short", () => {
+    // A diverse source: high pressure on DMG (4 shades), lower on GBC (32
+    // colors), zero for flat 9-color art anywhere.
+    // 64 flat 8×8 blocks, each a distinct color: every color has real coverage.
+    const diverse = decodeImage(
+      makeImage(64, 64, (x, y) => {
+        const block = Math.floor(y / 8) * 8 + Math.floor(x / 8);
+        return [40 + ((block * 23) % 200), 40 + ((block * 41) % 200), 40 + ((block * 59) % 200)];
+      }),
+    );
+    const lin = normalize(diverse);
+    const lab = referenceLab(lin, 64, 64, "photo");
+    const n = 64 * 64;
+    const dmg = palettePressure(lab, n, getConsole("dmg"));
+    const gbc = palettePressure(lab, n, getConsole("gbc"));
+    expect(dmg).toBeGreaterThan(gbc);
+    expect(dmg).toBeGreaterThan(0.5);
+
+    const flatLab = referenceLab(normalize(decodeImage(flatArt)), 160, 144, "art");
+    expect(palettePressure(flatLab, 160 * 144, getConsole("gbc"))).toBe(0);
+  });
+
+  it("graded candidates compete under pressure and are judged, not disqualified", async () => {
+    // A tonally-compressed, muted photo-like source on a coarse console: the
+    // graded candidates must at least run scored (their whole point is this
+    // regime); whichever wins, pressure must be engaged.
+    const murky = makeImage(64, 64, (x, y) => [
+      90 + ((x * 3) % 60),
+      80 + ((y * 2) % 55),
+      70 + (((x + y) * 2) % 50),
+    ]);
+    const result = await prep(murky, { console: "sms" });
+    expect(result.stats.palettePressure).toBeGreaterThan(0.2);
+    const graded = result.tournament.candidates.filter((c) => /expand|punchy/.test(c.strategy));
+    expect(graded.length).toBeGreaterThan(0);
+    for (const g of graded) {
+      expect(g.disqualified).toBeUndefined();
+      expect(g.aggregate).toBeGreaterThan(0);
+    }
   });
 });
 

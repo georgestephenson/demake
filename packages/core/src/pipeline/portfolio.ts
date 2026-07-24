@@ -14,6 +14,7 @@
 import type { ConsoleSpec } from "../consoles/types.js";
 
 import type { Analysis } from "./analyze.js";
+import type { GradeId } from "./grade.js";
 import type { DitherAlg, Effort, PrepOptions, Profile, ScaleKernel } from "./types.js";
 
 /** A concrete candidate strategy. */
@@ -29,6 +30,14 @@ export interface Candidate {
    * On by the `art` candidates; photos keep the smoother mean centroids.
    */
   clean?: boolean;
+  /**
+   * Bounded pre-quantization grade (doc 04 §The tournament): tonal stretch +
+   * chroma boost applied before fitting. The judge scores graded candidates
+   * against the *ungraded* reference via grade-aligned metrics, so a grade
+   * wins only when spending the palette on an exaggerated range actually
+   * reads better — typically under high palette pressure.
+   */
+  grade?: GradeId;
   description: string;
 }
 
@@ -79,6 +88,43 @@ const TILED_PORTFOLIO: readonly Candidate[] = [
     dither: { alg: "atkinson", strength: 100 },
     affinity: "photo",
     description: "Lanczos3 downscale, Atkinson diffusion (crisper, lighter).",
+  },
+  {
+    id: "art-majority-flat-expand",
+    kind: "tiled",
+    scale: "majority",
+    dither: { alg: "none", strength: 0 },
+    affinity: "art",
+    clean: true,
+    grade: "expand",
+    description: "The flat-art recipe with a bounded tonal/chroma expansion first.",
+  },
+  {
+    id: "photo-lanczos-fs-expand",
+    kind: "tiled",
+    scale: "lanczos3",
+    dither: { alg: "floyd-steinberg", strength: 90 },
+    affinity: "photo",
+    grade: "expand",
+    description: "Lanczos3 + Floyd–Steinberg over a bounded tonal/chroma expansion.",
+  },
+  {
+    id: "photo-lanczos-fs-punchy",
+    kind: "tiled",
+    scale: "lanczos3",
+    dither: { alg: "floyd-steinberg", strength: 90 },
+    affinity: "photo",
+    grade: "punchy",
+    description: "Lanczos3 + Floyd–Steinberg over a strong artist-style grade.",
+  },
+  {
+    id: "photo-lanczos-atkinson-punchy",
+    kind: "tiled",
+    scale: "lanczos3",
+    dither: { alg: "atkinson", strength: 100 },
+    affinity: "photo",
+    grade: "punchy",
+    description: "Lanczos3 + Atkinson over a strong artist-style grade.",
   },
 ];
 

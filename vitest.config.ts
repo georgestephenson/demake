@@ -16,6 +16,10 @@ export default defineConfig({
   },
   test: {
     include: ["packages/*/test/**/*.test.ts"],
+    // Tournament-driven tests run several full prep pipelines per assertion
+    // (9 candidates since the graded portfolio); give them headroom while the
+    // whole suite stays under the doc-10 two-minute target.
+    testTimeout: 20000,
     coverage: {
       provider: "v8",
       include: ["packages/*/src/**/*.ts"],

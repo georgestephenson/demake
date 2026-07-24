@@ -125,6 +125,8 @@ export interface AutoDecisions {
 export interface FitStats {
   meanDeltaE: number;
   p95DeltaE: number;
+  /** Palette pressure the judge weights were slid by (doc 04 §The objective). */
+  palettePressure: number;
   uniqueTiles: number;
   tileBudget: number | null;
   tileMerges: number;

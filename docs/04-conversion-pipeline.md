@@ -177,11 +177,13 @@ the grade; they dominate at low palette pressure and act as guardrails at high:
 | **Palette recall** | each dominant source color has a reasonably close match among the colors the output actually uses, in absolute space — brand colors and reference-matched art can't silently walk away |
 | Naturalness bounds | L clipping beyond a few percent, chroma gain beyond ~1.6×, grade curves hitting their bounds — the "this stopped being a grade" detectors |
 
-Implementation status: raw ΔE, hue error, chroma ratio, palette recall,
-gradient correlation and phantom-edge rate are live; grade-aligned ΔE,
-separation retention, asymmetric contrast, ramp monotonicity, MS-SSIM, the
-naturalness bounds, and pressure-scaled weighting are the next Phase-2 judge
-increment (doc 13).
+Implementation status: everything above is live except MS-SSIM and the
+σ=0.5px viewing-distance pass. The allowed-grade fit currently covers the
+monotone L curve + chroma gain; the bounded L-dependent *hue drift* is not yet
+fitted (the graded candidates don't build hue-shifted ramps yet, so there is
+nothing to forgive) — it lands with the hue-shifted-ramp candidate. The
+separation-aware *fitting* term (§Stage 3) is likewise still planned; today
+separation is enforced by the judge choosing between candidates.
 | Banding index (false-contour detector on smooth ramps) | posterization |
 | High-frequency energy ratio | fine detail/text survival |
 | **Highlight retention** | detect distinct extreme features in the source (local L/chroma maxima, small area, high local contrast — specular dots, rim light, catchlights); score their *existence and contrast* in the output, area-independent, so losing a 6-pixel highlight costs as much as losing a large region |
