@@ -49,3 +49,32 @@ jobs:
       # Build first so the spawned-binary surface test runs against real dist.
       - run: pnpm build
       - run: pnpm test
+
+  test-e2e:
+    name: Pixel-perfect E2E (ROM → emulator)
+    runs-on: ubuntu-latest
+    # The ROM + emulator loop of doc 10: assemblers and libretro cores are built
+    # from source (or installed from the distro archive) and cached, then the
+    # same `pnpm test` runs with every self-skipping E2E enabled. This is what
+    # makes "supported" mean supported (doc 13 §Phase 2).
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Cache toolchains + emulator cores
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/demake/toolchains
+          key: demake-tc-${{ runner.os }}-${{ hashFiles('tools/toolchains/**', 'emu-harness/**') }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Provision assemblers (RGBDS, cc65, WLA-DX, m68k, ARM)
+        run: pnpm toolchains
+      - name: Provision emulators (SameBoy + libretro cores)
+        run: pnpm emulator
+      - name: Fail if any console E2E would silently self-skip
+        run: node tools/ci/check-e2e-ready.mjs
+      - run: pnpm test

@@ -5,7 +5,13 @@ import { prep } from "../src/pipeline/prep.js";
 import { renderCompliant, encodeCompliantPng } from "../src/pipeline/encode-image.js";
 import { gen } from "../src/codegen/gen.js";
 import { detectCompliant } from "../src/codegen/detect.js";
-import { extractTiles, packPacked4, packPlanar } from "../src/codegen/tiles.js";
+import {
+  extractTiles,
+  packPacked4,
+  packPacked4Le,
+  packPlanar,
+  packSnes4,
+} from "../src/codegen/tiles.js";
 import { decodeImage } from "../src/image/decode.js";
 import { getConsole } from "../src/consoles/registry.js";
 import type { TileLayout } from "../src/consoles/types.js";
@@ -61,6 +67,97 @@ describe("packed-nibble tile packing (MD 4bpp)", () => {
     expect(bytes.length).toBe(32); // 4 bytes/row × 8 rows
     expect(bytes[0]).toBe(0xa3);
     expect(bytes[4]).toBe(0x50);
+  });
+});
+
+describe("packed-nibble tile packing, little-endian (GBA/NDS 4bpp)", () => {
+  it("packs an 8×8 grid row-major with the left pixel in the low nibble", () => {
+    const grid = new Uint8Array(64);
+    grid[0] = 0xa; // row 0, col 0 → low nibble of byte 0
+    grid[1] = 0x3; // row 0, col 1 → high nibble of byte 0
+    grid[8] = 0x5; // row 1, col 0 → low nibble of byte 4
+    const bytes = packPacked4Le(grid, 8, 8);
+    expect(bytes.length).toBe(32);
+    expect(bytes[0]).toBe(0x3a);
+    expect(bytes[4]).toBe(0x05);
+  });
+});
+
+describe("SNES 4bpp tile packing", () => {
+  it("interleaves planes 0/1 per row, then planes 2/3", () => {
+    const grid = new Uint8Array(64);
+    grid[0] = 0b0101; // row 0, col 0: planes 0 and 2 set
+    grid[9] = 0b1010; // row 1, col 1: planes 1 and 3 set
+    const bytes = packSnes4(grid, 8, 8);
+    expect(bytes.length).toBe(32);
+    expect(bytes[0]).toBe(0x80); // row 0 plane 0, bit 7
+    expect(bytes[1]).toBe(0x00); // row 0 plane 1
+    expect(bytes[16]).toBe(0x80); // row 0 plane 2
+    expect(bytes[17]).toBe(0x00); // row 0 plane 3
+    expect(bytes[2]).toBe(0x00); // row 1 plane 0
+    expect(bytes[3]).toBe(0x40); // row 1 plane 1, bit 6
+    expect(bytes[19]).toBe(0x40); // row 1 plane 3, bit 6
+  });
+});
+
+describe("gen — snes family (Super Nintendo, mode 1)", () => {
+  it("emits 32-byte tiles, palette-tagged little-endian map words, and BGR555 CGRAM", async () => {
+    const png = encodeRgbaPng(64, 64, makeSource(64, 64));
+    const result = await gen(png, { console: "snes", format: "bin", symbol: "demake" });
+    const tiles = result.artifacts.find((a) => a.suffix === ".tiles.bin")!.bytes;
+    const map = result.artifacts.find((a) => a.suffix === ".map.bin")!.bytes;
+    const pal = result.artifacts.find((a) => a.suffix === ".pal.bin")!.bytes;
+
+    expect(tiles.length % 32).toBe(0);
+    expect(map.length).toBe((64 / 8) * (64 / 8) * 2);
+    expect(pal.length).toBe(8 * 16 * 2); // 8 sub-palettes × 16 colors
+    for (let i = 0; i < map.length; i += 2) {
+      const word = map[i]! | (map[i + 1]! << 8);
+      expect(word & 0x3ff).toBeLessThan(1024); // 10-bit tile index
+      expect((word >> 10) & 7).toBeLessThan(8); // 3-bit palette select
+      expect((word >> 13) & 1).toBe(0); // priority 0
+    }
+    // CGRAM color 0 of every sub-palette is the shared transparent backdrop.
+    for (let p = 1; p < 8; p += 1) {
+      expect(pal[p * 16 * 2]).toBe(pal[0]);
+      expect(pal[p * 16 * 2 + 1]).toBe(pal[1]);
+    }
+  });
+});
+
+describe("gen — gba/nds families (ARM 2D engines)", () => {
+  for (const consoleId of ["gba", "nds"] as const) {
+    it(`${consoleId}: emits 32-byte tiles, 16 sub-palettes, and 4-bit palette-bank entries`, async () => {
+      const png = encodeRgbaPng(64, 64, makeSource(64, 64));
+      const result = await gen(png, { console: consoleId, format: "bin", symbol: "demake" });
+      const tiles = result.artifacts.find((a) => a.suffix === ".tiles.bin")!.bytes;
+      const map = result.artifacts.find((a) => a.suffix === ".map.bin")!.bytes;
+      const pal = result.artifacts.find((a) => a.suffix === ".pal.bin")!.bytes;
+
+      expect(tiles.length % 32).toBe(0);
+      expect(map.length).toBe((64 / 8) * (64 / 8) * 2);
+      expect(pal.length).toBe(16 * 16 * 2);
+      for (let i = 0; i < map.length; i += 2) {
+        const word = map[i]! | (map[i + 1]! << 8);
+        expect(word & 0x3ff).toBeLessThan(1024);
+        expect((word >> 12) & 0xf).toBeLessThan(16);
+      }
+      for (let p = 1; p < 16; p += 1) {
+        expect(pal[p * 16 * 2]).toBe(pal[0]);
+        expect(pal[p * 16 * 2 + 1]).toBe(pal[1]);
+      }
+    });
+  }
+
+  it("the DS reuses the GBA emitter byte-for-byte (same 2D engine formats)", async () => {
+    const png = encodeRgbaPng(64, 64, makeSource(64, 64));
+    const gbaResult = await gen(png, { console: "gba", format: "bin", symbol: "demake" });
+    const ndsResult = await gen(png, { console: "nds", format: "bin", symbol: "demake" });
+    for (const suffix of [".tiles.bin", ".map.bin", ".pal.bin"]) {
+      const a = gbaResult.artifacts.find((x) => x.suffix === suffix)!.bytes;
+      const b = ndsResult.artifacts.find((x) => x.suffix === suffix)!.bytes;
+      expect([...b]).toEqual([...a]);
+    }
   });
 });
 

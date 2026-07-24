@@ -8,18 +8,24 @@
  */
 
 import { gbBackend } from "./gb.js";
+import { gbaBackend } from "./gba.js";
 import { mdBackend } from "./md.js";
+import { ndsBackend } from "./nds.js";
 import { nesBackend } from "./nes.js";
 import { sg1000Backend } from "./sg1000.js";
 import { smsBackend } from "./sms.js";
+import { snesBackend } from "./snes.js";
 import type { CodegenBackend } from "./types.js";
 
 const BACKENDS = new Map<string, CodegenBackend>([
   [gbBackend.family, gbBackend],
+  [gbaBackend.family, gbaBackend],
   [mdBackend.family, mdBackend],
+  [ndsBackend.family, ndsBackend],
   [nesBackend.family, nesBackend],
   [sg1000Backend.family, sg1000Backend],
   [smsBackend.family, smsBackend],
+  [snesBackend.family, snesBackend],
 ]);
 
 /** The backend for a family, or `undefined` if none is registered yet. */

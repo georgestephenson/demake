@@ -21,6 +21,9 @@ RUNNER_SRC="$REPO_ROOT/emu-harness/libretro/retrorun.c"
 CORES=(
   "fceumm|https://github.com/libretro/libretro-fceumm.git|master|make -f Makefile.libretro|fceumm_libretro.so"
   "genesis_plus_gx|https://github.com/libretro/Genesis-Plus-GX.git|master|make -f Makefile.libretro|genesis_plus_gx_libretro.so"
+  "snes9x|https://github.com/libretro/snes9x.git|master|make -C libretro|snes9x_libretro.so"
+  "mgba|https://github.com/libretro/mgba.git|master|make -f Makefile.libretro|mgba_libretro.so"
+  "desmume|https://github.com/libretro/desmume.git|master|make -C desmume/src/frontend/libretro|desmume_libretro.so"
 )
 # Which cores to (re)build this run (default: all). Pass names as args to subset.
 WANT=("$@")
@@ -36,6 +39,25 @@ want() {
   [ ${#WANT[@]} -eq 0 ] && return 0
   for w in "${WANT[@]}"; do [ "$w" = "$1" ] && return 0; done
   return 1
+}
+
+# A couple of cores pull in a system library (DeSmuME's wifi unit needs libpcap
+# headers). Install it from the distro archive when it is missing — same
+# best-effort apt path as the m68k/ARM binutils provisioners.
+ensure_system_dep() {
+  local header="$1" pkg="$2"
+  [ -e "/usr/include/$header" ] && return 0
+  command -v apt-get >/dev/null 2>&1 || {
+    log "missing $header; install $pkg manually"
+    return 1
+  }
+  local sudo=""
+  [ "$(id -u)" != "0" ] && sudo="sudo"
+  log "installing $pkg (provides $header)…"
+  $sudo apt-get install -y "$pkg" >>/tmp/libretro-apt.log 2>&1 ||
+    $sudo apt-get update -qq >>/tmp/libretro-apt.log 2>&1 &&
+    $sudo apt-get install -y "$pkg" >>/tmp/libretro-apt.log 2>&1
+  [ -e "/usr/include/$header" ]
 }
 
 for tool in git make cc; do
@@ -55,6 +77,16 @@ for entry in "${CORES[@]}"; do
     log "cached: $name ($out)"
     continue
   fi
+  if [ "$name" = "desmume" ]; then
+    # DeSmuME's Linux build compiles its wifi unit against libpcap and its
+    # (runtime-optional) OpenGL rasterizer against the GL headers; the demake
+    # E2E only ever uses the software rasterizer, but both must be present to
+    # compile.
+    ensure_system_dep "pcap/pcap.h" "libpcap-dev" ||
+      die "desmume needs libpcap headers (libpcap-dev)"
+    ensure_system_dep "GL/gl.h" "libgl-dev" ||
+      die "desmume needs OpenGL headers (libgl-dev)"
+  fi
   log "cloning core $name…"
   git clone --depth 1 --branch "$branch" "$url" "$WORK/$name" >/dev/null 2>&1 ||
     git clone --depth 1 "$url" "$WORK/$name" >/dev/null 2>&1 ||
@@ -62,7 +94,7 @@ for entry in "${CORES[@]}"; do
   log "building core $name (this can take a minute)…"
   ( cd "$WORK/$name" && $recipe -j"$(nproc 2>/dev/null || echo 2)" ) >/tmp/libretro-$name.log 2>&1 ||
     die "build of $name failed (see /tmp/libretro-$name.log)"
-  soPath="$(find "$WORK/$name" -maxdepth 2 -name "$out" | head -1)"
+  soPath="$(find "$WORK/$name" -maxdepth 6 -name "$out" | head -1)"
   [ -n "$soPath" ] || die "core $name did not produce $out"
   cp "$soPath" "$CORES_DIR/$out"
 

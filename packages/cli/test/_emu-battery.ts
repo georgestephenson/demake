@@ -91,6 +91,16 @@ export const to565 = (r: number, g: number, b: number): number =>
   ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 
 /**
+ * Reduce an 8-bit RGB triple to RGB555 — the comparison space for cores whose
+ * framebuffer is 16-bit but whose console is a 15-bit machine, and which widen
+ * green by a plain shift rather than bit replication (mGBA, DeSmuME: the 565
+ * green field is always `g5 << 1`, so its sixth bit carries no information).
+ * Reducing both sides to 555 compares exactly the bits the hardware has.
+ */
+export const to555 = (r: number, g: number, b: number): number =>
+  ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+
+/**
  * Count pixels where the emulator frame's top-left region disagrees with the
  * DAC reference. `map` maps an RGB triple to the comparison space (identity for
  * exact 8-bit cores; {@link to565} for the 16-bit cores).

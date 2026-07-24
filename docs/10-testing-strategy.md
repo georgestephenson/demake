@@ -132,10 +132,10 @@ says so.
 | Console | Build (in container) | Headless emulator + capture method |
 |---|---|---|
 | GB / GBC | RGBDS | **SameBoy** tester binary (built for automation: run-N-frames, dump BMP); cross-check with mGBA |
-| GBA | devkitARM (or gcc-arm bare-metal) | **mGBA** headless (`mgba` CLI + Lua scripting: run frames, screenshot) |
-| NDS | devkitARM + libnds + ndstool | **melonDS** (headless patches/CLI) or **DeSmuME** `--num-cores`-less autoframe advance; decision task in Phase 4 — both prototyped, best automation wins |
+| GBA | GNU ARM binutils (`arm-none-eabi-as/ld/objcopy`) — bare-metal harness, no devkitARM | **mGBA** via the libretro harness (color correction off; compared in RGB555) |
+| NDS | GNU ARM binutils + demake's own `.nds` cartridge packer (no ndstool) | **DeSmuME** via the libretro harness — *decided* (doc 13 standing decision): it direct-boots a cartridge with no BIOS/firmware images, so the whole loop builds from source; compared in RGB555 |
 | NES | ca65 (NROM) | **Mesen 2** headless test-runner mode with Lua (runs on Linux, .NET) |
-| SNES | ca65 65816 / wla-dx | **Mesen 2** headless (same runner) |
+| SNES | WLA-DX (`wla-65816`) | **snes9x** via the libretro harness (compared in RGB565) |
 | Mega Drive | vasm m68k | **BlastEm** (headless mode) or Genesis Plus GX via libretro harness |
 | SMS / GG / SG-1000 / Coleco | WLA-DX / z88dk | **Emulicious** (headless automation) or Mednafen; Gearsystem as fallback |
 | PC Engine | PCEAS | **Mednafen** (pce_fast off, accuracy core) frame dump |

@@ -22,10 +22,13 @@ import type { CliEnv } from "../env.js";
 import { EXIT, type ExitCode } from "../exit-codes.js";
 import { CliError, resolveInput } from "../io.js";
 import { buildGbRom } from "../rom/gb.js";
+import { buildGbaRom } from "../rom/gba.js";
 import { buildMdRom } from "../rom/md.js";
+import { buildNdsRom } from "../rom/nds.js";
 import { buildNesRom } from "../rom/nes.js";
 import { buildSg1000Rom } from "../rom/sg1000.js";
 import { buildSmsRom } from "../rom/sms.js";
+import { buildSnesRom } from "../rom/snes.js";
 
 function str(values: Record<string, ParsedValue>, key: string): string | undefined {
   return typeof values[key] === "string" ? (values[key] as string) : undefined;
@@ -86,15 +89,11 @@ export async function runGen(
   }
 
   // `rom` is assembled at this edge: core produces the data, the family's
-  // toolchain the ROM. The GB harness consumes `asm` (with a fixed symbol); the
-  // NES harness consumes the `bin` blobs.
+  // toolchain the ROM. The GB harness consumes `asm` (with a fixed symbol);
+  // every other harness includes the `bin` blobs verbatim.
   const wantRom = format === "rom";
   const romFamily = wantRom ? getConsole(consoleId).codegen.family : "";
-  const coreFormat: CodegenFormat = wantRom
-    ? romFamily === "nes" || romFamily === "sms" || romFamily === "md" || romFamily === "sg1000"
-      ? "bin"
-      : "asm"
-    : format;
+  const coreFormat: CodegenFormat = wantRom ? (romFamily === "gb" ? "asm" : "bin") : format;
   const userSymbol = str(values, "symbol");
   if (wantRom && userSymbol !== undefined && !quiet) {
     env.errOut("demake: warning: --symbol is ignored for --format rom (the harness pins it).\n");
@@ -141,6 +140,15 @@ export async function runGen(
     } else if (spec.codegen.family === "sg1000") {
       const rom = buildSg1000Rom(env, spec, result);
       artifacts = [{ suffix: ".sg", kind: "rom", bytes: rom }];
+    } else if (spec.codegen.family === "snes") {
+      const rom = buildSnesRom(env, spec, result);
+      artifacts = [{ suffix: ".sfc", kind: "rom", bytes: rom }];
+    } else if (spec.codegen.family === "gba") {
+      const rom = buildGbaRom(env, spec, result);
+      artifacts = [{ suffix: ".gba", kind: "rom", bytes: rom }];
+    } else if (spec.codegen.family === "nds") {
+      const rom = buildNdsRom(env, spec, result);
+      artifacts = [{ suffix: ".nds", kind: "rom", bytes: rom }];
     } else {
       throw new CliError(
         EXIT.UNAVAILABLE,
