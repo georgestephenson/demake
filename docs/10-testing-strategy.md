@@ -58,15 +58,19 @@ Fixture corpus in `testdata/sources/`:
   (exercises the pixel-art detector), transparency cases, extreme aspect ratios,
   1×1 and max-res edge cases.
 - the predecessor portrait corpus (the author's own work, used with permission):
-  prep output must meet-or-beat the original tools' error metrics on it, and
+  prep output must meet-or-beat the original tools on it under the doc-04
+  perceptual judge (not raw error alone — doc 04 §The objective), and
   `--metric wrgb --quantizer mediancut` must reproduce the legacy pipeline class.
 
 Every (fixture × Tier-1 console × canonical option set) has checked-in golden
 outputs (PNG + manifest + asm hashes). Byte-exact comparison; re-baselining is a
 reviewed, release-noted act (doc 09 §Stability). Perceptual-quality regression:
-alongside byte goldens, we record fit-error metrics (Oklab MSE, SSIM vs source) and
-fail if error worsens > ε without an explicit baseline bump — this catches
-"different bytes AND worse" during algorithm work.
+alongside byte goldens, we record the doc-04 judge's aggregate and per-metric
+scores (the perceived-equivalence ruler — raw Oklab MSE alone is explicitly
+*not* the quality bar, doc 04 §The objective) and fail if a score worsens > ε
+without an explicit baseline bump — this catches "different bytes AND worse"
+during algorithm work. Judge-score regressions are confirmed by eye on the
+`pnpm eval:prep` sheets before any baseline bump.
 
 ## 4. Judge & tournament tests
 

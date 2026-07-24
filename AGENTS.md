@@ -136,6 +136,13 @@ Two files plus fixtures (doc 02 §Extensibility):
 
 ## Gotchas
 
+- **The prep objective is perceived equivalence, not per-pixel closeness**
+  (doc 04 §The objective — a deliberate direction change): under palette
+  pressure, keeping regions *distinct* and exaggerating tone/chroma the way
+  period artists did beats minimizing raw ΔE; a bounded coherent grade is
+  nearly free to the judge. Never "improve" the judge back toward pure
+  per-pixel ΔE, and keep round-trip idempotence on authored art as the
+  zero-pressure guardrail.
 - NES attribute cells are 16×16, not 8×8 — a load-bearing detail for the fitter.
 - **`prep` works in the console's _author space_**: on the GBC the `cgb` DAC
   model is an LCD _panel filter_, so fitting/judging/storage use raw RGB555

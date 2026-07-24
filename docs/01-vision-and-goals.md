@@ -35,8 +35,12 @@ One engine, four faces:
 Two core operations (mirroring the predecessor tools):
 
 - **prep**: any image, any size, any color depth → a hardware-compliant image for a
-  chosen console (and optional target size), preserving as much perceptual fidelity
-  as the hardware allows.
+  chosen console (and optional target size) that *reads* as the original to human
+  eyes within the hardware's palette budget. The objective is **perceived
+  equivalence, not per-pixel closeness** (doc 04 §The objective): the tighter the
+  palette, the more keeping regions *distinct* — exaggerating tonal range, chroma
+  and hue separation the way period artists did — outranks minimizing raw color
+  error. Human vision and psychology are the ruler; RGB numbers are only the tool.
 - **gen**: a source image (raw or prepped) → data + display code for that console
   (palettes, tiles, maps, in the native format), optionally up to a complete,
   buildable, bootable ROM that displays the image.
@@ -48,8 +52,10 @@ Two core operations (mirroring the predecessor tools):
   verifies the screenshot pixel-perfectly. If we claim NES support, an NES emulator
   shows our image.
 - **G2 — Best-in-class conversion quality.** Perceptual color spaces, per-tile
-  palette optimization, content-aware scaling, optional dithering — the smartest
-  published techniques, selected automatically but overridable (see doc 04).
+  palette optimization, content-aware scaling, optional dithering, bounded
+  artist-style grading under palette pressure — the smartest published
+  techniques, judged by perceived equivalence (doc 04 §The objective), selected
+  automatically but overridable (see doc 04).
 - **G3 — One deterministic engine.** The exact same TypeScript core runs in Node,
   the browser, and the desktop app. Same input + same options + same version =
   byte-identical output on every platform. Determinism is a tested guarantee.
