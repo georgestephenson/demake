@@ -157,6 +157,14 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
 - **Tier 3 long tail**: 2600 kernels, Atari 8-bit/5200, Intellivision, Virtual Boy,
   Pokémon Mini, and the remainder — each lands with its harness or ships prep-only
   with a documented "codegen pending toolchain validation" status.
+  - **Mega Duck** is the closest of these: its *data* formats are the DMG's
+    exactly, so it already rides the `gb` codegen family for `bin`/`asm`/`c`.
+    What it does not share is the display program — its LCD registers live at
+    `$FF10`–`$FF1B` instead of `$FF40`–`$FF4B` and LCDC's bits are shuffled — so
+    `rom` is withheld rather than quietly assembling a Game Boy cartridge. The
+    vertical is a `gb`-family harness variant plus the **SameDuck** libretro
+    core (a SameBoy fork, no BIOS files); `Core/gb.h` there is the register map
+    and its `display.c` the LCDC bit meanings.
 - In-browser ROM assembly for more families; WASM-accelerated hot kernels if
   profiling asks; palette-cycling & per-scanline tricks as opt-in "expert" flags;
   sprite/animation mode (the reserved schema slot); home-computer specs if demand
