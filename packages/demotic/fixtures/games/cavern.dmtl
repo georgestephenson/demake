@@ -1,0 +1,24 @@
+-- A cavern, wider than any of the target screens, so it scrolls.
+--
+-- The legend names each character; those names are what Demotic rules collide
+-- with, which is why `when player touches spikes` reads as a sentence.
+
+tile #  wall    solid  brick.svg
+tile =  ledge   solid  ledge.svg
+tile ^  spikes  solid  spikes.svg
+tile o  coin           coin.svg
+tile *  exit           coin.svg
+
+map
+##########################################################
+#                                                        #
+#   o        ===        o          ===         o         #
+#                                                 ===    #
+#         ===       o        ===                       * #
+#                                          ===        ####
+#  ===                  ===         o                    #
+#              o                              ===        #
+#      ===                     ===                       #
+#                    o                    o              #
+####    ^^^^    ####      ^^^^      ####      ^^^^    ####
+##########################################################

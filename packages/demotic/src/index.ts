@@ -87,3 +87,11 @@ export {
 } from "./testing/run.js";
 export { referencePages, referenceIndex, type ReferencePage } from "./docs/reference.js";
 export * from "./lang/spec.js";
+export {
+  parseLevel,
+  levelAssets,
+  tileAt,
+  EMPTY,
+  type LevelFile,
+  type TileSpec,
+} from "./level/parse.js";
