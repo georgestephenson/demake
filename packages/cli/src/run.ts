@@ -19,6 +19,7 @@ import {
 } from "@demake/cli-spec";
 import { CORE_VERSION } from "@demake/core";
 
+import { runBuild } from "./commands/build.js";
 import { runConsoles } from "./commands/consoles.js";
 import { runGen } from "./commands/gen.js";
 import { runInspect } from "./commands/inspect.js";
@@ -95,6 +96,8 @@ export async function run(argv: readonly string[], env: CliEnv): Promise<ExitCod
         return await runPrep(env, parsed.values, parsed.positionals);
       case "gen":
         return await runGen(env, parsed.values, parsed.positionals);
+      case "build":
+        return await runBuild(env, parsed.values, parsed.positionals);
       default:
         env.errOut(`demake: '${command.name}' is not implemented.\n`);
         return EXIT.UNAVAILABLE;

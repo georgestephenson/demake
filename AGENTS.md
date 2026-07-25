@@ -15,7 +15,7 @@ real emulator, compared pixel for pixel):
 | Demaker               | Docs         | State                                                           |
 | --------------------- | ------------ | --------------------------------------------------------------- |
 | art (images)          | 03–06        | working, eight Tier 1 consoles proven                           |
-| game (Demotic `.dmt`) | 14, 15       | language, interpreter, tests, preview working; runtimes to come |
+| game (Demotic `.dmt`) | 14, 15       | language, interpreter, tests, preview — and a playable `gb` ROM |
 | music                 | 13 §Phase 7+ | planned                                                         |
 | sound                 | 13 §Phase 7+ | planned                                                         |
 
@@ -52,9 +52,20 @@ full proof loop for **all eight Tier 1 consoles**:
   generic `emu-harness/libretro/` runner) — all marching through the same shared
   extensive image battery (`packages/cli/test/_emu-battery.ts`).
 
+Phase 7+ then opened the **Demotic backend**: `demake build` _compiles_ a `.dmt`
+into a real 32 KiB Game Boy cartridge — SM83 machine code written for that game,
+with the art it names demade by the image pipeline on the way — and the web app
+plays it in the page. There is no fixed engine and nothing is patched: the
+assembler is ours and written in TypeScript (`packages/demotic/src/codegen/`), so
+the browser produces byte-identical cartridges with no toolchain. Every game in
+the example library is proven against the reference interpreter tick for tick by
+`packages/demotic/test/rom.test.ts`.
+
 Still to come: the remaining Tier 2/3 consoles (each = a codegen backend, a ROM
-harness + toolchain, and a libretro core + DAC calibration), and the remaining
-framebuffer/scanline layout paths (Lynx, GBA/NDS bitmap modes, 2600/7800).
+harness + toolchain, and a libretro core + DAC calibration), the remaining
+framebuffer/scanline layout paths (Lynx, GBA/NDS bitmap modes, 2600/7800), and
+the rest of the Demotic runtime story (levels, art binding, the other CPU
+families, and the speed work doc 14 §Runtime model names).
 
 ## Layout map
 
@@ -66,6 +77,8 @@ packages/core/       @demake/core — the engine (zero platform deps; ESM; ships
   src/consoles/      ConsoleSpec schema + one declarative spec per console (21 of them)
   src/pipeline/      stages 0–7, the tiled fitter, mono + TMS row-pair paths, tournament
   src/codegen/       gen: per-family backends (gb, nes, snes, sms, md, sg1000, gba, nds), detector
+  src/image/svg/     our SVG rasteriser: XML, shapes, paint, scanline fill (doc 15 step 2)
+  src/pipeline/sprite.ts  object + tile art for games: transparency, shades, dedup
   src/inspect/       compliance oracle (inspect) + fidelity judge
 packages/cli-spec/   @demake/cli-spec — single source of truth: spec → parser, help, man
 packages/cli/        demake — thin CLI over core; re-exports core for scripting
@@ -77,6 +90,8 @@ emu-harness/libretro/  generic retrorun frontend — one capturer for every libr
 tools/toolchains/    provisioners (cached): RGBDS, cc65, WLA-DX, SameBoy source builds;
                      GNU m68k + arm-none-eabi binutils (apt); libretro cores
                      (fceumm, genesis-plus-gx, snes9x, mgba, desmume)
+packages/dmg/        @demake/dmg — a self-hosted Game Boy core: the Demotic conformance
+                     harness in Vitest, and the web app's in-page player (doc 07: no CDN)
 packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs 14, 15)
   src/lang/          lex → parse → flat statement AST (one statement per line, no nesting)
   src/compile.ts     AST + console profile → resolved Program tables (constants folded)
@@ -85,6 +100,10 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
   src/rng.ts         the game's seeded generator — one definition, shared build and run
   src/testing/       .test.dmt: assertions run against every console at once
   src/trace.ts       state traces: the cross-implementation conformance oracle
+  src/rom/           the console hand-off: table format, expression bytecode, the
+                     built-in tile bank and the trace readers
+  src/codegen/       the console backend: SM83 assembler, analysis, RAM layout,
+                     expression/rule/level emitters, and the `gb` ROM builder
   demo/              terminal runner (play.mjs) and test runner (test.mjs)
 tools/eslint-rules/  custom ESLint rules: platform-purity + determinism
 tools/ci/            CI guards: E2E prerequisites, web JS budget
@@ -108,6 +127,7 @@ pnpm eval:prep     # prep quality battery: scoreboard + side-by-side sheets (bui
 pnpm play          # Demotic: play the Pong fixture in a terminal (build first)
 pnpm test:dmt      # Demotic: run the .test.dmt suite on every console (build first)
 pnpm gen:demotic-docs  # regenerate the language reference from the registry (build first)
+pnpm cli -- build packages/demotic/fixtures/pong.dmt -o pong.gb  # a playable cartridge
 pnpm dev:web       # run the web app against the workspace core (build core first)
 pnpm build:web     # typecheck + bundle the web app into packages/web/dist
 pnpm test:browser  # Playwright: web functional + browser-vs-Node determinism
@@ -152,6 +172,24 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   a variable timestep, or host RNG — that turns the preview from a specification
   into a second, disagreeing implementation. Golden traces
   (`packages/demotic/fixtures/*.trace`) are output bytes under the rule above.
+- **A game compiles to machine code; there is no fixed engine.** `demake build`
+  generates SM83 for _this_ game and assembles it with our own TypeScript
+  assembler, which is what lets the browser produce byte-identical ROMs with no
+  toolchain (doc 13 §D5). Doc 14 §2 records the reversal and the measurement —
+  don't reintroduce a table interpreter without reading it.
+- **Unused features must leave no trace in the ROM.** Helpers are _pulled_, never
+  pushed: `ctx.need(name, body)` is the only way a routine reaches the output, so
+  a game that never divides ships no divider. Never add a routine unconditionally
+  and never build a list to prune afterwards — a prune can miss, reachability
+  cannot.
+- **Art is demade by the image engine, never by the game code.**
+  `buildGbRom({ assets })` hands the bytes to `@demake/core`; everything about
+  pixels is decided in `packages/core/src/pipeline/sprite.ts`. A second converter
+  in `@demake/demotic` is how the browser and the CLI stop agreeing.
+- **A backend gap is a build error, never a silent difference.** If the backend
+  cannot do what a `.dmt` asks for, `unsupportedFeatures` names it and the build
+  stops. A cartridge that plays a different game from the preview would make the
+  trace oracle report a divergence three layers from its cause.
 - **`CLAUDE.md` stays a pure `@AGENTS.md` import** (CI-checked, doc 12).
 - **Commands named in this file must exist as `package.json` scripts** (CI
   staleness check, doc 12) — update both together.
@@ -213,6 +251,38 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   regression visible; a mechanical one would show up anywhere. Write assertions
   in the relative vocabulary or they will only be true on one machine.
 
+## Working on the console backend
+
+- **Speed is a published number, and it is currently 1.** Every example runs at
+  1.00–1.01 Game Boy frames per game tick, so a game keeps up with the hardware.
+  The web app shows the measured figure rather than hiding it behind a speed
+  multiplier; if a change pushes a fixture over 1.2, that is a regression worth
+  chasing before anything else.
+- **Profile before optimising, with the real tool.** Build with
+  `--format sym`, run the ROM in `@demake/dmg`, and bucket `cpu.pc` by symbol.
+  Because the code is generated _for this game_, the histogram names the game's
+  own rules — not which part of an interpreter is slow. Every optimisation so far
+  came from that histogram and none from intuition.
+- **The conformance suite is the safety net, so use it.** `pnpm test
+packages/demotic/test/rom.test.ts` builds all seven fixture games and diffs raw
+  16.16 state for hundreds of ticks; a change that alters behaviour fails in
+  seconds, naming the tick. `art.test.ts` is its counterpart for the things a
+  trace cannot see, because art is not state.
+- **Emitters must leave the temp stack as they found it.** `ctx.scoped()` exists
+  for that; a `pushTemp` without its `popTemp` corrupts a sibling expression
+  rather than failing, and the symptom appears somewhere else entirely.
+- **Watch which registers a helper needs live.** `ld de, addr` and `ld bc, addr`
+  destroy a byte the caller may be carrying — that is exactly how every object
+  came to draw tile `$C0` (see §Gotchas). Prefer building an address from a
+  page-aligned base when an argument is in `d` or `b`.
+- **Long branches: use `jp`, not `jr`.** An unrolled rule body easily exceeds a
+  relative branch's ±128 bytes, and the assembler correctly refuses rather than
+  wrapping. Rule and comparison branches are `jp` for that reason.
+- **`jr` is relative to the instruction _after_ its operand.** Reading the base
+  before fetching the offset moves every relative jump one byte, which presents
+  as an infinite loop somewhere unrelated. `packages/dmg/test/cpu.test.ts` pins
+  it because it actually happened.
+
 ## How to add a console
 
 Two files plus fixtures (doc 02 §Extensibility):
@@ -236,6 +306,10 @@ Two files plus fixtures (doc 02 §Extensibility):
   `pnpm toolchains` first to exercise it. RGBDS is provisioned by a source build
   (`tools/toolchains/install-rgbds.sh`), and web sessions get it automatically
   via the `.claude/` SessionStart hook.
+- The Demotic ROM conformance suite (`packages/demotic/test/rom.test.ts`) builds
+  a cartridge from each fixture game and runs it in `@demake/dmg`, asserting the
+  trace matches the reference interpreter tick for tick — no toolchain, no
+  emulator install, so it runs everywhere `pnpm test` does.
 - The pixel-perfect emulator E2E (`packages/cli/test/emu.e2e.test.ts`, doc 10)
   boots the ROM in SameBoy and asserts the framebuffer matches the DAC reference
   byte-for-byte; it self-skips without the capturer, so run `pnpm emulator`
@@ -349,6 +423,17 @@ Two files plus fixtures (doc 02 §Extensibility):
   image (`src/lib/demo-image.ts`) uses no `Math.sin`/`Math.random` — the
   determinism spec converts it, so a transcendental there would turn a real byte
   mismatch into an untraceable one.
+- **`ld de, addr` clobbers `d`, and `d` is often live.** `PushSprite` takes the
+  tile number in `d`, so building the OAM address with `ld de, OAM_SHADOW`
+  silently made every object draw tile `$C0`. The shadow is page-aligned, so the
+  address is `ld h, HIGH(shadow)` plus a shifted count — cheaper as well as
+  correct. Check the register a helper takes its arguments in before reaching for
+  a 16-bit load.
+- **The Nintendo boot logo is never checked in.** The build leaves that area
+  zero, so a built ROM direct-boots in emulators and does not boot on original
+  hardware; `demake build --boot-logo` asks `rgbfix` to stamp it. Default output
+  is therefore byte-identical between the CLI and the browser, which is the
+  doc-07 parity contract restated for games.
 - The PNG encoder must stay deterministic (no libpng drift) once it exists.
 - Source imports use explicit `.js` extensions (NodeNext ESM); Vitest resolves
   them to `.ts` via the workspace alias.

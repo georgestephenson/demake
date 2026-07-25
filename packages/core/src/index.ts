@@ -18,6 +18,7 @@ export { DemakeError, type DemakeErrorCode } from "./errors.js";
 export { decodeImage, detectFormat, type ImageFormat } from "./image/decode.js";
 export { encodeIndexedPng, encodeRgbaPng, type IndexedImage } from "./image/png/encode.js";
 export { decodePng, isPng, PngDecodeError } from "./image/png/decode.js";
+export { rasterizeSvg, isSvg, type RasterizeOptions } from "./image/svg/index.js";
 export type { RgbaImage } from "./image/rgba.js";
 
 // --- consoles ----------------------------------------------------------------
@@ -38,6 +39,14 @@ export type { DacModel } from "./image/dac.js";
 
 // --- prep --------------------------------------------------------------------
 export { prep } from "./pipeline/prep.js";
+export {
+  buildSpriteBank,
+  paletteRegister,
+  type SpriteBank,
+  type SpriteSource,
+  type SpriteOptions,
+  type SpriteArt,
+} from "./pipeline/sprite.js";
 export { portfolioFor, buildPortfolio } from "./pipeline/portfolio.js";
 export { renderCompliant, encodeCompliantPng } from "./pipeline/encode-image.js";
 export type {

@@ -178,3 +178,50 @@ async function readTick(page: import("@playwright/test").Page): Promise<number> 
   const text = (await page.locator(".game-status").first().textContent()) ?? "";
   return Number(/tick (\d+)/.exec(text)?.[1] ?? 0);
 }
+
+test("builds and plays a real Game Boy ROM in the page", async ({ page }) => {
+  await page.goto("/#section=game");
+
+  // The cartridge is compiled in the page — our assembler, our rasteriser — so
+  // it is there the moment the game compiles: no toolchain, no worker round
+  // trip, and no host renderer between the source art and the tile bytes.
+  const canvas = page.getByTestId("rom-canvas");
+  await expect(canvas).toBeVisible();
+  await expect(page.getByTestId("rom-stat")).toContainText("32 KiB");
+
+  // It boots to the title screen, which means the runtime read the tables,
+  // uploaded its tiles, and is drawing text from the background layer.
+  await expect.poll(async () => romPainted(page), { timeout: 8000 }).toBeGreaterThan(0);
+
+  // Pressing A starts the game, and the picture changes: paddles and a ball
+  // instead of a line of text.
+  const title = await romPainted(page);
+  await page.locator(".rom-canvas").click();
+  await page.keyboard.press("KeyZ");
+  await expect.poll(async () => romPainted(page), { timeout: 8000 }).not.toBe(title);
+
+  // Once a tick has completed the pane reports what the runtime actually cost.
+  await expect(page.getByTestId("rom-stat")).toContainText("per tick");
+});
+
+test("builds a level game with a camera, which the fixed engine could not", async ({ page }) => {
+  await page.goto("/#section=game");
+  await page.getByTestId("example-select").selectOption("caves");
+  // A hand-drawn level, tile collision and a scrolling camera all compile now,
+  // and the level's own art is demade into the tile bank on the way.
+  await expect(page.getByTestId("rom-canvas")).toBeVisible();
+  await expect.poll(async () => romPainted(page), { timeout: 8000 }).toBeGreaterThan(0);
+});
+
+/** Fraction of the ROM screen that is not the lightest shade. */
+async function romPainted(page: import("@playwright/test").Page): Promise<number> {
+  return page.locator(".rom-canvas").evaluate((element) => {
+    const canvas = element as HTMLCanvasElement;
+    const context = canvas.getContext("2d");
+    if (!context) return 0;
+    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+    let dark = 0;
+    for (let i = 0; i < data.length; i += 4) if ((data[i] as number) < 0xd0) dark += 1;
+    return dark / (data.length / 4);
+  });
+}

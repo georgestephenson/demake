@@ -113,3 +113,43 @@ export {
   type TileHit,
 } from "./level/scene.js";
 export { DEFAULT_SEED, advance, pick } from "./rng.js";
+
+// --- compiling to a console (doc 14 §Runtime model, doc 06 §The Demotic runtime)
+export { Asm, AsmError, label, type Ref } from "./codegen/asm.js";
+export { analyze, isMutable, type Analysis } from "./codegen/analyze.js";
+export {
+  ENTITY_SIZE,
+  PROPS,
+  PROP_SIZE,
+  PROP_SLOT,
+  planLayout,
+  LayoutError,
+  type Layout,
+} from "./codegen/layout.js";
+export {
+  artRequests,
+  bindArt,
+  type AssetBytes,
+  type AssetRequest,
+  type BoundArt,
+} from "./codegen/art.js";
+export {
+  buildGbRom,
+  BuildError,
+  unsupportedFeatures,
+  HEADER_OFFSETS,
+  ROM_SIZE,
+  type BuiltRom,
+  type RomOptions,
+  type RomStats,
+  type SpriteArt,
+} from "./codegen/gb.js";
+export { BUILTIN_TILES, builtinTiles, TILE_BYTES } from "./rom/graphics.js";
+export {
+  romProp,
+  romReady,
+  romScene,
+  romTick,
+  romTraceLine,
+  type MemoryReader,
+} from "./rom/trace.js";

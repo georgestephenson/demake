@@ -14,8 +14,9 @@ the ROM path — and it reuses both. Implementation lives in
 aims it at real hardware is [doc 15, the Demakefile](15-demakefile.md).
 
 **Status.** The language, its reference interpreter, the trace oracle, and a
-browser preview exist and run. No console runtime exists yet — that boundary is
-deliberate and explained in §Runtime model. Milestones are in
+browser preview exist and run — and so does the first console runtime: `demake
+build` turns a `.dmt` into a playable 32 KiB Game Boy cartridge, proven against
+the interpreter tick for tick (§Runtime model, §Conformance). Milestones are in
 [doc 13](13-roadmap.md).
 
 ## The central split
@@ -89,16 +90,74 @@ RNG — `random` draws from the language's own seeded generator (§Randomness) �
 and one rounding rule — floor, which is what an arithmetic shift does on a
 6502 or a Z80 — applied everywhere.
 
-### 2. Compile to data, not to assembly
+### 2. Compile to a `Program`, then compile the `Program` to machine code
 
-The compiler emits a `Program`: resolved tables of scenes, objects, controls and
-rules, with every constant folded to fixed point. It does not emit Z80 or 6502.
+The front end emits a `Program`: resolved tables of scenes, objects, controls and
+rules, with every constant folded to fixed point. That much has not changed, and
+it is still where the language stops and the machine begins — the `Program` names
+no register and no opcode.
 
-A console runtime is a small fixed engine consuming those tables. Adding a
-language feature is then a new opcode in each runtime, not a new code path in each
-code generator — N + M work instead of N × M. It is the same move `ConsoleSpec`
-makes for images: the constraint model is data, the engine is generic
-(doc 02 §Extensibility).
+**A backend then compiles that `Program` to native code for the target.** This
+reverses an earlier decision in this document, which said the `Program` *was* the
+deliverable and each console got a small fixed engine to interpret it. The
+argument for the fixed engine was N + M work instead of N × M, and it was
+correct about effort. It was wrong about the machine.
+
+Three things went wrong in practice, and all three are structural rather than
+matters of tuning:
+
+1. **It was too slow to be the thing it claimed to be.** The interpreter had to
+   fetch a rule record, dispatch on its trigger, walk an expression tree through
+   a stack evaluator and address every property through a pointer — for every
+   rule, every object, every tick. Pong needed about three Game Boy frames per
+   game tick, so the preview ran at 60 Hz and the cartridge ran at 20. A runtime
+   that plays the game slower than the specification does is not a conformance
+   implementation of it; it is a second, disagreeing one.
+2. **Nothing could be left out.** A fixed engine ships every feature because it
+   cannot know which ones a game uses: the divider, the multiplier, the seeded
+   generator, the tile collision path, the camera. On a 32 KiB cartridge that is
+   not an abstraction cost, it is the budget.
+3. **The N + M saving did not appear.** Adding levels and a camera to the engine
+   meant new opcodes, new table records, and a format contract restated in an
+   assembly file — the same work as a code path, minus the ability to specialise
+   it.
+
+Compiling gets all three back at once, because at build time the compiler knows
+things the interpreter never can. Entities live at *constant* addresses, so a
+property access is a direct load. Rule loops are unrolled over the objects that
+can actually match. Comparisons lower to branches instead of producing a value.
+Constants fold. And a helper routine reaches the ROM only if something asked for
+it while emitting — a game that never divides ships no divider, which is
+reachability, not a pruning pass that might miss something.
+
+Measured on the example library, in Game Boy frames per game tick, running each
+game with input held so the camera scrolls and rules fire: one frame means the
+game keeps up with the hardware, and the interpreter never did.
+
+| | interpreter | compiler |
+|---|---|---|
+| pong | 3 | 1.01 |
+| breakout | | 1.00 |
+| platformer | | 1.00 |
+| dodger | | 1.00 |
+| shooter | 11 | 1.00 |
+| caves | *would not build* | 1.01 |
+| runner | *would not build* | 1.00 |
+
+The interpreter's figures spanned 3 to 11 frames across the five games it could
+build — roughly 20 Hz at best and 5 Hz at worst — and only its extremes were
+recorded before it was removed, hence the gaps in that column.
+
+The N × M cost is real and is paid deliberately: a new console family is a new
+backend. What the design keeps from the earlier decision is the part that was
+load-bearing — the `Program` is still the boundary, so the language, the
+diagnostics and the reference interpreter are shared by every backend, and a
+backend is the only thing that knows an opcode.
+
+The assembler is ours and written in TypeScript
+(`packages/demotic/src/codegen/asm.ts`), so "compile to machine code" costs a
+browser nothing: the page builds the same cartridge the CLI does, with no
+toolchain installed (doc 07 §parity, doc 13 §D5).
 
 ### 3. Two unit systems, because balance is not size
 
@@ -586,11 +645,36 @@ things are and so is watched by the simulator as it runs (§Budgets).
 
 ## Runtime model
 
-A build produces two things per target: the **program tables** (from the compiler,
-console-specific only in that constants are folded) and a **runtime** (hand-written
-per CPU family, identical across every game).
+A build produces one thing per target: **machine code for the game**. The
+compiler front end still emits a `Program` — resolved tables of scenes, objects,
+controls and rules, console-specific only in that constants are folded — and a
+backend then compiles that `Program` into code written for this game and no
+other (§2).
 
-A conforming runtime must implement, in this order, once per tick:
+The `gb` backend exists, in `packages/demotic/src/codegen/`: an SM83 assembler
+(`asm.ts`), a mutability analysis (`analyze.ts`), a work-RAM plan (`layout.ts`),
+expression and rule emitters, and the level and tile paths. Nothing about it is
+a table format, so there is no format contract to keep in step with an assembly
+file.
+
+**A build is an assembly, and the assembler is ours.** It is written in
+TypeScript with no dependencies, so:
+
+- the browser can build a ROM, which is what makes doc 13 §D5 possible at all;
+- `demake build` needs no toolchain, on any machine;
+- the CLI and the web emit identical bytes, which is doc 07's parity contract
+  restated for games rather than images.
+
+Two things fall out of compiling that an interpreter could not have:
+
+- **Unused features leave no trace.** Helpers are *pulled*, never pushed: a
+  routine is emitted only if something asked for it while generating code. A
+  game with no division ships no divider; one that never calls `random` ships no
+  generator. There is no list to prune, so nothing can be missed.
+- **Work RAM is allocated per object**, not per worst case, and the camera and
+  the generator's state simply do not exist in a game that has neither.
+
+A conforming backend must implement, in this order, once per tick:
 
 1. Resolve input edges (pressed / released since last tick).
 2. Apply `control` bindings.
@@ -600,15 +684,25 @@ A conforming runtime must implement, in this order, once per tick:
 6. Fire edge-triggered rules.
 7. Apply any pending scene change, resetting the entered scene.
 
-The order is load-bearing: a runtime that reorders these diverges within seconds.
-Rough size for a v1 runtime is 1.5–3k lines of assembly per family — entity table,
-input, fixed-point integrator, AABB collision, OAM upload with per-scanline
-mitigation, background glyphs, scene state, plus the table decoder.
+The order is load-bearing: a backend that reorders these diverges within seconds.
+
+**A gap is a build error, never a silent difference.** If a backend cannot do
+what a `.dmt` asks for, `unsupportedFeatures` names it and the build stops. A
+cartridge that played a different game from the preview would make the trace
+oracle report a divergence three layers from its cause. The `gb` list is empty
+today — levels, tile collision, the camera and scrolling all compile.
+
+**Speed is a published number, not a claim.** The web app shows measured Game
+Boy frames per game tick rather than running the emulator fast enough to
+disguise the cost, because a person writing a game needs to know what their
+rules cost. Every example in the library is at 1.00–1.01 frames per tick, so a
+game keeps up with the hardware; a rule set expensive enough to overrun a frame
+will say so in that figure.
 
 Families map onto the existing codegen families (doc 06): `gb`, `nes`, `sms`
-(SMS + GG), `md`, `snes`. Runtimes live in `runtime-harness/<family>/`, sibling to
-`rom-harness/`, and are assembled by the same toolchain edge that already builds
-image ROMs.
+(SMS + GG), `md`, `snes`. Each is a backend module beside the `gb` one, and each
+brings its own instruction encoder — which is the N × M cost §2 accepts
+deliberately.
 
 ## Conformance
 
@@ -620,6 +714,14 @@ rendering hides the one-bit disagreement that compounds into a visibly different
 game a thousand ticks later. Golden traces are checked in per (console, region);
 `packages/demotic/fixtures/pong.gb.trace` is the first. Proving a port is a `diff`,
 not a judgement call.
+
+This runs as a **unit test**, not an E2E: the runtime keeps its entity table at
+fixed work-RAM addresses, and `@demake/dmg` — a Game Boy core of ours, ~1200
+lines with no dependencies — boots the ROM and reads them. So the loop that
+proves a runtime correct needs no toolchain and no emulator install, and it runs
+on every machine that can run `pnpm test`. `packages/demotic/test/rom.test.ts`
+does this for five of the seven example games; the two it omits are the ones the
+runtime refuses to build.
 
 ```
 # demotic trace v1 console=gb
@@ -664,14 +766,20 @@ The language's semantics are **output bytes**, and carry the same guarantees as
 
 Named rather than hidden, in rough order of how much they matter.
 
-- **No console runtimes.** The whole point of §2 is that these are the next piece
-  of work; the semantics are the risky part and are cheaper to settle in TypeScript
-  first.
-- **No deterministic art rasterisation.** The preview draws SVG natively; a ROM
-  needs pixels, and deterministic SVG rasterisation across Node and browsers is
-  genuinely hard — text metrics, font fallback and antialiasing all drift against
-  an iron rule of byte-determinism. Doc 15 §Art specifies the raster-first path and
-  treats SVG as a preview convenience until a restricted rasteriser exists.
+- ~~**No console runtimes.**~~ The `gb` backend exists and its gap list is empty
+  (§Runtime model): levels, tiles, the camera and scrolling all compile. `nes`,
+  `sms`/`gg`, `md` and `snes` are doc 13 §D4.
+- ~~**No deterministic art rasterisation.**~~ `@demake/core` has its own SVG
+  rasteriser (doc 15 §The conversion path, step 2), so a `.dmt`'s art is demade
+  by the image engine and appears in the cartridge. The subset is deliberate —
+  shapes, paths, gradients, strokes — and what is *not* in it fails loudly by
+  name: text, filters, clip paths, masks, elliptical arcs. Text and numbers in a
+  game are drawn from a 5×7 font authored as ASCII in `rom/graphics.ts`, because
+  a font is data and a kilobyte of hand-written `db` lines is not proofreadable.
+- **One object palette for the whole build.** The hardware has two OBJ palette
+  registers and the conversion uses one, chosen over every asset at once. A game
+  wanting a pale sprite and a dark one to each get their own three shades cannot
+  say so.
 - **No `destroy` or runtime spawn.** Pong does not need them; Breakout and Snake
   do. The schema has room.
 - **No sound.** Overlaps with the audio demake entry in doc 13 §Phase 7+.

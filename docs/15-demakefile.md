@@ -18,6 +18,13 @@ present, `demake build` targets every console that has a runtime, with default
 conversion settings, writing `build/<console>/<name>.<ext>`. The web preview
 (doc 07) needs no Demakefile at all for the same reason.
 
+**Status.** The zero-config path is what exists today: `demake build game.dmt -o
+game.gb` builds for the one console that has a runtime, with `--console`,
+`--title` and `--format` standing in for the manifest's fields. The file itself,
+its resolver, art binding through `prep`, and `check`/`init`/`fmt` are still to
+come (doc 13 §D2). Everything below is the design they will implement, and the
+flags that exist now are deliberately named after the directives they anticipate.
+
 `demake init` writes the Demakefile that reproduces exactly what the defaults
 already do — so the zero-config path and the file are the same object, one of them
 just implicit. Editing a setting in the web preview is editing that file; see
@@ -212,21 +219,35 @@ path searched.
 Each sprite goes through the existing image pipeline — no second implementation:
 
 1. Resolve the asset (per target, honouring `use`).
-2. Rasterise, if the source is vector. **This step does not exist yet**;
-   deterministic SVG rasterisation across Node and browsers fights the
-   byte-determinism rule (doc 14 §Known gaps). Until it does, ROM builds require a
-   raster source and SVG is a preview convenience.
-3. `prep` it at `width × 8` by `height × 8` px for the target console, using the
-   resolved options — but against the console's **sprite** palette shape rather
-   than its background one, where the two differ. A Game Boy has two sprite
-   palettes of three colours plus transparent; the NES reserves the second set of
-   four. Sprite index 0 is transparency, not a colour.
+2. Rasterise, if the source is vector. **This exists**, in
+   `packages/core/src/image/svg/`, and `decodeImage` sniffs SVG like any other
+   format. It is ours rather than the host's for the reason this step was
+   deferred over: a canvas antialiases how it likes, so two engines disagree in
+   the low bits of every edge pixel and the browser stops producing the CLI's
+   bytes. The subset is what vector art is actually drawn in — shapes, paths,
+   gradients, strokes, groups, transforms — and anything outside it fails by
+   name rather than rendering as nothing.
+3. Fit it at `width × 8` by `height × 8` px for the target console — but against
+   the console's **sprite** palette shape rather than its background one, where
+   the two differ. Sprite index 0 is transparency, not a colour, so a Game Boy
+   object gets three shades where a tile gets four, and the NES reserves the
+   second set of four.
+
+   Which three is decided by what an object is drawn *over*, not by what the
+   source looks like: colour 0 shows the background through, so an object painted
+   in the backdrop's shade is invisible. The three darkest shades are the object
+   palette, and the art is stretched across them by auto-contrast over every
+   asset at once — doc 04 §The objective at eight pixels across, where
+   legibility beats error. Downscaling averages premultiplied, or a shape grows
+   a halo out of the transparency around it.
 4. Deduplicate tiles across every asset in the build and pack them into the
    family's tile bank.
-5. Emit alongside the program tables and the runtime (doc 14 §Runtime model).
+5. Emit alongside the compiled game (doc 14 §Runtime model).
 
-Steps 3–4 are `prep` and the doc-06 tile budget stage exactly as they already
-exist. The Demakefile only decides what is fed in and with which options.
+Steps 3–4 live in `packages/core/src/pipeline/sprite.ts`, beside the rest of the
+pipeline. The Demakefile only decides what is fed in and with which options; with
+no Demakefile, `demake build` loads the art next to the source and converts it
+with the defaults.
 
 ## The equivalence contract
 

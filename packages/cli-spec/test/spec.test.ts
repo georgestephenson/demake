@@ -94,6 +94,7 @@ describe("man generation", () => {
       "demake.1",
       "demake-prep.1",
       "demake-gen.1",
+      "demake-build.1",
       "demake-consoles.1",
       "demake-inspect.1",
     ]);

@@ -135,25 +135,39 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   - **D1 — language + preview** *(done)*: front end, reference interpreter,
     relative units, compile-time hardware diagnostics, `.test.dmt` runner, trace
     oracle, browser section, Pong fixture.
-  - **D2 — Demakefile + `build`**: the manifest parser and resolver, art binding
-    through `prep` (sprite palette shapes, transparency, shared tile dedup),
-    `build`/`check`/`init`/`fmt`, and the round-trip properties.
-  - **D3 — first runtime (`gb`)**: the fixed engine consuming the program tables,
-    plus the input-tape emulator harness. **Done means** a `.gb` built from
-    `pong.dmt` reproduces the checked-in golden trace tick-for-tick on SameBoy.
-  - **D4 — breadth**: `nes`, `sms`/`gg`, `md`, `snes` runtimes, each trace-green
-    then framebuffer-green.
-  - **D5 — Play ROM in the page**: because the runtime is fixed and only the
-    tables change, the browser patches a CI-assembled blob rather than assembling
-    anything, so this covers every family with a runtime. Needs a self-hosted
-    WASM core (never a CDN, per doc 07).
+  - **D2 — Demakefile + `build`** *(`build` done; the manifest is not)*: `demake
+    build` exists and is the zero-config path doc 15 §You do not need one
+    describes — flags stand in for the file, and it now demakes the game's art
+    through the image pipeline on the way. The manifest itself and
+    `check`/`init`/`fmt` are still to come.
+  - **D3 — first backend (`gb`)** *(done)*: `packages/demotic/src/codegen/`
+    compiles a game to SM83 machine code written for it — no fixed engine, no
+    program tables at run time. Every game in the example library builds and
+    matches the reference interpreter tick for tick, in
+    `packages/demotic/test/rom.test.ts`, levels and camera included. The harness
+    is `@demake/dmg` rather than SameBoy, which is what makes the conformance
+    loop a plain unit test: no toolchain, no emulator install. The gaps D3
+    originally carried are closed: levels, tiles and the camera compile; art is
+    demade through the image pipeline; and speed went from 3–11 Game Boy frames
+    per tick to 1.00–1.01, so a game keeps up with the hardware. Doc 14 §2 has
+    the reasoning for the reversal and the measurement.
+  - **D4 — breadth**: `nes`, `sms`/`gg`, `md`, `snes` backends, each trace-green
+    then framebuffer-green. A backend is per-family; the `Program` it compiles
+    is not.
+  - **D5 — Play ROM in the page** *(done for `gb`)*: the browser compiles the
+    game itself, because the assembler is ours and written in TypeScript, and
+    demakes its art with our own rasteriser rather than the browser's. It boots
+    the result in `@demake/dmg` — ours, because doc 07 forbids a CDN core and a
+    WASM core we cannot read is the same bargain in a different wrapper. The
+    bytes are identical to `demake build`'s, pinned by a Playwright spec, and
+    the pane offers them as a download.
   - **D6 — language growth**, driven by fixtures beyond Pong. Levels, tiles, a
     scrolling camera, `stream`-composed courses and a seeded `random` have
     landed (doc 14 §Levels, §Composed levels, §Randomness). What is left:
     runtime spawn, a tile layer that can *change* — a door that opens, a block
     that breaks — which needs a way to name a cell, and a camera with more than
     "follow". Scrolling is also where per-scanline sprite pressure bites, so the
-    runtimes will have opinions.
+    backends will have opinions.
 
 - **Projects in the web app**: today each section holds one artifact. A *project*
   is a folder with a Demakefile at its root — a `.dmt`, its `.test.dmt`, and an

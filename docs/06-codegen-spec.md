@@ -97,35 +97,50 @@ consoles, plus true in-browser `rom` for families where assembly is simple enoug
 implement in TS (GB family and NES NROM first — both are straightforward fixed-layout
 links; stretch goal per family thereafter, tracked in the roadmap).
 
-## The Demotic runtime (doc 14)
+## The Demotic backend (doc 14)
 
-A Demotic game build emits a third thing beyond data and display code: a
-**runtime** — the fixed engine that reads the compiled program tables and plays
-the game. Written once per family in that family's assembly, identical across
-every game, living in `runtime-harness/<family>/` beside the image harnesses.
+A Demotic game build does not emit data for a fixed engine to interpret. It
+**compiles the game to machine code**: a backend takes the front end's `Program`
+and generates code written for that game — entities at constant addresses, rule
+loops unrolled over the objects that can match, comparisons lowered to branches
+— with only the helper routines something in it actually reached.
 
-| Family | Runtime CPU | Assembled by |
+That reverses an earlier decision recorded here, and doc 14 §2 has the reasoning
+and the measurement. The short version: the fixed engine could not fit a game
+tick inside a Game Boy frame, and could not leave out the features a game did
+not use. Both are structural, and both cost more than the N + M saving was
+worth.
+
+| Family | CPU | State |
 |---|---|---|
-| `gb` | SM83 | RGBDS — already provisioned |
-| `nes` | 6502 | cc65 — already provisioned |
-| `sms` | Z80 (SMS + GG) | WLA-DX — already provisioned |
-| `md` | 68000 | GNU m68k binutils — already provisioned |
-| `snes` | 65816 | ca65 `--cpu 65816` — already provisioned |
+| `gb` | SM83 | **written** (`packages/demotic/src/codegen/`) |
+| `nes` | 6502 | planned |
+| `sms` | Z80 (SMS + GG) | planned |
+| `md` | 68000 | planned |
+| `snes` | 65816 | planned |
 
-Every one of those toolchains is already installed and tested by the image ROM
-path, which is most of why the language targets these five families first.
+A backend brings its own instruction encoder rather than borrowing the image
+path's toolchain, which is the N × M cost doc 14 §2 accepts deliberately. It is
+also what makes the next line true.
 
-`gen` emits *image* artifacts and is unchanged by any of this. `build` (doc 05)
-emits program tables plus a runtime plus prepped art and links them with the same
-per-family toolchain edge. A new Demotic feature is a new opcode in five
-runtimes — not a new code path in five code generators.
+**In-browser ROM assembly needs no assembler installed, because ours is
+TypeScript.** `packages/demotic/src/codegen/asm.ts` encodes SM83 with labels and
+forward-reference fixups, so the page compiles the same cartridge the CLI does
+and the two are byte-identical (doc 07 §parity). There is no blob to check in,
+no staleness test, and no format contract restated in an assembly file — the
+three pieces of machinery the patching approach needed, all gone with it.
 
-**In-browser ROM assembly needs no assembler.** Because the runtime is fixed and
-only the tables change per game, CI pre-assembles each runtime once and ships it
-as a blob; the browser appends tables and prepped tiles and patches header
-lengths and checksums. That generalises in-browser ROM building from "the two
-families where writing a TS assembler was plausible" to *every family with a
-runtime* (doc 07).
+Art goes through the image pipeline on the way. `buildGbRom` takes the asset
+bytes the game names and converts them itself (doc 15 §The conversion path), so
+the browser and the CLI cannot diverge on a tile: both hand over the same source
+and every decision from rasterising to dedup happens in one place.
+
+`gen` emits *image* artifacts and is unchanged by any of this.
+
+The Nintendo boot logo stays zero, on the same principle as the NDS builder: we
+ship no copyrighted data. A built ROM therefore direct-boots in emulators and
+does not boot on original hardware; `demake build --boot-logo` asks `rgbfix` to
+stamp it, which is the one optional step that wants a toolchain.
 
 ## Tile handling
 

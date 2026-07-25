@@ -50,16 +50,25 @@ importers:
       '@demake/core':
         specifier: workspace:*
         version: link:../core
+      '@demake/demotic':
+        specifier: workspace:*
+        version: link:../demotic
 
   packages/cli-spec: {}
 
   packages/core: {}
 
   packages/demotic:
-    devDependencies:
+    dependencies:
       '@demake/core':
         specifier: workspace:*
         version: link:../core
+    devDependencies:
+      '@demake/dmg':
+        specifier: workspace:*
+        version: link:../dmg
+
+  packages/dmg: {}
 
   packages/web:
     dependencies:
@@ -72,6 +81,9 @@ importers:
       '@demake/demotic':
         specifier: workspace:*
         version: link:../demotic
+      '@demake/dmg':
+        specifier: workspace:*
+        version: link:../dmg
       preact:
         specifier: ^10.29.7
         version: 10.29.7

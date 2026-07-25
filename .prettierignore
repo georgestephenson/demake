@@ -7,3 +7,7 @@ pnpm-lock.yaml
 # Design docs are hand-authored prose (tables, deliberate wrapping); Prettier's
 # Markdown reflow is not wanted here. They remain the source of truth as written.
 docs/
+
+# Assembly is column-aligned by hand and Prettier has no parser for it; the
+# `.inc` extension is the only reason it tries.
+rom-harness/

@@ -269,6 +269,36 @@ const INSPECT_FLAGS: readonly FlagSpec[] = [
   { name: "verbose", short: "v", type: "count", help: "Increase diagnostic detail (repeatable)." },
 ];
 
+const BUILD_FLAGS: readonly FlagSpec[] = [
+  {
+    name: "console",
+    short: "c",
+    type: "string",
+    default: "gb",
+    metavar: "<id>",
+    help: "Target console (a backend must exist; today: gb, gbc).",
+  },
+  {
+    name: "format",
+    type: "enum",
+    values: ["rom", "sym"],
+    default: "rom",
+    help: "Output a playable ROM, or the symbol map for profiling.",
+  },
+  {
+    name: "title",
+    type: "string",
+    metavar: "<text>",
+    help: "Cartridge title (default: the source file's name).",
+  },
+  {
+    name: "boot-logo",
+    type: "boolean",
+    help: "Stamp the boot logo via rgbfix, so the ROM boots on real hardware.",
+  },
+  ...OUTPUT_FLAGS,
+];
+
 const CONSOLES_FLAGS: readonly FlagSpec[] = [
   { name: "json", type: "boolean", help: "Emit every ConsoleSpec as a single JSON object." },
 ];
@@ -316,6 +346,24 @@ export const CLI_SPEC: CliSpec = {
           note: "implicit prep, then C arrays",
         },
         { cmd: "demake gen tiles.png -c dmg --format bin -o tiles", note: "raw blobs for incbin" },
+      ],
+    },
+    {
+      name: "build",
+      summary: "Build a Demotic game (.dmt) into a playable ROM",
+      positional: {
+        name: "input",
+        help: "Demotic source (path, or - for stdin).",
+        optional: true,
+      },
+      flags: BUILD_FLAGS,
+      examples: [
+        { cmd: "demake build pong.dmt -o pong.gb", note: "a playable Game Boy cartridge" },
+        { cmd: "demake build pong.dmt --title PONG --json", note: "report what went in it" },
+        {
+          cmd: "demake build pong.dmt --format sym -o pong.sym",
+          note: "symbols, for a cycle profile",
+        },
       ],
     },
     {

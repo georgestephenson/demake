@@ -26,7 +26,8 @@
   },
   "dependencies": {
     "@demake/cli-spec": "workspace:*",
-    "@demake/core": "workspace:*"
+    "@demake/core": "workspace:*",
+    "@demake/demotic": "workspace:*"
   },
   "publishConfig": {
     "access": "public",

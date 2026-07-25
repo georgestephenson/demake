@@ -834,3 +834,44 @@ main.docs-layout {
   padding-top: 0.8rem;
   border-top: 1px solid var(--line);
 }
+
+/* --- the cartridge ------------------------------------------------------- */
+/* The ROM screen is deliberately shown at its real 160x144 aspect and nearest-
+   neighbour scaled: this pane's whole job is to be the hardware, not a
+   prettier version of it. */
+
+.rom-pane {
+  margin-top: 1.25rem;
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
+}
+
+.rom-pane h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+.rom-canvas {
+  display: block;
+  width: 100%;
+  max-width: 480px;
+  aspect-ratio: 160 / 144;
+  margin: 0 auto;
+  background: #e8e8e8;
+  border-radius: 6px;
+  image-rendering: pixelated;
+}
+
+.rom-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.6rem;
+}
+
+.rom-stat {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.8rem;
+  opacity: 0.8;
+}
