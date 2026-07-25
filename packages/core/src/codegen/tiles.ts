@@ -168,6 +168,49 @@ export function packPacked4(grid: Uint8Array, tileW: number, tileH: number): Uin
 }
 
 /**
+ * Pack a `tileW*tileH` index grid into **row-major packed nibbles, low nibble
+ * first** — the GBA / Nintendo DS 2D-engine 4bpp tile layout. Same byte count as
+ * {@link packPacked4} (32 bytes for an 8×8 tile) but the opposite nibble order:
+ * the *left* pixel of each pair lives in the **low** nibble, because the ARM
+ * engines address VRAM little-endian.
+ */
+export function packPacked4Le(grid: Uint8Array, tileW: number, tileH: number): Uint8Array {
+  const out = new Uint8Array(tileH * (tileW >> 1));
+  let o = 0;
+  for (let y = 0; y < tileH; y += 1) {
+    for (let x = 0; x < tileW; x += 2) {
+      out[o] = (grid[y * tileW + x]! & 0xf) | ((grid[y * tileW + x + 1]! & 0xf) << 4);
+      o += 1;
+    }
+  }
+  return out;
+}
+
+/**
+ * Pack an 8×8 grid into the **SNES 4bpp** tile layout: bitplanes 0/1 interleaved
+ * per row for the first 16 bytes (`plane0[y], plane1[y]` for each row), then
+ * bitplanes 2/3 the same way for the next 16 — the PPU's "two 2bpp tiles stacked"
+ * arrangement, MSB-first per row.
+ */
+export function packSnes4(grid: Uint8Array, tileW: number, tileH: number): Uint8Array {
+  const out = new Uint8Array(tileH * 4);
+  for (let pair = 0; pair < 2; pair += 1) {
+    for (let y = 0; y < tileH; y += 1) {
+      for (let sub = 0; sub < 2; sub += 1) {
+        const plane = pair * 2 + sub;
+        let byte = 0;
+        for (let x = 0; x < tileW; x += 1) {
+          const bit = (grid[y * tileW + x]! >> plane) & 1;
+          byte |= bit << (tileW - 1 - x);
+        }
+        out[pair * tileH * 2 + y * 2 + sub] = byte;
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * Pack an 8×8 grid into **plane-grouped** planar bytes: all `tileH` low-plane row
  * bytes, then all `tileH` high-plane row bytes (the NES/2C02 pattern-table
  * layout), MSB-first per row.

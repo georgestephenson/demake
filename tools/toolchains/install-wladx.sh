@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Provision the WLA-DX toolchain (wla-z80 + wlalink) for the SMS/GG `--format
-# rom` path. Pinned source build (git clone + cmake), cached and idempotent —
+# Provision the WLA-DX toolchain (wla-z80 + wla-65816 + wlalink) for the SMS/GG,
+# SG-1000 and SNES `--format rom` paths — one build serves every WLA-DX target
+# family. Pinned source build (git clone + cmake), cached and idempotent —
 # the same mechanism as the other assemblers. No Docker; needs git egress, a C
 # compiler, and cmake. Best-effort (exits 0 unless WLADX_STRICT=1).
 set -uo pipefail
@@ -10,7 +11,7 @@ CACHE_ROOT="${DEMAKE_TOOLCHAIN_DIR:-$HOME/.cache/demake/toolchains}"
 PREFIX="$CACHE_ROOT/wladx-${WLADX_VERSION}"
 BIN_DIR="$PREFIX/bin"
 LINK_DIR="${DEMAKE_TOOLCHAIN_BIN:-/usr/local/bin}"
-TOOLS=(wla-z80 wlalink)
+TOOLS=(wla-z80 wla-65816 wlalink)
 
 log() { printf 'install-wladx: %s\n' "$*" >&2; }
 die() {
@@ -28,11 +29,20 @@ link_onto_path() {
   fi
 }
 
-if command -v wla-z80 >/dev/null 2>&1 && command -v wlalink >/dev/null 2>&1; then
+have_all() {
+  for t in "${TOOLS[@]}"; do command -v "$t" >/dev/null 2>&1 || return 1; done
+  return 0
+}
+cached_all() {
+  for t in "${TOOLS[@]}"; do [ -x "$BIN_DIR/$t" ] || return 1; done
+  return 0
+}
+
+if have_all; then
   log "using system WLA-DX — nothing to build"
   exit 0
 fi
-if [ -x "$BIN_DIR/wla-z80" ]; then
+if cached_all; then
   log "cached: WLA-DX ($BIN_DIR)"
   link_onto_path
   exit 0

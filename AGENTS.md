@@ -10,12 +10,12 @@ add content to `CLAUDE.md` directly.
 A tool that converts any image into hardware-compliant art — and displayable
 code — for 8/16-bit-era consoles and handhelds up to the Nintendo DS. The full
 design lives in [`docs/`](docs/README.md); the milestone plan is
-[`docs/13-roadmap.md`](docs/13-roadmap.md). **Current status: Phase 2 (in
-progress)** — the Phase-1 engine spine is live (the deterministic image layer:
-our PNG codec, color spaces, DAC models, seeded PRNG, math kernels; the
-`ConsoleSpec` schema with the `gbc` and `dmg` specs; the tiled-and-mono
-conversion pipeline with tournament + judge; the `inspect` compliance oracle).
-Phase 2 is well advanced:
+[`docs/13-roadmap.md`](docs/13-roadmap.md). **Current status: Phase 2 complete;
+Phase 3 (web app) shipped** — the Phase-1 engine spine is live (the
+deterministic image layer: our PNG codec, color spaces, DAC models, seeded PRNG,
+math kernels; the `ConsoleSpec` schema; the tiled-and-mono conversion pipeline
+with tournament + judge; the `inspect` compliance oracle). Phase 2 landed the
+full proof loop for **all eight Tier 1 consoles**:
 
 - **`prep`/`inspect` for 21 consoles** — every RGB-lattice and mono raster
   platform in doc 03 (GBC/DMG, NES, SNES, MD, SMS/GG, GBA, NDS, PCE, Neo Geo,
@@ -23,23 +23,24 @@ Phase 2 is well advanced:
   SG-1000, through the one generic tiled fitter + mono path + the TMS9918
   Graphics II per-row two-color path (`pipeline/fit-tms.ts`). NES added
   `fixed-master` color, 16×16 attribute cells, and the shared-backdrop constraint.
-- **Codegen** (`bin`/`asm`/`c`) for the `gb`, `nes`, `sms`, `md`, and `sg1000`
-  families, reached via an exact-path detector, a manifest sidecar, or implicit
-  `prep`.
+- **Codegen** (`bin`/`asm`/`c`) for the `gb`, `nes`, `snes`, `sms`, `md`,
+  `sg1000`, `gba`, and `nds` families, reached via an exact-path detector, a
+  manifest sidecar, or implicit `prep`.
 - **`--format rom`** builds bootable ROMs for GB (RGBDS), NES (cc65 NROM), SMS +
-  GG + SG-1000 (WLA-DX / Z80), and MD/Genesis (GNU m68k binutils). The z80/6502
-  assemblers are pinned source builds; the m68k binutils is a stock distro
-  package (apt, main archive) since a well-tested one ships there — all via
-  `pnpm toolchains`, no Docker.
-- **Pixel-perfect emulator E2E** for GB (SameBoy), NES + SMS + GG + MD + SG-1000
-  (libretro cores via one generic `emu-harness/libretro/` runner), all marching
-  through the same shared extensive image battery
-  (`packages/cli/test/_emu-battery.ts`).
+  GG + SG-1000 (WLA-DX / Z80), SNES (WLA-DX / 65816, LoROM), MD/Genesis (GNU m68k
+  binutils), and GBA + NDS (GNU ARM binutils). The z80/6502/65816 assemblers are
+  pinned source builds; the m68k and ARM binutils are stock distro packages (apt,
+  main archive) since well-tested ones ship there — all via `pnpm toolchains`, no
+  Docker, and no devkitARM/ndstool (demake packs the GBA and NDS cartridge
+  headers itself).
+- **Pixel-perfect emulator E2E** for every Tier 1 console — GB/GBC (SameBoy) and
+  NES + SMS + GG + MD + SG-1000 + SNES + GBA + NDS (libretro cores via one
+  generic `emu-harness/libretro/` runner) — all marching through the same shared
+  extensive image battery (`packages/cli/test/_emu-battery.ts`).
 
-Still to come: codegen + rom + E2E for the remaining consoles (each = a codegen
-backend, a ROM harness + toolchain, and a libretro core + DAC calibration),
-plus the remaining framebuffer/scanline layout paths (Lynx, GBA bitmap,
-2600/7800).
+Still to come: the remaining Tier 2/3 consoles (each = a codegen backend, a ROM
+harness + toolchain, and a libretro core + DAC calibration), and the remaining
+framebuffer/scanline layout paths (Lynx, GBA/NDS bitmap modes, 2600/7800).
 
 ## Layout map
 
@@ -50,23 +51,24 @@ packages/core/       @demake/core — the engine (zero platform deps; ESM; ships
   src/image/         PNG codec (inflate/deflate/decode/encode), DAC models, decode dispatch
   src/consoles/      ConsoleSpec schema + one declarative spec per console (21 of them)
   src/pipeline/      stages 0–7, the tiled fitter, mono + TMS row-pair paths, tournament
-  src/codegen/       gen: per-family backends (gb, nes, sms, md, sg1000), exact-path detector
+  src/codegen/       gen: per-family backends (gb, nes, snes, sms, md, sg1000, gba, nds), detector
   src/inspect/       compliance oracle (inspect) + fidelity judge
 packages/cli-spec/   @demake/cli-spec — single source of truth: spec → parser, help, man
 packages/cli/        demake — thin CLI over core; re-exports core for scripting
-  src/rom/           edge: assemble `--format rom` per family (RGBDS / cc65 / WLA-DX / m68k)
+  src/rom/           edge: assemble `--format rom` per family (RGBDS / cc65 / WLA-DX / m68k / ARM)
   man/               generated roff man pages (never hand-edited)
-rom-harness/{gb,nes,sms,md,sg1000}/  the display programs `gen --format rom` assembles
+rom-harness/{gb,nes,snes,sms,md,sg1000,gba,nds}/  the display programs `gen --format rom` assembles
 emu-harness/gb/      SameBoy headless capturer for the GB pixel-perfect E2E (doc 10)
 emu-harness/libretro/  generic retrorun frontend — one capturer for every libretro core
 tools/toolchains/    provisioners (cached): RGBDS, cc65, WLA-DX, SameBoy source builds;
-                     GNU m68k binutils (apt); libretro cores (fceumm, genesis-plus-gx)
+                     GNU m68k + arm-none-eabi binutils (apt); libretro cores
+                     (fceumm, genesis-plus-gx, snes9x, mgba, desmume)
 tools/eslint-rules/  custom ESLint rules: platform-purity + determinism
+tools/ci/            CI guards: E2E prerequisites, web JS budget
 docs/                the design plan; source of truth for decisions
 ```
 
-Packages not yet created (web, desktop, testdata) arrive in later phases per
-doc 02.
+Packages not yet created (desktop, testdata) arrive in later phases per doc 02.
 
 ## Golden commands
 
@@ -80,8 +82,12 @@ pnpm changeset     # add a changeset for a user-visible change
 pnpm cli -- --help # run the built CLI from source (build first)
 pnpm gen:man       # regenerate man pages from cli-spec (build first; CI checks staleness)
 pnpm eval:prep     # prep quality battery: scoreboard + side-by-side sheets (build first)
-pnpm toolchains    # provision RGBDS (source build, cached) for `gen --format rom`
-pnpm emulator      # provision the headless SameBoy capturer for the pixel-perfect E2E
+pnpm dev:web       # run the web app against the workspace core (build core first)
+pnpm build:web     # typecheck + bundle the web app into packages/web/dist
+pnpm test:browser  # Playwright: web functional + browser-vs-Node determinism
+pnpm check:web-budget  # assert the app's gzipped JS stays under the doc-07 budget
+pnpm toolchains    # provision every assembler `gen --format rom` needs (cached)
+pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
 ```
 
 ## Iron rules
@@ -133,6 +139,14 @@ Two files plus fixtures (doc 02 §Extensibility):
 - CLI tests exercise both the pure `run()` function and the spawned built binary;
   the binary test skips when `dist` is absent, so run `pnpm build` first to
   include it (CI always does).
+- The web suite is Playwright, not Vitest: `pnpm test:browser` builds the app,
+  serves the _built_ bundle, and runs both specs in Chromium + Firefox + WebKit.
+  `packages/web/test/e2e/determinism.spec.ts` is the doc-07 parity contract —
+  it converts the bundled demo image in Node through `@demake/core` and in the
+  page through its worker, then compares the exported PNGs byte-for-byte. Narrow
+  the browsers with `DEMAKE_BROWSERS=chromium`, and point at a browser already on
+  the machine with `DEMAKE_CHROMIUM=/path/to/chrome` (managed containers ship
+  one; CI runs `playwright install`).
 
 ## Gotchas
 
@@ -168,11 +182,42 @@ Two files plus fixtures (doc 02 §Extensibility):
   crop margin so the Game Gear's 160×144 window lands on the art; the MD harness
   addresses its data with absolute (not PC-relative) loads because the tile blob
   can exceed the 68000's ±32 KiB PC-relative range.
+- **The SNES scrolls by one line**: the PPU renders screen scanline N from BG
+  line `BGnVOFS + N + 1`, so the harness sets `BG1VOFS = -1` ($3FF). With zero
+  there the whole image is one pixel low and every E2E case fails by exactly a
+  row — the "shifted image" entry in doc 10's triage guide, in the flesh.
+- mGBA (GBA) and DeSmuME (NDS) render 15-bit consoles into a 16-bit framebuffer
+  and widen green with a plain shift, not bit replication, so those E2Es compare
+  in **RGB555** (`to555` in `test/_emu-battery.ts`) — the console's real depth.
+  The 565 cores (SMS/GG/MD/SNES) keep using `to565`.
+- GBA/NDS 4bpp tiles are packed nibbles with the **left pixel in the low nibble**
+  (`packPacked4Le`) — the mirror image of the MD's `packPacked4`. SNES 4bpp is a
+  third layout again (`packSnes4`: plane pair 0/1 per row, then 2/3).
+- The DS reuses the `gba` codegen emitter verbatim (identical 2D-engine formats);
+  only the ROM edge differs. demake writes the `.nds` cartridge header itself
+  (`cli/src/rom/nds.ts`) — ARM9 at ROM offset 0x4000 with entry 0x02000000, an
+  ARM7 stub at 0x02380000, header CRC16 — so no ndstool or devkitARM is needed;
+  the Nintendo logo area stays zero (direct boot never checks it, and we ship no
+  copyrighted logo).
+- ARM harnesses must keep their literal pool next to the code (`.pool` before the
+  `.incbin` blobs): `ldr rX, =value` only reaches ±4 KiB and the tile blob is far
+  bigger.
 - SG-1000 (TMS9918 Graphics II) is _not_ a tiled sub-palette layout: its rule is
   two colors per 8×1 row, handled by `pipeline/fit-tms.ts` and validated by a
   dedicated oracle branch (there is no `subPalettes` on a `scanline` spec — don't
   cast it to `TileLayout`). Its Z80 harness reuses WLA-DX; the master palette is
   derived from genesis-plus-gx's native RGB565 `tms_palette`, not the 32-bit one.
+- **The web app must never grow conversion logic.** Everything it shows comes
+  from `@demake/core` through `src/worker/core.worker.ts` — console list,
+  strategy portfolio, palettes, stats, manifest bytes. A second implementation
+  of anything the CLI does (a manifest shape, a symbol-name rule, a console
+  summary table) is how parity dies; if the web needs it, it moves into core
+  first, as `buildManifest`/`encodeManifest` did.
+- Web determinism has one extra trap the CLI doesn't: anything the _page_ feeds
+  the engine must itself be engine-independent. That is why the bundled demo
+  image (`src/lib/demo-image.ts`) uses no `Math.sin`/`Math.random` — the
+  determinism spec converts it, so a transcendental there would turn a real byte
+  mismatch into an untraceable one.
 - The PNG encoder must stay deterministic (no libpng drift) once it exists.
 - Source imports use explicit `.js` extensions (NodeNext ESM); Vitest resolves
   them to `.ts` via the workspace alias.

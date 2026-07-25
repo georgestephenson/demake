@@ -11,17 +11,21 @@
   },
   "scripts": {
     "build": "tsc --build",
+    "build:web": "pnpm --filter @demake/web build",
     "clean": "tsc --build --clean",
     "typecheck": "tsc --build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "dev:web": "pnpm --filter @demake/web dev",
+    "test:browser": "pnpm --filter @demake/web test:e2e",
+    "check:web-budget": "pnpm build:web && node tools/ci/check-web-budget.mjs",
     "lint": "eslint . && prettier --check .",
     "lint:fix": "eslint . --fix && prettier --write .",
     "changeset": "changeset",
     "cli": "node packages/cli/dist/index.js",
     "gen:man": "pnpm --filter demake gen:man",
     "eval:prep": "node tools/prep-eval/run.mjs",
-    "toolchains": "bash tools/toolchains/install-rgbds.sh && bash tools/toolchains/install-cc65.sh && bash tools/toolchains/install-wladx.sh && bash tools/toolchains/install-m68k.sh",
+    "toolchains": "bash tools/toolchains/install-rgbds.sh && bash tools/toolchains/install-cc65.sh && bash tools/toolchains/install-wladx.sh && bash tools/toolchains/install-m68k.sh && bash tools/toolchains/install-arm.sh",
     "emulator": "bash tools/toolchains/install-sameboy.sh && bash tools/toolchains/install-libretro.sh"
   },
   "devDependencies": {

@@ -1,0 +1,25 @@
+{
+  "name": "@demake/web",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The demake web app: the same @demake/core engine in a Web Worker, deployed as a static site (doc 07).",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "preview": "vite preview --port 4173",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@demake/cli-spec": "workspace:*",
+    "@demake/core": "workspace:*",
+    "preact": "^10.29.7"
+  },
+  "devDependencies": {
+    "@lhci/cli": "^0.15.1",
+    "@playwright/test": "^1.62.0",
+    "@preact/preset-vite": "^2.10.6",
+    "vite": "^8.1.5"
+  }
+}

@@ -48,12 +48,12 @@ where the data formats genuinely coincide.
 |---|---|---|---|
 | `gb` | DMG, GBC (Mega Duck via variant) | 2bpp planar tiles, BG map, BGP shades / BGR555 pals + attr map (bank1) | RGBDS (`rgbasm/rgblink/rgbfix`) |
 | `nes` | NES | 2bpp planar CHR, nametable, attribute table, 4×4 palette bytes | ca65/ld65 (NROM harness) |
-| `snes` | SNES | 4bpp/8bpp planar tiles, tilemap words, CGRAM BGR555 | ca65 --cpu 65816 or wla-dx harness |
+| `snes` | SNES | 4bpp SNES tiles (plane pairs 0/1 then 2/3), tilemap words, CGRAM BGR555 | WLA-DX (`wla-65816` + `wlalink`), LoROM harness |
 | `md` | Mega Drive | 4bpp packed tiles, plane map words (pal/prio bits), CRAM BGR333 | vasm m68k (tiny bare-metal harness) or SGDK for the `c` format |
 | `sms` | SMS, GG, SG-1000 mode targets | 4bpp planar tiles, name table, CRAM (RGB222/RGB444); TMS mode: pattern+color tables | WLA-DX or z88dk/devkitSMS |
 | `tms` | SG-1000, ColecoVision | Graphics II pattern/color/name tables | z88dk harness per BIOS/boot quirks |
-| `gba` | GBA | mode3 RGB555 bitmap / mode4 pal+8bpp / mode0 4bpp tiles+map+pals | devkitARM or the `agbcc`-free modern gcc; `.gba` header fixup |
-| `nds` | NDS | framebuffer / tiled + (ext) palettes, per-engine | devkitARM + libnds; `.nds` via ndstool |
+| `gba` | GBA | mode0 4bpp tiles (low-nibble-first) + screen entries + 16 BGR555 pals (mode3/4 bitmaps later) | GNU ARM binutils (`arm-none-eabi-as/ld/objcopy`); header in the harness |
+| `nds` | NDS | engine-A text BG: the `gba` formats unchanged (ext. palettes / framebuffer later) | GNU ARM binutils; `.nds` cartridge packed by demake itself, no ndstool |
 | `pce` | PC Engine | 4bpp planar-pair tiles, BAT entries, 9-bit palettes | PCEAS or HuC harness |
 | `neogeo` | Neo Geo | fix-layer + sprite-strip C-ROM format, palette RAM | ngdevkit |
 | `a26` | Atari 2600 | kernel-specific playfield/sprite tables **plus the kernel itself** (the display code *is* the format) | dasm |

@@ -9,7 +9,9 @@
  */
 
 import {
+  buildManifest,
   decodePng,
+  encodeManifest,
   encodeRgbaPng,
   prep,
   sourceHash,
@@ -137,10 +139,9 @@ export async function runPrep(
   if (previewSpec) writePreview(env, result.image, result.png, previewSpec, values.force === true);
   const manifestPath = manifestTarget(values);
   if (manifestPath !== undefined) {
-    const manifest = buildManifest(result, sourceHash(result.png));
     env.writeFileAtomic(
       manifestPath || defaultManifestPath(output),
-      new TextEncoder().encode(JSON.stringify(manifest, null, 2)),
+      encodeManifest(buildManifest(result, sourceHash(result.png))),
       values.force === true,
     );
   }
@@ -184,22 +185,6 @@ function manifestTarget(values: Record<string, ParsedValue>): string | undefined
 function defaultManifestPath(output: string | undefined): string {
   if (output) return output.replace(/\.png$/i, "") + ".json";
   return "manifest.json";
-}
-
-function buildManifest(result: Awaited<ReturnType<typeof prep>>, imageHash: string): unknown {
-  return {
-    schemaVersion: 1,
-    console: result.image.consoleId,
-    width: result.image.width,
-    height: result.image.height,
-    imageHash,
-    grid: result.image.grid,
-    palettes: result.image.palettes.map((p) =>
-      p.colors.map((c) => ({ codes: c.codes, display: c.display })),
-    ),
-    decisions: result.decisions,
-    stats: result.stats,
-  };
 }
 
 /** Write an N× nearest-neighbor preview PNG (`--preview file[@N]`). */

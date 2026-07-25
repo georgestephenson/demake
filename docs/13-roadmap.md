@@ -61,6 +61,15 @@ determinism (Node 3-OS) green.
 **Done means**: `hd-many-colors.png` passes the full prep→gen→ROM→emulator→
 pixel-perfect loop for all eight Tier 1 consoles in CI.
 
+**Status: complete.** All eight Tier 1 consoles (DMG, GBC, NES, SNES, MD, SMS,
+GBA, NDS) run the whole loop, each against the shared extensive image battery
+(`packages/cli/test/_emu-battery.ts`) rather than a single fixture: SameBoy for
+the GB family, and the one generic libretro harness for the rest (fceumm,
+genesis-plus-gx, snes9x, mGBA, DeSmuME). SG-1000 came along early with the
+TMS9918 row-pair path; the Game Gear rides the SMS family. Every toolchain is a
+pinned source build or a stock distro package provisioned by `pnpm toolchains` —
+no Docker anywhere in the loop.
+
 ## Phase 3 — Web app
 
 Vite+Preact app per doc 07: worker-hosted core, full option UI, previews with
@@ -69,6 +78,19 @@ equivalent-command display, PWA, Pages deploy, Playwright + browser-determinism 
 
 **Done means**: github.io live; browser output byte-identical to CLI across
 Chromium/Firefox/WebKit in CI; Lighthouse ≥ 95.
+
+**Status: built.** `packages/web` ships the three-pane app on a worker-hosted
+core: console picker grouped by tier with per-console constraint summaries, the
+full doc-05 option surface (advanced options collapsed), previews with the DAC
+model and pixel-aspect correction, the fitted palette strip, fit/tile-budget
+stats, the tournament scoreboard doubling as a strategy picker, exports for
+PNG/manifest/asm/C/bin, the live equivalent-command line, option permalinks, and
+an offline service worker. `pages.yml` deploys `main` to Pages; `test-browser`
+runs the Playwright functional + **byte-identity** suites in three engines, and a
+gzipped-JS budget check guards doc 07's 300 KB. In-browser ROM assembly (the
+GB/NES stretch goal) is not implemented: the ROM button explains that and points
+at the CLI, which is what doc 07 specifies for a console whose ROM the browser
+cannot build.
 
 ## Phase 4 — Desktop app + distribution
 
@@ -124,7 +146,11 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
 ## Standing decision log
 
 Decisions this plan defers, each becoming an ADR when made:
-DS emulator choice (melonDS vs DeSmuME automation, Phase 4/2 spike) · Node SEA vs
+~~DS emulator choice (melonDS vs DeSmuME automation)~~ — **decided in Phase 2:
+DeSmuME via the libretro harness.** It direct-boots a `.nds` with no BIOS or
+firmware images, so the DS loop builds from source on a bare machine like every
+other console; melonDS's BIOS/firmware requirement would have made the E2E
+unrunnable in CI without shipping copyrighted files. · Node SEA vs
 Bun compile (Phase 1 spike) · final name confirmation (Phase 0) · MD 32X/Sega CD
 "extended spec" inclusion (post-1.0) · Oklab L-weight and judge metric-weight
 calibration values (Phase 2, frozen thereafter) · initial candidate-portfolio

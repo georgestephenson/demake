@@ -72,5 +72,11 @@ export type { GenOptions, GenResult, GenPath } from "./codegen/gen.js";
 export type { GenArtifact, CodegenBackend, EmitOptions } from "./codegen/types.js";
 export { detectCompliant } from "./codegen/detect.js";
 export { backendFor, codegenFamilies } from "./codegen/registry.js";
-export { parseManifest, applyManifest, type CodegenManifest } from "./codegen/manifest.js";
+export {
+  parseManifest,
+  applyManifest,
+  buildManifest,
+  encodeManifest,
+  type CodegenManifest,
+} from "./codegen/manifest.js";
 export { sourceHash } from "./codegen/provenance.js";

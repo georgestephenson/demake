@@ -53,6 +53,9 @@ const hasCc65 = nodeEnv.which("ca65") !== null && nodeEnv.which("ld65") !== null
 const hasWla = nodeEnv.which("wla-z80") !== null && nodeEnv.which("wlalink") !== null;
 const hasM68k =
   nodeEnv.which("m68k-linux-gnu-as") !== null && nodeEnv.which("m68k-linux-gnu-objcopy") !== null;
+const hasWla65816 = nodeEnv.which("wla-65816") !== null && nodeEnv.which("wlalink") !== null;
+const hasArm =
+  nodeEnv.which("arm-none-eabi-as") !== null && nodeEnv.which("arm-none-eabi-objcopy") !== null;
 const maybe = hasRgbds ? it : it.skip;
 
 describe("gen --format rom (E2E, needs RGBDS)", () => {
@@ -142,5 +145,34 @@ describe("gen --format rom (E2E, needs m68k binutils)", () => {
     expect(rom.length).toBe(1 << 17); // padded to 128 KiB
     // The Mega Drive console signature the header carries at $100.
     expect(String.fromCharCode(...rom.slice(0x100, 0x104))).toBe("SEGA");
+  });
+});
+
+describe("gen --format rom (E2E, needs WLA-DX 65816)", () => {
+  romCliCase(hasWla65816, "snes", ".sfc", (rom) => {
+    expect(rom.length).toBe(8 * 32768); // eight LoROM banks
+    // The LoROM header's 21-character title sits at $7FC0.
+    expect(String.fromCharCode(...rom.slice(0x7fc0, 0x7fc6))).toBe("demake");
+  });
+});
+
+describe("gen --format rom (E2E, needs ARM binutils)", () => {
+  romCliCase(hasArm, "gba", ".gba", (rom) => {
+    // The cartridge entry point is an ARM branch (condition AL, opcode 0xEA),
+    // and byte $B2 is the header's fixed value.
+    expect(rom[3]).toBe(0xea);
+    expect(rom[0xb2]).toBe(0x96);
+    expect(String.fromCharCode(...rom.slice(0xa0, 0xa6))).toBe("DEMAKE");
+  });
+  romCliCase(hasArm, "nds", ".nds", (rom) => {
+    const u32 = (off: number): number =>
+      rom[off]! | (rom[off + 1]! << 8) | (rom[off + 2]! << 16) | (rom[off + 3]! << 24);
+    expect(String.fromCharCode(...rom.slice(0, 6))).toBe("DEMAKE");
+    expect(u32(0x020)).toBe(0x4000); // ARM9 ROM offset
+    expect(u32(0x024)).toBe(0x02000000); // ARM9 entry
+    expect(u32(0x028)).toBe(0x02000000); // ARM9 load address
+    expect(u32(0x034)).toBe(0x02380000); // ARM7 entry
+    expect(u32(0x02c)).toBeGreaterThan(0); // a non-empty ARM9 binary
+    expect(u32(0x080)).toBeLessThanOrEqual(rom.length); // total used size fits
   });
 });
