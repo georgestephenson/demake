@@ -1,7 +1,6 @@
 {
   "name": "@demake/demotic",
   "version": "0.0.0",
-  "private": true,
   "description": "Demotic: the declarative, platform-agnostic game language and its reference interpreter. Platform-pure, deterministic, fixed-point.",
   "type": "module",
   "license": "MIT",
@@ -25,6 +24,11 @@
     "build": "tsc --build"
   },
   "devDependencies": {
-    "@demake/core": "workspace:*"
+    "@demake/core": "workspace:*",
+    "@demake/dmg": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }

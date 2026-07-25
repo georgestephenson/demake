@@ -176,10 +176,22 @@ state per tick for a fixed input tape — `packages/demotic/fixtures/pong.gb.tra
 is the first. Three things are diffed against it: the reference interpreter on
 every commit; the browser preview in the web determinism suite (a whole game's
 state, every tick — a far stronger parity check than any single image
-comparison); and eventually the console runtime, by dumping its entity table per
-tick from the emulator harness. A port is proven by `diff`, not judgement. Values
-are raw integers precisely so a one-bit disagreement cannot hide behind a rounded
-decimal.
+comparison); and the console runtime, by reading its entity table out of work RAM
+each tick. A port is proven by `diff`, not judgement. Values are raw integers
+precisely so a one-bit disagreement cannot hide behind a rounded decimal.
+
+**The runtime's oracle is a unit test, not an E2E** — and that is a deliberate
+departure from the image path. The runtime keeps its entity table at fixed
+addresses, and `@demake/dmg` (our own Game Boy core, ~1200 lines, no
+dependencies) boots the patched ROM and reads them, so
+`packages/demotic/test/rom.test.ts` runs wherever `pnpm test` does: no
+assembler, no emulator install, no self-skip. It builds a cartridge from each
+supported example game and asserts the trace matches the interpreter tick for
+tick. Writing our own core was the cheaper option twice over, because doc 07
+also needs one in the browser and forbids fetching it from a CDN.
+
+Framebuffer equality for games then rides the existing SameBoy E2E, testing only
+rendering, because the logic has already been proven equal.
 
 **`.test.dmt` suites.** Assertions about a game, written in the same expression
 language as the game, run against *every* console. This is the only way to test

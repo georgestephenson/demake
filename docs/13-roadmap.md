@@ -135,18 +135,32 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   - **D1 — language + preview** *(done)*: front end, reference interpreter,
     relative units, compile-time hardware diagnostics, `.test.dmt` runner, trace
     oracle, browser section, Pong fixture.
-  - **D2 — Demakefile + `build`**: the manifest parser and resolver, art binding
-    through `prep` (sprite palette shapes, transparency, shared tile dedup),
-    `build`/`check`/`init`/`fmt`, and the round-trip properties.
-  - **D3 — first runtime (`gb`)**: the fixed engine consuming the program tables,
-    plus the input-tape emulator harness. **Done means** a `.gb` built from
-    `pong.dmt` reproduces the checked-in golden trace tick-for-tick on SameBoy.
+  - **D2 — Demakefile + `build`** *(`build` done; the manifest is not)*: `demake
+    build` exists and is the zero-config path doc 15 §You do not need one
+    describes — flags stand in for the file, and the file itself, art binding
+    through `prep`, and `check`/`init`/`fmt` are still to come.
+  - **D3 — first runtime (`gb`)** *(done)*: `runtime-harness/gb/` is the fixed
+    SM83 engine consuming the program tables, and `packages/demotic/src/rom/`
+    is the table format it reads. A `.gb` built from `pong.dmt` reproduces the
+    checked-in golden trace tick for tick, and four more fixture games match the
+    reference interpreter, in `packages/demotic/test/rom.test.ts`. The harness is
+    `@demake/dmg` rather than SameBoy, which is what makes the conformance loop
+    a plain unit test: no toolchain, no emulator install. Two deliberate gaps
+    remain, and `demake build` refuses rather than papering over either —
+    **levels, tiles and the camera** (they landed in the language after the
+    runtime scope was set), and **art**, which waits on doc 15's rasteriser, so
+    objects draw as a built-in block. Speed is the third: the interpreter needs
+    roughly three Game Boy frames per tick, so a game runs at about 20 Hz on
+    hardware, and the web app reports the measured figure instead of hiding it.
   - **D4 — breadth**: `nes`, `sms`/`gg`, `md`, `snes` runtimes, each trace-green
-    then framebuffer-green.
-  - **D5 — Play ROM in the page**: because the runtime is fixed and only the
-    tables change, the browser patches a CI-assembled blob rather than assembling
-    anything, so this covers every family with a runtime. Needs a self-hosted
-    WASM core (never a CDN, per doc 07).
+    then framebuffer-green. Only the engine is per-family; the tables are not.
+  - **D5 — Play ROM in the page** *(done for `gb`)*: the browser assembles
+    nothing. `pnpm gen:runtime` assembles the engine image once and checks it in
+    (guarded by a staleness test, like the man pages); the page patches the
+    tables it compiled into that image, fixes the header, and boots the result
+    in `@demake/dmg` — ours, because doc 07 forbids a CDN core and a WASM core
+    we cannot read is the same bargain in a different wrapper. The bytes are
+    identical to `demake build`'s, and the pane offers them as a download.
   - **D6 — language growth**, driven by fixtures beyond Pong. Levels, tiles, a
     scrolling camera, `stream`-composed courses and a seeded `random` have
     landed (doc 14 §Levels, §Composed levels, §Randomness). What is left:

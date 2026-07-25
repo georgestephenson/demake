@@ -8,12 +8,12 @@
 could display and play, verified on emulated hardware rather than merely
 asserted:
 
-| Demaker   | Input                                               | Output                                                                   | Status                                             |
-| --------- | --------------------------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------- |
-| **art**   | any image                                           | hardware-compliant art, palettes, tile maps, asm/C/binary, bootable ROMs | working                                            |
-| **game**  | a [Demotic](docs/14-demotic.md) `.dmt` script + art | one game, every console                                                  | language and preview working; runtimes in progress |
-| **music** | a track                                             | chip music and driver data                                               | planned                                            |
-| **sound** | an effect                                           | chip sound                                                               | planned                                            |
+| Demaker   | Input                                               | Output                                                                   | Status                                        |
+| --------- | --------------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------- |
+| **art**   | any image                                           | hardware-compliant art, palettes, tile maps, asm/C/binary, bootable ROMs | working                                       |
+| **game**  | a [Demotic](docs/14-demotic.md) `.dmt` script + art | one game, every console                                                  | language, preview and a playable Game Boy ROM |
+| **music** | a track                                             | chip music and driver data                                               | planned                                       |
+| **sound** | an effect                                           | chip sound                                                               | planned                                       |
 
 The two working demakers share one engine, one determinism guarantee, and one
 proof: a real ROM, booted in a real emulator, compared pixel for pixel in CI.
@@ -35,11 +35,14 @@ converted. Both are small, flat, and line-oriented precisely so a model can writ
 and patch them reliably — and a `.test.dmt` suite asserts the game still plays
 correctly on every console at once.
 
-> **Status: Phase 3, plus Demotic D1.** The engine, the CLI and the web app are
-> live; the Demotic language, its reference interpreter, its cross-console test
-> runner and its browser preview are live, and its console runtimes are not. All eight
-> Tier 1 consoles go image → compliant art → native data → bootable ROM →
-> emulator frame, compared pixel-for-pixel in CI. The full design lives in
+> **Status: Phase 3, plus Demotic D1–D3 and D5.** The engine, the CLI and the web
+> app are live; so are the Demotic language, its reference interpreter, its
+> cross-console test runner, its browser preview — and its first console
+> runtime. `demake build pong.dmt -o pong.gb` writes a real Game Boy cartridge,
+> the web app plays that cartridge in the page, and CI proves it reproduces the
+> reference interpreter's fixed-point state tick for tick. All eight Tier 1
+> consoles go image → compliant art → native data → bootable ROM → emulator
+> frame, compared pixel-for-pixel in CI. The full design lives in
 > [`docs/`](docs/README.md); the milestone plan is
 > [`docs/13-roadmap.md`](docs/13-roadmap.md).
 
@@ -55,7 +58,13 @@ demake gen photo.gbc.png -c gbc --format asm      # tiles, map, palettes as RGBD
 demake gen photo.jpg -c nes --format rom -o out.nes   # a bootable ROM that displays it
 demake inspect photo.gbc.png                      # is this really compliant? which consoles?
 demake consoles                                   # every supported machine + its constraints
+
+demake build pong.dmt -o pong.gb --title PONG     # a Demotic game as a playable cartridge
 ```
+
+Building a game needs no assembler: the console runtime is a fixed engine, so a
+build patches the compiled program tables into it and fixes the header. That is
+also why the web app can hand you the identical bytes.
 
 ## Supported consoles
 
@@ -68,6 +77,7 @@ Nintendo DS. Beyond that, support deepens in two steps:
 | `prep` + `inspect` (compliant PNG)                | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, GBA, NDS, SG-1000, PC Engine, Neo Geo, WonderSwan/Color, NGP/NGPC, Virtual Boy, Pokémon Mini, Supervision, Game.com, Mega Duck |
 | `gen` (bin/asm/C data + display code)             | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, SG-1000, GBA, NDS                                                                                                              |
 | `--format rom` + **pixel-perfect emulator proof** | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, SG-1000, GBA, NDS                                                                                                              |
+| `build` (a Demotic game as a playable ROM)        | GB                                                                                                                                                                     |
 
 "Pixel-perfect emulator proof" means what it says: CI assembles a real ROM,
 boots it in an emulator, and asserts the framebuffer matches demake's own output
@@ -75,11 +85,13 @@ byte-for-byte across an extensive image battery.
 
 ## Packages
 
-| Package                         | What                                                            |
-| ------------------------------- | --------------------------------------------------------------- |
-| [`@demake/core`](packages/core) | The engine. Zero platform deps, ESM, ships types (doc 09).      |
-| [`demake`](packages/cli)        | The CLI wrapper (doc 05). Re-exports core for scripting.        |
-| [`@demake/web`](packages/web)   | The browser app (doc 07): the same core in a worker, no server. |
+| Package                               | What                                                                            |
+| ------------------------------------- | ------------------------------------------------------------------------------- |
+| [`@demake/core`](packages/core)       | The engine. Zero platform deps, ESM, ships types (doc 09).                      |
+| [`demake`](packages/cli)              | The CLI wrapper (doc 05). Re-exports core for scripting.                        |
+| [`@demake/demotic`](packages/demotic) | Demotic: the game language, its interpreter, and the ROM builder (docs 14, 15). |
+| [`@demake/dmg`](packages/dmg)         | A Game Boy core: the conformance harness, and the web app's player.             |
+| [`@demake/web`](packages/web)         | The browser app (doc 07): the same core in a worker, no server.                 |
 
 ## Develop
 

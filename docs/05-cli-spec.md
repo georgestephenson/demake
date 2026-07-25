@@ -34,6 +34,14 @@ The second group is the Demotic surface (docs 14 and 15). Verbs are flat, like
 the first group, rather than nested under a `game` noun — one command tree, one
 `--help`, one completion script.
 
+**Of that group, `build` exists today**, in the zero-config shape doc 15 §You do
+not need one describes: it takes a `.dmt` and writes a cartridge for the one
+console that has a runtime, with `--console`, `--title`, `--format` and
+`--boot-logo` standing in for the Demakefile's directives until the manifest
+lands. It needs no toolchain — a build patches the fixed runtime image rather
+than assembling anything — which is why `--boot-logo`, the one step that does
+need `rgbfix`, is opt-in and reports its absence rather than guessing.
+
 **`check` and `inspect` are different questions**, and the file extension makes
 it obvious which you want: `inspect` asks *is this image hardware-compliant?*;
 `check` asks *is this source valid, and will it fit?* The man pages
@@ -90,6 +98,10 @@ demake test pong.test.dmt -c md --verbose
 
 # The conformance oracle a console runtime must reproduce
 demake trace pong.dmt -c gb --tape 1:a,90:,90:left > pong.gb.trace
+
+# A playable cartridge — no assembler, no Demakefile
+demake build pong.dmt -o pong.gb --title PONG
+demake build pong.dmt --json          # tables, budgets, free ROM space
 
 # See / pin the algorithm choice
 demake prep photo.jpg -c nes --strategy list
@@ -207,6 +219,9 @@ demake prep photo.jpg -c nes --strategy photo-lanczos-fs -o out.png
 | `--preview` | run | Open the local browser preview instead of the terminal renderer |
 | `--constrain` | run | Render on the console's real pixel grid rather than as authored |
 | `--write` | fmt | Rewrite files in place; default prints to stdout |
+| `--title <text>` | build | Cartridge title; default is the source file's name |
+| `--format rom\|tables` | build | A playable ROM, or the program tables alone |
+| `--boot-logo` | build | Stamp the boot logo via `rgbfix`, for original hardware |
 
 `build` and `check` report, in `--json`: the resolved source, every target with
 its console and region, every asset with its final option set and prepped size,

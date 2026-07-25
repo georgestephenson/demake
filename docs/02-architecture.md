@@ -41,8 +41,11 @@ demake/          # repo
 │   │   │   ├── compile.ts   # AST + console profile → resolved Program tables
 │   │   │   ├── sim.ts       # reference interpreter — the semantic definition
 │   │   │   ├── testing/     # .test.dmt: parse + run assertions on every console
+│   │   │   ├── rom/         # the console hand-off: table format, bytecode, ROM patcher
 │   │   │   └── demakefile/  # the build manifest: parse, resolve, emit (doc 15)
 │   │   └── test/
+│   ├── dmg/                 # @demake/dmg — our Game Boy core: the conformance harness
+│   │                        #   (doc 10) and the web app's in-page player (doc 07)
 │   ├── web/                 # Vite app → GitHub Pages (doc 07)
 │   ├── desktop/             # Tauri app, bundles CLI as sidecar (doc 08)
 │   └── cli-spec/            # single-source-of-truth command spec → --help, man, docs, JSON schema
@@ -66,6 +69,11 @@ demake/          # repo
   interpreter is the semantic specification a console runtime must match
   bit-for-bit (doc 14). **Nothing in `core` may depend on `demotic`**: the image
   engine stands alone, and the language is the layer above it.
+- `dmg` depends on **nothing at all**, and is platform-pure on the same terms as
+  `core`. It is an emulator, not conversion logic, and the direction of the
+  dependency is what keeps that honest: `demotic` uses it in tests, `web` uses it
+  to play a ROM, and neither ships a second implementation of anything. Nothing
+  depends on it at run time except the page's cartridge pane.
 - `cli` = argument parsing + file I/O + process conventions + calls into `core`.
 - `web` = UI + Web Worker hosting `core`.
 - `desktop` = UI shell + sidecar invocation of the built `cli` binary. It contains

@@ -18,6 +18,13 @@ present, `demake build` targets every console that has a runtime, with default
 conversion settings, writing `build/<console>/<name>.<ext>`. The web preview
 (doc 07) needs no Demakefile at all for the same reason.
 
+**Status.** The zero-config path is what exists today: `demake build game.dmt -o
+game.gb` builds for the one console that has a runtime, with `--console`,
+`--title` and `--format` standing in for the manifest's fields. The file itself,
+its resolver, art binding through `prep`, and `check`/`init`/`fmt` are still to
+come (doc 13 §D2). Everything below is the design they will implement, and the
+flags that exist now are deliberately named after the directives they anticipate.
+
 `demake init` writes the Demakefile that reproduces exactly what the defaults
 already do — so the zero-config path and the file are the same object, one of them
 just implicit. Editing a setting in the web preview is editing that file; see

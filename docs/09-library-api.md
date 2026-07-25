@@ -9,8 +9,9 @@ this exact API — nothing they can do is unavailable to library users.
 | Package | Contents |
 |---|---|
 | `@demake/core` | The engine: pipeline, console specs, codegen. Zero platform deps; ESM; ships types. |
-| `@demake/demotic` | The game language (doc 14) and the Demakefile (doc 15): compiler, reference interpreter, `.test.dmt` runner, trace oracle. Depends on `core`; zero platform deps. |
-| `demake` | The CLI (`bin`). Depends on both. Also re-exports them so `npm i demake` alone suffices for scripting. |
+| `@demake/demotic` | The game language (doc 14) and the Demakefile (doc 15): compiler, reference interpreter, `.test.dmt` runner, trace oracle, and the console hand-off — program tables and the `gb` ROM builder. Depends on `core`; zero platform deps. |
+| `@demake/dmg` | A Game Boy core: the Demotic conformance harness (doc 10) and the web app's in-page player (doc 07). Depends on nothing; zero platform deps. |
+| `demake` | The CLI (`bin`). Depends on all three. Also re-exports them so `npm i demake` alone suffices for scripting. |
 
 `@demake/demotic` is separate from `core` for three reasons: image-only consumers
 should not pay for a game language; the two domains' output-stability clocks are
@@ -104,6 +105,8 @@ import {
   compile, check, Sim, trace, tape,          // language
   parseTests, runTests, formatResults,        // .test.dmt
   parseDemakefile, resolveBuild,              // build manifest (doc 15)
+  emitTables, buildGbRom, unsupportedFeatures, // the console hand-off (doc 14)
+  romTraceLine, RAM,                          // reading a trace out of a running ROM
   profiles, getProfile,
   type Program, type ConsoleProfile, type Diagnostic, type RunResult,
 } from "@demake/demotic";
@@ -118,7 +121,15 @@ sim.runtimeBudget;            // worst sprites-per-scanline seen
 
 trace(sim, tape("1:a,90:,90:left"));            // the conformance oracle, as text
 runTests(parseTests(suite), program);           // assertions, per console
+
+const { bytes, stats } = buildGbRom(program, { title: "PONG" });  // a 32 KiB cartridge
+unsupportedFeatures(program);                   // [] when the runtime can run it
 ```
+
+`buildGbRom` *patches* — it writes the compiled tables into a checked-in engine
+image and fixes the header — so it needs no toolchain and runs in a browser. It
+throws rather than emit a cartridge that would play differently from `Sim`, which
+is what `unsupportedFeatures` lets a caller ask about first.
 
 `resolveBuild` returns a plan and does not execute it: running `prep`, assembling
 a runtime and writing files are the CLI's job, exactly as `gen`'s `rom-plan`

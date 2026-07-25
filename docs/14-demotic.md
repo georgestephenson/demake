@@ -14,8 +14,9 @@ the ROM path — and it reuses both. Implementation lives in
 aims it at real hardware is [doc 15, the Demakefile](15-demakefile.md).
 
 **Status.** The language, its reference interpreter, the trace oracle, and a
-browser preview exist and run. No console runtime exists yet — that boundary is
-deliberate and explained in §Runtime model. Milestones are in
+browser preview exist and run — and so does the first console runtime: `demake
+build` turns a `.dmt` into a playable 32 KiB Game Boy cartridge, proven against
+the interpreter tick for tick (§Runtime model, §Conformance). Milestones are in
 [doc 13](13-roadmap.md).
 
 ## The central split
@@ -590,6 +591,20 @@ A build produces two things per target: the **program tables** (from the compile
 console-specific only in that constants are folded) and a **runtime** (hand-written
 per CPU family, identical across every game).
 
+The `gb` runtime exists. `packages/demotic/src/rom/format.ts` is the table
+layout, `runtime-harness/gb/main.asm` is the engine, and the two are one
+contract — every offset, record size and opcode appears in both.
+
+Because the engine never varies, **a build is a byte patch, not an assembly**.
+The image is assembled once by `pnpm gen:runtime` and checked in, and a build
+writes the tables into a fixed 16 KiB window and fixes the cartridge header.
+Three things follow, and they are the reason it is done this way:
+
+- the browser can build a ROM, which is what makes doc 13 §D5 possible at all;
+- `demake build` needs no toolchain, on any machine;
+- the CLI and the web emit identical bytes, which is doc 07's parity contract
+  restated for games rather than images.
+
 A conforming runtime must implement, in this order, once per tick:
 
 1. Resolve input edges (pressed / released since last tick).
@@ -603,7 +618,17 @@ A conforming runtime must implement, in this order, once per tick:
 The order is load-bearing: a runtime that reorders these diverges within seconds.
 Rough size for a v1 runtime is 1.5–3k lines of assembly per family — entity table,
 input, fixed-point integrator, AABB collision, OAM upload with per-scanline
-mitigation, background glyphs, scene state, plus the table decoder.
+mitigation, background glyphs, scene state, plus the table decoder. The `gb` one
+came in at about 1.8k, including a 16.16 ALU and a postfix expression VM.
+
+**It is correct before it is fast, and the number is published rather than
+hidden.** A table interpreter doing 16.16 arithmetic on a 4 MHz 8-bit CPU does
+not yet fit a tick inside one frame: Pong needs about three, so it plays at
+roughly 20 Hz on hardware. The web app shows the measured frames-per-tick
+instead of running the emulator fast enough to disguise it, because a person
+writing a game needs to know what their rules cost. The known wins, in order of
+size, are pointer-based property access, a quarter-square table for the
+multiply, and skipping leading zero bytes in the general divide.
 
 Families map onto the existing codegen families (doc 06): `gb`, `nes`, `sms`
 (SMS + GG), `md`, `snes`. Runtimes live in `runtime-harness/<family>/`, sibling to
@@ -620,6 +645,14 @@ rendering hides the one-bit disagreement that compounds into a visibly different
 game a thousand ticks later. Golden traces are checked in per (console, region);
 `packages/demotic/fixtures/pong.gb.trace` is the first. Proving a port is a `diff`,
 not a judgement call.
+
+This runs as a **unit test**, not an E2E: the runtime keeps its entity table at
+fixed work-RAM addresses, and `@demake/dmg` — a Game Boy core of ours, ~1200
+lines with no dependencies — boots the ROM and reads them. So the loop that
+proves a runtime correct needs no toolchain and no emulator install, and it runs
+on every machine that can run `pnpm test`. `packages/demotic/test/rom.test.ts`
+does this for five of the seven example games; the two it omits are the ones the
+runtime refuses to build.
 
 ```
 # demotic trace v1 console=gb
@@ -664,14 +697,21 @@ The language's semantics are **output bytes**, and carry the same guarantees as
 
 Named rather than hidden, in rough order of how much they matter.
 
-- **No console runtimes.** The whole point of §2 is that these are the next piece
-  of work; the semantics are the risky part and are cheaper to settle in TypeScript
-  first.
+- ~~**No console runtimes.**~~ The `gb` one exists (§Runtime model). What it does
+  not implement is **levels, tiles and the camera** — they landed in the language
+  after the runtime's scope was fixed — and a build *refuses* a game that uses
+  them rather than shipping a cartridge that plays something else. `nes`,
+  `sms`/`gg`, `md` and `snes` are doc 13 §D4.
 - **No deterministic art rasterisation.** The preview draws SVG natively; a ROM
   needs pixels, and deterministic SVG rasterisation across Node and browsers is
   genuinely hard — text metrics, font fallback and antialiasing all drift against
   an iron rule of byte-determinism. Doc 15 §Art specifies the raster-first path and
-  treats SVG as a preview convenience until a restricted rasteriser exists.
+  treats SVG as a preview convenience until a restricted rasteriser exists. Until
+  it does, a built ROM draws every object as a solid block from the runtime's
+  built-in tile bank: the game *plays* correctly, and the instance record already
+  carries the field real art will fill. Text and numbers do have art — a 5×7 font
+  authored as ASCII in `rom/graphics.ts`, because a font is data and a kilobyte of
+  hand-written `db` lines is not proofreadable.
 - **No `destroy` or runtime spawn.** Pong does not need them; Breakout and Snake
   do. The schema has room.
 - **No sound.** Overlaps with the audio demake entry in doc 13 §Phase 7+.

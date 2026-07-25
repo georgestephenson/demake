@@ -116,3 +116,25 @@ pnpm test:dmt   # the .test.dmt suites, on every console
 a fixed input tape. A console runtime is correct when it emits those exact lines.
 Changing that file means the language's semantics changed, and that should be a
 deliberate, reviewed act.
+
+`test/rom.test.ts` is that oracle applied to real hardware: it builds a Game Boy
+cartridge from each supported fixture, boots it in `@demake/dmg`, reads the
+runtime's entity table out of work RAM every tick, and diffs. No toolchain and no
+emulator install, so the loop that proves a runtime correct runs wherever
+`pnpm test` does.
+
+## Building a ROM
+
+```sh
+demake build fixtures/pong.dmt -o pong.gb --title PONG
+```
+
+`src/rom/` is the console hand-off, and it is _data_, not code generation
+(doc 14 §2): `format.ts` is the byte layout, `tables.ts` turns a `Program` into a
+blob, `graphics.ts` holds the built-in font and tile patterns, and `gb.ts`
+patches the blob into a checked-in engine image and fixes the header. Nothing
+here assembles anything, which is what lets the browser produce identical bytes.
+
+The engine itself is [`runtime-harness/gb/`](../../runtime-harness/gb/README.md),
+and its README lists what it cannot do yet — levels, the camera, and sprite art —
+each of which `buildGbRom` refuses rather than quietly playing a different game.

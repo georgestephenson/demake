@@ -113,3 +113,39 @@ export {
   type TileHit,
 } from "./level/scene.js";
 export { DEFAULT_SEED, advance, pick } from "./rng.js";
+
+// --- building a ROM (doc 14 §Runtime model, doc 13 §D3) ----------------------
+export {
+  DATA_BASE,
+  DATA_SIZE,
+  ENTITY_SIZE,
+  FORMAT_VERSION,
+  PROP_IDS,
+  RAM,
+  STORED_PROPS,
+} from "./rom/format.js";
+export {
+  emitTables,
+  LIMITS,
+  TableError,
+  type EmittedTables,
+  type TableStats,
+} from "./rom/tables.js";
+export {
+  buildGbRom,
+  decodeBase64,
+  encodeBase64,
+  unsupportedFeatures,
+  HEADER_OFFSETS,
+  ROM_SIZE,
+  type BuiltRom,
+  type RomOptions,
+} from "./rom/gb.js";
+export {
+  romProp,
+  romReady,
+  romScene,
+  romTick,
+  romTraceLine,
+  type MemoryReader,
+} from "./rom/trace.js";

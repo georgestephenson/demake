@@ -15,6 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 
+import { RomPane } from "../components/RomPane.js";
 import {
   DEFAULT_EXAMPLE,
   DEMO_ASSETS,
@@ -70,6 +71,10 @@ export function GameDemaker() {
   const sim = useRef<Sim | null>(null);
   const held = useRef(new Set<string>());
   const latched = useRef(new Set<string>());
+  // The preview and the ROM each consume their own latch: a tap shorter than a
+  // tick has to survive for both of them, and one clearing the other's would
+  // drop inputs in whichever ran second.
+  const romLatched = useRef(new Set<string>());
   const assets = useRef(new Map<string, Loaded>());
   const offscreen = useRef<HTMLCanvasElement | null>(null);
 
@@ -95,6 +100,7 @@ export function GameDemaker() {
       held.current.add(action);
       // A tap shorter than one tick would otherwise vanish between polls.
       latched.current.add(action);
+      romLatched.current.add(action);
       event.preventDefault();
     };
     const up = (event: KeyboardEvent) => {
@@ -160,6 +166,7 @@ export function GameDemaker() {
   const press = useCallback((action: string) => {
     held.current.add(action);
     latched.current.add(action);
+    romLatched.current.add(action);
   }, []);
   const release = useCallback((action: string) => {
     held.current.delete(action);
@@ -266,12 +273,7 @@ export function GameDemaker() {
         </p>
         <pre class="game-status">{status}</pre>
 
-        <p class="hint">
-          A real ROM is not buildable yet: Demotic compiles to program tables, and the per-console
-          runtime that consumes them is still to come (doc 14 §Runtime model). When it lands the
-          page will assemble nothing — it patches tables into a prebuilt runtime and plays the
-          result here.
-        </p>
+        <RomPane program={program} name={example.id} held={held} latched={romLatched} />
       </section>
 
       <section class="pane">
