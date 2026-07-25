@@ -77,12 +77,16 @@ page keeps running the last version that compiled.
 The preview runs the reference interpreter, which is the specification — but the
 product claim is a *ROM*, so the page builds one and plays it. **Live for `gb`.**
 
-**Assembling needs no assembler** (doc 06): the runtime is a fixed engine, so a
-game changes only the program tables. `pnpm gen:runtime` assembles the engine
-image once and checks it in, guarded by a staleness test the way the man pages
-are; the page patches its tables into that image and fixes the header. The bytes
-are identical to `demake build`'s — the parity contract this document already
-asks of images, restated for games — and the pane offers them as a download.
+**Assembling needs no assembler installed** (doc 06), because the assembler is
+ours: `packages/demotic/src/codegen/asm.ts` is TypeScript, so the page compiles
+the game to SM83 machine code exactly as the CLI does. The art travels the same
+way — the page hands the build raw SVG text and `@demake/core`'s own rasteriser
+turns it into tiles, rather than the browser's SVG renderer, which would
+antialias differently from Node's and put a different byte in the cartridge. The
+bytes are identical to `demake build`'s — the parity contract this document
+already asks of images, restated for games, and pinned by a Playwright spec that
+builds `caves` on both sides and compares hashes — and the pane offers them as a
+download.
 
 **Playing it needs an emulator**, and it is ours: `@demake/dmg`, about 1200
 lines of dependency-free TypeScript. Self-hosting a WASM core would have

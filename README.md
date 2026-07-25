@@ -38,9 +38,10 @@ correctly on every console at once.
 > **Status: Phase 3, plus Demotic D1–D3 and D5.** The engine, the CLI and the web
 > app are live; so are the Demotic language, its reference interpreter, its
 > cross-console test runner, its browser preview — and its first console
-> runtime. `demake build pong.dmt -o pong.gb` writes a real Game Boy cartridge,
-> the web app plays that cartridge in the page, and CI proves it reproduces the
-> reference interpreter's fixed-point state tick for tick. All eight Tier 1
+> backend. `demake build pong.dmt -o pong.gb` _compiles_ a game to Game Boy
+> machine code and demakes its art on the way, the web app builds and plays the
+> identical cartridge in the page, and CI proves every example game reproduces
+> the reference interpreter's fixed-point state tick for tick. All eight Tier 1
 > consoles go image → compliant art → native data → bootable ROM → emulator
 > frame, compared pixel-for-pixel in CI. The full design lives in
 > [`docs/`](docs/README.md); the milestone plan is
@@ -62,9 +63,10 @@ demake consoles                                   # every supported machine + it
 demake build pong.dmt -o pong.gb --title PONG     # a Demotic game as a playable cartridge
 ```
 
-Building a game needs no assembler: the console runtime is a fixed engine, so a
-build patches the compiled program tables into it and fixes the header. That is
-also why the web app can hand you the identical bytes.
+Building a game needs no assembler installed, because the assembler is ours: a
+build compiles the game to SM83 machine code and demakes the art it names with
+the same pipeline `prep` uses. That is also why the web app can compile the game
+itself and hand you the identical bytes.
 
 ## Supported consoles
 

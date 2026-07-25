@@ -22,7 +22,9 @@ import { buildGbRom, HEADER_OFFSETS, ROM_SIZE, unsupportedFeatures } from "../sr
 import { Sim } from "../src/sim.js";
 import { tape, trace } from "../src/trace.js";
 
-import { romTrace } from "./_rom-harness.js";
+import { romReady } from "../src/rom/trace.js";
+
+import { RomRunner, romTrace } from "./_rom-harness.js";
 
 const fixtures = join(import.meta.dirname, "..", "fixtures");
 const read = (name: string) => readFileSync(join(fixtures, name), "utf8");
@@ -86,6 +88,46 @@ describe("gb ROM conformance across the example library", () => {
       const program = build(read(file), levels);
       const frames = tape(script);
       expect(romTrace(program, frames)).toBe(trace(new Sim(program), frames));
+    });
+  }
+});
+
+describe("what the generated code costs", () => {
+  /** Game Boy frames one game tick takes, measured with input held. */
+  function framesPerTick(program: ReturnType<typeof build>): number {
+    const runner = new RomRunner(program);
+    const { machine, layout } = runner;
+    const read = (address: number, length: number) => machine.readMemory(address, length);
+    // Settle past boot, then hold a direction so the camera scrolls and the
+    // rules that only fire while moving are in the measurement.
+    for (let frame = 0; frame < 300; frame += 1) machine.runFrame();
+    machine.setButtons(["right", "a"]);
+
+    let ticks = 0;
+    let last = romReady(layout, read);
+    const frames = 600;
+    for (let frame = 0; frame < frames; frame += 1) {
+      machine.runFrame();
+      const now = romReady(layout, read);
+      if (now !== last) {
+        last = now;
+        ticks += 1;
+      }
+    }
+    expect(ticks).toBeGreaterThan(0);
+    return frames / ticks;
+  }
+
+  // Doc 14 §Runtime model publishes this figure rather than hiding it behind a
+  // speed multiplier, so it is worth a test: at one frame per tick the game
+  // keeps up with the hardware, and the interpreter this replaced never did.
+  for (const [file, levels] of [
+    ["pong.dmt", undefined],
+    [join("games", "shooter.dmt"), undefined],
+    [join("games", "caves.dmt"), { "cavern.dmtl": read(join("games", "cavern.dmtl")) }],
+  ] as const) {
+    it(`fits a tick inside a frame for ${file}`, () => {
+      expect(framesPerTick(build(read(file), levels))).toBeLessThan(1.2);
     });
   }
 });

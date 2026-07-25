@@ -41,7 +41,8 @@ demake/          # repo
 │   │   │   ├── compile.ts   # AST + console profile → resolved Program tables
 │   │   │   ├── sim.ts       # reference interpreter — the semantic definition
 │   │   │   ├── testing/     # .test.dmt: parse + run assertions on every console
-│   │   │   ├── rom/         # the console hand-off: table format, bytecode, ROM patcher
+│   │   │   ├── codegen/     # the console backend: SM83 assembler, analysis, emitters (doc 14)
+│   │   │   ├── rom/         # the built-in tile bank and the trace readers
 │   │   │   └── demakefile/  # the build manifest: parse, resolve, emit (doc 15)
 │   │   └── test/
 │   ├── dmg/                 # @demake/dmg — our Game Boy core: the conformance harness
@@ -53,7 +54,6 @@ demake/          # repo
 │   ├── sources/             # HD many-color reference images (see doc 10)
 │   └── golden/              # expected outputs per console per version
 ├── rom-harness/             # per-console minimal "display this image" ROM projects (doc 06/10)
-├── runtime-harness/         # per-family Demotic runtimes: the fixed engine a game's tables drive (doc 14)
 ├── toolchains/              # Dockerfiles for assemblers/compilers + emulators (doc 10)
 ├── .github/workflows/       # CI (doc 11)
 ├── CLAUDE.md  AGENTS.md  README.md  CONTRIBUTING.md  SECURITY.md  LICENSE
@@ -111,6 +111,13 @@ libraries (sharp). Therefore:
   we still ship one implementation to control ancillary-chunk and bit-depth
   handling). We write our own encoder to control palette ordering and to emit
   properly indexed PNGs.
+- **SVG**: our own rasteriser, for the same reason and a stronger one — a host
+  rasteriser antialiases how it likes, so two engines disagree in the low bits of
+  every edge pixel. The subset is shapes, paths, gradients and strokes; curves
+  flatten at a fixed subdivision count rather than an adaptive tolerance, because
+  an adaptive one compares a float against a threshold and can subdivide
+  differently on either side of a 1-ulp difference. Anything outside the subset
+  fails by name rather than rendering as nothing.
 - **JPEG / WebP / GIF / BMP**: pinned WASM codecs (the jSquash/Squoosh codec builds)
   used identically on both platforms. WASM is bit-deterministic by spec.
 - All randomized algorithms (k-means init, annealing) use a seeded PRNG

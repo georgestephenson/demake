@@ -36,11 +36,12 @@ the first group, rather than nested under a `game` noun — one command tree, on
 
 **Of that group, `build` exists today**, in the zero-config shape doc 15 §You do
 not need one describes: it takes a `.dmt` and writes a cartridge for the one
-console that has a runtime, with `--console`, `--title`, `--format` and
+console that has a backend, with `--console`, `--title`, `--format` and
 `--boot-logo` standing in for the Demakefile's directives until the manifest
-lands. It needs no toolchain — a build patches the fixed runtime image rather
-than assembling anything — which is why `--boot-logo`, the one step that does
-need `rgbfix`, is opt-in and reports its absence rather than guessing.
+lands. It needs no toolchain — the assembler that turns the game into machine
+code is ours, in TypeScript — which is why `--boot-logo`, the one step that does
+need `rgbfix`, is opt-in and reports its absence rather than guessing. It also
+demakes the game's art on the way, through the same image pipeline `prep` uses.
 
 **`check` and `inspect` are different questions**, and the file extension makes
 it obvious which you want: `inspect` asks *is this image hardware-compliant?*;
@@ -220,7 +221,7 @@ demake prep photo.jpg -c nes --strategy photo-lanczos-fs -o out.png
 | `--constrain` | run | Render on the console's real pixel grid rather than as authored |
 | `--write` | fmt | Rewrite files in place; default prints to stdout |
 | `--title <text>` | build | Cartridge title; default is the source file's name |
-| `--format rom\|tables` | build | A playable ROM, or the program tables alone |
+| `--format rom\|sym` | build | A playable ROM, or the symbol map of the code generated for it |
 | `--boot-logo` | build | Stamp the boot logo via `rgbfix`, for original hardware |
 
 `build` and `check` report, in `--json`: the resolved source, every target with

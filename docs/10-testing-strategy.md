@@ -180,14 +180,20 @@ comparison); and the console runtime, by reading its entity table out of work RA
 each tick. A port is proven by `diff`, not judgement. Values are raw integers
 precisely so a one-bit disagreement cannot hide behind a rounded decimal.
 
-**The runtime's oracle is a unit test, not an E2E** — and that is a deliberate
-departure from the image path. The runtime keeps its entity table at fixed
-addresses, and `@demake/dmg` (our own Game Boy core, ~1200 lines, no
-dependencies) boots the patched ROM and reads them, so
+**The backend's oracle is a unit test, not an E2E** — and that is a deliberate
+departure from the image path. The generated code keeps its entities at constant
+addresses, which the build reports, and `@demake/dmg` (our own Game Boy core,
+~1200 lines, no dependencies) boots the compiled ROM and reads them, so
 `packages/demotic/test/rom.test.ts` runs wherever `pnpm test` does: no
-assembler, no emulator install, no self-skip. It builds a cartridge from each
-supported example game and asserts the trace matches the interpreter tick for
-tick. Writing our own core was the cheaper option twice over, because doc 07
+assembler, no emulator install, no self-skip. It builds a cartridge from *every*
+game in the example library — levels, tiles and camera included — and asserts
+the trace matches the interpreter tick for tick.
+
+Art needs a test of its own, because art is not state: a build that silently
+fell back to the placeholder block would pass every trace.
+`packages/demotic/test/art.test.ts` therefore checks that the converted tiles
+reach the ROM, that the OAM entries a running machine writes point at them, and
+that more than two shades end up on screen. Writing our own core was the cheaper option twice over, because doc 07
 also needs one in the browser and forbids fetching it from a CDN.
 
 Framebuffer equality for games then rides the existing SameBoy E2E, testing only

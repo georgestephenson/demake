@@ -9,7 +9,7 @@ this exact API — nothing they can do is unavailable to library users.
 | Package | Contents |
 |---|---|
 | `@demake/core` | The engine: pipeline, console specs, codegen. Zero platform deps; ESM; ships types. |
-| `@demake/demotic` | The game language (doc 14) and the Demakefile (doc 15): compiler, reference interpreter, `.test.dmt` runner, trace oracle, and the console hand-off — program tables and the `gb` ROM builder. Depends on `core`; zero platform deps. |
+| `@demake/demotic` | The game language (doc 14) and the Demakefile (doc 15): compiler, reference interpreter, `.test.dmt` runner, trace oracle, and the console backend — an SM83 assembler and the `gb` code generator. Depends on `core`; zero platform deps. |
 | `@demake/dmg` | A Game Boy core: the Demotic conformance harness (doc 10) and the web app's in-page player (doc 07). Depends on nothing; zero platform deps. |
 | `demake` | The CLI (`bin`). Depends on all three. Also re-exports them so `npm i demake` alone suffices for scripting. |
 
@@ -122,18 +122,22 @@ sim.runtimeBudget;            // worst sprites-per-scanline seen
 trace(sim, tape("1:a,90:,90:left"));            // the conformance oracle, as text
 runTests(parseTests(suite), program);           // assertions, per console
 
-const { bytes, stats } = buildGbRom(program, { title: "PONG" });  // a 32 KiB cartridge
-unsupportedFeatures(program);                   // [] when the runtime can run it
+const assets = new Map([["ball.svg", svgBytes]]);                 // the art it names
+const { bytes, stats } = buildGbRom(program, { title: "PONG", assets });
+unsupportedFeatures(program);                   // [] when the backend can build it
 ```
 
-`buildGbRom` *patches* — it writes the compiled tables into a checked-in engine
-image and fixes the header — so it needs no toolchain and runs in a browser. It
-throws rather than emit a cartridge that would play differently from `Sim`, which
-is what `unsupportedFeatures` lets a caller ask about first.
+`buildGbRom` *compiles* — it generates SM83 machine code for this game, with only
+the helper routines something in it reached, and demakes the art it was given
+through `@demake/core` on the way. The assembler is TypeScript, so it needs no
+toolchain and runs in a browser, and passing the same assets gives the same
+bytes on both. It throws rather than emit a cartridge that would play
+differently from `Sim`, which is what `unsupportedFeatures` lets a caller ask
+about first. `stats` reports the code size, the work RAM used, the helpers that
+survived, and any art the program named but was not given.
 
-`resolveBuild` returns a plan and does not execute it: running `prep`, assembling
-a runtime and writing files are the CLI's job, exactly as `gen`'s `rom-plan`
-already works. The package stays platform-pure, so the same calls back the web
+`resolveBuild` returns a plan and does not execute it: resolving assets and
+writing files are the CLI's job, exactly as `gen`'s `rom-plan` already works. The package stays platform-pure, so the same calls back the web
 app's Demotic section.
 
 ## Stability & determinism guarantees (documented, tested)

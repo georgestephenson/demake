@@ -113,15 +113,16 @@ pnpm test:dmt   # the .test.dmt suites, on every console
 ```
 
 `fixtures/pong.gb.trace` is the conformance target: raw 16.16 state per tick for
-a fixed input tape. A console runtime is correct when it emits those exact lines.
+a fixed input tape. A console backend is correct when it emits those exact lines.
 Changing that file means the language's semantics changed, and that should be a
 deliberate, reviewed act.
 
 `test/rom.test.ts` is that oracle applied to real hardware: it builds a Game Boy
-cartridge from each supported fixture, boots it in `@demake/dmg`, reads the
-runtime's entity table out of work RAM every tick, and diffs. No toolchain and no
-emulator install, so the loop that proves a runtime correct runs wherever
-`pnpm test` does.
+cartridge from _every_ fixture game, boots it in `@demake/dmg`, reads the
+entities out of work RAM every tick, and diffs. No toolchain and no emulator
+install, so the loop that proves a backend correct runs wherever `pnpm test`
+does. `test/art.test.ts` covers what a trace cannot see, because art is not
+state.
 
 ## Building a ROM
 
@@ -129,12 +130,18 @@ emulator install, so the loop that proves a runtime correct runs wherever
 demake build fixtures/pong.dmt -o pong.gb --title PONG
 ```
 
-`src/rom/` is the console hand-off, and it is _data_, not code generation
-(doc 14 §2): `format.ts` is the byte layout, `tables.ts` turns a `Program` into a
-blob, `graphics.ts` holds the built-in font and tile patterns, and `gb.ts`
-patches the blob into a checked-in engine image and fixes the header. Nothing
-here assembles anything, which is what lets the browser produce identical bytes.
+`src/codegen/` is the console backend, and it is a _compiler_ (doc 14 §2):
+`asm.ts` encodes SM83 with labels and forward references, `analyze.ts` works out
+which properties a game can actually change, `layout.ts` places its entities in
+work RAM, and the emitters generate code for that game — entities at constant
+addresses, rule loops unrolled over the objects that can match, comparisons
+lowered to branches. A helper routine reaches the ROM only if something asked
+for it, so a game that never divides ships no divider.
 
-The engine itself is [`runtime-harness/gb/`](../../runtime-harness/gb/README.md),
-and its README lists what it cannot do yet — levels, the camera, and sprite art —
-each of which `buildGbRom` refuses rather than quietly playing a different game.
+`art.ts` binds the art: it works out what the program needs and at what size,
+hands the bytes to `@demake/core`, and hands the tiles back to the emitter. Every
+decision about pixels is made in the image engine, which is what lets the browser
+and the CLI produce identical cartridges.
+
+The assembler being ours is the whole reason `demake build` needs no toolchain
+and the web app can hand you the same bytes.
