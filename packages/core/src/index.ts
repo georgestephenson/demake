@@ -48,6 +48,13 @@ export type {
 } from "./consoles/audio.js";
 export type { DacModel } from "./image/dac.js";
 
+// --- deterministic math ------------------------------------------------------
+// The engine's own transcendentals and PRNG, public because every package under
+// the determinism rule needs them and a second implementation would defeat the
+// point (doc 02 §Floating-point discipline, doc 16 §Determinism engineering).
+export * as math from "./math/kernels.js";
+export { makePrng, type Prng } from "./math/prng.js";
+
 // --- prep --------------------------------------------------------------------
 export { prep } from "./pipeline/prep.js";
 export {

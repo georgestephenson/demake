@@ -1,0 +1,66 @@
+/**
+ * Rendering — the load-bearing export (doc 16 §The render contract).
+ *
+ * The CLI writes files by calling this, the web app plays the buffer this
+ * returns through a bare `AudioBufferSourceNode`, and the desktop app plays the
+ * file the CLI produced. Three surfaces, one synthesis, which is what makes "the
+ * file sounds exactly like the cartridge" a testable claim rather than a hope.
+ *
+ * Nothing here interprets music. It hands a register schedule to a chip model
+ * and collects samples, so what is rendered is what a driver would deliver — and
+ * the register schedule the ROM executes is the same object (doc 16 §Claim 1).
+ */
+
+import { createChip, mix, renderSchedule, type OutputStage, type Pcm } from "@demake/chip";
+
+import type { ChipScript } from "./chipscript.js";
+
+export interface RenderAudioOptions {
+  /** Delivery rate. 48 kHz unless a caller has a specific reason. */
+  sampleRate?: number;
+  outputStage?: OutputStage;
+  /** Extra seconds after the last tick, so decays and releases are not cut. */
+  tailSeconds?: number;
+  /** Repeat from the script's loop point this many extra times. */
+  loops?: number;
+}
+
+/** Render a script to PCM through the chip models. */
+export function render(script: ChipScript, options: RenderAudioOptions = {}): Pcm {
+  const ticks = withLoops(script, options.loops ?? 0);
+  const parts: Pcm[] = [];
+  for (let index = 0; index < script.chips.length; index += 1) {
+    const chip = createChip(script.chips[index] as Parameters<typeof createChip>[0], {
+      stereo: true,
+    });
+    const schedule = ticks.map((tick) => ({
+      writes: (tick.chip ?? 0) === index ? tick.writes : [],
+    }));
+    parts.push(
+      renderSchedule(chip, schedule, script.driver.rate, {
+        ...(options.sampleRate === undefined ? {} : { sampleRate: options.sampleRate }),
+        ...(options.outputStage ? { outputStage: options.outputStage } : {}),
+        tailSeconds: options.tailSeconds ?? 0.25,
+      }),
+    );
+  }
+  return parts.length === 1 ? parts[0]! : mix(parts);
+}
+
+/**
+ * Expand a script's loop for rendering.
+ *
+ * A loop is a property of the schedule, not of the audio, so repeating it here
+ * is purely a listening convenience — the artifact still carries one pass plus
+ * the loop point, which is what the driver and every VGM player consume.
+ */
+function withLoops(script: ChipScript, loops: number): ChipScript["ticks"] {
+  if (loops <= 0 || script.loopTick < 0 || script.loopTick >= script.ticks.length) {
+    return script.ticks;
+  }
+  const out = [...script.ticks];
+  for (let i = 0; i < loops; i += 1) {
+    out.push(...script.ticks.slice(script.loopTick));
+  }
+  return out;
+}

@@ -42,6 +42,17 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@24.13.3))
 
+  packages/audio:
+    dependencies:
+      '@demake/chip':
+        specifier: workspace:*
+        version: link:../chip
+      '@demake/core':
+        specifier: workspace:*
+        version: link:../core
+
+  packages/chip: {}
+
   packages/cli:
     dependencies:
       '@demake/cli-spec':

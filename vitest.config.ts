@@ -15,6 +15,7 @@ export default defineConfig({
       "@demake/demotic": fileURLToPath(new URL("./packages/demotic/src/index.ts", import.meta.url)),
       "@demake/dmg": fileURLToPath(new URL("./packages/dmg/src/index.ts", import.meta.url)),
       "@demake/chip": fileURLToPath(new URL("./packages/chip/src/index.ts", import.meta.url)),
+      "@demake/audio": fileURLToPath(new URL("./packages/audio/src/index.ts", import.meta.url)),
     },
   },
   test: {

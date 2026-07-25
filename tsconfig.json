@@ -18,6 +18,9 @@
       "path": "./packages/chip"
     },
     {
+      "path": "./packages/audio"
+    },
+    {
       "path": "./packages/demotic"
     }
   ]

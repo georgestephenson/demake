@@ -1,0 +1,29 @@
+{
+  "name": "@demake/audio",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The music and sound demakers: any track or sound into hardware-compliant chip audio. Platform-pure.",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@demake/chip": "workspace:*",
+    "@demake/core": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsc --build"
+  }
+}
