@@ -1,0 +1,75 @@
+-- Runner — an endless scroller built from chunks, and the seeded generator.
+--
+-- What this exercises that the other examples do not:
+--   * `stream`: a level composed at build time by drawing chunks at random,
+--     rather than drawn by hand. Three small files become a long course.
+--   * `seed`: the one number the whole course follows from. Change it and the
+--     game is different; leave it and every console, every run and every trace
+--     agree exactly.
+--   * `random` at run time, for the coin that keeps moving ahead of the bird.
+--
+-- "Endless" here means "long enough, and different every seed" — which is what
+-- the era's own scrollers did. A course generated as the player flew would be
+-- reproducible only if every machine drew in the same order at the same tick,
+-- and that is a promise not worth making when a tilemap in ROM will do.
+
+start play
+
+seed 20260725
+
+scene play
+
+-- 24 chunks of 6 cells each: a 144-cell course, laid side by side. The chunks
+-- share a legend, so `#` is a pipe in all of them.
+stream course from open.dmtl, lowpipe.dmtl, highpipe.dmtl 24 wide
+
+camera follows bird1
+
+create object bird (width 1 cell, height 1 cell, speed 30vw, sprite hero.svg)
+create object prize (width 1 cell, height 1 cell, speed 0, sprite coin.svg)
+
+-- Row 14 is the one corridor every chunk leaves open — the low pipes stop below
+-- it and the high ones stop above. A vocabulary of chunks has properties like
+-- that, and the game is allowed to rely on them; it is why the chunks are
+-- hand-drawn and only their *order* is generated.
+create bird bird1 in play (x 1, y 14, xdirection 1)
+
+create prize prize1 in play (x 12, y 14)
+
+create number score in play (value 0, x 1, y 1)
+
+-- Gravity and the flap, exactly as in the platformer: the mechanic is the same,
+-- only the scenery is generated.
+when always in play then bird1.ydirection as min(bird1.ydirection + 0.05, 0.9)
+
+control bird1 a (ydirection -0.7) on press
+
+-- Pipes and ground are tiles, named by the chunks' shared legend.
+when bird1 touches pipe, ground then scene as gameover
+
+-- The bird flies until the end of the course.
+when bird1 hits screenright then scene as won
+when bird1 hits screentop then ydirection as 0
+
+-- The coin keeps its distance ahead of the view, at a height drawn fresh each
+-- time. This is the one place a game needs `random`: the course is fixed by the
+-- seed, but where the reward sits is decided as the game runs — and, because the
+-- generator is the language's own rather than the host's, decided identically on
+-- every machine and in every replay.
+when prize.right < camera.x in play then (x, y) as (camera.x + screenwidth, random(2, 20))
+
+when bird1 hits prize then (prize1.x, score.value) as (camera.x + screenwidth, score.value + 1)
+
+-- --------------------------------------------------------------- endings ----
+
+scene gameover
+
+create text lost in gameover (x centerx - 4, y centery, text "clipped it")
+
+when a pressed in gameover then scene as play
+
+scene won
+
+create text finished in won (x centerx - 5, y centery, text "flew it all")
+
+when a pressed in won then scene as play

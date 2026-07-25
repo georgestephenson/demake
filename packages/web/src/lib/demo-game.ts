@@ -1,24 +1,138 @@
 /**
- * The demo game the Demotic section opens with.
+ * The example library, bundled into the page.
  *
  * Imported from `@demake/demotic`'s fixtures rather than copied, so the page,
- * the CLI, the terminal runner and the conformance traces are all playing the
- * same Pong. A second copy would drift the first time anyone edited one.
+ * the CLI, the unit suite and the conformance traces are all running the same
+ * games. A second copy would drift the first time anyone edited one.
+ *
+ * Each example is here because it exercises something the others do not — the
+ * set is the feature inventory a console runtime has to satisfy (doc 14
+ * §Runtime model), not a gallery.
  */
 
 import pongSource from "@demake/demotic/fixtures/pong.dmt?raw";
 import pongTests from "@demake/demotic/fixtures/pong.test.dmt?raw";
+import breakoutSource from "@demake/demotic/fixtures/games/breakout.dmt?raw";
+import breakoutTests from "@demake/demotic/fixtures/games/breakout.test.dmt?raw";
+import platformerSource from "@demake/demotic/fixtures/games/platformer.dmt?raw";
+import platformerTests from "@demake/demotic/fixtures/games/platformer.test.dmt?raw";
+import dodgerSource from "@demake/demotic/fixtures/games/dodger.dmt?raw";
+import dodgerTests from "@demake/demotic/fixtures/games/dodger.test.dmt?raw";
+import shooterSource from "@demake/demotic/fixtures/games/shooter.dmt?raw";
+import shooterTests from "@demake/demotic/fixtures/games/shooter.test.dmt?raw";
+import cavesSource from "@demake/demotic/fixtures/games/caves.dmt?raw";
+import cavesTests from "@demake/demotic/fixtures/games/caves.test.dmt?raw";
+import runnerSource from "@demake/demotic/fixtures/games/runner.dmt?raw";
+import runnerTests from "@demake/demotic/fixtures/games/runner.test.dmt?raw";
+
+import cavernLevel from "@demake/demotic/fixtures/games/cavern.dmtl?raw";
+import openLevel from "@demake/demotic/fixtures/games/open.dmtl?raw";
+import lowpipeLevel from "@demake/demotic/fixtures/games/lowpipe.dmtl?raw";
+import highpipeLevel from "@demake/demotic/fixtures/games/highpipe.dmtl?raw";
+
 import ballUrl from "@demake/demotic/fixtures/ball.svg?url";
 import paddleUrl from "@demake/demotic/fixtures/paddle.svg?url";
+import brickUrl from "@demake/demotic/fixtures/games/brick.svg?url";
+import heroUrl from "@demake/demotic/fixtures/games/hero.svg?url";
+import coinUrl from "@demake/demotic/fixtures/games/coin.svg?url";
+import ledgeUrl from "@demake/demotic/fixtures/games/ledge.svg?url";
+import rockUrl from "@demake/demotic/fixtures/games/rock.svg?url";
+import shotUrl from "@demake/demotic/fixtures/games/shot.svg?url";
+import alienUrl from "@demake/demotic/fixtures/games/alien.svg?url";
+import spikesUrl from "@demake/demotic/fixtures/games/spikes.svg?url";
+import exitUrl from "@demake/demotic/fixtures/games/exit.svg?url";
 
-/** Source of the bundled demo game. */
-export const DEMO_GAME = pongSource;
+/** One bundled example. */
+export interface Example {
+  id: string;
+  name: string;
+  /** What this one exercises that the others do not. */
+  covers: string;
+  source: string;
+  tests: string;
+}
 
-/** Its `.test.dmt` suite, shown alongside it. */
-export const DEMO_TESTS = pongTests;
+export const EXAMPLES: readonly Example[] = [
+  {
+    id: "pong",
+    name: "Pong",
+    covers: "two movers, a bounce angle, and proportional opponent steering",
+    source: pongSource,
+    tests: pongTests,
+  },
+  {
+    id: "breakout",
+    name: "Breakout",
+    covers: "a grid of objects, removal, and real sprite-budget pressure",
+    source: breakoutSource,
+    tests: breakoutTests,
+  },
+  {
+    id: "platformer",
+    name: "Platformer",
+    covers: "gravity, an impulse jump, and resting contact",
+    source: platformerSource,
+    tests: platformerTests,
+  },
+  {
+    id: "dodger",
+    name: "Dodger",
+    covers: "many objects at staggered speeds, recycled rather than destroyed",
+    source: dodgerSource,
+    tests: dodgerTests,
+  },
+  {
+    id: "shooter",
+    name: "Shooter",
+    covers: "the per-scanline sprite limit's worst case, and a fast projectile",
+    source: shooterSource,
+    tests: shooterTests,
+  },
+  {
+    id: "caves",
+    name: "Caves",
+    covers: "a hand-drawn level bigger than the screen, tiles, and a scrolling camera",
+    source: cavesSource,
+    tests: cavesTests,
+  },
+  {
+    id: "runner",
+    name: "Runner",
+    covers: "a course composed from chunks at build time, and the seeded generator",
+    source: runnerSource,
+    tests: runnerTests,
+  },
+];
 
-/** Asset name (as written in the `.dmt`) → bundled URL. */
+/**
+ * `.dmtl` sources, keyed as a `.dmt` file names them.
+ *
+ * The compiler never reads a file, so the page resolves these the way the CLI
+ * and the terminal runners do — same `levelFiles()` lookup, same set. Handing
+ * over every bundled level rather than only the ones a game names is fine and
+ * one fewer moving part: an unused entry is simply never asked for.
+ */
+export const DEMO_LEVELS: Readonly<Record<string, string>> = {
+  "cavern.dmtl": cavernLevel,
+  "open.dmtl": openLevel,
+  "lowpipe.dmtl": lowpipeLevel,
+  "highpipe.dmtl": highpipeLevel,
+};
+
+/** Asset name (as written in a `.dmt`) → bundled URL. */
 export const DEMO_ASSETS: Readonly<Record<string, string>> = {
   "ball.svg": ballUrl,
   "paddle.svg": paddleUrl,
+  "brick.svg": brickUrl,
+  "hero.svg": heroUrl,
+  "coin.svg": coinUrl,
+  "ledge.svg": ledgeUrl,
+  "rock.svg": rockUrl,
+  "shot.svg": shotUrl,
+  "alien.svg": alienUrl,
+  "spikes.svg": spikesUrl,
+  "exit.svg": exitUrl,
 };
+
+/** The example the section opens with. */
+export const DEFAULT_EXAMPLE = EXAMPLES[0] as Example;

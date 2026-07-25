@@ -1,0 +1,49 @@
+-- Dodger — a lot of objects, moving fast, recycled rather than destroyed.
+--
+-- What this exercises:
+--   * many instances of one class in motion at once (sprite budget pressure)
+--   * recycling: an object that leaves the screen is put back at the top rather
+--     than removed, which is what a real console does because allocation is not
+--     a thing you do at 60 Hz
+--   * objects at staggered speeds, so the per-scanline count keeps changing
+--   * a survival score that rises on a timer rather than on an event
+
+start play
+
+scene play
+
+create object ship (width 1 cell, height 1 cell, speed 65vw, sprite hero.svg)
+create object rock (width 1 cell, height 1 cell, sprite rock.svg)
+
+create ship player in play (x centerx, y screenheight - 2)
+
+create rock r1 in play (x 8vw, y 0, speed 30vh, direction south)
+create rock r2 in play (x 24vw, y 4, speed 38vh, direction south)
+create rock r3 in play (x 40vw, y 8, speed 34vh, direction south)
+create rock r4 in play (x 56vw, y 2, speed 42vh, direction south)
+create rock r5 in play (x 72vw, y 6, speed 36vh, direction south)
+create rock r6 in play (x 88vw, y 10, speed 40vh, direction south)
+
+create number score in play (value 0, x 1, y 1)
+create number lives in play (value 3, x screenwidth - 2, y 1)
+
+control player left (xdirection -1) on hold
+control player right (xdirection 1) on hold
+
+when player hits screenleft, screenright then xdirection as 0
+
+-- Recycling, in one line for all six rocks. A level rule that names a class runs
+-- once per instance with that instance bound as its subject, so `y` here means
+-- "this rock's y". Written per-object this was six near-identical rules, and six
+-- places to forget one.
+when rock.y >= screenheight then y as 0
+
+when player hits rock then (lives.value, rock.y) as (lives.value - 1, 0)
+
+when lives.value reaches 0 in play then scene as gameover
+
+scene gameover
+
+create text over in gameover (x centerx - 4, y centery, text "game over")
+
+when a pressed in gameover then scene as play

@@ -16,6 +16,7 @@ import { COMING_SOON, readSection, SECTION_LABELS, SECTIONS, sectionHash } from 
 
 const TAGLINES: Readonly<Record<string, string>> = {
   game: "one declarative game → every console",
+  language: "every statement, property and diagnostic",
   art: "any image → hardware-compliant console art",
   music: "any track → chip music",
   sound: "any effect → chip sound",
@@ -23,7 +24,7 @@ const TAGLINES: Readonly<Record<string, string>> = {
 
 export function Site() {
   const [section, setSection] = useState(() => readSection(location.hash));
-  const [Game, setGame] = useState<ComponentType | null>(null);
+  const [lazySections, setLazySections] = useState<Record<string, ComponentType>>({});
 
   useEffect(() => {
     const onHash = () => setSection(readSection(location.hash));
@@ -31,15 +32,26 @@ export function Site() {
     return () => removeEventListener("hashchange", onHash);
   }, []);
 
-  // The Demotic section is loaded on demand. It carries the whole game language
-  // — compiler, interpreter, test runner — and someone who came to convert an
-  // image should not download any of it. Splitting it out keeps the art
-  // demaker's initial payload exactly what it was before the site grew sections
-  // (doc 07 §Quality bar).
+  // Both Demotic sections load on demand. Between them they carry the whole
+  // game language — compiler, interpreter, test runner, registry — and someone
+  // who came to convert an image should not download any of it. Splitting them
+  // out keeps the art demaker's initial payload what it was before the site
+  // grew sections (doc 07 §Quality bar).
   useEffect(() => {
-    if (section !== "game" || Game) return;
-    void import("./sections/GameDemaker.js").then((module) => setGame(() => module.GameDemaker));
-  }, [section, Game]);
+    if (lazySections[section]) return;
+    const load =
+      section === "game"
+        ? () => import("./sections/GameDemaker.js").then((m) => m.GameDemaker)
+        : section === "language"
+          ? () => import("./sections/LanguageDocs.js").then((m) => m.LanguageDocs)
+          : null;
+    if (!load) return;
+    void load().then((component) =>
+      setLazySections((previous) => ({ ...previous, [section]: component })),
+    );
+  }, [section, lazySections]);
+
+  const Lazy = lazySections[section];
 
   return (
     <div class="layout">
@@ -70,13 +82,13 @@ export function Site() {
       </header>
 
       {section === "art" ? <App /> : null}
-      {section === "game" ? (
-        Game ? (
-          <Game />
+      {section === "game" || section === "language" ? (
+        Lazy ? (
+          <Lazy />
         ) : (
           <main>
             <section class="pane">
-              <p class="hint">Loading the game demaker…</p>
+              <p class="hint">Loading…</p>
             </section>
           </main>
         )

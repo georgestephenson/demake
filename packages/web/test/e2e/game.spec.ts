@@ -45,15 +45,71 @@ test("runs the .test.dmt suite against every console", async ({ page }) => {
 test("retargets the game at another console", async ({ page }) => {
   await page.goto("/#section=game");
   await expect(page.locator(".game-status")).toContainText("20x18 cells");
-  await page.getByRole("combobox").selectOption("md");
+  await page.getByTestId("console-select").selectOption("md");
   await expect(page.locator(".game-status")).toContainText("40x28 cells");
 });
+
+test("every bundled example loads, compiles and passes its suite", async ({ page }) => {
+  await page.goto("/#section=game");
+  // The section is code-split, so wait for it to arrive before reading its DOM.
+  await expect(page.getByRole("heading", { name: "Play" })).toBeVisible();
+  const picker = page.getByTestId("example-select");
+  const ids = await picker.evaluate((el) =>
+    [...(el as HTMLSelectElement).options].map((option) => option.value),
+  );
+  expect(ids.length).toBeGreaterThanOrEqual(5);
+
+  for (const id of ids) {
+    await picker.selectOption(id);
+    // Compiling is synchronous, so a clean diagnostics pane means it compiled.
+    await expect(page.locator(".diag-error")).toHaveCount(0);
+    await page.getByRole("button", { name: "Run tests" }).click();
+    const report = page.locator(".game-status").last();
+    await expect(report, id).toContainText(/cases passed across \d+ consoles/);
+    await expect(report, id).not.toContainText("FAIL");
+  }
+});
+
+test("scrolls a level bigger than the screen, and draws its tiles", async ({ page }) => {
+  await page.goto("/#section=game");
+  await expect(page.getByRole("heading", { name: "Play" })).toBeVisible();
+  await page.getByTestId("example-select").selectOption("caves");
+  await expect(page.locator(".diag-error")).toHaveCount(0);
+
+  // The canvas is not blank before anything moves: a scene with a level draws
+  // its tiles, which is the whole of the background layer.
+  await expect.poll(() => painted(page), { timeout: 5000 }).toBeGreaterThan(0.05);
+
+  // Holding right moves the hero into the level, and the view has to follow —
+  // the level is 60 cells wide and no console shows more than 40.
+  await page.keyboard.down("ArrowRight");
+  const before = await painted(page);
+  await page.waitForTimeout(1200);
+  const after = await painted(page);
+  await page.keyboard.up("ArrowRight");
+  expect(after).not.toBe(before);
+});
+
+/** Fraction of the canvas that is not the background colour. */
+async function painted(page: import("@playwright/test").Page): Promise<number> {
+  return page.locator(".game-canvas").evaluate((element) => {
+    const canvas = element as HTMLCanvasElement;
+    const context = canvas.getContext("2d");
+    if (!context) return 0;
+    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+    let lit = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if ((data[i] as number) + (data[i + 1] as number) + (data[i + 2] as number) > 60) lit += 1;
+    }
+    return lit / (data.length / 4);
+  });
+}
 
 test("reports a source error without blanking the preview", async ({ page }) => {
   await page.goto("/#section=game");
   await page
     .getByLabel("Demotic game source")
-    .fill("loop play\nscene play\ncreate object d (wibble 1)");
+    .fill("start play\nscene play\ncreate object d (wibble 1)");
   await expect(page.locator(".diag-error")).toContainText("E_UNKNOWN_PROP");
   await expect(page.locator(".game-canvas")).toBeVisible();
 });
@@ -83,6 +139,33 @@ test("drives the game from the on-screen pad on a touch device", async ({ browse
   await expect(page.locator(".game-status")).toContainText("scene play", { timeout: 5000 });
 
   await context.close();
+});
+
+test("renders the language reference from the registry", async ({ page }) => {
+  const chunks: string[] = [];
+  page.on("response", (r) => {
+    if (r.url().endsWith(".js")) chunks.push(r.url());
+  });
+
+  await page.goto("/");
+  expect(chunks.some((url) => url.includes("LanguageDocs"))).toBe(false);
+
+  await page.getByRole("link", { name: /demotic reference/i }).click();
+  await expect(page.getByRole("heading", { name: "Statements" })).toBeVisible();
+  expect(chunks.some((url) => url.includes("LanguageDocs"))).toBe(true);
+
+  // Every statement keyword the compiler knows is documented here.
+  const statements = page.locator(".doc-body");
+  for (const keyword of ["start", "scene", "create object", "control", "when"]) {
+    await expect(statements).toContainText(keyword);
+  }
+
+  await page.getByRole("button", { name: "Diagnostics" }).click();
+  await expect(page.locator(".doc-body")).toContainText("E_SPRITE_BUDGET");
+  await expect(page.locator(".doc-body")).toContainText("W_TUNNELLING");
+
+  await page.getByRole("button", { name: "Triggers" }).click();
+  await expect(page.locator(".doc-body")).toContainText("touches");
 });
 
 test("announces the sections that are not built yet", async ({ page }) => {

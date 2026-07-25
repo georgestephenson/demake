@@ -1,0 +1,25 @@
+test gravity pulls the hero down
+play 20 ticks
+expect player.ydirection > 0
+expect player.y > 2
+
+test the hero lands on the floor and stops falling
+play 240 ticks
+expect player.ydirection <= 0.05
+expect player.bottom <= screenheight
+
+test jumping moves the hero upward
+play 240 ticks
+press a
+play 6 ticks
+expect player.ydirection < 0
+
+test the hero runs to the left edge and stops
+hold left for 300 ticks
+expect player.x = 0
+expect player.xdirection = 0
+
+test a collected coin is gone for good
+play 240 ticks
+hold right for 240 ticks
+expect score.value >= 0

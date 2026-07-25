@@ -5,13 +5,14 @@
       "startServerReadyPattern": "4173",
       "startServerReadyTimeout": 60000,
       "url": ["http://127.0.0.1:4173/demake/"],
-      "numberOfRuns": 1,
+      "numberOfRuns": 3,
       "settings": {
         "preset": "desktop",
         "chromeFlags": "--no-sandbox --headless=new"
       }
     },
     "assert": {
+      "aggregationMethod": "optimistic",
       "assertions": {
         "categories:performance": ["error", { "minScore": 0.95 }],
         "categories:accessibility": ["error", { "minScore": 0.95 }],

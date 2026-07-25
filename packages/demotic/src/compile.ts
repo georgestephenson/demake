@@ -30,7 +30,17 @@ import {
   toNumber,
 } from "./fixed.js";
 import type { Assignment, Expr, Prop, Stmt, Unit } from "./lang/ast.js";
+import {
+  CELL_QUANTISED,
+  DERIVED_PROPS,
+  knownPropertyNames,
+  NUMBER_DEFAULTS,
+  STRING_PROPS,
+} from "./lang/spec.js";
 import { parse } from "./lang/parse.js";
+import { levelAssets, type LevelFile, parseLevel } from "./level/parse.js";
+import { boundsOf } from "./level/scene.js";
+import { type StreamChunk, streamLevel } from "./level/stream.js";
 import type { ConsoleProfile } from "./profiles.js";
 import type {
   Action,
@@ -45,47 +55,16 @@ import type {
   EntityRef,
   InstanceDef,
   Program,
+  PureBuiltinFn,
   RuleDef,
   SceneDef,
 } from "./program.js";
 import { ACTIONS, EDGES } from "./program.js";
-
-/** Numeric properties every entity carries, with their defaults in cells. */
-const NUMBER_DEFAULTS: Readonly<Record<string, number>> = {
-  x: 0,
-  y: 0,
-  width: 1,
-  height: 1,
-  speed: 0,
-  xdirection: 0,
-  ydirection: 0,
-  value: 0,
-  visible: 1,
-};
+import { DEFAULT_SEED } from "./rng.js";
 
 const FIXED_DEFAULTS: Readonly<Record<string, Fixed>> = Object.fromEntries(
   Object.entries(NUMBER_DEFAULTS).map(([key, value]) => [key, fromInt(value)]),
 );
-
-/** String properties and their kinds. */
-const STRING_PROPS: Readonly<Record<string, "asset" | "text">> = {
-  sprite: "asset",
-  text: "text",
-};
-
-/**
- * Properties quantised to whole cells.
- *
- * A collision box is also a sprite's footprint, and hardware sprites come in
- * whole 8x8 units — a 1.5-cell box corresponds to nothing that can be drawn. So
- * these round to the nearest cell (minimum one) whatever units they were written
- * in, which is what makes `width 15vw` mean "three cells here, six cells there"
- * rather than a fractional box that no console can honour.
- */
-const CELL_QUANTISED = new Set(["width", "height"]);
-
-/** Read-only properties derived from the geometry ones. */
-const DERIVED_PROPS = new Set(["centerx", "centery", "left", "right", "top", "bottom"]);
 
 /**
  * Compass names, as (xdirection, ydirection) pairs. Screen coordinates grow
@@ -176,6 +155,13 @@ export function screenConstant(name: string, profile: ConsoleProfile): Fixed | u
 export interface CompileOptions {
   /** Target console profile. */
   profile: ConsoleProfile;
+  /**
+   * `.dmtl` sources by filename.
+   *
+   * The compiler is platform-pure, so it never reads a file; whoever calls it
+   * resolves paths and hands the text in, exactly as art assets work.
+   */
+  levels?: Readonly<Record<string, string>>;
 }
 
 interface ClassInfo {
@@ -200,7 +186,152 @@ class Compiler {
   private readonly sceneSet = new Set<string>();
   private entry: string | undefined;
 
-  constructor(private readonly profile: ConsoleProfile) {}
+  private readonly levelsByScene = new Map<string, LevelFile>();
+  private readonly cameraByScene = new Map<string, number>();
+  private readonly tileNames = new Set<string>();
+  private seed = DEFAULT_SEED;
+
+  constructor(
+    private readonly profile: ConsoleProfile,
+    private readonly levelSources: Readonly<Record<string, string>> = {},
+  ) {}
+
+  /** The program's random seed, which `stream` also composes with. */
+  collectSeed(statements: readonly Stmt[]): void {
+    let seen = false;
+    for (const statement of statements) {
+      if (statement.kind !== "seed") continue;
+      if (seen) {
+        this.error(statement.line, "E_DUPLICATE_SEED", "a program has one `seed`");
+        continue;
+      }
+      seen = true;
+      // Kept in 32 bits, and away from zero: an LCG seeded at 0 is fine here
+      // (the increment lifts it) but a negative seed would not survive the
+      // unsigned round trip a console runtime does.
+      this.seed = statement.value >>> 0;
+    }
+  }
+
+  /**
+   * Load each scene's playfield — hand-drawn (`level`) or composed (`stream`) —
+   * and check it is big enough for this console.
+   *
+   * One pass over both, because "a scene has one playfield" is the rule being
+   * enforced and it does not care which statement supplied it.
+   */
+  collectLevels(statements: readonly Stmt[]): void {
+    let currentScene: string | undefined;
+    // Streams draw from one generator run, in source order, so a program's whole
+    // set of composed levels follows from its single `seed`.
+    let state = this.seed;
+
+    for (const statement of statements) {
+      if (statement.kind === "scene") {
+        currentScene = statement.name;
+        continue;
+      }
+      if (statement.kind !== "level" && statement.kind !== "stream") continue;
+
+      const scene = this.resolveScene(statement.scene, currentScene, statement.line);
+      if (scene === undefined) continue;
+      if (this.levelsByScene.has(scene)) {
+        this.error(
+          statement.line,
+          "E_DUPLICATE_LEVEL",
+          `scene '${scene}' already has a level`,
+          "a scene has one playfield",
+        );
+        continue;
+      }
+
+      let level: LevelFile | undefined;
+      let describedAs: string;
+
+      if (statement.kind === "level") {
+        level = this.loadLevel(statement.file, statement.line);
+        describedAs = `'${statement.file}'`;
+      } else {
+        const chunks: StreamChunk[] = [];
+        for (const file of statement.files) {
+          const chunk = this.loadLevel(file, statement.line);
+          if (chunk) chunks.push({ file, level: chunk });
+        }
+        if (chunks.length < statement.files.length) continue;
+
+        const result = streamLevel(chunks, statement.count, statement.axis, state, statement.line);
+        state = result.state;
+        this.diagnostics.push(...result.diagnostics);
+        if (result.diagnostics.some((d) => d.severity === "error")) continue;
+        level = result.level;
+        describedAs = `stream '${statement.name}'`;
+      }
+
+      if (!level) continue;
+
+      // A level smaller than the viewport would leave part of the screen with
+      // nothing in it — and it is per-console, so a level that fits a Game Boy
+      // can still be too small for a Mega Drive.
+      if (level.width < this.profile.screenWidth || level.height < this.profile.screenHeight) {
+        this.error(
+          statement.line,
+          "E_LEVEL_TOO_SMALL",
+          `${describedAs} is ${level.width}x${level.height} cells; ${this.profile.name} shows ${this.profile.screenWidth}x${this.profile.screenHeight}`,
+          "a level must be at least as big as the largest screen it targets",
+        );
+        continue;
+      }
+
+      this.levelsByScene.set(scene, level);
+      for (const tile of level.tiles) this.tileNames.add(tile.name);
+    }
+  }
+
+  /** Parse one `.dmtl` source, reporting its diagnostics against this line. */
+  private loadLevel(file: string, line: number): LevelFile | undefined {
+    const source = this.levelSources[file];
+    if (source === undefined) {
+      this.error(
+        line,
+        "E_UNKNOWN_LEVEL",
+        `no level file '${file}' was provided`,
+        `available: ${Object.keys(this.levelSources).join(", ") || "none"}`,
+      );
+      return undefined;
+    }
+
+    const level = parseLevel(source);
+    for (const diagnostic of level.diagnostics) {
+      this.diagnostics.push({ ...diagnostic, message: `${file}: ${diagnostic.message}` });
+    }
+    return level.diagnostics.some((d) => d.severity === "error") ? undefined : level;
+  }
+
+  /** Resolve each scene's camera target. */
+  collectCameras(statements: readonly Stmt[]): void {
+    let currentScene: string | undefined;
+    for (const statement of statements) {
+      if (statement.kind === "scene") {
+        currentScene = statement.name;
+        continue;
+      }
+      if (statement.kind !== "camera") continue;
+
+      const scene = this.resolveScene(statement.scene, currentScene, statement.line);
+      if (scene === undefined) continue;
+      const instance = this.instancesByName.get(statement.target);
+      if (!instance) {
+        this.error(statement.line, "E_UNKNOWN_INSTANCE", `no object named '${statement.target}'`);
+        continue;
+      }
+      this.cameraByScene.set(scene, instance.id);
+    }
+  }
+
+  /** The playfield of a scene: its level's size, or the screen's. */
+  boundsFor(scene: string): { width: number; height: number } {
+    return boundsOf(this.levelsByScene.get(scene), this.profile);
+  }
 
   private error(line: number, code: string, message: string, hint?: string): void {
     this.diagnostics.push({
@@ -241,12 +372,12 @@ class Compiler {
         }
         this.sceneSet.add(statement.name);
         this.sceneOrder.push(statement.name);
-      } else if (statement.kind === "loop") {
+      } else if (statement.kind === "start") {
         if (this.entry !== undefined) {
           this.error(
             statement.line,
-            "E_DUPLICATE_LOOP",
-            "a program has exactly one `loop` statement",
+            "E_DUPLICATE_START",
+            "a program has exactly one `start` statement",
           );
           continue;
         }
@@ -258,14 +389,14 @@ class Compiler {
       this.error(
         1,
         "E_NO_ENTRY",
-        "no `loop <scene>` statement — the game has no entry point",
-        "add `loop <scene>` naming the scene the game starts on",
+        "no `start <scene>` statement — the game has no entry point",
+        "add `start <scene>` naming the scene the game begins on",
       );
     } else if (!this.sceneSet.has(this.entry)) {
       this.error(
         1,
         "E_UNKNOWN_SCENE",
-        `\`loop\` names scene '${this.entry}', which is never declared`,
+        `\`start\` names scene '${this.entry}', which is never declared`,
       );
     }
   }
@@ -568,6 +699,30 @@ class Compiler {
     let defaultTarget: EntityRef | undefined;
     let sceneHint: string | undefined;
 
+    // A level rule that names exactly one class runs once per instance of it,
+    // with that instance bound as the subject — the same binding a `hits` rule
+    // gets from its collision. This has to be settled before the trigger is
+    // compiled, because the trigger's own expressions refer to that binding.
+    let perInstance: number[] | undefined;
+    if (statement.event.kind !== "hits") {
+      const classes = this.classesNamedBy(statement);
+      if (classes.length > 1) {
+        this.error(
+          line,
+          "E_AMBIGUOUS_CLASS",
+          `this rule names ${classes.length} classes (${classes.join(", ")}), so it has no single object to act on`,
+          "name one class, or address objects individually",
+        );
+        return undefined;
+      }
+      const [only] = classes;
+      if (only) {
+        perInstance = [...(this.instancesByClass.get(only) ?? [])];
+        bindings = { map: new Map([[only, { kind: "subject" } as EntityRef]]) };
+        defaultTarget = { kind: "subject" };
+      }
+    }
+
     switch (statement.event.kind) {
       case "hits": {
         const subjects = this.resolveEntitySet(statement.event.subject, line);
@@ -575,6 +730,7 @@ class Compiler {
 
         const others: number[] = [];
         const edges: Edge[] = [];
+        const tiles: string[] = [];
         const map = new Map<string, EntityRef>([
           [statement.event.subject, { kind: "subject" } as EntityRef],
         ]);
@@ -584,13 +740,20 @@ class Compiler {
             edges.push(name as Edge);
             continue;
           }
+          // A tile name from a level legend collides like an object does — which
+          // is the whole point of naming tiles: `when player touches spikes`
+          // reads as a sentence, and the level supplied the noun.
+          if (this.tileNames.has(name)) {
+            tiles.push(name);
+            continue;
+          }
           const resolved = this.resolveEntitySet(name, line);
           if (!resolved) return undefined;
           others.push(...resolved);
           map.set(name, { kind: "other" });
         }
 
-        event = { kind: "hits", subjects, others, edges };
+        event = { kind: "hits", subjects, others, edges, tiles, level: statement.event.level };
         bindings = { map };
         defaultTarget = { kind: "subject" };
         sceneHint = this.sceneOf([...subjects, ...others]);
@@ -616,14 +779,14 @@ class Compiler {
       case "reaches": {
         event = {
           kind: "reaches",
-          left: this.compileNumber(statement.event.left, NO_BINDINGS),
-          right: this.compileNumber(statement.event.right, NO_BINDINGS),
+          left: this.compileNumber(statement.event.left, bindings),
+          right: this.compileNumber(statement.event.right, bindings),
         };
         sceneHint = this.sceneOfExprs([statement.event.left, statement.event.right]);
         break;
       }
       case "predicate": {
-        event = { kind: "predicate", test: this.compileNumber(statement.event.test, NO_BINDINGS) };
+        event = { kind: "predicate", test: this.compileNumber(statement.event.test, bindings) };
         sceneHint = this.sceneOfExprs([statement.event.test]);
         break;
       }
@@ -634,13 +797,88 @@ class Compiler {
       return undefined;
     }
 
+    if (perInstance) sceneHint = this.sceneOf(perInstance) ?? sceneHint;
+
     const scene = statement.scene ?? sceneHint;
+    const guard =
+      statement.guard === undefined ? undefined : this.compileNumber(statement.guard, bindings);
     const assignments = this.compileAssignments(statement.assignments, bindings, defaultTarget);
+    const otherwise =
+      statement.otherwise === undefined
+        ? undefined
+        : this.compileAssignments(statement.otherwise, bindings, defaultTarget);
+
     if (statement.assignments.length === 0) {
       this.warn(line, "W_EMPTY_RULE", "this rule triggers but assigns nothing");
     }
 
-    return { id, event, ...(scene === undefined ? {} : { scene }), assignments, line };
+    // `else` means "the rule was evaluated and did not fire". A bare edge
+    // trigger is only evaluated at the instant it happens, so its `else` would
+    // mean every other tick of the game — almost never what was meant.
+    const evaluatedEveryTick =
+      event.kind === "predicate" || (event.kind === "hits" && event.level) || guard !== undefined;
+    if (otherwise && !evaluatedEveryTick) {
+      this.error(
+        line,
+        "E_ELSE_NOT_ALLOWED",
+        "`else` needs a rule that is evaluated every tick",
+        "use a level trigger (`touches`, or a plain condition), or add an `if` guard",
+      );
+      return undefined;
+    }
+
+    return {
+      id,
+      event,
+      ...(scene === undefined ? {} : { scene }),
+      ...(guard === undefined ? {} : { guard }),
+      assignments,
+      ...(otherwise === undefined ? {} : { otherwise }),
+      ...(perInstance === undefined ? {} : { subjects: perInstance }),
+      line,
+    };
+  }
+
+  /** Class names a non-collision rule refers to, in its trigger or its actions. */
+  private classesNamedBy(statement: Extract<Stmt, { kind: "when" }>): string[] {
+    const found = new Set<string>();
+    const noteName = (raw: string): void => {
+      const owner = raw.includes(".") ? raw.slice(0, raw.lastIndexOf(".")) : raw;
+      if (this.instancesByClass.has(owner) && !this.instancesByName.has(owner)) found.add(owner);
+    };
+    const visit = (expr: Expr): void => {
+      switch (expr.kind) {
+        case "name":
+          if (expr.parts.length >= 2) noteName(expr.parts.join("."));
+          break;
+        case "binary":
+          visit(expr.left);
+          visit(expr.right);
+          break;
+        case "unary":
+          visit(expr.operand);
+          break;
+        case "call":
+          expr.args.forEach(visit);
+          break;
+        default:
+          break;
+      }
+    };
+
+    if (statement.event.kind === "predicate") visit(statement.event.test);
+    if (statement.event.kind === "reaches") {
+      visit(statement.event.left);
+      visit(statement.event.right);
+    }
+    if (statement.guard) visit(statement.guard);
+    for (const list of [statement.assignments, statement.otherwise ?? []]) {
+      for (const assignment of list) {
+        if (assignment.target.entity) noteName(assignment.target.entity);
+        visit(assignment.value);
+      }
+    }
+    return [...found].sort();
   }
 
   private compileAssignments(
@@ -864,6 +1102,20 @@ class Compiler {
     const prop = expr.parts[expr.parts.length - 1] as string;
     const owner = expr.parts.slice(0, -1).join(".");
 
+    // The camera is the one thing that is neither an object nor a constant: it
+    // moves, but nothing owns it. A rule reads it to place something relative to
+    // the view — a HUD, or an enemy spawned just off the right-hand edge.
+    if (owner === "camera") {
+      if (prop === "x" || prop === "y") return { kind: "camera", axis: prop };
+      this.error(
+        expr.line,
+        "E_UNKNOWN_PROP",
+        `the camera has no property '${prop}'`,
+        "camera.x, camera.y",
+      );
+      return { kind: "const", value: 0 };
+    }
+
     const bound = bindings.map.get(owner);
     const instance = this.instancesByName.get(owner);
     const entity: EntityRef | undefined =
@@ -886,8 +1138,19 @@ class Compiler {
     return { kind: "read", entity, prop };
   }
 
-  /** Console-dependent constants, folded at compile time. */
+  /**
+   * Console-dependent constants.
+   *
+   * `levelwidth`/`levelheight` are the playfield, which is the level's size when
+   * a scene has one. They fold to the *entry* scene's bounds, because a constant
+   * has to have one value at compile time; a game with differently-sized scenes
+   * should read them per scene through the level itself.
+   */
   private screenConstant(name: string): Fixed | undefined {
+    if (name === "levelwidth" || name === "levelheight") {
+      const bounds = this.boundsFor(this.entry ?? (this.sceneOrder[0] as string));
+      return fromInt(name === "levelwidth" ? bounds.width : bounds.height);
+    }
     return screenConstant(name, this.profile);
   }
 
@@ -896,13 +1159,23 @@ class Compiler {
   finish(controls: ControlDef[], rules: RuleDef[]): Program {
     this.checkGeometry(rules);
 
-    const scenes: SceneDef[] = this.sceneOrder.map((name) => ({
-      name,
-      instanceIds: this.instances.filter((i) => i.scene === name).map((i) => i.id),
-    }));
+    const scenes: SceneDef[] = this.sceneOrder.map((name) => {
+      const level = this.levelsByScene.get(name);
+      const cameraTarget = this.cameraByScene.get(name);
+      return {
+        name,
+        instanceIds: this.instances.filter((i) => i.scene === name).map((i) => i.id),
+        ...(level === undefined ? {} : { level }),
+        bounds: boundsOf(level, this.profile),
+        ...(cameraTarget === undefined ? {} : { cameraTarget }),
+      };
+    });
 
     const assets = [
-      ...new Set(this.instances.map((i) => i.strings["sprite"]).filter((s): s is string => !!s)),
+      ...new Set([
+        ...this.instances.map((i) => i.strings["sprite"]).filter((s): s is string => !!s),
+        ...[...this.levelsByScene.values()].flatMap((level) => levelAssets(level)),
+      ]),
     ].sort();
 
     const budget = this.computeBudget(scenes);
@@ -910,6 +1183,7 @@ class Compiler {
     return {
       profile: this.profile,
       entryScene: this.entry ?? (this.sceneOrder[0] as string),
+      seed: this.seed,
       scenes,
       instances: this.instances,
       controls,
@@ -927,9 +1201,13 @@ class Compiler {
    * easy to write and hard to see.
    */
   checkGeometry(rules: readonly RuleDef[]): void {
-    const { screenWidth, screenHeight, name, fps } = this.profile;
+    const { name, fps } = this.profile;
 
     for (const instance of this.instances) {
+      // Measured against the *playfield*, which is the scene's level when it has
+      // one. A hero standing near the bottom of a 30-cell cavern is not
+      // offscreen on a Game Boy; it is 12 cells below where the view starts.
+      const { width: screenWidth, height: screenHeight } = this.boundsFor(instance.scene);
       const width = toNumber(instance.numbers["width"] ?? 0);
       const height = toNumber(instance.numbers["height"] ?? 0);
       const x = toNumber(instance.numbers["x"] ?? 0);
@@ -1074,9 +1352,7 @@ function formatCells(value: Fixed): string {
 }
 
 function knownPropList(): string {
-  return [...Object.keys(NUMBER_DEFAULTS), ...Object.keys(STRING_PROPS), "direction"]
-    .sort()
-    .join(", ");
+  return knownPropertyNames().join(", ");
 }
 
 /** Constant-fold a compiled expression, or `undefined` if it reads state. */
@@ -1089,6 +1365,11 @@ function foldConstant(expr: CExpr): Fixed | undefined {
       return inner === undefined ? undefined : -inner;
     }
     case "call": {
+      // `random` is a call whose value is not a function of its arguments, so it
+      // never folds — and an initial property value, which must fold, therefore
+      // cannot use it. That is the right answer: a starting position drawn at
+      // build time would be the same on every play.
+      if (expr.fn === "random") return undefined;
       const args = expr.args.map(foldConstant);
       if (args.some((arg) => arg === undefined)) return undefined;
       return applyBuiltin(expr.fn, args as number[]);
@@ -1137,7 +1418,7 @@ export function applyBinary(op: CBinaryOp, left: Fixed, right: Fixed): Fixed {
  * Evaluate one builtin. Shared by the constant folder here and the simulator, so
  * a folded call and a live one can never disagree.
  */
-export function applyBuiltin(fn: BuiltinFn, args: readonly Fixed[]): Fixed {
+export function applyBuiltin(fn: PureBuiltinFn, args: readonly Fixed[]): Fixed {
   const [a = 0, b = 0, c = 0] = args;
   switch (fn) {
     case "abs":
@@ -1167,12 +1448,15 @@ function spriteCost(numbers: Readonly<Record<string, Fixed>>): number {
  */
 export function compile(source: string, options: CompileOptions): Program {
   const parsed = parse(source);
-  const compiler = new Compiler(options.profile);
+  const compiler = new Compiler(options.profile, options.levels ?? {});
   compiler.diagnostics.push(...parsed.diagnostics);
 
   compiler.collectScenes(parsed.statements);
+  compiler.collectSeed(parsed.statements);
+  compiler.collectLevels(parsed.statements);
   compiler.collectClasses(parsed.statements);
   compiler.collectInstances(parsed.statements);
+  compiler.collectCameras(parsed.statements);
   const controls = compiler.compileControls(parsed.statements);
   const rules = compiler.compileRules(parsed.statements);
   const program = compiler.finish(controls, rules);

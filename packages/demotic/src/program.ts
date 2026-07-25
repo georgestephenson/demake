@@ -15,9 +15,18 @@
 
 import type { Diagnostic } from "./errors.js";
 import type { Fixed } from "./fixed.js";
+import type { LevelFile } from "./level/parse.js";
 import type { ConsoleProfile } from "./profiles.js";
 
-/** Abstract buttons — the lowest common denominator across the target set. */
+/**
+ * Abstract buttons — the lowest common denominator across the target set.
+ *
+ * Written as a literal tuple rather than derived from the registry so the rest
+ * of the engine keeps exhaustive switch checking on `Action` and `Edge`; a test
+ * asserts these match `lang/spec.ts` exactly. That is the same bargain the man
+ * pages strike with `cli-spec` (doc 05): keep the strong form, let a test stop
+ * it drifting.
+ */
 export const ACTIONS = ["left", "right", "up", "down", "a", "b", "start"] as const;
 
 /** One abstract button. */
@@ -47,10 +56,21 @@ export type CExpr =
   | { kind: "scene"; scene: string }
   | { kind: "binary"; op: CBinaryOp; left: CExpr; right: CExpr }
   | { kind: "neg"; operand: CExpr }
-  | { kind: "call"; fn: BuiltinFn; args: readonly CExpr[] };
+  | { kind: "call"; fn: BuiltinFn; args: readonly CExpr[] }
+  /** `camera.x` / `camera.y` — where the viewport sits, in cells. */
+  | { kind: "camera"; axis: "x" | "y" };
 
 /** Builtin functions available to expressions. */
-export type BuiltinFn = "abs" | "min" | "max" | "clamp";
+export type BuiltinFn = "abs" | "min" | "max" | "clamp" | "random";
+
+/**
+ * The builtins that depend on nothing but their arguments.
+ *
+ * `random` is the exception, and the type keeps it out of every place that
+ * assumes a call can be folded: drawing a number advances the generator, so
+ * *when* it is evaluated is part of the game's behaviour.
+ */
+export type PureBuiltinFn = Exclude<BuiltinFn, "random">;
 
 /** Compiled binary operators. Relational ops yield 1 (true) or 0 (false). */
 export type CBinaryOp = "+" | "-" | "*" | "/" | "<" | ">" | "<=" | ">=" | "=" | "!=";
@@ -95,7 +115,16 @@ export interface ControlDef {
 
 /** The compiled trigger half of a rule. */
 export type CEvent =
-  | { kind: "hits"; subjects: readonly number[]; others: readonly number[]; edges: readonly Edge[] }
+  | {
+      kind: "hits";
+      subjects: readonly number[];
+      others: readonly number[];
+      edges: readonly Edge[];
+      /** Level tiles named as collision targets, by their legend name. */
+      tiles: readonly string[];
+      /** `touches`: fire every tick of overlap, not only on entry. */
+      level: boolean;
+    }
   | { kind: "input"; action: Action; edge: "pressed" | "released" }
   | { kind: "reaches"; left: CExpr; right: CExpr }
   | { kind: "predicate"; test: CExpr };
@@ -106,7 +135,20 @@ export interface RuleDef {
   event: CEvent;
   /** Restrict the rule to one scene; `undefined` means every scene. */
   scene?: string;
+  /** `if <expr>` — evaluated when the trigger fires; zero suppresses it. */
+  guard?: CExpr;
   assignments: readonly CAssignment[];
+  /** `else` — applied when the rule was evaluated and did not fire. */
+  otherwise?: readonly CAssignment[];
+  /**
+   * Instances this rule runs once per, each bound as the subject.
+   *
+   * A level rule naming a class means "every instance of it", so
+   * `when alien.right >= screenwidth then xdirection as -1` turns the line
+   * around one alien at a time. `hits` rules already bind their subject from
+   * the collision, so this is empty for them.
+   */
+  subjects?: readonly number[];
   line: number;
 }
 
@@ -114,6 +156,12 @@ export interface RuleDef {
 export interface SceneDef {
   name: string;
   instanceIds: readonly number[];
+  /** The level filling this scene's playfield, if it has one. */
+  level?: LevelFile;
+  /** Playfield size in cells: the level's, or the screen's. */
+  bounds: { width: number; height: number };
+  /** Instance the camera keeps centred, if any. */
+  cameraTarget?: number;
 }
 
 /** Static budget findings, reported without running the game. */
@@ -133,6 +181,12 @@ export interface Program {
   profile: ConsoleProfile;
   /** Scene the game loop enters on. */
   entryScene: string;
+  /**
+   * The seed every `random` draw comes from, and that `stream` composed its
+   * levels with. It lives in the program, not the Demakefile: a different seed
+   * is a different game, and the Demakefile may never change how a game plays.
+   */
+  seed: number;
   scenes: readonly SceneDef[];
   instances: readonly InstanceDef[];
   controls: readonly ControlDef[];

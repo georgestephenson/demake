@@ -7,7 +7,7 @@
  */
 
 /** The four top-level sections. */
-export const SECTIONS = ["game", "art", "music", "sound"] as const;
+export const SECTIONS = ["game", "language", "art", "music", "sound"] as const;
 
 /** One section id. */
 export type Section = (typeof SECTIONS)[number];
@@ -15,6 +15,7 @@ export type Section = (typeof SECTIONS)[number];
 /** Human-readable names, in nav order. */
 export const SECTION_LABELS: Readonly<Record<Section, string>> = {
   game: "demotic game demaker",
+  language: "demotic reference",
   art: "art demaker",
   music: "music demaker",
   sound: "sound demaker",

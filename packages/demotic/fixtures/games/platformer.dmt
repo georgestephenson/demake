@@ -1,0 +1,55 @@
+-- Platformer — gravity, a jump, and standing on things.
+--
+-- What this exercises that the ball games do not:
+--   * acceleration. `speed` is constant, but a level rule that nudges
+--     `ydirection` every tick *is* gravity, and `min` caps the terminal fall.
+--   * `on press` as a discrete action rather than a held direction
+--   * an object resting on another rather than bouncing off it
+--   * a collectible that disappears and scores
+
+start play
+
+scene play
+
+create object hero (width 1 cell, height 2 cells, speed 55vw, sprite hero.svg)
+create object ledge (width 25vw, height 1 cell, sprite ledge.svg)
+create object coin (width 1 cell, height 1 cell, sprite coin.svg)
+
+create hero player in play (x 15vw, y 2)
+
+-- A full-width floor would be a wall of hardware sprites (20 of a Game Boy's 40
+-- for the floor alone), and the compiler says so. Static scenery really wants a
+-- background layer, which the language does not have yet — so for now the floor
+-- is a ledge you can fall off, and `screenbottom` catches you.
+create ledge floor in play (x 10vw, y screenheight - 1, width 55vw)
+create ledge shelf1 in play (x 20vw, y screenheight - 5)
+create ledge shelf2 in play (x 60vw, y screenheight - 9)
+
+create coin coin1 in play (x 28vw, y screenheight - 7)
+create coin coin2 in play (x 68vw, y screenheight - 11)
+
+create number score in play (value 0, x 1, y 1)
+
+-- Gravity: a constant downward nudge, clamped so the fall has a terminal speed.
+-- Without the clamp a long drop tunnels through the floor in one tick, which the
+-- compiler would tell you about.
+when always in play then player.ydirection as min(player.ydirection + 0.04, 0.9)
+
+control player left (xdirection -1) on hold
+control player right (xdirection 1) on hold
+
+-- The jump is an impulse, not a held direction: `on press` fires once per press
+-- however long the button is held down.
+control player a (ydirection -0.85) on press
+
+when player hits screenleft, screenright then xdirection as 0
+when player touches screenbottom then ydirection as 0
+
+-- Landing. This is `touches`, not `hits`, and the difference is the whole reason
+-- `touches` exists: `hits` fires once, on contact, so gravity would go on adding
+-- to `ydirection` every tick the hero stood still. The separation would keep it
+-- looking correct while the state ran away underneath — and the first jump after
+-- a long stand would be fought by a full tick of accumulated fall.
+when player touches ledge then ydirection as 0
+
+when player hits coin then (coin.visible, score.value) as (0, score.value + 1)

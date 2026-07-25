@@ -84,8 +84,9 @@ game and would drift from a ROM within seconds. With it, the preview *is* the
 specification: `packages/demotic/src/sim.ts` defines the semantics and every
 console runtime is a conformance implementation of it.
 
-Consequences, all deliberate: no floats in the simulation, no host RNG, no wall
-clock, and one rounding rule — floor, which is what an arithmetic shift does on a
+Consequences, all deliberate: no floats in the simulation, no wall clock, no host
+RNG — `random` draws from the language's own seeded generator (§Randomness) —
+and one rounding rule — floor, which is what an arithmetic shift does on a
 6502 or a Z80 — applied everywhere.
 
 ### 2. Compile to data, not to assembly
@@ -181,13 +182,30 @@ to generate and patch programmatically.
 ### Statements
 
 ```
-loop <scene>                                   -- entry point; exactly one per program
+start <scene>                                  -- entry point; exactly one per program
+seed <n>                                       -- the game's random source; optional
 scene <name>                                   -- declare a scene
+level <name> [in <scene>] from <file.dmtl>     -- a hand-drawn playfield
+stream <name> [in <scene>] from <f>, <f>, … <n> wide|tall
+camera follows <object> [in <scene>]
 create object <class> ( <props> )              -- class definition with defaults
 create <class> <name> [in <scene>] ( <props> ) -- instance, overriding class defaults
 control <object> <button> ( <assigns> ) on hold|press|release
-when <event> [in <scene>] ( <assigns> )
+when <trigger> [in <scene>] [if <expr>] then <assigns> [else <assigns>]
 ```
+
+`then` separates the condition from the consequence. It costs a word and buys a
+seam that long rules badly need — without it the trigger and the assignment list
+run together with nothing but a bracket between them. Brackets are optional
+around a single `name as value`, so the common case reads
+`then xdirection as flip`, and stay required for the `(name value)` pair form
+where they mark one pair from the next.
+
+`if` guards a trigger with a condition, evaluated at the instant the trigger
+fires: `when a pressed if shot.visible = 0` is how firing reloads rather than
+restarts. `else` runs when the rule was evaluated and did not fire, so it is
+allowed on level triggers and on any guarded rule — and rejected on a bare edge
+trigger, where "did not fire" would mean every other tick of the game.
 
 Argument lists accept two shapes:
 
@@ -217,7 +235,7 @@ unambiguously "set `xdirection` to `-1`", never the expression `xdirection - 1`.
 | `sprite` | Asset name; bound to real art by the Demakefile | — |
 | `text` | Literal text, for `text` objects | — |
 | `value` | Number held by a `number` object | 0 |
-| `visible` | Drawn when non-zero | 1 |
+| `visible` | Drawn **and collidable** when non-zero | 1 |
 
 Read-only derived properties: `centerx`, `centery`, `left`, `right`, `top`,
 `bottom`. Assigning one is an error naming the property to assign instead.
@@ -243,14 +261,44 @@ instead. Stated, not hidden.
 Two builtin classes render from the background layer rather than as sprites, and so
 cost no sprite budget: `number` (renders `value`) and `text` (renders `text`).
 
+**`visible 0` makes an object inert**: not drawn, not collided with, and not
+moved. That is how a thing leaves play — a broken brick, a spent bullet — and it
+is why there is no `destroy`. The pairing is deliberate: an object you cannot see
+but can still hit is a bug in every game that has ever shipped one. The two
+genuine exceptions, trigger zones and invisible walls, want a separate property
+rather than a split in this one.
+
 ### Rule triggers
 
 | Form | Timing |
 |---|---|
 | `when <a> hits <b>, <c>` | edge — on contact, not per tick of contact |
+| `when <a> touches <b>, <c>` | level — every tick they overlap |
 | `when <button> pressed \| released` | edge |
-| `when <expr> reaches <expr>` | edge — when the test turns true |
+| `when <expr> reaches <expr>` | edge — when the value crosses or lands on the target |
+| `when <class>.<prop> <op> <expr>` | level — once per object of that class |
 | `when <expr>` | level — every tick it holds |
+
+**`hits` and `touches` are both needed and neither substitutes for the other.** A
+bounce must happen once per contact, or it inverts every tick and the object
+buzzes. Resting contact must be re-asserted every tick, or the state that contact
+suppresses runs away unseen: a hero standing on a ledge under `hits` keeps
+accumulating gravity into `ydirection` while the separation holds it in place, so
+it looks correct and then fights the next jump. Sitting on something is not an
+event.
+
+**A level rule naming a class runs once per object of it**, with that object
+bound as the subject, exactly as a `hits` rule binds the thing that collided. So
+`when rock.y >= screenheight then y as 0` recycles every rock, and `y` means
+*this* rock's. Naming two classes has no single subject to pick and is an error
+rather than a guess.
+
+**`reaches` is a crossing detector, not a threshold.** "reaches 10" on a rising
+score and "reaches 0" on falling lives have to mean the same thing, and a `>=`
+test cannot express both — three lives are already past zero, so the rule would
+fire on the first tick of the game. It fires when the value lands exactly on the
+target or crosses it from either side, and a value that *starts* on its target
+has not reached it.
 
 The level form is what makes an opponent one ordinary rule rather than a special
 "AI" feature — and the shape of that rule matters more than it looks:
@@ -294,6 +342,121 @@ compiler warns rather than failing, because the mapping is legitimate; it just i
 not a face button. Simultaneous opposing input resolves last-pressed-wins, which
 falls out of `on hold` keeping a snapshot per binding rather than per property.
 
+### Levels, tiles and the camera
+
+A scene's **playfield** is its level's size, or the screen's if it has none. That
+one sentence is the whole of scrolling, and everything else follows from it:
+
+- `screenleft`, `screenright`, `screentop`, `screenbottom` mean the *playfield's*
+  edges. A hero running right stops at the end of the level, not at an invisible
+  wall a screen-width in. The names keep their reading — "the edge of the
+  playfield" — and what the playfield is has grown.
+- **Object positions are level coordinates.** The camera decides what is on
+  screen, so no rule ever has to know where the view is. That is the only reason
+  scrolling does not infect every rule in the game.
+- A game with no level is unchanged in every respect, because its playfield is
+  still exactly the screen it always was.
+
+Levels live in their own file, `.dmtl`, and are a legend followed by a grid drawn
+in characters:
+
+```
+tile #  wall    solid  brick.svg
+tile ^  spikes         spikes.svg
+tile o  coin           coin.svg
+
+map
+##########################
+#   o        ===       o #
+#        ^^^^            #
+##########################
+```
+
+The grid *is* the level, literally, and that is the entire argument for the
+format. A model can read it, reason about it and edit it in place because the
+shape in the file is the shape on screen; an array of tile indices is the
+opposite — unreadable, and something editing one miscounts a column and silently
+moves a wall. Two consequences follow from taking that seriously: **one row per
+line, however long** (a hundred-cell level makes a hundred-character line), and
+**no comments inside the grid** — `--` is a comment in the legend, but past `map`
+every character is a cell and `-` is a perfectly good tile. A blank line inside
+the grid is a row of empty cells, not a separator.
+
+**Tiles are named, and the names are what rules collide with.**
+`when player touches spikes then scene as gameover` reads as a sentence precisely
+because the legend supplied the noun. Tiles then behave exactly like objects, on
+the same two conditions:
+
+- something happens only where a rule named the pair, so a tile no rule mentions
+  is scenery and nothing more;
+- separation happens only where the tile is `solid`, which is the tile equivalent
+  of the split `visible` makes for objects.
+
+So a `coin` tile scores without blocking and a `wall solid` tile blocks whether or
+not anything fired. One model, not two.
+
+`camera follows <object>` centres the view on an object and clamps it inside the
+playfield. The clamp is load-bearing twice: it stops the view running off the end
+of a level, and it means a level no bigger than the screen never scrolls at all —
+so a non-scrolling game needs no special case anywhere. `camera.x` and `camera.y`
+are readable in expressions, which is how a HUD stays on screen while the world
+under it moves:
+
+```
+when always in play then (score.x, score.y) as (camera.x + 1, camera.y + 1)
+```
+
+A rule reading the camera sees where the view was when the tick began, so a HUD
+trails by one tick while the world is moving and lands on the view the moment it
+stops. Invisible in play, and worth knowing before reading a trace.
+
+### Composed levels: `stream`
+
+An endless scroller is not an endless level. It is a short vocabulary of
+hand-made pieces played in an order nobody wrote down — Flappy Bird has one chunk
+with a gap in it, 1942 a handful of formations. `stream` says exactly that:
+
+```
+seed 20260725
+stream course from open.dmtl, lowpipe.dmtl, highpipe.dmtl 24 wide
+```
+
+Twenty-four chunks are drawn at random from the three and laid side by side, and
+the result is an ordinary level. Three things follow from composing at **compile
+time**, and all three are why it is done that way:
+
+- the simulator, the collision model and the camera need no notion of streaming;
+- a console runtime needs none either — the composed tilemap is data in the ROM,
+  not a generator the SM83 has to run identically;
+- the course is fixed for a given seed, so a trace is still a trace.
+
+"Endless" therefore means "long enough, and different every seed", which is what
+the era's own scrollers did. The axis is stated rather than inferred, because a
+stack of square chunks is ambiguous and `24 wide` says which way the game scrolls
+without the reader measuring anything. Chunks share one legend and must agree on
+the dimension they are not laid along; both are compile errors.
+
+A vocabulary can have properties a game relies on — the runner example's chunks
+all leave rows 11 to 17 clear, so however the stream orders them there is a way
+through. That is a good reason to hand-draw the pieces and generate only their
+order.
+
+### Randomness
+
+`random(low, high)` draws a whole number from the game's generator, seeded by
+`seed <n>` and defaulting to 1. The generator is *specified*, not borrowed: a host
+`Math.random` would make every run a different game and take the trace oracle with
+it, since two implementations could not be compared at all. It is a 32-bit LCG,
+chosen because a console runtime has to reproduce it bit-for-bit and that is a
+multiply and an add.
+
+The seed lives in the game, never in the Demakefile — a different seed is a
+different game, and the build file may not change how a game plays (doc 15).
+Drawing advances the generator, so *when* a draw happens is part of the game's
+behaviour: `random` cannot set an initial property value (that would be drawn once
+at build time and be the same every play), and a `.test.dmt` assertion may not
+call it, because asserting would change the run.
+
 ### Type-directed resolution
 
 Two resolutions remove all quoting ceremony:
@@ -302,6 +465,48 @@ Two resolutions remove all quoting ceremony:
   the compiler reads it as the literal string.
 - `(scene) as gameover` — a bare name; because the `scene` target is scene-typed, it
   resolves to a scene rather than an expression.
+
+## The example library
+
+Pong was never enough evidence: two movers, one collision shape, no removal. The
+examples in `packages/demotic/fixtures/games/` exist to pin down what a console
+runtime actually has to implement, and each is there for something the others do
+not do.
+
+| Example | Exercises |
+|---|---|
+| `pong` | two movers, a bounce angle, proportional opponent steering |
+| `breakout` | a grid of one class, removal via `visible`, sprite-budget pressure |
+| `platformer` | gravity as a level rule, an impulse jump, resting contact |
+| `dodger` | many objects at staggered speeds, recycled rather than removed |
+| `shooter` | the per-scanline sprite limit's worst case, a fast projectile |
+| `caves` | a hand-drawn level bigger than the screen, tiles, a scrolling camera |
+| `runner` | a course composed from chunks at build time, and the seeded generator |
+
+All seven compile for all seven consoles, stay inside every sprite budget, and
+pass their own `.test.dmt` suites on every one — run in the unit suite, from the
+CLI, and in the browser.
+
+Writing them changed the language, which is the point of writing them before the
+runtime rather than after: `touches` and the `reaches` crossing rule both come
+from here, and `visible` gained its collision meaning here too.
+
+### What they also found, and did not fix
+
+Named because a runtime built to the current language will hit exactly these:
+
+- ~~**No background layer.**~~ Fixed by `level`: scenery is tiles, and a
+  full-width floor costs no sprites at all. What the tile layer still cannot do
+  is *change* — a collected coin drawn as a tile stays drawn, because tiles have
+  no `visible`. A game that wants a thing to vanish uses an object for it, as the
+  platformer does, and `caves` says so in a comment rather than pretending.
+- **A level rule cannot address a class.** `when <a> hits <b>` binds the objects
+  that collided, so a rule can drive every alien at once; `when always
+  (alien.xdirection)` has no subject to bind and is rejected. Driving a whole
+  class from a condition is not expressible.
+- **An input edge cannot be conditioned on state.** "fire whichever bullet is
+  parked" needs `when a pressed and s1.visible = 0`, and a `control` binding
+  carries no condition. The shooter reuses a single shot because of it.
 
 ## Testing a game: `.test.dmt`
 
@@ -366,6 +571,11 @@ rather than leaving it to be found in an emulator.
 | `W_ASPECT_MISMATCH` | width and height sized against different screen axes, which cannot stay square |
 | `W_TEXT_TOO_WIDE` | text running past the edge on a narrow playfield |
 | `W_START_MAPPING` | `start` on hardware with no Start button |
+| `E_LEVEL_TOO_SMALL` | a level smaller than the screen on some console, leaving part of the view empty |
+| `E_LEVEL_SYNTAX` / `E_LEVEL_NO_MAP` / `E_UNKNOWN_TILE` / `E_DUPLICATE_TILE` | a malformed `.dmtl` |
+| `E_DUPLICATE_LEVEL` | two playfields in one scene |
+| `E_STREAM_MISMATCH` | stream chunks disagreeing on the dimension they are not laid along |
+| `E_STREAM_LEGEND` | stream chunks giving one character two meanings |
 
 Every one is per-console, because every one of these is a property of the target
 rather than of the source: a 30-cell wall is fine on a NES and impossible on a
@@ -464,12 +674,14 @@ Named rather than hidden, in rough order of how much they matter.
   treats SVG as a preview convenience until a restricted rasteriser exists.
 - **No `destroy` or runtime spawn.** Pong does not need them; Breakout and Snake
   do. The schema has room.
-- **No RNG.** It must be a seeded, specified generator, not the host's, or traces
-  stop being comparable. `@demake/core`'s PCG32 is the obvious candidate.
 - **No sound.** Overlaps with the audio demake entry in doc 13 §Phase 7+.
-- **No scrolling or multi-screen levels.** The largest genuine language gap: it
-  needs a camera concept and background streaming, and it is where per-scanline
-  sprite pressure actually bites.
+- **Tiles cannot change at run time.** The tile layer is fixed once composed, so
+  a door that opens or a block that breaks has to be an object. Editing the
+  tilemap live is what a console does most cheaply, so this is a gap worth
+  closing — and it needs a way to name a cell, which the language does not have.
+- **The camera only follows.** No dead zone, no lookahead, no fixed regions, and
+  no second scroll plane. Enough for the examples; not enough for a game that
+  wants the view ahead of the player.
 - **Single file.** No `include`; large games will want one.
 
 ## Where the rest of it lives

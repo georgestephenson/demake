@@ -81,6 +81,8 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
   src/lang/          lex → parse → flat statement AST (one statement per line, no nesting)
   src/compile.ts     AST + console profile → resolved Program tables (constants folded)
   src/sim.ts         the reference interpreter — the semantic definition of the language
+  src/level/         .dmtl levels: parse, camera + tile collision, `stream` composition
+  src/rng.ts         the game's seeded generator — one definition, shared build and run
   src/testing/       .test.dmt: assertions run against every console at once
   src/trace.ts       state traces: the cross-implementation conformance oracle
   demo/              terminal runner (play.mjs) and test runner (test.mjs)
@@ -105,6 +107,7 @@ pnpm gen:man       # regenerate man pages from cli-spec (build first; CI checks 
 pnpm eval:prep     # prep quality battery: scoreboard + side-by-side sheets (build first)
 pnpm play          # Demotic: play the Pong fixture in a terminal (build first)
 pnpm test:dmt      # Demotic: run the .test.dmt suite on every console (build first)
+pnpm gen:demotic-docs  # regenerate the language reference from the registry (build first)
 pnpm dev:web       # run the web app against the workspace core (build core first)
 pnpm build:web     # typecheck + bundle the web app into packages/web/dist
 pnpm test:browser  # Playwright: web functional + browser-vs-Node determinism
@@ -126,6 +129,18 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
 - **`packages/cli-spec` is the only place flags are defined** (doc 05); the
   parser, `--help`, and man pages are generated from it. Man pages are never
   hand-edited — run `pnpm gen:man` and a test enforces they match the spec.
+- **Language changes are the maintainer's call, not the agent's.** Adding,
+  removing or altering a Demotic statement, property, unit, builtin, trigger or
+  diagnostic — anything in `packages/demotic/src/lang/spec.ts` — needs the
+  maintainer to agree the design _before_ it is implemented. Propose options and
+  their trade-offs and wait. Finding a limitation while writing an example is
+  expected and welcome; quietly fixing it by growing the language is not. Bug
+  fixes that restore documented behaviour are not language changes.
+- **`packages/demotic/src/lang/spec.ts` is the only place the language surface is
+  defined**, the way `packages/cli-spec` is for the CLI (doc 05). The parser, the
+  compiler, the diagnostics and the reference documentation are all generated
+  from or checked against it; a test fails if the docs go stale. Never describe a
+  language feature in prose that is not in the registry.
 - **Demotic describes the game; the Demakefile describes the build** (docs 14,
   15). A `.dmt` file must never name a console, a palette, or a pixel, and a
   Demakefile must never change how the game plays. The operational test is a CI
@@ -158,6 +173,42 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   §Diagnostics): sprite budgets, tunnelling, sub-tick speeds, offscreen starts,
   aspect mismatch, size rounding. Adding a new class of known trap means adding a
   diagnostic, not a doc note.
+- **`hits` fires once per contact; `touches` fires every tick of it.** Bounces
+  want the first, resting contact wants the second — a platformer that lands with
+  `hits` accumulates gravity into `ydirection` while standing still, and looks
+  fine until the next jump. `reaches` is a _crossing_ detector so it works on
+  counters that fall as well as rise.
+- **`visible 0` is inert**: not drawn, not collided with, not moved. That is why
+  there is no `destroy`.
+- **A scene's playfield is its level's size, or the screen's** (doc 14 §Levels).
+  So `screenright` means the end of the _level_, object positions are level
+  coordinates, and the camera is the only thing that knows where the view is —
+  which is the whole reason scrolling does not infect every rule. A game with no
+  level is unchanged, because its playfield is still exactly the screen.
+- **Tiles collide on the same two conditions objects do**: a rule has to name the
+  pair, and separation happens only for `solid` ones. A tile no rule mentions is
+  scenery. Tiles have no `visible`, so they cannot change — a thing that must
+  vanish is an object.
+- **Levels are composed at build time, never generated at run time** (doc 14
+  §Composed levels). `stream` draws chunks from the program's `seed` and emits an
+  ordinary tilemap, so the simulator, the camera and a console runtime need no
+  notion of streaming and a trace stays a trace. Generating the course as the
+  player flies would be reproducible only if every machine drew in the same order
+  at the same tick.
+- **`random` draws from `src/rng.ts`, never from the host.** The generator is
+  part of the language because two implementations that disagree about it cannot
+  be compared at all. Drawing advances it, so _when_ a draw happens is behaviour:
+  it cannot fold into an initial value, and a `.test.dmt` assertion may not call
+  it. The seed is a `.dmt` statement and never a Demakefile setting — a different
+  seed is a different game.
+- **New language features come from the example library, not from theory**
+  (`packages/demotic/fixtures/games/`). Each example is there for something the
+  others do not exercise; `touches`, the `reaches` crossing rule and `visible`'s
+  collision meaning were all found by writing one.
+- **A `.dmtl` grid is literal.** Every line after `map` is a row, blank ones
+  included, and the only exception is the empty string a terminating newline
+  leaves behind. Treating a blank line as a separator moves every row below it up
+  one, which silently corrupts the shape the format exists to preserve.
 - **`.test.dmt` suites run on every console.** That is what makes a _balance_
   regression visible; a mechanical one would show up anywhere. Write assertions
   in the relative vocabulary or they will only be true on one machine.
@@ -268,6 +319,15 @@ Two files plus fixtures (doc 02 §Extensibility):
   of anything the CLI does (a manifest shape, a symbol-name rule, a console
   summary table) is how parity dies; if the web needs it, it moves into core
   first, as `buildManifest`/`encodeManifest` did.
+- **A one-run Lighthouse audit is a coin toss on a shared runner.** The job asks
+  for `numberOfRuns: 3` and asserts against the best of them, which is lhci's
+  default `optimistic` aggregation for a `minScore`. Noise only ever makes a page
+  look _slower_ than it is, so the least-contaminated run is the truthful
+  measurement, and a genuine regression still drags all three. Before touching
+  the thresholds when this job fails, reproduce locally
+  (`pnpm build:web && pnpm --filter @demake/web exec lhci autorun`) and check the
+  entry chunk against `pnpm check:web-budget` — the score falling while the
+  payload is flat means the runner, not the page.
 - **CI's server-start traps, both learned the hard way.** (1) Actions sets
   `CI=1`, which makes Vite _colourise_ its banner — `Local:` arrives as
   `Local\e[22m:`, so any ready-pattern matching that literal never fires;

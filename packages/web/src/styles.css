@@ -716,3 +716,121 @@ kbd {
   height: 3.5rem;
   font-weight: 600;
 }
+
+/* --- the language reference (doc 07 §Sections) ----------------------------- */
+
+main.docs-layout {
+  display: grid;
+  grid-template-columns: minmax(140px, 180px) 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 700px) {
+  main.docs-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.doc-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  position: sticky;
+  top: 1rem;
+}
+
+@media (max-width: 700px) {
+  .doc-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    position: static;
+  }
+}
+
+.doc-topic {
+  text-align: left;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.doc-topic:hover,
+.doc-topic:focus-visible {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+.doc-topic.active {
+  color: var(--ink);
+  border-color: currentColor;
+  font-weight: 600;
+}
+
+.doc-entry {
+  margin: 1.2rem 0;
+}
+
+.doc-entry h3,
+.doc-body h3 {
+  margin: 1.2rem 0 0.4rem;
+  font-size: 0.95rem;
+}
+
+.doc-syntax,
+.doc-example {
+  margin: 0.4rem 0;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  font:
+    0.78rem/1.6 ui-monospace,
+    monospace;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.doc-syntax {
+  color: var(--muted);
+}
+
+.doc-note {
+  margin: 0.5rem 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.doc-table-wrap {
+  overflow-x: auto;
+}
+
+.doc-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.82rem;
+}
+
+.doc-table th,
+.doc-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.doc-table th {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.doc-footer {
+  margin-top: 1.5rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--line);
+}

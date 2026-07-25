@@ -34,6 +34,7 @@ import type {
   Unit,
 } from "./ast.js";
 import { lex, type Token } from "./lex.js";
+import { FUNCTION_ARITY, UNIT_NAMES } from "./spec.js";
 
 /** Result of a parse: statements plus any recovered syntax errors. */
 export interface ParseResult extends ParsedProgram {
@@ -42,17 +43,10 @@ export interface ParseResult extends ParsedProgram {
 
 const CONTROL_MODES = new Set<string>(["hold", "press", "release"]);
 
-/** Unit suffixes a numeric literal may carry (see {@link Unit}). */
-const UNITS = new Set<string>(["cell", "cells", "vw", "vh", "vmin", "vmax"]);
-
-/**
- * Builtin functions, with their arity.
- *
- * Deliberately tiny and all exactly representable in integer arithmetic — every
- * one of these has to be reimplementable in a page of 6502 (doc 14 §Runtime
- * model), so nothing transcendental will ever join them.
- */
-const FUNCTIONS: Readonly<Record<string, number>> = { abs: 1, min: 2, max: 2, clamp: 3 };
+// Units and builtins come from the language registry, so the lexer cannot
+// accept something the reference does not document (AGENTS.md §Iron rules).
+const UNITS = UNIT_NAMES;
+const FUNCTIONS = FUNCTION_ARITY;
 
 /** Binding power per binary operator; higher binds tighter. */
 const PRECEDENCE: Record<BinaryOp, number> = {
@@ -203,10 +197,18 @@ function parseStatement(cursor: Cursor): Stmt {
   }
 
   switch (token.value) {
-    case "loop":
-      return parseLoop(cursor);
+    case "start":
+      return parseStart(cursor);
     case "scene":
       return parseScene(cursor);
+    case "level":
+      return parseLevelStatement(cursor);
+    case "stream":
+      return parseStream(cursor);
+    case "seed":
+      return parseSeed(cursor);
+    case "camera":
+      return parseCamera(cursor);
     case "create":
       return parseCreate(cursor);
     case "control":
@@ -217,16 +219,16 @@ function parseStatement(cursor: Cursor): Stmt {
       throw cursor.fail(
         "E_UNKNOWN_STATEMENT",
         `unknown statement '${token.raw}'`,
-        "statements start with loop, scene, create, control, or when",
+        "statements start with start, seed, scene, level, stream, camera, create, control, or when",
       );
   }
 }
 
-function parseLoop(cursor: Cursor): Stmt {
+function parseStart(cursor: Cursor): Stmt {
   const line = cursor.peek().line;
   cursor.next();
   const scene = cursor.expectIdent("a scene name");
-  return { kind: "loop", scene: scene.value, line };
+  return { kind: "start", scene: scene.value, line };
 }
 
 function parseScene(cursor: Cursor): Stmt {
@@ -234,6 +236,94 @@ function parseScene(cursor: Cursor): Stmt {
   cursor.next();
   const name = cursor.expectIdent("a scene name");
   return { kind: "scene", name: name.value, line };
+}
+
+/** `level <name> [in <scene>] from <file.dmtl>` */
+function parseLevelStatement(cursor: Cursor): Stmt {
+  const line = cursor.peek().line;
+  cursor.next();
+  const name = cursor.expectIdent("a level name");
+  let scene: string | undefined;
+  if (cursor.eatKeyword("in")) scene = cursor.expectIdent("a scene name").value;
+  if (!cursor.eatKeyword("from")) {
+    throw cursor.fail("E_SYNTAX", "a level needs a file", "e.g. `level cavern from cavern.dmtl`");
+  }
+  const file = cursor.expectIdent("a .dmtl filename");
+  return { kind: "level", name: name.value, ...(scene ? { scene } : {}), file: file.raw, line };
+}
+
+/** `stream <name> [in <scene>] from <file>, <file>, … <n> wide|tall` */
+function parseStream(cursor: Cursor): Stmt {
+  const line = cursor.peek().line;
+  cursor.next();
+  const name = cursor.expectIdent("a level name");
+  let scene: string | undefined;
+  if (cursor.eatKeyword("in")) scene = cursor.expectIdent("a scene name").value;
+  if (!cursor.eatKeyword("from")) {
+    throw cursor.fail(
+      "E_SYNTAX",
+      "a stream needs chunks to draw from",
+      "e.g. `stream course from gap.dmtl, pipe.dmtl 20 wide`",
+    );
+  }
+
+  const files: string[] = [];
+  do {
+    files.push(cursor.expectIdent("a .dmtl filename").raw);
+  } while (cursor.eatPunct(","));
+
+  const count = cursor.peek();
+  if (count.kind !== "number") {
+    throw cursor.fail(
+      "E_SYNTAX",
+      `expected how many chunks to draw but found ${describe(count)}`,
+      "e.g. `stream course from gap.dmtl, pipe.dmtl 20 wide`",
+    );
+  }
+  cursor.next();
+
+  // The axis is stated rather than inferred from the chunks' shape: a stack of
+  // square chunks is ambiguous, and a game that reads "20 wide" says which way
+  // it scrolls without the reader measuring anything.
+  const axis = cursor.eatKeyword("wide") ? "wide" : cursor.eatKeyword("tall") ? "tall" : undefined;
+  if (!axis) {
+    throw cursor.fail("E_SYNTAX", "a stream is laid out `wide` or `tall`");
+  }
+
+  return {
+    kind: "stream",
+    name: name.value,
+    ...(scene ? { scene } : {}),
+    files,
+    count: Math.trunc(Number(count.value)),
+    axis,
+    line,
+  };
+}
+
+/** `seed <n>` */
+function parseSeed(cursor: Cursor): Stmt {
+  const line = cursor.peek().line;
+  cursor.next();
+  const value = cursor.peek();
+  if (value.kind !== "number") {
+    throw cursor.fail("E_SYNTAX", `expected a whole number but found ${describe(value)}`);
+  }
+  cursor.next();
+  return { kind: "seed", value: Math.trunc(Number(value.value)), line };
+}
+
+/** `camera follows <object> [in <scene>]` */
+function parseCamera(cursor: Cursor): Stmt {
+  const line = cursor.peek().line;
+  cursor.next();
+  if (!cursor.eatKeyword("follows")) {
+    throw cursor.fail("E_SYNTAX", "a camera follows something", "e.g. `camera follows player`");
+  }
+  const target = cursor.expectIdent("an object name");
+  let scene: string | undefined;
+  if (cursor.eatKeyword("in")) scene = cursor.expectIdent("a scene name").value;
+  return { kind: "camera", target: target.value, ...(scene ? { scene } : {}), line };
 }
 
 function parseCreate(cursor: Cursor): Stmt {
@@ -286,21 +376,51 @@ function parseControl(cursor: Cursor): Stmt {
   return { kind: "control", entity: entity.value, action: action.value, assignments, mode, line };
 }
 
+/**
+ * `when <trigger> [in <scene>] [if <expr>] then <assignments> [else <assignments>]`
+ *
+ * `then` is required and `else` is optional. The keyword costs a word and buys
+ * a clear seam between the condition and the consequence — which matters most
+ * on the long rules, where the trigger and the assignment list would otherwise
+ * run together with nothing but a bracket between them.
+ */
 function parseWhen(cursor: Cursor): Stmt {
   const line = cursor.peek().line;
   cursor.next();
 
   const event = parseEvent(cursor);
+
   let scene: string | undefined;
   if (cursor.eatKeyword("in")) {
     scene = cursor.expectIdent("a scene name").value;
   }
+
+  let guard: Expr | undefined;
+  if (cursor.eatKeyword("if")) {
+    guard = parseExpr(cursor, 0);
+  }
+
+  if (!cursor.eatKeyword("then")) {
+    throw cursor.fail(
+      "E_SYNTAX",
+      `expected \`then\` but found ${describe(cursor.peek())}`,
+      "a rule reads `when <trigger> then <assignments>`",
+    );
+  }
   const assignments = parseAssignmentList(cursor);
+
+  let otherwise: Assignment[] | undefined;
+  if (cursor.eatKeyword("else")) {
+    otherwise = parseAssignmentList(cursor);
+  }
+
   return {
     kind: "when",
     event,
     ...(scene === undefined ? {} : { scene }),
+    ...(guard === undefined ? {} : { guard }),
     assignments,
+    ...(otherwise === undefined ? {} : { otherwise }),
     line,
   };
 }
@@ -309,15 +429,20 @@ function parseEvent(cursor: Cursor): Event {
   const first = cursor.peek();
   const second = cursor.peek(1);
 
-  // `when <subject> hits <a>, <b>, ...`
-  if (first.kind === "ident" && second.kind === "ident" && second.value === "hits") {
+  // `when <subject> hits|touches <a>, <b>, ...`
+  if (
+    first.kind === "ident" &&
+    second.kind === "ident" &&
+    (second.value === "hits" || second.value === "touches")
+  ) {
+    const level = second.value === "touches";
     cursor.next();
     cursor.next();
     const others: string[] = [];
     do {
       others.push(cursor.expectIdent("something to collide with").value);
     } while (cursor.eatPunct(","));
-    return { kind: "hits", subject: first.value, others };
+    return { kind: "hits", subject: first.value, others, level };
   }
 
   // `when <action> pressed | released`
@@ -453,8 +578,29 @@ function parsePropList(cursor: Cursor): Prop[] {
   return parsePairs(cursor);
 }
 
+/**
+ * Assignments after `then` or `else`.
+ *
+ * Brackets are optional for a single `name as value`, because `then xdirection
+ * as flip` is the common case and the brackets add nothing. They stay required
+ * for the `(name value)` pair form, where they are what marks the boundary
+ * between one pair and the next.
+ */
 function parseAssignmentList(cursor: Cursor): Assignment[] {
   if (cursor.atStatementEnd()) return [];
+
+  if (!cursor.atPunct("(")) {
+    const name = cursor.expectIdent("a property to set");
+    if (!cursor.eatKeyword("as")) {
+      throw cursor.fail(
+        "E_SYNTAX",
+        `expected \`as\` after '${name.raw}'`,
+        "without brackets a rule sets exactly one property: `then speed as 0`",
+      );
+    }
+    return [{ target: splitTarget(name.value, name.line), value: parseExpr(cursor, 0) }];
+  }
+
   return parsePairs(cursor).map((pair) => ({
     target: splitTarget(pair.name, pair.line),
     value: pair.value,

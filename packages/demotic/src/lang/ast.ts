@@ -62,8 +62,16 @@ export type ControlMode = "hold" | "press" | "release";
 
 /** The trigger half of a `when` statement. */
 export type Event =
-  /** `when ball hits paddle, screenleft` — edge-triggered on overlap start. */
-  | { kind: "hits"; subject: string; others: readonly string[] }
+  /**
+   * `when ball hits paddle` — edge-triggered on overlap start.
+   * `when hero touches ledge` — level-triggered, every tick they overlap.
+   *
+   * Both are needed and neither substitutes for the other: a bounce must happen
+   * once per contact, and resting contact must be re-asserted every tick or the
+   * state that contact suppresses (gravity, say) accumulates unseen while the
+   * object appears to sit still.
+   */
+  | { kind: "hits"; subject: string; others: readonly string[]; level: boolean }
   /** `when start pressed` / `when a released` — input edges. */
   | { kind: "input"; action: string; edge: "pressed" | "released" }
   /** `when score1.value reaches 10` — edge-triggered when the test turns true. */
@@ -73,8 +81,20 @@ export type Event =
 
 /** A parsed statement. */
 export type Stmt =
-  | { kind: "loop"; scene: string; line: number }
+  | { kind: "start"; scene: string; line: number }
   | { kind: "scene"; name: string; line: number }
+  | { kind: "level"; name: string; scene?: string; file: string; line: number }
+  | {
+      kind: "stream";
+      name: string;
+      scene?: string;
+      files: readonly string[];
+      count: number;
+      axis: "wide" | "tall";
+      line: number;
+    }
+  | { kind: "seed"; value: number; line: number }
+  | { kind: "camera"; target: string; scene?: string; line: number }
   | { kind: "class"; name: string; props: readonly Prop[]; line: number }
   | {
       kind: "instance";
@@ -96,7 +116,12 @@ export type Stmt =
       kind: "when";
       event: Event;
       scene?: string;
+      /** `if <expr>` — the trigger fired, but only act when this holds too. */
+      guard?: Expr;
+      /** Applied when the rule fires (and its guard, if any, holds). */
       assignments: readonly Assignment[];
+      /** `else` — applied when the rule was evaluated and did not fire. */
+      otherwise?: readonly Assignment[];
       line: number;
     };
 

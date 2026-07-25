@@ -12,7 +12,7 @@ function codes(source: string, profile = gb): string[] {
   return check(source, { profile }).diagnostics.map((d) => d.code);
 }
 
-const MINIMAL = ["loop play", "scene play", "create object dot (sprite dot.png)"].join("\n");
+const MINIMAL = ["start play", "scene play", "create object dot (sprite dot.png)"].join("\n");
 
 describe("compile", () => {
   it("folds screen constants per console, so one source targets many playfields", () => {
@@ -55,7 +55,7 @@ describe("compile", () => {
   it("resolves declarations in any order", () => {
     const source = [
       "create dot d1 in play (x 1)",
-      "loop play",
+      "start play",
       "create object dot (sprite dot.png)",
       "scene play",
     ].join("\n");
@@ -64,7 +64,7 @@ describe("compile", () => {
 
   it("collects every diagnostic rather than stopping at the first", () => {
     const source = [
-      "loop nowhere",
+      "start nowhere",
       "scene play",
       "create object dot (wibble 1)",
       "create dot d1 in play (x nonsense)",
@@ -89,7 +89,7 @@ describe("compile", () => {
     const source = [
       MINIMAL,
       "create dot d1 in play ()",
-      "when d1 hits screenleft (d1.centerx) as 0",
+      "when d1 hits screenleft then d1.centerx as 0",
     ].join("\n");
     const [diagnostic] = check(source, { profile: gb }).diagnostics;
     expect(diagnostic?.code).toBe("E_UNKNOWN_PROP");
@@ -97,7 +97,7 @@ describe("compile", () => {
   });
 
   it("requires an owner for a property when the rule has no subject", () => {
-    const source = [MINIMAL, "create dot d1 in play ()", "when a pressed (x) as 0"].join("\n");
+    const source = [MINIMAL, "create dot d1 in play ()", "when a pressed then x as 0"].join("\n");
     expect(codes(source)).toEqual(["E_UNQUALIFIED_TARGET"]);
   });
 
@@ -111,7 +111,7 @@ describe("compile", () => {
     // 12 objects of 4x2 cells = 96 sprites; a Game Boy has 40, a Mega Drive 80.
     const objects = Array.from({ length: 12 }, (_, i) => `create big b${i} in play (x ${i}, y 1)`);
     const source = [
-      "loop play",
+      "start play",
       "scene play",
       "create object big (width 4, height 2, sprite big.png)",
       ...objects,
@@ -128,7 +128,7 @@ describe("compile", () => {
   it("warns before it fails, once a scene passes three quarters of the budget", () => {
     const objects = Array.from({ length: 8 }, (_, i) => `create big b${i} in play (x ${i}, y 1)`);
     const source = [
-      "loop play",
+      "start play",
       "scene play",
       "create object big (width 4, height 1, sprite big.png)",
       ...objects,
@@ -141,7 +141,7 @@ describe("compile", () => {
 
   it("resolves relative units against each console's playfield", () => {
     const source = [
-      "loop play",
+      "start play",
       "scene play",
       "create object dot (sprite dot.png)",
       "create dot d1 in play (x 50vw, y 25vh, speed 40vmin)",
@@ -218,7 +218,7 @@ describe("compile", () => {
 
   it("catches an object too large for the playfield", () => {
     const source = [
-      "loop play",
+      "start play",
       "scene play",
       "create object wall (width 30, height 1, sprite w.png)",
       "create wall w1 in play ()",
@@ -241,13 +241,13 @@ describe("compile", () => {
 
   it("warns when a mover can tunnel through what it collides with", () => {
     const source = [
-      "loop play",
+      "start play",
       "scene play",
       "create object bullet (width 1, height 1, speed 300, sprite b.png)",
       "create object wall (width 4, height 1, sprite w.png)",
       "create bullet b1 in play (x 1, y 1, direction east)",
       "create wall w1 in play (x 10, y 1)",
-      "when bullet hits wall (speed) as 0",
+      "when bullet hits wall then speed as 0",
     ].join("\n");
     // 300 cells/second at 60 Hz is 5 cells a tick, through a 1-cell-thick wall.
     const diagnostic = check(source, { profile: md }).diagnostics.find(
@@ -258,7 +258,7 @@ describe("compile", () => {
 
   it("warns when text runs off the edge of a small playfield", () => {
     const source = [
-      "loop play",
+      "start play",
       "scene play",
       'create text t1 in play (x 2, y 1, text "a very long line of text indeed")',
     ].join("\n");
@@ -285,7 +285,7 @@ describe("compile", () => {
 
   it("reports the text of an error through GameLangError", () => {
     try {
-      compile("loop nowhere", { profile: gb });
+      compile("start nowhere", { profile: gb });
       expect.unreachable("should have thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(GameLangError);

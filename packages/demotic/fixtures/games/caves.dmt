@@ -1,0 +1,73 @@
+-- Caves — a hand-drawn level, bigger than any screen, and a camera.
+--
+-- What this exercises that the other examples do not:
+--   * a `level`, so the playfield is the level's 60x30 rather than the screen's
+--   * scrolling: the camera follows the hero and clamps at the level's edges
+--   * tiles as collision targets, by the names the `.dmtl` legend gave them
+--   * `camera.x` / `camera.y`, which is how a HUD stays on screen when the
+--     world underneath it moves
+--
+-- Nothing here is per-console. The level is the same 60x30 everywhere; what
+-- changes is how much of it a machine can show at once, and therefore how much
+-- it scrolls — a Game Boy sees 20x18 of it, a Mega Drive 40x28.
+
+start play
+
+scene play
+
+level cavern from cavern.dmtl
+
+camera follows player
+
+create object hero (width 1 cell, height 2 cells, speed 55vw, sprite hero.svg)
+
+create hero player in play (x 2, y levelheight - 5)
+
+create number score in play (value 0, x 1, y 1)
+
+-- Gravity, as in the platformer: a constant nudge with a terminal speed, so a
+-- long fall cannot tunnel through a one-cell ledge between ticks.
+when always in play then player.ydirection as min(player.ydirection + 0.04, 0.9)
+
+control player left (xdirection -1) on hold
+control player right (xdirection 1) on hold
+control player a (ydirection -0.85) on press
+
+-- `screenleft` and friends are the *level's* edges once a scene has a level, so
+-- this stops the hero at the end of the cavern, not a screen-width in.
+when player hits screenleft, screenright then xdirection as 0
+
+-- Landing. `touches`, not `hits`, for the same reason as in the platformer:
+-- resting on a ledge is a state, and gravity has to be cancelled every tick of
+-- it or it accumulates behind the separation.
+when player touches ledge, wall then ydirection as 0
+
+-- Tile names, straight from the legend. Spikes are not `solid`, so the hero
+-- falls into them rather than standing on them.
+when player touches spikes then scene as gameover
+when player hits exit then scene as won
+
+-- A coin scores on contact. Tiles have no `visible`, so a collected coin stays
+-- drawn and scores again the next time the hero enters that cell from outside
+-- it — a real limit of tiles-as-scenery, and the reason a game that wants a
+-- coin to *vanish* uses an object for it, as the platformer does.
+when player hits coin then score.value as score.value + 1
+
+-- The HUD is an ordinary object at level coordinates, so without this it would
+-- be left behind the moment the view moved. Pinning it to the camera is one
+-- line, and it is the only thing in the game that knows the view exists.
+when always in play then (score.x, score.y) as (camera.x + 1, camera.y + 1)
+
+-- --------------------------------------------------------------- endings ----
+
+scene gameover
+
+create text lost in gameover (x centerx - 4, y centery, text "you fell")
+
+when a pressed in gameover then scene as play
+
+scene won
+
+create text escaped in won (x centerx - 5, y centery, text "you got out")
+
+when a pressed in won then scene as play

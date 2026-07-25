@@ -1,0 +1,58 @@
+-- Breakout — bricks, removal, and a wall that thins as you play.
+--
+-- What this one exercises that Pong does not:
+--   * many objects of one class, laid out in a grid
+--   * removal: `visible 0` makes a brick inert — not drawn, not collided with
+--   * a win condition counted rather than reached
+--   * real sprite-budget pressure (a brick wall is a lot of hardware sprites)
+
+start play
+
+scene play
+
+create object ball (width 1 cell, height 1 cell, speed 45vmin, sprite ball.svg)
+create object paddle (width 18vw, height 1 cell, speed 70vw, sprite paddle.svg)
+create object brick (width 12vw, height 1 cell, sprite brick.svg)
+
+create ball ball1 in play (x centerx, y centery + 2, direction northeast)
+create paddle bat in play (x centerx, y screenheight - 2)
+
+create number score in play (value 0, x 1, y 1)
+create number left in play (value 8, x screenwidth - 2, y 1)
+
+-- Two rows of four. Positions are relative, so the wall spans the same share of
+-- every playfield even though a Game Boy brick is 2 cells and a Mega Drive one
+-- is 5.
+create brick b1 in play (x 4vw, y 3)
+create brick b2 in play (x 28vw, y 3)
+create brick b3 in play (x 52vw, y 3)
+create brick b4 in play (x 76vw, y 3)
+create brick b5 in play (x 4vw, y 5)
+create brick b6 in play (x 28vw, y 5)
+create brick b7 in play (x 52vw, y 5)
+create brick b8 in play (x 76vw, y 5)
+
+control bat left (xdirection -1) on hold
+control bat right (xdirection 1) on hold
+
+when bat hits screenleft, screenright then xdirection as 0
+
+when ball hits screenleft, screenright then xdirection as flip
+when ball hits screentop then ydirection as flip
+
+-- Losing the ball costs nothing but the serve: this is a demo, not a punishment.
+when ball hits screenbottom then (ball1.y, ball1.x, ball1.ydirection) as (centery + 2, centerx, -1)
+
+when ball hits paddle then (ydirection, xdirection) as (flip, (ball.centerx - paddle.centerx) / paddle.width)
+
+-- A brick that has been hit stops being drawn *and* stops being solid, so the
+-- ball passes through where it used to be. One property, both meanings.
+when ball hits brick then (ydirection, brick.visible, score.value, left.value) as (flip, 0, score.value + 1, left.value - 1)
+
+when score.value reaches 8 in play then scene as cleared
+
+scene cleared
+
+create text won in cleared (x centerx - 4, y centery, text "wall down")
+
+when a pressed in cleared then scene as play

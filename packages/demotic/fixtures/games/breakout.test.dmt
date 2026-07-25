@@ -1,0 +1,23 @@
+test the wall starts whole
+expect left.value = 8
+expect score.value = 0
+
+test the ball breaks a brick and the brick stops being solid
+play 240 ticks
+expect score.value >= 1
+expect left.value <= 7
+
+test the bat runs to the left wall and stops
+hold left for 300 ticks
+expect bat.x = 0
+expect bat.xdirection = 0
+
+test the bat runs to the right wall and stops
+hold right for 300 ticks
+expect bat.right = screenwidth
+expect bat.xdirection = 0
+
+test losing the ball re-serves rather than ending the game
+play 600 ticks
+expect scene play
+expect ball1.y > 0

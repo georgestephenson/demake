@@ -30,7 +30,7 @@ describe("movement", () => {
   it("treats speed as cells per second, so a second of travel is one speed", () => {
     const world = sim(
       [
-        "loop play",
+        "start play",
         "scene play",
         "create object ball (speed 8, sprite ball.png)",
         "create ball b in play (x 0, y 0, direction east)",
@@ -42,7 +42,7 @@ describe("movement", () => {
 
   it("covers the same ground per second on every console", () => {
     const source = [
-      "loop play",
+      "start play",
       "scene play",
       "create object ball (speed 8, sprite ball.png)",
       "create ball b in play (x 0, y 0, direction east)",
@@ -62,11 +62,11 @@ describe("movement", () => {
 
 describe("collisions", () => {
   const WALL = [
-    "loop play",
+    "start play",
     "scene play",
     "create object ball (speed 60, sprite ball.png)",
     "create ball b in play (x 1, y 5, direction west)",
-    "when ball hits screenleft (xdirection) as flip",
+    "when ball hits screenleft then xdirection as flip",
   ].join("\n");
 
   it("flips direction and clamps the object back inside the playfield", () => {
@@ -84,12 +84,12 @@ describe("collisions", () => {
     // triggering the flip would invert every tick and the object would buzz.
     const world = sim(
       [
-        "loop play",
+        "start play",
         "scene play",
         "create object ball (speed 0, sprite ball.png)",
         "create ball b in play (x 0, y 5)",
         "create number fires in play (value 0, x 5, y 0)",
-        "when ball hits screenleft (fires.value) as (fires.value + 1)",
+        "when ball hits screenleft then fires.value as (fires.value + 1)",
       ].join("\n"),
     );
     steps(world, 10);
@@ -101,12 +101,12 @@ describe("collisions", () => {
     // resets the ball to the middle — would immediately be undone.
     const world = sim(
       [
-        "loop play",
+        "start play",
         "scene play",
         "create object ball (speed 60, sprite ball.png)",
         "create ball b in play (x 5, y 16, direction south)",
         "create number score in play (value 0, x 0, y 0)",
-        "when ball hits screenbottom (score.value, b.y, b.ydirection) as (score.value + 1, 1, -1)",
+        "when ball hits screenbottom then (score.value, b.y, b.ydirection) as (score.value + 1, 1, -1)",
       ].join("\n"),
     );
     world.step();
@@ -118,13 +118,13 @@ describe("collisions", () => {
   it("computes a bounce angle from where the ball met the paddle", () => {
     const world = sim(
       [
-        "loop play",
+        "start play",
         "scene play",
         "create object ball (width 1, height 1, speed 60, sprite ball.png)",
         "create object paddle (width 4, height 1, sprite paddle.png)",
         "create ball b in play (x 1, y 4, direction south)",
         "create paddle p in play (x 0, y 5)",
-        "when ball hits paddle (ydirection, xdirection) as (flip, (ball.centerx - paddle.centerx) / paddle.width)",
+        "when ball hits paddle then (ydirection, xdirection) as (flip, (ball.centerx - paddle.centerx) / paddle.width)",
       ].join("\n"),
     );
     world.step();
@@ -139,13 +139,13 @@ describe("collisions", () => {
     // result and the two counters would disagree.
     const world = sim(
       [
-        "loop play",
+        "start play",
         "scene play",
         "create object ball (speed 60, sprite ball.png)",
         "create ball b in play (x 1, y 5, direction west)",
         "create number a in play (value 5, x 0, y 0)",
         "create number c in play (value 9, x 3, y 0)",
-        "when ball hits screenleft (a.value, c.value) as (c.value, a.value)",
+        "when ball hits screenleft then (a.value, c.value) as (c.value, a.value)",
       ].join("\n"),
     );
     world.step();
@@ -156,7 +156,7 @@ describe("collisions", () => {
 
 describe("controls", () => {
   const PADDLE = [
-    "loop play",
+    "start play",
     "scene play",
     "create object p (speed 60, sprite p.png)",
     "create p p1 in play (x 5, y 5)",
@@ -188,7 +188,7 @@ describe("controls", () => {
   it("fires `on press` once per press, not once per tick held", () => {
     const world = sim(
       [
-        "loop play",
+        "start play",
         "scene play",
         "create object p (sprite p.png)",
         "create p p1 in play ()",
@@ -205,13 +205,13 @@ describe("rules", () => {
   it("re-evaluates a level predicate every tick", () => {
     const world = sim(
       [
-        "loop play",
+        "start play",
         "scene play",
         "create object p (speed 60, sprite p.png)",
         "create p chaser in play (x 0, y 0)",
         "create p target in play (x 10, y 0)",
-        "when chaser.x < target.x in play (chaser.xdirection) as 1",
-        "when chaser.x > target.x in play (chaser.xdirection) as -1",
+        "when chaser.x < target.x in play then chaser.xdirection as 1",
+        "when chaser.x > target.x in play then chaser.xdirection as -1",
       ].join("\n"),
     );
     steps(world, 30);
@@ -222,14 +222,14 @@ describe("rules", () => {
   it("fires `reaches` once, on the transition", () => {
     const world = sim(
       [
-        "loop play",
+        "start play",
         "scene play",
         "create object p (sprite p.png)",
         "create p p1 in play ()",
         "create number n in play (value 0, x 0, y 0)",
         "create number fires in play (value 0, x 4, y 0)",
-        "when n.value reaches 3 (fires.value) as (fires.value + 1)",
-        "when a pressed (n.value) as (n.value + 1)",
+        "when n.value reaches 3 then fires.value as (fires.value + 1)",
+        "when a pressed then n.value as (n.value + 1)",
       ].join("\n"),
     );
     for (let i = 0; i < 6; i += 1) {
@@ -243,14 +243,14 @@ describe("rules", () => {
 
 describe("scenes", () => {
   const SCENES = [
-    "loop title",
+    "start title",
     "scene title",
     "create text prompt in title (x 0, y 0, text hi)",
-    "when a pressed in title (scene) as play",
+    "when a pressed in title then scene as play",
     "scene play",
     "create object p (speed 60, sprite p.png)",
     "create p p1 in play (x 5, y 5, direction east)",
-    "when b pressed in play (scene) as play",
+    "when b pressed in play then scene as play",
   ].join("\n");
 
   it("switches scene at the end of the tick that asked for it", () => {
@@ -277,7 +277,7 @@ describe("hardware pressure", () => {
   it("notices when more sprites share a scanline than the console will draw", () => {
     const objects = Array.from({ length: 12 }, (_, i) => `create dot d${i} in play (x ${i}, y 4)`);
     const world = sim(
-      ["loop play", "scene play", "create object dot (sprite dot.png)", ...objects].join("\n"),
+      ["start play", "scene play", "create object dot (sprite dot.png)", ...objects].join("\n"),
       getProfile("nes"),
     );
     world.step();
@@ -291,7 +291,7 @@ describe("hardware pressure", () => {
   it("stays quiet when the same row fits", () => {
     const objects = Array.from({ length: 12 }, (_, i) => `create dot d${i} in play (x ${i}, y 4)`);
     const world = sim(
-      ["loop play", "scene play", "create object dot (sprite dot.png)", ...objects].join("\n"),
+      ["start play", "scene play", "create object dot (sprite dot.png)", ...objects].join("\n"),
       getProfile("md"),
     );
     world.step();

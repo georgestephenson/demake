@@ -11,9 +11,9 @@
  */
 
 import { applyBinary, applyBuiltin, resolveUnit, screenConstant } from "../compile.js";
-import { formatFixed, type Fixed, ONE } from "../fixed.js";
+import { formatFixed, type Fixed, fromInt, ONE } from "../fixed.js";
 import type { Expr } from "../lang/ast.js";
-import type { BuiltinFn, CBinaryOp, Program } from "../program.js";
+import type { CBinaryOp, Program, PureBuiltinFn } from "../program.js";
 import { Sim, type InputState } from "../sim.js";
 
 import type { TestCase, TestFile } from "./parse.js";
@@ -153,14 +153,29 @@ function evaluate(expr: Expr, sim: Sim): Fixed {
       return applyBinary(expr.op as CBinaryOp, evaluate(expr.left, sim), evaluate(expr.right, sim));
 
     case "call":
+      // An assertion may not draw: doing so would advance the game's generator
+      // and make the run depend on whether the test was there. A test that wants
+      // to talk about randomness asserts on what the draw *did*.
+      if (expr.name === "random") {
+        throw new EvalError("`random` cannot be used in an assertion — it would change the game");
+      }
       return applyBuiltin(
-        expr.name as BuiltinFn,
+        expr.name as PureBuiltinFn,
         expr.args.map((arg) => evaluate(arg, sim)),
       );
 
     case "name": {
+      if (expr.parts.length === 2 && expr.parts[0] === "camera") {
+        return expr.parts[1] === "y" ? sim.camera.y : sim.camera.x;
+      }
       if (expr.parts.length === 1) {
-        const constant = screenConstant(expr.parts[0] as string, profile);
+        // The playfield is the running scene's, which is its level's size when
+        // it has one — so an assertion about "the end of the level" is true on
+        // every console, which is the whole point of writing it that way.
+        const name = expr.parts[0] as string;
+        if (name === "levelwidth") return fromInt(sim.bounds.width);
+        if (name === "levelheight") return fromInt(sim.bounds.height);
+        const constant = screenConstant(name, profile);
         if (constant === undefined) {
           throw new EvalError(`'${expr.raw}' is not a value — did you mean <object>.<property>?`);
         }
