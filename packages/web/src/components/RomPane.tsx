@@ -1,27 +1,24 @@
 /**
  * The cartridge: the same game, running as a real Game Boy ROM in the page.
  *
- * Doc 13 §D5 says the browser must never assemble anything, and it does not.
- * The runtime is a fixed engine assembled once and checked in (`pnpm
- * gen:runtime`); a build patches the compiled program tables into it and fixes
- * the header. So the bytes this pane plays — and the bytes the Download button
- * hands you — are byte-identical to what `demake build` writes on the command
- * line, which is the doc-07 parity contract restated for games.
+ * Doc 13 §D5 says the browser must never need a toolchain, and it does not: the
+ * assembler is ours and written in TypeScript, so the page *compiles* the game
+ * to SM83 machine code the same way the CLI does and gets the same bytes. What
+ * the Download button hands you is byte-identical to what `demake build` writes
+ * on the command line, which is the doc-07 parity contract restated for games.
  *
  * The emulator is `@demake/dmg`, ours, for the reason doc 07 gives: a core
  * fetched from a CDN is forbidden, and a WASM core we cannot read would be the
  * same bargain in a different wrapper.
  *
- * **The frame counter under the screen is not decoration.** This runtime is a
- * table interpreter doing 16.16 arithmetic on a 4 MHz 8-bit CPU, and it does
- * not yet fit a game tick inside one frame. Showing the measured cost is the
- * honest way to present that: the ROM runs at hardware speed, and the number
- * says what that speed is.
+ * **The frame counter under the screen is not decoration.** It is the measured
+ * cost of one game tick on a 4 MHz 8-bit CPU, and reporting it is how the pane
+ * stays honest about hardware speed rather than hiding behind a multiplier.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 
-import { buildGbRom, RAM, unsupportedFeatures, type Program } from "@demake/demotic";
+import { buildGbRom, romReady, unsupportedFeatures, type Program } from "@demake/demotic";
 import { Gameboy, SCREEN_HEIGHT, SCREEN_WIDTH, type Button } from "@demake/dmg";
 
 import { download } from "../lib/download.js";
@@ -56,36 +53,33 @@ export function RomPane({
   const [cost, setCost] = useState<number | null>(null);
 
   const built = useMemo(() => {
-    if (!program) return { rom: undefined, error: undefined };
-    if (program.profile.id !== "gb") {
-      return {
-        rom: undefined,
-        error:
-          `Only the Game Boy has a runtime so far. ${program.profile.name} needs its own ` +
-          `engine for the same tables — that is doc 13 §D4, and it is the next piece of work.`,
-      };
-    }
+    if (!program) return { rom: undefined, layout: undefined, error: undefined };
     const missing = unsupportedFeatures(program);
     if (missing.length > 0) {
       return {
         rom: undefined,
+        layout: undefined,
         error:
-          `This game uses ${missing.join(" and ")}, which the Game Boy runtime does not ` +
-          `implement yet. The preview above plays it correctly; a ROM would play something ` +
-          `else, so the build refuses rather than pretend.`,
+          `This game needs ${missing.join(" and ")}. The preview above plays it correctly; ` +
+          `a ROM would play something else, so the build refuses rather than pretend.`,
       };
     }
     try {
-      return { rom: buildGbRom(program, { title: name }).bytes, error: undefined };
+      const result = buildGbRom(program, { title: name });
+      return { rom: result.bytes, layout: result.layout, error: undefined };
     } catch (error) {
-      return { rom: undefined, error: String((error as Error).message ?? error) };
+      return {
+        rom: undefined,
+        layout: undefined,
+        error: String((error as Error).message ?? error),
+      };
     }
   }, [program, name]);
 
-  const rom = built.rom;
+  const { rom, layout } = built;
 
   useEffect(() => {
-    if (!rom) {
+    if (!rom || !layout) {
       machine.current = null;
       return;
     }
@@ -119,7 +113,7 @@ export function RomPane({
         gameboy.runFrame();
         accumulator -= step;
         sinceTick += 1;
-        const tick = gameboy.readMemory(RAM.ready, 1)[0] as number;
+        const tick = romReady(layout, (address, length) => gameboy.readMemory(address, length));
         if (tick !== lastTick) {
           lastTick = tick;
           latched.current.clear();
@@ -134,7 +128,7 @@ export function RomPane({
 
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [rom, held, latched]);
+  }, [rom, layout, held, latched]);
 
   const save = useCallback(() => {
     if (rom) download(`${name}.gb`, rom);
@@ -182,10 +176,10 @@ export function RomPane({
         </span>
       </div>
       <p class="hint">
-        A real 32 KiB cartridge, patched in the page and byte-identical to <code>demake build</code>
-        &rsquo;s. It runs at hardware speed here, so the frames-per-tick figure is what the
-        interpreter actually costs an SM83 — the runtime is correct before it is fast, and making it
-        fast is the next piece of work.
+        A real 32 KiB cartridge, compiled in the page and byte-identical to{" "}
+        <code>demake build</code>
+        &rsquo;s. Your game is machine code here, not a table an interpreter walks: it runs at
+        hardware speed, and the frames-per-tick figure is the measured cost on an SM83.
       </p>
     </div>
   );

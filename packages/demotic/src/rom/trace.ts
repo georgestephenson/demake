@@ -14,7 +14,7 @@
 
 import type { Program } from "../program.js";
 
-import { ENTITY_SIZE, PROP_IDS, PROP_SIZE, RAM } from "./format.js";
+import { PROP_SLOT, PROP_SIZE, type Layout } from "../codegen/layout.js";
 
 /** Reads `length` bytes of the machine's address space. */
 export type MemoryReader = (address: number, length: number) => Uint8Array;
@@ -23,8 +23,8 @@ export type MemoryReader = (address: number, length: number) => Uint8Array;
 const TRACED = ["x", "y", "xdirection", "ydirection", "speed", "value"] as const;
 
 /** The scene index the ROM is running. */
-export function romScene(read: MemoryReader): number {
-  return read(RAM.scene, 1)[0] as number;
+export function romScene(layout: Layout, read: MemoryReader): number {
+  return read(layout.scene, 1)[0] as number;
 }
 
 /**
@@ -34,21 +34,28 @@ export function romScene(read: MemoryReader): number {
  * watches it can never observe the counter half-updated — which is exactly what
  * happens on the 255-to-256 boundary if you watch the counter itself.
  */
-export function romReady(read: MemoryReader): number {
-  return read(RAM.ready, 1)[0] as number;
+export function romReady(layout: Layout, read: MemoryReader): number {
+  return read(layout.ready, 1)[0] as number;
 }
 
 /** Ticks the ROM has completed. */
-export function romTick(read: MemoryReader): number {
-  const bytes = read(RAM.tick, 2);
+export function romTick(layout: Layout, read: MemoryReader): number {
+  const bytes = read(layout.tick, 2);
   return (bytes[0] as number) | ((bytes[1] as number) << 8);
 }
 
 /** One stored property of one entity, as a signed 16.16 value. */
-export function romProp(read: MemoryReader, instanceId: number, prop: string): number {
-  const id = PROP_IDS[prop];
-  if (id === undefined) throw new Error(`no runtime id for property '${prop}'`);
-  const bytes = read(RAM.entities + instanceId * ENTITY_SIZE + id * PROP_SIZE, PROP_SIZE);
+export function romProp(
+  layout: Layout,
+  read: MemoryReader,
+  instanceId: number,
+  prop: string,
+): number {
+  const slot = PROP_SLOT[prop];
+  if (slot === undefined) throw new Error(`'${prop}' is not a stored property`);
+  const base = layout.entities[instanceId];
+  if (base === undefined) throw new Error(`no entity ${instanceId}`);
+  const bytes = read(base + slot * PROP_SIZE, PROP_SIZE);
   const raw =
     ((bytes[0] as number) |
       ((bytes[1] as number) << 8) |
@@ -59,15 +66,15 @@ export function romProp(read: MemoryReader, instanceId: number, prop: string): n
 }
 
 /** The trace line for the tick the ROM has just finished. */
-export function romTraceLine(program: Program, read: MemoryReader): string {
-  const sceneIndex = romScene(read);
+export function romTraceLine(program: Program, layout: Layout, read: MemoryReader): string {
+  const sceneIndex = romScene(layout, read);
   const scene = program.scenes[sceneIndex];
   const entities = (scene?.instanceIds ?? [])
     .map((id) => {
       const name = program.instances[id]?.name ?? `#${id}`;
-      const values = TRACED.map((prop) => romProp(read, id, prop));
+      const values = TRACED.map((prop) => romProp(layout, read, id, prop));
       return `${name}=${values.join(",")}`;
     })
     .join(" ");
-  return `${romTick(read)} ${scene?.name ?? "?"} ${entities}`;
+  return `${romTick(layout, read)} ${scene?.name ?? "?"} ${entities}`;
 }

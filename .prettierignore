@@ -9,10 +9,5 @@ pnpm-lock.yaml
 docs/
 
 # Assembly is column-aligned by hand and Prettier has no parser for it; the
-# `.inc` extension is the only reason it tries. `runtime-harness/` is the
-# Demotic engine, `rom-harness/` the image display programs.
-runtime-harness/
+# `.inc` extension is the only reason it tries.
 rom-harness/
-
-# Generated: `pnpm gen:runtime` writes it, and a test checks it is current.
-packages/demotic/src/rom/runtime-gb.generated.ts

@@ -8,10 +8,10 @@ Build a Demotic game (.dmt) into a playable ROM.
 .SH OPTIONS
 .TP
 \fB\-c\fR, \fB\-\-console\fR \fI<id>\fR
-Target console (a runtime must exist; today: gb). (default: gb)
+Target console (a backend must exist; today: gb, gbc). (default: gb)
 .TP
 \fB\-\-format\fR \fIvalue\fR
-Output a playable ROM, or just the program tables. (default: rom)
+Output a playable ROM, or the symbol map for profiling. (default: rom)
 .TP
 \fB\-\-title\fR \fI<text>\fR
 Cartridge title (default: the source file's name).
@@ -43,8 +43,8 @@ demake build pong.dmt \-\-title PONG \-\-json
 .br
 report what went in it
 .PP
-demake build pong.dmt \-\-format tables \-o pong.bin
+demake build pong.dmt \-\-format sym \-o pong.sym
 .br
-the program tables alone
+symbols, for a cycle profile
 .SH SEE ALSO
 \fBdemake\fR(1)

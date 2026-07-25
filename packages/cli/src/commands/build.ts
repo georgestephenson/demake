@@ -2,12 +2,13 @@
  * `demake build` — a Demotic game becomes a playable ROM (doc 14 §Runtime
  * model, doc 15).
  *
- * The build is a *patch*, not an assembly: the runtime is fixed, so a game
- * changes the program tables and nothing else. That is why this command needs
- * no toolchain, and why the browser can do the same job byte for byte
- * (doc 07 §parity). RGBDS, when it happens to be installed, is used for one
- * optional thing only — stamping the Nintendo logo so the cartridge boots on
- * original hardware — and its absence is reported, never guessed around.
+ * The build *compiles*: a game becomes SM83 machine code specialised to it, with
+ * only the runtime routines something in it actually reaches. The assembler is
+ * ours and written in TypeScript, so this needs no toolchain and the browser can
+ * do the same job byte for byte (doc 07 §parity). RGBDS, when it happens to be
+ * installed, is used for one optional thing only — stamping the Nintendo logo so
+ * the cartridge boots on original hardware — and its absence is reported, never
+ * guessed around.
  *
  * There is no Demakefile yet (doc 15 is the design; this is the zero-config
  * path it says must exist on its own). Flags stand in for the manifest, and the
@@ -18,6 +19,7 @@ import { dirname, join } from "node:path";
 
 import {
   buildGbRom,
+  BuildError,
   compile,
   describeProgram,
   findProfile,
@@ -25,8 +27,6 @@ import {
   GameLangError,
   levelFiles,
   profiles,
-  TableError,
-  emitTables,
   unsupportedFeatures,
   type Program,
 } from "@demake/demotic";
@@ -40,8 +40,12 @@ function str(values: Record<string, ParsedValue>, key: string): string | undefin
   return typeof values[key] === "string" ? (values[key] as string) : undefined;
 }
 
-/** Consoles whose runtime exists today. Everything else is an honest error. */
-const RUNTIME_CONSOLES = ["gb"] as const;
+/**
+ * Consoles with a code-generation backend today. Everything else is an honest
+ * error. `gbc` builds the same DMG-compatible cartridge as `gb` until the
+ * colour work lands — the machine code is identical, so its trace is too.
+ */
+const RUNTIME_CONSOLES = ["gb", "gbc"] as const;
 
 /** Derive a default output name and cartridge title from the source path. */
 function stemFromSource(source: string): string {
@@ -125,7 +129,7 @@ export async function runBuild(
     throw new CliError(
       EXIT.UNAVAILABLE,
       "E_RUNTIME_UNSUPPORTED",
-      `the ${profile.id} runtime does not implement ${missing.join(" or ")} yet`,
+      `the ${profile.id} backend cannot build ${missing.join(" or ")} yet`,
       "the preview plays it correctly; a ROM would not, so the build stops rather than " +
         "shipping a different game. See docs/13-roadmap.md §D6.",
     );
@@ -137,24 +141,20 @@ export async function runBuild(
 
   let product: Uint8Array;
   let stats;
+  let symbols: ReadonlyMap<string, number>;
   try {
-    if (format === "tables") {
-      const emitted = emitTables(program);
-      product = emitted.bytes;
-      stats = emitted.stats;
-    } else {
-      const built = buildGbRom(program, { title });
-      product = built.bytes;
-      stats = built.stats;
-    }
+    const built = buildGbRom(program, { title });
+    stats = built.stats;
+    symbols = built.symbols;
+    product = format === "sym" ? new TextEncoder().encode(formatSymbols(symbols)) : built.bytes;
   } catch (error) {
-    if (error instanceof TableError) {
+    if (error instanceof BuildError) {
       throw new CliError(EXIT.FAILURE, error.code, error.message, error.hint);
     }
     throw error;
   }
 
-  const extension = format === "tables" ? "bin" : profile.id === "gbc" ? "gbc" : "gb";
+  const extension = format === "sym" ? "sym" : profile.id === "gbc" ? "gbc" : "gb";
   const output = str(values, "output");
   const target = output ?? (env.stdoutIsTTY() ? `${stem}.${extension}` : undefined);
 
@@ -188,7 +188,7 @@ export async function runBuild(
           output: target ?? "<stdout>",
           bytes: product.length,
           title: format === "rom" ? title.toUpperCase().slice(0, 15) : undefined,
-          tables: stats,
+          rom: stats,
           bootLogo: wantsLogo,
           warnings: program.warnings,
         },
@@ -202,7 +202,10 @@ export async function runBuild(
   if (!quiet) {
     env.errOut(`${describeProgram(program)}\n`);
     env.errOut(
-      `tables ${stats.bytes} bytes (${stats.free} free), ${stats.code} bytes of expressions\n`,
+      `code ${stats.bytes} bytes (${stats.free} free in ROM), ${stats.ram} bytes of work RAM\n`,
+    );
+    env.errOut(
+      `runtime helpers: ${stats.helpers.length > 0 ? stats.helpers.join(", ") : "none — every one was compiled away"}\n`,
     );
     if (program.warnings.length > 0) {
       env.errOut(`${formatDiagnostics(program.warnings)}\n`);
@@ -215,6 +218,21 @@ export async function runBuild(
     }
   }
   return EXIT.OK;
+}
+
+/**
+ * The symbol map, in the no-bank RGBDS format a profiler or a debugger reads.
+ *
+ * Emitting it matters more here than for a fixed engine: the code is *specific
+ * to this game*, so a cycle histogram bucketed by these symbols says which of
+ * its rules is expensive, not which part of an interpreter is.
+ */
+function formatSymbols(symbols: ReadonlyMap<string, number>): string {
+  const lines = [...symbols]
+    .filter(([, address]) => address < 0x8000)
+    .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
+    .map(([name, address]) => `00:${address.toString(16).padStart(4, "0")} ${name}`);
+  return `${lines.join("\n")}\n`;
 }
 
 /**

@@ -17,8 +17,8 @@ import { Gameboy, type Button } from "@demake/dmg";
 
 import type { InputState, InputTape } from "../src/sim.js";
 import type { Program } from "../src/program.js";
-import { buildGbRom } from "../src/rom/gb.js";
-import { RAM } from "../src/rom/format.js";
+import { buildGbRom, type RomOptions } from "../src/codegen/gb.js";
+import type { Layout } from "../src/codegen/layout.js";
 import { romReady, romTraceLine } from "../src/rom/trace.js";
 
 /** Abstract buttons map straight onto the Game Boy's, which is the floor the
@@ -36,11 +36,19 @@ const BUTTONS: Readonly<Record<string, Button>> = {
 /** A booted ROM, ready to be stepped a tick at a time. */
 export class RomRunner {
   readonly machine: Gameboy;
+  readonly layout: Layout;
+  readonly rom: Uint8Array;
   private readonly read = (address: number, length: number) =>
     this.machine.readMemory(address, length);
 
-  constructor(readonly program: Program) {
-    this.machine = new Gameboy(buildGbRom(program).bytes);
+  constructor(
+    readonly program: Program,
+    options: RomOptions = {},
+  ) {
+    const built = buildGbRom(program, options);
+    this.layout = built.layout;
+    this.rom = built.bytes;
+    this.machine = new Gameboy(built.bytes);
     // Let the runtime finish initialising before the first input is offered.
     this.settle();
   }
@@ -54,7 +62,7 @@ export class RomRunner {
    */
   private settle(): void {
     for (let guard = 0; guard < 500_000; guard += 1) {
-      if (this.machine.readMemory(RAM.booted, 1)[0] !== 0) return;
+      if (this.machine.readMemory(this.layout.booted, 1)[0] !== 0) return;
       this.machine.stepInstruction();
     }
     throw new Error("rom: the runtime never finished initialising");
@@ -68,17 +76,17 @@ export class RomRunner {
       if (held && button) down.push(button);
     }
     this.machine.setButtons(down);
-    const before = romReady(this.read);
-    for (let guard = 0; guard < 4_000_000; guard += 1) {
+    const before = romReady(this.layout, this.read);
+    for (let guard = 0; guard < 8_000_000; guard += 1) {
       this.machine.stepInstruction();
-      if (romReady(this.read) !== before) return;
+      if (romReady(this.layout, this.read) !== before) return;
     }
     throw new Error("rom: a tick never completed");
   }
 
   /** The trace line for the tick just finished. */
   line(): string {
-    return romTraceLine(this.program, this.read);
+    return romTraceLine(this.program, this.layout, this.read);
   }
 }
 
@@ -89,8 +97,8 @@ export class RomRunner {
  * offered, exactly as `new Sim(program)` starts on tick zero with the entry
  * scene reset. Both sides therefore report tick 1 after one tape frame.
  */
-export function romTrace(program: Program, tape: InputTape): string {
-  const runner = new RomRunner(program);
+export function romTrace(program: Program, tape: InputTape, options: RomOptions = {}): string {
+  const runner = new RomRunner(program, options);
   const lines: string[] = [
     `# demake-game trace v1 console=${program.profile.id}`,
     `# props=x,y,xdirection,ydirection,speed,value units=16.16`,

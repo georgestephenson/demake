@@ -276,14 +276,14 @@ const BUILD_FLAGS: readonly FlagSpec[] = [
     type: "string",
     default: "gb",
     metavar: "<id>",
-    help: "Target console (a runtime must exist; today: gb).",
+    help: "Target console (a backend must exist; today: gb, gbc).",
   },
   {
     name: "format",
     type: "enum",
-    values: ["rom", "tables"],
+    values: ["rom", "sym"],
     default: "rom",
-    help: "Output a playable ROM, or just the program tables.",
+    help: "Output a playable ROM, or the symbol map for profiling.",
   },
   {
     name: "title",
@@ -361,8 +361,8 @@ export const CLI_SPEC: CliSpec = {
         { cmd: "demake build pong.dmt -o pong.gb", note: "a playable Game Boy cartridge" },
         { cmd: "demake build pong.dmt --title PONG --json", note: "report what went in it" },
         {
-          cmd: "demake build pong.dmt --format tables -o pong.bin",
-          note: "the program tables alone",
+          cmd: "demake build pong.dmt --format sym -o pong.sym",
+          note: "symbols, for a cycle profile",
         },
       ],
     },

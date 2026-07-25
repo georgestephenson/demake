@@ -114,33 +114,30 @@ export {
 } from "./level/scene.js";
 export { DEFAULT_SEED, advance, pick } from "./rng.js";
 
-// --- building a ROM (doc 14 §Runtime model, doc 13 §D3) ----------------------
+// --- compiling to a console (doc 14 §Runtime model, doc 06 §The Demotic runtime)
+export { Asm, AsmError, label, type Ref } from "./codegen/asm.js";
+export { analyze, isMutable, type Analysis } from "./codegen/analyze.js";
 export {
-  DATA_BASE,
-  DATA_SIZE,
   ENTITY_SIZE,
-  FORMAT_VERSION,
-  PROP_IDS,
-  RAM,
-  STORED_PROPS,
-} from "./rom/format.js";
-export {
-  emitTables,
-  LIMITS,
-  TableError,
-  type EmittedTables,
-  type TableStats,
-} from "./rom/tables.js";
+  PROPS,
+  PROP_SIZE,
+  PROP_SLOT,
+  planLayout,
+  LayoutError,
+  type Layout,
+} from "./codegen/layout.js";
 export {
   buildGbRom,
-  decodeBase64,
-  encodeBase64,
+  BuildError,
   unsupportedFeatures,
   HEADER_OFFSETS,
   ROM_SIZE,
   type BuiltRom,
   type RomOptions,
-} from "./rom/gb.js";
+  type RomStats,
+  type SpriteArt,
+} from "./codegen/gb.js";
+export { BUILTIN_TILES, builtinTiles, TILE_BYTES } from "./rom/graphics.js";
 export {
   romProp,
   romReady,

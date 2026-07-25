@@ -2,7 +2,7 @@
  * `demake build` — the game path's CLI edge.
  *
  * Two properties matter more than the flag handling: the command needs no
- * toolchain (the ROM is patched, not assembled), and it *refuses* rather than
+ * toolchain (the assembler is ours, in TypeScript), and it *refuses* rather than
  * building a cartridge that would play a different game from the preview.
  * Everything else here is the usual exit-code surface (doc 05).
  */
@@ -70,36 +70,37 @@ describe("demake build", () => {
     const report = JSON.parse(h.out()) as {
       console: string;
       bytes: number;
-      tables: { rules: number; free: number };
+      rom: { rules: number; free: number; ram: number; helpers: string[] };
     };
     expect(report.console).toBe("gb");
     expect(report.bytes).toBe(0x8000);
-    expect(report.tables.rules).toBeGreaterThan(0);
-    expect(report.tables.free).toBeGreaterThan(0);
+    expect(report.rom.rules).toBeGreaterThan(0);
+    expect(report.rom.free).toBeGreaterThan(0);
+    expect(report.rom.ram).toBeGreaterThan(0);
+    // Pong divides and multiplies; it does not draw random numbers.
+    expect(report.rom.helpers).toContain("Div32");
+    expect(report.rom.helpers).not.toContain("RngPick");
   });
 
-  it("emits just the program tables when asked", async () => {
+  it("emits the symbol map of the code it generated when asked", async () => {
     const h = harness({ "pong.dmt": read("pong.dmt") });
-    expect(await run(["build", "pong.dmt", "--format", "tables", "-o", "p.bin"], h.env)).toBe(
-      EXIT.OK,
-    );
-    const tables = h.written.get("p.bin") as Uint8Array;
-    expect(String.fromCharCode(...tables.subarray(0, 4))).toBe("DMT1");
-    expect(tables.length).toBeLessThan(0x4000);
+    expect(await run(["build", "pong.dmt", "--format", "sym", "-o", "p.sym"], h.env)).toBe(EXIT.OK);
+    const map = new TextDecoder().decode(h.written.get("p.sym") as Uint8Array);
+    // The no-bank RGBDS format, so a profiler can bucket cycles by rule.
+    expect(map).toMatch(/^00:[0-9a-f]{4} \S+$/m);
+    expect(map).toContain("Main");
   });
 
-  it("refuses a game the runtime cannot run, rather than shipping a different one", async () => {
+  it("builds a level game with a camera, which the fixed engine could not", async () => {
     const h = harness({
       "caves.dmt": read(join("games", "caves.dmt")),
       "cavern.dmtl": read(join("games", "cavern.dmtl")),
     });
-    const code = await run(["build", "caves.dmt", "-o", "caves.gb"], h.env);
-    expect(code).toBe(EXIT.UNAVAILABLE);
-    expect(h.err()).toMatch(/does not implement/);
-    expect(h.written.has("caves.gb")).toBe(false);
+    expect(await run(["build", "caves.dmt", "-o", "caves.gb"], h.env)).toBe(EXIT.OK);
+    expect((h.written.get("caves.gb") as Uint8Array).length).toBe(0x8000);
   });
 
-  it("refuses a console with no runtime, naming the ones that have one", async () => {
+  it("refuses a console with no backend, naming the ones that have one", async () => {
     const h = harness({ "pong.dmt": read("pong.dmt") });
     expect(await run(["build", "pong.dmt", "-c", "md", "-o", "pong.bin"], h.env)).toBe(
       EXIT.UNAVAILABLE,
