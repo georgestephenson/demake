@@ -147,6 +147,16 @@ export function GameDemaker() {
     return () => cancelAnimationFrame(raf);
   }, [program, constrain]);
 
+  // Touch and keyboard feed the same two sets, so a rule cannot tell them apart
+  // — which is the point: the pad is an input device, not a second code path.
+  const press = useCallback((action: string) => {
+    held.current.add(action);
+    latched.current.add(action);
+  }, []);
+  const release = useCallback((action: string) => {
+    held.current.delete(action);
+  }, []);
+
   const restart = useCallback(() => {
     if (program) sim.current = new Sim(program);
   }, [program]);
@@ -205,8 +215,17 @@ export function GameDemaker() {
           </button>
         </div>
 
-        <canvas ref={canvas} class="game-canvas" width={640} height={576} />
-        <p class="hint">
+        <canvas
+          ref={canvas}
+          class="game-canvas"
+          width={640}
+          height={576}
+          role="img"
+          aria-label="The game, playing"
+        />
+        <TouchPad onPress={press} onRelease={release} />
+
+        <p class="hint keyboard-hint">
           Move with <kbd>←</kbd> <kbd>→</kbd>, <kbd>Z</kbd> is A, <kbd>X</kbd> is B,{" "}
           <kbd>Enter</kbd> is Start.
         </p>
@@ -224,6 +243,7 @@ export function GameDemaker() {
         <h2>Game</h2>
         <textarea
           class="game-source"
+          aria-label="Demotic game source"
           spellcheck={false}
           value={source}
           onInput={(e) => setSource((e.target as HTMLTextAreaElement).value)}
@@ -246,6 +266,70 @@ export function GameDemaker() {
         {testReport ? <pre class="game-status">{testReport}</pre> : null}
       </section>
     </main>
+  );
+}
+
+/**
+ * An on-screen pad, for the machines this is most fun on.
+ *
+ * The pad is the **abstract** button set — `left right up down a b start`, the
+ * portable floor from doc 14 §Buttons — and never a particular console's
+ * controller. It is identical for every console and every game, because that set
+ * is the only thing a `.dmt` file can bind to: a game that ignores `up` simply
+ * never reads it. Nothing here branches on the target.
+ *
+ * Shown only where the primary pointer is coarse — a phone or a tablet — because
+ * a keyboard is strictly better when there is one. Pointer events rather than
+ * touch events, so it works with a stylus and a mouse too, and every button
+ * releases on `pointerleave` and `pointercancel` as well as `pointerup`: sliding
+ * a thumb off the d-pad must not leave the paddle running forever.
+ */
+function TouchPad({
+  onPress,
+  onRelease,
+}: {
+  onPress: (action: string) => void;
+  onRelease: (action: string) => void;
+}) {
+  // `face` is what is drawn; `label` is what a screen reader says. The d-pad
+  // draws arrows because "Right" does not fit in a thumb-sized circle.
+  const bind = (action: string, label: string, face: string, extraClass = "") => (
+    <button
+      type="button"
+      class={`pad-button ${extraClass}`}
+      aria-label={label}
+      onPointerDown={(event) => {
+        // Claim the pointer so a drag off the button still delivers its release,
+        // and stop the browser turning the gesture into a scroll or a selection.
+        (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+        event.preventDefault();
+        onPress(action);
+      }}
+      onPointerUp={() => onRelease(action)}
+      onPointerLeave={() => onRelease(action)}
+      onPointerCancel={() => onRelease(action)}
+      onContextMenu={(event) => event.preventDefault()}
+    >
+      <span aria-hidden="true">{face}</span>
+    </button>
+  );
+
+  return (
+    <div class="touch-pad" aria-label="On-screen controls">
+      <div class="pad-dpad">
+        {bind("up", "Up", "\u25B2", "pad-up")}
+        {bind("left", "Left", "\u25C0", "pad-left")}
+        {bind("right", "Right", "\u25B6", "pad-right")}
+        {bind("down", "Down", "\u25BC", "pad-down")}
+      </div>
+      <div class="pad-face">
+        {bind("start", "Start", "Start", "pad-start")}
+        <div class="pad-ab">
+          {bind("b", "B", "B", "pad-b")}
+          {bind("a", "A", "A", "pad-a")}
+        </div>
+      </div>
+    </div>
   );
 }
 

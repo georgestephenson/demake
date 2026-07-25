@@ -8,10 +8,10 @@
  */
 
 import { useEffect, useState } from "preact/hooks";
+import type { ComponentType } from "preact";
 
 import { App } from "./app.js";
 import { ComingSoon } from "./sections/ComingSoon.js";
-import { GameDemaker } from "./sections/GameDemaker.js";
 import { COMING_SOON, readSection, SECTION_LABELS, SECTIONS, sectionHash } from "./lib/route.js";
 
 const TAGLINES: Readonly<Record<string, string>> = {
@@ -23,12 +23,23 @@ const TAGLINES: Readonly<Record<string, string>> = {
 
 export function Site() {
   const [section, setSection] = useState(() => readSection(location.hash));
+  const [Game, setGame] = useState<ComponentType | null>(null);
 
   useEffect(() => {
     const onHash = () => setSection(readSection(location.hash));
     addEventListener("hashchange", onHash);
     return () => removeEventListener("hashchange", onHash);
   }, []);
+
+  // The Demotic section is loaded on demand. It carries the whole game language
+  // — compiler, interpreter, test runner — and someone who came to convert an
+  // image should not download any of it. Splitting it out keeps the art
+  // demaker's initial payload exactly what it was before the site grew sections
+  // (doc 07 §Quality bar).
+  useEffect(() => {
+    if (section !== "game" || Game) return;
+    void import("./sections/GameDemaker.js").then((module) => setGame(() => module.GameDemaker));
+  }, [section, Game]);
 
   return (
     <div class="layout">
@@ -59,7 +70,17 @@ export function Site() {
       </header>
 
       {section === "art" ? <App /> : null}
-      {section === "game" ? <GameDemaker /> : null}
+      {section === "game" ? (
+        Game ? (
+          <Game />
+        ) : (
+          <main>
+            <section class="pane">
+              <p class="hint">Loading the game demaker…</p>
+            </section>
+          </main>
+        )
+      ) : null}
       {COMING_SOON.includes(section) ? <ComingSoon section={section} /> : null}
 
       <footer>

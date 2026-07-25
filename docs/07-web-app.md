@@ -56,6 +56,19 @@ The simulator runs on the main thread, not in the engine worker: a tick is a few
 hundred integer operations on a handful of entities, so the round trip would cost
 more than the work. Art conversion still goes to the worker.
 
+**The section is code-split.** It carries the whole game language — compiler,
+interpreter, test runner — and someone who came to convert an image should not
+download any of it, so it loads on first navigation and the art demaker's initial
+payload is what it was before the site grew sections.
+
+**On-screen controls** appear where the primary pointer is coarse. They bind the
+*abstract* button set (`left right up down a b start`), never a particular
+console's controller — identical for every console and every game, because that
+set is the only thing a `.dmt` file can bind to. Pointer events rather than touch
+events, so a stylus and a mouse work too, and every button releases on
+`pointerleave` and `pointercancel` as well as `pointerup`: sliding a thumb off
+the d-pad must not leave a paddle running forever.
+
 A syntax error never blanks the preview — the parser recovers per line, and the
 page keeps running the last version that compiled.
 
@@ -112,6 +125,9 @@ shareable; "Load demo image" ships a bundled test image so the page demos itself
 
 - Works fully offline after first load (PWA manifest + service worker, cache-first).
 - Accessible: keyboard operable, labeled controls, honors reduced-motion.
+  Contrast is always set with an explicit colour, **never with opacity** — a
+  translucent foreground composites against whatever is behind it, which is both
+  a measured contrast failure and genuinely harder to read.
 - Budget: < 300 KB JS gzipped before WASM codecs (lazy-loaded per input format);
   Lighthouse ≥ 95 across the board, checked in CI.
 - Browser matrix: last 2 versions of Chrome/Firefox/Safari/Edge, tested via
