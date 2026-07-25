@@ -213,6 +213,22 @@ Two files plus fixtures (doc 02 §Extensibility):
   of anything the CLI does (a manifest shape, a symbol-name rule, a console
   summary table) is how parity dies; if the web needs it, it moves into core
   first, as `buildManifest`/`encodeManifest` did.
+- **CI's server-start traps, both learned the hard way.** (1) Actions sets
+  `CI=1`, which makes Vite _colourise_ its banner — `Local:` arrives as
+  `Local\e[22m:`, so any ready-pattern matching that literal never fires;
+  `lighthouserc.json` matches the bare port and the job sets `NO_COLOR=1`.
+  (2) Bound to the name `localhost`, the preview server can listen on `::1`
+  alone while everything polls `127.0.0.1` — Playwright then dies on "Timed out
+  waiting … from config.webServer" and Lighthouse audits an error page. The
+  `preview` script therefore pins `--host 127.0.0.1 --strictPort`; keep it that
+  way, and don't leave a stray preview on 4173 (Playwright reuses an existing
+  server locally, even one serving a different base).
+- Toolchain provisioners are best-effort by design (they must never break a
+  session or a SessionStart hook), so **CI sets their `*_STRICT=1` variables**:
+  a failed build then fails at the provisioning step with the tail of its build
+  log, instead of silently skipping suites later. RGBDS additionally apt-installs
+  its own build deps (bison, pkg-config, libpng-dev) — runner images ship libpng
+  without its headers, which fails cmake in about a second.
 - Web determinism has one extra trap the CLI doesn't: anything the _page_ feeds
   the engine must itself be engine-independent. That is why the bundled demo
   image (`src/lib/demo-image.ts`) uses no `Math.sin`/`Math.random` — the

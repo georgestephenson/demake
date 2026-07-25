@@ -28,12 +28,45 @@ BIN_DIR="$PREFIX/bin"
 LINK_DIR="${DEMAKE_TOOLCHAIN_BIN:-/usr/local/bin}"
 TOOLS=(rgbasm rgblink rgbfix rgbgfx)
 
+BUILD_LOG="${TMPDIR:-/tmp}/rgbds-build.log"
+
 log() { printf 'install-rgbds: %s\n' "$*" >&2; }
 
 die() {
   log "ERROR: $*"
+  # A build failure is useless without the compiler's own words — the CI job that
+  # first hit this only said "RGBDS build failed" and left nothing to go on.
+  if [ -s "$BUILD_LOG" ]; then
+    log "last 25 lines of $BUILD_LOG:"
+    tail -25 "$BUILD_LOG" >&2
+  fi
   [ "${RGBDS_STRICT:-0}" = "1" ] && exit 1
   exit 0
+}
+
+# RGBDS needs bison + pkg-config + libpng headers to configure; runner images
+# routinely ship the libpng *runtime* without its `-dev` package, which fails
+# cmake in about a second. Install whatever is missing from the distro archive,
+# the same best-effort apt path the m68k/ARM provisioners use.
+ensure_build_deps() {
+  local want=()
+  command -v bison >/dev/null 2>&1 || want+=("bison")
+  command -v pkg-config >/dev/null 2>&1 || want+=("pkg-config")
+  [ -e /usr/include/png.h ] || want+=("libpng-dev")
+  [ ${#want[@]} -eq 0 ] && return 0
+
+  command -v apt-get >/dev/null 2>&1 || {
+    log "missing build dependencies (${want[*]}); install them and re-run"
+    return 1
+  }
+  local sudo=""
+  [ "$(id -u)" != "0" ] && { command -v sudo >/dev/null 2>&1 && sudo="sudo"; }
+  log "installing build dependencies: ${want[*]}…"
+  $sudo apt-get install -y "${want[@]}" >>"$BUILD_LOG" 2>&1 ||
+    { $sudo apt-get update -qq >>"$BUILD_LOG" 2>&1 &&
+      $sudo apt-get install -y "${want[@]}" >>"$BUILD_LOG" 2>&1; } ||
+    log "apt-get could not install ${want[*]}; attempting the build anyway"
+  return 0
 }
 
 rgbds_version() { "$1" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1; }
@@ -95,14 +128,18 @@ for tool in git cmake make cc; do
   command -v "$tool" >/dev/null 2>&1 || die "missing build dependency '$tool'"
 done
 WORK="${WORK:-$(mktemp -d)}"; trap 'rm -rf "$WORK"' EXIT
+: >"$BUILD_LOG"
+ensure_build_deps
 log "building RGBDS v$RGBDS_VERSION from source…"
 if ! git clone --depth 1 --branch "v$RGBDS_VERSION" \
-  https://github.com/gbdev/rgbds.git "$WORK/rgbds" >/dev/null 2>&1; then
+  https://github.com/gbdev/rgbds.git "$WORK/rgbds" >>"$BUILD_LOG" 2>&1; then
   die "git clone of RGBDS v$RGBDS_VERSION failed (check network egress to github.com)"
 fi
-if ! cmake -S "$WORK/rgbds" -B "$WORK/rgbds/build" -DCMAKE_BUILD_TYPE=Release >/dev/null 2>&1 ||
-  ! cmake --build "$WORK/rgbds/build" -j"$(nproc 2>/dev/null || echo 2)" >/dev/null 2>&1; then
-  die "RGBDS build failed"
+if ! cmake -S "$WORK/rgbds" -B "$WORK/rgbds/build" -DCMAKE_BUILD_TYPE=Release >>"$BUILD_LOG" 2>&1; then
+  die "RGBDS configure failed (see $BUILD_LOG)"
+fi
+if ! cmake --build "$WORK/rgbds/build" -j"$(nproc 2>/dev/null || echo 2)" >>"$BUILD_LOG" 2>&1; then
+  die "RGBDS compile failed (see $BUILD_LOG)"
 fi
 install_from_dir "$WORK/rgbds/build" || die "built RGBDS is missing a tool"
 log "installed $("$BIN_DIR/rgbasm" --version) into $BIN_DIR"

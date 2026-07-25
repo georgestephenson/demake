@@ -1,9 +1,10 @@
 {
   "ci": {
     "collect": {
-      "startServerCommand": "pnpm build && pnpm preview",
-      "url": ["http://127.0.0.1:4173/"],
-      "startServerReadyPattern": "Local:",
+      "startServerCommand": "pnpm preview",
+      "startServerReadyPattern": "4173",
+      "startServerReadyTimeout": 60000,
+      "url": ["http://127.0.0.1:4173/demake/"],
       "numberOfRuns": 1,
       "settings": {
         "preset": "desktop",

@@ -7,6 +7,12 @@ import { defineConfig, devices } from "@playwright/test";
  * server, so what is tested is what Pages will serve. The base path is set to
  * `/` for the preview (production deploys under `/demake/`).
  *
+ * The preview binds 127.0.0.1 explicitly (see the package's `preview` script):
+ * bound to the name `localhost` it can land on ::1 alone — which is what happens
+ * on GitHub's runners — while this config polls 127.0.0.1, and the suite then
+ * dies on `Timed out waiting … from config.webServer` with a server that was up
+ * the whole time.
+ *
  * Browsers: Chromium, Firefox and WebKit — the determinism suite's whole point
  * is that three independent engines produce identical bytes. Set
  * `DEMAKE_BROWSERS=chromium` to narrow it on a machine that only has one, and
