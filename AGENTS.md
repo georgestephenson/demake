@@ -319,6 +319,15 @@ Two files plus fixtures (doc 02 §Extensibility):
   of anything the CLI does (a manifest shape, a symbol-name rule, a console
   summary table) is how parity dies; if the web needs it, it moves into core
   first, as `buildManifest`/`encodeManifest` did.
+- **A one-run Lighthouse audit is a coin toss on a shared runner.** The job asks
+  for `numberOfRuns: 3` and asserts against the best of them, which is lhci's
+  default `optimistic` aggregation for a `minScore`. Noise only ever makes a page
+  look _slower_ than it is, so the least-contaminated run is the truthful
+  measurement, and a genuine regression still drags all three. Before touching
+  the thresholds when this job fails, reproduce locally
+  (`pnpm build:web && pnpm --filter @demake/web exec lhci autorun`) and check the
+  entry chunk against `pnpm check:web-budget` — the score falling while the
+  payload is flat means the runner, not the page.
 - **CI's server-start traps, both learned the hard way.** (1) Actions sets
   `CI=1`, which makes Vite _colourise_ its banner — `Local:` arrives as
   `Local\e[22m:`, so any ready-pattern matching that literal never fires;

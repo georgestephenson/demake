@@ -92,6 +92,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm build:web
+      # Three runs, asserted against the best of them (lhci's default
+      # `optimistic` aggregation for a `minScore`). Noise on a shared runner
+      # only ever makes a page look slower than it is, so the least-contaminated
+      # run is the truthful measurement — and a real regression drags all three.
       - name: Audit the static site
         run: pnpm --filter @demake/web exec lhci autorun
         env:
