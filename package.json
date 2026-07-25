@@ -25,6 +25,8 @@
     "cli": "node packages/cli/dist/index.js",
     "gen:man": "pnpm --filter demake gen:man",
     "eval:prep": "node tools/prep-eval/run.mjs",
+    "play": "node packages/demotic/demo/play.mjs",
+    "test:dmt": "node packages/demotic/demo/test.mjs",
     "toolchains": "bash tools/toolchains/install-rgbds.sh && bash tools/toolchains/install-cc65.sh && bash tools/toolchains/install-wladx.sh && bash tools/toolchains/install-m68k.sh && bash tools/toolchains/install-arm.sh",
     "emulator": "bash tools/toolchains/install-sameboy.sh && bash tools/toolchains/install-libretro.sh"
   },

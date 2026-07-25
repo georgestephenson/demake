@@ -4,11 +4,11 @@
 
 import { render } from "preact";
 
-import { App } from "./app.js";
+import { Site } from "./site.js";
 import "./styles.css";
 
 const root = document.getElementById("app");
-if (root) render(<App />, root);
+if (root) render(<Site />, root);
 
 // Offline support (doc 07 §Quality bar). Registration failures are non-fatal:
 // the app works exactly the same, it just won't be available offline.

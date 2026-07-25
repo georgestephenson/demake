@@ -27,9 +27,59 @@ no upload, no accounts, no telemetry. If GitHub Pages is up, the app works.
   Base path configured for `https://georgestephenson.github.io/demake/`
   (plus custom domain support if ever wanted).
 
+## Sections
+
+The site is one shell over four demakers, because demake demakes game assets and
+images are only one kind (doc 01 §Scope):
+
+| Section | What it does | State |
+|---|---|---|
+| **demotic game demaker** | write a `.dmt`, play it on any console, run its `.test.dmt` suite | live |
+| **art demaker** | the image pipeline described below | live |
+| **music demaker** | tracks → chip music | coming soon |
+| **sound demaker** | effects → chip sound | coming soon |
+
+The route lives in the hash as `#section=<id>`, and the **art demaker is the
+unmarked default** — so every option permalink shared before the site grew
+sections still opens exactly what it used to.
+
+### The Demotic section
+
+Two panes. **Play** carries the console picker, the canvas, and a *console
+pixels* toggle that switches between the art as authored (SVG, any resolution)
+and the same state on the target's real 8×8 grid with over-limit scanlines shaded
+red — the product thesis in one control. **Game** is the editable source with
+per-line diagnostics, and a *Run tests* button that runs the `.test.dmt` suite
+against every console at once and reports the tally.
+
+The simulator runs on the main thread, not in the engine worker: a tick is a few
+hundred integer operations on a handful of entities, so the round trip would cost
+more than the work. Art conversion still goes to the worker.
+
+A syntax error never blanks the preview — the parser recovers per line, and the
+page keeps running the last version that compiled.
+
+### Playing the real ROM in the page
+
+The preview runs the reference interpreter, which is the specification — but the
+product claim is a *ROM*, so the page must build one and play it. Two steps:
+
+**Assembling needs no assembler** (doc 06): the browser patches compiled tables
+into a CI-assembled runtime blob and fixes the checksums.
+
+**Playing it needs an emulator** — a WASM core, loaded lazily and **self-hosted**,
+never from a CDN, because "never phones home" is not negotiable and a CDN script
+would also break the offline PWA guarantee. EmulatorJS is the obvious candidate
+since it covers `gb`/`nes`/`sms`/`md` behind one API; it would be vendored and
+served from our own origin.
+
+Both steps wait on there being a runtime at all (doc 13, milestone D3). Until
+then the section previews and exports source, and says so rather than shipping a
+button that does nothing.
+
 ## UX specification
 
-Single screen, three panes:
+The art demaker: single screen, three panes:
 
 1. **Input pane** — drag-and-drop / file-picker / paste-from-clipboard; shows
    source with dimensions and detected profile (art vs photo).

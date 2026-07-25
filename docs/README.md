@@ -26,6 +26,8 @@ that an engineer (human or agent) can pick up a section and implement it.
 | 11 | [CI & Releases](11-ci-and-releases.md) | GitHub Actions workflows, versioning, publish pipelines |
 | 12 | [Repo Standards](12-repo-standards.md) | AGENTS.md (with CLAUDE.md import shim), README, contribution standards, engineering conventions |
 | 13 | [Roadmap](13-roadmap.md) | Phased milestones with acceptance criteria |
+| 14 | [Demotic](14-demotic.md) | The `.dmt` game language: semantics, runtime model, conformance traces |
+| 15 | [Demakefile](15-demakefile.md) | The build manifest: targets, art conversion, ROM headers, artifacts |
 
 ## Provenance
 

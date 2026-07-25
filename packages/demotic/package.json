@@ -1,0 +1,30 @@
+{
+  "name": "@demake/demotic",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Demotic: the declarative, platform-agnostic game language and its reference interpreter. Platform-pure, deterministic, fixed-point.",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./fixtures/*": "./fixtures/*"
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "fixtures"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "devDependencies": {
+    "@demake/core": "workspace:*"
+  }
+}

@@ -9,7 +9,13 @@ this exact API — nothing they can do is unavailable to library users.
 | Package | Contents |
 |---|---|
 | `@demake/core` | The engine: pipeline, console specs, codegen. Zero platform deps; ESM; ships types. |
-| `demake` | The CLI (`bin`). Depends on core. Also re-exports core so `npm i demake` alone suffices for scripting. |
+| `@demake/demotic` | The game language (doc 14) and the Demakefile (doc 15): compiler, reference interpreter, `.test.dmt` runner, trace oracle. Depends on `core`; zero platform deps. |
+| `demake` | The CLI (`bin`). Depends on both. Also re-exports them so `npm i demake` alone suffices for scripting. |
+
+`@demake/demotic` is separate from `core` for three reasons: image-only consumers
+should not pay for a game language; the two domains' output-stability clocks are
+independent (a trace change and a pixel change are different releases); and `core`
+must stay standalone, since the dependency runs one way only (doc 02).
 
 Publishing: both from the monorepo on each release tag, with npm provenance
 (`--provenance`), `sideEffects: false`, exports map with proper `types` conditions.
@@ -91,6 +97,34 @@ Design rules:
   (tile merges, palette compromise) are `warnings` + stats, or errors under
   `strict` — same semantics as the CLI because it *is* the CLI's semantics.
 
+## `@demake/demotic` surface (v1)
+
+```ts
+import {
+  compile, check, Sim, trace, tape,          // language
+  parseTests, runTests, formatResults,        // .test.dmt
+  parseDemakefile, resolveBuild,              // build manifest (doc 15)
+  profiles, getProfile,
+  type Program, type ConsoleProfile, type Diagnostic, type RunResult,
+} from "@demake/demotic";
+
+const program = compile(source, { profile: getProfile("gb") });
+const { program: maybe, diagnostics } = check(source, { profile });  // never throws
+
+const sim = new Sim(program);
+sim.step({ left: true });     // one logical tick, 16.16 fixed point
+sim.entities();               // live state
+sim.runtimeBudget;            // worst sprites-per-scanline seen
+
+trace(sim, tape("1:a,90:,90:left"));            // the conformance oracle, as text
+runTests(parseTests(suite), program);           // assertions, per console
+```
+
+`resolveBuild` returns a plan and does not execute it: running `prep`, assembling
+a runtime and writing files are the CLI's job, exactly as `gen`'s `rom-plan`
+already works. The package stays platform-pure, so the same calls back the web
+app's Demotic section.
+
 ## Stability & determinism guarantees (documented, tested)
 
 - **API stability**: semver on the TS surface; deprecations live one major.
@@ -100,6 +134,10 @@ Design rules:
   same PR (doc 10 §Goldens). Patch releases never change output bytes.
 - **Cross-platform determinism**: same bytes on Node/browser/all OSes — enforced in
   CI. This is why the core forbids platform codecs and `Math.random` (lint rules).
+- **Demotic semantics are output bytes too**: a change that alters any golden
+  trace is a minor bump on `@demake/demotic`, with traces re-baselined, a
+  changeset and a release-note line, in the same PR. Patch releases never change
+  a trace. The two packages version independently (doc 14 §Stability).
 
 ## Docs
 

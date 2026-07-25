@@ -128,6 +128,59 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   sprite/animation mode (the reserved schema slot); home-computer specs if demand
   appears; tiny fixed-weight learned perceptual metric as a judge input
   (doc 04 §Aesthetics — admissible only if byte-deterministic and browser-sized).
+- **Demotic — the game language (new domain)**: docs [14](14-demotic.md) and
+  [15](15-demakefile.md). Declare a game once in `.dmt` and build it for every
+  tiled-sprite console, with a Demakefile deciding targets, art conversion and
+  artifacts. Ordered so each step is provable before the next begins:
+  - **D1 — language + preview** *(done)*: front end, reference interpreter,
+    relative units, compile-time hardware diagnostics, `.test.dmt` runner, trace
+    oracle, browser section, Pong fixture.
+  - **D2 — Demakefile + `build`**: the manifest parser and resolver, art binding
+    through `prep` (sprite palette shapes, transparency, shared tile dedup),
+    `build`/`check`/`init`/`fmt`, and the round-trip properties.
+  - **D3 — first runtime (`gb`)**: the fixed engine consuming the program tables,
+    plus the input-tape emulator harness. **Done means** a `.gb` built from
+    `pong.dmt` reproduces the checked-in golden trace tick-for-tick on SameBoy.
+  - **D4 — breadth**: `nes`, `sms`/`gg`, `md`, `snes` runtimes, each trace-green
+    then framebuffer-green.
+  - **D5 — Play ROM in the page**: because the runtime is fixed and only the
+    tables change, the browser patches a CI-assembled blob rather than assembling
+    anything, so this covers every family with a runtime. Needs a self-hosted
+    WASM core (never a CDN, per doc 07).
+  - **D6 — language growth**, driven by fixtures beyond Pong: `destroy` and
+    runtime spawn (Breakout, Snake), a seeded PRNG, then scrolling and a camera —
+    the largest genuine gap, and where per-scanline sprite pressure bites.
+
+- **Projects in the web app**: today each section holds one artifact. A *project*
+  is a folder with a Demakefile at its root — a `.dmt`, its `.test.dmt`, and an
+  art directory — and it is the unit the site should actually operate on:
+  open one, edit any file in it, build every target. It is the same object the
+  CLI already builds, so the work is the browser's file handling (File System
+  Access API where available, an in-memory tree elsewhere) plus import/export as
+  a zip, not a second configuration model.
+
+- **Agent-driven demaking**: the workflow doc 01 §Why exists for, closed. Attach
+  an agent, describe a game in one prompt, and get back a `.dmt`, its art assets,
+  a Demakefile and ROMs for every console. Three pieces, in order of leverage:
+  a **`SKILL.md`** teaching the Demotic language and the loop that produces a
+  working game (cheap, useful immediately, and testable by having an agent build
+  a game from it); a **Demotic MCP server** exposing `check`, `test`, `trace` and
+  `build` as tools so an agent iterates against real diagnostics rather than
+  guesses; and **asset generation**, where the agent produces source art that the
+  image pipeline then demakes. The language was designed for this — flat,
+  line-oriented, order-free, with total error recovery and structured
+  diagnostics — so most of the work is packaging rather than new capability.
+
+- **Tile editing — a question, not a plan**: a tileset exists because hardware
+  forces art to be shared, which makes it a *hardware* concern leaking into an
+  authoring tool. A tile editor would therefore cut against the premise that you
+  describe what you want and the tool handles the constraints. The current
+  position is to avoid needing one: push harder on automatic dedup, budget
+  reporting, and per-console art variants in the Demakefile. Revisit only if real
+  games hit a wall the automatic path cannot clear — and if they do, the honest
+  framing is a *tile budget inspector* that explains what was merged and why,
+  rather than a manual editor.
+
 - **Audio demake (new domain, exploratory)**: extend beyond images — convert
   modern music and sound effects into hardware-compliant chip audio and playable
   driver data for the same consoles (GB pulse/wave/noise, NES 2A03, SNES SPC700

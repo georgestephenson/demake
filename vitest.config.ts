@@ -12,6 +12,7 @@ export default defineConfig({
       "@demake/cli-spec": fileURLToPath(
         new URL("./packages/cli-spec/src/index.ts", import.meta.url),
       ),
+      "@demake/demotic": fileURLToPath(new URL("./packages/demotic/src/index.ts", import.meta.url)),
     },
   },
   test: {

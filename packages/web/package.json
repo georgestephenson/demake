@@ -14,6 +14,7 @@
   "dependencies": {
     "@demake/cli-spec": "workspace:*",
     "@demake/core": "workspace:*",
+    "@demake/demotic": "workspace:*",
     "preact": "^10.29.7"
   },
   "devDependencies": {

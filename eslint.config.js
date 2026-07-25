@@ -21,6 +21,7 @@ export default tseslint.config(
       "**/*.test.ts",
       "tools/**/*.js",
       "tools/**/*.mjs",
+      "packages/demotic/demo/**/*.mjs",
       "*.js",
       "*.ts",
     ],
@@ -46,7 +47,11 @@ export default tseslint.config(
   {
     // The core engine is isomorphic and deterministic — enforce it mechanically.
     // Only ES globals are in scope here; anything platform-specific is a lint error.
-    files: ["packages/core/src/**/*.ts"],
+    // Demotic's front end and reference interpreter live under the same two
+    // invariants: the simulator is the semantic spec a console runtime must
+    // match bit-for-bit, so it cannot reach for a platform API or drift by an
+    // ulp (doc 14 §Simulate constrained).
+    files: ["packages/core/src/**/*.ts", "packages/demotic/src/**/*.ts"],
     languageOptions: {
       globals: { ...globals.es2021 },
     },

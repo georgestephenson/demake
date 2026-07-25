@@ -17,9 +17,27 @@ Commands:
   consoles   List supported consoles and their constraints
   inspect    Analyze an image: is it compliant? for which consoles? why not?
              With --source, also judge it: fidelity metrics vs the source image
+
+  build      Build a Demotic game for every target in the Demakefile
+  run        Play a .dmt in the terminal, or open the local preview
+  check      Check a .dmt / Demakefile: diagnostics, budgets, resolved plan
+  test       Run a .test.dmt suite against one console or all of them
+  trace      Emit a state trace for a .dmt and an input tape (conformance oracle)
+  init       Scaffold a Demakefile reproducing the current defaults
+  fmt        Canonicalize .dmt, .test.dmt and Demakefile formatting
+
   completion Emit shell completion (bash/zsh/fish)
   help       Help for any command
 ```
+
+The second group is the Demotic surface (docs 14 and 15). Verbs are flat, like
+the first group, rather than nested under a `game` noun — one command tree, one
+`--help`, one completion script.
+
+**`check` and `inspect` are different questions**, and the file extension makes
+it obvious which you want: `inspect` asks *is this image hardware-compliant?*;
+`check` asks *is this source valid, and will it fit?* The man pages
+cross-reference each other on exactly that point.
 
 `gen` on a *non-compliant* source runs the prep pipeline implicitly first (that is
 the "source image straight into code" flag combination); `gen` on a compliant image
@@ -52,6 +70,27 @@ demake inspect out.png --json
 # Score any result against its source with the tournament's own judge (doc 04)
 demake inspect out.png --source photo.jpg --json
 
+# --- Demotic (docs 14, 15) ---------------------------------------------------
+
+# No Demakefile needed: build every console with defaults into build/
+demake build
+demake build --target gb
+demake build --dry-run --json          # the whole plan, before anything is written
+
+# Play it; open the browser preview
+demake run pong.dmt -c gb
+demake run pong.dmt --preview
+
+# Diagnostics, budgets, and the hardware traps caught before an emulator sees them
+demake check pong.dmt -c nes --json
+
+# One suite, every console — the balance check that absolute units cannot express
+demake test pong.test.dmt --all
+demake test pong.test.dmt -c md --verbose
+
+# The conformance oracle a console runtime must reproduce
+demake trace pong.dmt -c gb --tape 1:a,90:,90:left > pong.gb.trace
+
 # See / pin the algorithm choice
 demake prep photo.jpg -c nes --strategy list
 demake prep photo.jpg -c nes --strategy photo-lanczos-fs -o out.png
@@ -62,7 +101,11 @@ demake prep photo.jpg -c nes --strategy photo-lanczos-fs -o out.png
 - **POSIX/GNU conventions**: short `-c`/long `--console` flags, `--` end-of-options,
   bundled short flags, `=`-or-space option values. Flag parsing via a spec-driven
   parser (see §Single source of truth).
-- **One image in, one image out — the prime directive.** The default invocation is
+- **One image in, one image out — the prime directive.** (`build` is the single
+  deliberate exception: it is a build tool, not a filter, and writes many
+  artifacts by design. It declares every path it will write in `--dry-run` and in
+  `--json` before writing any of them, never writes outside `out` unless a path
+  explicitly escapes it, and is otherwise held to the same hygiene rules below.) The default invocation is
   a pure filter: exactly one input, exactly one artifact, nothing else written
   anywhere. With no `-o`, the artifact goes to **stdout automatically when stdout
   is a pipe or file** (`demake prep a.jpg -c gbc > out.png` and
@@ -83,8 +126,11 @@ demake prep photo.jpg -c nes --strategy photo-lanczos-fs -o out.png
 - **`--version`**: `demake X.Y.Z` on stdout, exit 0. **`--help`** everywhere,
   exit 0, ≤ 100 cols, examples included.
 - **Man pages**: `demake(1)`, `demake-prep(1)`, `demake-gen(1)`,
-  `demake-consoles(1)`, `demake-inspect(1)`, plus `demake-formats(5)` for the
-  manifest/JSON schemas. Generated (never hand-drifted) — §Single source of truth.
+  `demake-consoles(1)`, `demake-inspect(1)`, `demake-build(1)`, `demake-run(1)`,
+  `demake-check(1)`, `demake-test(1)`, `demake-trace(1)`, `demake-init(1)`,
+  `demake-fmt(1)`, plus `demake-formats(5)` for the manifest/JSON schemas,
+  `demotic(5)` for the game language, and `demakefile(5)` for the build manifest.
+  Generated (never hand-drifted) — §Single source of truth.
 - **Environment**: honors `NO_COLOR`, `CLICOLOR_FORCE`, `TERM=dumb`; no config file
   in v1 (explicit flags only — better for reproducibility and agents; revisit with
   `DEMAKE_*` env prefix if ever needed).
@@ -146,6 +192,30 @@ demake prep photo.jpg -c nes --strategy photo-lanczos-fs -o out.png
 | `--strict` | Fail rather than degrade (no tile merging, no implicit prep in gen) |
 | `--emit-manifest [path]` | Sidecar JSON with palettes/assignments/provenance |
 | gen: `--format bin\|asm\|c\|rom`, `--symbol <name>`, `--org/layout opts per family` | Doc 06 |
+
+### Demotic flags (docs 14, 15)
+
+| Flag | Applies to | Meaning |
+|---|---|---|
+| `-f, --file <path>` | build/check/init | Demakefile to use; default is the nearest one walking up from cwd |
+| `--target <name>` | build/check | Build only this target; repeatable; default is all |
+| `--dry-run` | build | Resolve everything and print the plan without writing |
+| `--out-dir <dir>` | build | Override the Demakefile's `out` |
+| `--all` | test | Run against every supported console (the default for `test`) |
+| `--tape <script>` | run/trace | Input tape, e.g. `1:a,90:,90:left+a` (ticks:buttons) |
+| `--ticks N` | run/trace | How many logical ticks to run |
+| `--preview` | run | Open the local browser preview instead of the terminal renderer |
+| `--constrain` | run | Render on the console's real pixel grid rather than as authored |
+| `--write` | fmt | Rewrite files in place; default prints to stdout |
+
+`build` and `check` report, in `--json`: the resolved source, every target with
+its console and region, every asset with its final option set and prepped size,
+every artifact written with byte size and hash, the static sprite budget per
+scene, and every diagnostic. That is enough for an agent to fix a budget failure
+without reading anything else.
+
+`test` reports per console, per case, per assertion, with both sides of a failed
+comparison in cells — the actual value being the only useful half of a failure.
 
 ## Single source of truth for the interface
 

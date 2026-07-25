@@ -35,6 +35,14 @@ demake/          # repo
 │   ├── cli/                 # demake — thin wrapper over core (doc 05)
 │   │   ├── src/
 │   │   └── man/             # generated roff, checked in per release
+│   ├── demotic/             # @demake/demotic — the game language (docs 14, 15)
+│   │   ├── src/
+│   │   │   ├── lang/        # lex → parse → flat statement AST
+│   │   │   ├── compile.ts   # AST + console profile → resolved Program tables
+│   │   │   ├── sim.ts       # reference interpreter — the semantic definition
+│   │   │   ├── testing/     # .test.dmt: parse + run assertions on every console
+│   │   │   └── demakefile/  # the build manifest: parse, resolve, emit (doc 15)
+│   │   └── test/
 │   ├── web/                 # Vite app → GitHub Pages (doc 07)
 │   ├── desktop/             # Tauri app, bundles CLI as sidecar (doc 08)
 │   └── cli-spec/            # single-source-of-truth command spec → --help, man, docs, JSON schema
@@ -42,6 +50,7 @@ demake/          # repo
 │   ├── sources/             # HD many-color reference images (see doc 10)
 │   └── golden/              # expected outputs per console per version
 ├── rom-harness/             # per-console minimal "display this image" ROM projects (doc 06/10)
+├── runtime-harness/         # per-family Demotic runtimes: the fixed engine a game's tables drive (doc 14)
 ├── toolchains/              # Dockerfiles for assemblers/compilers + emulators (doc 10)
 ├── .github/workflows/       # CI (doc 11)
 ├── CLAUDE.md  AGENTS.md  README.md  CONTRIBUTING.md  SECURITY.md  LICENSE
@@ -52,6 +61,11 @@ demake/          # repo
 
 - `core` depends on **nothing platform-specific**: no `fs`, no `Buffer`-only APIs, no
   DOM. All I/O happens at the edges (CLI/web/desktop pass `Uint8Array`s in and out).
+- `demotic` depends on `core` (console specs, `prep` for art) and on nothing
+  platform-specific — the same two lint rules apply, because its reference
+  interpreter is the semantic specification a console runtime must match
+  bit-for-bit (doc 14). **Nothing in `core` may depend on `demotic`**: the image
+  engine stands alone, and the language is the layer above it.
 - `cli` = argument parsing + file I/O + process conventions + calls into `core`.
 - `web` = UI + Web Worker hosting `core`.
 - `desktop` = UI shell + sidecar invocation of the built `cli` binary. It contains

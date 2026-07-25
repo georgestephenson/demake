@@ -2,8 +2,28 @@
 
 ## One-sentence pitch
 
-Give it any image and a console name; get back an image that the real hardware could
-actually display — or the source code that displays it.
+Give it a modern game asset — an image, or a whole game — and a console name; get
+back something that hardware could actually run.
+
+## Scope: demaking, not just image conversion
+
+demake began as image conversion and that remains its deepest capability, but the
+subject is **game assets**, plural. The verb is the product: to *demake* is to
+take something built for modern hardware and reconstruct it under the constraints
+of old hardware, faithfully enough that it still reads as itself.
+
+| Domain | Doc | State |
+|---|---|---|
+| Art — images → compliant art, data, code, ROMs | 03–06 | working, eight Tier 1 consoles proven on emulated hardware |
+| Games — Demotic `.dmt` → one game, every console | [14](14-demotic.md), [15](15-demakefile.md) | language, interpreter, test runner and preview working; runtimes in progress |
+| Music — tracks → chip music and driver data | [13 §Phase 7+](13-roadmap.md) | planned |
+| Sound — effects → chip sound | [13 §Phase 7+](13-roadmap.md) | planned |
+
+Each domain has the same shape, which is why they share a repository rather than
+merely a name: **constrain → fit → emit → prove it on emulated hardware**. Each
+reuses the layer below it — a game's sprites are demade by the image pipeline,
+and its ROM is assembled by the same toolchain edge — and none of them is
+finished until something boots in an emulator and is compared byte for byte.
 
 ## The problem
 
@@ -32,7 +52,11 @@ One engine, four faces:
 4. **Library** — an npm package (`demake` / `@demake/core`) exposing the engine
    programmatically for build pipelines, game engines, and other tools.
 
-Two core operations (mirroring the predecessor tools):
+Beyond `prep` and `gen`, the game domain adds `build`, `run`, `check`, `trace`,
+`test`, `init` and `fmt` (doc 05), and the web app grows a section per demaker
+(doc 07).
+
+Two core image operations (mirroring the predecessor tools):
 
 - **prep**: any image, any size, any color depth → a hardware-compliant image for a
   chosen console (and optional target size) that *reads* as the original to human
