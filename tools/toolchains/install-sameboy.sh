@@ -23,6 +23,11 @@ CAPTURE_SRC="$REPO_ROOT/emu-harness/gb/capture.c"
 log() { printf 'install-sameboy: %s\n' "$*" >&2; }
 die() {
   log "ERROR: $*"
+  # Show the build's own words; "SameBoy build failed" alone is undebuggable in CI.
+  if [ -s /tmp/sameboy-build.log ]; then
+    log "last 25 lines of /tmp/sameboy-build.log:"
+    tail -25 /tmp/sameboy-build.log >&2
+  fi
   [ "${SAMEBOY_STRICT:-0}" = "1" ] && exit 1
   exit 0
 }

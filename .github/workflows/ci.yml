@@ -79,6 +79,9 @@ jobs:
   lighthouse:
     name: Lighthouse budget (web)
     runs-on: ubuntu-latest
+    # The site is built here rather than inside Lighthouse's `startServerCommand`,
+    # so the server-ready window never races a compile, and it is audited at the
+    # `/demake/` base Pages actually serves it from.
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
@@ -88,10 +91,24 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      - name: Build + audit the static site
+      - run: pnpm build:web
+      - name: Audit the static site
         run: pnpm --filter @demake/web exec lhci autorun
         env:
-          DEMAKE_BASE: /
+          # Actions sets CI=1, which makes Vite colourise its startup banner:
+          # "Local:" arrives as "Local\e[22m:", so a ready-pattern matching the
+          # literal text never fires and Lighthouse audits a port nothing is on.
+          NO_COLOR: "1"
+      - name: Keep the report when the audit fails
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: lighthouse-report
+          path: |
+            packages/web/.lighthouseci
+            packages/web/lighthouse-report
+          retention-days: 7
+          if-no-files-found: ignore
 
   test-e2e:
     name: Pixel-perfect E2E (ROM → emulator)
@@ -114,10 +131,23 @@ jobs:
           key: demake-tc-${{ runner.os }}-${{ hashFiles('tools/toolchains/**', 'emu-harness/**') }}
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      # Strict here, best-effort everywhere else: the provisioners are designed
+      # to never break a developer's session or a SessionStart hook, but in CI a
+      # toolchain that fails to build must fail *at this step*, with its build
+      # log, instead of surfacing later as a mystery.
       - name: Provision assemblers (RGBDS, cc65, WLA-DX, m68k, ARM)
         run: pnpm toolchains
+        env:
+          RGBDS_STRICT: "1"
+          CC65_STRICT: "1"
+          WLADX_STRICT: "1"
+          M68K_STRICT: "1"
+          ARM_STRICT: "1"
       - name: Provision emulators (SameBoy + libretro cores)
         run: pnpm emulator
+        env:
+          SAMEBOY_STRICT: "1"
+          LIBRETRO_STRICT: "1"
       - name: Fail if any console E2E would silently self-skip
         run: node tools/ci/check-e2e-ready.mjs
       - run: pnpm test

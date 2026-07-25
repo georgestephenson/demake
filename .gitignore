@@ -25,3 +25,7 @@ tools/prep-eval/local/
 packages/web/test-results/
 packages/web/playwright-report/
 packages/web/dist/
+
+# Lighthouse CI output
+packages/web/.lighthouseci/
+packages/web/lighthouse-report/
