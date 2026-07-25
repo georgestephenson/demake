@@ -11,28 +11,33 @@ A `when` rule fires on an **edge** (once, when something happens) or at a **leve
 | `<a> touches <b>, <c>` | level | Every tick two things overlap. |
 | `<button> pressed \| released` | edge | On the button's edge, once per press. |
 | `<expr> reaches <expr>` | edge | When a value lands on a target or crosses it from either side. |
+| `<class>.<property> <op> <expr>` | level | Every tick, once per object of that class, with it bound as the subject. |
 | `<expr>` | level | Every tick the expression is non-zero. |
 
 ## Examples
 
 ```
-when ball hits paddle (ydirection) as flip
+when ball hits paddle then ydirection as flip
 ```
 
 ```
-when player touches ledge (ydirection) as 0
+when player touches ledge then ydirection as 0
 ```
 
 ```
-when a pressed in title (scene) as play
+when a pressed in title then scene as play
 ```
 
 ```
-when score1.value reaches 10 in play (scene) as gameover
+when score1.value reaches 10 in play then scene as gameover
 ```
 
 ```
-when always in play (paddle2.xdirection) as clamp(error / 1.5vw, -1, 1)
+when rock.y >= screenheight then y as 0
+```
+
+```
+when always in play then paddle2.xdirection as clamp(error / 1.5vw, -1, 1)
 ```
 
 ## Notes
@@ -42,5 +47,7 @@ when always in play (paddle2.xdirection) as clamp(error / 1.5vw, -1, 1)
 **`<a> touches <b>, <c>`** — Resting contact is not an event. Under `hits`, a hero standing on a ledge keeps accumulating gravity into `ydirection` while the separation holds it in place — it looks right, then fights the next jump.
 
 **`<expr> reaches <expr>`** — A crossing detector, not a threshold: `reaches 0` on falling lives and `reaches 10` on a rising score must mean the same thing, and `>=` cannot express both. A value that *starts* on its target has not reached it.
+
+**`<class>.<property> <op> <expr>`** — A level rule naming exactly one class runs once per instance of it, so an unqualified property means *this* object's. One line replaces one rule per object, and one place to forget one. Naming two classes has no single subject to pick and is an error rather than a guess.
 
 **`<expr>`** — Level rules apply in program order and the last write wins, which is how a proportional controller and its limits compose.

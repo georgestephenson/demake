@@ -8,7 +8,7 @@
 --   * objects at staggered speeds, so the per-scanline count keeps changing
 --   * a survival score that rises on a timer rather than on an event
 
-loop play
+start play
 
 scene play
 
@@ -30,23 +30,20 @@ create number lives in play (value 3, x screenwidth - 2, y 1)
 control player left (xdirection -1) on hold
 control player right (xdirection 1) on hold
 
-when player hits screenleft, screenright (xdirection) as 0
+when player hits screenleft, screenright then xdirection as 0
 
--- Recycling. Each rock goes back to the top when it falls off the bottom; the
--- separation would otherwise pin it against the edge forever.
-when r1 hits screenbottom (r1.y) as 0
-when r2 hits screenbottom (r2.y) as 0
-when r3 hits screenbottom (r3.y) as 0
-when r4 hits screenbottom (r4.y) as 0
-when r5 hits screenbottom (r5.y) as 0
-when r6 hits screenbottom (r6.y) as 0
+-- Recycling, in one line for all six rocks. A level rule that names a class runs
+-- once per instance with that instance bound as its subject, so `y` here means
+-- "this rock's y". Written per-object this was six near-identical rules, and six
+-- places to forget one.
+when rock.y >= screenheight then y as 0
 
-when player hits rock (lives.value, rock.y) as (lives.value - 1, 0)
+when player hits rock then (lives.value, rock.y) as (lives.value - 1, 0)
 
-when lives.value reaches 0 in play (scene) as gameover
+when lives.value reaches 0 in play then scene as gameover
 
 scene gameover
 
 create text over in gameover (x centerx - 4, y centery, text "game over")
 
-when a pressed in gameover (scene) as play
+when a pressed in gameover then scene as play

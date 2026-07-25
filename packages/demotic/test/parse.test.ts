@@ -61,11 +61,13 @@ describe("parse", () => {
   });
 
   it("treats `--` as a comment to end of line", () => {
-    expect(statements("loop title -- enters here\n-- a whole comment line\n")).toHaveLength(1);
+    expect(statements("start title -- enters here\n-- a whole comment line\n")).toHaveLength(1);
   });
 
   it("parses a collision list with several targets", () => {
-    const [statement] = statements("when ball hits screenleft, screenright (xdirection) as flip");
+    const [statement] = statements(
+      "when ball hits screenleft, screenright then xdirection as flip",
+    );
     expect(statement).toMatchObject({
       kind: "when",
       event: { kind: "hits", subject: "ball", others: ["screenleft", "screenright"] },
@@ -73,15 +75,17 @@ describe("parse", () => {
   });
 
   it("parses a level predicate and an edge `reaches`", () => {
-    const [predicate] = statements("when ball1.x < paddle2.x in play (paddle2.xdirection) as -1");
+    const [predicate] = statements(
+      "when ball1.x < paddle2.x in play then paddle2.xdirection as -1",
+    );
     expect(predicate).toMatchObject({ kind: "when", event: { kind: "predicate" }, scene: "play" });
 
-    const [reaches] = statements("when score1.value reaches 10 (score1.value) as 0");
+    const [reaches] = statements("when score1.value reaches 10 then score1.value as 0");
     expect(reaches).toMatchObject({ kind: "when", event: { kind: "reaches" } });
   });
 
   it("parses input edges", () => {
-    const [statement] = statements("when start pressed (scene) as play");
+    const [statement] = statements("when start pressed then scene as play");
     expect(statement).toMatchObject({
       kind: "when",
       event: { kind: "input", action: "start", edge: "pressed" },
@@ -90,14 +94,14 @@ describe("parse", () => {
 
   it("recovers per line, so one bad statement does not hide the rest", () => {
     const result = parse(
-      ["loop title", "wibble wobble", "scene title", "create object ((", "scene play"].join("\n"),
+      ["start title", "wibble wobble", "scene title", "create object ((", "scene play"].join("\n"),
     );
-    expect(result.statements.map((s) => s.kind)).toEqual(["loop", "scene", "scene"]);
+    expect(result.statements.map((s) => s.kind)).toEqual(["start", "scene", "scene"]);
     expect(result.diagnostics.map((d) => d.line)).toEqual([2, 4]);
   });
 
   it("rejects two statements on one line rather than silently joining them", () => {
-    const result = parse("loop title scene title");
+    const result = parse("start title scene title");
     expect(result.diagnostics[0]?.hint).toContain("one per line");
   });
 });

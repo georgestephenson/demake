@@ -215,12 +215,12 @@ class Compiler {
         }
         this.sceneSet.add(statement.name);
         this.sceneOrder.push(statement.name);
-      } else if (statement.kind === "loop") {
+      } else if (statement.kind === "start") {
         if (this.entry !== undefined) {
           this.error(
             statement.line,
-            "E_DUPLICATE_LOOP",
-            "a program has exactly one `loop` statement",
+            "E_DUPLICATE_START",
+            "a program has exactly one `start` statement",
           );
           continue;
         }
@@ -232,14 +232,14 @@ class Compiler {
       this.error(
         1,
         "E_NO_ENTRY",
-        "no `loop <scene>` statement — the game has no entry point",
-        "add `loop <scene>` naming the scene the game starts on",
+        "no `start <scene>` statement — the game has no entry point",
+        "add `start <scene>` naming the scene the game begins on",
       );
     } else if (!this.sceneSet.has(this.entry)) {
       this.error(
         1,
         "E_UNKNOWN_SCENE",
-        `\`loop\` names scene '${this.entry}', which is never declared`,
+        `\`start\` names scene '${this.entry}', which is never declared`,
       );
     }
   }
@@ -542,6 +542,30 @@ class Compiler {
     let defaultTarget: EntityRef | undefined;
     let sceneHint: string | undefined;
 
+    // A level rule that names exactly one class runs once per instance of it,
+    // with that instance bound as the subject — the same binding a `hits` rule
+    // gets from its collision. This has to be settled before the trigger is
+    // compiled, because the trigger's own expressions refer to that binding.
+    let perInstance: number[] | undefined;
+    if (statement.event.kind !== "hits") {
+      const classes = this.classesNamedBy(statement);
+      if (classes.length > 1) {
+        this.error(
+          line,
+          "E_AMBIGUOUS_CLASS",
+          `this rule names ${classes.length} classes (${classes.join(", ")}), so it has no single object to act on`,
+          "name one class, or address objects individually",
+        );
+        return undefined;
+      }
+      const [only] = classes;
+      if (only) {
+        perInstance = [...(this.instancesByClass.get(only) ?? [])];
+        bindings = { map: new Map([[only, { kind: "subject" } as EntityRef]]) };
+        defaultTarget = { kind: "subject" };
+      }
+    }
+
     switch (statement.event.kind) {
       case "hits": {
         const subjects = this.resolveEntitySet(statement.event.subject, line);
@@ -590,14 +614,14 @@ class Compiler {
       case "reaches": {
         event = {
           kind: "reaches",
-          left: this.compileNumber(statement.event.left, NO_BINDINGS),
-          right: this.compileNumber(statement.event.right, NO_BINDINGS),
+          left: this.compileNumber(statement.event.left, bindings),
+          right: this.compileNumber(statement.event.right, bindings),
         };
         sceneHint = this.sceneOfExprs([statement.event.left, statement.event.right]);
         break;
       }
       case "predicate": {
-        event = { kind: "predicate", test: this.compileNumber(statement.event.test, NO_BINDINGS) };
+        event = { kind: "predicate", test: this.compileNumber(statement.event.test, bindings) };
         sceneHint = this.sceneOfExprs([statement.event.test]);
         break;
       }
@@ -608,13 +632,88 @@ class Compiler {
       return undefined;
     }
 
+    if (perInstance) sceneHint = this.sceneOf(perInstance) ?? sceneHint;
+
     const scene = statement.scene ?? sceneHint;
+    const guard =
+      statement.guard === undefined ? undefined : this.compileNumber(statement.guard, bindings);
     const assignments = this.compileAssignments(statement.assignments, bindings, defaultTarget);
+    const otherwise =
+      statement.otherwise === undefined
+        ? undefined
+        : this.compileAssignments(statement.otherwise, bindings, defaultTarget);
+
     if (statement.assignments.length === 0) {
       this.warn(line, "W_EMPTY_RULE", "this rule triggers but assigns nothing");
     }
 
-    return { id, event, ...(scene === undefined ? {} : { scene }), assignments, line };
+    // `else` means "the rule was evaluated and did not fire". A bare edge
+    // trigger is only evaluated at the instant it happens, so its `else` would
+    // mean every other tick of the game — almost never what was meant.
+    const evaluatedEveryTick =
+      event.kind === "predicate" || (event.kind === "hits" && event.level) || guard !== undefined;
+    if (otherwise && !evaluatedEveryTick) {
+      this.error(
+        line,
+        "E_ELSE_NOT_ALLOWED",
+        "`else` needs a rule that is evaluated every tick",
+        "use a level trigger (`touches`, or a plain condition), or add an `if` guard",
+      );
+      return undefined;
+    }
+
+    return {
+      id,
+      event,
+      ...(scene === undefined ? {} : { scene }),
+      ...(guard === undefined ? {} : { guard }),
+      assignments,
+      ...(otherwise === undefined ? {} : { otherwise }),
+      ...(perInstance === undefined ? {} : { subjects: perInstance }),
+      line,
+    };
+  }
+
+  /** Class names a non-collision rule refers to, in its trigger or its actions. */
+  private classesNamedBy(statement: Extract<Stmt, { kind: "when" }>): string[] {
+    const found = new Set<string>();
+    const noteName = (raw: string): void => {
+      const owner = raw.includes(".") ? raw.slice(0, raw.lastIndexOf(".")) : raw;
+      if (this.instancesByClass.has(owner) && !this.instancesByName.has(owner)) found.add(owner);
+    };
+    const visit = (expr: Expr): void => {
+      switch (expr.kind) {
+        case "name":
+          if (expr.parts.length >= 2) noteName(expr.parts.join("."));
+          break;
+        case "binary":
+          visit(expr.left);
+          visit(expr.right);
+          break;
+        case "unary":
+          visit(expr.operand);
+          break;
+        case "call":
+          expr.args.forEach(visit);
+          break;
+        default:
+          break;
+      }
+    };
+
+    if (statement.event.kind === "predicate") visit(statement.event.test);
+    if (statement.event.kind === "reaches") {
+      visit(statement.event.left);
+      visit(statement.event.right);
+    }
+    if (statement.guard) visit(statement.guard);
+    for (const list of [statement.assignments, statement.otherwise ?? []]) {
+      for (const assignment of list) {
+        if (assignment.target.entity) noteName(assignment.target.entity);
+        visit(assignment.value);
+      }
+    }
+    return [...found].sort();
   }
 
   private compileAssignments(

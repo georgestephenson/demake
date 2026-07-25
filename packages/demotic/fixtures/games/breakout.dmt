@@ -6,7 +6,7 @@
 --   * a win condition counted rather than reached
 --   * real sprite-budget pressure (a brick wall is a lot of hardware sprites)
 
-loop play
+start play
 
 scene play
 
@@ -35,24 +35,24 @@ create brick b8 in play (x 76vw, y 5)
 control bat left (xdirection -1) on hold
 control bat right (xdirection 1) on hold
 
-when bat hits screenleft, screenright (xdirection) as 0
+when bat hits screenleft, screenright then xdirection as 0
 
-when ball hits screenleft, screenright (xdirection) as flip
-when ball hits screentop (ydirection) as flip
+when ball hits screenleft, screenright then xdirection as flip
+when ball hits screentop then ydirection as flip
 
 -- Losing the ball costs nothing but the serve: this is a demo, not a punishment.
-when ball hits screenbottom (ball1.y, ball1.x, ball1.ydirection) as (centery + 2, centerx, -1)
+when ball hits screenbottom then (ball1.y, ball1.x, ball1.ydirection) as (centery + 2, centerx, -1)
 
-when ball hits paddle (ydirection, xdirection) as (flip, (ball.centerx - paddle.centerx) / paddle.width)
+when ball hits paddle then (ydirection, xdirection) as (flip, (ball.centerx - paddle.centerx) / paddle.width)
 
 -- A brick that has been hit stops being drawn *and* stops being solid, so the
 -- ball passes through where it used to be. One property, both meanings.
-when ball hits brick (ydirection, brick.visible, score.value, left.value) as (flip, 0, score.value + 1, left.value - 1)
+when ball hits brick then (ydirection, brick.visible, score.value, left.value) as (flip, 0, score.value + 1, left.value - 1)
 
-when score.value reaches 8 in play (scene) as cleared
+when score.value reaches 8 in play then scene as cleared
 
 scene cleared
 
 create text won in cleared (x centerx - 4, y centery, text "wall down")
 
-when a pressed in cleared (scene) as play
+when a pressed in cleared then scene as play

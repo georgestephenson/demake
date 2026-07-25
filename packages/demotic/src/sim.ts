@@ -294,10 +294,35 @@ export class Sim {
     for (const rule of this.program.rules) {
       if (!this.ruleActive(rule)) continue;
       if (rule.event.kind !== "predicate") continue;
-      if (this.evaluate(rule.event.test, {}) !== 0) {
-        this.applyAssignments(rule.assignments, {});
+      for (const context of this.subjectsOf(rule)) {
+        this.fire(rule, this.evaluate(rule.event.test, context) !== 0, context);
       }
     }
+  }
+
+  /**
+   * The subject bindings a rule runs under.
+   *
+   * A rule naming a class runs once per instance, each bound as the subject;
+   * everything else runs once with nothing bound. Inert objects are skipped, so
+   * a spent bullet stops being steered as well as drawn.
+   */
+  private subjectsOf(rule: RuleDef): RuleContext[] {
+    if (!rule.subjects) return [{}];
+    return rule.subjects
+      .filter((id) => this.isActive(id) && this.isSolid(id))
+      .map((id) => ({ subject: id }));
+  }
+
+  /**
+   * Apply a rule's outcome: its assignments when it fired and its guard held,
+   * its `else` when it was evaluated and did not.
+   */
+  private fire(rule: RuleDef, triggered: boolean, context: RuleContext): void {
+    const passed =
+      triggered && (rule.guard === undefined || this.evaluate(rule.guard, context) !== 0);
+    if (passed) this.applyAssignments(rule.assignments, context);
+    else if (rule.otherwise) this.applyAssignments(rule.otherwise, context);
   }
 
   private applyEdgeRules(): void {
@@ -309,7 +334,11 @@ export class Sim {
           rule.event.edge === "pressed"
             ? this.pressed.has(rule.event.action)
             : this.released.has(rule.event.action);
-        if (fired) this.applyAssignments(rule.assignments, {});
+        // A guarded input rule is evaluated every tick, so its `else` can run;
+        // an unguarded one only has something to say when the edge happens.
+        for (const context of this.subjectsOf(rule)) {
+          if (fired || rule.guard !== undefined) this.fire(rule, fired, context);
+        }
         continue;
       }
 
@@ -324,7 +353,11 @@ export class Sim {
 
         const landed = delta === 0 && previous !== 0;
         const crossed = previous !== 0 && delta !== 0 && previous < 0 !== delta < 0;
-        if (landed || crossed) this.applyAssignments(rule.assignments, {});
+        for (const context of this.subjectsOf(rule)) {
+          if (landed || crossed || rule.guard !== undefined) {
+            this.fire(rule, landed || crossed, context);
+          }
+        }
       }
     }
   }
@@ -368,7 +401,7 @@ export class Sim {
           // one event, not one per tick. `touches` fires every tick, which is
           // what resting contact needs.
           if (rule.event.level || !this.overlaps.has(key)) {
-            this.applyAssignments(rule.assignments, { subject: subjectId });
+            this.fire(rule, true, { subject: subjectId });
           }
           // Separate every tick the contact persists, but re-test first: a rule
           // that moved its subject away (a ball reset to the middle after a
@@ -385,7 +418,7 @@ export class Sim {
           const key = `${rule.id}:${subjectId}:${otherId}`;
 
           if (rule.event.level || !this.overlaps.has(key)) {
-            this.applyAssignments(rule.assignments, { subject: subjectId, other: otherId });
+            this.fire(rule, true, { subject: subjectId, other: otherId });
           }
           if (this.overlapping(subjectId, otherId)) {
             this.separateFromEntity(subjectId, otherId);

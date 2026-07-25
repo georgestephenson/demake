@@ -121,7 +121,20 @@ export interface RuleDef {
   event: CEvent;
   /** Restrict the rule to one scene; `undefined` means every scene. */
   scene?: string;
+  /** `if <expr>` — evaluated when the trigger fires; zero suppresses it. */
+  guard?: CExpr;
   assignments: readonly CAssignment[];
+  /** `else` — applied when the rule was evaluated and did not fire. */
+  otherwise?: readonly CAssignment[];
+  /**
+   * Instances this rule runs once per, each bound as the subject.
+   *
+   * A level rule naming a class means "every instance of it", so
+   * `when alien.right >= screenwidth then xdirection as -1` turns the line
+   * around one alien at a time. `hits` rules already bind their subject from
+   * the collision, so this is empty for them.
+   */
+  subjects?: readonly number[];
   line: number;
 }
 

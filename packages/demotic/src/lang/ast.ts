@@ -81,7 +81,7 @@ export type Event =
 
 /** A parsed statement. */
 export type Stmt =
-  | { kind: "loop"; scene: string; line: number }
+  | { kind: "start"; scene: string; line: number }
   | { kind: "scene"; name: string; line: number }
   | { kind: "class"; name: string; props: readonly Prop[]; line: number }
   | {
@@ -104,7 +104,12 @@ export type Stmt =
       kind: "when";
       event: Event;
       scene?: string;
+      /** `if <expr>` — the trigger fired, but only act when this holds too. */
+      guard?: Expr;
+      /** Applied when the rule fires (and its guard, if any, holds). */
       assignments: readonly Assignment[];
+      /** `else` — applied when the rule was evaluated and did not fire. */
+      otherwise?: readonly Assignment[];
       line: number;
     };
 

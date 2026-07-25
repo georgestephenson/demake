@@ -197,8 +197,8 @@ function parseStatement(cursor: Cursor): Stmt {
   }
 
   switch (token.value) {
-    case "loop":
-      return parseLoop(cursor);
+    case "start":
+      return parseStart(cursor);
     case "scene":
       return parseScene(cursor);
     case "create":
@@ -211,16 +211,16 @@ function parseStatement(cursor: Cursor): Stmt {
       throw cursor.fail(
         "E_UNKNOWN_STATEMENT",
         `unknown statement '${token.raw}'`,
-        "statements start with loop, scene, create, control, or when",
+        "statements start with start, scene, create, control, or when",
       );
   }
 }
 
-function parseLoop(cursor: Cursor): Stmt {
+function parseStart(cursor: Cursor): Stmt {
   const line = cursor.peek().line;
   cursor.next();
   const scene = cursor.expectIdent("a scene name");
-  return { kind: "loop", scene: scene.value, line };
+  return { kind: "start", scene: scene.value, line };
 }
 
 function parseScene(cursor: Cursor): Stmt {
@@ -280,21 +280,51 @@ function parseControl(cursor: Cursor): Stmt {
   return { kind: "control", entity: entity.value, action: action.value, assignments, mode, line };
 }
 
+/**
+ * `when <trigger> [in <scene>] [if <expr>] then <assignments> [else <assignments>]`
+ *
+ * `then` is required and `else` is optional. The keyword costs a word and buys
+ * a clear seam between the condition and the consequence — which matters most
+ * on the long rules, where the trigger and the assignment list would otherwise
+ * run together with nothing but a bracket between them.
+ */
 function parseWhen(cursor: Cursor): Stmt {
   const line = cursor.peek().line;
   cursor.next();
 
   const event = parseEvent(cursor);
+
   let scene: string | undefined;
   if (cursor.eatKeyword("in")) {
     scene = cursor.expectIdent("a scene name").value;
   }
+
+  let guard: Expr | undefined;
+  if (cursor.eatKeyword("if")) {
+    guard = parseExpr(cursor, 0);
+  }
+
+  if (!cursor.eatKeyword("then")) {
+    throw cursor.fail(
+      "E_SYNTAX",
+      `expected \`then\` but found ${describe(cursor.peek())}`,
+      "a rule reads `when <trigger> then <assignments>`",
+    );
+  }
   const assignments = parseAssignmentList(cursor);
+
+  let otherwise: Assignment[] | undefined;
+  if (cursor.eatKeyword("else")) {
+    otherwise = parseAssignmentList(cursor);
+  }
+
   return {
     kind: "when",
     event,
     ...(scene === undefined ? {} : { scene }),
+    ...(guard === undefined ? {} : { guard }),
     assignments,
+    ...(otherwise === undefined ? {} : { otherwise }),
     line,
   };
 }
@@ -452,8 +482,29 @@ function parsePropList(cursor: Cursor): Prop[] {
   return parsePairs(cursor);
 }
 
+/**
+ * Assignments after `then` or `else`.
+ *
+ * Brackets are optional for a single `name as value`, because `then xdirection
+ * as flip` is the common case and the brackets add nothing. They stay required
+ * for the `(name value)` pair form, where they are what marks the boundary
+ * between one pair and the next.
+ */
 function parseAssignmentList(cursor: Cursor): Assignment[] {
   if (cursor.atStatementEnd()) return [];
+
+  if (!cursor.atPunct("(")) {
+    const name = cursor.expectIdent("a property to set");
+    if (!cursor.eatKeyword("as")) {
+      throw cursor.fail(
+        "E_SYNTAX",
+        `expected \`as\` after '${name.raw}'`,
+        "without brackets a rule sets exactly one property: `then speed as 0`",
+      );
+    }
+    return [{ target: splitTarget(name.value, name.line), value: parseExpr(cursor, 0) }];
+  }
+
   return parsePairs(cursor).map((pair) => ({
     target: splitTarget(pair.name, pair.line),
     value: pair.value,

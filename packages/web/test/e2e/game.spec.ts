@@ -74,7 +74,7 @@ test("reports a source error without blanking the preview", async ({ page }) => 
   await page.goto("/#section=game");
   await page
     .getByLabel("Demotic game source")
-    .fill("loop play\nscene play\ncreate object d (wibble 1)");
+    .fill("start play\nscene play\ncreate object d (wibble 1)");
   await expect(page.locator(".diag-error")).toContainText("E_UNKNOWN_PROP");
   await expect(page.locator(".game-canvas")).toBeVisible();
 });
@@ -121,7 +121,7 @@ test("renders the language reference from the registry", async ({ page }) => {
 
   // Every statement keyword the compiler knows is documented here.
   const statements = page.locator(".doc-body");
-  for (const keyword of ["loop", "scene", "create object", "control", "when"]) {
+  for (const keyword of ["start", "scene", "create object", "control", "when"]) {
     await expect(statements).toContainText(keyword);
   }
 

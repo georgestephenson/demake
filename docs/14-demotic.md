@@ -181,13 +181,26 @@ to generate and patch programmatically.
 ### Statements
 
 ```
-loop <scene>                                   -- entry point; exactly one per program
+start <scene>                                  -- entry point; exactly one per program
 scene <name>                                   -- declare a scene
 create object <class> ( <props> )              -- class definition with defaults
 create <class> <name> [in <scene>] ( <props> ) -- instance, overriding class defaults
 control <object> <button> ( <assigns> ) on hold|press|release
-when <event> [in <scene>] ( <assigns> )
+when <trigger> [in <scene>] [if <expr>] then <assigns> [else <assigns>]
 ```
+
+`then` separates the condition from the consequence. It costs a word and buys a
+seam that long rules badly need — without it the trigger and the assignment list
+run together with nothing but a bracket between them. Brackets are optional
+around a single `name as value`, so the common case reads
+`then xdirection as flip`, and stay required for the `(name value)` pair form
+where they mark one pair from the next.
+
+`if` guards a trigger with a condition, evaluated at the instant the trigger
+fires: `when a pressed if shot.visible = 0` is how firing reloads rather than
+restarts. `else` runs when the rule was evaluated and did not fire, so it is
+allowed on level triggers and on any guarded rule — and rejected on a bare edge
+trigger, where "did not fire" would mean every other tick of the game.
 
 Argument lists accept two shapes:
 
@@ -258,6 +271,7 @@ rather than a split in this one.
 | `when <a> touches <b>, <c>` | level — every tick they overlap |
 | `when <button> pressed \| released` | edge |
 | `when <expr> reaches <expr>` | edge — when the value crosses or lands on the target |
+| `when <class>.<prop> <op> <expr>` | level — once per object of that class |
 | `when <expr>` | level — every tick it holds |
 
 **`hits` and `touches` are both needed and neither substitutes for the other.** A
@@ -267,6 +281,12 @@ suppresses runs away unseen: a hero standing on a ledge under `hits` keeps
 accumulating gravity into `ydirection` while the separation holds it in place, so
 it looks correct and then fights the next jump. Sitting on something is not an
 event.
+
+**A level rule naming a class runs once per object of it**, with that object
+bound as the subject, exactly as a `hits` rule binds the thing that collided. So
+`when rock.y >= screenheight then y as 0` recycles every rock, and `y` means
+*this* rock's. Naming two classes has no single subject to pick and is an error
+rather than a guess.
 
 **`reaches` is a crossing detector, not a threshold.** "reaches 10" on a rising
 score and "reaches 0" on falling lives have to mean the same thing, and a `>=`

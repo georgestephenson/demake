@@ -7,7 +7,7 @@
 --   * an object resting on another rather than bouncing off it
 --   * a collectible that disappears and scores
 
-loop play
+start play
 
 scene play
 
@@ -33,7 +33,7 @@ create number score in play (value 0, x 1, y 1)
 -- Gravity: a constant downward nudge, clamped so the fall has a terminal speed.
 -- Without the clamp a long drop tunnels through the floor in one tick, which the
 -- compiler would tell you about.
-when always in play (player.ydirection) as min(player.ydirection + 0.04, 0.9)
+when always in play then player.ydirection as min(player.ydirection + 0.04, 0.9)
 
 control player left (xdirection -1) on hold
 control player right (xdirection 1) on hold
@@ -42,14 +42,14 @@ control player right (xdirection 1) on hold
 -- however long the button is held down.
 control player a (ydirection -0.85) on press
 
-when player hits screenleft, screenright (xdirection) as 0
-when player touches screenbottom (ydirection) as 0
+when player hits screenleft, screenright then xdirection as 0
+when player touches screenbottom then ydirection as 0
 
 -- Landing. This is `touches`, not `hits`, and the difference is the whole reason
 -- `touches` exists: `hits` fires once, on contact, so gravity would go on adding
 -- to `ydirection` every tick the hero stood still. The separation would keep it
 -- looking correct while the state ran away underneath — and the first jump after
 -- a long stand would be fought by a full tick of accumulated fall.
-when player touches ledge (ydirection) as 0
+when player touches ledge then ydirection as 0
 
-when player hits coin (coin.visible, score.value) as (0, score.value + 1)
+when player hits coin then (coin.visible, score.value) as (0, score.value + 1)

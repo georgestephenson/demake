@@ -5,16 +5,16 @@
 
 Case-insensitive throughout. `--` begins a comment. **One statement per line, no nesting**, and declaration order does not matter.
 
-## `loop`
+## `start`
 
-Names the scene the game starts on. Exactly one per program.
-
-```
-loop <scene>
-```
+Names the scene the game begins on. Exactly one per program.
 
 ```
-loop title
+start <scene>
+```
+
+```
+start title
 ```
 
 ## `scene`
@@ -72,9 +72,11 @@ control paddle1 left (xdirection -1) on hold
 Fires assignments when something happens, or while something holds.
 
 ```
-when <trigger> [in <scene>] ( <assignments> )
+when <trigger> [in <scene>] [if <expr>] then <assignments> [else <assignments>]
 ```
 
 ```
-when ball hits screenleft, screenright (xdirection) as flip
+when ball hits screenleft, screenright then xdirection as flip
 ```
+
+`then` separates the condition from the consequence, which is what makes a long rule readable. `if` guards a trigger with a condition — `when a pressed if shot.visible = 0` is how a rule fires only when the state allows it. `else` runs when the rule was evaluated and did not fire, so it is allowed on level triggers and on any guarded rule, but not on a bare edge trigger, where "did not fire" would mean every other tick of the game. Brackets are optional around a single `name as value`.

@@ -241,10 +241,10 @@ export interface StatementSpec {
 /** Statements, in the order a program tends to use them. */
 export const STATEMENTS: readonly StatementSpec[] = [
   {
-    keyword: "loop",
-    syntax: "loop <scene>",
-    summary: "Names the scene the game starts on. Exactly one per program.",
-    example: "loop title",
+    keyword: "start",
+    syntax: "start <scene>",
+    summary: "Names the scene the game begins on. Exactly one per program.",
+    example: "start title",
   },
   {
     keyword: "scene",
@@ -273,9 +273,10 @@ export const STATEMENTS: readonly StatementSpec[] = [
   },
   {
     keyword: "when",
-    syntax: "when <trigger> [in <scene>] ( <assignments> )",
+    syntax: "when <trigger> [in <scene>] [if <expr>] then <assignments> [else <assignments>]",
     summary: "Fires assignments when something happens, or while something holds.",
-    example: "when ball hits screenleft, screenright (xdirection) as flip",
+    example: "when ball hits screenleft, screenright then xdirection as flip",
+    note: '`then` separates the condition from the consequence, which is what makes a long rule readable. `if` guards a trigger with a condition — `when a pressed if shot.visible = 0` is how a rule fires only when the state allows it. `else` runs when the rule was evaluated and did not fire, so it is allowed on level triggers and on any guarded rule, but not on a bare edge trigger, where "did not fire" would mean every other tick of the game. Brackets are optional around a single `name as value`.',
   },
 ];
 
@@ -294,34 +295,41 @@ export const TRIGGERS: readonly TriggerSpec[] = [
     syntax: "<a> hits <b>, <c>",
     timing: "edge",
     summary: "On contact, once — not once per tick of contact.",
-    example: "when ball hits paddle (ydirection) as flip",
+    example: "when ball hits paddle then ydirection as flip",
     note: "Bare class names bind to the two objects that collided, and an unqualified property targets the subject.",
   },
   {
     syntax: "<a> touches <b>, <c>",
     timing: "level",
     summary: "Every tick two things overlap.",
-    example: "when player touches ledge (ydirection) as 0",
+    example: "when player touches ledge then ydirection as 0",
     note: "Resting contact is not an event. Under `hits`, a hero standing on a ledge keeps accumulating gravity into `ydirection` while the separation holds it in place — it looks right, then fights the next jump.",
   },
   {
     syntax: "<button> pressed | released",
     timing: "edge",
     summary: "On the button's edge, once per press.",
-    example: "when a pressed in title (scene) as play",
+    example: "when a pressed in title then scene as play",
   },
   {
     syntax: "<expr> reaches <expr>",
     timing: "edge",
     summary: "When a value lands on a target or crosses it from either side.",
-    example: "when score1.value reaches 10 in play (scene) as gameover",
+    example: "when score1.value reaches 10 in play then scene as gameover",
     note: "A crossing detector, not a threshold: `reaches 0` on falling lives and `reaches 10` on a rising score must mean the same thing, and `>=` cannot express both. A value that *starts* on its target has not reached it.",
+  },
+  {
+    syntax: "<class>.<property> <op> <expr>",
+    timing: "level",
+    summary: "Every tick, once per object of that class, with it bound as the subject.",
+    example: "when rock.y >= screenheight then y as 0",
+    note: "A level rule naming exactly one class runs once per instance of it, so an unqualified property means *this* object's. One line replaces one rule per object, and one place to forget one. Naming two classes has no single subject to pick and is an error rather than a guess.",
   },
   {
     syntax: "<expr>",
     timing: "level",
     summary: "Every tick the expression is non-zero.",
-    example: "when always in play (paddle2.xdirection) as clamp(error / 1.5vw, -1, 1)",
+    example: "when always in play then paddle2.xdirection as clamp(error / 1.5vw, -1, 1)",
     note: "Level rules apply in program order and the last write wins, which is how a proportional controller and its limits compose.",
   },
 ];
@@ -350,7 +358,17 @@ export const DIAGNOSTICS: readonly DiagnosticSpec[] = [
     summary: "A scene was named that is never declared.",
   },
   { code: "E_DUPLICATE_SCENE", severity: "error", summary: "Two scenes share a name." },
-  { code: "E_DUPLICATE_LOOP", severity: "error", summary: "More than one `loop` statement." },
+  { code: "E_DUPLICATE_START", severity: "error", summary: "More than one `start` statement." },
+  {
+    code: "E_ELSE_NOT_ALLOWED",
+    severity: "error",
+    summary: '`else` on a bare edge trigger, where "did not fire" would mean every other tick.',
+  },
+  {
+    code: "E_AMBIGUOUS_CLASS",
+    severity: "error",
+    summary: "A level rule naming more than one class has no single object to bind as its subject.",
+  },
   {
     code: "E_UNKNOWN_CLASS",
     severity: "error",

@@ -34,7 +34,7 @@ describe("language registry", () => {
 
   it("documents every property the compiler accepts", () => {
     // Ask the compiler for its own list, via the hint it produces on a bad one.
-    const source = ["loop p", "scene p", "create object o (nonsense 1)"].join("\n");
+    const source = ["start p", "scene p", "create object o (nonsense 1)"].join("\n");
     const hint = check(source, { profile: gb }).diagnostics[0]?.hint ?? "";
     const documented = PROPERTIES.filter((p) => !p.derived)
       .map((p) => p.name)
@@ -46,19 +46,33 @@ describe("language registry", () => {
     // Every code produced by the diagnostics fixtures must be in the registry.
     const codes = new Set(DIAGNOSTICS.map((d) => d.code));
     const provoke: string[][] = [
-      ["loop nowhere"],
-      ["loop p", "scene p", "scene p"],
-      ["loop p", "scene p", "create object o (wibble 1)"],
-      ["loop p", "scene p", "create ghost g in p ()"],
-      ["loop p", "scene p", "create object o ()", "create o a in p ()", "control a x (speed 1)"],
-      ["loop p", "scene p", "create object o ()", "create o a in p ()", "when a pressed (x) as 0"],
-      ["loop p", "scene p", "create object o (sprite o.png)", "create o a in p (width 30)"],
-      ["loop p", "scene p", "create object o (sprite o.png)", "create o a in p (speed 0.0001)"],
+      ["start nowhere"],
+      ["start p", "scene p", "scene p"],
+      ["start p", "scene p", "create object o (wibble 1)"],
+      ["start p", "scene p", "create ghost g in p ()"],
+      ["start p", "scene p", "create object o ()", "create o a in p ()", "control a x (speed 1)"],
       [
-        "loop p",
+        "start p",
+        "scene p",
+        "create object o ()",
+        "create o a in p ()",
+        "when a pressed then x as 0",
+      ],
+      ["start p", "scene p", "create object o (sprite o.png)", "create o a in p (width 30)"],
+      ["start p", "scene p", "create object o (sprite o.png)", "create o a in p (speed 0.0001)"],
+      [
+        "start p",
         "scene p",
         "create object o (sprite o.png)",
         "create o a in p (width 10vw, height 10vh)",
+      ],
+      // `else` on a bare edge trigger, and a level rule naming two classes.
+      [
+        "start p",
+        "scene p",
+        "create object o (sprite o.png)",
+        "create o a in p ()",
+        "when a hits screenleft then speed as 0 else speed as 1",
       ],
     ];
     for (const lines of provoke) {
@@ -72,7 +86,7 @@ describe("language registry", () => {
     // A documented example that does not parse is worse than no example. Each
     // is checked inside a minimal program that gives it the names it references.
     const preamble = [
-      "loop title",
+      "start title",
       "scene title",
       "scene play",
       "scene gameover",
@@ -92,11 +106,13 @@ describe("language registry", () => {
 
     const examples = [
       ...STATEMENTS.map((s) => s.example),
-      "when player touches ledge (ydirection) as 0",
-      "when score1.value reaches 10 in play (scene) as gameover",
-      "when a pressed in title (scene) as play",
-      "when ball hits paddle (ydirection) as flip",
-      "when always in play (paddle2.xdirection) as clamp((ball0.x - paddle2.x) / 1.5vw, -1, 1)",
+      "when player touches ledge then ydirection as 0",
+      "when score1.value reaches 10 in play then scene as gameover",
+      "when a pressed in title then scene as play",
+      "when ball hits paddle then ydirection as flip",
+      "when always in play then paddle2.xdirection as clamp((ball0.x - paddle2.x) / 1.5vw, -1, 1)",
+      "when a pressed if ball0.visible = 1 then ball0.speed as 0",
+      "when ball0.y > centery then ball0.ydirection as -1 else ball0.ydirection as 1",
     ];
 
     for (const example of examples) {
@@ -104,12 +120,12 @@ describe("language registry", () => {
       // redeclare what it already has — so each gets the minimum program that
       // makes it valid on its own.
       let source: string;
-      if (example.startsWith("loop ")) {
-        source = [example, `scene ${example.slice(5)}`].join("\n");
+      if (example.startsWith("start ")) {
+        source = [example, `scene ${example.slice(6)}`].join("\n");
       } else if (example.startsWith("scene ")) {
-        source = [`loop ${example.slice(6)}`, example].join("\n");
+        source = [`start ${example.slice(6)}`, example].join("\n");
       } else if (example.startsWith("create object")) {
-        source = ["loop p", "scene p", example].join("\n");
+        source = ["start p", "scene p", example].join("\n");
       } else if (example.startsWith("create ")) {
         // An instance example declares its own object, so the preamble must not
         // also declare one by that name.
@@ -134,7 +150,7 @@ describe("language registry", () => {
 
   it("resolves every documented constant on every console", () => {
     // A constant in the reference that the compiler rejects is a broken promise.
-    const source = ["loop p", "scene p", "create object o (sprite o.png)"].join("\n");
+    const source = ["start p", "scene p", "create object o (sprite o.png)"].join("\n");
     for (const profile of profiles) {
       for (const name of ["screenwidth", "screenheight", "centerx", "fps", "always", "never"]) {
         const errors = check([source, `create o a in p (x ${name})`].join("\n"), {

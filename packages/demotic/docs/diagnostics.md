@@ -12,7 +12,9 @@ Every one of these is a mistake the cell-and-tick model makes easy to write and 
 | `E_NO_ENTRY` | No `loop` statement, so the game has no entry point. |
 | `E_UNKNOWN_SCENE` | A scene was named that is never declared. |
 | `E_DUPLICATE_SCENE` | Two scenes share a name. |
-| `E_DUPLICATE_LOOP` | More than one `loop` statement. |
+| `E_DUPLICATE_START` | More than one `start` statement. |
+| `E_ELSE_NOT_ALLOWED` | `else` on a bare edge trigger, where "did not fire" would mean every other tick. |
+| `E_AMBIGUOUS_CLASS` | A level rule naming more than one class has no single object to bind as its subject. |
 | `E_UNKNOWN_CLASS` | An object was created from a class that is never declared. |
 | `E_DUPLICATE_CLASS` | Two classes share a name. |
 | `E_RESERVED_CLASS` | A builtin class name (`number`, `text`) was redeclared. |
