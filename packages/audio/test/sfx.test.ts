@@ -108,10 +108,17 @@ describe("demaking an effect", () => {
     expect(result.script.channels).toHaveLength(1);
   });
 
-  it("fits a sweep with a sweep", () => {
-    const result = demakeSfx(wavOf(sweep(300, 1400, 0.3)), { console: "dmg" });
-    expect(result.soundClass).toBe("swept");
-    expect(result.tournament.winner).toMatch(/^sweep|arp/);
+  it("fits a rising sweep with a rising sweep, and a falling one with a fall", () => {
+    // Direction is the whole difference between these two families, so getting
+    // it right is the minimum bar. It needs scoring pitch against what the
+    // hardware will *play* rather than against a pitch tracker's reading of our
+    // own square wave, which makes octave errors on a narrow duty cycle.
+    const up = demakeSfx(wavOf(sweep(300, 1400, 0.3)), { console: "dmg" });
+    expect(up.soundClass).toBe("swept");
+    expect(up.tournament.winner).toBe("sweep-up");
+
+    const down = demakeSfx(wavOf(sweep(1700, 500, 0.3)), { console: "dmg" });
+    expect(down.tournament.winner).toBe("sweep-down");
   });
 
   it("never answers a noise burst with a pure tone", () => {

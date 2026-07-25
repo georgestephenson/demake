@@ -16,8 +16,8 @@ real emulator, compared pixel for pixel):
 | --------------------- | ------ | --------------------------------------------------------------- |
 | art (images)          | 03–06  | working, eight Tier 1 consoles proven                           |
 | game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and a playable `gb` ROM |
-| music                 | 16, 17 | designed, not built                                             |
-| sound                 | 16, 18 | designed, not built                                             |
+| music (`arrange`)     | 16, 17 | MIDI → chip music + exact audio, six consoles                   |
+| sound (`sfx`)         | 16, 18 | WAV → chip effects, six consoles                                |
 
 Every domain has the same shape, which is why they share a repo: **constrain →
 fit → emit → prove it on emulated hardware**. Each reuses the layer below — a
@@ -67,14 +67,18 @@ framebuffer/scanline layout paths (Lynx, GBA/NDS bitmap modes, 2600/7800), and
 the rest of the Demotic runtime story (levels, art binding, the other CPU
 families, and the speed work doc 14 §Runtime model names).
 
-**The audio domains are designed and unbuilt.** Docs
-[16](docs/16-audio-engine.md), [17](docs/17-music-demaker.md) and
-[18](docs/18-sound-demaker.md) specify the chip layer, `arrange` and `sfx` to the
-standard docs 04 and 14 set. Nothing exists in `packages/` yet; the planned
-packages are `@demake/chip` (every sound chip as a register-driven model,
-depending on nothing, the way `dmg` does) and `@demake/audio` (the two demakers,
-depending on `core` and `chip`). Read doc 16 before starting any of it — three of
-its decisions are load-bearing and easy to undo by accident (§Working on audio).
+**The audio spine is built** (docs [16](docs/16-audio-engine.md),
+[17](docs/17-music-demaker.md), [18](docs/18-sound-demaker.md)): `@demake/chip`
+models the Game Boy APU, the SN76489 and the NES 2A03; `@demake/audio` holds both
+demakers; and `demake arrange`, `demake sfx` and `demake render` work for `dmg`,
+`gbc`, `nes`, `sms`, `gg` and `sg1000`. A track becomes a `.vgm` plus a WAV that
+is exactly what the schedule produces.
+
+Still to come for audio: the driver and ROM emit (so nothing boots yet), the
+emulator proof loop, the remaining chips (YM2612, S-DSP, the handhelds), tracker
+and lossy-audio input with the transcription front end, FLAC/M4A export, and the
+two web sections. Read doc 16 before touching any of it — several of its
+decisions are load-bearing and easy to undo by accident (§Working on audio).
 
 ## Layout map
 
@@ -114,6 +118,20 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
   src/codegen/       the console backend: SM83 assembler, analysis, RAM layout,
                      expression/rule/level emitters, and the `gb` ROM builder
   demo/              terminal runner (play.mjs) and test runner (test.mjs)
+packages/chip/       @demake/chip — every sound chip as a register-driven model (doc 16)
+  src/gb-apu.ts      Game Boy APU: 2 pulse + wave + noise, envelopes, panning
+  src/sn76489.ts     the SMS/GG/SG-1000 PSG: no envelopes, ~109 Hz pitch floor
+  src/nes-apu.ts     the 2A03: volume-less triangle, non-linear mixing
+  src/mix.ts         exact box-integration render, DC block, the one renderer
+packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 18)
+  src/score/         Score: the hardware-free representation, and the MIDI parser
+  src/analysis.ts    roles, salience, sections, loop choice
+  src/arrange/       assignment, exchange refinement, and the schedule compiler
+  src/binding/       per-console register encoders + the driver-rate fits
+  src/timing.ts      absolute row placement: the tempo guarantee lives here
+  src/sfx/           gesture families, class gate, hardware-in-the-loop fitting
+  src/dsp.ts         deterministic FFT/resampler/pitch, all on core's kernels
+  src/render.ts      ChipScript → PCM; the only way anything makes sound
 tools/eslint-rules/  custom ESLint rules: platform-purity + determinism
 tools/ci/            CI guards: E2E prerequisites, web JS budget
 docs/                the design plan; source of truth for decisions

@@ -19,6 +19,7 @@ import {
 } from "@demake/cli-spec";
 import { CORE_VERSION } from "@demake/core";
 
+import { runArrange, runRender, runSfx } from "./commands/audio.js";
 import { runBuild } from "./commands/build.js";
 import { runConsoles } from "./commands/consoles.js";
 import { runGen } from "./commands/gen.js";
@@ -98,6 +99,12 @@ export async function run(argv: readonly string[], env: CliEnv): Promise<ExitCod
         return await runGen(env, parsed.values, parsed.positionals);
       case "build":
         return await runBuild(env, parsed.values, parsed.positionals);
+      case "arrange":
+        return await runArrange(env, parsed.values, parsed.positionals);
+      case "sfx":
+        return await runSfx(env, parsed.values, parsed.positionals);
+      case "render":
+        return await runRender(env, parsed.values, parsed.positionals);
       default:
         env.errOut(`demake: '${command.name}' is not implemented.\n`);
         return EXIT.UNAVAILABLE;

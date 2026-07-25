@@ -36,8 +36,8 @@ images are only one kind (doc 01 §Scope):
 |---|---|---|
 | **demotic game demaker** | write a `.dmt`, play it on any console, run its `.test.dmt` suite | live |
 | **art demaker** | the image pipeline described below | live |
-| **music demaker** | tracks → chip music (docs 16, 17) | designed, not built |
-| **sound demaker** | effects → chip sound (docs 16, 18) | designed, not built |
+| **music demaker** | tracks → chip music (docs 16, 17) | engine built, section not |
+| **sound demaker** | effects → chip sound (docs 16, 18) | engine built, section not |
 
 The route lives in the hash as `#section=<id>`, and the **art demaker is the
 unmarked default** — so every option permalink shared before the site grew

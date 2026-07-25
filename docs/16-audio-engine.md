@@ -13,8 +13,12 @@ same shape:
 
 > **constrain → fit → emit → prove it on emulated hardware.**
 
-**Status: planned.** Nothing in this document is built. It is written to the same
-standard as docs 04 and 14: specific enough to implement section by section.
+**Status: the spine is built.** `@demake/chip` models the Game Boy APU, the
+SN76489 and the NES 2A03; `@demake/audio` implements both demakers over them;
+`arrange`, `sfx` and `render` are live in the CLI for `dmg`, `gbc`, `nes`, `sms`,
+`gg` and `sg1000`. What is not built: the remaining chips (YM2612, S-DSP, the
+handhelds), the driver and ROM emit (§The driver contract), the emulator proof
+loop (§The proof), the lossy encoders, and the web sections.
 
 ## The load-bearing idea, restated for sound
 

@@ -1,0 +1,83 @@
+.TH DEMAKE\-ARRANGE 1 "" "" "Convert any track into hardware\-compliant chip music"
+.SH NAME
+demake-arrange \- Convert any track into hardware\-compliant chip music
+.SH SYNOPSIS
+\fBdemake arrange\fR [\fIoptions\fR] [\fIinput\fR]
+.SH DESCRIPTION
+Convert any track into hardware\-compliant chip music.
+.SH OPTIONS
+.TP
+\fB\-c\fR, \fB\-\-console\fR \fI<id>\fR
+Target console id or alias (e.g. gb, nes, sms). [required]
+.TP
+\fB\-\-preview\fR \fI<file>\fR
+Also write a playable audio file of the exact result.
+.TP
+\fB\-\-preview-format\fR \fIvalue\fR
+Preview encoding. WAV is sample\-exact; lossy formats land with their encoders. (default: wav)
+.TP
+\fB\-\-output-stage\fR \fIvalue\fR
+Raw chip output, or the console's analog stage simulated. (default: raw)
+.TP
+\fB\-\-effort\fR \fIvalue\fR
+Search budget: one candidate, a pruned portfolio, or the full one. (default: default)
+.TP
+\fB\-\-strategy\fR \fIauto|<name>|list\fR
+Tournament control: auto (default), a candidate name, or list. (default: auto)
+.TP
+\fB\-\-strict\fR
+Fail rather than degrade.
+.TP
+\fB\-\-emit-manifest\fR \fI[path]\fR
+Also write the sidecar JSON: channel plan, timing, budgets, provenance.
+.TP
+\fB\-\-bpm\fR \fI<n>\fR
+Override the detected tempo.
+.TP
+\fB\-\-tempo\fR \fIvalue\fR
+Hold the source tempo, or let the bounded tempo grade pick a cheaper grid. (default: exact)
+.TP
+\fB\-\-role\fR \fI<part>=<role>\fR
+Override a part's role (percussion|bass|lead|harmony|pad|arp|fx); repeatable.
+.TP
+\fB\-\-drop\fR \fI<part>\fR
+Exclude a part outright; repeatable.
+.TP
+\fB\-\-channels\fR \fI<n>\fR
+Cap the channels used; the rest stay silent.
+.TP
+\fB\-\-reserve\fR \fI<channel>\fR
+Keep a channel free for sound effects; repeatable.
+.TP
+\fB\-\-title\fR \fI<text>\fR
+Track title, stored in the file.
+.TP
+\fB\-o\fR, \fB\-\-output\fR \fI<file>\fR
+Write the artifact to <file> (default: stdout when piped).
+.TP
+\fB\-\-json\fR
+Emit a single JSON object on stdout (product goes to \-o).
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Increase diagnostic detail (repeatable).
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Suppress warnings.
+.TP
+\fB\-f\fR, \fB\-\-force\fR
+Overwrite an existing output file.
+.SH EXAMPLES
+.PP
+demake arrange song.mid \-c gb \-o song.vgm \-\-preview song.wav
+.br
+chip music, plus audio that is exactly what the cartridge plays
+.PP
+demake arrange track.mid \-c nes \-\-bpm 128 \-\-role 3=bass
+.br
+pin the tempo, correct a role
+.PP
+demake arrange song.mid \-c sms \-\-json
+.br
+channel plan, timing, drops, scoreboard
+.SH SEE ALSO
+\fBdemake\fR(1)

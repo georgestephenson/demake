@@ -55,6 +55,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@demake/audio':
+        specifier: workspace:*
+        version: link:../audio
       '@demake/cli-spec':
         specifier: workspace:*
         version: link:../cli-spec

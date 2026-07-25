@@ -11,7 +11,11 @@ contract that lets you hear the result exactly — is [doc 16](16-audio-engine.m
 The sound-effect demaker is [doc 18](18-sound-demaker.md), and it shares
 everything in doc 16.
 
-**Status: planned.**
+**Status: built for MIDI input.** Ingest, analysis, the arrangement tournament,
+timbre and timing fitting, the judge and the artifact all exist and run on six
+consoles. Tracker modules and the audio-input transcription front end (§Stage 0)
+are not built, nor is the reference synthesizer the timbral metrics need — so
+the judge is symbolic today and says so.
 
 ## The objective: it still has to be the tune
 

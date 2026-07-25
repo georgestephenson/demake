@@ -17,6 +17,7 @@ import { silentFrames, type ChipBinding } from "../binding/types.js";
 import type { ChannelFrame, ChipScript, TickWrites } from "../chipscript.js";
 import { countWrites, peakWritesPerTick } from "../chipscript.js";
 import { correlation, resample, resize } from "../dsp.js";
+import { snapPitch } from "../pitch.js";
 import { encodeVgm } from "../encode/vgm.js";
 import { inspectScript } from "../inspect.js";
 import { render } from "../render.js";
@@ -161,6 +162,7 @@ export function demakeSfx(bytes: Uint8Array, options: SfxOptions): SfxResult {
       channelIndex,
       rate,
       scoringTarget,
+      features,
       options,
     );
     const script = buildScript(gesture, refined.params, spec, binding, channelIndex, rate);
@@ -232,12 +234,22 @@ function refine(
   binding: ChipBinding,
   channelIndex: number,
   rate: { num: number; den: number },
-  features: SoundFeatures,
+  target: SoundFeatures,
+  pitchTarget: SoundFeatures,
   options: SfxOptions,
 ): { params: GestureParams; score: number; metrics: { id: string; score: number }[] } {
   const passes = (options.effort ?? "default") === "max" ? 3 : 1;
   let current = seed;
-  let evaluation = evaluate(gesture, current, spec, binding, channelIndex, rate, features);
+  let evaluation = evaluate(
+    gesture,
+    current,
+    spec,
+    binding,
+    channelIndex,
+    rate,
+    target,
+    pitchTarget,
+  );
 
   // Only the parameters this gesture reads: sweeping a duty cycle on a noise
   // burst is dozens of renders that cannot change the answer.
@@ -261,7 +273,16 @@ function refine(
       for (const value of sweep.values) {
         if (current[sweep.key] === value) continue;
         const candidate = { ...current, [sweep.key]: value } as GestureParams;
-        const trial = evaluate(gesture, candidate, spec, binding, channelIndex, rate, features);
+        const trial = evaluate(
+          gesture,
+          candidate,
+          spec,
+          binding,
+          channelIndex,
+          rate,
+          target,
+          pitchTarget,
+        );
         if (trial.score > evaluation.score + 1e-9) {
           current = candidate;
           evaluation = trial;
@@ -299,7 +320,9 @@ function evaluate(
   channelIndex: number,
   rate: { num: number; den: number },
   target: SoundFeatures,
+  pitchTarget: SoundFeatures,
 ): { score: number; metrics: { id: string; score: number }[] } {
+  const lane = gesture.frames(params);
   const script = buildScript(gesture, params, spec, binding, channelIndex, rate);
   // Scoring renders at a lower rate with a coarser hop. The shapes being
   // compared — envelope, noisiness, brightness — survive that intact, and the
@@ -316,12 +339,30 @@ function evaluate(
   const envelopeScore = half(
     correlation(resize(target.envelope, length), resize(rendered.envelope, length)),
   );
-  const noiseScore = half(
-    correlation(resize(target.noisiness, length), resize(rendered.noisiness, length)),
-  );
-  const brightScore = half(
-    correlation(resize(target.brightness, length), resize(rendered.brightness, length)),
-  );
+  // Pitch is scored against what the hardware will *play* rather than against a
+  // pitch tracker's reading of our own square wave. The lattice snap is
+  // deterministic and already applied here, so this is the frequency the chip
+  // emits — exact, free, and without the octave errors autocorrelation makes on
+  // a narrow duty cycle. Timbre and envelope still come from the render, where
+  // there is no substitute for hearing what the chip did.
+  const intended = spec.channels[channelIndex]!.pitch
+    ? lane.map((frame) =>
+        frame.on ? snapPitch(spec.channels[channelIndex]!.pitch!, frame.hz).hz : 0,
+      )
+    : [];
+  // Pitch is compared against the source's *full-rate* track. The coarse
+  // scoring analysis exists to make render-based metrics cheap; a pitch track is
+  // measured once from the source and does not need re-measuring per candidate,
+  // and measuring it coarsely costs an octave error that can invert a gesture.
+  const pitchScore = pitchContour(pitchTarget, intended, Math.max(8, pitchTarget.f0.length));
+  // Noisiness and brightness are compared as *levels*, not shapes. Both tracks
+  // are near-constant over a short effect, and correlating two flat series says
+  // nothing — which is how a pure tone came to out-score a drum on a noise
+  // burst. Envelope and pitch stay correlations, because those genuinely are
+  // shapes.
+  const noiseScore =
+    1 - Math.min(1, Math.abs(meanOf(target.noisiness) - meanOf(rendered.noisiness)));
+  const brightScore = octaveAgreement(meanOf(target.brightness), meanOf(rendered.brightness));
   const durationScore =
     target.durationSeconds === 0
       ? 0
@@ -334,22 +375,95 @@ function evaluate(
   // rendered sound in the wrong class scores zero however well it correlates.
   const classScore = rendered.soundClass === target.soundClass ? 1 : 0.25;
 
-  const metrics = [
-    { id: "envelope", score: envelopeScore },
-    { id: "noisiness", score: noiseScore },
-    { id: "brightness", score: brightScore },
-    { id: "duration", score: durationScore },
-    { id: "class", score: classScore },
+  const metrics: { id: string; score: number; weight: number }[] = [
+    { id: "envelope", score: envelopeScore, weight: 0.28 },
+    { id: "noisiness", score: noiseScore, weight: 0.16 },
+    { id: "brightness", score: brightScore, weight: 0.1 },
+    { id: "duration", score: durationScore, weight: 0.11 },
+    { id: "class", score: classScore, weight: 0.11 },
   ];
-  const weights = [0.35, 0.2, 0.15, 0.15, 0.15];
+  // Pitch applies only to a pitched channel. A noise burst has no pitch to get
+  // right, so the metric is *omitted* and the remaining weights renormalized —
+  // scoring it a neutral 0.5 instead would hand every pitched candidate a lead
+  // no drum could ever make up, which is how a snare ends up as a beep.
+  // Pitch's weight scales with how pitched the source actually is. A noise
+  // burst has 30% voiced frames of mostly spurious estimates, and a candidate
+  // that matches them should not be able to win on it.
+  if (intended.length > 0 && pitchTarget.voicedFraction > 0.2) {
+    metrics.splice(1, 0, {
+      id: "pitch-contour",
+      score: pitchScore,
+      weight: 0.24 * pitchTarget.voicedFraction,
+    });
+  }
   let score = 0;
-  for (let i = 0; i < metrics.length; i += 1) score += metrics[i]!.score * weights[i]!;
-  return { score, metrics };
+  let total = 0;
+  for (const metric of metrics) {
+    score += metric.score * metric.weight;
+    total += metric.weight;
+  }
+  return {
+    score: total === 0 ? 0 : score / total,
+    metrics: metrics.map(({ id, score: value }) => ({ id, score: value })),
+  };
 }
 
 /** Correlation is in [-1, 1]; scores are in [0, 1]. */
 function half(value: number): number {
   return (value + 1) / 2;
+}
+
+/**
+ * How well the candidate's pitch moves the way the source's did.
+ *
+ * Compared over the frames where the *source* was voiced, because a candidate's
+ * own unvoiced frames say nothing about whether it got the gesture right. This
+ * is the metric that distinguishes a rising sweep from a falling one, and
+ * without it the other four are perfectly happy to accept either — brightness
+ * tracks pitch only loosely once a square wave's harmonics are in play.
+ */
+function pitchContour(target: SoundFeatures, intended: readonly number[], length: number): number {
+  if (intended.length === 0) return 0.5;
+  const wanted = resize(target.f0, length);
+  const got = resize(intended, length);
+  const a: number[] = [];
+  const b: number[] = [];
+  for (let i = 0; i < length; i += 1) {
+    if (wanted[i]! <= 0) continue;
+    a.push(wanted[i]!);
+    b.push(got[i]!);
+  }
+  // Nothing pitched to compare: neither reward nor punish.
+  if (a.length < 3) return 0.5;
+
+  // Correlation alone discriminates weakly here, because a chip's square wave
+  // gives a noisy pitch track and both directions correlate about as badly.
+  // Trend — where the pitch ended up relative to where it started, in octaves —
+  // is the thing the sweep families actually differ in, so it is measured
+  // directly rather than hoped for.
+  const shape = half(correlation(a, b));
+  const difference = Math.abs(trend(a) - trend(b));
+  const direction = 1 - Math.min(1, difference / 2);
+  return shape * 0.4 + direction * 0.6;
+}
+
+/** Pitch travel from the first third to the last, in octaves. */
+function trend(series: readonly number[]): number {
+  const third = Math.max(1, Math.floor(series.length / 3));
+  const mean = (from: number, to: number): number => {
+    let sum = 0;
+    let count = 0;
+    for (let i = from; i < to; i += 1) {
+      if (series[i]! <= 0) continue;
+      sum += series[i]!;
+      count += 1;
+    }
+    return count === 0 ? 0 : sum / count;
+  };
+  const start = mean(0, third);
+  const end = mean(series.length - third, series.length);
+  if (start <= 0 || end <= 0) return 0;
+  return math.log(end / start) / 0.6931471805599453;
 }
 
 /** Wrap a gesture's frames into a complete, single-channel script. */
@@ -442,6 +556,13 @@ function meanOf(values: readonly number[]): number {
   let sum = 0;
   for (const value of values) sum += value;
   return sum / values.length;
+}
+
+/** How close two frequencies are, in octaves: 1 is identical, 0 is two apart. */
+function octaveAgreement(a: number, b: number): number {
+  if (a <= 0 || b <= 0) return a === b ? 1 : 0;
+  const octaves = Math.abs(math.log(a / b) / 0.6931471805599453);
+  return 1 - Math.min(1, octaves / 2);
 }
 
 function peakOf(values: readonly number[]): number {

@@ -307,7 +307,11 @@ function octaveFor(parts: readonly Part[], channel: AudioChannelSpec): number {
   const max = latticeMaxHz(channel.pitch);
   let best = 0;
   let bestInside = -1;
-  for (let shift = -3; shift <= 3; shift += 1) {
+  // Candidates are ordered by distance from home, so a tie keeps the music
+  // where it was. Iterating -3…3 instead would silently transpose everything
+  // down three octaves the moment a channel's range is generous enough to fit
+  // every shift — which is most of them.
+  for (const shift of [0, -1, 1, -2, 2, -3, 3]) {
     let inside = 0;
     let total = 0;
     for (const part of parts) {
@@ -318,7 +322,6 @@ function octaveFor(parts: readonly Part[], channel: AudioChannelSpec): number {
       }
     }
     if (total === 0) return 0;
-    // Ties prefer no shift: moving material is a cost even when it is free to fit.
     if (inside > bestInside) {
       bestInside = inside;
       best = shift;

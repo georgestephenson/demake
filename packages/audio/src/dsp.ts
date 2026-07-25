@@ -226,6 +226,7 @@ export function detectF0(
   for (let i = 0; i < decimated.length; i += 1) energy += decimated[i]! * decimated[i]!;
   if (energy === 0) return 0;
 
+  const scores = new Float64Array(maxLag + 2);
   for (let lag = minLag; lag <= maxLag; lag += 1) {
     let correlation = 0;
     let normal = 0;
@@ -235,6 +236,7 @@ export function detectF0(
     }
     if (normal === 0) continue;
     const score = correlation / Math.sqrt(energy * normal);
+    scores[lag] = score;
     if (score > bestScore) {
       bestScore = score;
       bestLag = lag;
@@ -243,7 +245,18 @@ export function detectF0(
   // Below this the "period" is as likely to be noise structure as pitch, and a
   // confident wrong answer is worse than an honest "unvoiced".
   if (bestScore < 0.3 || bestLag === 0) return 0;
-  return rate / bestLag;
+
+  // Whole-lag resolution is hopeless at the top of the range — at 8 kHz, 1700 Hz
+  // and 2000 Hz are one lag apart — so the peak is refined by fitting a parabola
+  // through its neighbours. Without this a rising sweep and a falling one
+  // produce the same quantized staircase and nothing downstream can tell them
+  // apart.
+  const previous = scores[bestLag - 1] ?? 0;
+  const next = scores[bestLag + 1] ?? 0;
+  const curvature = previous - 2 * bestScore + next;
+  const offset = curvature === 0 ? 0 : (0.5 * (previous - next)) / curvature;
+  const refined = bestLag + (offset > -1 && offset < 1 ? offset : 0);
+  return refined > 0 ? rate / refined : 0;
 }
 
 /** Box-average decimation: cheap, and enough anti-aliasing for a pitch search. */

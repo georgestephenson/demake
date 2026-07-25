@@ -16,8 +16,8 @@ of old hardware, faithfully enough that it still reads as itself.
 |---|---|---|
 | Art — images → compliant art, data, code, ROMs | 03–06 | working, eight Tier 1 consoles proven on emulated hardware |
 | Games — Demotic `.dmt` → one game, every console | [14](14-demotic.md), [15](15-demakefile.md) | language, interpreter, test runner and preview working; runtimes in progress |
-| Music — tracks → chip music and driver data | [16](16-audio-engine.md), [17](17-music-demaker.md) | designed, not built |
-| Sound — effects → chip sound | [16](16-audio-engine.md), [18](18-sound-demaker.md) | designed, not built |
+| Music — tracks → chip music and driver data | [16](16-audio-engine.md), [17](17-music-demaker.md) | `arrange` works on six consoles; no ROM yet |
+| Sound — effects → chip sound | [16](16-audio-engine.md), [18](18-sound-demaker.md) | `sfx` works on six consoles; no ROM yet |
 
 Each domain has the same shape, which is why they share a repository rather than
 merely a name: **constrain → fit → emit → prove it on emulated hardware**. Each

@@ -12,8 +12,8 @@ asserted:
 | --------- | --------------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------- |
 | **art**   | any image                                           | hardware-compliant art, palettes, tile maps, asm/C/binary, bootable ROMs | working                                       |
 | **game**  | a [Demotic](docs/14-demotic.md) `.dmt` script + art | one game, every console                                                  | language, preview and a playable Game Boy ROM |
-| **music** | a track (MIDI, module, MP3…)                        | chip music, driver data, ROMs — and audio that sounds exactly like them  | [designed](docs/17-music-demaker.md)          |
-| **sound** | an effect                                           | chip sound effects and banks                                             | [designed](docs/18-sound-demaker.md)          |
+| **music** | a MIDI track                                        | chip music, plus audio that sounds exactly like the hardware will        | six consoles; ROM emit to come                |
+| **sound** | a WAV effect                                        | a chip sound effect, placed and prioritised                              | six consoles; ROM emit to come                |
 
 The two working demakers share one engine, one determinism guarantee, and one
 proof: a real ROM, booted in a real emulator, compared pixel for pixel in CI.

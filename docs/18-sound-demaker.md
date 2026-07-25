@@ -10,7 +10,10 @@ lets you hear the result exactly ([doc 16](16-audio-engine.md)). What differs is
 the objective, the search, and the fact that an effect has to *coexist* with
 music rather than own the chip.
 
-**Status: planned.**
+**Status: built for WAV input.** Analysis, the class gate, eight gesture
+families, hardware-in-the-loop fitting and the placement contract all run. The
+lossy decoders, banks, `--variations` and the driver-side stealing logic are not
+built yet.
 
 ## The objective: identity, not fidelity
 

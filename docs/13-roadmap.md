@@ -216,21 +216,25 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   and one addition images do not need: a file you can play anywhere that is
   guaranteed to sound like the cartridge (doc 16 §The render contract). Ordered
   so each step is provable before the next begins:
-  - **A1 — the chip layer**: `@demake/chip` with the GB APU and the SN76489, the
-    `AudioSpec` schema and specs for the Tier 1 consoles, the deterministic
-    mixer/resampler, WAV/FLAC encode, and `render`. `@demake/dmg` gains its APU
-    from the same models. *Done means*: the hardware test ROMs pass in our own
-    core, the analytic vectors pass, and a hand-written `ChipScript` renders to a
-    byte-golden WAV identically in Node and all three browsers.
-  - **A2 — `arrange` for `gb`, end to end**: MIDI and tracker ingest, analysis,
-    the arrangement tournament, timing fit, the judge, the driver and the ROM.
-    *Done means*: a MIDI file becomes a cartridge that plays it; Level A schedule
-    equality is green as a plain unit test; the listening sheets exist and the
-    judge weights are frozen against a ranked corpus.
-  - **A3 — `sfx` and the coexistence contract**: gesture families, the fitting
-    search, banks, priority and channel stealing with restore. *Done means*: the
-    bank-in-a-ROM E2E proves stealing and restore against the schedule, over
-    playing music.
+  - **A1 — the chip layer** *(built, bar the test ROMs)*: `@demake/chip` models
+    the GB APU, the SN76489 and the NES 2A03; `AudioSpec` and specs for six
+    consoles live in `core`; the exact box-integration renderer and WAV encode
+    are done, and `render` is the single path every surface makes sound through.
+    Eighteen analytic vectors pass. Outstanding: the hardware test ROMs and
+    their provisioner, FLAC, and `@demake/dmg` consuming these models for its
+    own APU.
+  - **A2 — `arrange`** *(built for MIDI, no ROM yet)*: ingest, analysis, the
+    arrangement tournament, absolute-placement timing, the judge and the `.vgm`
+    artifact run on all six consoles. Tempo is preserved outright rather than
+    approximately, and a test shows the error shrinking with length rather than
+    compounding. Outstanding: tracker ingest, the driver and ROM emit, Level A
+    schedule equality, and the listening sheets the judge weights get frozen
+    against.
+  - **A3 — `sfx`** *(built for WAV)*: eight gesture families, the class gate,
+    deterministic coordinate descent with every candidate rendered through the
+    chip model, and the placement contract each effect declares. Outstanding:
+    banks, `--variations`, the driver-side stealing and restore, and the
+    bank-in-a-ROM E2E that proves them.
   - **A4 — audio input**: the transcription front end (beat, percussion, bass,
     lead, harmony) with confidences, plus the decoders. *Done means*: an MP3
     becomes a playable cartridge, and the parts it found are reported honestly

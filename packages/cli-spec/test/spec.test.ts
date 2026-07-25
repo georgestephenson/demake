@@ -97,6 +97,9 @@ describe("man generation", () => {
       "demake-build.1",
       "demake-consoles.1",
       "demake-inspect.1",
+      "demake-arrange.1",
+      "demake-sfx.1",
+      "demake-render.1",
     ]);
   });
   it("emits roff with the expected sections", () => {

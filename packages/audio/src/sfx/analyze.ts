@@ -99,6 +99,13 @@ export function analyzeSound(
     brightness.push(centroid(magnitude, sampleRate, frameSize));
   }
 
+  // A median filter over the pitch track. Autocorrelation makes single-frame
+  // octave errors on anything but a pure tone — and a spurious first frame,
+  // where the window is half empty — and one bad frame is enough to invert the
+  // trend of a whole gesture. Three frames is the smallest window that removes
+  // an isolated spike without smearing a real sweep.
+  medianFilter(f0);
+
   let peak = 0;
   let peakIndex = 0;
   for (let i = 0; i < envelope.length; i += 1) {
@@ -129,6 +136,25 @@ export function analyzeSound(
     endF0,
   };
   return { ...features, soundClass: classify(features) };
+}
+
+/** Replace each value with the median of itself and its neighbours, in place. */
+function medianFilter(series: number[]): void {
+  if (series.length < 3) return;
+  const source = [...series];
+  for (let i = 1; i < series.length - 1; i += 1) {
+    const window = [source[i - 1]!, source[i]!, source[i + 1]!].sort((a, b) => a - b);
+    series[i] = window[1]!;
+  }
+  // The endpoints have one neighbour each; take it when they disagree wildly,
+  // which is exactly the half-empty-window case.
+  if (series.length >= 3) {
+    if (source[0]! > 0 && series[1]! > 0 && source[0]! / series[1]! > 1.8) series[0] = series[1]!;
+    const last = series.length - 1;
+    if (source[last]! > 0 && series[last - 1]! > 0 && source[last]! / series[last - 1]! > 1.8) {
+      series[last] = series[last - 1]!;
+    }
+  }
 }
 
 /**
