@@ -74,6 +74,24 @@ export { render, type RenderAudioOptions } from "./render.js";
 export { encodeWav, type WavOptions } from "./encode/wav.js";
 export { encodeVgm, type VgmOptions } from "./encode/vgm.js";
 
+// --- the sound demaker -------------------------------------------------------
+export {
+  demakeSfx,
+  SfxError,
+  type SfxOptions,
+  type SfxResult,
+  type SfxCandidateScore,
+} from "./sfx/index.js";
+export {
+  analyzeSound,
+  limitLength,
+  trim,
+  type SoundClass,
+  type SoundFeatures,
+} from "./sfx/analyze.js";
+export { decodeSound, isWav, SoundDecodeError, type DecodedSound } from "./sfx/decode.js";
+export { GESTURES, gesturesFor, type Gesture, type GestureParams } from "./sfx/gestures.js";
+
 // --- checking it -------------------------------------------------------------
 export { inspectScript, type AudioInspectResult, type AudioViolation } from "./inspect.js";
 export { judgeArrangement, type JudgeResult, type MetricScore } from "./judge.js";
