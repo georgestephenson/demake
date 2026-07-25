@@ -30,6 +30,13 @@ import {
   toNumber,
 } from "./fixed.js";
 import type { Assignment, Expr, Prop, Stmt, Unit } from "./lang/ast.js";
+import {
+  CELL_QUANTISED,
+  DERIVED_PROPS,
+  knownPropertyNames,
+  NUMBER_DEFAULTS,
+  STRING_PROPS,
+} from "./lang/spec.js";
 import { parse } from "./lang/parse.js";
 import type { ConsoleProfile } from "./profiles.js";
 import type {
@@ -50,42 +57,9 @@ import type {
 } from "./program.js";
 import { ACTIONS, EDGES } from "./program.js";
 
-/** Numeric properties every entity carries, with their defaults in cells. */
-const NUMBER_DEFAULTS: Readonly<Record<string, number>> = {
-  x: 0,
-  y: 0,
-  width: 1,
-  height: 1,
-  speed: 0,
-  xdirection: 0,
-  ydirection: 0,
-  value: 0,
-  visible: 1,
-};
-
 const FIXED_DEFAULTS: Readonly<Record<string, Fixed>> = Object.fromEntries(
   Object.entries(NUMBER_DEFAULTS).map(([key, value]) => [key, fromInt(value)]),
 );
-
-/** String properties and their kinds. */
-const STRING_PROPS: Readonly<Record<string, "asset" | "text">> = {
-  sprite: "asset",
-  text: "text",
-};
-
-/**
- * Properties quantised to whole cells.
- *
- * A collision box is also a sprite's footprint, and hardware sprites come in
- * whole 8x8 units — a 1.5-cell box corresponds to nothing that can be drawn. So
- * these round to the nearest cell (minimum one) whatever units they were written
- * in, which is what makes `width 15vw` mean "three cells here, six cells there"
- * rather than a fractional box that no console can honour.
- */
-const CELL_QUANTISED = new Set(["width", "height"]);
-
-/** Read-only properties derived from the geometry ones. */
-const DERIVED_PROPS = new Set(["centerx", "centery", "left", "right", "top", "bottom"]);
 
 /**
  * Compass names, as (xdirection, ydirection) pairs. Screen coordinates grow
@@ -1074,9 +1048,7 @@ function formatCells(value: Fixed): string {
 }
 
 function knownPropList(): string {
-  return [...Object.keys(NUMBER_DEFAULTS), ...Object.keys(STRING_PROPS), "direction"]
-    .sort()
-    .join(", ");
+  return knownPropertyNames().join(", ");
 }
 
 /** Constant-fold a compiled expression, or `undefined` if it reads state. */

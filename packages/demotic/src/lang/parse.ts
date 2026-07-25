@@ -34,6 +34,7 @@ import type {
   Unit,
 } from "./ast.js";
 import { lex, type Token } from "./lex.js";
+import { FUNCTION_ARITY, UNIT_NAMES } from "./spec.js";
 
 /** Result of a parse: statements plus any recovered syntax errors. */
 export interface ParseResult extends ParsedProgram {
@@ -42,17 +43,10 @@ export interface ParseResult extends ParsedProgram {
 
 const CONTROL_MODES = new Set<string>(["hold", "press", "release"]);
 
-/** Unit suffixes a numeric literal may carry (see {@link Unit}). */
-const UNITS = new Set<string>(["cell", "cells", "vw", "vh", "vmin", "vmax"]);
-
-/**
- * Builtin functions, with their arity.
- *
- * Deliberately tiny and all exactly representable in integer arithmetic — every
- * one of these has to be reimplementable in a page of 6502 (doc 14 §Runtime
- * model), so nothing transcendental will ever join them.
- */
-const FUNCTIONS: Readonly<Record<string, number>> = { abs: 1, min: 2, max: 2, clamp: 3 };
+// Units and builtins come from the language registry, so the lexer cannot
+// accept something the reference does not document (AGENTS.md §Iron rules).
+const UNITS = UNIT_NAMES;
+const FUNCTIONS = FUNCTION_ARITY;
 
 /** Binding power per binary operator; higher binds tighter. */
 const PRECEDENCE: Record<BinaryOp, number> = {

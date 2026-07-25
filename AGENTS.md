@@ -105,6 +105,7 @@ pnpm gen:man       # regenerate man pages from cli-spec (build first; CI checks 
 pnpm eval:prep     # prep quality battery: scoreboard + side-by-side sheets (build first)
 pnpm play          # Demotic: play the Pong fixture in a terminal (build first)
 pnpm test:dmt      # Demotic: run the .test.dmt suite on every console (build first)
+pnpm gen:demotic-docs  # regenerate the language reference from the registry (build first)
 pnpm dev:web       # run the web app against the workspace core (build core first)
 pnpm build:web     # typecheck + bundle the web app into packages/web/dist
 pnpm test:browser  # Playwright: web functional + browser-vs-Node determinism
@@ -126,6 +127,18 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
 - **`packages/cli-spec` is the only place flags are defined** (doc 05); the
   parser, `--help`, and man pages are generated from it. Man pages are never
   hand-edited — run `pnpm gen:man` and a test enforces they match the spec.
+- **Language changes are the maintainer's call, not the agent's.** Adding,
+  removing or altering a Demotic statement, property, unit, builtin, trigger or
+  diagnostic — anything in `packages/demotic/src/lang/spec.ts` — needs the
+  maintainer to agree the design _before_ it is implemented. Propose options and
+  their trade-offs and wait. Finding a limitation while writing an example is
+  expected and welcome; quietly fixing it by growing the language is not. Bug
+  fixes that restore documented behaviour are not language changes.
+- **`packages/demotic/src/lang/spec.ts` is the only place the language surface is
+  defined**, the way `packages/cli-spec` is for the CLI (doc 05). The parser, the
+  compiler, the diagnostics and the reference documentation are all generated
+  from or checked against it; a test fails if the docs go stale. Never describe a
+  language feature in prose that is not in the registry.
 - **Demotic describes the game; the Demakefile describes the build** (docs 14,
   15). A `.dmt` file must never name a console, a palette, or a pixel, and a
   Demakefile must never change how the game plays. The operational test is a CI

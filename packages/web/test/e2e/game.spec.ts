@@ -51,10 +51,12 @@ test("retargets the game at another console", async ({ page }) => {
 
 test("every bundled example loads, compiles and passes its suite", async ({ page }) => {
   await page.goto("/#section=game");
+  // The section is code-split, so wait for it to arrive before reading its DOM.
+  await expect(page.getByRole("heading", { name: "Play" })).toBeVisible();
   const picker = page.getByTestId("example-select");
-  const ids = await picker
-    .locator("option")
-    .evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value));
+  const ids = await picker.evaluate((el) =>
+    [...(el as HTMLSelectElement).options].map((option) => option.value),
+  );
   expect(ids.length).toBeGreaterThanOrEqual(5);
 
   for (const id of ids) {
@@ -102,6 +104,33 @@ test("drives the game from the on-screen pad on a touch device", async ({ browse
   await expect(page.locator(".game-status")).toContainText("scene play", { timeout: 5000 });
 
   await context.close();
+});
+
+test("renders the language reference from the registry", async ({ page }) => {
+  const chunks: string[] = [];
+  page.on("response", (r) => {
+    if (r.url().endsWith(".js")) chunks.push(r.url());
+  });
+
+  await page.goto("/");
+  expect(chunks.some((url) => url.includes("LanguageDocs"))).toBe(false);
+
+  await page.getByRole("link", { name: /demotic reference/i }).click();
+  await expect(page.getByRole("heading", { name: "Statements" })).toBeVisible();
+  expect(chunks.some((url) => url.includes("LanguageDocs"))).toBe(true);
+
+  // Every statement keyword the compiler knows is documented here.
+  const statements = page.locator(".doc-body");
+  for (const keyword of ["loop", "scene", "create object", "control", "when"]) {
+    await expect(statements).toContainText(keyword);
+  }
+
+  await page.getByRole("button", { name: "Diagnostics" }).click();
+  await expect(page.locator(".doc-body")).toContainText("E_SPRITE_BUDGET");
+  await expect(page.locator(".doc-body")).toContainText("W_TUNNELLING");
+
+  await page.getByRole("button", { name: "Triggers" }).click();
+  await expect(page.locator(".doc-body")).toContainText("touches");
 });
 
 test("announces the sections that are not built yet", async ({ page }) => {

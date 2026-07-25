@@ -85,3 +85,5 @@ export {
   type CaseResult,
   type RunResult,
 } from "./testing/run.js";
+export { referencePages, referenceIndex, type ReferencePage } from "./docs/reference.js";
+export * from "./lang/spec.js";

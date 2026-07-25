@@ -17,7 +17,15 @@ import type { Diagnostic } from "./errors.js";
 import type { Fixed } from "./fixed.js";
 import type { ConsoleProfile } from "./profiles.js";
 
-/** Abstract buttons — the lowest common denominator across the target set. */
+/**
+ * Abstract buttons — the lowest common denominator across the target set.
+ *
+ * Written as a literal tuple rather than derived from the registry so the rest
+ * of the engine keeps exhaustive switch checking on `Action` and `Edge`; a test
+ * asserts these match `lang/spec.ts` exactly. That is the same bargain the man
+ * pages strike with `cli-spec` (doc 05): keep the strong form, let a test stop
+ * it drifting.
+ */
 export const ACTIONS = ["left", "right", "up", "down", "a", "b", "start"] as const;
 
 /** One abstract button. */
