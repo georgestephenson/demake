@@ -217,7 +217,7 @@ unambiguously "set `xdirection` to `-1`", never the expression `xdirection - 1`.
 | `sprite` | Asset name; bound to real art by the Demakefile | — |
 | `text` | Literal text, for `text` objects | — |
 | `value` | Number held by a `number` object | 0 |
-| `visible` | Drawn when non-zero | 1 |
+| `visible` | Drawn **and collidable** when non-zero | 1 |
 
 Read-only derived properties: `centerx`, `centery`, `left`, `right`, `top`,
 `bottom`. Assigning one is an error naming the property to assign instead.
@@ -243,14 +243,37 @@ instead. Stated, not hidden.
 Two builtin classes render from the background layer rather than as sprites, and so
 cost no sprite budget: `number` (renders `value`) and `text` (renders `text`).
 
+**`visible 0` makes an object inert**: not drawn, not collided with, and not
+moved. That is how a thing leaves play — a broken brick, a spent bullet — and it
+is why there is no `destroy`. The pairing is deliberate: an object you cannot see
+but can still hit is a bug in every game that has ever shipped one. The two
+genuine exceptions, trigger zones and invisible walls, want a separate property
+rather than a split in this one.
+
 ### Rule triggers
 
 | Form | Timing |
 |---|---|
 | `when <a> hits <b>, <c>` | edge — on contact, not per tick of contact |
+| `when <a> touches <b>, <c>` | level — every tick they overlap |
 | `when <button> pressed \| released` | edge |
-| `when <expr> reaches <expr>` | edge — when the test turns true |
+| `when <expr> reaches <expr>` | edge — when the value crosses or lands on the target |
 | `when <expr>` | level — every tick it holds |
+
+**`hits` and `touches` are both needed and neither substitutes for the other.** A
+bounce must happen once per contact, or it inverts every tick and the object
+buzzes. Resting contact must be re-asserted every tick, or the state that contact
+suppresses runs away unseen: a hero standing on a ledge under `hits` keeps
+accumulating gravity into `ydirection` while the separation holds it in place, so
+it looks correct and then fights the next jump. Sitting on something is not an
+event.
+
+**`reaches` is a crossing detector, not a threshold.** "reaches 10" on a rising
+score and "reaches 0" on falling lives have to mean the same thing, and a `>=`
+test cannot express both — three lives are already past zero, so the rule would
+fire on the first tick of the game. It fires when the value lands exactly on the
+target or crosses it from either side, and a value that *starts* on its target
+has not reached it.
 
 The level form is what makes an opponent one ordinary rule rather than a special
 "AI" feature — and the shape of that rule matters more than it looks:
@@ -302,6 +325,44 @@ Two resolutions remove all quoting ceremony:
   the compiler reads it as the literal string.
 - `(scene) as gameover` — a bare name; because the `scene` target is scene-typed, it
   resolves to a scene rather than an expression.
+
+## The example library
+
+Pong was never enough evidence: two movers, one collision shape, no removal. The
+examples in `packages/demotic/fixtures/games/` exist to pin down what a console
+runtime actually has to implement, and each is there for something the others do
+not do.
+
+| Example | Exercises |
+|---|---|
+| `pong` | two movers, a bounce angle, proportional opponent steering |
+| `breakout` | a grid of one class, removal via `visible`, sprite-budget pressure |
+| `platformer` | gravity as a level rule, an impulse jump, resting contact |
+| `dodger` | many objects at staggered speeds, recycled rather than removed |
+| `shooter` | the per-scanline sprite limit's worst case, a fast projectile |
+
+All five compile for all seven consoles, stay inside every sprite budget, and
+pass their own `.test.dmt` suites on every one — 196 cases in total, run in the
+unit suite, from the CLI, and in the browser.
+
+Writing them changed the language three times, which is the point of writing them
+before the runtime rather than after: `touches` and the `reaches` crossing rule
+both come from here, and `visible` gained its collision meaning here too.
+
+### What they also found, and did not fix
+
+Named because a runtime built to the current language will hit exactly these:
+
+- **No background layer.** Static scenery has to be sprites, so a full-width
+  floor costs twenty of a Game Boy's forty. The compiler warns, which is the
+  right answer to the wrong problem — scenery wants tiles.
+- **A level rule cannot address a class.** `when <a> hits <b>` binds the objects
+  that collided, so a rule can drive every alien at once; `when always
+  (alien.xdirection)` has no subject to bind and is rejected. Driving a whole
+  class from a condition is not expressible.
+- **An input edge cannot be conditioned on state.** "fire whichever bullet is
+  parked" needs `when a pressed and s1.visible = 0`, and a `control` binding
+  carries no condition. The shooter reuses a single shot because of it.
 
 ## Testing a game: `.test.dmt`
 

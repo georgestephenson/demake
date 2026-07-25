@@ -309,15 +309,20 @@ function parseEvent(cursor: Cursor): Event {
   const first = cursor.peek();
   const second = cursor.peek(1);
 
-  // `when <subject> hits <a>, <b>, ...`
-  if (first.kind === "ident" && second.kind === "ident" && second.value === "hits") {
+  // `when <subject> hits|touches <a>, <b>, ...`
+  if (
+    first.kind === "ident" &&
+    second.kind === "ident" &&
+    (second.value === "hits" || second.value === "touches")
+  ) {
+    const level = second.value === "touches";
     cursor.next();
     cursor.next();
     const others: string[] = [];
     do {
       others.push(cursor.expectIdent("something to collide with").value);
     } while (cursor.eatPunct(","));
-    return { kind: "hits", subject: first.value, others };
+    return { kind: "hits", subject: first.value, others, level };
   }
 
   // `when <action> pressed | released`

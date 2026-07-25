@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 
-import { DEMO_ASSETS, DEMO_GAME, DEMO_TESTS } from "../lib/demo-game.js";
+import { DEFAULT_EXAMPLE, DEMO_ASSETS, EXAMPLES, type Example } from "../lib/demo-game.js";
 import {
   check,
   formatResults,
@@ -52,7 +52,8 @@ interface Loaded {
 }
 
 export function GameDemaker() {
-  const [source, setSource] = useState(DEMO_GAME);
+  const [example, setExample] = useState<Example>(DEFAULT_EXAMPLE);
+  const [source, setSource] = useState(DEFAULT_EXAMPLE.source);
   const [consoleId, setConsoleId] = useState("gb");
   const [constrain, setConstrain] = useState(false);
   const [status, setStatus] = useState("");
@@ -161,8 +162,16 @@ export function GameDemaker() {
     if (program) sim.current = new Sim(program);
   }, [program]);
 
+  const loadExample = useCallback((id: string) => {
+    const next = EXAMPLES.find((candidate) => candidate.id === id);
+    if (!next) return;
+    setExample(next);
+    setSource(next.source);
+    setTestReport(null);
+  }, []);
+
   const runSuite = useCallback(() => {
-    const file = parseTests(DEMO_TESTS);
+    const file = parseTests(example.tests);
     const results = [];
     for (const profile of profiles) {
       try {
@@ -177,7 +186,7 @@ export function GameDemaker() {
     setTestReport(
       `${total - failed}/${total} cases passed across ${results.length} consoles\n\n${formatResults(results)}`,
     );
-  }, [source]);
+  }, [source, example]);
 
   const errors = diagnostics.filter((d) => d.severity === "error");
 
@@ -187,8 +196,23 @@ export function GameDemaker() {
         <h2>Play</h2>
         <div class="game-toolbar">
           <label class="field inline">
+            <span>Game</span>
+            <select
+              data-testid="example-select"
+              value={example.id}
+              onChange={(e) => loadExample((e.target as HTMLSelectElement).value)}
+            >
+              {EXAMPLES.map((candidate) => (
+                <option key={candidate.id} value={candidate.id}>
+                  {candidate.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label class="field inline">
             <span>Console</span>
             <select
+              data-testid="console-select"
               value={consoleId}
               onChange={(e) => setConsoleId((e.target as HTMLSelectElement).value)}
             >
@@ -223,6 +247,10 @@ export function GameDemaker() {
           role="img"
           aria-label="The game, playing"
         />
+        <p class="hint">
+          <strong>{example.name}</strong> — {example.covers}
+        </p>
+
         <TouchPad onPress={press} onRelease={release} />
 
         <p class="hint keyboard-hint">

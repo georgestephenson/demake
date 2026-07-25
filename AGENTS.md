@@ -158,6 +158,17 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   §Diagnostics): sprite budgets, tunnelling, sub-tick speeds, offscreen starts,
   aspect mismatch, size rounding. Adding a new class of known trap means adding a
   diagnostic, not a doc note.
+- **`hits` fires once per contact; `touches` fires every tick of it.** Bounces
+  want the first, resting contact wants the second — a platformer that lands with
+  `hits` accumulates gravity into `ydirection` while standing still, and looks
+  fine until the next jump. `reaches` is a _crossing_ detector so it works on
+  counters that fall as well as rise.
+- **`visible 0` is inert**: not drawn, not collided with, not moved. That is why
+  there is no `destroy`.
+- **New language features come from the example library, not from theory**
+  (`packages/demotic/fixtures/games/`). Each example is there for something the
+  others do not exercise; `touches`, the `reaches` crossing rule and `visible`'s
+  collision meaning were all found by writing one.
 - **`.test.dmt` suites run on every console.** That is what makes a _balance_
   regression visible; a mechanical one would show up anywhere. Write assertions
   in the relative vocabulary or they will only be true on one machine.

@@ -45,8 +45,27 @@ test("runs the .test.dmt suite against every console", async ({ page }) => {
 test("retargets the game at another console", async ({ page }) => {
   await page.goto("/#section=game");
   await expect(page.locator(".game-status")).toContainText("20x18 cells");
-  await page.getByRole("combobox").selectOption("md");
+  await page.getByTestId("console-select").selectOption("md");
   await expect(page.locator(".game-status")).toContainText("40x28 cells");
+});
+
+test("every bundled example loads, compiles and passes its suite", async ({ page }) => {
+  await page.goto("/#section=game");
+  const picker = page.getByTestId("example-select");
+  const ids = await picker
+    .locator("option")
+    .evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value));
+  expect(ids.length).toBeGreaterThanOrEqual(5);
+
+  for (const id of ids) {
+    await picker.selectOption(id);
+    // Compiling is synchronous, so a clean diagnostics pane means it compiled.
+    await expect(page.locator(".diag-error")).toHaveCount(0);
+    await page.getByRole("button", { name: "Run tests" }).click();
+    const report = page.locator(".game-status").last();
+    await expect(report, id).toContainText(/cases passed across \d+ consoles/);
+    await expect(report, id).not.toContainText("FAIL");
+  }
 });
 
 test("reports a source error without blanking the preview", async ({ page }) => {

@@ -95,7 +95,14 @@ export interface ControlDef {
 
 /** The compiled trigger half of a rule. */
 export type CEvent =
-  | { kind: "hits"; subjects: readonly number[]; others: readonly number[]; edges: readonly Edge[] }
+  | {
+      kind: "hits";
+      subjects: readonly number[];
+      others: readonly number[];
+      edges: readonly Edge[];
+      /** `touches`: fire every tick of overlap, not only on entry. */
+      level: boolean;
+    }
   | { kind: "input"; action: Action; edge: "pressed" | "released" }
   | { kind: "reaches"; left: CExpr; right: CExpr }
   | { kind: "predicate"; test: CExpr };

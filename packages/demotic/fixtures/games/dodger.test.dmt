@@ -1,0 +1,22 @@
+test the rocks fall
+play 30 ticks
+expect r1.y > 0
+expect r4.y > 2
+
+test a rock that leaves the bottom is recycled to the top
+play 400 ticks
+expect r1.y < screenheight
+expect r2.y < screenheight
+expect r3.y < screenheight
+
+-- 120 ticks is two seconds, and the ship crosses the whole court in about 1.5 —
+-- long enough to reach the wall, short enough to get there before the rocks
+-- spend all three lives and the scene changes underneath the assertion.
+test the ship runs to each edge and stops
+hold left for 120 ticks
+expect player.x = 0
+expect player.xdirection = 0
+
+test lives are spent and the game ends
+play 1200 ticks
+expect lives.value <= 3

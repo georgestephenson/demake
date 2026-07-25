@@ -1,0 +1,27 @@
+test the alien line advances
+play 30 ticks
+expect a1.x > 4vw - 1
+
+test the alien line turns at the wall instead of leaving it
+play 900 ticks
+expect a9.right <= screenwidth
+expect a1.x >= 0
+
+test the shot starts parked and inert
+expect s1.visible = 0
+
+test firing launches the shot upward
+press a
+play 10 ticks
+expect s1.visible = 1
+expect s1.y < screenheight - 3
+
+test the shot parks itself again at the top
+press a
+play 300 ticks
+expect s1.visible = 0
+
+test the ship runs to each edge and stops
+hold left for 300 ticks
+expect player.x = 0
+expect player.xdirection = 0

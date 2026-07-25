@@ -96,8 +96,16 @@ export class Sim {
 
   /** Overlaps that existed at the end of the previous tick (edge triggering). */
   private overlaps = new Set<string>();
-  /** Truth of each edge-triggered rule at the end of the previous tick. */
-  private ruleWasTrue = new Set<number>();
+  /**
+   * Distance from its target for each `reaches` rule at the end of last tick.
+   *
+   * `reaches` is a *crossing* detector, not a threshold test. "reaches 10" on a
+   * rising score and "reaches 0" on falling lives have to mean the same thing,
+   * and a `>=` test cannot: lives start at three, which is already past zero, so
+   * the rule would fire on the first tick of the game. Remembering which side of
+   * the target the value was on is what makes both readings work.
+   */
+  private reachedDelta = new Map<number, Fixed>();
   /** Property snapshots taken when an `on hold` binding engaged. */
   private readonly holdSnapshots = new Map<string, Fixed>();
 
@@ -186,7 +194,7 @@ export class Sim {
       this.resetScene(next);
       // A fresh scene has no collision or rule history to inherit.
       this.overlaps = new Set();
-      this.ruleWasTrue = new Set();
+      this.reachedDelta.clear();
       this.holdSnapshots.clear();
     }
 
@@ -306,13 +314,17 @@ export class Sim {
       }
 
       if (rule.event.kind === "reaches") {
-        const left = this.evaluate(rule.event.left, {});
-        const right = this.evaluate(rule.event.right, {});
-        const isTrue = left >= right;
-        const wasTrue = this.ruleWasTrue.has(rule.id);
-        if (isTrue && !wasTrue) this.applyAssignments(rule.assignments, {});
-        if (isTrue) this.ruleWasTrue.add(rule.id);
-        else this.ruleWasTrue.delete(rule.id);
+        const delta = this.evaluate(rule.event.left, {}) - this.evaluate(rule.event.right, {});
+        const previous = this.reachedDelta.get(rule.id);
+        this.reachedDelta.set(rule.id, delta);
+
+        // No history yet: record where the value started without firing. A
+        // counter that begins on its target has not *reached* it.
+        if (previous === undefined) continue;
+
+        const landed = delta === 0 && previous !== 0;
+        const crossed = previous !== 0 && delta !== 0 && previous < 0 !== delta < 0;
+        if (landed || crossed) this.applyAssignments(rule.assignments, {});
       }
     }
   }
@@ -328,7 +340,7 @@ export class Sim {
     for (const id of this.activeIds()) {
       const numbers = this.numbers[id] as Record<string, Fixed>;
       const speed = numbers["speed"] ?? 0;
-      if (speed === 0) continue;
+      if (speed === 0 || (numbers["visible"] ?? 0) === 0) continue;
       const dx = perTick(numbers["xdirection"] ?? 0, speed, fps);
       const dy = perTick(numbers["ydirection"] ?? 0, speed, fps);
       if (dx !== 0) numbers["x"] = clampFixed((numbers["x"] ?? 0) + dx);
@@ -346,15 +358,16 @@ export class Sim {
       if (rule.event.kind !== "hits") continue;
 
       for (const subjectId of rule.event.subjects) {
-        if (!this.isActive(subjectId)) continue;
+        if (!this.isActive(subjectId) || !this.isSolid(subjectId)) continue;
 
         for (const edge of rule.event.edges) {
           if (!this.touchesEdge(subjectId, edge)) continue;
           const key = `${rule.id}:${subjectId}:${edge}`;
 
-          // Fire on entry only — an object resting against a wall is one
-          // event, not one per tick.
-          if (!this.overlaps.has(key)) {
+          // `hits` fires on entry only — an object resting against a wall is
+          // one event, not one per tick. `touches` fires every tick, which is
+          // what resting contact needs.
+          if (rule.event.level || !this.overlaps.has(key)) {
             this.applyAssignments(rule.assignments, { subject: subjectId });
           }
           // Separate every tick the contact persists, but re-test first: a rule
@@ -367,11 +380,11 @@ export class Sim {
         }
 
         for (const otherId of rule.event.others) {
-          if (otherId === subjectId || !this.isActive(otherId)) continue;
+          if (otherId === subjectId || !this.isActive(otherId) || !this.isSolid(otherId)) continue;
           if (!this.overlapping(subjectId, otherId)) continue;
           const key = `${rule.id}:${subjectId}:${otherId}`;
 
-          if (!this.overlaps.has(key)) {
+          if (rule.event.level || !this.overlaps.has(key)) {
             this.applyAssignments(rule.assignments, { subject: subjectId, other: otherId });
           }
           if (this.overlapping(subjectId, otherId)) {
@@ -559,6 +572,20 @@ export class Sim {
 
   private isActive(id: number): boolean {
     return (this.program.instances[id] as InstanceDef).scene === this.currentScene;
+  }
+
+  /**
+   * An object with `visible 0` is inert: not drawn, and not collided with.
+   *
+   * This is how a thing is removed from play — a broken brick, a spent bullet —
+   * without the language needing a lifecycle concept, and it is why `destroy`
+   * does not exist. The pairing is deliberate: an object you cannot see but can
+   * still hit is a bug in every game that has ever shipped one, and the two
+   * genuine exceptions (trigger zones, invisible walls) are better served by a
+   * separate property than by splitting this one.
+   */
+  private isSolid(id: number): boolean {
+    return ((this.numbers[id] as Record<string, Fixed>)["visible"] ?? 0) !== 0;
   }
 
   // --- hardware pressure -----------------------------------------------------

@@ -590,7 +590,7 @@ class Compiler {
           map.set(name, { kind: "other" });
         }
 
-        event = { kind: "hits", subjects, others, edges };
+        event = { kind: "hits", subjects, others, edges, level: statement.event.level };
         bindings = { map };
         defaultTarget = { kind: "subject" };
         sceneHint = this.sceneOf([...subjects, ...others]);

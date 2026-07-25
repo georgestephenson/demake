@@ -62,8 +62,16 @@ export type ControlMode = "hold" | "press" | "release";
 
 /** The trigger half of a `when` statement. */
 export type Event =
-  /** `when ball hits paddle, screenleft` — edge-triggered on overlap start. */
-  | { kind: "hits"; subject: string; others: readonly string[] }
+  /**
+   * `when ball hits paddle` — edge-triggered on overlap start.
+   * `when hero touches ledge` — level-triggered, every tick they overlap.
+   *
+   * Both are needed and neither substitutes for the other: a bounce must happen
+   * once per contact, and resting contact must be re-asserted every tick or the
+   * state that contact suppresses (gravity, say) accumulates unseen while the
+   * object appears to sit still.
+   */
+  | { kind: "hits"; subject: string; others: readonly string[]; level: boolean }
   /** `when start pressed` / `when a released` — input edges. */
   | { kind: "input"; action: string; edge: "pressed" | "released" }
   /** `when score1.value reaches 10` — edge-triggered when the test turns true. */

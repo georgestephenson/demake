@@ -1,0 +1,60 @@
+-- Shooter — the extremes. This one exists to be hard on the hardware.
+--
+--   * a row of enemies at the same y, which is the per-scanline sprite limit's
+--     worst case: eight on a NES or a Master System, ten on a Game Boy, and
+--     anything past that simply does not draw
+--   * a fast bullet against thin targets, close to the tunnelling threshold
+--   * a magazine of bullets recycled rather than spawned
+--   * two independent level rules driving the same object (the enemy line
+--     advances and sways)
+
+loop play
+
+scene play
+
+create object ship (width 1 cell, height 1 cell, speed 60vw, sprite hero.svg)
+create object shot (width 1 cell, height 1 cell, speed 70vh, sprite shot.svg)
+create object alien (width 1 cell, height 1 cell, speed 8vw, sprite alien.svg)
+
+create ship player in play (x centerx, y screenheight - 2)
+
+-- Nine aliens on one row. On a Game Boy that is nine of the ten sprites the
+-- hardware will draw on that scanline; add the player's shot passing through and
+-- the eleventh vanishes. The simulator reports the peak as it runs.
+create alien a1 in play (x 4vw, y 3, direction east)
+create alien a2 in play (x 14vw, y 3, direction east)
+create alien a3 in play (x 24vw, y 3, direction east)
+create alien a4 in play (x 34vw, y 3, direction east)
+create alien a5 in play (x 44vw, y 3, direction east)
+create alien a6 in play (x 54vw, y 3, direction east)
+create alien a7 in play (x 64vw, y 3, direction east)
+create alien a8 in play (x 74vw, y 3, direction east)
+create alien a9 in play (x 84vw, y 3, direction east)
+
+-- One shot, reused. Three would be better, but "fire whichever one is parked"
+-- needs an input edge conditioned on state, and a `control` binding cannot carry
+-- a condition — a limitation this file exists to have found.
+create shot s1 in play (x centerx, y screenheight - 3, visible 0, direction north)
+
+create number score in play (value 0, x 1, y 1)
+
+control player left (xdirection -1) on hold
+control player right (xdirection 1) on hold
+
+when player hits screenleft, screenright (xdirection) as 0
+
+-- Firing puts the shot back at the ship and makes it solid again. Pressing while
+-- one is already in flight simply restarts it, which is how a lot of 1978
+-- shooters actually behaved.
+control player a (s1.visible, s1.x, s1.y) as (1, player.x, player.y - 1) on press
+
+when s1 hits screentop (s1.visible) as 0
+
+when shot hits alien (alien.visible, shot.visible, score.value) as (0, 0, score.value + 1)
+
+-- The line sways by bouncing off the walls. A `hits` rule can target the *class*
+-- — every alien at once — because collision binds the object that collided. A
+-- level rule cannot: `when always (alien.xdirection)` has no subject to bind, so
+-- driving a whole class from a condition is not expressible today. Another
+-- finding this file is here to produce.
+when alien hits screenleft, screenright (xdirection) as flip
