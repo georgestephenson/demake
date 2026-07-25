@@ -782,7 +782,14 @@ Named rather than hidden, in rough order of how much they matter.
   say so.
 - **No `destroy` or runtime spawn.** Pong does not need them; Breakout and Snake
   do. The schema has room.
-- **No sound.** Overlaps with the audio demake entry in doc 13 §Phase 7+.
+- **No sound.** The engine that would demake it is designed (docs
+  [16](16-audio-engine.md)–[18](18-sound-demaker.md)); what is missing is the
+  *language* surface — how a `.dmt` names a track and fires an effect. That is a
+  language change and therefore the maintainer's call, not an agent's, so doc 17
+  §Demotic sets out the options and their trade-offs and stops there. One
+  consequence should be decided with the surface: audio events would have to join
+  the conformance trace as per-tick event names, or the ROM and the interpreter
+  could disagree about *when* a sound fires and the oracle would not catch it.
 - **Tiles cannot change at run time.** The tile layer is fixed once composed, so
   a door that opens or a block that breaks has to be an object. Editing the
   tilemap live is what a console does most cheaply, so this is a gap worth

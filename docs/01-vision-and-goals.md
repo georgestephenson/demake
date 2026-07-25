@@ -16,14 +16,20 @@ of old hardware, faithfully enough that it still reads as itself.
 |---|---|---|
 | Art — images → compliant art, data, code, ROMs | 03–06 | working, eight Tier 1 consoles proven on emulated hardware |
 | Games — Demotic `.dmt` → one game, every console | [14](14-demotic.md), [15](15-demakefile.md) | language, interpreter, test runner and preview working; runtimes in progress |
-| Music — tracks → chip music and driver data | [13 §Phase 7+](13-roadmap.md) | planned |
-| Sound — effects → chip sound | [13 §Phase 7+](13-roadmap.md) | planned |
+| Music — tracks → chip music and driver data | [16](16-audio-engine.md), [17](17-music-demaker.md) | designed, not built |
+| Sound — effects → chip sound | [16](16-audio-engine.md), [18](18-sound-demaker.md) | designed, not built |
 
 Each domain has the same shape, which is why they share a repository rather than
 merely a name: **constrain → fit → emit → prove it on emulated hardware**. Each
 reuses the layer below it — a game's sprites are demade by the image pipeline,
 and its ROM is assembled by the same toolchain edge — and none of them is
 finished until something boots in an emulator and is compared byte for byte.
+
+For the audio domains that comparison is a *register schedule* rather than a
+framebuffer, and it carries a promise images do not need: the file demake hands
+you plays exactly what the cartridge will play, in the CLI, in the browser and on
+the desktop. Doc 16 §The render contract is where that promise is made precise
+and split into the three claims that make it testable.
 
 ## The problem
 

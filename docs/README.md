@@ -28,6 +28,9 @@ that an engineer (human or agent) can pick up a section and implement it.
 | 13 | [Roadmap](13-roadmap.md) | Phased milestones with acceptance criteria |
 | 14 | [Demotic](14-demotic.md) | The `.dmt` game language: semantics, runtime model, conformance traces |
 | 15 | [Demakefile](15-demakefile.md) | The build manifest: targets, art conversion, ROM headers, artifacts |
+| 16 | [Audio Engine](16-audio-engine.md) | Sound-chip matrix, the `Score`/`ChipScript` representations, chip synthesis, and the render contract: hearing exactly what the hardware will play |
+| 17 | [Music Demaker](17-music-demaker.md) | `arrange`: any track → chip music. Ingest, transcription, arrangement, timbre fitting, tempo, the judge |
+| 18 | [Sound Demaker](18-sound-demaker.md) | `sfx`: any sound → a chip effect, and how effects live alongside music |
 
 ## Provenance
 

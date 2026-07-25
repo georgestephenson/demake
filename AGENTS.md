@@ -12,12 +12,12 @@ something 8/16-bit-era consoles and handhelds up to the Nintendo DS could
 actually run. Four demakers, sharing one engine and one proof (a real ROM, in a
 real emulator, compared pixel for pixel):
 
-| Demaker               | Docs         | State                                                           |
-| --------------------- | ------------ | --------------------------------------------------------------- |
-| art (images)          | 03–06        | working, eight Tier 1 consoles proven                           |
-| game (Demotic `.dmt`) | 14, 15       | language, interpreter, tests, preview — and a playable `gb` ROM |
-| music                 | 13 §Phase 7+ | planned                                                         |
-| sound                 | 13 §Phase 7+ | planned                                                         |
+| Demaker               | Docs   | State                                                           |
+| --------------------- | ------ | --------------------------------------------------------------- |
+| art (images)          | 03–06  | working, eight Tier 1 consoles proven                           |
+| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and a playable `gb` ROM |
+| music                 | 16, 17 | designed, not built                                             |
+| sound                 | 16, 18 | designed, not built                                             |
 
 Every domain has the same shape, which is why they share a repo: **constrain →
 fit → emit → prove it on emulated hardware**. Each reuses the layer below — a
@@ -66,6 +66,15 @@ harness + toolchain, and a libretro core + DAC calibration), the remaining
 framebuffer/scanline layout paths (Lynx, GBA/NDS bitmap modes, 2600/7800), and
 the rest of the Demotic runtime story (levels, art binding, the other CPU
 families, and the speed work doc 14 §Runtime model names).
+
+**The audio domains are designed and unbuilt.** Docs
+[16](docs/16-audio-engine.md), [17](docs/17-music-demaker.md) and
+[18](docs/18-sound-demaker.md) specify the chip layer, `arrange` and `sfx` to the
+standard docs 04 and 14 set. Nothing exists in `packages/` yet; the planned
+packages are `@demake/chip` (every sound chip as a register-driven model,
+depending on nothing, the way `dmg` does) and `@demake/audio` (the two demakers,
+depending on `core` and `chip`). Read doc 16 before starting any of it — three of
+its decisions are load-bearing and easy to undo by accident (§Working on audio).
 
 ## Layout map
 
@@ -282,6 +291,49 @@ packages/demotic/test/rom.test.ts` builds all seven fixture games and diffs raw
   before fetching the offset moves every relative jump one byte, which presents
   as an infinite loop somewhere unrelated. `packages/dmg/test/cpu.test.ts` pins
   it because it actually happened.
+
+## Working on audio
+
+Nothing here is built yet, so these are the rules that keep the first
+implementation from painting itself into a corner. All of them come from doc 16.
+
+- **A chip is implemented once, in `@demake/chip`.** `@demake/dmg` needs a Game
+  Boy APU for the web player and the audio pipeline needs one for previews;
+  those must be the same code. A second implementation of a chip is how the
+  preview and the emulator quietly stop agreeing — the exact failure the "no
+  second art converter" and "the web app must never grow conversion logic" rules
+  already exist to prevent.
+- **The compliant artifact is a timed register-write schedule**, not a song.
+  That is what makes four things the same object: what our synth renders, what
+  the driver must write, what an emulator's chip actually receives, and what the
+  compliance oracle checks. Any "musical" layer left in the artifact is a place
+  two implementations can disagree.
+- **One renderer feeds every surface.** The CLI writes files with `render()`, the
+  page plays the _same_ PCM through a bare `AudioBufferSourceNode`, the desktop
+  plays the CLI's file. Web Audio is a playback device, never a synthesizer — no
+  `OscillatorNode`, no filters, no worklet DSP. Construct the `AudioContext` with
+  an explicit `{ sampleRate: 48000 }` or the browser resamples the buffer on its
+  own terms, differently per engine.
+- **Lossless carries the guarantee; lossy does not.** WAV and FLAC are
+  sample-exact and byte-golden. M4A/Opus/MP3 are convenience exports and must be
+  labelled as approximations everywhere they appear — the project does not make
+  "transparent to most listeners" claims anywhere else.
+- **Exactness lives in the schedule, not in a waveform diff.** Level A (diff the
+  register writes an owned core observes against the `ChipScript`) is exact and
+  runs in `pnpm test`. Comparing our audio to a third-party core's is a
+  tolerance-based cross-check and must never be written as if it were bit-exact —
+  cores resample and filter on their own terms.
+- **Audio DSP is where determinism breaks first.** FFT twiddles, windows, mel
+  banks, dB conversions and resampler kernels all come from
+  `packages/core/src/math/kernels.ts`. An FFT seeded with `Math.cos` returns
+  different low bits in Firefox and every metric downstream inherits it.
+- **Tempo is a budget, not a metric.** The requirement is that timing error does
+  not _accumulate_; a bar boundary must land where it should after ninety
+  seconds. Report requested BPM, achieved BPM, ppm error and worst onset
+  deviation every time.
+- **Never lose a part silently.** Every dropped note, merged voice and stolen
+  channel is counted in the manifest and `--json`; `--strict` turns any of them
+  into an error. The image path's tile-merge reporting is the precedent.
 
 ## How to add a console
 

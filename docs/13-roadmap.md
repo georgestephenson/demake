@@ -207,13 +207,41 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   framing is a *tile budget inspector* that explains what was merged and why,
   rather than a manual editor.
 
-- **Audio demake (new domain, exploratory)**: extend beyond images — convert
-  modern music and sound effects into hardware-compliant chip audio and playable
-  driver data for the same consoles (GB pulse/wave/noise, NES 2A03, SNES SPC700
-  BRR samples, MD YM2612 FM patches). Same shape as the image pipeline:
-  constrain → fit → emit → prove in an emulator, with audio-capture E2E standing
-  in for pixel-perfect. Starts as a spike plus its own design doc before any
-  tier commitment.
+- **Audio — the music and sound demakers (new domain)**: docs
+  [16](16-audio-engine.md), [17](17-music-demaker.md) and
+  [18](18-sound-demaker.md). Convert modern music and sound effects into
+  hardware-compliant chip audio, driver data and ROMs for the same consoles.
+  Same shape as the image pipeline — constrain → fit → emit → prove on emulated
+  hardware — with **register-schedule equality** standing in for pixel-perfect,
+  and one addition images do not need: a file you can play anywhere that is
+  guaranteed to sound like the cartridge (doc 16 §The render contract). Ordered
+  so each step is provable before the next begins:
+  - **A1 — the chip layer**: `@demake/chip` with the GB APU and the SN76489, the
+    `AudioSpec` schema and specs for the Tier 1 consoles, the deterministic
+    mixer/resampler, WAV/FLAC encode, and `render`. `@demake/dmg` gains its APU
+    from the same models. *Done means*: the hardware test ROMs pass in our own
+    core, the analytic vectors pass, and a hand-written `ChipScript` renders to a
+    byte-golden WAV identically in Node and all three browsers.
+  - **A2 — `arrange` for `gb`, end to end**: MIDI and tracker ingest, analysis,
+    the arrangement tournament, timing fit, the judge, the driver and the ROM.
+    *Done means*: a MIDI file becomes a cartridge that plays it; Level A schedule
+    equality is green as a plain unit test; the listening sheets exist and the
+    judge weights are frozen against a ranked corpus.
+  - **A3 — `sfx` and the coexistence contract**: gesture families, the fitting
+    search, banks, priority and channel stealing with restore. *Done means*: the
+    bank-in-a-ROM E2E proves stealing and restore against the schedule, over
+    playing music.
+  - **A4 — audio input**: the transcription front end (beat, percussion, bass,
+    lead, harmony) with confidences, plus the decoders. *Done means*: an MP3
+    becomes a playable cartridge, and the parts it found are reported honestly
+    enough that a wrong one can be corrected in one flag.
+  - **A5 — breadth**: `nes`, `sms`/`gg`, `md` (FM patch fitting), `snes` (BRR,
+    the SPC700 driver, sample budgeting), `gba`, `nds` — each is a chip model, a
+    driver backend and a Level A/B harness, on the per-console definition of done
+    Phase 2 used for images.
+  - **A6 — the surfaces**: the two web sections (doc 07), the desktop wiring, and
+    the Demotic integration *if and when the maintainer settles the language
+    surface* (doc 17 §Demotic — a proposal, not a decision).
 - **3D asset demake (new domain, exploratory)**: apply the same treatment to the
   32/64-bit 3D era — take a common modern 3D asset and emit PS1/N64/Saturn-
   compatible ones: polygon budgets and retopology, texture quantization through
@@ -233,4 +261,6 @@ unrunnable in CI without shipping copyrighted files. · Node SEA vs
 Bun compile (Phase 1 spike) · final name confirmation (Phase 0) · MD 32X/Sega CD
 "extended spec" inclusion (post-1.0) · Oklab L-weight and judge metric-weight
 calibration values (Phase 2, frozen thereafter) · initial candidate-portfolio
-composition per console class (Phase 2, revisited per tier rollout).
+composition per console class (Phase 2, revisited per tier rollout) · the four
+audio decisions in doc 16 §Open decisions (verb names, expansion sound chips,
+the Demotic audio surface, and the `.dmm` fallback format).

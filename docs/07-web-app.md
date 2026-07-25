@@ -36,8 +36,8 @@ images are only one kind (doc 01 §Scope):
 |---|---|---|
 | **demotic game demaker** | write a `.dmt`, play it on any console, run its `.test.dmt` suite | live |
 | **art demaker** | the image pipeline described below | live |
-| **music demaker** | tracks → chip music | coming soon |
-| **sound demaker** | effects → chip sound | coming soon |
+| **music demaker** | tracks → chip music (docs 16, 17) | designed, not built |
+| **sound demaker** | effects → chip sound (docs 16, 18) | designed, not built |
 
 The route lives in the hash as `#section=<id>`, and the **art demaker is the
 unmarked default** — so every option permalink shared before the site grew
@@ -106,6 +106,46 @@ and the number says what that speed is.
 A game the runtime cannot run — one with a level or a camera, today — gets a
 message naming the feature instead of a cartridge that would play something
 else.
+
+### The audio sections
+
+Drop a track (or a sound) in, pick a console, press play, and hear exactly what
+the cartridge will play. That last word is the whole design constraint, and it
+rules out the obvious implementation:
+
+**Web Audio is a playback device here, never a synthesizer.** No
+`OscillatorNode`, no `BiquadFilterNode`, no `AudioWorklet` DSP — the page renders
+the result with `@demake/chip` (the same models Node uses, the same models the
+conformance suite validates) into a plain PCM buffer and hands that buffer to an
+`AudioBufferSourceNode`. A browser-synthesized approximation would be a second
+implementation of the hardware, which is the failure this document already
+forbids for conversion logic and doc 14 forbids for art. The determinism suite
+enforces it the same way it enforces byte-identical PNGs: the audio exported in
+the page must be byte-identical to the audio exported in Node.
+
+Two traps that follow, both worth stating because both are invisible until
+someone compares waveforms:
+
+- The `AudioContext` is constructed with an explicit `{ sampleRate: 48000 }` and
+  the render matches it. A buffer whose rate differs from the context's is
+  resampled *by the browser*, differently per engine. Where the constructor
+  refuses the rate, the page renders at the context's rate through our own
+  resampler and says which it did.
+- Nothing else goes in the graph — no gain automation, no compressor, no
+  `preservesPitch`. Volume is applied inside the render or not at all.
+
+The panes: **Source** (the file, its analysis — detected BPM, key, structure,
+the parts and the roles the classifier gave them, all editable), **Arrangement**
+(the channel plan as a piano roll, one lane per hardware channel, showing which
+part owns which channel bar by bar and what was dropped), and **Listen** (play
+source and result A/B, the tournament scoreboard doubling as a strategy picker
+exactly as the art demaker's does, and downloads: the `.vgm`, the manifest, the
+driver data, and a FLAC or WAV that carries the doc-16 guarantee — with the lossy
+formats offered under a label that says they do not).
+
+**Code-split**, like the Demotic section: the chip models, the decoders and the
+analysis DSP are a large payload and someone who came to convert an image must
+not download any of it.
 
 ## UX specification
 
