@@ -35,6 +35,17 @@ export type {
   RGB8,
   Ratio,
 } from "./consoles/types.js";
+export { latticeMaxHz, latticeMinHz } from "./consoles/audio.js";
+export type {
+  AudioSpec,
+  AudioChannelSpec,
+  ChannelKind,
+  DriverClock,
+  HardwareEnvelope,
+  PitchLattice,
+  RateSpec,
+  VolumeLattice,
+} from "./consoles/audio.js";
 export type { DacModel } from "./image/dac.js";
 
 // --- prep --------------------------------------------------------------------

@@ -13,6 +13,7 @@
  */
 
 import type { ChannelBits } from "../color/lattice.js";
+import type { AudioSpec } from "./audio.js";
 import type { DacModel } from "../image/dac.js";
 
 /** An 8-bit-per-channel color. */
@@ -126,6 +127,8 @@ export interface ConsoleSpec {
   /** Selectable modes (SNES 1/3/7, GBA 0/3/4, ANTIC/GTIA). */
   modes?: readonly LayoutSpec[];
   codegen: { family: string; formats: readonly CodegenFormat[] };
+  /** The console's sound hardware (doc 16); absent until a spec exists. */
+  audio?: AudioSpec;
   /** Primary references the numbers came from (doc 03 verification task). */
   docs: { sources: readonly string[] };
 }

@@ -11,6 +11,7 @@
  * exact in the core's native RGB565.
  */
 
+import { sg1000Audio } from "./audio-specs.js";
 import type { ConsoleSpec, RGB8 } from "./types.js";
 
 /**
@@ -47,6 +48,7 @@ export const sg1000 = {
   color: { model: "fixed-master", masterPalette: TMS_MASTER, dac: { kind: "linear" } },
   layout: { kind: "scanline", strategy: "tms-rowpair" },
   codegen: { family: "sg1000", formats: ["bin", "asm", "c", "rom"] },
+  audio: sg1000Audio,
   docs: {
     sources: [
       "TMS9918A/TMS9928A Video Display Processors data manual — Graphics II mode",
