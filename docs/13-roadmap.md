@@ -111,19 +111,39 @@ optimizer polish (SNES/GBA/ANTIC).
 **Done means**: all Tier 2 consoles E2E-green in nightly CI; docs/README support
 table auto-updated.
 
-**Status: started.** The **PC Engine** vertical is complete and rides the same
-loop as Tier 1: a `pce` codegen backend (word-planar HuC6270 characters, BAT
-words, 9-bit VCE palettes), a 64 KiB HuCard harness assembled by
-`wla-huc6280` — the WLA-DX build the SMS/SG-1000/SNES families already
-provision, a fourth CPU target on it — and a pixel-perfect E2E against
-beetle-pce-fast through the generic libretro runner, marching the shared image
-battery. The Game Gear shipped with the SMS family in Phase 2 and SG-1000 with
-the TMS9918 path. What remains of Tier 2 splits by what a headless CI can
-actually boot: **WonderSwan / Color** (NEC V30MZ; NASM assembles it and
-beetle-wswan needs no BIOS) is the next reachable vertical, while
-**ColecoVision**, **Neo Geo** and **Lynx** are gated on emulators that require
-copyrighted BIOS images, and **Atari 7800** on a display-list layout path that
-does not exist yet.
+**Status: started.** Two Tier 2 verticals are complete and ride the same loop as
+Tier 1, each reusing an existing edge rather than adding one:
+
+- **PC Engine** — a `pce` codegen backend (word-planar HuC6270 characters, BAT
+  words, 9-bit VCE palettes), a 64 KiB HuCard harness assembled by
+  `wla-huc6280` (a fourth CPU target on the WLA-DX build the SMS/SG-1000/SNES
+  families already provision), and a pixel-perfect E2E against beetle-pce-fast
+  through the generic libretro runner.
+- **WonderSwan Color** — a `wsc` backend (packed 4bpp tiles, screen-map words
+  with palette/bank/flip, 16 RGB444 palettes), a 4 Mbit cartridge assembled by
+  **NASM** (the V30MZ is an 8086-compatible core, so a stock x86 assembler is
+  the native tool, not an approximation) with the cartridge footer and its
+  checksum packed by demake itself, and a pixel-perfect E2E against
+  beetle-wswan.
+
+Both march the shared image battery. The Game Gear shipped with the SMS family
+in Phase 2 and SG-1000 with the TMS9918 path.
+
+What remains of Tier 2 splits by what is blocking it:
+
+- **WonderSwan (mono)** is blocked on the engine, not the toolchain — its ROM
+  path would be the `wsc` one with 2bpp tiles. The hardware shows four shades
+  per tile through sixteen palettes that pick from an eight-shade pool, itself
+  picked from sixteen LCD levels: a *two-level* mono palette with per-tile
+  selection, which no fit path expresses (the mono path is single-palette;
+  the tiled path fits RGB lattices). Its current `ConsoleSpec` papers over that
+  with one eight-entry palette at 4bpp, which the mono hardware cannot display —
+  so `prep -c ws` is, today, optimistic. Fixing it means a **tiled-mono fitter**
+  and is the next engine increment here, not a backend.
+- **ColecoVision**, **Neo Geo** and **Lynx** are gated on emulators that require
+  copyrighted BIOS images, which the doc-10 loop will not ship.
+- **Atari 7800** needs a display-list layout path that does not exist yet.
+- **NGP/NGPC** has no assembler for the TLCS-900H in any distro archive.
 
 ## Phase 6 — 1.0
 

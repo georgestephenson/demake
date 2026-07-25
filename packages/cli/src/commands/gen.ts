@@ -30,6 +30,7 @@ import { buildPceRom } from "../rom/pce.js";
 import { buildSg1000Rom } from "../rom/sg1000.js";
 import { buildSmsRom } from "../rom/sms.js";
 import { buildSnesRom } from "../rom/snes.js";
+import { buildWscRom } from "../rom/wsc.js";
 
 function str(values: Record<string, ParsedValue>, key: string): string | undefined {
   return typeof values[key] === "string" ? (values[key] as string) : undefined;
@@ -153,6 +154,9 @@ export async function runGen(
     } else if (spec.codegen.family === "pce") {
       const rom = buildPceRom(env, spec, result);
       artifacts = [{ suffix: ".pce", kind: "rom", bytes: rom }];
+    } else if (spec.codegen.family === "wsc") {
+      const rom = buildWscRom(env, spec, result);
+      artifacts = [{ suffix: ".wsc", kind: "rom", bytes: rom }];
     } else {
       throw new CliError(
         EXIT.UNAVAILABLE,

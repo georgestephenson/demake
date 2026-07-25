@@ -144,7 +144,8 @@ says so.
 | Atari 7800 | dasm | **a7800** (MAME-derived, scriptable) or MAME with `-seconds_to_run`/`-snapname` |
 | Atari 5200/8-bit | MADS | **Atari800** (`-headless` build, screenshot on exit) |
 | Lynx | cc65 | **Mednafen** lynx core |
-| WS / WSC / NGPC | Wonderful toolchain | **Mednafen** cores |
+| WS / WSC | NASM (the V30MZ is 8086-compatible) | **beetle-wswan** (Mednafen's wswan) via the libretro harness (compared in RGB565, landscape forced by core option) |
+| NGPC | Wonderful toolchain | **Mednafen** cores |
 | Intellivision | as1600 | **jzIntv** (frame dump support) |
 | Tier-3 mono/etc. | per platform | **MAME** as the universal fallback: `-video none -sound none -statename/-snapshot` scripting covers nearly every remaining system |
 

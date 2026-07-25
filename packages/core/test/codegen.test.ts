@@ -190,6 +190,35 @@ describe("gen — md family (Mega Drive)", () => {
   });
 });
 
+describe("gen — wsc family (WonderSwan Color)", () => {
+  it("emits packed 4bpp tiles, flip/bank-tagged map words, and RGB444 palettes", async () => {
+    const png = encodeRgbaPng(64, 64, makeSource(64, 64));
+    const result = await gen(png, { console: "wsc", format: "bin", symbol: "demake" });
+    const tiles = result.artifacts.find((a) => a.suffix === ".tiles.bin")!.bytes;
+    const map = result.artifacts.find((a) => a.suffix === ".map.bin")!.bytes;
+    const pal = result.artifacts.find((a) => a.suffix === ".pal.bin")!.bytes;
+
+    expect(tiles.length % 32).toBe(0);
+    expect(map.length).toBe((64 / 8) * (64 / 8) * 2);
+    expect(pal.length).toBe(16 * 16 * 2); // 16 palettes × 16 colors
+    for (let i = 0; i < map.length; i += 2) {
+      const word = map[i]! | (map[i + 1]! << 8);
+      expect(word & 0x1ff).toBeLessThan(tiles.length / 32); // 9-bit tile number
+      expect((word >> 9) & 0xf).toBeLessThan(16); // 4-bit palette select
+      expect((word >> 13) & 1).toBe(0); // one bank is enough for 64 tiles
+    }
+    // Every palette word is 12 bits wide, and color 0 of every palette is the
+    // shared backdrop (the display controller renders index 0 transparent).
+    for (let i = 0; i < pal.length; i += 2) {
+      expect(pal[i]! | (pal[i + 1]! << 8)).toBeLessThan(0x1000);
+    }
+    for (let p = 1; p < 16; p += 1) {
+      expect(pal[p * 16 * 2]).toBe(pal[0]);
+      expect(pal[p * 16 * 2 + 1]).toBe(pal[1]);
+    }
+  });
+});
+
 describe("gen — pce family (PC Engine / HuC6270)", () => {
   it("packs a character as word-planar bitplane pairs", () => {
     // Row 0: pixel 0 = index 15 (every plane's bit 7 set), rest 0.

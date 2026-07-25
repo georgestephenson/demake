@@ -25,6 +25,7 @@ const TOOLS = {
   "sms/gg/sg1000 (WLA-DX z80)": ["wla-z80", "wlalink"],
   "snes (WLA-DX 65816)": ["wla-65816", "wlalink"],
   "pce (WLA-DX huc6280)": ["wla-huc6280", "wlalink"],
+  "wsc (NASM)": ["nasm"],
   "md (GNU m68k binutils)": ["m68k-linux-gnu-as", "m68k-linux-gnu-ld", "m68k-linux-gnu-objcopy"],
   "gba/nds (GNU ARM binutils)": ["arm-none-eabi-as", "arm-none-eabi-ld", "arm-none-eabi-objcopy"],
 };
@@ -44,6 +45,7 @@ const FILES = {
   "gba (mGBA)": join(TC, "libretro", "cores", "mgba_libretro.so"),
   "nds (DeSmuME)": join(TC, "libretro", "cores", "desmume_libretro.so"),
   "pce (beetle-pce-fast)": join(TC, "libretro", "cores", "mednafen_pce_fast_libretro.so"),
+  "wsc (beetle-wswan)": join(TC, "libretro", "cores", "mednafen_wswan_libretro.so"),
 };
 
 const onPath = (tool) => {
