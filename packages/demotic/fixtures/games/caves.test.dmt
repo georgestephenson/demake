@@ -8,7 +8,7 @@
 test the hero falls onto the cavern floor and stays there
 play 240 ticks
 expect player.ydirection <= 0.05
-expect player.bottom < levelheight
+expect player.bottom = levelheight - 2
 
 test the camera starts clamped into the bottom-left corner
 play 2 ticks
@@ -16,15 +16,37 @@ expect camera.x = 0
 expect camera.y = levelheight - screenheight
 
 test running right scrolls the view, and never past the level
-hold right for 60 ticks
+hold right for 120 ticks
 expect camera.x > 0
 expect camera.x <= levelwidth - screenwidth
 
+-- Both halves of the HUD ride the camera, and the label has to be pinned as
+-- surely as the number is — a counter that keeps up with the view while its
+-- caption is left behind in the cave is worse than neither.
 test the hud follows the camera rather than the world
-hold right for 60 ticks
-expect score.x = camera.x + 1
+hold right for 120 ticks
+expect scoretag.x = camera.x + 1
+expect scoretag.y = camera.y + 1
+expect score.x = camera.x + 8
 expect score.y = camera.y + 1
 
 test the spike pit is fatal, whichever console you fall into it on
 hold right for 300 ticks
 expect scene gameover
+
+-- The climb is a staircase of ledges two and three cells apart, so a jump that
+-- cannot clear three cells makes most of the cavern scenery. Measured at the
+-- apex, which is 37 ticks after the press on every console.
+test a jump from the floor clears the first step of the climb
+play 240 ticks
+press a
+play 40 ticks
+expect player.bottom <= levelheight - 5
+
+test the hero cannot jump again in mid air
+play 240 ticks
+press a
+play 20 ticks
+press a
+play 2 ticks
+expect player.ydirection > -1

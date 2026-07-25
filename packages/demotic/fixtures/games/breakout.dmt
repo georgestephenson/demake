@@ -17,8 +17,12 @@ create object brick (width 12vw, height 1 cell, sprite brick.svg)
 create ball ball1 in play (x centerx, y centery + 2, direction northeast)
 create paddle bat in play (x centerx, y screenheight - 2)
 
-create number score in play (value 0, x 1, y 1)
-create number left in play (value 8, x screenwidth - 2, y 1)
+-- A counter with no caption is a number nobody can read. The label is an
+-- ordinary `text` object beside it — same font, same layer, no new concept.
+create text scoretag in play (x 1, y 1, text "score:")
+create number score in play (value 0, x 8, y 1)
+create text lefttag in play (x screenwidth - 9, y 1, text "left:")
+create number left in play (value 8, x screenwidth - 3, y 1)
 
 -- Two rows of four. Positions are relative, so the wall spans the same share of
 -- every playfield even though a Game Boy brick is 2 cells and a Mega Drive one

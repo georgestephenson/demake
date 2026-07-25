@@ -149,7 +149,7 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     loop a plain unit test: no toolchain, no emulator install. The gaps D3
     originally carried are closed: levels, tiles and the camera compile; art is
     demade through the image pipeline; and speed went from 3–11 Game Boy frames
-    per tick to 1.00–1.01, so a game keeps up with the hardware. Doc 14 §2 has
+    per tick to 1.00–1.03, so a game keeps up with the hardware. Doc 14 §2 has
     the reasoning for the reversal and the measurement.
   - **D4 — breadth**: `nes`, `sms`/`gg`, `md`, `snes` backends, each trace-green
     then framebuffer-green. A backend is per-family; the `Program` it compiles

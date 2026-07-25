@@ -467,8 +467,9 @@ export class Sim {
           }
           // Separate every tick the contact persists, but re-test first: a rule
           // that moved its subject away (a ball reset to the middle after a
-          // point) must not be dragged back to the wall it just left.
-          if (this.touchesEdge(subjectId, edge)) {
+          // point) must not be dragged back to the wall it just left, and one
+          // that hid it must not have it pushed around while it is out of play.
+          if (this.isSolid(subjectId) && this.touchesEdge(subjectId, edge)) {
             this.separateFromEdge(subjectId, edge);
             current.add(key);
           }
@@ -482,7 +483,15 @@ export class Sim {
           if (rule.event.level || !this.overlaps.has(key)) {
             this.fire(rule, true, { subject: subjectId, other: otherId });
           }
-          if (this.overlapping(subjectId, otherId)) {
+          // `visible 0` is inert — not drawn, *not collided with*, not moved —
+          // and a rule that collects a coin by hiding it has said so before
+          // this line runs. Separating anyway would shove the player off a
+          // thing that no longer exists.
+          if (
+            this.isSolid(subjectId) &&
+            this.isSolid(otherId) &&
+            this.overlapping(subjectId, otherId)
+          ) {
             this.separateFromEntity(subjectId, otherId);
             current.add(key);
           }
@@ -791,11 +800,25 @@ export class Sim {
     const lines = screenHeight * cellSize;
     const perLine = new Int32Array(lines);
 
+    // A scrolling scene's HUD is drawn with sprites, because the background
+    // layer cannot hold still while it moves — so those glyphs are counted too.
+    const hudCostsSprites = this.sceneDef().cameraTarget !== undefined;
+
     for (const id of this.activeIds()) {
       const def = this.program.instances[id] as InstanceDef;
-      if (!def.strings["sprite"]) continue;
       const numbers = this.numbers[id] as Record<string, Fixed>;
       if ((numbers["visible"] ?? ONE) === 0) continue;
+
+      if (!def.strings["sprite"]) {
+        if (!hudCostsSprites) continue;
+        const glyphs = hudGlyphs(def, numbers);
+        if (glyphs === 0) continue;
+        const row = Math.floor(toNumber(numbers["y"] ?? 0) * cellSize);
+        for (let line = Math.max(0, row); line < Math.min(lines, row + cellSize); line += 1) {
+          perLine[line] = (perLine[line] as number) + glyphs;
+        }
+        continue;
+      }
 
       const columns = Math.max(1, Math.ceil(toNumber(numbers["width"] ?? ONE)));
       const top = Math.floor(toNumber(numbers["y"] ?? 0) * cellSize);
@@ -836,4 +859,12 @@ function perTick(direction: Fixed, speed: Fixed, fps: Fixed): Fixed {
 
 function absFixed(value: Fixed): Fixed {
   return value < 0 ? -value : value;
+}
+
+/** Cells a `number` or `text` object writes on screen; zero for anything else. */
+function hudGlyphs(def: InstanceDef, numbers: Readonly<Record<string, Fixed>>): number {
+  if (def.className === "text") return (def.strings["text"] ?? "").length;
+  if (def.className !== "number") return 0;
+  const value = Math.trunc(toNumber(numbers["value"] ?? 0));
+  return String(Math.abs(value)).length + (value < 0 ? 1 : 0);
 }

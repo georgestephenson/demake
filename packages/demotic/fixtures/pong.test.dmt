@@ -15,7 +15,7 @@ expect scene play
 
 test the ball serves down and to the left
 press a
-play 60 ticks
+play 30 ticks
 expect ball1.y > centery
 expect ball1.x < centerx
 
@@ -32,11 +32,11 @@ expect paddle1.right = screenwidth
 expect paddle1.xdirection = 0
 
 -- The ball reaches the bottom wall at almost exactly the same tick on every
--- console (68 on a Game Boy, 71 on a Mega Drive) because speeds are relative.
+-- console (49 on a Game Boy, 51 on a Mega Drive) because speeds are relative.
 -- That is the balance work, asserted rather than assumed.
 test a still player concedes a point and the ball returns to the middle
 press a
-play 80 ticks
+play 55 ticks
 expect score2.value = 1
 expect abs(ball1.y - centery) < 15vh
 expect abs(ball1.x - centerx) < 15vw
@@ -51,3 +51,11 @@ press a
 play 600 ticks
 expect paddle2.x >= 0
 expect paddle2.right <= screenwidth
+
+-- The opponent's handicap, asserted rather than described. `aim` is redrawn
+-- every time the ball leaves the player's paddle, and a non-zero aim is what
+-- stops the return coming back down the same line every rally.
+test the opponent aims off-centre once a rally has started
+press a
+play 200 ticks
+expect abs(aim.value) > 0

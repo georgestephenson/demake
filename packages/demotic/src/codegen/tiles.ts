@@ -205,6 +205,7 @@ export function emitTilesUnder(ctx: Ctx, base: number, data: LevelData, body: ()
   const lastRow = w + W.lastRow * 2;
   const col = w + W.tileCol * 2;
   const row = w + W.tileRow * 2;
+  const level = data.file;
 
   emitFloorCell(ctx, base + propOffset("x"), firstCol);
   emitFloorCell(ctx, base + propOffset("y"), firstRow);
@@ -218,6 +219,17 @@ export function emitTilesUnder(ctx: Ctx, base: number, data: LevelData, body: ()
     emitCeilOpen(ctx, edge, lastRow);
   });
 
+  // Clip the walk to the grid *once*, rather than asking `TileAt` whether every
+  // single cell is inside it. Cells outside contribute nothing either way — the
+  // lookup would return "empty" — so the two are equivalent, and this way the
+  // inner loop is a load and an increment instead of four bounds comparisons
+  // and a multiply. An object standing still overlaps the same six cells every
+  // tick, and a game with five tile rules walks them five times.
+  emitClampLow(ctx, firstCol);
+  emitClampLow(ctx, firstRow);
+  emitClampHigh(ctx, lastCol, level.width - 1);
+  emitClampHigh(ctx, lastRow, level.height - 1);
+
   const rowLoop = ctx.unique("tileRowLoop");
   const colLoop = ctx.unique("tileColLoop");
   const rowDone = ctx.unique("tileRowDone");
@@ -227,16 +239,72 @@ export function emitTilesUnder(ctx: Ctx, base: number, data: LevelData, body: ()
   asm.label(rowLoop);
   emitLess16Signed(ctx, lastRow, row, rowDone);
   copy16(ctx, col, firstCol);
+  // hl = grid + row * width + firstCol, computed once for the whole row.
+  asm.lda(row);
+  asm.ld("l", "a");
+  asm.lda(row + 1);
+  asm.ld("h", "a");
+  emitMulConst16(ctx, level.width);
+  asm.lda(firstCol);
+  asm.ld("e", "a");
+  asm.lda(firstCol + 1);
+  asm.ld("d", "a");
+  asm.addHL("de");
+  asm.ld16("de", label(data.gridLabel));
+  asm.addHL("de");
+  asm.ld("a", "l");
+  asm.sta(layout.tilePtr);
+  asm.ld("a", "h");
+  asm.sta(layout.tilePtr + 1);
   asm.label(colLoop);
+  // The body runs whole rules and uses every register there is, and so does the
+  // comparison above it, so the cursor lives in RAM between cells.
   emitLess16Signed(ctx, lastCol, col, colDone);
-  asm.call(tileAtLabel(data));
+  asm.lda(layout.tilePtr);
+  asm.ld("l", "a");
+  asm.lda(layout.tilePtr + 1);
+  asm.ld("h", "a");
+  asm.ld("a", "hlp");
   body();
+  inc16At(ctx, layout.tilePtr);
   inc16At(ctx, col);
   asm.jp(colLoop);
   asm.label(colDone);
   inc16At(ctx, row);
   asm.jp(rowLoop);
   asm.label(rowDone);
+}
+
+/** `addr = max(addr, 0)`, on a signed 16-bit cell coordinate. */
+function emitClampLow(ctx: Ctx, addr: number): void {
+  const { asm } = ctx;
+  const done = ctx.unique("clampLow");
+  asm.lda(addr + 1);
+  asm.bit(7, "a");
+  asm.jr(done, "z");
+  asm.alu("xor", "a");
+  asm.sta(addr);
+  asm.sta(addr + 1);
+  asm.label(done);
+}
+
+/** `addr = min(addr, limit)`, leaving a negative coordinate alone so an object
+ * entirely off the grid ends up with `last < first` and walks nothing. */
+function emitClampHigh(ctx: Ctx, addr: number, limit: number): void {
+  const { asm } = ctx;
+  const done = ctx.unique("clampHigh");
+  const tooBig = ctx.unique("clampSet");
+  asm.lda(addr + 1);
+  asm.bit(7, "a");
+  asm.jr(done, "nz");
+  emitAtLeast16(ctx, addr, limit + 1, tooBig);
+  asm.jr(done);
+  asm.label(tooBig);
+  asm.ldn("a", limit & 0xff);
+  asm.sta(addr);
+  asm.ldn("a", (limit >> 8) & 0xff);
+  asm.sta(addr + 1);
+  asm.label(done);
 }
 
 /** `dst16 = floor(value)` — the integer cell a 16.16 coordinate sits in. */

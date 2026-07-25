@@ -2,7 +2,7 @@
 --
 -- What this exercises that the other examples do not:
 --   * `stream`: a level composed at build time by drawing chunks at random,
---     rather than drawn by hand. Three small files become a long course.
+--     rather than drawn by hand. Four small files become a long course.
 --   * `seed`: the one number the whole course follows from. Change it and the
 --     game is different; leave it and every console, every run and every trace
 --     agree exactly.
@@ -21,28 +21,39 @@ scene play
 
 -- 24 chunks of 6 cells each: a 144-cell course, laid side by side. The chunks
 -- share a legend, so `#` is a pipe in all of them.
-stream course from open.dmtl, lowpipe.dmtl, highpipe.dmtl 24 wide
+stream course from open.dmtl, lowpipe.dmtl, highpipe.dmtl, pipemid.dmtl 24 wide
 
 camera follows bird1
 
-create object bird (width 1 cell, height 1 cell, speed 30vw, sprite hero.svg)
+-- Six cells a second, absolute, and that is the interesting choice in this file.
+-- Everywhere else a speed is relative, because the playfield is the screen and a
+-- rally has to take the same seconds on a wide one as on a narrow one. Here the
+-- playfield is a *course*, 144 hand-drawn cells on every console, so "how fast"
+-- and "how hard" are both measured in cells: at 30vw the Mega Drive's bird would
+-- cover the same pipes at twice the speed and be playing a different game.
+create object bird (width 1 cell, height 1 cell, speed 6, sprite hero.svg)
 create object prize (width 1 cell, height 1 cell, speed 0, sprite coin.svg)
 
--- Row 14 is the one corridor every chunk leaves open — the low pipes stop below
--- it and the high ones stop above. A vocabulary of chunks has properties like
--- that, and the game is allowed to rely on them; it is why the chunks are
--- hand-drawn and only their *order* is generated.
-create bird bird1 in play (x 1, y 14, xdirection 1)
+-- Rows 13 to 16 are the corridor every chunk leaves open: the low pipes stop
+-- below it, the high ones above it, and the middle chunk's slot contains it. A
+-- vocabulary of chunks has properties like that, and the game is allowed to rely
+-- on them; it is why the chunks are hand-drawn and only their *order* is
+-- generated.
+create bird bird1 in play (x 1, y 13, xdirection 1)
 
 create prize prize1 in play (x 12, y 14)
 
-create number score in play (value 0, x 1, y 1)
+create text scoretag in play (x 1, y 1, text "coins:")
+create number score in play (value 0, x 8, y 1)
 
--- Gravity and the flap, exactly as in the platformer: the mechanic is the same,
--- only the scenery is generated.
-when always in play then bird1.ydirection as min(bird1.ydirection + 0.05, 0.9)
+-- Gravity and the flap. The mechanic is the platformer's, but the numbers are a
+-- flapper's rather than a jumper's: a small impulse against a heavy pull, so one
+-- press buys about one row and the bird is always either climbing or falling.
+-- A jump-sized impulse here would send it over the pipes entirely, and a game
+-- you can fly above is not a game.
+when always in play then bird1.ydirection as min(bird1.ydirection + 0.09, 0.9)
 
-control bird1 a (ydirection -0.7) on press
+control bird1 a (ydirection -1.2) on press
 
 -- Pipes and ground are tiles, named by the chunks' shared legend.
 when bird1 touches pipe, ground then scene as gameover
@@ -52,13 +63,18 @@ when bird1 hits screenright then scene as won
 when bird1 hits screentop then ydirection as 0
 
 -- The coin keeps its distance ahead of the view, at a height drawn fresh each
--- time. This is the one place a game needs `random`: the course is fixed by the
--- seed, but where the reward sits is decided as the game runs — and, because the
--- generator is the language's own rather than the host's, decided identically on
--- every machine and in every replay.
-when prize.right < camera.x in play then (x, y) as (camera.x + screenwidth, random(2, 20))
+-- time from inside the corridor. This is the one place a game needs `random`:
+-- the course is fixed by the seed, but where the reward sits is decided as the
+-- game runs — and, because the generator is the language's own rather than the
+-- host's, decided identically on every machine and in every replay.
+when prize.right < camera.x in play then (x, y) as (camera.x + screenwidth, random(13, 16))
 
 when bird1 hits prize then (prize1.x, score.value) as (camera.x + screenwidth, score.value + 1)
+
+-- The HUD rides the camera, label and counter alike, or it is left behind in the
+-- first chunk. A scrolling scene draws its counters with sprites for the same
+-- reason the caves does: the background cannot hold still while it scrolls.
+when always in play then (scoretag.x, scoretag.y, score.x, score.y) as (camera.x + 1, camera.y + 1, camera.x + 8, camera.y + 1)
 
 -- --------------------------------------------------------------- endings ----
 

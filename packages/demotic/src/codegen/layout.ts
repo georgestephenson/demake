@@ -45,6 +45,15 @@ export const PROP_SIZE = 4;
 /** Bytes per entity record. */
 export const ENTITY_SIZE = PROPS.length * PROP_SIZE;
 
+/**
+ * Bytes of an entity record that make up its collision box.
+ *
+ * `x`, `y`, `width`, `height` are the first four slots by construction, so a box
+ * is a contiguous run and staging one is a single block copy. The order in
+ * {@link PROPS} is therefore load-bearing, not alphabetical.
+ */
+export const BOX_SIZE = 4 * PROP_SIZE;
+
 /** Derived properties, computed on read. */
 export const DERIVED = ["centerx", "centery", "left", "right", "top", "bottom"] as const;
 
@@ -156,6 +165,22 @@ export interface Layout {
   tileContactSlots: ReadonlyMap<string, number>;
   /** Where this tick's tile contacts are built before replacing the stored list. */
   tileScratch: number;
+  /** The tile walker's cursor into the grid, kept out of the register file
+   * because the rule bodies it runs use every register there is. */
+  tilePtr: number;
+  /**
+   * Staging for the two boxes of an object-versus-object contact, and the
+   * workspace the shared overlap and separation routines use.
+   *
+   * `x`, `y`, `width` and `height` are the first four slots of an entity record,
+   * so a box is one sixteen-byte copy. That is what lets the arithmetic be a
+   * *routine* rather than a copy of itself per pair — and with a bullet against
+   * nine aliens costing twenty-seven pairs, the difference is the whole
+   * cartridge. Absent unless some rule can put two objects in contact.
+   */
+  pairA: number | null;
+  pairB: number | null;
+  pairWork: number | null;
 
   // --- rendering ------------------------------------------------------------
   /** Pending VRAM writes: address low, address high, tile. */
@@ -316,6 +341,15 @@ export function planLayout(program: Program, analysis: Analysis): Layout {
   // This tick's list is built here and copied over the stored one at the end
   // of the pair, so the comparison is never against a half-overwritten list.
   const tileScratch = analysis.usesTiles ? heap.take(tileContactStride) : 0;
+  const tilePtr = analysis.usesLevels ? heap.take(2) : 0;
+
+  // Only games where two objects can meet pay for the pair staging.
+  const usesPairs = program.rules.some(
+    (rule) => rule.event.kind === "hits" && rule.event.others.length > 0,
+  );
+  const pairA = usesPairs ? heap.take(BOX_SIZE) : null;
+  const pairB = usesPairs ? heap.take(BOX_SIZE) : null;
+  const pairWork = usesPairs ? heap.take(4 * PROP_SIZE) : null;
 
   const queue = heap.take(QUEUE_MAX * 3);
   const queueCount = heap.take(1);
@@ -363,6 +397,10 @@ export function planLayout(program: Program, analysis: Analysis): Layout {
     tileContactStride,
     tileContactSlots,
     tileScratch,
+    tilePtr,
+    pairA,
+    pairB,
+    pairWork,
     queue,
     queueCount,
     plot,

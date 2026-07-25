@@ -12,8 +12,11 @@ play 20 ticks
 expect bird1.ydirection > 0
 expect bird1.x > 1
 
+-- Ten ticks, not thirty: the corridor is four rows and the bird falls out of the
+-- bottom of it in about half a second, which is the difference between this and
+-- the drifting version it replaced.
 test flapping lifts it
-play 30 ticks
+play 10 ticks
 press a
 play 4 ticks
 expect bird1.ydirection < 0

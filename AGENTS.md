@@ -217,7 +217,20 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   fine until the next jump. `reaches` is a _crossing_ detector so it works on
   counters that fall as well as rise.
 - **`visible 0` is inert**: not drawn, not collided with, not moved. That is why
-  there is no `destroy`.
+  there is no `destroy` — and why separation re-checks it: a rule that collects a
+  coin by hiding it has said so _before_ the push-apart runs, so the player must
+  not be shoved off a thing that no longer exists.
+- **A `number` with `visible 0` is how a game holds a plain value.** It is not
+  drawn, not collided with and not moved, so it is a variable in everything but
+  name — the platformer's `footing`, the shooter's `fired`, pong's `aim`. When
+  one of those reads correctly it is because of _tick order_: cleared by a level
+  rule (step 3), set by the collision or tile phase (steps 5–6), read by an edge
+  rule (step 7). Writing the three rules in the wrong phase is the way to get a
+  flag that is always false.
+- **A jump needs a `when a pressed if` rule, not a `control`.** Controls run at
+  the top of the tick, before anything has been collided with, so a control
+  cannot ask whether there is ground underfoot — and a jump that cannot ask is a
+  jump you can press forever.
 - **A scene's playfield is its level's size, or the screen's** (doc 14 §Levels).
   So `screenright` means the end of the _level_, object positions are level
   coordinates, and the camera is the only thing that knows where the view is —
@@ -254,7 +267,7 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
 ## Working on the console backend
 
 - **Speed is a published number, and it is currently 1.** Every example runs at
-  1.00–1.01 Game Boy frames per game tick, so a game keeps up with the hardware.
+  1.00–1.03 Game Boy frames per game tick, so a game keeps up with the hardware.
   The web app shows the measured figure rather than hiding it behind a speed
   multiplier; if a change pushes a fixture over 1.2, that is a regression worth
   chasing before anything else.
@@ -271,6 +284,38 @@ packages/demotic/test/rom.test.ts` builds all seven fixture games and diffs raw
 - **Emitters must leave the temp stack as they found it.** `ctx.scoped()` exists
   for that; a `pushTemp` without its `popTemp` corrupts a sibling expression
   rather than failing, and the symptom appears somewhere else entirely.
+- **Art is sized by the _instance_, not the class.** One asset used at two
+  different `width`s is converted twice, at both boxes, and keyed by
+  `name@WxH` — because the box is the collision box, and drawing the larger
+  conversion for both paints ledge where nothing can be stood on. Tile dedup
+  across the build makes the second box nearly free.
+- **A scene that scrolls draws its HUD with sprites.** The background layer moves
+  as one piece, so a cell of it cannot be held still while the rest slides; a
+  counter pinned to `camera.x + 1` on the background jitters by up to seven
+  pixels and snaps back. Sprites are positioned in screen pixels, so the pin
+  lands on the pixel. They use OBP1, which stays the plain ramp — the art's own
+  palette may map the font's ink onto the lightest shade.
+- **A static caption is painted once, with the background.** `hudIsStatic` asks
+  whether anything about a `number` or `text` can change; if nothing can, it goes
+  in during the full redraw and never touches the per-frame erase-and-repaint
+  path. Labels are six cells against a counter's one, so this is most of the HUD
+  cost in a small game.
+- **Per-pair collision work is a routine, not a copy per pair.** `x`, `y`,
+  `width` and `height` are the first four slots of an entity record, so a box is
+  one block copy into fixed staging and the overlap test and separation are
+  shared code. Inlined, a bullet against nine aliens cost 1.5 KiB _per pair_ and
+  a three-shot magazine would not fit in a cartridge.
+- **The tile walk is clipped to the grid once, not per cell.** Cells outside a
+  level contribute nothing either way, so bounding the walk up front is
+  equivalent to asking `TileAt` about every cell — and it is the difference
+  between a load-and-increment inner loop and four bounds comparisons plus a
+  multiply. An object standing still walks the same six cells every tick, once
+  per tile rule.
+- **A divisor that is a whole number of cells takes the byte divider.** The
+  general path is a 48-bit shift-and-subtract loop, and a rule that divides every
+  tick pays for it every tick. Pong's opponent uses a `5vw` gain — one whole cell
+  on a Game Boy court — for exactly that reason, and it is worth a third of the
+  game's tick.
 - **Watch which registers a helper needs live.** `ld de, addr` and `ld bc, addr`
   destroy a byte the caller may be carrying — that is exactly how every object
   came to draw tile `$C0` (see §Gotchas). Prefer building an address from a

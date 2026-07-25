@@ -5,10 +5,16 @@
 --   * recycling: an object that leaves the screen is put back at the top rather
 --     than removed, which is what a real console does because allocation is not
 --     a thing you do at 60 Hz
+--   * `random` in a level rule, so the same six rocks make a different run every
+--     time round — the one thing that turns "stand still and wait" into a game
 --   * objects at staggered speeds, so the per-scanline count keeps changing
---   * a survival score that rises on a timer rather than on an event
+--   * a score, a target to reach, and a life count to lose it with
 
 start play
+
+-- One number decides every column every rock ever falls down. Change it and the
+-- run is different; leave it and a replay is a replay, on every console.
+seed 20260726
 
 scene play
 
@@ -17,15 +23,20 @@ create object rock (width 1 cell, height 1 cell, sprite rock.svg)
 
 create ship player in play (x centerx, y screenheight - 2)
 
-create rock r1 in play (x 8vw, y 0, speed 30vh, direction south)
-create rock r2 in play (x 24vw, y 4, speed 38vh, direction south)
-create rock r3 in play (x 40vw, y 8, speed 34vh, direction south)
-create rock r4 in play (x 56vw, y 2, speed 42vh, direction south)
-create rock r5 in play (x 72vw, y 6, speed 36vh, direction south)
-create rock r6 in play (x 88vw, y 10, speed 40vh, direction south)
+create rock r1 in play (x 8vw, y 0, speed 22vh, direction south)
+create rock r2 in play (x 24vw, y 4, speed 28vh, direction south)
+create rock r3 in play (x 40vw, y 8, speed 25vh, direction south)
+create rock r4 in play (x 56vw, y 2, speed 31vh, direction south)
+create rock r5 in play (x 72vw, y 6, speed 26vh, direction south)
+create rock r6 in play (x 88vw, y 10, speed 29vh, direction south)
 
-create number score in play (value 0, x 1, y 1)
-create number lives in play (value 3, x screenwidth - 2, y 1)
+-- A counter on its own is a number with no noun. The label is an ordinary `text`
+-- object beside it, which costs nothing a number does not: both are drawn from
+-- the same font, on the same layer, at cells the game chose.
+create text dodgedtag in play (x 1, y 1, text "dodged:")
+create number score in play (value 0, x 9, y 1)
+create text livestag in play (x 1, y 2, text "lives:")
+create number lives in play (value 3, x 8, y 2)
 
 control player left (xdirection -1) on hold
 control player right (xdirection 1) on hold
@@ -36,14 +47,41 @@ when player hits screenleft, screenright then xdirection as 0
 -- once per instance with that instance bound as its subject, so `y` here means
 -- "this rock's y". Written per-object this was six near-identical rules, and six
 -- places to forget one.
-when rock.y >= screenheight then y as 0
+--
+-- The new column is drawn as it falls off the bottom, which is also the moment
+-- it is scored. Six rocks on six fixed columns is a pattern you learn once and
+-- then stand still in; six rocks on columns nobody wrote down is a game.
+--
+-- The draw is *around the ship*, not across the whole wall: `random` takes
+-- expressions, so where the player is standing is an argument to it. A rock aimed
+-- within five cells either way has to be stepped away from, which is the
+-- difference between a hazard and weather. `clamp` keeps the column on the
+-- playfield when the ship is against a wall.
+--
+-- Five *cells*, not five percent, and that is the whole reason this one is
+-- absolute: the ship is one cell wide on every console, so a dodge window
+-- measured in cells is the same window everywhere. Written as a share of the
+-- width it would be nine columns on a Game Boy and seventeen on a Mega Drive —
+-- the same game on paper and half as dangerous in the hand.
+--
+-- And because the draw happens at a *stated* moment — this rock, leaving the
+-- screen — the sequence is the same in the preview, in the ROM and in every
+-- replay.
+when rock.y >= screenheight then (y, x, score.value) as (0, clamp(random(player.centerx - 5, player.centerx + 5), 0, screenwidth - 1), score.value + 1)
 
-when player hits rock then (lives.value, rock.y) as (lives.value - 1, 0)
+when player hits rock then (lives.value, rock.y, rock.x) as (lives.value - 1, 0, clamp(random(player.centerx - 5, player.centerx + 5), 0, screenwidth - 1))
 
 when lives.value reaches 0 in play then scene as gameover
+when score.value reaches 30 in play then scene as cleared
 
 scene gameover
 
 create text over in gameover (x centerx - 4, y centery, text "game over")
 
 when a pressed in gameover then scene as play
+
+scene cleared
+
+create text clear in cleared (x centerx - 6, y centery, text "all dodged")
+
+when a pressed in cleared then scene as play

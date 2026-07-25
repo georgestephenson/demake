@@ -79,6 +79,7 @@ describe("gb ROM conformance across the example library", () => {
         "open.dmtl": read(join("games", "open.dmtl")),
         "lowpipe.dmtl": read(join("games", "lowpipe.dmtl")),
         "highpipe.dmtl": read(join("games", "highpipe.dmtl")),
+        "pipemid.dmtl": read(join("games", "pipemid.dmtl")),
       },
     ],
   ];

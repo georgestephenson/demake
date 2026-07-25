@@ -29,6 +29,7 @@ import cavernLevel from "@demake/demotic/fixtures/games/cavern.dmtl?raw";
 import openLevel from "@demake/demotic/fixtures/games/open.dmtl?raw";
 import lowpipeLevel from "@demake/demotic/fixtures/games/lowpipe.dmtl?raw";
 import highpipeLevel from "@demake/demotic/fixtures/games/highpipe.dmtl?raw";
+import pipemidLevel from "@demake/demotic/fixtures/games/pipemid.dmtl?raw";
 
 import ballUrl from "@demake/demotic/fixtures/ball.svg?url";
 import paddleUrl from "@demake/demotic/fixtures/paddle.svg?url";
@@ -129,6 +130,7 @@ export const DEMO_LEVELS: Readonly<Record<string, string>> = {
   "open.dmtl": openLevel,
   "lowpipe.dmtl": lowpipeLevel,
   "highpipe.dmtl": highpipeLevel,
+  "pipemid.dmtl": pipemidLevel,
 };
 
 /** Asset name (as written in a `.dmt`) → bundled URL. */

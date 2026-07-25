@@ -141,7 +141,7 @@ game keeps up with the hardware, and the interpreter never did.
 | platformer | | 1.00 |
 | dodger | | 1.00 |
 | shooter | 11 | 1.00 |
-| caves | *would not build* | 1.01 |
+| caves | *would not build* | 1.03 |
 | runner | *would not build* | 1.00 |
 
 The interpreter's figures spanned 3 to 11 frames across the five games it could
@@ -477,10 +477,10 @@ with a gap in it, 1942 a handful of formations. `stream` says exactly that:
 
 ```
 seed 20260725
-stream course from open.dmtl, lowpipe.dmtl, highpipe.dmtl 24 wide
+stream course from open.dmtl, lowpipe.dmtl, highpipe.dmtl, pipemid.dmtl 24 wide
 ```
 
-Twenty-four chunks are drawn at random from the three and laid side by side, and
+Twenty-four chunks are drawn at random from the four and laid side by side, and
 the result is an ordinary level. Three things follow from composing at **compile
 time**, and all three are why it is done that way:
 
@@ -695,9 +695,12 @@ today — levels, tile collision, the camera and scrolling all compile.
 **Speed is a published number, not a claim.** The web app shows measured Game
 Boy frames per game tick rather than running the emulator fast enough to
 disguise the cost, because a person writing a game needs to know what their
-rules cost. Every example in the library is at 1.00–1.01 frames per tick, so a
+rules cost. Every example in the library is at 1.00–1.03 frames per tick, so a
 game keeps up with the hardware; a rule set expensive enough to overrun a frame
-will say so in that figure.
+will say so in that figure. It is a *budget*, and it has been spent: the cavern
+would like its coins to be objects, so that a collected one could vanish, and a
+dozen of them in a scrolling level costs about 0.4 of a frame per tick. They are
+tiles because the number said no.
 
 Families map onto the existing codegen families (doc 06): `gb`, `nes`, `sms`
 (SMS + GG), `md`, `snes`. Each is a backend module beside the `gb` one, and each

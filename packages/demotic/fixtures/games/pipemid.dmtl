@@ -1,0 +1,41 @@
+-- Pipes from both ends, leaving a slot through the middle.
+--
+-- The piece that makes the course a course. With only a high pipe and a low one
+-- the clear bands are wide and half the screen is always safe; this one's slot
+-- is five rows, so a stretch of it has to be flown down the middle rather than
+-- along the top or the bottom.
+
+tile #  pipe   solid  brick.svg
+tile _  ground solid  ledge.svg
+
+map
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+
+
+
+
+
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+______
+______

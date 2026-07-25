@@ -1,3 +1,9 @@
+-- Platformer — assertions about gravity, a jump, and standing on things.
+--
+-- Written in the relative vocabulary as always, so one suite covers every
+-- console: the shelves are four cells apart everywhere, but the hero's jump is
+-- a multiple of its own `speed`, which is a share of the playfield's width.
+
 test gravity pulls the hero down
 play 20 ticks
 expect player.ydirection > 0
@@ -8,18 +14,43 @@ play 240 ticks
 expect player.ydirection <= 0.05
 expect player.bottom <= screenheight
 
-test jumping moves the hero upward
+test jumping from the ground lifts the hero
 play 240 ticks
 press a
 play 6 ticks
 expect player.ydirection < 0
+
+-- The jump has to clear the step between one shelf and the next, or half the
+-- course is scenery. Measured at the apex, which is 37 ticks after the press on
+-- every console because gravity and the impulse are both in `speed`.
+test a jump clears the step between shelves
+play 240 ticks
+press a
+play 40 ticks
+expect player.bottom <= screenheight - 5
+
+-- The bug this rule exists to stop: with the jump bound straight to the button,
+-- pressing it again in mid-air renewed the impulse, and the hero climbed the sky
+-- one press at a time. The second press here must do nothing at all.
+test the hero cannot jump again in mid air
+play 240 ticks
+press a
+play 20 ticks
+press a
+play 2 ticks
+expect player.ydirection > -1
 
 test the hero runs to the left edge and stops
 hold left for 300 ticks
 expect player.x = 0
 expect player.xdirection = 0
 
+-- `visible 0` is inert: not drawn, not collided with, not moved. So a coin
+-- scores exactly once however long the hero stands in it.
 test a collected coin is gone for good
 play 240 ticks
-hold right for 240 ticks
-expect score.value >= 0
+hold right for 90 ticks
+expect score.value = 1
+expect coin1.visible = 0
+play 240 ticks
+expect score.value = 1

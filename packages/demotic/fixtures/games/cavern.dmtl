@@ -4,6 +4,12 @@
 -- The legend names each character, and those names are what Demotic rules
 -- collide with — which is why `when player touches spikes` reads as a
 -- sentence rather than as an index into a tile table.
+--
+-- `wall` and `ledge` are both solid and the split is not decorative: the game
+-- grounds a jump on a `ledge` and merely stops at a `wall`, so the floor and the
+-- platforms are ledges and the shaft's sides and roof are walls. One legend
+-- character is the difference between landing on the ground and being able to
+-- climb the side of the cave.
 
 tile #  wall    solid  brick.svg
 tile =  ledge   solid  ledge.svg
@@ -40,5 +46,5 @@ map
 #                                                          #
 #                                                          #
 #                                                          #
-##########################^^^^##############^^^^############
-############################################################
+==========================^^^^==============^^^^============
+============================================================

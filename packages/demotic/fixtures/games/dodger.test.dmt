@@ -1,3 +1,5 @@
+-- Dodger — assertions about six objects, a generator, and a run you can lose.
+
 test the rocks fall
 play 30 ticks
 expect r1.y > 0
@@ -9,6 +11,25 @@ expect r1.y < screenheight
 expect r2.y < screenheight
 expect r3.y < screenheight
 
+-- The bug this replaced: six rocks on six fixed columns is a pattern, and a
+-- pattern you can stand still in. A recycled rock has to come back somewhere
+-- else, and the seed is what makes "somewhere else" the same somewhere on every
+-- console and in every replay.
+test recycled rocks come back in new columns
+play 400 ticks
+expect abs(r1.x - 8vw) + abs(r2.x - 24vw) + abs(r3.x - 40vw) + abs(r4.x - 56vw) > 0
+
+test every rock stays on the playfield
+play 900 ticks
+expect r1.x >= 0
+expect r1.right <= screenwidth
+expect r6.x >= 0
+expect r6.right <= screenwidth
+
+test dodging is what scores
+play 400 ticks
+expect score.value > 0
+
 -- 120 ticks is two seconds, and the ship crosses the whole court in about 1.5 —
 -- long enough to reach the wall, short enough to get there before the rocks
 -- spend all three lives and the scene changes underneath the assertion.
@@ -17,6 +38,8 @@ hold left for 120 ticks
 expect player.x = 0
 expect player.xdirection = 0
 
-test lives are spent and the game ends
-play 1200 ticks
-expect lives.value <= 3
+-- Standing still used to be a winning strategy, because the rocks fell down
+-- columns that never moved. Now it is a losing one, on every console.
+test a ship that never moves loses all three lives
+play 1400 ticks
+expect scene gameover

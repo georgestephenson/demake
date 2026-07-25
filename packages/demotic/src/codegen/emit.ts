@@ -84,6 +84,19 @@ const VRAM_MAP = 0x9800;
 /** Where the OAM DMA kernel is copied to; it must run outside the main bus. */
 const HRAM_DMA = 0xff80;
 
+/**
+ * How converted art is looked up: by the file the game named *and* the box it
+ * fills.
+ *
+ * The box is part of the key because it is part of the art. Two objects of one
+ * class with different `width`s are two different pictures, and drawing the
+ * larger one for both is how a five-cell shelf came to be painted eleven cells
+ * wide with nothing under six of them.
+ */
+export function artKey(name: string, cellsWide: number, cellsHigh: number): string {
+  return `${name}@${cellsWide}x${cellsHigh}`;
+}
+
 /** Art for one asset, already converted by the image pipeline. */
 export interface SpriteArt {
   /** First tile index in the bank. */
@@ -192,7 +205,9 @@ export function emitProgram(ctx: Ctx, options: EmitOptions = {}): void {
   for (const level of levels) {
     emitLevelData(ctx, level, (index) => {
       const art = level.file.tiles[index]?.art;
-      const bound = art ? options.tiles?.get(art) : undefined;
+      const bound = art
+        ? (options.tiles?.get(artKey(art, 1, 1)) ?? options.tiles?.get(art))
+        : undefined;
       return bound ?? patternTile(index, level.file.tiles[index]?.solid ?? false);
     });
     emitTileAt(ctx, level);
@@ -244,6 +259,10 @@ function emitEntry(
   // the built-in block is drawn in the same shades as the background.
   asm.ldn("a", options.objectPalette ?? 0b11100100);
   asm.stha(R.OBP0 & 0xff);
+  // OBP1 stays the plain ramp, and that is what a HUD drawn with sprites uses.
+  // The art's palette is chosen for the art: it may well map the font's ink
+  // index onto the lightest shade, which is a score nobody can read.
+  asm.ldn("a", 0b11100100);
   asm.stha(R.OBP1 & 0xff);
   asm.alu("xor", "a");
   asm.stha(R.SCX & 0xff);
@@ -838,16 +857,37 @@ function emitSceneRender(
   if (level) emitScrollUpdate(ctx, level);
   asm.label(afterScroll);
 
-  // Restore the level tiles the HUD covered last frame, then draw it again.
-  emitHudErase(ctx, level);
-  asm.alu("xor", "a");
-  asm.sta(layout.plotCount);
-  emitHud(ctx, scene);
-  emitSwapPlots(ctx);
+  // A scene that scrolls draws its HUD with sprites instead (see
+  // {@link emitHudSprites}); one that does not gets it as background cells,
+  // which costs no OAM at all.
+  if (!scrolls(ctx, scene)) {
+    // Restore the level tiles the HUD covered last frame, then draw it again.
+    // Only the objects that can change: the captions were painted with the
+    // background and are still there.
+    emitHudErase(ctx, level);
+    asm.alu("xor", "a");
+    asm.sta(layout.plotCount);
+    emitHud(ctx, scene, "dynamic");
+    emitSwapPlots(ctx);
+  }
   emitOam(ctx, scene, options);
   asm.ret();
   void program;
   void profile;
+}
+
+/**
+ * Does this scene's view move?
+ *
+ * It is the one question that decides where the HUD is drawn, because the
+ * background layer scrolls as one piece: a cell of it can be *put* anywhere,
+ * but it cannot be held still while everything around it slides, and the seven
+ * pixels it slides before the next whole cell comes round are exactly the jitter
+ * a score in the corner must not have. Sprites are positioned in screen pixels,
+ * so a HUD pinned to `camera.x` lands on the same pixel every frame.
+ */
+function scrolls(ctx: Ctx, scene: SceneCtx): boolean {
+  return scene.def.cameraTarget !== undefined && ctx.layout.camera !== null;
 }
 
 /** `dst16 = floor(value * 8 / 65536)` — cells to pixels. */
@@ -915,10 +955,12 @@ function emitFullRedraw(ctx: Ctx, scene: SceneCtx, level: LevelData | undefined)
   asm.pop("bc");
   asm.dec("b");
   asm.jp(rowLoop, "nz");
+  // Captions go on now, with the background they sit on. A scrolling scene
+  // draws its whole HUD with sprites instead, so it has none to paint here.
+  if (!scrolls(ctx, scene)) emitHud(ctx, scene, "static");
   // The LCD comes back on with the picture already correct.
   asm.ldn("a", 0b10010011);
   asm.stha(R.LCDC & 0xff);
-  void scene;
 }
 
 /** `A = the background tile for the legend index in A`. */
@@ -1165,14 +1207,31 @@ function emitSwapPlots(ctx: Ctx): void {
   asm.label(done);
 }
 
+/**
+ * Can anything about this HUD object ever change?
+ *
+ * A caption is the common case: fixed text at a fixed cell that no rule writes.
+ * Erasing and repainting it sixty times a second costs more than everything else
+ * a small game does — and it is the *labels* that made it worth finding, because
+ * "score:" is six cells against a counter's one or two. A static object is
+ * painted once, with the background it sits on, and then left alone.
+ */
+function hudIsStatic(ctx: Ctx, id: number): boolean {
+  const instance = ctx.program.instances[id] as InstanceDef;
+  const fixed = (prop: string): boolean => !isMutable(ctx.analysis, id, prop);
+  if (!fixed("x") || !fixed("y") || !fixed("visible")) return false;
+  return instance.className === "text" || fixed("value");
+}
+
 /** Draw the scene's `number` and `text` objects on the background layer. */
-function emitHud(ctx: Ctx, scene: SceneCtx): void {
+function emitHud(ctx: Ctx, scene: SceneCtx, want: "static" | "dynamic"): void {
   const { asm, layout, program } = ctx;
   for (const id of scene.def.instanceIds) {
     const instance = program.instances[id] as InstanceDef;
     const isNumber = instance.className === "number";
     const isText = instance.className === "text";
     if (!isNumber && !isText) continue;
+    if ((hudIsStatic(ctx, id) ? "static" : "dynamic") !== want) continue;
 
     const skip = ctx.unique("hudSkip");
     if (isMutable(ctx.analysis, id, "visible")) {
@@ -1194,18 +1253,45 @@ function emitHud(ctx: Ctx, scene: SceneCtx): void {
     asm.lda(base + propOffset("y") + 3);
     asm.sta(layout.words + W.tileRow * 2 + 1);
 
+    // A static object is painted straight into VRAM with the LCD already off,
+    // so it needs neither the write queue nor a place in the erase list.
+    const plot = want === "static" ? needPokeCell(ctx) : "PlotCell";
     if (isText) {
       const text = instance.strings["text"] ?? "";
       for (const character of [...text].slice(0, 20)) {
         asm.ldn("a", glyphTile(character));
-        asm.call("PlotCell");
+        asm.call(plot);
       }
     } else {
       asm.ld16("hl", base + propOffset("value") + 2);
-      asm.call("DrawNumber");
+      asm.call(want === "static" ? needPokeNumber(ctx) : "DrawNumber");
     }
     asm.label(skip);
   }
+}
+
+/** `A = tile`: write it at the current cell and advance the column. */
+function needPokeCell(ctx: Ctx): string {
+  const name = "PokeCell";
+  ctx.need(name, (inner) => {
+    const { asm, layout } = inner;
+    asm.ld("c", "a");
+    asm.call("VramFor");
+    asm.ld("a", "c");
+    asm.ld("hlp", "a");
+    emitIncWord(inner, layout.words + W.tileCol * 2);
+    asm.ret();
+  });
+  return name;
+}
+
+/** The decimal renderer again, writing straight to VRAM. */
+function needPokeNumber(ctx: Ctx): string {
+  const name = "DrawNumberPoke";
+  ctx.need(name, (inner) => {
+    emitDecimal(inner, needPokeCell(inner), inner.layout.words + W.target * 2);
+  });
+  return name;
 }
 
 /** Build the OAM shadow from the scene's sprite objects. */
@@ -1218,7 +1304,16 @@ function emitOam(ctx: Ctx, scene: SceneCtx, options: EmitOptions): void {
     const instance = program.instances[id] as InstanceDef;
     const asset = instance.strings["sprite"];
     if (asset === undefined) continue;
-    const art = options.sprites?.get(asset);
+
+    // The collision box is the sprite's footprint, in whole cells — *this*
+    // object's box, not its class's and not the largest one the file was
+    // converted at. Anything else draws ledge where nothing can be stood on.
+    const cells = (prop: string): number =>
+      Math.max(1, Math.round((instance.numbers[prop] ?? 0) / 65536));
+    const width = cells("width");
+    const height = cells("height");
+    // A caller that supplied its own bank keyed by plain name still works.
+    const art = options.sprites?.get(artKey(asset, width, height)) ?? options.sprites?.get(asset);
 
     const skip = ctx.unique("oamSkip");
     if (isMutable(ctx.analysis, id, "visible")) {
@@ -1240,14 +1335,9 @@ function emitOam(ctx: Ctx, scene: SceneCtx, options: EmitOptions): void {
       emitPixelsFromFixed(ctx, temp, layout.words + W.count * 2);
     });
 
-    // The collision box is the sprite's footprint, in whole cells.
-    const cells = (prop: string): number =>
-      Math.max(1, Math.round((instance.numbers[prop] ?? 0) / 65536));
-    const width = art?.width ?? cells("width");
-    const height = art?.height ?? cells("height");
     for (let row = 0; row < height; row += 1) {
       for (let column = 0; column < width; column += 1) {
-        const tile = art ? art.tile + row * width + column : OBJECT_TILE;
+        const tile = art ? art.tile + row * art.width + column : OBJECT_TILE;
         asm.lda(layout.words + W.count * 2);
         asm.aluN("add", row * 8 + 16);
         asm.ld("b", "a");
@@ -1260,7 +1350,101 @@ function emitOam(ctx: Ctx, scene: SceneCtx, options: EmitOptions): void {
     }
     asm.label(skip);
   }
+  if (scrolls(ctx, scene)) emitHudSprites(ctx, scene);
   asm.call("ClearRestOfOam");
+}
+
+/**
+ * Draw a scrolling scene's `number` and `text` objects as hardware sprites.
+ *
+ * Same objects, same coordinates, same `camera.x + 1` rule the game already
+ * wrote — only the layer differs. The pen lives in the two scratch words the
+ * OAM builder already uses for a sprite's screen position, so the glyph routine
+ * is four instructions and a call.
+ */
+function emitHudSprites(ctx: Ctx, scene: SceneCtx): void {
+  const { asm, layout, program } = ctx;
+  const penX = layout.words + W.temp * 2;
+  const penY = layout.words + W.count * 2;
+
+  for (const id of scene.def.instanceIds) {
+    const instance = program.instances[id] as InstanceDef;
+    const isNumber = instance.className === "number";
+    const isText = instance.className === "text";
+    if (!isNumber && !isText) continue;
+
+    const skip = ctx.unique("hudOamSkip");
+    if (isMutable(ctx.analysis, id, "visible")) {
+      isZero32(ctx, (layout.entities[id] as number) + propOffset("visible"));
+      asm.jp(skip, "z");
+    } else if ((instance.numbers["visible"] ?? 0) === 0) {
+      asm.label(skip);
+      continue;
+    }
+
+    const base = layout.entities[id] as number;
+    ctx.scoped(() => {
+      const temp = ctx.pushTemp();
+      copy32(ctx, temp, base + propOffset("x"));
+      if (layout.camera !== null) sub32(ctx, temp, layout.camera);
+      emitPixelsFromFixed(ctx, temp, penX);
+      copy32(ctx, temp, base + propOffset("y"));
+      if (layout.camera !== null) sub32(ctx, temp, layout.camera + 4);
+      emitPixelsFromFixed(ctx, temp, penY);
+    });
+    // OAM counts from eight pixels left of the screen and sixteen above it.
+    asm.lda(penX);
+    asm.aluN("add", 8);
+    asm.sta(penX);
+    asm.lda(penY);
+    asm.aluN("add", 16);
+    asm.sta(penY);
+
+    if (isText) {
+      const text = instance.strings["text"] ?? "";
+      for (const character of [...text].slice(0, 20)) {
+        asm.ldn("a", glyphTile(character));
+        asm.call(needHudGlyph(ctx));
+      }
+    } else {
+      asm.ld16("hl", base + propOffset("value") + 2);
+      asm.call(needHudNumber(ctx));
+    }
+    asm.label(skip);
+  }
+}
+
+/** `A = tile`: put one glyph at the pen, on the object layer, and advance it. */
+function needHudGlyph(ctx: Ctx): string {
+  const name = "HudGlyph";
+  ctx.need(name, (inner) => {
+    const { asm, layout } = inner;
+    asm.ld("d", "a");
+    asm.lda(layout.words + W.count * 2);
+    asm.ld("b", "a");
+    asm.lda(layout.words + W.temp * 2);
+    asm.ld("c", "a");
+    // OBP1, which is the plain ramp — see `emitEntry`.
+    asm.ldn("e", 0x10);
+    asm.call("PushSpriteAttr");
+    asm.lda(layout.words + W.temp * 2);
+    asm.aluN("add", 8);
+    asm.sta(layout.words + W.temp * 2);
+    asm.ret();
+  });
+  return name;
+}
+
+/** The decimal renderer again, plotting sprites instead of background cells. */
+function needHudNumber(ctx: Ctx): string {
+  const name = "DrawNumberOam";
+  ctx.need(name, (inner) => {
+    // The pen occupies `temp`, so the leading-zero flag needs a word of its
+    // own; `target` is only live during tile-contact bookkeeping, which is a
+    // different phase of the tick entirely.
+    emitDecimal(inner, needHudGlyph(inner), inner.layout.words + W.target * 2);
+  });
+  return name;
 }
 
 // --- shared render routines --------------------------------------------------
@@ -1353,7 +1537,11 @@ export function emitRenderHelpers(ctx: Ctx): void {
   // built from the shadow's page rather than with `ld de, OAM_SHADOW` — that
   // form overwrites the tile number with the address's high byte, and the cost
   // is forty objects all drawing whatever tile happens to live at $C0.
+  // `PushSpriteAttr` takes the attribute byte in E as well, which is how a HUD
+  // glyph asks for OBP1; the plain entry point falls through with zero.
   asm.label("PushSprite");
+  asm.ldn("e", 0);
+  asm.label("PushSpriteAttr");
   asm.lda(layout.oamCount);
   asm.aluN("cp", 40);
   asm.ret("nc");
@@ -1367,7 +1555,7 @@ export function emitRenderHelpers(ctx: Ctx): void {
   asm.staHLI();
   asm.ld("a", "d");
   asm.staHLI();
-  asm.alu("xor", "a");
+  asm.ld("a", "e");
   asm.staHLI();
   asm.lda(layout.oamCount);
   asm.inc("a");
@@ -1435,6 +1623,27 @@ export function emitRenderHelpers(ctx: Ctx): void {
 
   // HL points at the low byte of a value's whole part; draw it in decimal.
   asm.label("DrawNumber");
+  emitDecimal(ctx, "PlotCell", layout.words + W.temp * 2);
+
+  asm.label("DecimalPowers");
+  asm.dw(10000);
+  asm.dw(1000);
+  asm.dw(100);
+  asm.dw(10);
+  asm.dw(1);
+}
+
+/**
+ * Draw the signed 16-bit value at HL in decimal, one glyph at a time.
+ *
+ * `plot` is the routine that puts a glyph down and advances the pen, and it is
+ * the *only* difference between the background HUD and the sprite one — which
+ * is why it is a parameter rather than a second copy of the digit loop.
+ * `flag` is a byte remembering whether a significant digit has been seen, so
+ * leading zeroes are suppressed and a lone zero still prints.
+ */
+function emitDecimal(ctx: Ctx, plot: string, flag: number): void {
+  const { asm } = ctx;
   asm.ldaHLI();
   asm.ld("e", "a");
   asm.ld("a", "hlp");
@@ -1453,13 +1662,13 @@ export function emitRenderHelpers(ctx: Ctx): void {
   asm.inc16("de");
   asm.push("de");
   asm.ldn("a", glyphTile("-"));
-  asm.call("PlotCell");
+  asm.call(plot);
   asm.pop("de");
   asm.label(positive);
   asm.ld16("hl", label("DecimalPowers"));
   asm.ldn("c", 5);
   asm.alu("xor", "a");
-  asm.sta(layout.words + W.temp * 2);
+  asm.sta(flag);
   const powerLoop = ctx.unique("numPower");
   const subLoop = ctx.unique("numSub");
   const digitDone = ctx.unique("numDigit");
@@ -1492,7 +1701,7 @@ export function emitRenderHelpers(ctx: Ctx): void {
   asm.ld("a", "b");
   asm.alu("or", "a");
   asm.jp(emitDigit, "nz");
-  asm.lda(layout.words + W.temp * 2);
+  asm.lda(flag);
   asm.alu("or", "a");
   asm.jp(emitDigit, "nz");
   asm.ld("a", "c");
@@ -1500,12 +1709,12 @@ export function emitRenderHelpers(ctx: Ctx): void {
   asm.jp(skipDigit, "nz");
   asm.label(emitDigit);
   asm.ldn("a", 1);
-  asm.sta(layout.words + W.temp * 2);
+  asm.sta(flag);
   asm.ld("a", "b");
   asm.aluN("add", glyphTile("0"));
   asm.push("bc");
   asm.push("de");
-  asm.call("PlotCell");
+  asm.call(plot);
   asm.pop("de");
   asm.pop("bc");
   asm.label(skipDigit);
@@ -1513,13 +1722,6 @@ export function emitRenderHelpers(ctx: Ctx): void {
   asm.dec("c");
   asm.jp(powerLoop, "nz");
   asm.ret();
-
-  asm.label("DecimalPowers");
-  asm.dw(10000);
-  asm.dw(1000);
-  asm.dw(100);
-  asm.dw(10);
-  asm.dw(1);
 }
 
 // --- data --------------------------------------------------------------------

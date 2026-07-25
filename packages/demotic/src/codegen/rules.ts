@@ -47,6 +47,7 @@ import {
   type EntityAddr,
 } from "./expr.js";
 import { isMutable } from "./analyze.js";
+import { BOX_SIZE, PROP_SIZE } from "./layout.js";
 import {
   add32,
   addConst32,
@@ -547,60 +548,126 @@ function emitEdgeSeparate(ctx: Ctx, id: number, edge: Edge, scene: SceneCtx): vo
   }
 }
 
-/** Jump to `skip` unless the two boxes overlap. Half-open on both axes. */
-function emitOverlapTest(ctx: Ctx, a: number, b: number, skip: string): void {
+/**
+ * Copy both boxes of a pair into the shared staging area.
+ *
+ * `x`, `y`, `width`, `height` are the first four slots of an entity record, so
+ * each box is one block copy of sixteen bytes. Everything downstream then works
+ * on *fixed* addresses, which is what lets the overlap test and the separation
+ * be routines instead of one copy of themselves per pair.
+ */
+function emitStageBox(ctx: Ctx, src: number, dst: number): void {
   const { asm } = ctx;
-  const pairs: [number, number, string, string][] = [
-    [a, b, "x", "width"],
-    [a, b, "y", "height"],
-  ];
-  ctx.scoped(() => {
-    const temp = ctx.pushTemp();
-    for (const [p, q, pos, size] of pairs) {
-      // p.pos < q.pos + q.size
-      copy32(ctx, temp, q + propOffset(pos));
-      add32(ctx, temp, q + propOffset(size));
-      less32(ctx, p + propOffset(pos), temp);
-      asm.jp(skip, "nc");
-      // q.pos < p.pos + p.size
-      copy32(ctx, temp, p + propOffset(pos));
-      add32(ctx, temp, p + propOffset(size));
-      less32(ctx, q + propOffset(pos), temp);
-      asm.jp(skip, "nc");
-    }
-  });
+  asm.ld16("hl", src);
+  asm.ld16("de", dst);
+  asm.call(needCopyBox(ctx));
+}
+
+function emitStagePair(ctx: Ctx, a: number, b: number): void {
+  emitStageBox(ctx, a, ctx.layout.pairA as number);
+  emitStageBox(ctx, b, ctx.layout.pairB as number);
 }
 
 /**
- * Push the subject clear along the axis of least penetration — the same rule
- * the interpreter uses, because resolving the deeper axis would teleport a
- * walking object over something it merely brushed.
+ * Copy one box, unrolled.
+ *
+ * `CopyBytes` costs fifty-six clocks a byte because it counts; sixteen is a
+ * known length, so this costs twenty-four. It runs once per pair per tick —
+ * every pair, every tick, whether or not anything is touching — so the loop
+ * overhead was the single largest line in the profile of a game with a dozen
+ * collectibles in it.
  */
-function emitEntitySeparate(ctx: Ctx, a: number, b: number): void {
-  const { asm } = ctx;
-  ctx.scoped(() => {
-    const xPush = ctx.pushTemp();
-    const yPush = ctx.pushTemp();
-    const near = ctx.pushTemp();
-    const far = ctx.pushTemp();
+function needCopyBox(ctx: Ctx): string {
+  const name = "CopyBox";
+  ctx.need(name, (inner) => {
+    const { asm } = inner;
+    for (let index = 0; index < BOX_SIZE; index += 1) {
+      asm.ldaHLI();
+      asm.staDE();
+      if (index + 1 < BOX_SIZE) asm.inc16("de");
+    }
+    asm.ret();
+  });
+  return name;
+}
+
+/** Address of a staged box's property. */
+function boxProp(base: number, prop: string): number {
+  return base + propOffset(prop);
+}
+
+/**
+ * `A = 1` when the staged boxes overlap, `0` when they do not. Half-open on
+ * both axes, matching the interpreter and matching tile contact.
+ */
+function needOverlapPair(ctx: Ctx): string {
+  const name = "OverlapPair";
+  ctx.need(name, (inner) => {
+    const { asm, layout } = inner;
+    const a = layout.pairA as number;
+    const b = layout.pairB as number;
+    const temp = layout.pairWork as number;
+    const apart = inner.unique("olNo");
+    for (const [pos, size] of [
+      ["x", "width"],
+      ["y", "height"],
+    ] as const) {
+      // a.pos < b.pos + b.size, and b.pos < a.pos + a.size.
+      copy32(inner, temp, boxProp(b, pos));
+      add32(inner, temp, boxProp(b, size));
+      less32(inner, boxProp(a, pos), temp);
+      asm.jp(apart, "nc");
+      copy32(inner, temp, boxProp(a, pos));
+      add32(inner, temp, boxProp(a, size));
+      less32(inner, boxProp(b, pos), temp);
+      asm.jp(apart, "nc");
+    }
+    asm.ldn("a", 1);
+    asm.ret();
+    asm.label(apart);
+    asm.alu("xor", "a");
+    asm.ret();
+  });
+  return name;
+}
+
+/**
+ * Push the staged subject clear of the staged other along the axis of least
+ * penetration — the same rule the interpreter uses, because resolving the deeper
+ * axis would teleport a walking object over something it merely brushed.
+ *
+ * The result lands in the staged box, so a caller that separated copies `x` and
+ * `y` back and one that did not touches nothing.
+ */
+function needSeparatePair(ctx: Ctx): string {
+  const name = "SeparatePair";
+  ctx.need(name, (inner) => {
+    const { asm, layout } = inner;
+    const a = layout.pairA as number;
+    const b = layout.pairB as number;
+    const work = layout.pairWork as number;
+    const xPush = work;
+    const yPush = work + 4;
+    const near = work + 8;
+    const far = work + 12;
 
     const axis = (pos: string, size: string, push: number): void => {
-      // near = p.pos + p.size - q.pos ; far = q.pos + q.size - p.pos
-      copy32(ctx, near, a + propOffset(pos));
-      add32(ctx, near, a + propOffset(size));
-      sub32(ctx, near, b + propOffset(pos));
-      copy32(ctx, far, b + propOffset(pos));
-      add32(ctx, far, b + propOffset(size));
-      sub32(ctx, far, a + propOffset(pos));
-      const takeFar = ctx.unique("sepFar");
-      const done = ctx.unique("sepDone");
-      less32(ctx, near, far);
+      // near = a.pos + a.size - b.pos ; far = b.pos + b.size - a.pos
+      copy32(inner, near, boxProp(a, pos));
+      add32(inner, near, boxProp(a, size));
+      sub32(inner, near, boxProp(b, pos));
+      copy32(inner, far, boxProp(b, pos));
+      add32(inner, far, boxProp(b, size));
+      sub32(inner, far, boxProp(a, pos));
+      const takeFar = inner.unique("sepFar");
+      const done = inner.unique("sepDone");
+      less32(inner, near, far);
       asm.jp(takeFar, "nc");
-      copy32(ctx, push, near);
-      neg32(ctx, push);
+      copy32(inner, push, near);
+      neg32(inner, push);
       asm.jp(done);
       asm.label(takeFar);
-      copy32(ctx, push, far);
+      copy32(inner, push, far);
       asm.label(done);
     };
 
@@ -608,22 +675,33 @@ function emitEntitySeparate(ctx: Ctx, a: number, b: number): void {
     axis("y", "height", yPush);
 
     // |xPush| < |yPush| decides the axis.
-    copy32(ctx, near, xPush);
-    emitAbs(ctx, near);
-    copy32(ctx, far, yPush);
-    emitAbs(ctx, far);
-    const useY = ctx.unique("sepUseY");
-    const done = ctx.unique("sepApplied");
-    less32(ctx, near, far);
+    copy32(inner, near, xPush);
+    emitAbs(inner, near);
+    copy32(inner, far, yPush);
+    emitAbs(inner, far);
+    const useY = inner.unique("sepUseY");
+    const done = inner.unique("sepApplied");
+    less32(inner, near, far);
     asm.jp(useY, "nc");
-    add32(ctx, a + propOffset("x"), xPush);
-    clamp32(ctx, a + propOffset("x"));
-    asm.jp(done);
+    add32(inner, boxProp(a, "x"), xPush);
+    clamp32(inner, boxProp(a, "x"));
+    asm.ret();
     asm.label(useY);
-    add32(ctx, a + propOffset("y"), yPush);
-    clamp32(ctx, a + propOffset("y"));
+    add32(inner, boxProp(a, "y"), yPush);
+    clamp32(inner, boxProp(a, "y"));
     asm.label(done);
+    asm.ret();
   });
+  return name;
+}
+
+/** Write the staged subject's position back to the entity it came from. */
+function emitCommitPair(ctx: Ctx, a: number): void {
+  const { asm, layout } = ctx;
+  asm.ld16("hl", layout.pairA as number);
+  asm.ld16("de", a);
+  asm.ld16("bc", 2 * PROP_SIZE);
+  asm.call("CopyBytes");
 }
 
 function emitAbs(ctx: Ctx, addr: number): void {
@@ -679,14 +757,21 @@ export function emitCollisions(ctx: Ctx, scene: SceneCtx): void {
         emitFire(ctx, rule, { subject, other: { kind: "none" } });
         asm.label(afterFire);
         // Separation re-tests, so a rule that teleported its subject away is
-        // not dragged back to the wall it just left.
+        // not dragged back to the wall it just left — or that hid it, because
+        // `visible 0` is not collided with either.
         const noSeparate = ctx.unique("edgeNoSep");
+        guardVisible(ctx, subjectId, noSeparate);
         emitEdgeTest(ctx, subjectId, edge, scene, noSeparate);
         emitEdgeSeparate(ctx, subjectId, edge, scene);
         emitContactSet(ctx, bit);
         asm.label(noSeparate);
         asm.label(skip);
       }
+
+      // Stage the subject's box once for the whole `others` loop; every path
+      // through a pair leaves it current, so a pair that touches nothing costs
+      // one copy rather than two.
+      if (event.others.length > 0) emitStageBox(ctx, subjectBase, layout.pairA as number);
 
       for (const [otherIndex, otherId] of event.others.entries()) {
         if (otherId === subjectId) continue;
@@ -697,15 +782,34 @@ export function emitCollisions(ctx: Ctx, scene: SceneCtx): void {
           continue;
         }
         const otherBase = layout.entities[otherId] as number;
-        emitOverlapTest(ctx, subjectBase, otherBase, skip);
+        // Only the other box is staged here: the subject's was staged before the
+        // loop and every path below leaves it current, so the per-tick cost of a
+        // pair that is not touching anything is one box copy and a call.
+        emitStageBox(ctx, otherBase, layout.pairB as number);
+        asm.call(needOverlapPair(ctx));
+        asm.alu("or", "a");
+        asm.jp(skip, "z");
         const bit = bitBase + event.edges.length + otherIndex;
         const afterFire = ctx.unique("otherFired");
         if (!event.level) emitContactSeen(ctx, bit, afterFire);
         emitFire(ctx, rule, { subject, other: entityOf(ctx, otherId) });
         asm.label(afterFire);
+        // Re-stage before separating, because the rule that just fired may have
+        // moved either box. This also restores the subject staging for the next
+        // pair, which is why it comes before the visibility guards rather than
+        // after them.
         const noSeparate = ctx.unique("otherNoSep");
-        emitOverlapTest(ctx, subjectBase, otherBase, noSeparate);
-        emitEntitySeparate(ctx, subjectBase, otherBase);
+        emitStagePair(ctx, subjectBase, otherBase);
+        // `visible 0` is inert — not drawn, *not collided with*, not moved — and
+        // a rule that collected a coin by hiding it has said so by now.
+        guardVisible(ctx, subjectId, noSeparate);
+        guardVisible(ctx, otherId, noSeparate);
+        asm.call(needOverlapPair(ctx));
+        asm.alu("or", "a");
+        asm.jp(noSeparate, "z");
+        asm.call(needSeparatePair(ctx));
+        emitCommitPair(ctx, subjectBase);
+        emitStageBox(ctx, subjectBase, layout.pairA as number);
         emitContactSet(ctx, bit);
         asm.label(noSeparate);
         asm.label(skip);

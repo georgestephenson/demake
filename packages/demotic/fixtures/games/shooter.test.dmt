@@ -1,3 +1,5 @@
+-- Shooter — assertions about a magazine, a line of aliens, and a sprite budget.
+
 test the alien line advances
 play 30 ticks
 expect a1.x > 4vw - 1
@@ -7,16 +9,50 @@ play 900 ticks
 expect a9.right <= screenwidth
 expect a1.x >= 0
 
-test the shot starts parked and inert
+test the magazine starts parked and inert
 expect s1.visible = 0
+expect s2.visible = 0
+expect s3.visible = 0
 
-test firing launches the shot upward
+test one press launches one shot, upward
 press a
 play 10 ticks
 expect s1.visible = 1
 expect s1.y < screenheight - 3
+expect s2.visible = 0
+expect s3.visible = 0
 
-test the shot parks itself again at the top
+-- The point of the magazine: three in the air at once, each launched by its own
+-- press, each at the height its press put it.
+test three presses put three shots in the air
+press a
+play 8 ticks
+press a
+play 8 ticks
+press a
+play 4 ticks
+expect s1.visible = 1
+expect s2.visible = 1
+expect s3.visible = 1
+expect s1.y < s2.y
+expect s2.y < s3.y
+
+-- A fourth press with nothing in the rack must do nothing at all. The failure it
+-- guards against is not "no shot appears" but "an airborne shot is teleported
+-- back to the ship", which looks like firing and plays like cheating.
+test a fourth press waits for a shot to come back
+press a
+play 8 ticks
+press a
+play 8 ticks
+press a
+play 8 ticks
+press a
+play 4 ticks
+expect s1.y < s2.y
+expect s2.y < s3.y
+
+test a shot parks itself again at the top
 press a
 play 300 ticks
 expect s1.visible = 0

@@ -1305,13 +1305,30 @@ class Compiler {
     return Math.max(2, String(value).length);
   }
 
+  /**
+   * Hardware sprites one instance costs *in this scene*.
+   *
+   * A `number` or a `text` is normally free, because it is drawn on the
+   * background layer. A scene that scrolls cannot do that — the background
+   * moves as one piece, so a HUD painted into it slides with the world — and
+   * its counters are drawn with sprites instead. That is a real cost against a
+   * real limit, so the budget has to know about it here rather than let it be
+   * discovered as a vanished digit on hardware.
+   */
+  private sceneSpriteCost(scene: SceneDef, instance: InstanceDef): number {
+    if (instance.spriteCost > 0) return instance.spriteCost;
+    if (scene.cameraTarget === undefined) return 0;
+    if (instance.className !== "number" && instance.className !== "text") return 0;
+    return (instance.numbers["visible"] ?? 0) === 0 ? 0 : this.glyphWidth(instance);
+  }
+
   private computeBudget(scenes: readonly SceneDef[]): BudgetReport {
     let peakSprites = 0;
     let peakScene = scenes[0]?.name ?? "";
 
     for (const scene of scenes) {
       const cost = scene.instanceIds.reduce(
-        (sum, id) => sum + (this.instances[id] as InstanceDef).spriteCost,
+        (sum, id) => sum + this.sceneSpriteCost(scene, this.instances[id] as InstanceDef),
         0,
       );
       if (cost > peakSprites) {

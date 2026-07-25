@@ -72,12 +72,19 @@ describe("what a program needs", () => {
     );
     expect(buildGbRom(still).stats.helpers).toEqual([]);
 
-    // Pong divides (the opponent's proportional steering) and multiplies
-    // (direction by speed), so exactly those two arrive.
+    // Pong divides (the opponent's proportional steering), multiplies
+    // (direction by speed) and draws (the opponent's wandering aim), so exactly
+    // those three arrive.
     const pong = buildGbRom(build(read("pong.dmt"))).stats;
     expect(pong.helpers).toContain("Div32");
     expect(pong.helpers).toContain("Mul32");
-    expect(pong.helpers).not.toContain("RngPick");
+    expect(pong.helpers).toContain("RngPick");
+
+    // Breakout does the same arithmetic and never draws, so it ships no
+    // generator at all — which is the half of this that is easy to get wrong.
+    const breakout = buildGbRom(build(read(join("games", "breakout.dmt")))).stats;
+    expect(breakout.helpers).toContain("Div32");
+    expect(breakout.helpers).not.toContain("RngPick");
   });
 
   it("allocates work RAM per object, not per worst case", () => {
@@ -88,9 +95,14 @@ describe("what a program needs", () => {
     // Records are contiguous and sized by the property set, nothing more.
     expect((layout.entities[1] as number) - (layout.entities[0] as number)).toBe(ENTITY_SIZE);
     expect(layout.used).toBeLessThan(2048);
-    // No generator and no camera in Pong, so neither is allocated.
-    expect(layout.rng).toBeNull();
+    // Pong draws for the opponent's aim, so it has a generator; it has no
+    // camera, so it has no camera variables.
+    expect(layout.rng).not.toBeNull();
     expect(layout.camera).toBeNull();
+
+    // Breakout draws nothing, and pays for nothing.
+    const plain = build(read(join("games", "breakout.dmt")));
+    expect(planLayout(plain, analyze(plain)).rng).toBeNull();
   });
 
   it("knows which properties a rule can actually change", () => {

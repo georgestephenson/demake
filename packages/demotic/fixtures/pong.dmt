@@ -14,6 +14,11 @@
 
 start title
 
+-- The opponent's aim wanders, and a wandering aim needs a generator. Fixing it
+-- here rather than leaving it at the default is the same reason the runner does
+-- it: the seed is part of the game, so a replay is a replay.
+seed 20260726
+
 -- ---------------------------------------------------------------- title -----
 
 scene title
@@ -27,8 +32,8 @@ when a pressed in title then scene as play
 scene play
 
 -- The ball is one cell on every console — it is the smallest thing that can be
--- drawn — but it crosses the court in the same 2.5 seconds everywhere.
-create object ball (width 1 cell, height 1 cell, speed 40vmin, sprite ball.svg)
+-- drawn — but it crosses the court in the same 1.8 seconds everywhere.
+create object ball (width 1 cell, height 1 cell, speed 55vmin, sprite ball.svg)
 
 -- The paddle covers 15% of the wall and can traverse the court in 1.7 seconds,
 -- on a Game Boy and on a Mega Drive alike.
@@ -38,11 +43,20 @@ create ball ball1 in play (x centerx, y centery, direction southwest)
 
 create paddle paddle1 in play (x centerx, y screenheight - 1)
 
--- The opponent is a touch slower than the player, which is the whole of its
--- handicap. Everything else about it is the same object.
-create paddle paddle2 in play (x centerx, y 0, speed 45vw)
+-- The opponent is slower than the player, and that is half of its handicap:
+-- with the ball at 55vmin it can be beaten to a corner. Everything else about
+-- it is the same object.
+create paddle paddle2 in play (x centerx, y 0, speed 32vw)
 
-create number score1 in play (value 0, x 1, y 1)
+-- The other half of the handicap. `aim` is how far off the ball the opponent
+-- means to meet it, redrawn on every bounce. It is a number with `visible 0`,
+-- which is how a game holds a value nobody is meant to read: not drawn, not
+-- collided with, not moved.
+create number aim in play (value 0, visible 0)
+
+create text you in play (x 1, y 1, text "you:")
+create number score1 in play (value 0, x 6, y 1)
+create text cpu in play (x screenwidth - 7, y 1, text "cpu:")
 create number score2 in play (value 0, x screenwidth - 2, y 1)
 
 -- The player drives the bottom paddle. `on hold` restores the previous value
@@ -59,10 +73,24 @@ control paddle1 right (xdirection 1) on hold
 -- either buzzes or, with a dead zone wide enough to stop that, moves in visible
 -- blocks. This does neither.
 --
--- `1.5vw` is the gain: with the paddle at 45vw per second and 60 ticks per
--- second it covers 0.75vw per tick, so the ball is at full chase just over two
--- ticks out. Both numbers are relative, so the feel ports unchanged.
-when always in play then paddle2.xdirection as clamp((ball1.centerx - paddle2.centerx) / 1.5vw, -1, 1)
+-- `5vw` is the gain: with the paddle at 32vw per second and 60 ticks per second
+-- it covers 0.53vw per tick, so the ball is at full chase about nine ticks out
+-- and eases through the last stretch. Both numbers are relative, so the feel
+-- ports unchanged.
+--
+-- Five percent is also one whole cell on this court, and that is not an
+-- accident: a divisor that is a whole number of cells takes the runtime's byte
+-- divider instead of its general one, and this rule runs every tick of every
+-- rally. It is the sort of thing you only find by profiling the ROM, which is
+-- why doc 14 says to.
+--
+-- What it chases is `ball1.centerx + aim.value`, not the ball itself. A machine
+-- that tracks the centre perfectly returns every ball down the same line,
+-- because the bounce angle below is measured from where on the paddle the ball
+-- landed — so a perfect opponent is not only unbeatable, it is dull. The offset
+-- gives it a *preferred contact point* that changes each rally, which is one
+-- number and the difference between a wall and a player.
+when always in play then paddle2.xdirection as clamp((ball1.centerx + aim.value - paddle2.centerx) / 5vw, -1, 1)
 
 -- Walls.
 when ball hits screenleft, screenright then xdirection as flip
@@ -70,12 +98,20 @@ when paddle hits screenleft, screenright then xdirection as 0
 
 -- The bounce. `ball` and `paddle` bind to whichever two objects collided, and
 -- the horizontal component comes out of where on the paddle the ball landed.
-when ball hits paddle then (ydirection, xdirection) as (flip, (ball.centerx - paddle.centerx) / paddle.width)
+--
+-- Every contact also draws the opponent a new aim for the leg after next. Nine
+-- percent of the court either way is under half a paddle, so it still gets
+-- there — it just gets there off-centre, and sends the ball back at an angle
+-- instead of straight down the middle. Drawing it here rather than in a rule of
+-- its own is deliberate: a draw is only reproducible if *when* it happens is
+-- part of the game, and "on every bounce" is the simplest such moment there is.
+when ball hits paddle then (ydirection, xdirection, aim.value) as (flip, (ball.centerx - paddle.centerx) / paddle.width, random(-9, 9) * 1vw)
 
 -- Scoring. A miss resets the ball to the middle, serving toward whoever
--- conceded, and every value in one rule is computed before any of them lands.
-when ball hits screentop then (score1.value, ball1.x, ball1.y, ball1.ydirection) as (score1.value + 1, centerx, centery, 1)
-when ball hits screenbottom then (score2.value, ball1.x, ball1.y, ball1.ydirection) as (score2.value + 1, centerx, centery, -1)
+-- conceded, and every value in one rule is computed before any of them lands —
+-- including the opponent's aim for the new rally.
+when ball hits screentop then (score1.value, ball1.x, ball1.y, ball1.ydirection, aim.value) as (score1.value + 1, centerx, centery, 1, random(-9, 9) * 1vw)
+when ball hits screenbottom then (score2.value, ball1.x, ball1.y, ball1.ydirection, aim.value) as (score2.value + 1, centerx, centery, -1, random(-9, 9) * 1vw)
 
 when score1.value reaches 10 in play then scene as gameover
 when score2.value reaches 10 in play then scene as gameover
