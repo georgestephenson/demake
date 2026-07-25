@@ -1,0 +1,30 @@
+-- Caves — assertions about a playfield bigger than the screen.
+--
+-- These are written in the relative vocabulary for the usual reason: the level
+-- is 60x30 on every console, but the *view* is 20x18 on a Game Boy and 40x28 on
+-- a Mega Drive, so anything said in absolute screen terms would only be true on
+-- one machine. `levelwidth`/`screenwidth` say it once and mean it everywhere.
+
+test the hero falls onto the cavern floor and stays there
+play 240 ticks
+expect player.ydirection <= 0.05
+expect player.bottom < levelheight
+
+test the camera starts clamped into the bottom-left corner
+play 2 ticks
+expect camera.x = 0
+expect camera.y = levelheight - screenheight
+
+test running right scrolls the view, and never past the level
+hold right for 60 ticks
+expect camera.x > 0
+expect camera.x <= levelwidth - screenwidth
+
+test the hud follows the camera rather than the world
+hold right for 60 ticks
+expect score.x = camera.x + 1
+expect score.y = camera.y + 1
+
+test the spike pit is fatal, whichever console you fall into it on
+hold right for 300 ticks
+expect scene gameover

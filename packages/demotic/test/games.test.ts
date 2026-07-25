@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { check } from "../src/compile.js";
+import { levelFiles } from "../src/level/parse.js";
 import { profiles } from "../src/profiles.js";
 import { parseTests } from "../src/testing/parse.js";
 import { runTests } from "../src/testing/run.js";
@@ -23,6 +24,23 @@ function read(dir: string, name: string): string {
   return readFileSync(`${dir}${name}`, "utf8");
 }
 
+/**
+ * The `.dmtl` files a game names, read from beside it.
+ *
+ * The compiler never touches a filesystem, so this is the same job the CLI, the
+ * web worker and the terminal runners each do — via the same `levelFiles()`, so
+ * they cannot disagree about which files a game needs.
+ */
+function levelsFor(dir: string, source: string): Record<string, string> {
+  return Object.fromEntries(levelFiles(source).map((file) => [file, read(dir, file)]));
+}
+
+/** Compile one example the way an edge would, levels and all. */
+function checkGame(name: string, profile: (typeof profiles)[number]) {
+  const source = read(GAMES, `${name}.dmt`);
+  return check(source, { profile, levels: levelsFor(GAMES, source) });
+}
+
 /** Every `<name>.dmt` in the library that has a `<name>.test.dmt` beside it. */
 const EXAMPLES = readdirSync(GAMES)
   .filter((f) => f.endsWith(".dmt") && !f.endsWith(".test.dmt"))
@@ -37,7 +55,7 @@ describe("example games", () => {
 
   it.each(EXAMPLES)("%s compiles for every console, without errors", (name) => {
     for (const profile of profiles) {
-      const { program, diagnostics } = check(read(GAMES, `${name}.dmt`), { profile });
+      const { program, diagnostics } = checkGame(name, profile);
       const errors = diagnostics.filter((d) => d.severity === "error");
       expect(
         errors.map((d) => `${d.code} line ${d.line}: ${d.message}`),
@@ -49,7 +67,7 @@ describe("example games", () => {
 
   it.each(EXAMPLES)("%s stays inside every console's sprite budget", (name) => {
     for (const profile of profiles) {
-      const { program } = check(read(GAMES, `${name}.dmt`), { profile });
+      const { program } = checkGame(name, profile);
       expect(program?.budget.peakSprites, profile.id).toBeLessThanOrEqual(
         program?.budget.spriteLimit ?? 0,
       );
@@ -61,7 +79,7 @@ describe("example games", () => {
     expect(suite.diagnostics).toEqual([]);
 
     for (const profile of profiles) {
-      const { program } = check(read(GAMES, `${name}.dmt`), { profile });
+      const { program } = checkGame(name, profile);
       const result = runTests(suite, program!);
       const failed = result.cases
         .filter((c) => !c.passed)
@@ -93,7 +111,7 @@ describe("example games", () => {
       [...readdirSync(GAMES), ...readdirSync(FIXTURES)].filter((f) => f.endsWith(".svg")),
     );
     for (const name of EXAMPLES) {
-      const { program } = check(read(GAMES, `${name}.dmt`), { profile: profiles[0]! });
+      const { program } = checkGame(name, profiles[0]!);
       for (const asset of program?.assets ?? []) {
         expect(present, `${name} → ${asset}`).toContain(asset);
       }

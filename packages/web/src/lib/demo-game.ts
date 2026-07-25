@@ -20,6 +20,15 @@ import dodgerSource from "@demake/demotic/fixtures/games/dodger.dmt?raw";
 import dodgerTests from "@demake/demotic/fixtures/games/dodger.test.dmt?raw";
 import shooterSource from "@demake/demotic/fixtures/games/shooter.dmt?raw";
 import shooterTests from "@demake/demotic/fixtures/games/shooter.test.dmt?raw";
+import cavesSource from "@demake/demotic/fixtures/games/caves.dmt?raw";
+import cavesTests from "@demake/demotic/fixtures/games/caves.test.dmt?raw";
+import runnerSource from "@demake/demotic/fixtures/games/runner.dmt?raw";
+import runnerTests from "@demake/demotic/fixtures/games/runner.test.dmt?raw";
+
+import cavernLevel from "@demake/demotic/fixtures/games/cavern.dmtl?raw";
+import openLevel from "@demake/demotic/fixtures/games/open.dmtl?raw";
+import lowpipeLevel from "@demake/demotic/fixtures/games/lowpipe.dmtl?raw";
+import highpipeLevel from "@demake/demotic/fixtures/games/highpipe.dmtl?raw";
 
 import ballUrl from "@demake/demotic/fixtures/ball.svg?url";
 import paddleUrl from "@demake/demotic/fixtures/paddle.svg?url";
@@ -30,6 +39,8 @@ import ledgeUrl from "@demake/demotic/fixtures/games/ledge.svg?url";
 import rockUrl from "@demake/demotic/fixtures/games/rock.svg?url";
 import shotUrl from "@demake/demotic/fixtures/games/shot.svg?url";
 import alienUrl from "@demake/demotic/fixtures/games/alien.svg?url";
+import spikesUrl from "@demake/demotic/fixtures/games/spikes.svg?url";
+import exitUrl from "@demake/demotic/fixtures/games/exit.svg?url";
 
 /** One bundled example. */
 export interface Example {
@@ -77,7 +88,36 @@ export const EXAMPLES: readonly Example[] = [
     source: shooterSource,
     tests: shooterTests,
   },
+  {
+    id: "caves",
+    name: "Caves",
+    covers: "a hand-drawn level bigger than the screen, tiles, and a scrolling camera",
+    source: cavesSource,
+    tests: cavesTests,
+  },
+  {
+    id: "runner",
+    name: "Runner",
+    covers: "a course composed from chunks at build time, and the seeded generator",
+    source: runnerSource,
+    tests: runnerTests,
+  },
 ];
+
+/**
+ * `.dmtl` sources, keyed as a `.dmt` file names them.
+ *
+ * The compiler never reads a file, so the page resolves these the way the CLI
+ * and the terminal runners do — same `levelFiles()` lookup, same set. Handing
+ * over every bundled level rather than only the ones a game names is fine and
+ * one fewer moving part: an unused entry is simply never asked for.
+ */
+export const DEMO_LEVELS: Readonly<Record<string, string>> = {
+  "cavern.dmtl": cavernLevel,
+  "open.dmtl": openLevel,
+  "lowpipe.dmtl": lowpipeLevel,
+  "highpipe.dmtl": highpipeLevel,
+};
 
 /** Asset name (as written in a `.dmt`) → bundled URL. */
 export const DEMO_ASSETS: Readonly<Record<string, string>> = {
@@ -90,6 +130,8 @@ export const DEMO_ASSETS: Readonly<Record<string, string>> = {
   "rock.svg": rockUrl,
   "shot.svg": shotUrl,
   "alien.svg": alienUrl,
+  "spikes.svg": spikesUrl,
+  "exit.svg": exitUrl,
 };
 
 /** The example the section opens with. */

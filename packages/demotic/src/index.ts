@@ -57,6 +57,7 @@ export {
   type CAssignment,
   type CBinaryOp,
   type BuiltinFn,
+  type PureBuiltinFn,
   type CEvent,
   type CExpr,
   type CTarget,
@@ -90,8 +91,25 @@ export * from "./lang/spec.js";
 export {
   parseLevel,
   levelAssets,
+  levelFiles,
   tileAt,
   EMPTY,
   type LevelFile,
   type TileSpec,
 } from "./level/parse.js";
+export {
+  streamLevel,
+  type StreamAxis,
+  type StreamChunk,
+  type StreamResult,
+} from "./level/stream.js";
+export {
+  boundsOf,
+  follow,
+  tilesUnder,
+  separateFromTile,
+  type Bounds,
+  type Camera,
+  type TileHit,
+} from "./level/scene.js";
+export { DEFAULT_SEED, advance, pick } from "./rng.js";

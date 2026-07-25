@@ -1,0 +1,39 @@
+-- A pipe hanging from the ceiling, leaving a gap below it.
+--
+-- The mirror of lowpipe.dmtl, and with it the whole difficulty curve of a
+-- flapper: two shapes and an order nobody wrote down.
+
+tile #  pipe   solid  brick.svg
+tile _  ground solid  ledge.svg
+
+map
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+______
+______

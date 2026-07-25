@@ -15,6 +15,7 @@
 
 import type { Diagnostic } from "./errors.js";
 import type { Fixed } from "./fixed.js";
+import type { LevelFile } from "./level/parse.js";
 import type { ConsoleProfile } from "./profiles.js";
 
 /**
@@ -55,10 +56,21 @@ export type CExpr =
   | { kind: "scene"; scene: string }
   | { kind: "binary"; op: CBinaryOp; left: CExpr; right: CExpr }
   | { kind: "neg"; operand: CExpr }
-  | { kind: "call"; fn: BuiltinFn; args: readonly CExpr[] };
+  | { kind: "call"; fn: BuiltinFn; args: readonly CExpr[] }
+  /** `camera.x` / `camera.y` — where the viewport sits, in cells. */
+  | { kind: "camera"; axis: "x" | "y" };
 
 /** Builtin functions available to expressions. */
-export type BuiltinFn = "abs" | "min" | "max" | "clamp";
+export type BuiltinFn = "abs" | "min" | "max" | "clamp" | "random";
+
+/**
+ * The builtins that depend on nothing but their arguments.
+ *
+ * `random` is the exception, and the type keeps it out of every place that
+ * assumes a call can be folded: drawing a number advances the generator, so
+ * *when* it is evaluated is part of the game's behaviour.
+ */
+export type PureBuiltinFn = Exclude<BuiltinFn, "random">;
 
 /** Compiled binary operators. Relational ops yield 1 (true) or 0 (false). */
 export type CBinaryOp = "+" | "-" | "*" | "/" | "<" | ">" | "<=" | ">=" | "=" | "!=";
@@ -108,6 +120,8 @@ export type CEvent =
       subjects: readonly number[];
       others: readonly number[];
       edges: readonly Edge[];
+      /** Level tiles named as collision targets, by their legend name. */
+      tiles: readonly string[];
       /** `touches`: fire every tick of overlap, not only on entry. */
       level: boolean;
     }
@@ -142,6 +156,12 @@ export interface RuleDef {
 export interface SceneDef {
   name: string;
   instanceIds: readonly number[];
+  /** The level filling this scene's playfield, if it has one. */
+  level?: LevelFile;
+  /** Playfield size in cells: the level's, or the screen's. */
+  bounds: { width: number; height: number };
+  /** Instance the camera keeps centred, if any. */
+  cameraTarget?: number;
 }
 
 /** Static budget findings, reported without running the game. */
@@ -161,6 +181,12 @@ export interface Program {
   profile: ConsoleProfile;
   /** Scene the game loop enters on. */
   entryScene: string;
+  /**
+   * The seed every `random` draw comes from, and that `stream` composed its
+   * levels with. It lives in the program, not the Demakefile: a different seed
+   * is a different game, and the Demakefile may never change how a game plays.
+   */
+  seed: number;
   scenes: readonly SceneDef[];
   instances: readonly InstanceDef[];
   controls: readonly ControlDef[];

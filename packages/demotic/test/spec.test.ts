@@ -21,6 +21,22 @@ const DOCS = fileURLToPath(new URL("../docs/", import.meta.url));
 const gb = getProfile("gb");
 
 /**
+ * Level sources for the examples that load one. Sized well past the largest
+ * playfield in the profile list, since `E_LEVEL_TOO_SMALL` is per-console.
+ */
+const LEVELS: Record<string, string> = {
+  "cavern.dmtl": grid(80, 40, "#"),
+  "gap.dmtl": grid(4, 40, "."),
+  "low.dmtl": grid(4, 40, "#"),
+  "high.dmtl": grid(4, 40, "#"),
+};
+
+function grid(width: number, height: number, fill: string): string {
+  const row = fill.repeat(width);
+  return ["tile # wall solid", "tile . sky", "map", ...Array(height).fill(row)].join("\n");
+}
+
+/**
  * The registry is the single source of truth for the language surface
  * (AGENTS.md §Iron rules). These tests are what make that true rather than
  * aspirational: the engine's own tables, and the checked-in reference, both have
@@ -133,7 +149,7 @@ describe("language registry", () => {
       } else {
         source = [preamble, example].join("\n");
       }
-      const errors = check(source, { profile: gb }).diagnostics.filter(
+      const errors = check(source, { profile: gb, levels: LEVELS }).diagnostics.filter(
         (d) => d.severity === "error",
       );
       expect(
@@ -145,7 +161,7 @@ describe("language registry", () => {
 
   it("declares a unit and a builtin for everything the parser accepts", () => {
     expect([...UNIT_NAMES].sort()).toEqual(["cell", "cells", "vh", "vmax", "vmin", "vw"]);
-    expect(Object.keys(FUNCTION_ARITY).sort()).toEqual(["abs", "clamp", "max", "min"]);
+    expect(Object.keys(FUNCTION_ARITY).sort()).toEqual(["abs", "clamp", "max", "min", "random"]);
   });
 
   it("resolves every documented constant on every console", () => {

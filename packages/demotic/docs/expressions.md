@@ -23,6 +23,7 @@ Any numeric literal may carry a unit, attached (`15vw`) or spaced (`15 vw`).
 | `min(a, b)` | The smaller of two values. |
 | `max(a, b)` | The larger of two values. |
 | `clamp(x, low, high)` | `x` held between `low` and `high`. The basis of proportional control. |
+| `random(low, high)` | A whole number from `low` to `high`, from the game's seeded generator. |
 
 ## Constants
 
@@ -41,5 +42,7 @@ Resolved against the target console at compile time.
 | `screenright` | Same as `screenwidth`. |
 | `screenbottom` | Same as `screenheight`. |
 | `fps` | Logical ticks per second on this console. |
+| `levelwidth` | Playfield width in cells — the level's, or the screen's. |
+| `levelheight` | Playfield height in cells. |
 | `always` | One. `when always` is how a rule says *every tick*. |
 | `never` | Zero. |

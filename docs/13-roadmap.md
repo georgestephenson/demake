@@ -147,9 +147,13 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     tables change, the browser patches a CI-assembled blob rather than assembling
     anything, so this covers every family with a runtime. Needs a self-hosted
     WASM core (never a CDN, per doc 07).
-  - **D6 — language growth**, driven by fixtures beyond Pong: `destroy` and
-    runtime spawn (Breakout, Snake), a seeded PRNG, then scrolling and a camera —
-    the largest genuine gap, and where per-scanline sprite pressure bites.
+  - **D6 — language growth**, driven by fixtures beyond Pong. Levels, tiles, a
+    scrolling camera, `stream`-composed courses and a seeded `random` have
+    landed (doc 14 §Levels, §Composed levels, §Randomness). What is left:
+    runtime spawn, a tile layer that can *change* — a door that opens, a block
+    that breaks — which needs a way to name a cell, and a camera with more than
+    "follow". Scrolling is also where per-scanline sprite pressure bites, so the
+    runtimes will have opinions.
 
 - **Projects in the web app**: today each section holds one artifact. A *project*
   is a folder with a Demakefile at its root — a `.dmt`, its `.test.dmt`, and an
@@ -170,6 +174,14 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   image pipeline then demakes. The language was designed for this — flat,
   line-oriented, order-free, with total error recovery and structured
   diagnostics — so most of the work is packaging rather than new capability.
+
+- **A level editor in the web app**: `.dmtl` is a text format an LLM can edit,
+  and that was the point — but a person drawing a room wants to draw it. The
+  planned shape is a top-level site section after the four demakers: paint into
+  a grid, name tiles, mark them solid, bind art, and see the result scroll at
+  every console's viewport at once. The file it writes is the same `.dmtl` the
+  compiler already reads, so it is a view over the format rather than a second
+  one, and a game stays hand-editable whether or not the editor was used.
 
 - **Tile editing — a question, not a plan**: a tileset exists because hardware
   forces art to be shared, which makes it a *hardware* concern leaking into an

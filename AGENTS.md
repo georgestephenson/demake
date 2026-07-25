@@ -81,6 +81,8 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
   src/lang/          lex → parse → flat statement AST (one statement per line, no nesting)
   src/compile.ts     AST + console profile → resolved Program tables (constants folded)
   src/sim.ts         the reference interpreter — the semantic definition of the language
+  src/level/         .dmtl levels: parse, camera + tile collision, `stream` composition
+  src/rng.ts         the game's seeded generator — one definition, shared build and run
   src/testing/       .test.dmt: assertions run against every console at once
   src/trace.ts       state traces: the cross-implementation conformance oracle
   demo/              terminal runner (play.mjs) and test runner (test.mjs)
@@ -178,10 +180,35 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   counters that fall as well as rise.
 - **`visible 0` is inert**: not drawn, not collided with, not moved. That is why
   there is no `destroy`.
+- **A scene's playfield is its level's size, or the screen's** (doc 14 §Levels).
+  So `screenright` means the end of the _level_, object positions are level
+  coordinates, and the camera is the only thing that knows where the view is —
+  which is the whole reason scrolling does not infect every rule. A game with no
+  level is unchanged, because its playfield is still exactly the screen.
+- **Tiles collide on the same two conditions objects do**: a rule has to name the
+  pair, and separation happens only for `solid` ones. A tile no rule mentions is
+  scenery. Tiles have no `visible`, so they cannot change — a thing that must
+  vanish is an object.
+- **Levels are composed at build time, never generated at run time** (doc 14
+  §Composed levels). `stream` draws chunks from the program's `seed` and emits an
+  ordinary tilemap, so the simulator, the camera and a console runtime need no
+  notion of streaming and a trace stays a trace. Generating the course as the
+  player flies would be reproducible only if every machine drew in the same order
+  at the same tick.
+- **`random` draws from `src/rng.ts`, never from the host.** The generator is
+  part of the language because two implementations that disagree about it cannot
+  be compared at all. Drawing advances it, so _when_ a draw happens is behaviour:
+  it cannot fold into an initial value, and a `.test.dmt` assertion may not call
+  it. The seed is a `.dmt` statement and never a Demakefile setting — a different
+  seed is a different game.
 - **New language features come from the example library, not from theory**
   (`packages/demotic/fixtures/games/`). Each example is there for something the
   others do not exercise; `touches`, the `reaches` crossing rule and `visible`'s
   collision meaning were all found by writing one.
+- **A `.dmtl` grid is literal.** Every line after `map` is a row, blank ones
+  included, and the only exception is the empty string a terminating newline
+  leaves behind. Treating a blank line as a separator moves every row below it up
+  one, which silently corrupts the shape the format exists to preserve.
 - **`.test.dmt` suites run on every console.** That is what makes a _balance_
   regression visible; a mechanical one would show up anywhere. Write assertions
   in the relative vocabulary or they will only be true on one machine.

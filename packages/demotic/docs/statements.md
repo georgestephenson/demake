@@ -17,6 +17,20 @@ start <scene>
 start title
 ```
 
+## `seed`
+
+Fixes the game's random source. Optional; the default is 1.
+
+```
+seed <n>
+```
+
+```
+seed 20260725
+```
+
+The seed lives in the game, never in the Demakefile: a different seed is a different game, and the build file may not change how a game plays (doc 15). It is also what `stream` composes its levels with, so one number decides the whole course.
+
 ## `scene`
 
 Declares a scene. Objects and rules belong to one.
@@ -52,6 +66,48 @@ create <class> <name> [in <scene>] ( <properties> )
 ```
 create ball ball1 in play (x centerx, y centery, direction southwest)
 ```
+
+## `level`
+
+Loads a level, which becomes the scene's playfield.
+
+```
+level <name> [in <scene>] from <file.dmtl>
+```
+
+```
+level cavern from cavern.dmtl
+```
+
+A scene with a level takes that level's size as its bounds, so `screenwidth` and the screen edges mean the *level's* edges — a player running right stops at the end of the level, not at an invisible wall a screen-width in. Object positions are level coordinates throughout; the camera decides what is on screen, which is why scrolling does not infect every rule in the game.
+
+## `stream`
+
+Builds a level by drawing `n` chunks at random and laying them end to end.
+
+```
+stream <name> [in <scene>] from <file>, <file>, … <n> wide|tall
+```
+
+```
+stream course from gap.dmtl, low.dmtl, high.dmtl 24 wide
+```
+
+An endless scroller is not an endless level — it is a short vocabulary of hand-made pieces played in an order nobody wrote down. Composition happens at compile time from the program's `seed`, so the result is an ordinary level: the simulator, the camera and a console runtime all see a tilemap and need no notion of streaming. Chunks share one legend, and must agree on the dimension they are not laid along.
+
+## `camera`
+
+Keeps the viewport centred on an object, clamped inside the level.
+
+```
+camera follows <object> [in <scene>]
+```
+
+```
+camera follows player
+```
+
+The clamp is what stops the view running off the end of a level, and it means a level no bigger than the screen never scrolls — so a non-scrolling game needs no special case. `camera.x` and `camera.y` are readable in expressions.
 
 ## `control`
 

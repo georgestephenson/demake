@@ -83,6 +83,18 @@ export type Event =
 export type Stmt =
   | { kind: "start"; scene: string; line: number }
   | { kind: "scene"; name: string; line: number }
+  | { kind: "level"; name: string; scene?: string; file: string; line: number }
+  | {
+      kind: "stream";
+      name: string;
+      scene?: string;
+      files: readonly string[];
+      count: number;
+      axis: "wide" | "tall";
+      line: number;
+    }
+  | { kind: "seed"; value: number; line: number }
+  | { kind: "camera"; target: string; scene?: string; line: number }
   | { kind: "class"; name: string; props: readonly Prop[]; line: number }
   | {
       kind: "instance";

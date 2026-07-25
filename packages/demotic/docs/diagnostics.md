@@ -9,11 +9,21 @@ Every one of these is a mistake the cell-and-tick model makes easy to write and 
 
 | Code | Meaning |
 |---|---|
-| `E_NO_ENTRY` | No `loop` statement, so the game has no entry point. |
+| `E_NO_ENTRY` | No `start` statement, so the game has no entry point. |
 | `E_UNKNOWN_SCENE` | A scene was named that is never declared. |
 | `E_DUPLICATE_SCENE` | Two scenes share a name. |
 | `E_DUPLICATE_START` | More than one `start` statement. |
 | `E_ELSE_NOT_ALLOWED` | `else` on a bare edge trigger, where "did not fire" would mean every other tick. |
+| `E_UNKNOWN_LEVEL` | A level file that was never loaded, or could not be found. |
+| `E_LEVEL_SYNTAX` | A `.dmtl` line that is neither a `tile` legend entry nor `map`. |
+| `E_LEVEL_NO_MAP` | A `.dmtl` file with no `map` grid. |
+| `E_UNKNOWN_TILE` | A grid character with no legend entry. |
+| `E_DUPLICATE_TILE` | A legend reusing a character or a name. |
+| `E_DUPLICATE_LEVEL` | More than one level in a scene; a scene has one playfield. |
+| `E_LEVEL_TOO_SMALL` | A level smaller than the screen on some console, so part of the view has nothing in it. |
+| `E_STREAM_MISMATCH` | Stream chunks that disagree on the dimension they are not laid along. |
+| `E_STREAM_LEGEND` | Stream chunks giving one character two different meanings. |
+| `E_DUPLICATE_SEED` | More than one `seed` statement. |
 | `E_AMBIGUOUS_CLASS` | A level rule naming more than one class has no single object to bind as its subject. |
 | `E_UNKNOWN_CLASS` | An object was created from a class that is never declared. |
 | `E_DUPLICATE_CLASS` | Two classes share a name. |

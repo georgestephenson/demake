@@ -1,0 +1,41 @@
+-- A pipe from the ground up, leaving a gap above it.
+--
+-- The gap is drawn, not computed: rows 11 to 17 are clear here and in
+-- highpipe.dmtl too, so however the stream orders the chunks there is always
+-- a way through. A vocabulary with a property like that is worth more than
+-- one with more pieces in it.
+
+tile #  pipe   solid  brick.svg
+tile _  ground solid  ledge.svg
+
+map
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+  ##
+______
+______

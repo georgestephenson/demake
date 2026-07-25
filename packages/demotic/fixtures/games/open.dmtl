@@ -1,0 +1,39 @@
+-- An open stretch — nothing but ground.
+--
+-- Every chunk vocabulary needs a rest in it. Without one the course is
+-- wall-to-wall pipes and the only way through is a metronome.
+
+tile #  pipe   solid  brick.svg
+tile _  ground solid  ledge.svg
+
+map
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+______
+______

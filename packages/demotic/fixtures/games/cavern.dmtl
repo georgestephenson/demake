@@ -1,24 +1,44 @@
--- A cavern, wider than any of the target screens, so it scrolls.
+-- A cavern, wider and taller than any of the target screens, so it scrolls
+-- in both directions.
 --
--- The legend names each character; those names are what Demotic rules collide
--- with, which is why `when player touches spikes` reads as a sentence.
+-- The legend names each character, and those names are what Demotic rules
+-- collide with — which is why `when player touches spikes` reads as a
+-- sentence rather than as an index into a tile table.
 
 tile #  wall    solid  brick.svg
 tile =  ledge   solid  ledge.svg
-tile ^  spikes  solid  spikes.svg
+tile ^  spikes         spikes.svg
 tile o  coin           coin.svg
-tile *  exit           coin.svg
+tile *  exit           exit.svg
 
 map
-##########################################################
-#                                                        #
-#   o        ===        o          ===         o         #
-#                                                 ===    #
-#         ===       o        ===                       * #
-#                                          ===        ####
-#  ===                  ===         o                    #
-#              o                              ===        #
-#      ===                     ===                       #
-#                    o                    o              #
-####    ^^^^    ####      ^^^^      ####      ^^^^    ####
-##########################################################
+############################################################
+#                                                          #
+#                                        o              *  #
+#                                       =====         ==== #
+#                                                          #
+#                        o                                 #
+#                       ======                             #
+#                                                          #
+#                                             o            #
+#         o                                  ======        #
+#        =====                                             #
+#                                 o                        #
+#                                =====                     #
+#                                                          #
+#                  o                                       #
+#                 ======                                   #
+#                                                o         #
+#                                               =====      #
+#                               o                          #
+#                              =====                       #
+#            o                                             #
+#           =====                        o                 #
+#                      o                ======             #
+#    o                ======                               #
+#   =====                                                  #
+#                                                          #
+#                                                          #
+#                                                          #
+##########################^^^^##############^^^^############
+############################################################

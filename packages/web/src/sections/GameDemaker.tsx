@@ -15,7 +15,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 
-import { DEFAULT_EXAMPLE, DEMO_ASSETS, EXAMPLES, type Example } from "../lib/demo-game.js";
+import {
+  DEFAULT_EXAMPLE,
+  DEMO_ASSETS,
+  DEMO_LEVELS,
+  EXAMPLES,
+  type Example,
+} from "../lib/demo-game.js";
 import {
   check,
   formatResults,
@@ -24,6 +30,7 @@ import {
   profiles,
   runTests,
   Sim,
+  tileAt,
   toNumber,
   type Diagnostic,
 } from "@demake/demotic";
@@ -69,7 +76,7 @@ export function GameDemaker() {
   // Compilation is pure and fast; there is nothing to debounce or cancel.
   const { program, diagnostics } = useMemo(() => {
     try {
-      return check(source, { profile: getProfile(consoleId) });
+      return check(source, { profile: getProfile(consoleId), levels: DEMO_LEVELS });
     } catch (error) {
       return {
         diagnostics: [
@@ -175,7 +182,7 @@ export function GameDemaker() {
     const results = [];
     for (const profile of profiles) {
       try {
-        const compiled = check(source, { profile });
+        const compiled = check(source, { profile, levels: DEMO_LEVELS });
         if (compiled.program) results.push(runTests(file, compiled.program));
       } catch {
         /* a console this game cannot target is reported by its own diagnostics */
@@ -380,6 +387,56 @@ function loadAsset(cache: Map<string, Loaded>, name: string): void {
   cache.set(name, entry);
 }
 
+/**
+ * The background layer: the scene's level, one cell at a time.
+ *
+ * Only the cells the view covers are considered, so the cost is a screenful
+ * however long the level is — which is exactly what the hardware does, and the
+ * reason a 144-cell course is not 144 cells of work per frame.
+ *
+ * A tile with no art draws as a flat block. That is deliberate: a legend entry
+ * exists to give a *name* to rules, and a game may well want a named tile that
+ * is never seen.
+ */
+function drawTiles(
+  target: CanvasRenderingContext2D,
+  sim: Sim,
+  unit: number,
+  viewX: number,
+  viewY: number,
+  constrain: boolean,
+  assets: Map<string, Loaded>,
+): void {
+  const level = sim.level;
+  if (!level) return;
+
+  const { screenWidth, screenHeight } = sim.program.profile;
+  const firstColumn = Math.floor(viewX);
+  const firstRow = Math.floor(viewY);
+
+  for (let row = firstRow; row <= firstRow + screenHeight; row += 1) {
+    for (let column = firstColumn; column <= firstColumn + screenWidth; column += 1) {
+      const tile = tileAt(level, column, row);
+      if (!tile) continue;
+
+      let x = (column - viewX) * unit;
+      let y = (row - viewY) * unit;
+      if (constrain) {
+        x = Math.floor(x);
+        y = Math.floor(y);
+      }
+
+      const art = tile.art ? assets.get(tile.art) : undefined;
+      if (art?.ready) {
+        target.drawImage(art.image, x, y, unit, unit);
+      } else {
+        target.fillStyle = tile.solid ? "#3a4459" : "#232b3b";
+        target.fillRect(x, y, unit, unit);
+      }
+    }
+  }
+}
+
 /** Draw one frame; returns the status line. */
 function draw(
   element: HTMLCanvasElement | null,
@@ -412,13 +469,21 @@ function draw(
   target.fillStyle = "#05070c";
   target.fillRect(0, 0, width, height);
 
+  // Everything below draws the *view*, not the level: object coordinates are
+  // level coordinates, and subtracting the camera is all scrolling costs the
+  // renderer. The simulation never knew there was a view.
+  const viewX = toNumber(sim.camera.x);
+  const viewY = toNumber(sim.camera.y);
+
+  drawTiles(target, sim, unit, viewX, viewY, constrain, assets);
+
   const perLine = new Int32Array(Math.max(1, Math.round(height)));
 
   for (const [index, entity] of sim.entities().entries()) {
     if ((entity.numbers["visible"] ?? 0) === 0) continue;
 
-    let x = toNumber(entity.numbers["x"] ?? 0) * unit;
-    let y = toNumber(entity.numbers["y"] ?? 0) * unit;
+    let x = (toNumber(entity.numbers["x"] ?? 0) - viewX) * unit;
+    let y = (toNumber(entity.numbers["y"] ?? 0) - viewY) * unit;
     const w = Math.max(1, toNumber(entity.numbers["width"] ?? 0)) * unit;
     const h = Math.max(1, toNumber(entity.numbers["height"] ?? 0)) * unit;
 

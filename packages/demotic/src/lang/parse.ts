@@ -201,6 +201,14 @@ function parseStatement(cursor: Cursor): Stmt {
       return parseStart(cursor);
     case "scene":
       return parseScene(cursor);
+    case "level":
+      return parseLevelStatement(cursor);
+    case "stream":
+      return parseStream(cursor);
+    case "seed":
+      return parseSeed(cursor);
+    case "camera":
+      return parseCamera(cursor);
     case "create":
       return parseCreate(cursor);
     case "control":
@@ -211,7 +219,7 @@ function parseStatement(cursor: Cursor): Stmt {
       throw cursor.fail(
         "E_UNKNOWN_STATEMENT",
         `unknown statement '${token.raw}'`,
-        "statements start with start, scene, create, control, or when",
+        "statements start with start, seed, scene, level, stream, camera, create, control, or when",
       );
   }
 }
@@ -228,6 +236,94 @@ function parseScene(cursor: Cursor): Stmt {
   cursor.next();
   const name = cursor.expectIdent("a scene name");
   return { kind: "scene", name: name.value, line };
+}
+
+/** `level <name> [in <scene>] from <file.dmtl>` */
+function parseLevelStatement(cursor: Cursor): Stmt {
+  const line = cursor.peek().line;
+  cursor.next();
+  const name = cursor.expectIdent("a level name");
+  let scene: string | undefined;
+  if (cursor.eatKeyword("in")) scene = cursor.expectIdent("a scene name").value;
+  if (!cursor.eatKeyword("from")) {
+    throw cursor.fail("E_SYNTAX", "a level needs a file", "e.g. `level cavern from cavern.dmtl`");
+  }
+  const file = cursor.expectIdent("a .dmtl filename");
+  return { kind: "level", name: name.value, ...(scene ? { scene } : {}), file: file.raw, line };
+}
+
+/** `stream <name> [in <scene>] from <file>, <file>, … <n> wide|tall` */
+function parseStream(cursor: Cursor): Stmt {
+  const line = cursor.peek().line;
+  cursor.next();
+  const name = cursor.expectIdent("a level name");
+  let scene: string | undefined;
+  if (cursor.eatKeyword("in")) scene = cursor.expectIdent("a scene name").value;
+  if (!cursor.eatKeyword("from")) {
+    throw cursor.fail(
+      "E_SYNTAX",
+      "a stream needs chunks to draw from",
+      "e.g. `stream course from gap.dmtl, pipe.dmtl 20 wide`",
+    );
+  }
+
+  const files: string[] = [];
+  do {
+    files.push(cursor.expectIdent("a .dmtl filename").raw);
+  } while (cursor.eatPunct(","));
+
+  const count = cursor.peek();
+  if (count.kind !== "number") {
+    throw cursor.fail(
+      "E_SYNTAX",
+      `expected how many chunks to draw but found ${describe(count)}`,
+      "e.g. `stream course from gap.dmtl, pipe.dmtl 20 wide`",
+    );
+  }
+  cursor.next();
+
+  // The axis is stated rather than inferred from the chunks' shape: a stack of
+  // square chunks is ambiguous, and a game that reads "20 wide" says which way
+  // it scrolls without the reader measuring anything.
+  const axis = cursor.eatKeyword("wide") ? "wide" : cursor.eatKeyword("tall") ? "tall" : undefined;
+  if (!axis) {
+    throw cursor.fail("E_SYNTAX", "a stream is laid out `wide` or `tall`");
+  }
+
+  return {
+    kind: "stream",
+    name: name.value,
+    ...(scene ? { scene } : {}),
+    files,
+    count: Math.trunc(Number(count.value)),
+    axis,
+    line,
+  };
+}
+
+/** `seed <n>` */
+function parseSeed(cursor: Cursor): Stmt {
+  const line = cursor.peek().line;
+  cursor.next();
+  const value = cursor.peek();
+  if (value.kind !== "number") {
+    throw cursor.fail("E_SYNTAX", `expected a whole number but found ${describe(value)}`);
+  }
+  cursor.next();
+  return { kind: "seed", value: Math.trunc(Number(value.value)), line };
+}
+
+/** `camera follows <object> [in <scene>]` */
+function parseCamera(cursor: Cursor): Stmt {
+  const line = cursor.peek().line;
+  cursor.next();
+  if (!cursor.eatKeyword("follows")) {
+    throw cursor.fail("E_SYNTAX", "a camera follows something", "e.g. `camera follows player`");
+  }
+  const target = cursor.expectIdent("an object name");
+  let scene: string | undefined;
+  if (cursor.eatKeyword("in")) scene = cursor.expectIdent("a scene name").value;
+  return { kind: "camera", target: target.value, ...(scene ? { scene } : {}), line };
 }
 
 function parseCreate(cursor: Cursor): Stmt {

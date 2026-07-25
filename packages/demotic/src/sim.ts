@@ -9,7 +9,9 @@
  * without needing a framebuffer, leaving the existing pixel-perfect emulator
  * E2E to test only rendering.
  *
- * Everything below is integer arithmetic. No floats, no wall clock, no RNG.
+ * Everything below is integer arithmetic. No floats, no wall clock, and no host
+ * RNG — `random` draws from the seeded generator in `rng.ts`, which is part of
+ * the language precisely so that two implementations can be compared at all.
  *
  * ## Tick order
  *
@@ -21,8 +23,10 @@
  *  3. Apply level-triggered rules (`when <expression>`) — every tick they hold.
  *  4. Integrate positions from speed and direction.
  *  5. Detect collisions, fire `when ... hits ...`, then separate the overlap.
- *  6. Fire edge-triggered rules (`reaches`, `pressed`, `released`).
- *  7. Apply any pending scene change, resetting the entered scene.
+ *  6. Do the same against the level's tiles.
+ *  7. Fire edge-triggered rules (`reaches`, `pressed`, `released`).
+ *  8. Move the camera to follow its target.
+ *  9. Apply any pending scene change, resetting the entered scene.
  *
  * Within one rule, all assignments are evaluated against the pre-rule state and
  * written together, so `(ydirection, xdirection) as (flip, ball.x - paddle.x)`
@@ -30,6 +34,8 @@
  */
 
 import { applyBinary, applyBuiltin } from "./compile.js";
+import { type LevelFile } from "./level/parse.js";
+import { type Bounds, type Camera, follow, separateFromTile, tilesUnder } from "./level/scene.js";
 import { clampFixed, type Fixed, fromInt, ONE, toNumber } from "./fixed.js";
 import type {
   Action,
@@ -42,6 +48,7 @@ import type {
   RuleDef,
 } from "./program.js";
 import { ACTIONS } from "./program.js";
+import { advance, pick } from "./rng.js";
 
 /** Which buttons are held this tick. */
 export type InputState = Partial<Record<Action, boolean>>;
@@ -96,6 +103,8 @@ export class Sim {
 
   /** Overlaps that existed at the end of the previous tick (edge triggering). */
   private overlaps = new Set<string>();
+  /** The same, for object-versus-tile contacts. */
+  private tileOverlaps = new Set<string>();
   /**
    * Distance from its target for each `reaches` rule at the end of last tick.
    *
@@ -119,6 +128,17 @@ export class Sim {
 
   private budget: RuntimeBudget;
 
+  /** Where the viewport sits in the running scene, in cells. */
+  private cameraAt: Camera = { x: 0, y: 0 };
+
+  /**
+   * The game's random source, re-seeded on scene entry so that replaying a scene
+   * replays its draws. The generator itself lives in `rng.ts`, shared with the
+   * compile-time composition `stream` does — one definition, so a console
+   * runtime has one thing to reproduce.
+   */
+  private rng = 0;
+
   constructor(readonly program: Program) {
     for (const instance of program.instances) {
       this.numbers.push({ ...instance.numbers });
@@ -128,6 +148,7 @@ export class Sim {
       this.bySceneName.set(scene.name, scene.instanceIds);
     }
     this.currentScene = program.entryScene;
+    this.rng = program.seed;
     this.budget = {
       peakSpritesPerLine: 0,
       peakLine: 0,
@@ -141,6 +162,42 @@ export class Sim {
   /** The scene currently running. */
   get scene(): string {
     return this.currentScene;
+  }
+
+  /** Where the viewport sits, in cells. Object positions are level coordinates. */
+  get camera(): Readonly<Camera> {
+    return this.cameraAt;
+  }
+
+  /** The running scene's playfield, which is its level's size or the screen's. */
+  get bounds(): Bounds {
+    return this.sceneDef().bounds;
+  }
+
+  /** The running scene's level, if it has one. */
+  get level(): LevelFile | undefined {
+    return this.sceneDef().level;
+  }
+
+  private sceneDef() {
+    return (
+      this.program.scenes.find((scene) => scene.name === this.currentScene) ??
+      (this.program.scenes[0] as (typeof this.program.scenes)[number])
+    );
+  }
+
+  /**
+   * Next whole number in `[low, high]` from the seeded generator.
+   *
+   * Advancing the state is a side effect of *evaluating*, so the number of draws
+   * per tick is part of the game's behaviour — which is exactly why the
+   * generator has to be specified rather than borrowed from the host.
+   */
+  private nextRandom(low: Fixed, high: Fixed): Fixed {
+    this.rng = advance(this.rng);
+    const lo = Math.floor(low / ONE);
+    const hi = Math.floor(high / ONE);
+    return hi <= lo ? fromInt(lo) : fromInt(lo + pick(this.rng, hi - lo + 1));
   }
 
   /** Ticks elapsed since construction. */
@@ -184,7 +241,9 @@ export class Sim {
     this.applyLevelRules();
     this.integrate();
     this.resolveCollisions();
+    this.resolveTiles();
     this.applyEdgeRules();
+    this.updateCamera();
     this.observeSpriteBudget();
 
     if (this.pendingScene !== undefined) {
@@ -192,8 +251,11 @@ export class Sim {
       this.pendingScene = undefined;
       this.currentScene = next;
       this.resetScene(next);
+      this.rng = this.program.seed;
+      this.updateCamera();
       // A fresh scene has no collision or rule history to inherit.
       this.overlaps = new Set();
+      this.tileOverlaps = new Set();
       this.reachedDelta.clear();
       this.holdSnapshots.clear();
     }
@@ -433,7 +495,7 @@ export class Sim {
 
   private touchesEdge(id: number, edge: Edge): boolean {
     const numbers = this.numbers[id] as Record<string, Fixed>;
-    const { screenWidth, screenHeight } = this.program.profile;
+    const { width: screenWidth, height: screenHeight } = this.bounds;
     switch (edge) {
       case "screenleft":
         return (numbers["x"] ?? 0) <= 0;
@@ -448,7 +510,7 @@ export class Sim {
 
   private separateFromEdge(id: number, edge: Edge): void {
     const numbers = this.numbers[id] as Record<string, Fixed>;
-    const { screenWidth, screenHeight } = this.program.profile;
+    const { width: screenWidth, height: screenHeight } = this.bounds;
     switch (edge) {
       case "screenleft":
         numbers["x"] = 0;
@@ -498,6 +560,94 @@ export class Sim {
     } else {
       p["y"] = clampFixed((p["y"] ?? 0) + yPush);
     }
+  }
+
+  /**
+   * Fire tile rules, then push objects out of solid tiles.
+   *
+   * Tiles behave like objects on purpose, and the same two conditions apply:
+   * something happens only where a rule named the pair, and separation happens
+   * only where the tile is `solid`. So `when coin touches player` collects
+   * without blocking, and `wall solid` blocks whether or not anything fired —
+   * one model, not two.
+   */
+  private resolveTiles(): void {
+    const level = this.level;
+    if (!level) return;
+    const current = new Set<string>();
+
+    // Which tiles each subject can be stopped by. Built first so an object
+    // named by three rules is still pushed out once, not three times.
+    const blockers = new Map<number, Set<string>>();
+
+    for (const rule of this.program.rules) {
+      if (!this.ruleActive(rule)) continue;
+      if (rule.event.kind !== "hits" || rule.event.tiles.length === 0) continue;
+
+      for (const subjectId of rule.event.subjects) {
+        if (!this.isActive(subjectId) || !this.isSolid(subjectId)) continue;
+        const named = blockers.get(subjectId) ?? new Set<string>();
+        for (const name of rule.event.tiles) named.add(name);
+        blockers.set(subjectId, named);
+
+        for (const hit of this.tilesUnderEntity(level, subjectId)) {
+          if (!rule.event.tiles.includes(hit.name)) continue;
+          const key = `${rule.id}:${subjectId}:${hit.column},${hit.row}`;
+          current.add(key);
+          if (rule.event.level || !this.tileOverlaps.has(key)) {
+            this.fire(rule, true, { subject: subjectId });
+          }
+        }
+      }
+    }
+
+    // Separation re-reads positions, because a rule that just fired may have
+    // moved its subject somewhere it is no longer in contact — the same reason
+    // object separation re-tests before pushing.
+    for (const [subjectId, named] of blockers) {
+      if (!this.isActive(subjectId) || !this.isSolid(subjectId)) continue;
+      for (const hit of this.tilesUnderEntity(level, subjectId)) {
+        if (!hit.solid || !named.has(hit.name)) continue;
+        const numbers = this.numbers[subjectId] as Record<string, Fixed>;
+        const moved = separateFromTile(
+          hit,
+          numbers["x"] ?? 0,
+          numbers["y"] ?? 0,
+          numbers["width"] ?? 0,
+          numbers["height"] ?? 0,
+        );
+        numbers["x"] = clampFixed(moved.x);
+        numbers["y"] = clampFixed(moved.y);
+      }
+    }
+
+    this.tileOverlaps = current;
+  }
+
+  private tilesUnderEntity(level: LevelFile, id: number): ReturnType<typeof tilesUnder> {
+    const numbers = this.numbers[id] as Record<string, Fixed>;
+    return tilesUnder(
+      level,
+      numbers["x"] ?? 0,
+      numbers["y"] ?? 0,
+      numbers["width"] ?? 0,
+      numbers["height"] ?? 0,
+    );
+  }
+
+  /** Centre the viewport on the scene's camera target, held inside the bounds. */
+  private updateCamera(): void {
+    const target = this.sceneDef().cameraTarget;
+    if (target === undefined) {
+      this.cameraAt = { x: 0, y: 0 };
+      return;
+    }
+    this.cameraAt = follow(
+      this.readProp(target, "centerx"),
+      this.readProp(target, "centery"),
+      this.bounds,
+      this.program.profile,
+    );
   }
 
   // --- assignment ------------------------------------------------------------
@@ -573,17 +723,19 @@ export class Sim {
         return 0;
       case "neg":
         return clampFixed(-this.evaluate(expr.operand, context));
-      case "call":
-        return applyBuiltin(
-          expr.fn,
-          expr.args.map((arg) => this.evaluate(arg, context)),
-        );
+      case "call": {
+        const args = expr.args.map((arg) => this.evaluate(arg, context));
+        if (expr.fn === "random") return this.nextRandom(args[0] ?? 0, args[1] ?? 0);
+        return applyBuiltin(expr.fn, args);
+      }
       case "binary":
         return applyBinary(
           expr.op,
           this.evaluate(expr.left, context),
           this.evaluate(expr.right, context),
         );
+      case "camera":
+        return expr.axis === "x" ? this.cameraAt.x : this.cameraAt.y;
       case "read": {
         const id = this.resolveEntity(expr.entity, context);
         return id === undefined ? 0 : this.readProp(id, expr.prop);

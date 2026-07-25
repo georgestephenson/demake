@@ -9,9 +9,14 @@
  * It renders the *cell* grid, so what it shows is the playfield at the
  * granularity the language actually thinks in. A Game Boy frame is 20×18
  * characters here; a Mega Drive frame is 40×28.
+ *
+ * It draws the *view*, not the level: object coordinates are level coordinates,
+ * so everything is offset by the camera. That is the whole of what scrolling
+ * costs a renderer, which is the point — the simulation never knew.
  */
 
 import { floorToInt, toNumber } from "../fixed.js";
+import { tileAt } from "../level/parse.js";
 import type { EntityState } from "../sim.js";
 import type { Sim } from "../sim.js";
 
@@ -42,10 +47,26 @@ export function renderAscii(sim: Sim, options: AsciiOptions = {}): string {
     Array.from({ length: screenWidth }, () => empty),
   );
 
+  const viewX = floorToInt(sim.camera.x);
+  const viewY = floorToInt(sim.camera.y);
+
   const put = (x: number, y: number, char: string): void => {
-    if (y < 0 || y >= screenHeight || x < 0 || x >= screenWidth) return;
-    (grid[y] as string[])[x] = char;
+    const column = x - viewX;
+    const row = y - viewY;
+    if (row < 0 || row >= screenHeight || column < 0 || column >= screenWidth) return;
+    (grid[row] as string[])[column] = char;
   };
+
+  // Tiles first, so an object standing on a ledge is drawn over it.
+  const level = sim.level;
+  if (level) {
+    for (let row = 0; row < screenHeight; row += 1) {
+      for (let column = 0; column < screenWidth; column += 1) {
+        const tile = tileAt(level, viewX + column, viewY + row);
+        if (tile) put(viewX + column, viewY + row, tile.name[0] as string);
+      }
+    }
+  }
 
   for (const entity of sim.entities()) {
     if ((entity.numbers["visible"] ?? 0) === 0) continue;

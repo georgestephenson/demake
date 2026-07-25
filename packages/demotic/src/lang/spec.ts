@@ -163,6 +163,12 @@ export const FUNCTIONS: readonly FunctionSpec[] = [
     signature: "clamp(x, low, high)",
     summary: "`x` held between `low` and `high`. The basis of proportional control.",
   },
+  {
+    name: "random",
+    arity: 2,
+    signature: "random(low, high)",
+    summary: "A whole number from `low` to `high`, from the game's seeded generator.",
+  },
 ];
 
 /** A bare name that resolves to a number. */
@@ -187,6 +193,8 @@ export const CONSTANTS: readonly ConstantSpec[] = [
   { name: "screenright", summary: "Same as `screenwidth`." },
   { name: "screenbottom", summary: "Same as `screenheight`." },
   { name: "fps", summary: "Logical ticks per second on this console." },
+  { name: "levelwidth", summary: "Playfield width in cells — the level's, or the screen's." },
+  { name: "levelheight", summary: "Playfield height in cells." },
   { name: "always", summary: "One. `when always` is how a rule says *every tick*." },
   { name: "never", summary: "Zero." },
 ];
@@ -247,6 +255,13 @@ export const STATEMENTS: readonly StatementSpec[] = [
     example: "start title",
   },
   {
+    keyword: "seed",
+    syntax: "seed <n>",
+    summary: "Fixes the game's random source. Optional; the default is 1.",
+    example: "seed 20260725",
+    note: "The seed lives in the game, never in the Demakefile: a different seed is a different game, and the build file may not change how a game plays (doc 15). It is also what `stream` composes its levels with, so one number decides the whole course.",
+  },
+  {
     keyword: "scene",
     syntax: "scene <name>",
     summary: "Declares a scene. Objects and rules belong to one.",
@@ -263,6 +278,27 @@ export const STATEMENTS: readonly StatementSpec[] = [
     syntax: "create <class> <name> [in <scene>] ( <properties> )",
     summary: "Creates one object, overriding its class defaults.",
     example: "create ball ball1 in play (x centerx, y centery, direction southwest)",
+  },
+  {
+    keyword: "level",
+    syntax: "level <name> [in <scene>] from <file.dmtl>",
+    summary: "Loads a level, which becomes the scene's playfield.",
+    example: "level cavern from cavern.dmtl",
+    note: "A scene with a level takes that level's size as its bounds, so `screenwidth` and the screen edges mean the *level's* edges — a player running right stops at the end of the level, not at an invisible wall a screen-width in. Object positions are level coordinates throughout; the camera decides what is on screen, which is why scrolling does not infect every rule in the game.",
+  },
+  {
+    keyword: "stream",
+    syntax: "stream <name> [in <scene>] from <file>, <file>, … <n> wide|tall",
+    summary: "Builds a level by drawing `n` chunks at random and laying them end to end.",
+    example: "stream course from gap.dmtl, low.dmtl, high.dmtl 24 wide",
+    note: "An endless scroller is not an endless level — it is a short vocabulary of hand-made pieces played in an order nobody wrote down. Composition happens at compile time from the program's `seed`, so the result is an ordinary level: the simulator, the camera and a console runtime all see a tilemap and need no notion of streaming. Chunks share one legend, and must agree on the dimension they are not laid along.",
+  },
+  {
+    keyword: "camera",
+    syntax: "camera follows <object> [in <scene>]",
+    summary: "Keeps the viewport centred on an object, clamped inside the level.",
+    example: "camera follows player",
+    note: "The clamp is what stops the view running off the end of a level, and it means a level no bigger than the screen never scrolls — so a non-scrolling game needs no special case. `camera.x` and `camera.y` are readable in expressions.",
   },
   {
     keyword: "control",
@@ -350,7 +386,7 @@ export const DIAGNOSTICS: readonly DiagnosticSpec[] = [
   {
     code: "E_NO_ENTRY",
     severity: "error",
-    summary: "No `loop` statement, so the game has no entry point.",
+    summary: "No `start` statement, so the game has no entry point.",
   },
   {
     code: "E_UNKNOWN_SCENE",
@@ -364,6 +400,45 @@ export const DIAGNOSTICS: readonly DiagnosticSpec[] = [
     severity: "error",
     summary: '`else` on a bare edge trigger, where "did not fire" would mean every other tick.',
   },
+  {
+    code: "E_UNKNOWN_LEVEL",
+    severity: "error",
+    summary: "A level file that was never loaded, or could not be found.",
+  },
+  {
+    code: "E_LEVEL_SYNTAX",
+    severity: "error",
+    summary: "A `.dmtl` line that is neither a `tile` legend entry nor `map`.",
+  },
+  { code: "E_LEVEL_NO_MAP", severity: "error", summary: "A `.dmtl` file with no `map` grid." },
+  { code: "E_UNKNOWN_TILE", severity: "error", summary: "A grid character with no legend entry." },
+  {
+    code: "E_DUPLICATE_TILE",
+    severity: "error",
+    summary: "A legend reusing a character or a name.",
+  },
+  {
+    code: "E_DUPLICATE_LEVEL",
+    severity: "error",
+    summary: "More than one level in a scene; a scene has one playfield.",
+  },
+  {
+    code: "E_LEVEL_TOO_SMALL",
+    severity: "error",
+    summary:
+      "A level smaller than the screen on some console, so part of the view has nothing in it.",
+  },
+  {
+    code: "E_STREAM_MISMATCH",
+    severity: "error",
+    summary: "Stream chunks that disagree on the dimension they are not laid along.",
+  },
+  {
+    code: "E_STREAM_LEGEND",
+    severity: "error",
+    summary: "Stream chunks giving one character two different meanings.",
+  },
+  { code: "E_DUPLICATE_SEED", severity: "error", summary: "More than one `seed` statement." },
   {
     code: "E_AMBIGUOUS_CLASS",
     severity: "error",

@@ -18,6 +18,7 @@ import { argv, exit, stdout } from "node:process";
 
 const { compile, formatDiagnostics, formatResults, getProfile, parseTests, profiles, runTests } =
   await import("../dist/index.js");
+const { loadLevels } = await import("./levels.mjs");
 
 const args = argv.slice(2);
 const options = { console: null, verbose: false, game: null, tests: null };
@@ -40,13 +41,14 @@ if (file.diagnostics.length > 0) {
 }
 
 const source = readFileSync(gamePath, "utf8");
+const levels = loadLevels(gamePath, source);
 const targets = options.console ? [getProfile(options.console)] : profiles;
 const results = [];
 
 for (const profile of targets) {
   let program;
   try {
-    program = compile(source, { profile });
+    program = compile(source, { profile, levels });
   } catch (error) {
     stdout.write(`FAIL ${profile.id}: ${error.message}\n`);
     exit(1);

@@ -70,6 +70,41 @@ test("every bundled example loads, compiles and passes its suite", async ({ page
   }
 });
 
+test("scrolls a level bigger than the screen, and draws its tiles", async ({ page }) => {
+  await page.goto("/#section=game");
+  await expect(page.getByRole("heading", { name: "Play" })).toBeVisible();
+  await page.getByTestId("example-select").selectOption("caves");
+  await expect(page.locator(".diag-error")).toHaveCount(0);
+
+  // The canvas is not blank before anything moves: a scene with a level draws
+  // its tiles, which is the whole of the background layer.
+  await expect.poll(() => painted(page), { timeout: 5000 }).toBeGreaterThan(0.05);
+
+  // Holding right moves the hero into the level, and the view has to follow —
+  // the level is 60 cells wide and no console shows more than 40.
+  await page.keyboard.down("ArrowRight");
+  const before = await painted(page);
+  await page.waitForTimeout(1200);
+  const after = await painted(page);
+  await page.keyboard.up("ArrowRight");
+  expect(after).not.toBe(before);
+});
+
+/** Fraction of the canvas that is not the background colour. */
+async function painted(page: import("@playwright/test").Page): Promise<number> {
+  return page.locator(".game-canvas").evaluate((element) => {
+    const canvas = element as HTMLCanvasElement;
+    const context = canvas.getContext("2d");
+    if (!context) return 0;
+    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+    let lit = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if ((data[i] as number) + (data[i + 1] as number) + (data[i + 2] as number) > 60) lit += 1;
+    }
+    return lit / (data.length / 4);
+  });
+}
+
 test("reports a source error without blanking the preview", async ({ page }) => {
   await page.goto("/#section=game");
   await page

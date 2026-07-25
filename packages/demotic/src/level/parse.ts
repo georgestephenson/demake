@@ -26,6 +26,11 @@
  *     the format exists to avoid.
  *   - **No comments inside the grid.** `--` is a comment in the legend, but
  *     inside the map every character is a cell and `-` is a perfectly good tile.
+ *   - **Every line after `map` is a row, blank ones included.** A blank line is
+ *     a row of empty cells; treating it as a separator would move every row
+ *     below it up one, silently corrupting the shape the format exists to
+ *     preserve. The single exception is the empty string a terminating newline
+ *     leaves behind, which is an artefact of the file, not a row in it.
  *
  * Tiles are named, and those names are what Demotic rules collide with:
  * `when player touches spikes` reads as a sentence precisely because the level
@@ -101,6 +106,12 @@ export function parseLevel(source: string): LevelFile {
   };
 
   const lines = source.split("\n");
+  // A file ending in a newline splits to a final empty string. That is the one
+  // blank line that is an artefact rather than a row — every other line after
+  // `map` is a row, including blank ones, because a level that starts with
+  // three rows of sky has to be able to say so.
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+
   for (let index = 0; index < lines.length; index += 1) {
     const line = index + 1;
     const raw = lines[index] as string;
@@ -108,9 +119,9 @@ export function parseLevel(source: string): LevelFile {
     if (inMap) {
       // Every character is a cell from here on, so nothing is stripped — not
       // trailing spaces, which are empty cells, and not `--`, which is a
-      // perfectly reasonable pair of tiles.
-      if (raw.trim() === "" && rows.length === 0) continue;
-      if (raw.trim() === "") continue;
+      // perfectly reasonable pair of tiles. Blank lines are kept too, because a
+      // row of nothing but empty cells is a row; only the ones bookending the
+      // grid are trimmed, below.
       rows.push(raw.replace(/\r$/, ""));
       continue;
     }
@@ -215,6 +226,30 @@ export function tileAt(level: LevelFile, column: number, row: number): TileSpec 
   const char = (level.rows[row] as string)[column];
   if (char === undefined || char === EMPTY) return undefined;
   return level.tiles.find((tile) => tile.char === char);
+}
+
+/**
+ * Every `.dmtl` file a game's source refers to, in the order it names them.
+ *
+ * The compiler never reads a file — it is platform-pure, like `@demake/core` —
+ * so each edge (CLI, web worker, demo runner) has to resolve the paths itself.
+ * This is the one place that says *which* paths, so those edges cannot drift
+ * apart on, say, whether `stream` counts.
+ */
+export function levelFiles(source: string): readonly string[] {
+  const files: string[] = [];
+  for (const raw of source.split("\n")) {
+    const line = raw.replace(/--.*$/, "").trim();
+    const match = /^(?:level|stream)\s+.*?\bfrom\s+(.+?)(?:\s+\d[\d.]*\s+(?:wide|tall))?$/i.exec(
+      line,
+    );
+    if (!match) continue;
+    for (const file of (match[1] as string).split(",")) {
+      const name = file.trim();
+      if (name && !files.includes(name)) files.push(name);
+    }
+  }
+  return files;
 }
 
 /** Every distinct art file the level references, deduplicated and sorted. */

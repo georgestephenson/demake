@@ -18,25 +18,26 @@ describe(".dmtl", () => {
   it("reads the legend and the grid", () => {
     const parsed = parseLevel(CAVERN);
     expect(parsed.diagnostics).toEqual([]);
-    expect(parsed.width).toBe(58);
-    expect(parsed.height).toBe(12);
+    expect(parsed.width).toBe(60);
+    expect(parsed.height).toBe(30);
     expect(parsed.tiles.map((t) => t.name)).toEqual(["wall", "ledge", "spikes", "coin", "exit"]);
-    expect(parsed.tiles.filter((t) => t.solid).map((t) => t.name)).toEqual([
-      "wall",
-      "ledge",
-      "spikes",
-    ]);
+    // Spikes are named but not solid: a rule fires on them, and nothing stops
+    // the hero falling in. That split is the tile equivalent of `visible`.
+    expect(parsed.tiles.filter((t) => t.solid).map((t) => t.name)).toEqual(["wall", "ledge"]);
   });
 
-  it("is wider than any target screen, which is the point of it", () => {
-    // The widest playfield in the set is the Mega Drive's 40 cells.
+  it("is bigger than any target screen, which is the point of it", () => {
+    // The largest playfield in the set is the Mega Drive's 40x28 cells, so a
+    // level that scrolls on every console has to clear both.
     expect(parseLevel(CAVERN).width).toBeGreaterThan(40);
+    expect(parseLevel(CAVERN).height).toBeGreaterThan(28);
   });
 
   it("collects the art each tile needs", () => {
     expect(levelAssets(parseLevel(CAVERN))).toEqual([
       "brick.svg",
       "coin.svg",
+      "exit.svg",
       "ledge.svg",
       "spikes.svg",
     ]);

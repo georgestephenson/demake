@@ -38,6 +38,9 @@ import {
   STRING_PROPS,
 } from "./lang/spec.js";
 import { parse } from "./lang/parse.js";
+import { levelAssets, type LevelFile, parseLevel } from "./level/parse.js";
+import { boundsOf } from "./level/scene.js";
+import { type StreamChunk, streamLevel } from "./level/stream.js";
 import type { ConsoleProfile } from "./profiles.js";
 import type {
   Action,
@@ -52,10 +55,12 @@ import type {
   EntityRef,
   InstanceDef,
   Program,
+  PureBuiltinFn,
   RuleDef,
   SceneDef,
 } from "./program.js";
 import { ACTIONS, EDGES } from "./program.js";
+import { DEFAULT_SEED } from "./rng.js";
 
 const FIXED_DEFAULTS: Readonly<Record<string, Fixed>> = Object.fromEntries(
   Object.entries(NUMBER_DEFAULTS).map(([key, value]) => [key, fromInt(value)]),
@@ -150,6 +155,13 @@ export function screenConstant(name: string, profile: ConsoleProfile): Fixed | u
 export interface CompileOptions {
   /** Target console profile. */
   profile: ConsoleProfile;
+  /**
+   * `.dmtl` sources by filename.
+   *
+   * The compiler is platform-pure, so it never reads a file; whoever calls it
+   * resolves paths and hands the text in, exactly as art assets work.
+   */
+  levels?: Readonly<Record<string, string>>;
 }
 
 interface ClassInfo {
@@ -174,7 +186,152 @@ class Compiler {
   private readonly sceneSet = new Set<string>();
   private entry: string | undefined;
 
-  constructor(private readonly profile: ConsoleProfile) {}
+  private readonly levelsByScene = new Map<string, LevelFile>();
+  private readonly cameraByScene = new Map<string, number>();
+  private readonly tileNames = new Set<string>();
+  private seed = DEFAULT_SEED;
+
+  constructor(
+    private readonly profile: ConsoleProfile,
+    private readonly levelSources: Readonly<Record<string, string>> = {},
+  ) {}
+
+  /** The program's random seed, which `stream` also composes with. */
+  collectSeed(statements: readonly Stmt[]): void {
+    let seen = false;
+    for (const statement of statements) {
+      if (statement.kind !== "seed") continue;
+      if (seen) {
+        this.error(statement.line, "E_DUPLICATE_SEED", "a program has one `seed`");
+        continue;
+      }
+      seen = true;
+      // Kept in 32 bits, and away from zero: an LCG seeded at 0 is fine here
+      // (the increment lifts it) but a negative seed would not survive the
+      // unsigned round trip a console runtime does.
+      this.seed = statement.value >>> 0;
+    }
+  }
+
+  /**
+   * Load each scene's playfield — hand-drawn (`level`) or composed (`stream`) —
+   * and check it is big enough for this console.
+   *
+   * One pass over both, because "a scene has one playfield" is the rule being
+   * enforced and it does not care which statement supplied it.
+   */
+  collectLevels(statements: readonly Stmt[]): void {
+    let currentScene: string | undefined;
+    // Streams draw from one generator run, in source order, so a program's whole
+    // set of composed levels follows from its single `seed`.
+    let state = this.seed;
+
+    for (const statement of statements) {
+      if (statement.kind === "scene") {
+        currentScene = statement.name;
+        continue;
+      }
+      if (statement.kind !== "level" && statement.kind !== "stream") continue;
+
+      const scene = this.resolveScene(statement.scene, currentScene, statement.line);
+      if (scene === undefined) continue;
+      if (this.levelsByScene.has(scene)) {
+        this.error(
+          statement.line,
+          "E_DUPLICATE_LEVEL",
+          `scene '${scene}' already has a level`,
+          "a scene has one playfield",
+        );
+        continue;
+      }
+
+      let level: LevelFile | undefined;
+      let describedAs: string;
+
+      if (statement.kind === "level") {
+        level = this.loadLevel(statement.file, statement.line);
+        describedAs = `'${statement.file}'`;
+      } else {
+        const chunks: StreamChunk[] = [];
+        for (const file of statement.files) {
+          const chunk = this.loadLevel(file, statement.line);
+          if (chunk) chunks.push({ file, level: chunk });
+        }
+        if (chunks.length < statement.files.length) continue;
+
+        const result = streamLevel(chunks, statement.count, statement.axis, state, statement.line);
+        state = result.state;
+        this.diagnostics.push(...result.diagnostics);
+        if (result.diagnostics.some((d) => d.severity === "error")) continue;
+        level = result.level;
+        describedAs = `stream '${statement.name}'`;
+      }
+
+      if (!level) continue;
+
+      // A level smaller than the viewport would leave part of the screen with
+      // nothing in it — and it is per-console, so a level that fits a Game Boy
+      // can still be too small for a Mega Drive.
+      if (level.width < this.profile.screenWidth || level.height < this.profile.screenHeight) {
+        this.error(
+          statement.line,
+          "E_LEVEL_TOO_SMALL",
+          `${describedAs} is ${level.width}x${level.height} cells; ${this.profile.name} shows ${this.profile.screenWidth}x${this.profile.screenHeight}`,
+          "a level must be at least as big as the largest screen it targets",
+        );
+        continue;
+      }
+
+      this.levelsByScene.set(scene, level);
+      for (const tile of level.tiles) this.tileNames.add(tile.name);
+    }
+  }
+
+  /** Parse one `.dmtl` source, reporting its diagnostics against this line. */
+  private loadLevel(file: string, line: number): LevelFile | undefined {
+    const source = this.levelSources[file];
+    if (source === undefined) {
+      this.error(
+        line,
+        "E_UNKNOWN_LEVEL",
+        `no level file '${file}' was provided`,
+        `available: ${Object.keys(this.levelSources).join(", ") || "none"}`,
+      );
+      return undefined;
+    }
+
+    const level = parseLevel(source);
+    for (const diagnostic of level.diagnostics) {
+      this.diagnostics.push({ ...diagnostic, message: `${file}: ${diagnostic.message}` });
+    }
+    return level.diagnostics.some((d) => d.severity === "error") ? undefined : level;
+  }
+
+  /** Resolve each scene's camera target. */
+  collectCameras(statements: readonly Stmt[]): void {
+    let currentScene: string | undefined;
+    for (const statement of statements) {
+      if (statement.kind === "scene") {
+        currentScene = statement.name;
+        continue;
+      }
+      if (statement.kind !== "camera") continue;
+
+      const scene = this.resolveScene(statement.scene, currentScene, statement.line);
+      if (scene === undefined) continue;
+      const instance = this.instancesByName.get(statement.target);
+      if (!instance) {
+        this.error(statement.line, "E_UNKNOWN_INSTANCE", `no object named '${statement.target}'`);
+        continue;
+      }
+      this.cameraByScene.set(scene, instance.id);
+    }
+  }
+
+  /** The playfield of a scene: its level's size, or the screen's. */
+  boundsFor(scene: string): { width: number; height: number } {
+    return boundsOf(this.levelsByScene.get(scene), this.profile);
+  }
 
   private error(line: number, code: string, message: string, hint?: string): void {
     this.diagnostics.push({
@@ -573,6 +730,7 @@ class Compiler {
 
         const others: number[] = [];
         const edges: Edge[] = [];
+        const tiles: string[] = [];
         const map = new Map<string, EntityRef>([
           [statement.event.subject, { kind: "subject" } as EntityRef],
         ]);
@@ -582,13 +740,20 @@ class Compiler {
             edges.push(name as Edge);
             continue;
           }
+          // A tile name from a level legend collides like an object does — which
+          // is the whole point of naming tiles: `when player touches spikes`
+          // reads as a sentence, and the level supplied the noun.
+          if (this.tileNames.has(name)) {
+            tiles.push(name);
+            continue;
+          }
           const resolved = this.resolveEntitySet(name, line);
           if (!resolved) return undefined;
           others.push(...resolved);
           map.set(name, { kind: "other" });
         }
 
-        event = { kind: "hits", subjects, others, edges, level: statement.event.level };
+        event = { kind: "hits", subjects, others, edges, tiles, level: statement.event.level };
         bindings = { map };
         defaultTarget = { kind: "subject" };
         sceneHint = this.sceneOf([...subjects, ...others]);
@@ -937,6 +1102,20 @@ class Compiler {
     const prop = expr.parts[expr.parts.length - 1] as string;
     const owner = expr.parts.slice(0, -1).join(".");
 
+    // The camera is the one thing that is neither an object nor a constant: it
+    // moves, but nothing owns it. A rule reads it to place something relative to
+    // the view — a HUD, or an enemy spawned just off the right-hand edge.
+    if (owner === "camera") {
+      if (prop === "x" || prop === "y") return { kind: "camera", axis: prop };
+      this.error(
+        expr.line,
+        "E_UNKNOWN_PROP",
+        `the camera has no property '${prop}'`,
+        "camera.x, camera.y",
+      );
+      return { kind: "const", value: 0 };
+    }
+
     const bound = bindings.map.get(owner);
     const instance = this.instancesByName.get(owner);
     const entity: EntityRef | undefined =
@@ -959,8 +1138,19 @@ class Compiler {
     return { kind: "read", entity, prop };
   }
 
-  /** Console-dependent constants, folded at compile time. */
+  /**
+   * Console-dependent constants.
+   *
+   * `levelwidth`/`levelheight` are the playfield, which is the level's size when
+   * a scene has one. They fold to the *entry* scene's bounds, because a constant
+   * has to have one value at compile time; a game with differently-sized scenes
+   * should read them per scene through the level itself.
+   */
   private screenConstant(name: string): Fixed | undefined {
+    if (name === "levelwidth" || name === "levelheight") {
+      const bounds = this.boundsFor(this.entry ?? (this.sceneOrder[0] as string));
+      return fromInt(name === "levelwidth" ? bounds.width : bounds.height);
+    }
     return screenConstant(name, this.profile);
   }
 
@@ -969,13 +1159,23 @@ class Compiler {
   finish(controls: ControlDef[], rules: RuleDef[]): Program {
     this.checkGeometry(rules);
 
-    const scenes: SceneDef[] = this.sceneOrder.map((name) => ({
-      name,
-      instanceIds: this.instances.filter((i) => i.scene === name).map((i) => i.id),
-    }));
+    const scenes: SceneDef[] = this.sceneOrder.map((name) => {
+      const level = this.levelsByScene.get(name);
+      const cameraTarget = this.cameraByScene.get(name);
+      return {
+        name,
+        instanceIds: this.instances.filter((i) => i.scene === name).map((i) => i.id),
+        ...(level === undefined ? {} : { level }),
+        bounds: boundsOf(level, this.profile),
+        ...(cameraTarget === undefined ? {} : { cameraTarget }),
+      };
+    });
 
     const assets = [
-      ...new Set(this.instances.map((i) => i.strings["sprite"]).filter((s): s is string => !!s)),
+      ...new Set([
+        ...this.instances.map((i) => i.strings["sprite"]).filter((s): s is string => !!s),
+        ...[...this.levelsByScene.values()].flatMap((level) => levelAssets(level)),
+      ]),
     ].sort();
 
     const budget = this.computeBudget(scenes);
@@ -983,6 +1183,7 @@ class Compiler {
     return {
       profile: this.profile,
       entryScene: this.entry ?? (this.sceneOrder[0] as string),
+      seed: this.seed,
       scenes,
       instances: this.instances,
       controls,
@@ -1000,9 +1201,13 @@ class Compiler {
    * easy to write and hard to see.
    */
   checkGeometry(rules: readonly RuleDef[]): void {
-    const { screenWidth, screenHeight, name, fps } = this.profile;
+    const { name, fps } = this.profile;
 
     for (const instance of this.instances) {
+      // Measured against the *playfield*, which is the scene's level when it has
+      // one. A hero standing near the bottom of a 30-cell cavern is not
+      // offscreen on a Game Boy; it is 12 cells below where the view starts.
+      const { width: screenWidth, height: screenHeight } = this.boundsFor(instance.scene);
       const width = toNumber(instance.numbers["width"] ?? 0);
       const height = toNumber(instance.numbers["height"] ?? 0);
       const x = toNumber(instance.numbers["x"] ?? 0);
@@ -1160,6 +1365,11 @@ function foldConstant(expr: CExpr): Fixed | undefined {
       return inner === undefined ? undefined : -inner;
     }
     case "call": {
+      // `random` is a call whose value is not a function of its arguments, so it
+      // never folds — and an initial property value, which must fold, therefore
+      // cannot use it. That is the right answer: a starting position drawn at
+      // build time would be the same on every play.
+      if (expr.fn === "random") return undefined;
       const args = expr.args.map(foldConstant);
       if (args.some((arg) => arg === undefined)) return undefined;
       return applyBuiltin(expr.fn, args as number[]);
@@ -1208,7 +1418,7 @@ export function applyBinary(op: CBinaryOp, left: Fixed, right: Fixed): Fixed {
  * Evaluate one builtin. Shared by the constant folder here and the simulator, so
  * a folded call and a live one can never disagree.
  */
-export function applyBuiltin(fn: BuiltinFn, args: readonly Fixed[]): Fixed {
+export function applyBuiltin(fn: PureBuiltinFn, args: readonly Fixed[]): Fixed {
   const [a = 0, b = 0, c = 0] = args;
   switch (fn) {
     case "abs":
@@ -1238,12 +1448,15 @@ function spriteCost(numbers: Readonly<Record<string, Fixed>>): number {
  */
 export function compile(source: string, options: CompileOptions): Program {
   const parsed = parse(source);
-  const compiler = new Compiler(options.profile);
+  const compiler = new Compiler(options.profile, options.levels ?? {});
   compiler.diagnostics.push(...parsed.diagnostics);
 
   compiler.collectScenes(parsed.statements);
+  compiler.collectSeed(parsed.statements);
+  compiler.collectLevels(parsed.statements);
   compiler.collectClasses(parsed.statements);
   compiler.collectInstances(parsed.statements);
+  compiler.collectCameras(parsed.statements);
   const controls = compiler.compileControls(parsed.statements);
   const rules = compiler.compileRules(parsed.statements);
   const program = compiler.finish(controls, rules);

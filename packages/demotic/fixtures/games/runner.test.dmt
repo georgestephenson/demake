@@ -1,0 +1,41 @@
+-- Runner — assertions about a course nobody drew.
+--
+-- The interesting property is not that the bird flies; it is that the *same*
+-- course exists on every console. `stream` composed it from the seed at compile
+-- time, so a Game Boy and a Mega Drive get identical tilemaps and differ only in
+-- how much of one they can show. A test that passes on one and fails on another
+-- would mean the composition had picked up a per-console dependency, which is
+-- exactly the bug this file is here to catch.
+
+test the bird drifts down and to the right on its own
+play 20 ticks
+expect bird1.ydirection > 0
+expect bird1.x > 1
+
+test flapping lifts it
+play 30 ticks
+press a
+play 4 ticks
+expect bird1.ydirection < 0
+
+-- The one assertion here written in absolute cells, and deliberately so: 24
+-- chunks of 6 is 144 cells on *every* console, because the seed and the chunks
+-- decide the course and the console decides nothing. If composition ever picked
+-- up a per-console dependency, this is the line that would fail.
+test the composed course is the same size on every console
+play 2 ticks
+expect levelwidth = 144
+expect levelheight = 30
+expect levelwidth > screenwidth
+expect levelheight > screenheight
+
+test an unflown bird ends up in the scenery
+play 600 ticks
+expect scene gameover
+
+test the coin is always somewhere in the level
+play 40 ticks
+expect prize1.x >= 0
+expect prize1.right <= levelwidth
+expect prize1.y >= 0
+expect prize1.bottom <= levelheight
