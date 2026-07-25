@@ -59,10 +59,11 @@ importers:
   packages/core: {}
 
   packages/demotic:
-    devDependencies:
+    dependencies:
       '@demake/core':
         specifier: workspace:*
         version: link:../core
+    devDependencies:
       '@demake/dmg':
         specifier: workspace:*
         version: link:../dmg

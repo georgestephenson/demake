@@ -18,6 +18,7 @@
 import { dirname, join } from "node:path";
 
 import {
+  artRequests,
   buildGbRom,
   BuildError,
   compile,
@@ -74,6 +75,29 @@ function loadLevels(env: CliEnv, source: string, path: string): Record<string, s
     }
   }
   return levels;
+}
+
+/**
+ * Load the art a program names, next to the source that named it.
+ *
+ * Missing art is not an error here: the build reports it and falls back to the
+ * built-in block, which is a far better outcome than refusing to produce a
+ * playable cartridge because one sprite was renamed. What must never happen is
+ * a *different* fallback in the browser, which is why both edges hand the same
+ * bytes to the same converter and neither converts anything itself.
+ */
+function loadAssets(env: CliEnv, program: Program, path: string): Map<string, Uint8Array> {
+  const assets = new Map<string, Uint8Array>();
+  if (path === "<stdin>") return assets;
+  const root = dirname(path);
+  for (const request of artRequests(program)) {
+    try {
+      assets.set(request.name, env.readFile(join(root, request.name)));
+    } catch {
+      // Reported by the build, with every missing name at once.
+    }
+  }
+  return assets;
 }
 
 export async function runBuild(
@@ -143,7 +167,7 @@ export async function runBuild(
   let stats;
   let symbols: ReadonlyMap<string, number>;
   try {
-    const built = buildGbRom(program, { title });
+    const built = buildGbRom(program, { title, assets: loadAssets(env, program, sourcePath) });
     stats = built.stats;
     symbols = built.symbols;
     product = format === "sym" ? new TextEncoder().encode(formatSymbols(symbols)) : built.bytes;
@@ -207,6 +231,14 @@ export async function runBuild(
     env.errOut(
       `runtime helpers: ${stats.helpers.length > 0 ? stats.helpers.join(", ") : "none — every one was compiled away"}\n`,
     );
+    if (stats.artTiles > 0) {
+      env.errOut(`art: ${stats.artTiles} tiles demade from the program's sources\n`);
+    }
+    if (stats.missingArt.length > 0) {
+      env.errOut(
+        `note: no art found for ${stats.missingArt.join(", ")}; those objects draw as blocks\n`,
+      );
+    }
     if (program.warnings.length > 0) {
       env.errOut(`${formatDiagnostics(program.warnings)}\n`);
     }

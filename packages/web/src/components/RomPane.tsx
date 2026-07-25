@@ -21,6 +21,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import { buildGbRom, romReady, unsupportedFeatures, type Program } from "@demake/demotic";
 import { Gameboy, SCREEN_HEIGHT, SCREEN_WIDTH, type Button } from "@demake/dmg";
 
+import { demoAssetBytes } from "../lib/demo-game.js";
 import { download } from "../lib/download.js";
 
 /** The portable button set maps one for one onto the Game Boy's. */
@@ -65,7 +66,9 @@ export function RomPane({
       };
     }
     try {
-      const result = buildGbRom(program, { title: name });
+      // The bundled art goes in as *source bytes*: the conversion happens
+      // inside the build, so the page and the CLI cannot diverge on it.
+      const result = buildGbRom(program, { title: name, assets: demoAssetBytes() });
       return { rom: result.bytes, layout: result.layout, error: undefined };
     } catch (error) {
       return {

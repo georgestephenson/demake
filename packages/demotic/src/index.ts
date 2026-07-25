@@ -127,6 +127,13 @@ export {
   type Layout,
 } from "./codegen/layout.js";
 export {
+  artRequests,
+  bindArt,
+  type AssetBytes,
+  type AssetRequest,
+  type BoundArt,
+} from "./codegen/art.js";
+export {
   buildGbRom,
   BuildError,
   unsupportedFeatures,

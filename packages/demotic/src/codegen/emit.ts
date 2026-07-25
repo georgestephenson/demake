@@ -101,6 +101,15 @@ export interface EmitOptions {
   tiles?: ReadonlyMap<string, number>;
   /** Extra tiles appended to the built-in bank. */
   extraTiles?: Uint8Array;
+  /**
+   * The object palette register, when converted art chose one.
+   *
+   * The image pipeline picks which hardware shades an object's three colour
+   * indices map to, over every asset in the build at once (doc 15 §The
+   * conversion path). That choice only exists as a register value, so it
+   * arrives here rather than in the tile bytes.
+   */
+  objectPalette?: number;
 }
 
 /** Scene index by name. */
@@ -231,6 +240,9 @@ function emitEntry(
 
   asm.ldn("a", 0b11100100);
   asm.stha(R.BGP & 0xff);
+  // Objects get whatever palette the art conversion chose; with no bound art
+  // the built-in block is drawn in the same shades as the background.
+  asm.ldn("a", options.objectPalette ?? 0b11100100);
   asm.stha(R.OBP0 & 0xff);
   asm.stha(R.OBP1 & 0xff);
   asm.alu("xor", "a");
@@ -1337,16 +1349,18 @@ export function emitRenderHelpers(ctx: Ctx): void {
   asm.ret();
 
   // B = y, C = x, D = tile; append an OAM entry.
+  // B = y, C = x, D = tile. **D has to survive**, which is why the address is
+  // built from the shadow's page rather than with `ld de, OAM_SHADOW` — that
+  // form overwrites the tile number with the address's high byte, and the cost
+  // is forty objects all drawing whatever tile happens to live at $C0.
   asm.label("PushSprite");
   asm.lda(layout.oamCount);
   asm.aluN("cp", 40);
   asm.ret("nc");
+  asm.alu("add", "a");
+  asm.alu("add", "a");
   asm.ld("l", "a");
-  asm.ldn("h", 0);
-  asm.addHL("hl");
-  asm.addHL("hl");
-  asm.ld16("de", OAM_SHADOW);
-  asm.addHL("de");
+  asm.ldn("h", OAM_SHADOW >> 8);
   asm.ld("a", "b");
   asm.staHLI();
   asm.ld("a", "c");
@@ -1371,13 +1385,11 @@ export function emitRenderHelpers(ctx: Ctx): void {
   asm.sta(layout.oamPrev);
   asm.alu("cp", "b");
   asm.ret("nc");
-  asm.ld("l", "a");
-  asm.ldn("h", 0);
-  asm.addHL("hl");
-  asm.addHL("hl");
-  asm.ld16("de", OAM_SHADOW);
-  asm.addHL("de");
   asm.ld("c", "a");
+  asm.alu("add", "a");
+  asm.alu("add", "a");
+  asm.ld("l", "a");
+  asm.ldn("h", OAM_SHADOW >> 8);
   asm.ld("a", "b");
   asm.alu("sub", "c");
   asm.ld("b", "a");

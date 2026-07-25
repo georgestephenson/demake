@@ -42,6 +42,18 @@ import alienUrl from "@demake/demotic/fixtures/games/alien.svg?url";
 import spikesUrl from "@demake/demotic/fixtures/games/spikes.svg?url";
 import exitUrl from "@demake/demotic/fixtures/games/exit.svg?url";
 
+import ballSvg from "@demake/demotic/fixtures/ball.svg?raw";
+import paddleSvg from "@demake/demotic/fixtures/paddle.svg?raw";
+import brickSvg from "@demake/demotic/fixtures/games/brick.svg?raw";
+import heroSvg from "@demake/demotic/fixtures/games/hero.svg?raw";
+import coinSvg from "@demake/demotic/fixtures/games/coin.svg?raw";
+import ledgeSvg from "@demake/demotic/fixtures/games/ledge.svg?raw";
+import rockSvg from "@demake/demotic/fixtures/games/rock.svg?raw";
+import shotSvg from "@demake/demotic/fixtures/games/shot.svg?raw";
+import alienSvg from "@demake/demotic/fixtures/games/alien.svg?raw";
+import spikesSvg from "@demake/demotic/fixtures/games/spikes.svg?raw";
+import exitSvg from "@demake/demotic/fixtures/games/exit.svg?raw";
+
 /** One bundled example. */
 export interface Example {
   id: string;
@@ -133,6 +145,39 @@ export const DEMO_ASSETS: Readonly<Record<string, string>> = {
   "spikes.svg": spikesUrl,
   "exit.svg": exitUrl,
 };
+
+/**
+ * The same assets as text, for the ROM build.
+ *
+ * The preview draws them through the browser's own SVG renderer, which is fine
+ * because a preview only has to look right. A cartridge has to be *identical*
+ * to the one `demake build` writes, so the page hands the source text to
+ * `@demake/core`'s rasteriser instead — the same code, the same pixels, both
+ * sides (doc 07 §parity).
+ */
+export const DEMO_ASSET_SOURCES: Readonly<Record<string, string>> = {
+  "ball.svg": ballSvg,
+  "paddle.svg": paddleSvg,
+  "brick.svg": brickSvg,
+  "hero.svg": heroSvg,
+  "coin.svg": coinSvg,
+  "ledge.svg": ledgeSvg,
+  "rock.svg": rockSvg,
+  "shot.svg": shotSvg,
+  "alien.svg": alienSvg,
+  "spikes.svg": spikesSvg,
+  "exit.svg": exitSvg,
+};
+
+/** The bundled art, as the bytes a ROM build takes. */
+export function demoAssetBytes(): Map<string, Uint8Array> {
+  const encoder = new TextEncoder();
+  const out = new Map<string, Uint8Array>();
+  for (const [name, text] of Object.entries(DEMO_ASSET_SOURCES)) {
+    out.set(name, encoder.encode(text));
+  }
+  return out;
+}
 
 /** The example the section opens with. */
 export const DEFAULT_EXAMPLE = EXAMPLES[0] as Example;

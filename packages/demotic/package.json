@@ -24,11 +24,13 @@
     "build": "tsc --build"
   },
   "devDependencies": {
-    "@demake/core": "workspace:*",
     "@demake/dmg": "workspace:*"
   },
   "publishConfig": {
     "access": "public",
     "provenance": true
+  },
+  "dependencies": {
+    "@demake/core": "workspace:*"
   }
 }

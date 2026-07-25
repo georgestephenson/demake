@@ -19,6 +19,7 @@ import { getProfile } from "../profiles.js";
 import type { Program } from "../program.js";
 
 import { analyze, type Analysis } from "./analyze.js";
+import { bindArt } from "./art.js";
 import { AsmError } from "./asm.js";
 import { Ctx } from "./ctx.js";
 import { emitProgram, type EmitOptions, type SpriteArt } from "./emit.js";
@@ -43,6 +44,16 @@ export const HEADER_OFFSETS = {
 export interface RomOptions extends EmitOptions {
   /** Cartridge title: up to 15 characters, upper-cased ASCII. */
   title?: string;
+  /**
+   * Raw bytes of the art the program names, keyed by the file name it wrote.
+   *
+   * Converting here rather than at the edges is what makes the browser and the
+   * CLI produce identical cartridges: both hand over the same source bytes, and
+   * every decision from rasterising to tile dedup happens in one place. An
+   * asset that is not supplied is simply not bound — the object falls back to
+   * the built-in block, and `stats.missingArt` says which ones did.
+   */
+  assets?: ReadonlyMap<string, Uint8Array>;
 }
 
 /** What the build produced. */
@@ -58,6 +69,10 @@ export interface RomStats {
   rules: number;
   /** Runtime helpers the program actually pulled in. */
   helpers: readonly string[];
+  /** Tiles the art conversion added to the built-in bank. */
+  artTiles: number;
+  /** Art the program names that no bytes were supplied for. */
+  missingArt: readonly string[];
 }
 
 /** A built ROM, with the map a harness needs to read its state. */
@@ -117,10 +132,15 @@ export function buildGbRom(program: Program, options: RomOptions = {}): BuiltRom
     throw error;
   }
 
+  // Explicit options win over converted art, so a caller can hand over a bank
+  // it built itself; anything it left out comes from the conversion.
+  const art = bindArt(program, options.assets ?? new Map());
+  const emitOptions: EmitOptions = { ...art, ...stripUndefined(options) };
+
   const ctx = new Ctx(program, analysis, layout, getProfile(program.profile.id), 0);
   let code: Uint8Array;
   try {
-    emitProgram(ctx, options);
+    emitProgram(ctx, emitOptions);
     code = ctx.asm.assemble();
   } catch (error) {
     if (error instanceof AsmError) {
@@ -157,8 +177,19 @@ export function buildGbRom(program: Program, options: RomOptions = {}): BuiltRom
       instances: program.instances.length,
       rules: program.rules.length,
       helpers: ctx.helperNames(),
+      artTiles: art.tiles8,
+      missingArt: art.missing,
     },
   };
+}
+
+/** Drop absent keys so a spread cannot overwrite a value with `undefined`. */
+function stripUndefined(options: RomOptions): EmitOptions {
+  const out: Record<string, unknown> = {};
+  for (const key of ["sprites", "tiles", "extraTiles", "objectPalette"] as const) {
+    if (options[key] !== undefined) out[key] = options[key];
+  }
+  return out as EmitOptions;
 }
 
 /**

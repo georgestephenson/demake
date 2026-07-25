@@ -2,23 +2,28 @@
  * Format-dispatching image decoder (doc 02 §Image codecs, doc 04 §Stage 0).
  *
  * The public entry point turns arbitrary input bytes into an {@link RgbaImage}.
- * PNG is decoded by our own pure-TS codec. JPEG/WebP/GIF/BMP are slated for
- * pinned, bit-deterministic WASM codecs (the jSquash/Squoosh builds, doc 02);
- * until those land, an unsupported format fails with a typed, actionable error
- * rather than a wrong guess — honesty over a silent bad decode.
+ * PNG is decoded by our own pure-TS codec and SVG by our own rasteriser, both
+ * for the same reason: the bytes that come out have to be identical in Node and
+ * in a browser, and a host decoder makes no such promise. JPEG/WebP/GIF/BMP are
+ * slated for pinned, bit-deterministic WASM codecs (the jSquash/Squoosh builds,
+ * doc 02); until those land, an unsupported format fails with a typed,
+ * actionable error rather than a wrong guess — honesty over a silent bad decode.
  */
 
 import { DemakeError } from "../errors.js";
 
 import { decodePng, isPng } from "./png/decode.js";
+import { isSvg, rasterizeSvg } from "./svg/index.js";
+import { decodeUtf8 } from "./svg/utf8.js";
 import type { RgbaImage } from "./rgba.js";
 
 /** A detectable input image format. */
-export type ImageFormat = "png" | "jpeg" | "gif" | "webp" | "bmp" | "unknown";
+export type ImageFormat = "png" | "svg" | "jpeg" | "gif" | "webp" | "bmp" | "unknown";
 
 /** Sniff the container format from magic bytes. */
 export function detectFormat(bytes: Uint8Array): ImageFormat {
   if (isPng(bytes)) return "png";
+  if (isSvg(bytes)) return "svg";
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
     return "jpeg";
   }
@@ -56,9 +61,12 @@ export function decodeImage(bytes: Uint8Array): RgbaImage {
   if (format === "png") {
     return decodePng(bytes);
   }
+  if (format === "svg") {
+    return rasterizeSvg(decodeUtf8(bytes));
+  }
   if (format === "unknown") {
     throw new DemakeError("E_BAD_INPUT", "input is not a recognized image format", {
-      hint: "supported input in this build: PNG. JPEG/WebP/GIF/BMP support (WASM codecs) is planned.",
+      hint: "supported input in this build: PNG and SVG. JPEG/WebP/GIF/BMP support (WASM codecs) is planned.",
     });
   }
   throw new DemakeError(
