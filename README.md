@@ -77,8 +77,8 @@ Nintendo DS. Beyond that, support deepens in two steps:
 | Capability                                        | Consoles                                                                                                                                                               |
 | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `prep` + `inspect` (compliant PNG)                | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, GBA, NDS, SG-1000, PC Engine, Neo Geo, WonderSwan/Color, NGP/NGPC, Virtual Boy, Pokémon Mini, Supervision, Game.com, Mega Duck |
-| `gen` (bin/asm/C data + display code)             | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, SG-1000, GBA, NDS                                                                                                              |
-| `--format rom` + **pixel-perfect emulator proof** | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, SG-1000, GBA, NDS                                                                                                              |
+| `gen` (bin/asm/C data + display code)             | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, SG-1000, GBA, NDS, PC Engine                                                                                                   |
+| `--format rom` + **pixel-perfect emulator proof** | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, SG-1000, GBA, NDS, PC Engine                                                                                                   |
 | `build` (a Demotic game as a playable ROM)        | GB                                                                                                                                                                     |
 
 "Pixel-perfect emulator proof" means what it says: CI assembles a real ROM,
@@ -121,7 +121,7 @@ and need no Docker:
 
 ```sh
 pnpm toolchains  # RGBDS, cc65, WLA-DX, m68k + ARM binutils
-pnpm emulator    # SameBoy capturer + libretro cores (fceumm, genesis-plus-gx, snes9x, mGBA, DeSmuME)
+pnpm emulator    # SameBoy capturer + libretro cores (fceumm, genesis-plus-gx, snes9x, mGBA, DeSmuME, beetle-pce-fast)
 pnpm test        # now includes every ROM + pixel-perfect emulator E2E
 ```
 

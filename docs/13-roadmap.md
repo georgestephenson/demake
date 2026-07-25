@@ -111,6 +111,20 @@ optimizer polish (SNES/GBA/ANTIC).
 **Done means**: all Tier 2 consoles E2E-green in nightly CI; docs/README support
 table auto-updated.
 
+**Status: started.** The **PC Engine** vertical is complete and rides the same
+loop as Tier 1: a `pce` codegen backend (word-planar HuC6270 characters, BAT
+words, 9-bit VCE palettes), a 64 KiB HuCard harness assembled by
+`wla-huc6280` — the WLA-DX build the SMS/SG-1000/SNES families already
+provision, a fourth CPU target on it — and a pixel-perfect E2E against
+beetle-pce-fast through the generic libretro runner, marching the shared image
+battery. The Game Gear shipped with the SMS family in Phase 2 and SG-1000 with
+the TMS9918 path. What remains of Tier 2 splits by what a headless CI can
+actually boot: **WonderSwan / Color** (NEC V30MZ; NASM assembles it and
+beetle-wswan needs no BIOS) is the next reachable vertical, while
+**ColecoVision**, **Neo Geo** and **Lynx** are gated on emulators that require
+copyrighted BIOS images, and **Atari 7800** on a display-list layout path that
+does not exist yet.
+
 ## Phase 6 — 1.0
 
 Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs complete

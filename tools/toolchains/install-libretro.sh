@@ -24,6 +24,7 @@ CORES=(
   "snes9x|https://github.com/libretro/snes9x.git|master|make -C libretro|snes9x_libretro.so"
   "mgba|https://github.com/libretro/mgba.git|master|make -f Makefile.libretro|mgba_libretro.so"
   "desmume|https://github.com/libretro/desmume.git|master|make -C desmume/src/frontend/libretro|desmume_libretro.so"
+  "mednafen_pce_fast|https://github.com/libretro/beetle-pce-fast-libretro.git|master|make|mednafen_pce_fast_libretro.so"
 )
 # Which cores to (re)build this run (default: all). Pass names as args to subset.
 WANT=("$@")

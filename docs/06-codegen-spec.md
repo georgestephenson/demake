@@ -54,7 +54,7 @@ where the data formats genuinely coincide.
 | `tms` | SG-1000, ColecoVision | Graphics II pattern/color/name tables | z88dk harness per BIOS/boot quirks |
 | `gba` | GBA | mode0 4bpp tiles (low-nibble-first) + screen entries + 16 BGR555 pals (mode3/4 bitmaps later) | GNU ARM binutils (`arm-none-eabi-as/ld/objcopy`); header in the harness |
 | `nds` | NDS | engine-A text BG: the `gba` formats unchanged (ext. palettes / framebuffer later) | GNU ARM binutils; `.nds` cartridge packed by demake itself, no ndstool |
-| `pce` | PC Engine | 4bpp planar-pair tiles, BAT entries, 9-bit palettes | PCEAS or HuC harness |
+| `pce` | PC Engine | 4bpp word-planar characters (bitplanes 0/1 then 2/3), BAT entries, 9-bit VCE palettes | WLA-DX (`wla-huc6280` + `wlalink`), 64 KiB HuCard harness |
 | `neogeo` | Neo Geo | fix-layer + sprite-strip C-ROM format, palette RAM | ngdevkit |
 | `a26` | Atari 2600 | kernel-specific playfield/sprite tables **plus the kernel itself** (the display code *is* the format) | dasm |
 | `a78` | Atari 7800 | display lists + graphics data + palette regs | dasm/cc7800 harness |

@@ -138,7 +138,7 @@ says so.
 | SNES | WLA-DX (`wla-65816`) | **snes9x** via the libretro harness (compared in RGB565) |
 | Mega Drive | vasm m68k | **BlastEm** (headless mode) or Genesis Plus GX via libretro harness |
 | SMS / GG / SG-1000 / Coleco | WLA-DX / z88dk | **Emulicious** (headless automation) or Mednafen; Gearsystem as fallback |
-| PC Engine | PCEAS | **Mednafen** (pce_fast off, accuracy core) frame dump |
+| PC Engine | WLA-DX (`wla-huc6280`) | **beetle-pce-fast** (Mednafen's pce_fast) via the libretro harness (compared in RGB565) |
 | Neo Geo | ngdevkit | ngdevkit's GnGeo fork or **FBNeo** via libretro harness |
 | Atari 2600 | dasm | **Stella** (debugger CLI can script + `screenshot`) |
 | Atari 7800 | dasm | **a7800** (MAME-derived, scriptable) or MAME with `-seconds_to_run`/`-snapname` |

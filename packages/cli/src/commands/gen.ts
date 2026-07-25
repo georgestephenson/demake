@@ -26,6 +26,7 @@ import { buildGbaRom } from "../rom/gba.js";
 import { buildMdRom } from "../rom/md.js";
 import { buildNdsRom } from "../rom/nds.js";
 import { buildNesRom } from "../rom/nes.js";
+import { buildPceRom } from "../rom/pce.js";
 import { buildSg1000Rom } from "../rom/sg1000.js";
 import { buildSmsRom } from "../rom/sms.js";
 import { buildSnesRom } from "../rom/snes.js";
@@ -149,6 +150,9 @@ export async function runGen(
     } else if (spec.codegen.family === "nds") {
       const rom = buildNdsRom(env, spec, result);
       artifacts = [{ suffix: ".nds", kind: "rom", bytes: rom }];
+    } else if (spec.codegen.family === "pce") {
+      const rom = buildPceRom(env, spec, result);
+      artifacts = [{ suffix: ".pce", kind: "rom", bytes: rom }];
     } else {
       throw new CliError(
         EXIT.UNAVAILABLE,
