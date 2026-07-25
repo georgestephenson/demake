@@ -4,15 +4,9 @@
     "rootDir": "./src",
     "outDir": "./dist"
   },
-  "include": [
-    "src/**/*.ts"
-  ],
-  "references": [
-    {
-      "path": "../core"
-    },
-    {
-      "path": "../dmg"
-    }
-  ]
+  "include": ["src/**/*.ts"],
+  // Referenced by file rather than by directory: Playwright's tsconfig loader
+  // walks these when a spec imports this package, and it resolves a bare
+  // directory to `<dir>.json`. `tsc` accepts either form.
+  "references": [{ "path": "../core/tsconfig.json" }, { "path": "../dmg/tsconfig.json" }]
 }

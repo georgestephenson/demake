@@ -182,8 +182,9 @@ async function readTick(page: import("@playwright/test").Page): Promise<number> 
 test("builds and plays a real Game Boy ROM in the page", async ({ page }) => {
   await page.goto("/#section=game");
 
-  // The cartridge is built by patching, not assembling, so it is available the
-  // moment the game compiles — no toolchain, no worker round trip.
+  // The cartridge is compiled in the page — our assembler, our rasteriser — so
+  // it is there the moment the game compiles: no toolchain, no worker round
+  // trip, and no host renderer between the source art and the tile bytes.
   const canvas = page.getByTestId("rom-canvas");
   await expect(canvas).toBeVisible();
   await expect(page.getByTestId("rom-stat")).toContainText("32 KiB");
@@ -203,12 +204,13 @@ test("builds and plays a real Game Boy ROM in the page", async ({ page }) => {
   await expect(page.getByTestId("rom-stat")).toContainText("per tick");
 });
 
-test("refuses to build a ROM for a game the runtime cannot run", async ({ page }) => {
+test("builds a level game with a camera, which the fixed engine could not", async ({ page }) => {
   await page.goto("/#section=game");
   await page.getByTestId("example-select").selectOption("caves");
-  // `caves` has a level and a camera, which the gb runtime does not implement.
-  // Saying so beats shipping a cartridge that plays a different game.
-  await expect(page.getByTestId("rom-unavailable")).toContainText(/level|camera/i);
+  // A hand-drawn level, tile collision and a scrolling camera all compile now,
+  // and the level's own art is demade into the tile bank on the way.
+  await expect(page.getByTestId("rom-canvas")).toBeVisible();
+  await expect.poll(async () => romPainted(page), { timeout: 8000 }).toBeGreaterThan(0);
 });
 
 /** Fraction of the ROM screen that is not the lightest shade. */
