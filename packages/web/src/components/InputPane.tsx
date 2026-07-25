@@ -77,6 +77,10 @@ export function InputPane({ source, onSource, onDemo, profile }: Props) {
           type="file"
           accept="image/*"
           class="visually-hidden"
+          // Visually hidden but still in the accessibility tree, so it needs its
+          // own name — the "Choose file…" button that triggers it is a separate
+          // element and does not label it.
+          aria-label="Choose an image file to convert"
           onChange={(e) => {
             const file = (e.currentTarget as HTMLInputElement).files?.[0];
             if (file) void accept(file);

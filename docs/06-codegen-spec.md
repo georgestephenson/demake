@@ -97,6 +97,36 @@ consoles, plus true in-browser `rom` for families where assembly is simple enoug
 implement in TS (GB family and NES NROM first — both are straightforward fixed-layout
 links; stretch goal per family thereafter, tracked in the roadmap).
 
+## The Demotic runtime (doc 14)
+
+A Demotic game build emits a third thing beyond data and display code: a
+**runtime** — the fixed engine that reads the compiled program tables and plays
+the game. Written once per family in that family's assembly, identical across
+every game, living in `runtime-harness/<family>/` beside the image harnesses.
+
+| Family | Runtime CPU | Assembled by |
+|---|---|---|
+| `gb` | SM83 | RGBDS — already provisioned |
+| `nes` | 6502 | cc65 — already provisioned |
+| `sms` | Z80 (SMS + GG) | WLA-DX — already provisioned |
+| `md` | 68000 | GNU m68k binutils — already provisioned |
+| `snes` | 65816 | ca65 `--cpu 65816` — already provisioned |
+
+Every one of those toolchains is already installed and tested by the image ROM
+path, which is most of why the language targets these five families first.
+
+`gen` emits *image* artifacts and is unchanged by any of this. `build` (doc 05)
+emits program tables plus a runtime plus prepped art and links them with the same
+per-family toolchain edge. A new Demotic feature is a new opcode in five
+runtimes — not a new code path in five code generators.
+
+**In-browser ROM assembly needs no assembler.** Because the runtime is fixed and
+only the tables change per game, CI pre-assembles each runtime once and ships it
+as a blob; the browser appends tables and prepped tiles and patches header
+lengths and checksums. That generalises in-browser ROM building from "the two
+families where writing a TS assembler was plausible" to *every family with a
+runtime* (doc 07).
+
 ## Tile handling
 
 - Deduplication (with H/V flip where hardware maps support it) is performed by

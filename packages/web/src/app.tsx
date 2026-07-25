@@ -100,52 +100,33 @@ export function App() {
   const activeConsole = consoleList.find((c) => c.id === options.console) ?? null;
 
   return (
-    <div class="layout">
-      <header class="topbar">
-        <h1>
-          <span class="wordmark">demake</span>
-          <span class="tagline">any image → hardware-compliant console art</span>
-        </h1>
-        <p class="privacy">
-          Runs entirely in your browser. Nothing is uploaded — the engine is the same{" "}
-          <code>@demake/core</code> the CLI uses.
-        </p>
-      </header>
-
-      <main>
-        <InputPane
-          source={source}
-          onSource={setSource}
-          onDemo={() => void loadDemo()}
-          profile={result?.decisions.profile ?? null}
-        />
-        <ControlsPane
-          options={options}
-          consoles={consoleList}
-          strategies={strategyList}
-          onChange={setOptions}
-          onReset={() => setOptions({ ...DEFAULT_OPTIONS })}
-          sourceName={source?.name ?? "image.png"}
-        />
-        <PreviewPane
-          source={source}
-          result={result}
-          console={activeConsole}
-          options={options}
-          busy={busy}
-          progress={progress}
-          error={error}
-          engine={engine}
-          onStrategy={(strategy) => setOptions((prev) => ({ ...prev, strategy }))}
-        />
-      </main>
-
-      <footer>
-        <a href="https://github.com/georgestephenson/demake">source</a> ·{" "}
-        <a href="https://github.com/georgestephenson/demake/tree/main/docs">design docs</a> · the
-        same conversion is available as <code>npx demake</code>
-      </footer>
-    </div>
+    <main>
+      <InputPane
+        source={source}
+        onSource={setSource}
+        onDemo={() => void loadDemo()}
+        profile={result?.decisions.profile ?? null}
+      />
+      <ControlsPane
+        options={options}
+        consoles={consoleList}
+        strategies={strategyList}
+        onChange={setOptions}
+        onReset={() => setOptions({ ...DEFAULT_OPTIONS })}
+        sourceName={source?.name ?? "image.png"}
+      />
+      <PreviewPane
+        source={source}
+        result={result}
+        console={activeConsole}
+        options={options}
+        busy={busy}
+        progress={progress}
+        error={error}
+        engine={engine}
+        onStrategy={(strategy) => setOptions((prev) => ({ ...prev, strategy }))}
+      />
+    </main>
   );
 }
 

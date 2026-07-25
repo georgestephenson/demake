@@ -166,6 +166,49 @@ scheduled workflow from `toolchains/` and used both by CI and by users' local
 - Shifted image → harness scroll/overscan init bug.
 - Garbage → build or upload-order bug (VRAM writes during active display, etc.).
 
+## 6b. Demotic conformance (docs 14, 15)
+
+Game state is small and exactly comparable, which buys a sharper oracle than the
+image path can have.
+
+**State traces.** A golden trace per (console, region) records raw 16.16 entity
+state per tick for a fixed input tape — `packages/demotic/fixtures/pong.gb.trace`
+is the first. Three things are diffed against it: the reference interpreter on
+every commit; the browser preview in the web determinism suite (a whole game's
+state, every tick — a far stronger parity check than any single image
+comparison); and eventually the console runtime, by dumping its entity table per
+tick from the emulator harness. A port is proven by `diff`, not judgement. Values
+are raw integers precisely so a one-bit disagreement cannot hide behind a rounded
+decimal.
+
+**`.test.dmt` suites.** Assertions about a game, written in the same expression
+language as the game, run against *every* console. This is the only way to test
+balance rather than mechanics: `expect abs(ball1.y - centery) < 15vh` means the
+same thing on a 20×18 playfield and a 40×28 one, where an absolute assertion
+would have to be written twice and would drift. The Pong suite runs in the unit
+suite across all seven profiles, and is also runnable from the CLI (`demake
+test`) and from the web app.
+
+**Input-tape E2E.** The per-console emulator harness needs one addition: feed a
+scripted button tape, and capture both the framebuffer at chosen ticks and the
+runtime's entity table every tick. State equality catches all logic divergence;
+the framebuffer comparison then tests only rendering. Same harness, same cores,
+same capture path as §6.
+
+**Demakefile properties.** Parsing and formatting are checked as algebra, which
+is what makes the web app's settings a genuine view of the file rather than a
+parallel system (doc 15):
+
+- `fmt(fmt(x)) == fmt(x)` — formatting is idempotent.
+- `emit(parse(x)) == fmt(x)` — the model round-trips through text losslessly.
+- `emit(settings(parse(x))) == fmt(x)` — the UI round-trips.
+- `trace(dmt, console, region)` is byte-identical **with and without** a
+  Demakefile — the invariant that keeps gameplay out of the build file.
+
+Plus a tabs-and-spaces matrix: the same Demakefile indented either way must parse
+to the identical model, and mixing them within one file must fail naming both
+offending lines.
+
 ## 7. Surface tests
 
 - CLI: `--help`/`--version`/exit codes/stdin-stdout/signals via integration harness

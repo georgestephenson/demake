@@ -473,3 +473,246 @@ a {
     animation: none !important;
   }
 }
+
+/* --- site sections (doc 07) ------------------------------------------------ */
+
+.sections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.75rem 0 0.5rem;
+}
+
+/*
+ * Contrast here is set with an explicit colour, never with opacity: a
+ * translucent foreground composites against whatever is behind it, which
+ * Lighthouse (correctly) scores as a contrast failure and which is genuinely
+ * harder to read. `--muted` is the theme's accessible secondary ink.
+ */
+.section-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.85rem;
+  text-decoration: none;
+  color: var(--muted);
+}
+
+.section-link:hover,
+.section-link:focus-visible {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+.section-link.active {
+  color: var(--ink);
+  border-color: currentColor;
+  font-weight: 600;
+}
+
+.section-link .soon {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 0.25rem;
+}
+
+/* --- the Demotic section --------------------------------------------------- */
+
+main.game-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(340px, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  main.game-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.game-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.game-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #05070c;
+  border-radius: 6px;
+  image-rendering: pixelated;
+}
+
+.game-status {
+  margin: 0.6rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: var(--muted);
+  overflow-x: auto;
+}
+
+.game-source {
+  width: 100%;
+  height: 44vh;
+  min-height: 280px;
+  padding: 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font:
+    0.78rem/1.6 ui-monospace,
+    "SF Mono",
+    Menlo,
+    monospace;
+  resize: vertical;
+  tab-size: 2;
+}
+
+.game-diagnostics {
+  margin-top: 0.6rem;
+  font-size: 0.78rem;
+  font-family: ui-monospace, monospace;
+}
+
+.game-diagnostics p {
+  margin: 0.2rem 0;
+}
+
+.diag-error {
+  color: var(--error);
+}
+
+.diag-warning {
+  color: var(--warn);
+}
+
+.diag-hint {
+  color: var(--muted);
+}
+
+.coming-soon .blurb {
+  font-size: 1.05rem;
+  margin: 0.4rem 0 0.8rem;
+}
+
+kbd {
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0 0.3rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.75em;
+}
+
+/* --- on-screen controls (doc 07 §Sections) --------------------------------- */
+
+/*
+ * Hidden wherever there is a real keyboard. `(pointer: coarse)` is the honest
+ * test — it asks what the user's primary input actually is, rather than sniffing
+ * the user agent or guessing from viewport width, which gets a small laptop
+ * window wrong in both directions.
+ */
+.touch-pad {
+  display: none;
+}
+
+.keyboard-hint {
+  display: block;
+}
+
+@media (pointer: coarse) {
+  .touch-pad {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 0.75rem;
+    user-select: none;
+  }
+
+  .keyboard-hint {
+    display: none;
+  }
+}
+
+.pad-dpad {
+  display: grid;
+  grid-template-columns: repeat(3, 3.25rem);
+  grid-template-rows: repeat(3, 3.25rem);
+  gap: 0.15rem;
+}
+
+.pad-up {
+  grid-area: 1 / 2;
+}
+.pad-left {
+  grid-area: 2 / 1;
+}
+.pad-right {
+  grid-area: 2 / 3;
+}
+.pad-down {
+  grid-area: 3 / 2;
+}
+
+.pad-face {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.6rem;
+}
+
+.pad-ab {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.pad-button {
+  /* Large enough to hit without looking, per the WCAG target-size guidance. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 3rem;
+  min-height: 3rem;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.8rem;
+  /* The pad must not scroll the page or fire synthetic mouse events. */
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pad-button:active {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.pad-start {
+  border-radius: 999px;
+  min-height: 2.25rem;
+  padding: 0 1rem;
+}
+
+.pad-a,
+.pad-b {
+  width: 3.5rem;
+  height: 3.5rem;
+  font-weight: 600;
+}

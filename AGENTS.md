@@ -7,8 +7,22 @@ add content to `CLAUDE.md` directly.
 
 ## What this is
 
-A tool that converts any image into hardware-compliant art — and displayable
-code — for 8/16-bit-era consoles and handhelds up to the Nintendo DS. The full
+A tool that **demakes modern game assets** — art, and whole games — into
+something 8/16-bit-era consoles and handhelds up to the Nintendo DS could
+actually run. Four demakers, sharing one engine and one proof (a real ROM, in a
+real emulator, compared pixel for pixel):
+
+| Demaker               | Docs         | State                                                           |
+| --------------------- | ------------ | --------------------------------------------------------------- |
+| art (images)          | 03–06        | working, eight Tier 1 consoles proven                           |
+| game (Demotic `.dmt`) | 14, 15       | language, interpreter, tests, preview working; runtimes to come |
+| music                 | 13 §Phase 7+ | planned                                                         |
+| sound                 | 13 §Phase 7+ | planned                                                         |
+
+Every domain has the same shape, which is why they share a repo: **constrain →
+fit → emit → prove it on emulated hardware**. Each reuses the layer below — a
+game's sprites are demade by the image pipeline, its ROM assembled by the same
+toolchain edge. The full
 design lives in [`docs/`](docs/README.md); the milestone plan is
 [`docs/13-roadmap.md`](docs/13-roadmap.md). **Current status: Phase 2 complete;
 Phase 3 (web app) shipped** — the Phase-1 engine spine is live (the
@@ -63,6 +77,13 @@ emu-harness/libretro/  generic retrorun frontend — one capturer for every libr
 tools/toolchains/    provisioners (cached): RGBDS, cc65, WLA-DX, SameBoy source builds;
                      GNU m68k + arm-none-eabi binutils (apt); libretro cores
                      (fceumm, genesis-plus-gx, snes9x, mgba, desmume)
+packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs 14, 15)
+  src/lang/          lex → parse → flat statement AST (one statement per line, no nesting)
+  src/compile.ts     AST + console profile → resolved Program tables (constants folded)
+  src/sim.ts         the reference interpreter — the semantic definition of the language
+  src/testing/       .test.dmt: assertions run against every console at once
+  src/trace.ts       state traces: the cross-implementation conformance oracle
+  demo/              terminal runner (play.mjs) and test runner (test.mjs)
 tools/eslint-rules/  custom ESLint rules: platform-purity + determinism
 tools/ci/            CI guards: E2E prerequisites, web JS budget
 docs/                the design plan; source of truth for decisions
@@ -82,6 +103,8 @@ pnpm changeset     # add a changeset for a user-visible change
 pnpm cli -- --help # run the built CLI from source (build first)
 pnpm gen:man       # regenerate man pages from cli-spec (build first; CI checks staleness)
 pnpm eval:prep     # prep quality battery: scoreboard + side-by-side sheets (build first)
+pnpm play          # Demotic: play the Pong fixture in a terminal (build first)
+pnpm test:dmt      # Demotic: run the .test.dmt suite on every console (build first)
 pnpm dev:web       # run the web app against the workspace core (build core first)
 pnpm build:web     # typecheck + bundle the web app into packages/web/dist
 pnpm test:browser  # Playwright: web functional + browser-vs-Node determinism
@@ -103,9 +126,41 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
 - **`packages/cli-spec` is the only place flags are defined** (doc 05); the
   parser, `--help`, and man pages are generated from it. Man pages are never
   hand-edited — run `pnpm gen:man` and a test enforces they match the spec.
+- **Demotic describes the game; the Demakefile describes the build** (docs 14,
+  15). A `.dmt` file must never name a console, a palette, or a pixel, and a
+  Demakefile must never change how the game plays. The operational test is a CI
+  property: `demake trace` for a given (console, region) is byte-identical with
+  and without a Demakefile. Region is a _profile selector_, not an override.
+- **Demotic simulates constrained and renders unconstrained** (doc 14): state is
+  16.16 fixed point on a fixed logical tick, identical in the preview and (later)
+  on hardware; only rendering is free. Never "improve" the simulator with floats,
+  a variable timestep, or host RNG — that turns the preview from a specification
+  into a second, disagreeing implementation. Golden traces
+  (`packages/demotic/fixtures/*.trace`) are output bytes under the rule above.
 - **`CLAUDE.md` stays a pure `@AGENTS.md` import** (CI-checked, doc 12).
 - **Commands named in this file must exist as `package.json` scripts** (CI
   staleness check, doc 12) — update both together.
+
+## Working on Demotic
+
+- **Two unit systems, and the choice is semantic** (doc 14 §3). `1 cell` is
+  absolute; `15vw` is 15% of the playfield. Absolute where a thing _is what it
+  is_ everywhere (a one-tile ball); relative where it must stay _balanced_ (a
+  paddle covering a sixth of the wall, a rally taking the same seconds). Sizes
+  quantise to whole cells; speeds and positions do not. `vmin` for anything that
+  must stay square — the consoles do not share an aspect ratio.
+- **Level rules are continuous, so prefer proportional control to on/off.**
+  `when always (…) as clamp(error / gain, -1, 1)` eases in and lands on target;
+  on/off steering overshoots by a tick every tick and buzzes, and a dead zone
+  wide enough to stop that makes it lurch instead. Both failure modes show up as
+  stop/start events, which `sim.test.ts` bounds.
+- **Hardware traps are compile errors, not emulator surprises** (doc 14
+  §Diagnostics): sprite budgets, tunnelling, sub-tick speeds, offscreen starts,
+  aspect mismatch, size rounding. Adding a new class of known trap means adding a
+  diagnostic, not a doc note.
+- **`.test.dmt` suites run on every console.** That is what makes a _balance_
+  regression visible; a mechanical one would show up anywhere. Write assertions
+  in the relative vocabulary or they will only be true on one machine.
 
 ## How to add a console
 

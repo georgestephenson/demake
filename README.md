@@ -1,12 +1,22 @@
 # demake
 
-> Convert any image into hardware-compliant art — and displayable code — for the
-> 8/16-bit-era consoles and handhelds, up to and including the Nintendo DS.
+> Demake modern game assets — art, and whole games — into something the
+> 8/16-bit-era consoles and handhelds could actually run, up to and including the
+> Nintendo DS.
 
-`demake` takes an ordinary modern image and produces art that a real retro
-console could actually display, plus the data and source code to display it:
-palettes, tile maps, and assembly/C/binary — verified on emulated hardware, not
-merely asserted.
+`demake` takes ordinary modern inputs and produces things real retro hardware
+could display and play, verified on emulated hardware rather than merely
+asserted:
+
+| Demaker   | Input                                               | Output                                                                   | Status                                             |
+| --------- | --------------------------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------- |
+| **art**   | any image                                           | hardware-compliant art, palettes, tile maps, asm/C/binary, bootable ROMs | working                                            |
+| **game**  | a [Demotic](docs/14-demotic.md) `.dmt` script + art | one game, every console                                                  | language and preview working; runtimes in progress |
+| **music** | a track                                             | chip music and driver data                                               | planned                                            |
+| **sound** | an effect                                           | chip sound                                                               | planned                                            |
+
+The two working demakers share one engine, one determinism guarantee, and one
+proof: a real ROM, booted in a real emulator, compared pixel for pixel in CI.
 
 ## Why
 
@@ -18,7 +28,16 @@ budgets) has been the missing piece. `demake` closes that gap, so an AI agent
 can create a retro game end to end: generate art, convert it into
 hardware-compliant data and display code, and build a running ROM.
 
-> **Status: Phase 3.** The engine, the CLI and the web app are live. All eight
+Demotic (docs [14](docs/14-demotic.md), [15](docs/15-demakefile.md)) takes that
+further. A game is a `.dmt` script that names no console, no palette and no
+pixel; a Demakefile says which machines to build for and how the art is
+converted. Both are small, flat, and line-oriented precisely so a model can write
+and patch them reliably — and a `.test.dmt` suite asserts the game still plays
+correctly on every console at once.
+
+> **Status: Phase 3, plus Demotic D1.** The engine, the CLI and the web app are
+> live; the Demotic language, its reference interpreter, its cross-console test
+> runner and its browser preview are live, and its console runtimes are not. All eight
 > Tier 1 consoles go image → compliant art → native data → bootable ROM →
 > emulator frame, compared pixel-for-pixel in CI. The full design lives in
 > [`docs/`](docs/README.md); the milestone plan is

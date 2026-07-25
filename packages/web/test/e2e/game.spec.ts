@@ -1,0 +1,97 @@
+/**
+ * The Demotic section (doc 07 §Sections).
+ *
+ * These guard three things that are easy to break without noticing: the section
+ * is code-split, so the art demaker never pays for the game language; the
+ * simulator actually advances in the page; and the `.test.dmt` suite runs
+ * against every console from the browser, with the same result the CLI gets.
+ */
+
+import { expect, test } from "@playwright/test";
+
+test("loads the game demaker on demand and plays", async ({ page }) => {
+  const chunks: string[] = [];
+  page.on("response", (r) => {
+    if (r.url().endsWith(".js")) chunks.push(r.url());
+  });
+
+  await page.goto("/");
+  // The art demaker is the default, and must not have pulled the game chunk in.
+  await expect(page.getByTestId("source-dropzone").or(page.locator(".dropzone"))).toBeVisible();
+  expect(chunks.some((url) => url.includes("GameDemaker"))).toBe(false);
+
+  await page.getByRole("link", { name: /demotic game demaker/i }).click();
+  await expect(page.getByRole("heading", { name: "Play" })).toBeVisible();
+  expect(chunks.some((url) => url.includes("GameDemaker"))).toBe(true);
+
+  // Enter play, then let the simulation run: the tick counter must advance.
+  await page.keyboard.press("KeyZ");
+  await expect(page.locator(".game-status")).toContainText("scene play", { timeout: 5000 });
+  const first = await readTick(page);
+  await page.waitForTimeout(500);
+  expect(await readTick(page)).toBeGreaterThan(first);
+});
+
+test("runs the .test.dmt suite against every console", async ({ page }) => {
+  await page.goto("/#section=game");
+  await page.getByRole("button", { name: "Run tests" }).click();
+  // Same tally the CLI prints — one suite, seven playfields.
+  await expect(page.locator(".game-status").last()).toContainText(
+    /\d+\/\d+ cases passed across \d+ consoles/,
+  );
+  await expect(page.locator(".game-status").last()).not.toContainText("FAIL");
+});
+
+test("retargets the game at another console", async ({ page }) => {
+  await page.goto("/#section=game");
+  await expect(page.locator(".game-status")).toContainText("20x18 cells");
+  await page.getByRole("combobox").selectOption("md");
+  await expect(page.locator(".game-status")).toContainText("40x28 cells");
+});
+
+test("reports a source error without blanking the preview", async ({ page }) => {
+  await page.goto("/#section=game");
+  await page
+    .getByLabel("Demotic game source")
+    .fill("loop play\nscene play\ncreate object d (wibble 1)");
+  await expect(page.locator(".diag-error")).toContainText("E_UNKNOWN_PROP");
+  await expect(page.locator(".game-canvas")).toBeVisible();
+});
+
+test("drives the game from the on-screen pad on a touch device", async ({ browser }) => {
+  // A phone has no keyboard, so the pad is the only way in. It appears behind a
+  // `(pointer: coarse)` media query, which is what `isMobile` sets here.
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
+  });
+  const page = await context.newPage();
+  await page.goto("/#section=game");
+  await expect(page.getByRole("heading", { name: "Play" })).toBeVisible();
+
+  const pad = page.getByLabel("On-screen controls");
+  await expect(pad).toBeVisible();
+  await expect(page.locator(".keyboard-hint")).toBeHidden();
+
+  // What this test owns is that the pad reaches the same input path the keyboard
+  // does — tapping A must start the game. That the held direction then moves the
+  // paddle is the simulator's business, and `.test.dmt` asserts it on every
+  // console.
+  await expect(page.locator(".game-status")).toContainText("scene title");
+  await page.getByRole("button", { name: "A", exact: true }).tap();
+  await expect(page.locator(".game-status")).toContainText("scene play", { timeout: 5000 });
+
+  await context.close();
+});
+
+test("announces the sections that are not built yet", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("link", { name: /music demaker/i }).click();
+  await expect(page.getByRole("heading", { name: "Coming soon" })).toBeVisible();
+});
+
+async function readTick(page: import("@playwright/test").Page): Promise<number> {
+  const text = (await page.locator(".game-status").first().textContent()) ?? "";
+  return Number(/tick (\d+)/.exec(text)?.[1] ?? 0);
+}
