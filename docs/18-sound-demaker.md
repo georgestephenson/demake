@@ -230,9 +230,14 @@ the proof loop needs anyway.
 `.dmt` names, packs them behind one index, and emits one driver that plays any of
 them under the music (doc 16 §Two streams, one clock); `packages/demotic/test/
 audio.test.ts` fires one from a button press and diffs what the chip received
-against the effect's own schedule. An effect fitted for a game is fitted to the
-game's driver rate rather than to the standalone 240 Hz — `SfxOptions.rateHz` —
-because one timer produces one rate.
+against the effect's own schedule, on every console with a driver. An effect
+fitted for a game is fitted to the game's driver rate rather than to the
+standalone 240 Hz — `SfxOptions.rateHz` — because one interrupt produces one
+rate, and *which* rate is the console's: 120 Hz where there is a timer to
+programme, the frame rate where the picture's interrupt is the only clock (doc 16
+§Two streams, one clock). What that costs on such a machine is the resolution of
+an attack, sixteen milliseconds instead of eight — which is the tick its own
+games drove their drivers with.
 
 `--variations N` produces a set of related effects from one source by perturbing
 pitch and decay within bounded ranges (the four coin sounds, the three footsteps)

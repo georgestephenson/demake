@@ -235,10 +235,25 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     `nes-rom.test.ts`, which checks the nametable against the level grid the
     cartridge carries, cell by cell, before and after the camera has travelled.
 
-    Sound is named as unsupported rather than ignored: a 2A03 driver is §A5's
-    work, and a game that names music still builds, plays silently, and records
-    what a rule asked for — so a silent build traces identically to a sounding
-    one, which is what keeps the conformance suite honest.
+    Sound is built: a generated 6502 driver plays the demade schedules on the
+    2A03, on the picture's own interrupt because the NES has no timer a driver
+    can have without burning the DMC channel (§A5). The proof is the Game Boy's
+    one console over — `packages/demotic/test/audio.test.ts` now runs its whole
+    battery on both machines, booting each cartridge and diffing every register
+    write against the schedules the demakers produced. A game whose audio files
+    were not supplied still builds, plays silently, and records what a rule asked
+    for, so a silent build traces identically to a sounding one.
+
+    What it also exposes is the **cartridge budget**, and one example runs out:
+    the shooter's NES build is under two hundred bytes over with its music in it. The audio is
+    not the reason — 1742 bytes there against 2076 on the Game Boy, because the
+    driver ticks at 60 Hz rather than 120 — the code is: the same program's 6502
+    is around 3.8 KiB larger than its SM83, and a backdrop is a 960-cell
+    nametable against 360, on a cartridge with no mapper. The suite asserts the
+    overflow rather than skipping the fixture. The obvious place to win it back
+    is the backdrop nametable, which is stored raw; the play screen's would pack
+    to a third of its size and the title screen's to about the same, so a
+    literal-and-run encoding is worth roughly six hundred bytes a game.
   - **D5 — Play ROM in the page** *(done for `gb`, `gbc` and `nes`)*: the browser
     compiles the
     game itself, because the assembler is ours and written in TypeScript, and
@@ -253,8 +268,9 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     `.nes` that a second core plays on a screen of its own shape. While the next
     cartridge demakes the pane keeps playing the one it has, so everything on
     screen — the machine's name, the canvas shape, the download's extension —
-    describes the ROM that is running rather than the picker. Sound stays the
-    Game Boy's until §A5, and the button is disabled rather than silent.
+    describes the ROM that is running rather than the picker. Sound follows the
+    cartridge too: the sound button plays whichever chip the running core has,
+    through the same `StreamSink` and the same `@demake/chip` models.
   - **D6 — language growth**, driven by fixtures beyond Pong. Levels, tiles, a
     scrolling camera, `stream`-composed courses and a seeded `random` have
     landed (doc 14 §Levels, §Composed levels, §Randomness). What is left:
@@ -354,7 +370,13 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     lead, harmony) with confidences, plus the decoders. *Done means*: an MP3
     becomes a playable cartridge, and the parts it found are reported honestly
     enough that a wrong one can be corrected in one flag.
-  - **A5 — breadth**: `nes`, `sms`/`gg`, `md` (FM patch fitting), `snes` (BRR,
+  - **A5 — breadth** *(`nes` done, inside a game)*: the 2A03 has a chip model, a
+    binding and a generated 6502 driver, and `demake build -c nes` puts music and
+    effects in the cartridge with doc 16's Level A proof over both. What it does
+    not have yet is a *standalone* audio cartridge — `demake gen … --format rom`
+    is still the Game Boy's alone — because a cartridge whose only job is one
+    track is what the next caller needs and not what a game needed. Remaining:
+    `sms`/`gg`, `md` (FM patch fitting), `snes` (BRR,
     the SPC700 driver, sample budgeting), `gba`, `nds` — each is a chip model, a
     driver backend and a Level A/B harness, on the per-console definition of done
     Phase 2 used for images. Each faces the choice doc 16 §The driver contract
