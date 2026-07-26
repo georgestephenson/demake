@@ -48,7 +48,7 @@ import type { InstanceDef, Program } from "../program.js";
 import { BUILTIN_TILES, builtinTiles, TILE_BYTES } from "../rom/graphics.js";
 
 import { artKey, ART_PALETTES, PALETTE_BYTES, SYSTEM_PALETTE, type EmitOptions } from "./emit.js";
-import { VIEW_H, VIEW_W } from "./layout.js";
+import { GB_MEMORY } from "./layout.js";
 
 /** Asset bytes by the name a `.dmt` or a `.dmtl` legend wrote. */
 export type AssetBytes = ReadonlyMap<string, Uint8Array>;
@@ -247,7 +247,7 @@ function demakeBackdrop(bytes: Uint8Array, consoleId: string): Backdrop {
   // the map it produces and the loop that draws it are the same rectangle.
   const fitted = prepSync(bytes, {
     console: consoleId,
-    size: { w: VIEW_W * 8, h: VIEW_H * 8 },
+    size: { w: GB_MEMORY.viewW * 8, h: GB_MEMORY.viewH * 8 },
     fit: "cover",
     // One palette is the font's, so a picture gets the rest. Reserving it here
     // rather than taking it back afterwards is what keeps the fit honest: the

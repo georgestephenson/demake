@@ -17,96 +17,23 @@
 import { label, type Ref } from "@demake/core";
 
 import { fromInt } from "../fixed.js";
-import { type LevelFile, tileAt } from "../level/parse.js";
-import type { InstanceDef, RuleDef } from "../program.js";
+import { tileAt } from "../level/parse.js";
+import type { InstanceDef } from "../program.js";
 
 import type { Ctx } from "./ctx.js";
 import { propOffset, readProp, UNBOUND, type Binding } from "./expr.js";
 import { W } from "./layout.js";
+import {
+  collectLevels,
+  emitLevelData,
+  emitRuleTileTable,
+  GRID_EMPTY,
+  ruleTileTableLabel,
+  tileAtLabel,
+  tileSlot,
+  type LevelData,
+} from "./shape.js";
 import { add32, clamp32, copy32, less32, neg32, set32, sub32 } from "./val.js";
-
-/** Empty cell marker in an emitted grid. */
-export const GRID_EMPTY = 0xff;
-
-/** Level data, once per distinct level, with the labels its code refers to. */
-export interface LevelData {
-  index: number;
-  file: LevelFile;
-  gridLabel: string;
-  solidLabel: string;
-  tileLabel: string;
-  /** Parallel to {@link tileLabel}: the CGB attribute each legend entry draws
-   * with. Emitted only on a colour build, where every cell carries one. */
-  attrLabel: string;
-}
-
-/** Collect the distinct levels a program uses, in scene order. */
-export function collectLevels(scenes: readonly { level?: LevelFile }[]): LevelData[] {
-  const out: LevelData[] = [];
-  const seen = new Map<LevelFile, LevelData>();
-  for (const scene of scenes) {
-    if (!scene.level || seen.has(scene.level)) continue;
-    const data: LevelData = {
-      index: out.length,
-      file: scene.level,
-      gridLabel: `LevelGrid_${out.length}`,
-      solidLabel: `LevelSolid_${out.length}`,
-      tileLabel: `LevelTiles_${out.length}`,
-      attrLabel: `LevelAttrs_${out.length}`,
-    };
-    seen.set(scene.level, data);
-    out.push(data);
-  }
-  return out;
-}
-
-/** Emit a level's grid and its per-legend tables. */
-export function emitLevelData(
-  ctx: Ctx,
-  data: LevelData,
-  tileForLegend: (index: number) => number,
-  attrForLegend?: (index: number) => number,
-): void {
-  const { asm } = ctx;
-  const level = data.file;
-
-  asm.label(data.gridLabel);
-  for (let row = 0; row < level.height; row += 1) {
-    const line = level.rows[row] ?? "";
-    for (let column = 0; column < level.width; column += 1) {
-      const character = line[column] ?? " ";
-      const legend = level.tiles.findIndex((tile) => tile.char === character);
-      asm.db(legend < 0 ? GRID_EMPTY : legend);
-    }
-  }
-
-  asm.label(data.solidLabel);
-  for (const tile of level.tiles) asm.db(tile.solid ? 1 : 0);
-
-  asm.label(data.tileLabel);
-  for (const [index] of level.tiles.entries()) asm.db(tileForLegend(index));
-
-  if (!attrForLegend) return;
-  asm.label(data.attrLabel);
-  for (const [index] of level.tiles.entries()) asm.db(attrForLegend(index));
-}
-
-/**
- * A per-rule table: for each legend index, is this tile one the rule names?
- *
- * Emitted once per (rule, level) pair that needs it, which is how a rule's tile
- * list becomes an indexed load instead of a search.
- */
-export function ruleTileTableLabel(rule: RuleDef, data: LevelData): string {
-  return `RuleTiles_${rule.id}_${data.index}`;
-}
-
-export function emitRuleTileTable(ctx: Ctx, rule: RuleDef, data: LevelData): void {
-  if (rule.event.kind !== "hits") return;
-  const names = new Set(rule.event.tiles);
-  ctx.asm.label(ruleTileTableLabel(rule, data));
-  for (const tile of data.file.tiles) ctx.asm.db(names.has(tile.name) ? 1 : 0);
-}
 
 /**
  * `A = the legend index at (word[tileCol], word[tileRow])`, or `$FF` outside
@@ -115,9 +42,16 @@ export function emitRuleTileTable(ctx: Ctx, rule: RuleDef, data: LevelData): voi
  * The row-times-width multiply is by a constant, so it unrolls into doublings
  * and adds with no multiply routine involved.
  */
-export function tileAtLabel(data: LevelData): string {
-  return `TileAt_${data.index}`;
-}
+export {
+  collectLevels,
+  emitLevelData,
+  emitRuleTileTable,
+  GRID_EMPTY,
+  ruleTileTableLabel,
+  tileAtLabel,
+  tileSlot,
+  type LevelData,
+};
 
 export function emitTileAt(ctx: Ctx, data: LevelData): void {
   const { asm, layout } = ctx;
@@ -478,13 +412,6 @@ function absAt(ctx: Ctx, addr: number): void {
   asm.jp(done, "z");
   neg32(ctx, addr);
   asm.label(done);
-}
-
-/** The tile contact list for one `(rule, subject)` pair. */
-export function tileSlot(ctx: Ctx, ruleId: number, subject: number): number {
-  const index = ctx.layout.tileContactSlots.get(`${ruleId}:${subject}`);
-  if (index === undefined) throw new Error(`no tile contact slot for rule ${ruleId}`);
-  return ctx.layout.tileContacts + index * ctx.layout.tileContactStride;
 }
 
 /** Silence the unused-import checker for helpers referenced by the emitters. */

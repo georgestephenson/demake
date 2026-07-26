@@ -1,12 +1,18 @@
 /**
- * Building a `gb` ROM: compile, assemble, stamp the header.
+ * The `gb` backend: the Game Boy's answers to {@link Backend}'s six questions.
  *
  * There is no fixed engine and no blob to patch. A game is compiled to SM83
  * machine code specialised to it — its entities at constant addresses, its
  * rules unrolled into the scenes they can fire in, and only the runtime
- * routines something actually called. The assembler is ours (`core`'s
- * {@link Asm}, shared with the audio driver backend), so this runs in a browser
- * with nothing installed and produces the same bytes the CLI does.
+ * routines something actually called. The assembler is ours (`core`'s `Asm`,
+ * shared with the audio driver backend), so this runs in a browser with nothing
+ * installed and produces the same bytes the CLI does.
+ *
+ * What is *not* here is the shape of the build: which step happens when, what
+ * each failure is called, and what a `RomStats` contains all live in
+ * `backend.ts`, because they are the same on every console. This file is the
+ * Game Boy's part — its memory map, its image path, its driver, its cartridge —
+ * and `nes.ts` beside it is the NES's.
  *
  * The Nintendo logo area is left as zeros, exactly as the NDS builder leaves
  * its logo area (doc 06): we ship no copyrighted data. Emulators that direct
@@ -19,14 +25,26 @@ import { AsmError, GB_HEADER_OFFSETS, GB_ROM_SIZE, stampGbHeader } from "@demake
 
 import { getProfile } from "../profiles.js";
 import type { Program } from "../program.js";
+import { BUILTIN_TILES } from "../rom/graphics.js";
 
-import { analyze, type Analysis } from "./analyze.js";
+import { type Analysis } from "./analyze.js";
 import { bindArt } from "./art.js";
-import { bindAudio, effectIndices, trackForScene, type BoundAudio } from "./audio.js";
+import { bindAudio, effectIndices, trackForScene } from "./audio.js";
+import {
+  buildRom,
+  BuildError,
+  type Assembled,
+  type AssetBytes,
+  type Backend,
+  type BoundAssets,
+  type BoundAudioShape,
+  type BuildOptions,
+  type BuiltRom,
+  type RomStats,
+} from "./backend.js";
 import { Ctx } from "./ctx.js";
 import { emitProgram, type EmitOptions, type SpriteArt } from "./emit.js";
-import { BUILTIN_TILES } from "../rom/graphics.js";
-import { LayoutError, planLayout, type Layout } from "./layout.js";
+import { GB_MEMORY, GBC_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
 
 /**
  * The cartridge wrapper, re-exported from `core`.
@@ -67,126 +85,52 @@ function tileSlots(program: Program): number {
  */
 const HRAM_AUDIO = 0xff8b;
 
-/** What to stamp in the cartridge header, and what art to bind. */
-export interface RomOptions extends EmitOptions {
-  /** Cartridge title: up to 15 characters, upper-cased ASCII. */
-  title?: string;
+/** What the Game Boy's audio binding hands the emitter. */
+interface GbAudio extends BoundAudioShape {
+  /** The emitter options the driver contributes: itself, and its index tables. */
+  options: EmitOptions;
+  /** The bytes a rule writes to ask for a sound; absent when none can. */
+  hooks?: { driver: boolean; music: number; request: number; effects: readonly number[] };
+}
+
+/** The Game Boy's implementation of the build. */
+export const gbBackend: Backend<EmitOptions, GbAudio> = {
+  family: "gb",
+  consoles: ["gb", "gbc"],
+  cartridge: "a mapper-less cartridge",
+
   /**
-   * Raw bytes of the art the program names, keyed by the file name it wrote.
+   * Language features this backend does not implement.
    *
-   * Converting here rather than at the edges is what makes the browser and the
-   * CLI produce identical cartridges: both hand over the same source bytes, and
-   * every decision from rasterising to tile dedup happens in one place. An
-   * asset that is not supplied is simply not bound — the object falls back to
-   * the built-in block, and `stats.missingArt` says which ones did.
+   * Empty, now: levels, tiles, the camera and scrolling all compile. It stays as
+   * the place a future gap is *named*, because a runtime that silently ignored a
+   * feature would produce a ROM that plays a different game from the preview,
+   * and the trace oracle would report the divergence three layers from its cause.
    */
-  assets?: ReadonlyMap<string, Uint8Array>;
-}
+  unsupported(program: Program): string[] {
+    const missing: string[] = [];
+    if (!gbBackend.consoles.includes(program.profile.id)) {
+      missing.push(`a runtime for ${program.profile.name}`);
+    }
+    return missing;
+  },
 
-/** What the build produced. */
-export interface RomStats {
-  /** Bytes of code and data emitted, before padding. */
-  bytes: number;
-  /** ROM still free. */
-  free: number;
-  /** Work RAM in use. */
-  ram: number;
-  scenes: number;
-  instances: number;
-  rules: number;
-  /** Runtime helpers the program actually pulled in. */
-  helpers: readonly string[];
-  /** Tiles the art conversion added to the built-in bank. */
-  artTiles: number;
-  /** Art the program names that no bytes were supplied for. */
-  missingArt: readonly string[];
-  /** Tracks and effects the game plays, and what they cost. */
-  audio?: {
-    tracks: number;
-    effects: number;
-    /** Driver code bytes. */
-    code: number;
-    /** Packed schedule bytes. */
-    data: number;
-    /** Driver routines this game pulled in. */
-    helpers: readonly string[];
-    /** The tick rate the ROM's audio really runs at, in Hz. */
-    rateHz: number;
-    /** Writes an effect could not keep, because it borrows one channel. */
-    writesRestricted: number;
-    /** What the demakers reported: dropped parts, gestures, channels. */
-    notes: readonly string[];
-  };
-  /** Music and sound files the program names that no bytes were supplied for. */
-  missingAudio: readonly string[];
-}
+  memory(program: Program): MemoryPlan {
+    return program.profile.id === "gbc" ? GBC_MEMORY : GB_MEMORY;
+  },
 
-/** A built ROM, with the map a harness needs to read its state. */
-export interface BuiltRom {
-  bytes: Uint8Array;
-  layout: Layout;
-  analysis: Analysis;
-  symbols: ReadonlyMap<string, number>;
-  stats: RomStats;
-}
+  bindArt(program: Program, assets: AssetBytes): BoundAssets<EmitOptions> {
+    const art = bindArt(program, assets);
+    return { emit: art, tiles: art.tiles8, missing: art.missing };
+  },
 
-/** Raised when a game cannot be built for this console. */
-export class BuildError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly hint?: string,
-  ) {
-    super(message);
-    this.name = "BuildError";
-  }
-}
-
-/**
- * Language features this backend does not implement.
- *
- * Empty, now: levels, tiles, the camera and scrolling all compile. It stays as
- * the place a future gap is *named*, because a runtime that silently ignored a
- * feature would produce a ROM that plays a different game from the preview, and
- * the trace oracle would report the divergence three layers from its cause.
- */
-export function unsupportedFeatures(program: Program): string[] {
-  const missing: string[] = [];
-  if (program.profile.id !== "gb" && program.profile.id !== "gbc") {
-    missing.push(`a runtime for ${program.profile.name}`);
-  }
-  return missing;
-}
-
-/** Compile a program into a bootable `.gb`. */
-export function buildGbRom(program: Program, options: RomOptions = {}): BuiltRom {
-  const missing = unsupportedFeatures(program);
-  if (missing.length > 0) {
-    throw new BuildError(
-      "E_RUNTIME_UNSUPPORTED",
-      `the gb backend cannot build ${missing.join(" or ")}`,
-      "the preview runs it; the ROM would play a different game, so the build stops here",
-    );
-  }
-
-  const analysis = analyze(program);
-  let layout: Layout;
-  try {
-    layout = planLayout(program, analysis);
-  } catch (error) {
-    if (error instanceof LayoutError) throw new BuildError(error.code, error.message, error.hint);
-    throw error;
-  }
-
-  // Explicit options win over converted art, so a caller can hand over a bank
-  // it built itself; anything it left out comes from the conversion.
-  const art = bindArt(program, options.assets ?? new Map());
-  // The bank is one 256-entry table shared by the background and the objects,
-  // so a title screen's tiles are what is left after the game's own art. Art
-  // that does not fit is named here rather than drawn with holes in it.
-  const tiles = BUILTIN_TILES + art.tiles8;
-  const slots = tileSlots(program);
-  if (tiles > slots) {
+  checkTiles(program: Program, art: BoundAssets<EmitOptions>): void {
+    // The bank is one 256-entry table shared by the background and the objects,
+    // so a title screen's tiles are what is left after the game's own art. Art
+    // that does not fit is named here rather than drawn with holes in it.
+    const tiles = BUILTIN_TILES + art.tiles;
+    const slots = tileSlots(program);
+    if (tiles <= slots) return;
     const backdrops = program.scenes.filter((scene) => scene.backdrop !== undefined).length;
     throw new BuildError(
       "E_BACKDROP_TILES",
@@ -195,121 +139,107 @@ export function buildGbRom(program: Program, options: RomOptions = {}): BuiltRom
         ? "a backdrop costs one tile per distinct 8x8 cell — flatter areas and repeated motifs cost fewer"
         : "fewer objects, or smaller ones; every distinct 8x8 cell of art is a tile",
     );
-  }
-  // Audio is demade here for the same reason art is: the browser and the CLI
-  // hand over the same source bytes, and every decision from arrangement to
-  // register encoding then happens in one place (doc 16 §Working on audio).
-  let bound: BoundAudio;
-  try {
-    bound = bindAudio(program, options.assets ?? new Map(), HRAM_AUDIO);
-  } catch (error) {
-    throw new BuildError(
-      "E_AUDIO",
-      `this game's audio could not be demade: ${(error as Error).message}`,
-      "the track or the effect is what to look at; `demake arrange` and `demake sfx` report the same failure on their own",
-    );
-  }
-  const audioOptions: EmitOptions = bound.driver
-    ? {
-        audio: bound.driver,
-        effectIndices: effectIndices(program, bound),
-        sceneTracks: trackForScene(program, bound),
-      }
-    : {};
-  const emitOptions: EmitOptions = { ...art, ...audioOptions, ...stripUndefined(options) };
+  },
 
-  const ctx = new Ctx(program, analysis, layout, getProfile(program.profile.id), 0);
-  // Set whenever the program *names* audio, driver or no driver: a rule still
-  // records the sound it asked for, so a build with the files left out traces
-  // identically to one with them in.
-  if (program.tracks.length > 0 || program.sounds.length > 0) {
-    ctx.audio = {
-      driver: bound.driver !== undefined,
-      music: bound.driver?.request.music ?? 0,
-      request: bound.driver?.request.sfx ?? 0,
-      trace: layout.sound,
-      effects: emitOptions.effectIndices ?? program.sounds.map(() => -1),
-    };
-  }
-  let code: Uint8Array;
-  try {
-    emitProgram(ctx, emitOptions);
-    code = ctx.asm.assemble();
-  } catch (error) {
-    if (error instanceof AsmError) {
-      throw new BuildError(
-        "E_INTERNAL",
-        `the code generator produced invalid code: ${error.message}`,
-      );
-    }
-    throw error;
-  }
-
-  if (code.length > ROM_SIZE) {
-    throw new BuildError(
-      "E_GAME_TOO_LARGE",
-      `this game compiles to ${code.length} bytes and a mapper-less cartridge holds ${ROM_SIZE}`,
-      "fewer objects in one rule, or a smaller level; bank switching is doc 15 §Not in v1.",
-    );
-  }
-
-  const rom = new Uint8Array(ROM_SIZE);
-  rom.set(code, 0);
-  // A colour build declares itself CGB-only, because it programs palette RAM
-  // and a second VRAM bank from its first instruction: a DMG asked to run it
-  // would show the game in whatever BGP happened to hold, and a cartridge that
-  // refuses is a better answer than one that runs wrong.
-  stampGbHeader(rom, options.title ?? "DEMOTIC", { cgb: program.profile.id === "gbc" });
-
-  return {
-    bytes: rom,
-    layout,
-    analysis,
-    symbols: ctx.asm.symbols(),
-    stats: {
-      bytes: code.length,
-      free: ROM_SIZE - code.length,
-      ram: layout.used,
-      scenes: program.scenes.length,
-      instances: program.instances.length,
-      rules: program.rules.length,
-      helpers: ctx.helperNames(),
-      artTiles: art.tiles8,
-      missingArt: art.missing,
-      ...(bound.driver === undefined
-        ? {}
-        : {
-            audio: {
-              tracks: bound.driver.stats.tracks,
-              effects: bound.driver.stats.effects,
-              code: bound.driver.stats.code,
-              data: bound.driver.stats.data,
-              helpers: bound.driver.stats.helpers,
-              rateHz: bound.driver.stats.rate.num / bound.driver.stats.rate.den,
-              writesRestricted: bound.driver.stats.writesRestricted,
-              notes: bound.notes,
+  bindAudio(program: Program, assets: AssetBytes): BoundAssets<GbAudio> {
+    const bound = bindAudio(program, assets, HRAM_AUDIO);
+    const names = program.tracks.length > 0 || program.sounds.length > 0;
+    const driver = bound.driver;
+    const options: EmitOptions = driver
+      ? {
+          audio: driver,
+          effectIndices: effectIndices(program, bound),
+          sceneTracks: trackForScene(program, bound),
+        }
+      : {};
+    const emit: GbAudio = {
+      present: driver !== undefined,
+      options,
+      tracks: driver?.stats.tracks ?? 0,
+      effects: driver?.stats.effects ?? 0,
+      code: driver?.stats.code ?? 0,
+      data: driver?.stats.data ?? 0,
+      helpers: driver?.stats.helpers ?? [],
+      rateHz: driver ? driver.stats.rate.num / driver.stats.rate.den : 0,
+      writesRestricted: driver?.stats.writesRestricted ?? 0,
+      // Set whenever the program *names* audio, driver or no driver: a rule still
+      // records the sound it asked for, so a build with the files left out traces
+      // identically to one with them in.
+      ...(names
+        ? {
+            hooks: {
+              driver: driver !== undefined,
+              music: driver?.request.music ?? 0,
+              request: driver?.request.sfx ?? 0,
+              effects: options.effectIndices ?? program.sounds.map(() => -1),
             },
-          }),
-      missingAudio: bound.missing,
-    },
-  };
+          }
+        : {}),
+    };
+    return { emit, tiles: 0, missing: bound.missing, notes: bound.notes };
+  },
+
+  assemble({ program, analysis, layout, art, audio, title }): Assembled {
+    const emitOptions: EmitOptions = { ...art, ...audio.options };
+    const ctx = new Ctx(program, analysis, layout, getProfile(program.profile.id), 0);
+    if (audio.hooks) {
+      ctx.audio = {
+        driver: audio.hooks.driver,
+        music: audio.hooks.music,
+        request: audio.hooks.request,
+        trace: layout.sound,
+        effects: audio.hooks.effects,
+      };
+    }
+    let code: Uint8Array;
+    try {
+      emitProgram(ctx, emitOptions);
+      code = ctx.asm.assemble();
+    } catch (error) {
+      if (error instanceof AsmError) {
+        throw new BuildError(
+          "E_INTERNAL",
+          `the code generator produced invalid code: ${error.message}`,
+        );
+      }
+      throw error;
+    }
+
+    const rom = new Uint8Array(ROM_SIZE);
+    rom.set(code.subarray(0, Math.min(code.length, ROM_SIZE)), 0);
+    // A colour build declares itself CGB-only, because it programs palette RAM
+    // and a second VRAM bank from its first instruction: a DMG asked to run it
+    // would show the game in whatever BGP happened to hold, and a cartridge that
+    // refuses is a better answer than one that runs wrong.
+    stampGbHeader(rom, title ?? "DEMOTIC", { cgb: program.profile.id === "gbc" });
+    return {
+      bytes: rom,
+      code: code.length,
+      capacity: ROM_SIZE,
+      symbols: ctx.asm.symbols(),
+      helpers: ctx.helperNames(),
+    };
+  },
+};
+
+/**
+ * What to stamp in the cartridge header, and what source bytes to demake.
+ *
+ * Nothing here is pre-converted art: the build takes the files the game named and
+ * demakes them itself, which is the rule that keeps the browser's cartridge and
+ * the CLI's identical byte for byte.
+ */
+export type RomOptions = BuildOptions;
+
+/** Language features this backend does not implement. */
+export function unsupportedFeatures(program: Program): string[] {
+  return gbBackend.unsupported(program);
 }
 
-/** Drop absent keys so a spread cannot overwrite a value with `undefined`. */
-function stripUndefined(options: RomOptions): EmitOptions {
-  const out: Record<string, unknown> = {};
-  for (const key of [
-    "sprites",
-    "tiles",
-    "extraTiles",
-    "objectPalette",
-    "objectPalettes",
-    "tilePalettes",
-    "systemPalette",
-  ] as const) {
-    if (options[key] !== undefined) out[key] = options[key];
-  }
-  return out as EmitOptions;
+/** Compile a program into a bootable `.gb`. */
+export function buildGbRom(program: Program, options: RomOptions = {}): BuiltRom {
+  return buildRom(program, gbBackend, options);
 }
 
-export type { SpriteArt, EmitOptions, Layout, Analysis };
+export { BuildError };
+export type { SpriteArt, EmitOptions, Layout, Analysis, RomStats, BuiltRom };

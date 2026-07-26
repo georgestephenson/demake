@@ -13,24 +13,25 @@
 
 import { label } from "@demake/core";
 
-import { fromInt } from "../fixed.js";
-import type { InstanceDef, Program, RuleDef, SceneDef } from "../program.js";
-import { boundsOf } from "../level/scene.js";
+import type { InstanceDef, RuleDef } from "../program.js";
 
 import type { Ctx } from "./ctx.js";
 import { emitTest, propOffset, type Binding } from "./expr.js";
 import { isMutable } from "./analyze.js";
+import { emitTickSteps, type TickSteps } from "./backend.js";
 import {
-  ENTITY_SIZE,
-  OAM_SHADOW,
-  PLOT_MAX,
-  PROPS,
-  QUEUE_MAX,
-  TILE_CONTACT_MAX,
-  VIEW_H,
-  VIEW_W,
-  W,
-} from "./layout.js";
+  artKey,
+  emitInstanceDefaults,
+  fixedCells,
+  hudIsStatic,
+  instanceCells,
+  sceneContexts,
+  sceneIndexOf,
+  scrolls,
+  tileCellsCacheable,
+  type SpriteArt,
+} from "./shape.js";
+import { ENTITY_SIZE, PROPS, TILE_CONTACT_MAX, W } from "./layout.js";
 import {
   emitAssignments,
   emitCamera,
@@ -126,30 +127,6 @@ const HRAM_DMA = 0xff80;
  */
 const HRAM_VBLANK = 0xff8a;
 
-/**
- * How converted art is looked up: by the file the game named *and* the box it
- * fills.
- *
- * The box is part of the key because it is part of the art. Two objects of one
- * class with different `width`s are two different pictures, and drawing the
- * larger one for both is how a five-cell shelf came to be painted eleven cells
- * wide with nothing under six of them.
- */
-export function artKey(name: string, cellsWide: number, cellsHigh: number): string {
-  return `${name}@${cellsWide}x${cellsHigh}`;
-}
-
-/** Art for one asset, already converted by the image pipeline. */
-export interface SpriteArt {
-  /** First tile index in the bank. */
-  tile: number;
-  /** Size in cells, which is the collision box's size (doc 15 §art). */
-  width: number;
-  height: number;
-  /** Sub-palette the fit chose, on a colour build; 0 on a monochrome one. */
-  palette?: number;
-}
-
 /** Everything the emitter needs beyond the program itself. */
 export interface EmitOptions {
   /** Converted sprite art, keyed by the asset name a `.dmt` wrote. */
@@ -200,26 +177,6 @@ export interface EmitOptions {
   effectIndices?: readonly number[];
   /** Track index each scene asks for, or `-1`; indexed by scene. */
   sceneTracks?: readonly number[];
-}
-
-/** Scene index by name. */
-function sceneIndex(program: Program, name: string): number {
-  const index = program.scenes.findIndex((scene) => scene.name === name);
-  return index < 0 ? 0 : index;
-}
-
-/** Build the per-scene view the rule emitters work against. */
-function sceneContexts(ctx: Ctx): SceneCtx[] {
-  return ctx.program.scenes.map((def: SceneDef, index: number) => {
-    const bounds = boundsOf(def.level, ctx.profile);
-    return {
-      index,
-      def,
-      boundsW: fromInt(bounds.width),
-      boundsH: fromInt(bounds.height),
-      level: def.level,
-    };
-  });
 }
 
 /** Dispatch on the running scene to one of a set of labels. */
@@ -313,7 +270,7 @@ export function emitProgram(ctx: Ctx, options: EmitOptions = {}): void {
       );
     };
     emitLevelData(
-      ctx,
+      asm,
       level,
       (index) => boundTile(index).tile & 0xff,
       ctx.color
@@ -326,11 +283,11 @@ export function emitProgram(ctx: Ctx, options: EmitOptions = {}): void {
     emitTileAt(ctx, level);
     for (const rule of program.rules) {
       if (rule.event.kind === "hits" && rule.event.tiles.length > 0) {
-        emitRuleTileTable(ctx, rule, level);
+        emitRuleTileTable(asm, rule, level);
       }
     }
   }
-  emitInstanceDefaults(ctx);
+  emitInstanceDefaults(asm, program, PROPS);
 
   // One demade tilemap per scene that has a backdrop: a screenful of bytes,
   // each naming a tile in the bank the conversion filled — followed, on a
@@ -492,12 +449,12 @@ function emitEntry(
   asm.sta(layout.plotCount);
   asm.sta(layout.plotPrevCount);
   asm.sta(layout.queueCount);
-  asm.ldn("a", 40);
+  asm.ldn("a", layout.memory.oamEntries);
   asm.sta(layout.oamPrev);
   asm.alu("xor", "a");
   asm.ldn("a", 0xff);
   asm.sta(layout.pending);
-  asm.ldn("a", sceneIndex(program, program.entryScene));
+  asm.ldn("a", sceneIndexOf(program, program.entryScene));
   asm.sta(layout.scene);
   asm.ldn("a", 1);
   asm.sta(layout.redraw);
@@ -633,7 +590,7 @@ function emitClearState(ctx: Ctx): void {
 }
 
 function emitMainLoop(ctx: Ctx, audio: boolean): void {
-  const { asm } = ctx;
+  const { asm, layout } = ctx;
   asm.label("Main");
   asm.halt();
   asm.nop();
@@ -690,7 +647,7 @@ function emitMainLoop(ctx: Ctx, audio: boolean): void {
   asm.ret();
 
   asm.label("DmaKernel");
-  asm.ldn("a", OAM_SHADOW >> 8);
+  asm.ldn("a", layout.memory.oamShadow >> 8);
   asm.stha(R.DMA & 0xff);
   asm.ldn("a", 40);
   const spin = ctx.unique("dmaSpin");
@@ -845,25 +802,41 @@ function emitSceneChange(ctx: Ctx, scenes: readonly SceneCtx[]): void {
 
 // --- per-scene ---------------------------------------------------------------
 
-function emitSceneTick(ctx: Ctx, scene: SceneCtx, level: LevelData | undefined): void {
+/**
+ * The Game Boy's instructions for each of doc 14's tick steps.
+ *
+ * The *order* is not here: `emitTickSteps` runs them, so this backend supplies
+ * the code for a step and has no say in the sequence (`backend.ts` §The tick's).
+ */
+function tickSteps(ctx: Ctx): TickSteps {
   const { asm, layout } = ctx;
+  return {
+    controls: (scene) => emitControls(ctx, scene),
+    levelRules: (scene) => emitLevelRules(ctx, scene),
+    integrate: (scene) => emitIntegrate(ctx, scene),
+    beginContacts: () => {
+      asm.alu("xor", "a");
+      for (let index = 0; index < layout.contactBytes; index += 1) {
+        asm.sta(layout.contacts + index);
+      }
+    },
+    collisions: (scene) => emitCollisions(ctx, scene),
+    endContacts: () => {
+      for (let index = 0; index < layout.contactBytes; index += 1) {
+        asm.lda(layout.contacts + index);
+        asm.sta(layout.contactsPrev + index);
+      }
+    },
+    tileRules: (scene, level) => emitTileRules(ctx, scene, level),
+    edgeRules: (scene) => emitEdgeRules(ctx, scene),
+    camera: (scene) => emitCamera(ctx, scene),
+  };
+}
+
+function emitSceneTick(ctx: Ctx, scene: SceneCtx, level: LevelData | undefined): void {
+  const { asm } = ctx;
   asm.label(`SceneTick_${scene.index}`);
-  emitControls(ctx, scene);
-  emitLevelRules(ctx, scene);
-  emitIntegrate(ctx, scene);
-
-  // A fresh set of contacts each tick; last tick's is what `hits` tests.
-  asm.alu("xor", "a");
-  for (let index = 0; index < layout.contactBytes; index += 1) asm.sta(layout.contacts + index);
-  emitCollisions(ctx, scene);
-  for (let index = 0; index < layout.contactBytes; index += 1) {
-    asm.lda(layout.contacts + index);
-    asm.sta(layout.contactsPrev + index);
-  }
-
-  if (level) emitTileRules(ctx, scene, level);
-  emitEdgeRules(ctx, scene);
-  emitCamera(ctx, scene);
+  emitTickSteps(tickSteps(ctx), scene, level);
   asm.jp("TickDone");
 }
 
@@ -887,30 +860,6 @@ function emitSceneCamera(ctx: Ctx, scene: SceneCtx): void {
 }
 
 // --- 6. tiles ----------------------------------------------------------------
-
-/**
- * Can this object's overlapped cells be walked once and read by every rule?
- *
- * Only if nothing in the tile phase can move it: the interpreter recomputes the
- * list per rule, so caching it is equivalent exactly when the answer cannot have
- * changed in between. That is a compile-time question — which assignments a tile
- * rule makes — so it is asked here rather than guessed.
- */
-function tileCellsCacheable(ctx: Ctx, scene: SceneCtx, subjectId: number): boolean {
-  const box = new Set(["x", "y", "width", "height"]);
-  for (const rule of ctx.program.rules) {
-    if (rule.event.kind !== "hits" || rule.event.tiles.length === 0) continue;
-    if (rule.scene !== undefined && rule.scene !== scene.def.name) continue;
-    for (const assignment of [...rule.assignments, ...(rule.otherwise ?? [])]) {
-      if (assignment.target.kind !== "prop" || !box.has(assignment.target.prop)) continue;
-      const entity = assignment.target.entity;
-      if (entity.kind === "instance" && entity.id === subjectId) return false;
-      if (entity.kind === "subject" && rule.event.subjects.includes(subjectId)) return false;
-      if (entity.kind === "other") return false;
-    }
-  }
-  return true;
-}
 
 /** Where one subject's cell list lives. */
 function cellSlot(ctx: Ctx, subjectId: number): number {
@@ -1314,20 +1263,6 @@ function emitSceneRender(
   void profile;
 }
 
-/**
- * Does this scene's view move?
- *
- * It is the one question that decides where the HUD is drawn, because the
- * background layer scrolls as one piece: a cell of it can be *put* anywhere,
- * but it cannot be held still while everything around it slides, and the seven
- * pixels it slides before the next whole cell comes round are exactly the jitter
- * a score in the corner must not have. Sprites are positioned in screen pixels,
- * so a HUD pinned to `camera.x` lands on the same pixel every frame.
- */
-function scrolls(ctx: Ctx, scene: SceneCtx): boolean {
-  return scene.def.cameraTarget !== undefined && ctx.layout.camera !== null;
-}
-
 /** `dst16 = floor(value * 8 / 65536)` — cells to pixels. */
 function emitPixelsFromFixed(ctx: Ctx, src: number, dst: number): void {
   const { asm } = ctx;
@@ -1410,14 +1345,14 @@ function emitFullRedraw(
   const painted = options.backdrops?.has(scene.def.name) && !level ? 0 : 1;
   const rowLoop = ctx.unique("fullRow");
   const colLoop = ctx.unique("fullCol");
-  asm.ldn("b", VIEW_H + painted);
+  asm.ldn("b", layout.memory.viewH + painted);
   asm.label(rowLoop);
   asm.push("bc");
   asm.lda(layout.words + W.firstCol * 2);
   asm.sta(layout.words + W.tileCol * 2);
   asm.lda(layout.words + W.firstCol * 2 + 1);
   asm.sta(layout.words + W.tileCol * 2 + 1);
-  asm.ldn("b", VIEW_W + painted);
+  asm.ldn("b", layout.memory.viewW + painted);
   asm.label(colLoop);
   asm.push("bc");
   emitBackgroundTile(ctx, scene, level, options);
@@ -1491,9 +1426,10 @@ function needCopyScreen(ctx: Ctx): string {
     const { asm } = inner;
     const rowLoop = inner.unique("scrRow");
     const colLoop = inner.unique("scrCol");
-    asm.ldn("b", VIEW_H);
+    const { viewW, viewH } = inner.layout.memory;
+    asm.ldn("b", viewH);
     asm.label(rowLoop);
-    asm.ldn("c", VIEW_W);
+    asm.ldn("c", viewW);
     asm.label(colLoop);
     asm.ldaHLI();
     asm.staDE();
@@ -1501,7 +1437,7 @@ function needCopyScreen(ctx: Ctx): string {
     asm.dec("c");
     asm.jr(colLoop, "nz");
     asm.ld("a", "e");
-    asm.aluN("add", 32 - VIEW_W);
+    asm.aluN("add", 32 - viewW);
     asm.ld("e", "a");
     asm.ld("a", "d");
     asm.aluN("adc", 0);
@@ -1551,13 +1487,13 @@ function emitBackgroundTile(
   const done = ctx.unique("bdDone");
   // A cell off the picture is blank rather than a byte from whatever follows
   // the map: the HUD is free to sit anywhere, including past the last column.
-  emitAtLeastConst(ctx, layout.words + W.tileCol * 2, VIEW_W, outside);
-  emitAtLeastConst(ctx, layout.words + W.tileRow * 2, VIEW_H, outside);
+  emitAtLeastConst(ctx, layout.words + W.tileCol * 2, layout.memory.viewW, outside);
+  emitAtLeastConst(ctx, layout.words + W.tileRow * 2, layout.memory.viewH, outside);
   asm.lda(layout.words + W.tileRow * 2);
   asm.ld("l", "a");
   asm.lda(layout.words + W.tileRow * 2 + 1);
   asm.ld("h", "a");
-  emitMulConst16(ctx, VIEW_W);
+  emitMulConst16(ctx, layout.memory.viewW);
   asm.lda(layout.words + W.tileCol * 2);
   asm.ld("e", "a");
   asm.lda(layout.words + W.tileCol * 2 + 1);
@@ -1570,7 +1506,7 @@ function emitBackgroundTile(
     // The picture's attributes are the same screenful again, right behind its
     // map, so the cell's attribute is one fixed offset from its tile.
     asm.ld("c", "a");
-    asm.ld16("de", VIEW_W * VIEW_H);
+    asm.ld16("de", layout.memory.viewW * layout.memory.viewH);
     asm.addHL("de");
     asm.ld("a", "hlp");
     asm.sta(layout.attr);
@@ -1737,7 +1673,7 @@ function emitWalkAxis(
   asm.ld("a", "h");
   asm.sta(origin + 1);
   asm.push("bc");
-  emitPaintEdge(ctx, level, isColumn, isColumn ? VIEW_W : VIEW_H);
+  emitPaintEdge(ctx, level, isColumn, isColumn ? ctx.layout.memory.viewW : ctx.layout.memory.viewH);
   asm.pop("bc");
   asm.jp(loop);
   asm.label(back);
@@ -1762,7 +1698,7 @@ function emitPaintEdge(ctx: Ctx, level: LevelData, isColumn: boolean, offset: nu
   const across = isColumn ? layout.words + W.tileCol * 2 : layout.words + W.tileRow * 2;
   const originAcross = isColumn ? layout.words + W.mapCol * 2 : layout.words + W.mapRow * 2;
   const originAlong = isColumn ? layout.words + W.mapRow * 2 : layout.words + W.mapCol * 2;
-  const count = isColumn ? VIEW_H + 1 : VIEW_W + 1;
+  const count = isColumn ? layout.memory.viewH + 1 : layout.memory.viewW + 1;
 
   asm.lda(originAcross);
   asm.ld("l", "a");
@@ -1851,22 +1787,6 @@ function emitSwapPlots(ctx: Ctx): void {
   asm.label(done);
 }
 
-/**
- * Can anything about this HUD object ever change?
- *
- * A caption is the common case: fixed text at a fixed cell that no rule writes.
- * Erasing and repainting it sixty times a second costs more than everything else
- * a small game does — and it is the *labels* that made it worth finding, because
- * "score:" is six cells against a counter's one or two. A static object is
- * painted once, with the background it sits on, and then left alone.
- */
-function hudIsStatic(ctx: Ctx, id: number): boolean {
-  const instance = ctx.program.instances[id] as InstanceDef;
-  const fixed = (prop: string): boolean => !isMutable(ctx.analysis, id, prop);
-  if (!fixed("x") || !fixed("y") || !fixed("visible")) return false;
-  return instance.className === "text" || fixed("value");
-}
-
 /** Draw the scene's `number` and `text` objects on the background layer. */
 function emitHud(ctx: Ctx, scene: SceneCtx, want: "static" | "dynamic"): void {
   const { asm, layout, program } = ctx;
@@ -1947,19 +1867,6 @@ function needPokeNumber(ctx: Ctx): string {
 }
 
 /**
- * Is this object's footprint a compile-time constant?
- *
- * The cheap culls below work in whole cells and need a margin wide enough to
- * cover the object, so they only apply where the size cannot change under them.
- * Nothing in the example library resizes anything; the test is here so that the
- * day something does, it gets the slow, always-correct path instead of being
- * quietly culled while half on screen.
- */
-function fixedCells(ctx: Ctx, id: number): boolean {
-  return !isMutable(ctx.analysis, id, "width") && !isMutable(ctx.analysis, id, "height");
-}
-
-/**
  * `HL` = entity base, `B` = cells wide, `C` = cells high → `A` is zero when the
  * object is certainly outside the view.
  *
@@ -2019,8 +1926,8 @@ function needOnscreen(ctx: Ctx): string {
       asm.bit(7, "h");
       asm.jp(apart, "z");
     };
-    axis(propOffset("x"), "b", VIEW_W);
-    axis(propOffset("y"), "c", VIEW_H);
+    axis(propOffset("x"), "b", layout.memory.viewW);
+    axis(propOffset("y"), "c", layout.memory.viewH);
 
     asm.ldn("a", 1);
     asm.ret();
@@ -2045,10 +1952,8 @@ function emitOam(ctx: Ctx, scene: SceneCtx, options: EmitOptions): void {
     // The collision box is the sprite's footprint, in whole cells — *this*
     // object's box, not its class's and not the largest one the file was
     // converted at. Anything else draws ledge where nothing can be stood on.
-    const cells = (prop: string): number =>
-      Math.max(1, Math.round((instance.numbers[prop] ?? 0) / 65536));
-    const width = cells("width");
-    const height = cells("height");
+    const width = instanceCells(instance, "width");
+    const height = instanceCells(instance, "height");
     // A caller that supplied its own bank keyed by plain name still works.
     const art = options.sprites?.get(artKey(asset, width, height)) ?? options.sprites?.get(asset);
 
@@ -2234,7 +2139,7 @@ export function emitRenderHelpers(ctx: Ctx): void {
   asm.label("QueueCell");
   asm.ld("c", "a");
   asm.lda(layout.queueCount);
-  asm.aluN("cp", QUEUE_MAX);
+  asm.aluN("cp", layout.memory.queueMax);
   asm.ret("nc");
   asm.push("bc");
   asm.call("VramFor");
@@ -2287,7 +2192,7 @@ export function emitRenderHelpers(ctx: Ctx): void {
   asm.call("QueueCell");
   asm.pop("af");
   asm.lda(layout.plotCount);
-  asm.aluN("cp", PLOT_MAX);
+  asm.aluN("cp", layout.memory.plotMax);
   const noRoom = ctx.unique("plotFull");
   asm.jp(noRoom, "nc");
   asm.ld("l", "a");
@@ -2313,7 +2218,7 @@ export function emitRenderHelpers(ctx: Ctx): void {
 
   // B = y, C = x, D = tile; append an OAM entry.
   // B = y, C = x, D = tile. **D has to survive**, which is why the address is
-  // built from the shadow's page rather than with `ld de, OAM_SHADOW` — that
+  // built from the shadow's page rather than with a 16-bit load — that
   // form overwrites the tile number with the address's high byte, and the cost
   // is forty objects all drawing whatever tile happens to live at $C0.
   // `PushSpriteAttr` takes the attribute byte in E as well, which is how a HUD
@@ -2322,12 +2227,12 @@ export function emitRenderHelpers(ctx: Ctx): void {
   asm.ldn("e", 0);
   asm.label("PushSpriteAttr");
   asm.lda(layout.oamCount);
-  asm.aluN("cp", 40);
+  asm.aluN("cp", layout.memory.oamEntries);
   asm.ret("nc");
   asm.alu("add", "a");
   asm.alu("add", "a");
   asm.ld("l", "a");
-  asm.ldn("h", OAM_SHADOW >> 8);
+  asm.ldn("h", layout.memory.oamShadow >> 8);
   asm.ld("a", "b");
   asm.staHLI();
   asm.ld("a", "c");
@@ -2356,7 +2261,7 @@ export function emitRenderHelpers(ctx: Ctx): void {
   asm.alu("add", "a");
   asm.alu("add", "a");
   asm.ld("l", "a");
-  asm.ldn("h", OAM_SHADOW >> 8);
+  asm.ldn("h", layout.memory.oamShadow >> 8);
   asm.ld("a", "b");
   asm.alu("sub", "c");
   asm.ld("b", "a");
@@ -2531,10 +2436,5 @@ function emitDecimal(ctx: Ctx, plot: string, flag: number): void {
 
 // --- data --------------------------------------------------------------------
 
-function emitInstanceDefaults(ctx: Ctx): void {
-  const { asm, program } = ctx;
-  for (const instance of program.instances) {
-    asm.label(`Defaults_${instance.id}`);
-    for (const prop of PROPS) asm.dd(instance.numbers[prop] ?? 0);
-  }
-}
+export { artKey };
+export type { SpriteArt };

@@ -1,7 +1,7 @@
 /**
- * Compile-time RAM allocation.
+ * Compile-time RAM allocation, for every console the backends target.
  *
- * This is where the backend earns most of its speed, and it is worth being
+ * This is where a backend earns most of its speed, and it is worth being
  * explicit about why. A game's objects are known when it is compiled, so every
  * entity gets a *fixed address*, and therefore every property read is an
  * absolute load rather than a base-plus-index computation. The old interpreter
@@ -17,6 +17,15 @@
  * is not laziness — it is what lets the conformance harness read a trace
  * straight out of work RAM (doc 14 §Conformance), and the alternative saves
  * bytes only for objects that would still need somewhere to put them.
+ *
+ * **One allocator, one plan per machine.** What a game needs is a property of the
+ * game; where it goes is a property of the console, and the difference between
+ * them is exactly a {@link MemoryPlan}. That is not a convenience: the two
+ * machines differ by a factor of six in how much RAM they have — a Game Boy has
+ * 8 KiB of work RAM and an NROM cartridge has the console's 2 KiB and nothing
+ * else — so *which* things fit is a per-console fact while *what* they are is
+ * not. Sharing the allocator is what keeps the trace reader (`rom/trace.ts`)
+ * able to read either machine's entity table with one function.
  */
 
 import type { Program } from "../program.js";
@@ -62,24 +71,114 @@ export const PROP_SLOT: Readonly<Record<string, number>> = Object.fromEntries(
   PROPS.map((name, index) => [name, index]),
 );
 
-/** Where the OAM shadow lives. The DMA source must be page-aligned. */
-export const OAM_SHADOW = 0xc000;
+/**
+ * Where a console's state goes, and how much of it there is.
+ *
+ * Everything here is a hardware fact rather than a policy, and the two that look
+ * like policies are not:
+ *
+ *   - `queueMax` is what fits in a VBlank. A Game Boy's is 1140 machine cycles
+ *     wide and an NES's is about 2270 CPU cycles, of which an object DMA takes
+ *     513 — and the per-cell cost differs too, because one writes a byte into
+ *     memory-mapped VRAM and the other writes an address and a byte through two
+ *     registers. Anything over the cap spills to the next frame rather than
+ *     being written outside the window, which would tear.
+ *   - `fast` is the region the machine addresses more cheaply, when it has one.
+ *     On the 6502 that is page zero: two bytes and three cycles instead of three
+ *     and four, and — the part that is not an optimisation — the only place a
+ *     pointer can live at all, because `($nn),y` is the CPU's one indirect mode.
+ *     A machine without such a region leaves it unset and everything comes from
+ *     the one heap, in the same order, at the same addresses.
+ */
+export interface MemoryPlan {
+  /** What to call the machine when it runs out of room. */
+  machine: string;
+  /** First and last byte of the general heap. */
+  heapStart: number;
+  heapEnd: number;
+  /** The cheaply-addressed region, if the machine has one. */
+  fastStart?: number;
+  fastEnd?: number;
+  /** Where the object shadow lives; the DMA source must be page-aligned. */
+  oamShadow: number;
+  /** Hardware object entries the shadow covers. */
+  oamEntries: number;
+  /** Visible tilemap window, in cells. */
+  viewW: number;
+  viewH: number;
+  /** Cells the renderer will queue for one vertical blank. */
+  queueMax: number;
+  /** Background cells `number` and `text` objects may occupy at once. */
+  plotMax: number;
+  /**
+   * Whether a queued cell carries an attribute byte alongside its tile.
+   *
+   * True only where the hardware attributes a cell at a time: a Game Boy Color
+   * has a palette per 8×8 cell in its second VRAM bank, so the queue carries it.
+   * The NES attributes a 16×16 block through a packed table that a scene uploads
+   * whole, so a queued cell there is a tile and nothing else — which is why this
+   * is a plan field and not a colour flag.
+   */
+  cellAttributes: boolean;
+}
 
-/** First byte the allocator may hand out. */
-const HEAP_START = 0xc0a0;
+/**
+ * The Game Boy's plan: 8 KiB of work RAM, and room to be generous with it.
+ *
+ * The heap starts past the object shadow's page because the DMA source has to be
+ * page-aligned, and stops short of `$DFFF` to leave the stack the top of RAM.
+ */
+export const GB_MEMORY: MemoryPlan = {
+  machine: "Game Boy",
+  heapStart: 0xc0a0,
+  heapEnd: 0xdf00,
+  oamShadow: 0xc000,
+  oamEntries: 40,
+  viewW: 20,
+  viewH: 18,
+  queueMax: 192,
+  plotMax: 96,
+  cellAttributes: false,
+};
 
-/** Last byte of work RAM, minus the stack we reserve at the top. */
-const HEAP_END = 0xdf00;
+/** The same, for a Game Boy Color: an attribute byte per queued cell. */
+export const GBC_MEMORY: MemoryPlan = { ...GB_MEMORY, cellAttributes: true };
 
-/** Visible tilemap window, in cells. */
-export const VIEW_W = 20;
-export const VIEW_H = 18;
-
-/** Most background cells the renderer will queue in one VBlank. */
-export const QUEUE_MAX = 192;
-
-/** Most background cells `number` and `text` objects may occupy at once. */
-export const PLOT_MAX = 96;
+/**
+ * The NES's plan, and every number in it is smaller for a reason.
+ *
+ * The console has 2 KiB of RAM and an NROM cartridge adds none, so the same games
+ * that use a fifth of a Game Boy's work RAM use most of this. Three fixed
+ * reservations come out of it first: page zero, which the 6502 addresses in two
+ * bytes and is the only place a pointer can live; the stack, which the hardware
+ * puts at `$0100` and nowhere else; and the object shadow, which has to be a
+ * whole aligned page because that is what `$4014` transfers. What is left —
+ * `$0300`–`$07FF` — is the heap.
+ *
+ * `queueMax` is larger than the Game Boy's per byte of VBlank and much smaller in
+ * absolute terms: an NES VBlank is about 2270 CPU cycles, an object DMA eats 513
+ * of them, and a queued cell costs more here because the address goes out through
+ * a register rather than being the store's own operand.
+ *
+ * The cheap region starts at `$0010` rather than `$0000` because the backend keeps
+ * a handful of named pointers of its own below it (`codegen/nes/zp.ts`): a routine
+ * that walks a table needs a pointer at a *fixed* address, not one the allocator
+ * chose, and sixteen bytes is what the routines between them use.
+ */
+export const NES_MEMORY: MemoryPlan = {
+  machine: "NES",
+  heapStart: 0x0300,
+  heapEnd: 0x0800,
+  fastStart: 0x0010,
+  fastEnd: 0x0100,
+  oamShadow: 0x0200,
+  oamEntries: 64,
+  viewW: 32,
+  viewH: 30,
+  queueMax: 48,
+  plotMax: 32,
+  cellAttributes: false,
+};
 
 /** Raised when a game needs more state than the machine has. */
 export class LayoutError extends Error {
@@ -103,10 +202,14 @@ export interface ContactRange {
 
 /** Where everything lives. */
 export interface Layout {
+  /** The machine this plan was made for. */
+  memory: MemoryPlan;
   /** Base address of each instance's record, by instance id. */
   entities: readonly number[];
   /** Bytes of work RAM in use. */
   used: number;
+  /** Bytes of the cheaply-addressed region in use; zero where there is none. */
+  fastUsed: number;
 
   // --- always present -------------------------------------------------------
   tick: number;
@@ -265,16 +368,25 @@ export const W = {
 export const TILE_CONTACT_MAX = 16;
 
 class Bump {
-  private at = HEAP_START;
+  private at: number;
+
+  constructor(
+    private readonly start: number,
+    private readonly end: number,
+    private readonly machine: string,
+    private readonly what: string,
+  ) {
+    this.at = start;
+  }
 
   take(bytes: number): number {
     const address = this.at;
     this.at += bytes;
-    if (this.at > HEAP_END) {
+    if (this.at > this.end) {
       throw new LayoutError(
         "E_GAME_TOO_LARGE",
-        `this game needs ${this.at - HEAP_START} bytes of work RAM and the Game Boy has ` +
-          `${HEAP_END - HEAP_START}`,
+        `this game needs ${this.at - this.start} bytes of ${this.what} and the ` +
+          `${this.machine} has ${this.end - this.start}`,
         "fewer objects, or a smaller level; the limit is the machine's, not a policy.",
       );
     }
@@ -282,7 +394,7 @@ class Bump {
   }
 
   get used(): number {
-    return this.at - HEAP_START;
+    return this.at - this.start;
   }
 }
 
@@ -307,51 +419,67 @@ function numberContacts(program: Program): { ranges: Map<number, ContactRange>; 
   return { ranges, total };
 }
 
-/** Allocate every byte the program needs. */
-export function planLayout(program: Program, analysis: Analysis): Layout {
-  const heap = new Bump();
+/**
+ * Allocate every byte the program needs.
+ *
+ * The order of the calls below is the order of the addresses, so it is part of
+ * what a golden trace pins: reordering two of them moves every entity record and
+ * re-baselines every checked-in trace for no gain. `fast` hands out the machine's
+ * cheap region where it has one and falls through to the same heap in the same
+ * order where it does not, which is why adding it changed no Game Boy address.
+ */
+export function planLayout(program: Program, analysis: Analysis, memory: MemoryPlan): Layout {
+  const heap = new Bump(memory.heapStart, memory.heapEnd, memory.machine, "work RAM");
+  const quick =
+    memory.fastStart !== undefined && memory.fastEnd !== undefined
+      ? new Bump(memory.fastStart, memory.fastEnd, memory.machine, "page zero")
+      : undefined;
+  /** Take from the cheap region if the machine has one, the heap otherwise. */
+  const fast = (bytes: number): number => (quick ?? heap).take(bytes);
 
   const entities: number[] = [];
   for (let id = 0; id < program.instances.length; id += 1) {
     entities.push(heap.take(ENTITY_SIZE));
   }
 
-  const tick = heap.take(2);
-  const scene = heap.take(1);
-  const pending = heap.take(1);
-  const ready = heap.take(1);
-  const booted = heap.take(1);
-  const held = heap.take(1);
-  const pressed = heap.take(1);
-  const released = heap.take(1);
-  const redraw = heap.take(1);
-  const scratch = heap.take(8);
-  const mathA = heap.take(PROP_SIZE);
-  const mathB = heap.take(PROP_SIZE);
+  const tick = fast(2);
+  const scene = fast(1);
+  const pending = fast(1);
+  const ready = fast(1);
+  const booted = fast(1);
+  const held = fast(1);
+  const pressed = fast(1);
+  const released = fast(1);
+  const redraw = fast(1);
+  const scratch = fast(8);
+  const mathA = fast(PROP_SIZE);
+  const mathB = fast(PROP_SIZE);
   // Seven bytes of product plus five of remainder: the multiply's accumulator
   // has to hold 2^52 exactly, which is what the clamped operand range implies.
-  const mathWork = heap.take(24);
+  const mathWork = fast(24);
 
   const temps: number[] = [];
   // Six beyond the deepest expression: the collision and camera emitters
   // borrow temporaries for their own intermediate boxes.
-  for (let index = 0; index < analysis.maxDepth + 6; index += 1) temps.push(heap.take(PROP_SIZE));
+  for (let index = 0; index < analysis.maxDepth + 6; index += 1) temps.push(fast(PROP_SIZE));
   const staging: number[] = [];
   for (let index = 0; index < Math.max(1, analysis.maxAssignments); index += 1) {
-    staging.push(heap.take(PROP_SIZE));
+    staging.push(fast(PROP_SIZE));
   }
 
-  const sound = program.sounds.length > 0 ? heap.take(1) : null;
-  const rng = analysis.usesRandom ? heap.take(4) : null;
-  const camera = analysis.usesCamera || analysis.readsCamera ? heap.take(8) : null;
-  const mapOrigin = analysis.usesLevels ? heap.take(4) : null;
-  const self = heap.take(2);
-  const other = heap.take(2);
+  const sound = program.sounds.length > 0 ? fast(1) : null;
+  const rng = analysis.usesRandom ? fast(4) : null;
+  const camera = analysis.usesCamera || analysis.readsCamera ? fast(8) : null;
+  const mapOrigin = analysis.usesLevels ? fast(4) : null;
+  // These two are pointers, and on the 6502 a pointer that is not in page zero
+  // cannot be dereferenced at all — `($nn),y` is the only indirect mode there is.
+  const self = fast(2);
+  const other = fast(2);
 
   const { ranges, total } = numberContacts(program);
   const contactBytes = Math.max(1, Math.ceil(total / 8));
-  const contacts = heap.take(contactBytes);
-  const contactsPrev = heap.take(contactBytes);
+  const contacts = fast(contactBytes);
+  const contactsPrev = fast(contactBytes);
 
   const holdCount = Math.max(1, analysis.holdSlots);
   const holdValues = heap.take(holdCount * PROP_SIZE);
@@ -382,7 +510,7 @@ export function planLayout(program: Program, analysis: Analysis): Layout {
   // This tick's list is built here and copied over the stored one at the end
   // of the pair, so the comparison is never against a half-overwritten list.
   const tileScratch = analysis.usesTiles ? heap.take(tileContactStride) : 0;
-  const tilePtr = analysis.usesLevels ? heap.take(2) : 0;
+  const tilePtr = analysis.usesLevels ? fast(2) : 0;
 
   // One cell list per object any tile rule names as a subject.
   const tileCellSlots = new Map<number, number>();
@@ -406,27 +534,29 @@ export function planLayout(program: Program, analysis: Analysis): Layout {
   const pairA = usesPairs ? heap.take(BOX_SIZE) : null;
   const pairB = usesPairs ? heap.take(BOX_SIZE) : null;
   const pairWork = usesPairs ? heap.take(4 * PROP_SIZE) : null;
-  const cull = heap.take(2);
+  const cull = fast(2);
 
-  // A colour build carries an attribute byte alongside every queued tile; a
-  // monochrome one allocates neither the fourth byte nor the scratch, so its
-  // work-RAM usage is exactly what it was before colour existed.
-  const color = program.profile.id === "gbc";
-  const queueStride = color ? 4 : 3;
-  const queue = heap.take(QUEUE_MAX * queueStride);
-  const queueCount = heap.take(1);
-  const attr = color ? heap.take(1) : 0;
-  const plot = heap.take(PLOT_MAX * 2);
-  const plotPrev = heap.take(PLOT_MAX * 2);
-  const plotCount = heap.take(1);
-  const plotPrevCount = heap.take(1);
-  const oamCount = heap.take(1);
-  const oamPrev = heap.take(1);
-  const words = heap.take(16 * 2);
+  // Hardware that attributes one cell at a time carries the attribute byte
+  // alongside every queued tile; hardware that does not allocates neither the
+  // fourth byte nor the scratch, so its work-RAM usage is exactly what it was
+  // before colour existed.
+  const queueStride = memory.cellAttributes ? 4 : 3;
+  const queue = heap.take(memory.queueMax * queueStride);
+  const queueCount = fast(1);
+  const attr = memory.cellAttributes ? fast(1) : 0;
+  const plot = heap.take(memory.plotMax * 2);
+  const plotPrev = heap.take(memory.plotMax * 2);
+  const plotCount = fast(1);
+  const plotPrevCount = fast(1);
+  const oamCount = fast(1);
+  const oamPrev = fast(1);
+  const words = fast(16 * 2);
 
   return {
+    memory,
     entities,
     used: heap.used,
+    fastUsed: quick?.used ?? 0,
     tick,
     scene,
     pending,

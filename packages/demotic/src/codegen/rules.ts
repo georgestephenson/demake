@@ -21,16 +21,7 @@
  */
 
 import { fromInt, ONE as FIXED_ONE } from "../fixed.js";
-import type { LevelFile } from "../level/parse.js";
-import type {
-  CAssignment,
-  ControlDef,
-  Edge,
-  InstanceDef,
-  Program,
-  RuleDef,
-  SceneDef,
-} from "../program.js";
+import type { CAssignment, ControlDef, Edge, InstanceDef, RuleDef } from "../program.js";
 import { ACTIONS } from "../program.js";
 
 import type { Ctx } from "./ctx.js";
@@ -49,6 +40,18 @@ import {
 import { isMutable } from "./analyze.js";
 import { BOX_SIZE, PROP_SIZE } from "./layout.js";
 import {
+  boundMax,
+  clampConst,
+  entityOf,
+  inScene,
+  nearMargins,
+  perTick,
+  ruleInScene,
+  sceneIndexOf,
+  subjectBindings,
+  type SceneCtx,
+} from "./shape.js";
+import {
   add32,
   addConst32,
   clamp32,
@@ -61,38 +64,6 @@ import {
   set32,
   sub32,
 } from "./val.js";
-
-/** Everything the emitters need about the scene being compiled. */
-export interface SceneCtx {
-  index: number;
-  def: SceneDef;
-  /** Playfield in 16.16 cells: the level's size, or the screen's. */
-  boundsW: number;
-  boundsH: number;
-  level: LevelFile | undefined;
-}
-
-/** The scene an instance belongs to, as an index. */
-function sceneIndexOf(program: Program, name: string): number {
-  const index = program.scenes.findIndex((scene) => scene.name === name);
-  return index < 0 ? 0 : index;
-}
-
-/** Is this instance part of the scene being compiled? */
-function inScene(program: Program, scene: SceneCtx, id: number): boolean {
-  const instance = program.instances[id];
-  return instance !== undefined && instance.scene === scene.def.name;
-}
-
-/** A rule runs in this scene when it names it, or names none at all. */
-function ruleInScene(rule: RuleDef, scene: SceneCtx): boolean {
-  return rule.scene === undefined || rule.scene === scene.def.name;
-}
-
-/** The compile-time entity address of a known instance. */
-function entityOf(ctx: Ctx, id: number): EntityAddr {
-  return { kind: "const", id, base: ctx.layout.entities[id] as number };
-}
 
 /**
  * Jump to `skip` when the object is not in play.
@@ -110,6 +81,8 @@ function guardVisible(ctx: Ctx, id: number, skip: string): "always" | "never" | 
   ctx.asm.jp(skip, "z");
   return "runtime";
 }
+
+export type { SceneCtx };
 
 // --- assignments -------------------------------------------------------------
 
@@ -191,14 +164,6 @@ export function emitAssignments(
     asm.ldn("a", sceneTarget);
     asm.sta(layout.pending);
   }
-}
-
-/** The interpreter clamps every write; a constant can be clamped here instead. */
-function clampConst(value: number): number {
-  const limit = 1024 * FIXED_ONE;
-  if (value > limit) return limit;
-  if (value < -limit) return -limit;
-  return value;
 }
 
 /** A trigger emitter: jumps to `falseLabel` when the rule did not fire. */
@@ -365,12 +330,6 @@ function emitRestore(ctx: Ctx, control: ControlDef, bind: Binding, base: number)
 
 // --- 3. level rules ----------------------------------------------------------
 
-/** The subject bindings a rule runs under, filtered to this scene. */
-function subjectBindings(ctx: Ctx, rule: RuleDef, scene: SceneCtx): (number | null)[] {
-  if (!rule.subjects) return [null];
-  return rule.subjects.filter((id) => inScene(ctx.program, scene, id));
-}
-
 export function emitLevelRules(ctx: Ctx, scene: SceneCtx): void {
   const { asm } = ctx;
   for (const rule of ctx.program.rules) {
@@ -393,12 +352,6 @@ export function emitLevelRules(ctx: Ctx, scene: SceneCtx): void {
 }
 
 // --- 4. integration ----------------------------------------------------------
-
-/** One tick of movement: `direction × speed ÷ fps`, floored, in that order. */
-function perTick(direction: number, speed: number, fps: number): number {
-  const velocity = Math.floor((direction * speed) / FIXED_ONE);
-  return Math.floor((velocity * FIXED_ONE) / fromInt(fps));
-}
 
 export function emitIntegrate(ctx: Ctx, scene: SceneCtx): void {
   const { asm } = ctx;
@@ -796,25 +749,6 @@ function needNearBox(ctx: Ctx): string {
   return name;
 }
 
-/**
- * Margins for {@link needNearBox}, or `undefined` where a size can change and
- * the cheap test therefore cannot be trusted.
- */
-function nearMargins(ctx: Ctx, a: number, b: number): { x: number; y: number } | undefined {
-  const cells = (id: number, prop: string): number | undefined => {
-    if (isMutable(ctx.analysis, id, prop)) return undefined;
-    const value = (ctx.program.instances[id] as InstanceDef).numbers[prop] ?? 0;
-    return Math.max(1, Math.ceil(value / FIXED_ONE));
-  };
-  const width = [cells(a, "width"), cells(b, "width")];
-  const height = [cells(a, "height"), cells(b, "height")];
-  if (width.some((v) => v === undefined) || height.some((v) => v === undefined)) return undefined;
-  const x = Math.max(...(width as number[]));
-  const y = Math.max(...(height as number[]));
-  // The margin goes in a byte and a sane object is nowhere near that big.
-  return x > 120 || y > 120 ? undefined : { x, y };
-}
-
 /** Write the staged subject's position back to the entity it came from. */
 function emitCommitPair(ctx: Ctx, a: number): void {
   const { asm, layout } = ctx;
@@ -1154,9 +1088,4 @@ export function emitCamera(ctx: Ctx, scene: SceneCtx): void {
     fromInt(profile.screenHeight) / 2,
     boundMax(scene.boundsH, profile.screenHeight),
   );
-}
-
-function boundMax(boundsFixed: number, screenCells: number): number {
-  const cells = boundsFixed / FIXED_ONE;
-  return fromInt(Math.max(0, cells - screenCells));
 }

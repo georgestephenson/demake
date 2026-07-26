@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { analyze } from "../src/codegen/analyze.js";
-import { planLayout, ENTITY_SIZE } from "../src/codegen/layout.js";
+import { GB_MEMORY, planLayout, ENTITY_SIZE } from "../src/codegen/layout.js";
 import { buildGbRom } from "../src/codegen/gb.js";
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
@@ -50,7 +50,7 @@ describe("what a program needs", () => {
   it("allocates work RAM per object, not per worst case", () => {
     const program = build(read("pong.dmt"));
     const analysis = analyze(program);
-    const layout = planLayout(program, analysis);
+    const layout = planLayout(program, analysis, GB_MEMORY);
     expect(layout.entities.length).toBe(program.instances.length);
     // Records are contiguous and sized by the property set, nothing more.
     expect((layout.entities[1] as number) - (layout.entities[0] as number)).toBe(ENTITY_SIZE);
@@ -62,7 +62,7 @@ describe("what a program needs", () => {
 
     // Breakout draws nothing, and pays for nothing.
     const plain = build(read(join("games", "breakout.dmt")));
-    expect(planLayout(plain, analyze(plain)).rng).toBeNull();
+    expect(planLayout(plain, analyze(plain), GB_MEMORY).rng).toBeNull();
   });
 
   it("knows which properties a rule can actually change", () => {
