@@ -198,13 +198,19 @@ APU. So the sound button lives in the cartridge view, the preview is silent, and
 in *Preview* there is no sound control at all — which is the honest way to say
 that a simulator has nothing to play.
 
-On a console whose driver is not written yet — the NES, until doc 13 §A5 — the
-button is *disabled* rather than silent, and the pane says why. A switch that
-turns on nothing is worse than one that is plainly unavailable.
+Both consoles the page builds for have a driver, so the button is available on
+both. A console whose driver has not been written would have it *disabled* rather
+than silent, and the pane would say why: a switch that turns on nothing is worse
+than one that is plainly unavailable.
 
 The ROM pane plays the cartridge's own sound, and every sample of it comes out of
-`@demake/chip`'s Game Boy APU — the same model the audio pipeline renders WAVs
-with, the same one the conformance suite diffs register writes against. The page
+`@demake/chip`'s model of that console's chip — the Game Boy's APU or the NES's
+2A03, whichever cartridge is running, and in both cases the same model the audio
+pipeline renders WAVs with and the same one the conformance suite diffs register
+writes against. Which model is playing follows the cartridge for the same reason
+the core does, and the stream is rebuilt against *that chip's* clock: 4.19 MHz
+against 1.79, and a sink handed the wrong one would play the game at the wrong
+speed rather than sounding wrong. The page
 computes nothing: `StreamSink` box-integrates and DC-blocks the chip's output
 exactly as the offline renderer does (`packages/chip/test/stream.test.ts` pins
 the two as bit-identical, in any chunk size), and what reaches Web Audio is a

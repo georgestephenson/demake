@@ -21,6 +21,7 @@
  * RGBDS happens to be installed, and says so when it is not.
  */
 
+import { buildGameAudio } from "@demake/audio";
 import { AsmError, GB_HEADER_OFFSETS, GB_ROM_SIZE, stampGbHeader } from "@demake/core";
 
 import { getProfile } from "../profiles.js";
@@ -146,7 +147,9 @@ export const gbBackend: Backend<EmitOptions, GbAudio> = {
   },
 
   bindAudio(program: Program, assets: AssetBytes): BoundAssets<GbAudio> {
-    const bound = bindAudio(program, assets, HRAM_AUDIO);
+    const bound = bindAudio(program, assets, {
+      build: (tracks, effects) => buildGameAudio({ tracks, effects, hram: HRAM_AUDIO }),
+    });
     const names = program.tracks.length > 0 || program.sounds.length > 0;
     const driver = bound.driver;
     const options: EmitOptions = driver

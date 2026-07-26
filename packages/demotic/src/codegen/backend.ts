@@ -169,8 +169,15 @@ export interface Backend<Art, Audio extends BoundAudioShape> {
   /** Demake the art the program names, through the image engine. */
   bindArt(program: Program, assets: AssetBytes): BoundAssets<Art>;
 
-  /** Demake the music and effects, through the audio engine. */
-  bindAudio(program: Program, assets: AssetBytes): BoundAssets<Audio>;
+  /**
+   * Demake the music and effects, through the audio engine.
+   *
+   * The layout is an argument because a driver has to be told where its state
+   * lives, and that is a plan the build has already made: the Game Boy's is at a
+   * fixed high-RAM address the allocator never hands out, the NES's is page-zero
+   * bytes the allocator chose.
+   */
+  bindAudio(program: Program, assets: AssetBytes, layout: Layout): BoundAssets<Audio>;
 
   /**
    * Refuse a game whose art does not fit the tile hardware.
@@ -272,7 +279,7 @@ export function buildRom<Art, Audio extends BoundAudioShape>(
 
   let audio: BoundAssets<Audio>;
   try {
-    audio = backend.bindAudio(program, assets);
+    audio = backend.bindAudio(program, assets, layout);
   } catch (error) {
     throw new BuildError(
       "E_AUDIO",

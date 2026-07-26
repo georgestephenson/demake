@@ -2,9 +2,11 @@
  * Playing a running cartridge's APU (doc 07 §The audio sections).
  *
  * **Web Audio is a playback device here, never a synthesizer.** Every sample
- * comes out of `@demake/chip`'s Game Boy APU — the same model the audio pipeline
- * renders WAVs with and the same one the conformance suite diffs register writes
- * against — box-integrated and DC-blocked by `@demake/chip`'s `StreamSink`,
+ * comes out of `@demake/chip`'s model of the console's own sound hardware — the
+ * Game Boy's APU or the NES's 2A03, whichever cartridge is running, and in both
+ * cases the same model the audio pipeline renders WAVs with and the same one the
+ * conformance suite diffs register writes against —
+ * box-integrated and DC-blocked by `@demake/chip`'s `StreamSink`,
  * which `packages/chip/test/stream.test.ts` pins as bit-identical to the offline
  * renderer. Nothing in this file computes a sample. Nothing else goes in the
  * graph either: a buffer source connected straight to the destination, no gain
@@ -20,8 +22,21 @@
  * minutes.
  */
 
-import { GB_CLOCK_HZ, StreamSink } from "@demake/chip";
-import type { Gameboy } from "@demake/dmg";
+import { GB_CLOCK_HZ, StreamSink, type SampleSink } from "@demake/chip";
+
+/**
+ * A machine whose chip can be listened to, whichever console it is.
+ *
+ * The player needs exactly two things of a core — somewhere to put a sink, and
+ * the rate its chip is clocked at — so that is what it asks for. Neither
+ * `@demake/dmg` nor `@demake/nes` learns about the page, and the page does not
+ * learn which of them it is holding.
+ */
+export interface Listenable {
+  audioSink: SampleSink | undefined;
+  /** The chip itself, for its master clock: 4.19 MHz on a Game Boy, 1.79 on an NES. */
+  readonly apu: { readonly clockHz: number };
+}
 
 /** The rate the page asks for; doc 07 §The audio sections says why explicitly. */
 const WANTED_RATE = 48000;
@@ -66,7 +81,9 @@ export class RomAudio {
     // is rendered at whatever rate the context ended up with. Nothing is
     // resampled either way.
     this.context = openContext();
-    this.sink = this.newSink();
+    // Until a cartridge is attached there is no chip and therefore no clock; the
+    // Game Boy's stands in and is replaced the moment one boots.
+    this.sink = this.newSink(GB_CLOCK_HZ);
     this.scratchLeft = new Float32Array(this.context.sampleRate);
     this.scratchRight = new Float32Array(this.context.sampleRate);
   }
@@ -87,13 +104,19 @@ export class RomAudio {
     return this.context.state === "running";
   }
 
-  private newSink(): StreamSink {
-    return new StreamSink(GB_CLOCK_HZ, { sampleRate: this.context.sampleRate });
+  private newSink(clockHz: number): StreamSink {
+    return new StreamSink(clockHz, { sampleRate: this.context.sampleRate });
   }
 
-  /** Point a machine's APU at this stream. Call again when the ROM changes. */
-  attach(machine: Gameboy): void {
-    this.sink = this.newSink();
+  /**
+   * Point a machine's chip at this stream. Call again when the ROM changes.
+   *
+   * The sink is rebuilt rather than reused because it is built *against the
+   * chip's clock*, and the two consoles do not share one — a Game Boy sink
+   * fed an NES's clocks would play the game at forty-three percent speed.
+   */
+  attach(machine: Listenable): void {
+    this.sink = this.newSink(machine.apu.clockHz);
     machine.audioSink = this.sink;
     this.cursor = 0;
   }
@@ -165,7 +188,7 @@ export class RomAudio {
   }
 
   /** Stop playing and let the machine run silently again. */
-  async suspend(machine: Gameboy | null): Promise<void> {
+  async suspend(machine: Listenable | null): Promise<void> {
     if (machine) machine.audioSink = undefined;
     this.sink.clear();
     this.cursor = 0;
