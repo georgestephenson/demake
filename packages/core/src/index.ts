@@ -150,3 +150,31 @@ export {
   type NesHeaderOptions,
   type NesMirroring,
 } from "./asm/nes-cart.js";
+export {
+  AsmZ80,
+  highByte,
+  lowByte,
+  type Imm8,
+  type Z80AluOp,
+  type Z80CC,
+  type Z80Index,
+  type Z80JrCC,
+  type Z80R8,
+  type Z80R16,
+  type Z80ShiftOp,
+} from "./asm/z80.js";
+export {
+  SMS_HEADER_OFFSET,
+  SMS_HEADER_SIZE,
+  SMS_IRQ_VECTOR,
+  SMS_NMI_VECTOR,
+  SMS_ORIGIN,
+  SMS_RAM_END,
+  SMS_RAM_START,
+  SMS_ROM_SIZE,
+  packSegaRom,
+  regionFor,
+  segaChecksum,
+  type SegaHeaderOptions,
+  type SegaRegion,
+} from "./asm/sms-cart.js";
