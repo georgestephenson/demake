@@ -39,7 +39,8 @@ export {
   type Fixed,
 } from "./fixed.js";
 export { parse, type ParseResult } from "./lang/parse.js";
-export { lex, type Token, type TokenKind } from "./lang/lex.js";
+export { lex, type Comment, type Token, type TokenKind } from "./lang/lex.js";
+export { highlight, type HighlightSpan, type Scope } from "./lang/highlight.js";
 export type * from "./lang/ast.js";
 export {
   findProfile,

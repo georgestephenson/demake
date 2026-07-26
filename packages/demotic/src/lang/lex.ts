@@ -19,6 +19,11 @@
  * token before it, leaving the parser to report it. Notes work the same way for
  * a string with no closing quote, which would otherwise be blamed on whatever
  * token the runaway string swallowed.
+ *
+ * Tokens carry their source offsets and comments are kept as ranges, neither of
+ * which the parser reads. Both are here so `highlight.ts` can colour source
+ * without a second scanner — and a second scanner is exactly how the `y--1`
+ * rule above would come to have two answers.
  */
 
 /** Token kinds produced by {@link lex}. */
@@ -39,6 +44,10 @@ export interface Token {
    * them, which is what tells the parser a unit was meant.
    */
   spaceBefore: boolean;
+  /** Offset of the token's first character in the source. */
+  start: number;
+  /** Offset one past its last character. */
+  end: number;
 }
 
 /** Something the lexer noticed that only the parser can judge. */
@@ -53,10 +62,26 @@ export interface LexNote {
   raw: string;
 }
 
+/**
+ * A comment, as a source range.
+ *
+ * The parser has no use for these — a comment is whitespace to it — but the
+ * highlighter does, and a second scanner that had to re-decide where a comment
+ * starts would be a second answer to `y--1` (see the note above). Keeping them
+ * here costs one array and makes the lexer the only thing in the package that
+ * knows what a comment looks like.
+ */
+export interface Comment {
+  start: number;
+  end: number;
+  line: number;
+}
+
 /** Tokens, plus whatever the lexer noticed on the way. */
 export interface LexResult {
   tokens: Token[];
   notes: LexNote[];
+  comments: Comment[];
 }
 
 const PUNCT = new Set(["(", ")", ","]);
@@ -86,19 +111,24 @@ function isDigit(c: string): boolean {
 export function lex(source: string): LexResult {
   const tokens: Token[] = [];
   const notes: LexNote[] = [];
+  const comments: Comment[] = [];
   let i = 0;
   let line = 1;
   // True when whitespace, a comment or a line start separates the next token
   // from the previous one. The start of the file counts.
   let gap = true;
+  // Where the token being pushed began. Set by each branch before it pushes,
+  // since `i` has usually already run past the token by then.
+  let from = 0;
 
   const push = (kind: TokenKind, value: string, raw = value): void => {
-    tokens.push({ kind, value, raw, line, spaceBefore: gap });
+    tokens.push({ kind, value, raw, line, spaceBefore: gap, start: from, end: from + raw.length });
     gap = false;
   };
 
   while (i < source.length) {
     const c = source[i] as string;
+    from = i;
 
     if (c === "\n") {
       push("newline", "\n");
@@ -120,6 +150,7 @@ export function lex(source: string): LexResult {
       const start = i;
       while (i < source.length && source[i] !== "\n") i += 1;
       if (!gap) notes.push({ kind: "glued-comment", line, raw: source.slice(start, i) });
+      comments.push({ start, end: i, line });
       gap = true;
       continue;
     }
@@ -175,6 +206,7 @@ export function lex(source: string): LexResult {
     i += 1;
   }
 
+  from = source.length;
   push("eof", "");
-  return { tokens, notes };
+  return { tokens, notes, comments };
 }

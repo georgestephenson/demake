@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 
 import { RomPane } from "../components/RomPane.js";
+import { SourceEditor } from "../components/SourceEditor.js";
 import {
   DEFAULT_EXAMPLE,
   DEMO_ASSETS,
@@ -73,6 +74,14 @@ function choose(event: Event, apply: (value: string) => void): void {
   select.blur();
 }
 
+/**
+ * How long the editor waits before handing the engine what you typed.
+ *
+ * Long enough that ordinary typing never triggers a rebuild mid-word, short
+ * enough that a diagnostic still feels like it is answering you.
+ */
+const SETTLE_MS = 400;
+
 /** Which of the two machines the pane is showing. */
 type View = "cartridge" | "preview" | "both";
 
@@ -85,7 +94,15 @@ const VIEWS: readonly { id: View; label: string }[] = [
 
 export function GameDemaker() {
   const [example, setExample] = useState<Example>(DEFAULT_EXAMPLE);
+  // Two copies of the text, and the distinction is the whole of the section's
+  // responsiveness. `draft` is what the editor shows and changes on every
+  // keystroke; `source` is what the *engine* has been given, and only catches up
+  // once typing pauses. Everything downstream — the compile, the diagnostics,
+  // the interpreter and the cartridge — hangs off `source`, so a keystroke costs
+  // a lex for the colours and nothing else.
+  const [draft, setDraft] = useState(DEFAULT_EXAMPLE.source);
   const [source, setSource] = useState(DEFAULT_EXAMPLE.source);
+  const typing = draft !== source;
   const [consoleId, setConsoleId] = useState("gb");
   const [constrain, setConstrain] = useState(false);
   // What the pane shows. The cartridge by default: it is the artifact, and the
@@ -109,7 +126,22 @@ export function GameDemaker() {
   const assets = useRef(new Map<string, Loaded>());
   const offscreen = useRef<HTMLCanvasElement | null>(null);
 
-  // Compilation is pure and fast; there is nothing to debounce or cancel.
+  // Typing settles into the engine after a pause.
+  //
+  // Only *typing*: everything else — picking a game, picking a console — sets
+  // both copies at once, because a dropdown is one deliberate action and waiting
+  // after it would just feel broken. The whole pipeline waits together rather
+  // than compiling live and building late, so the editor never has a keystroke
+  // competing with a compile, and the interpreter is no longer restarted from
+  // scratch on every character.
+  useEffect(() => {
+    if (draft === source) return;
+    const timer = setTimeout(() => setSource(draft), SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [draft, source]);
+
+  // Compilation is pure and fast, but it is not free, and it is not what the
+  // caret is waiting for.
   const { program, diagnostics } = useMemo(() => {
     try {
       return check(source, { profile: getProfile(consoleId), levels: DEMO_LEVELS });
@@ -221,16 +253,23 @@ export function GameDemaker() {
     const next = EXAMPLES.find((candidate) => candidate.id === id);
     if (!next) return;
     setExample(next);
+    // Both copies, so picking a game takes effect now rather than after the
+    // typing pause. Nobody drums the dropdown.
+    setDraft(next.source);
     setSource(next.source);
     setTestReport(null);
   }, []);
 
   const runSuite = useCallback(() => {
+    // The *draft*, not the settled copy, and it settles it on the way: pressing
+    // Run tests within the typing pause has to test what is on screen. Reporting
+    // on the version from 300 ms ago would be a failure nobody could reproduce.
+    setSource(draft);
     const file = parseTests(example.tests);
     const results = [];
     for (const profile of profiles) {
       try {
-        const compiled = check(source, { profile, levels: DEMO_LEVELS });
+        const compiled = check(draft, { profile, levels: DEMO_LEVELS });
         if (compiled.program) results.push(runTests(file, compiled.program));
       } catch {
         /* a console this game cannot target is reported by its own diagnostics */
@@ -241,7 +280,7 @@ export function GameDemaker() {
     setTestReport(
       `${total - failed}/${total} cases passed across ${results.length} consoles\n\n${formatResults(results)}`,
     );
-  }, [source, example]);
+  }, [draft, example]);
 
   const errors = diagnostics.filter((d) => d.severity === "error");
 
@@ -355,6 +394,7 @@ export function GameDemaker() {
               held={held}
               latched={romLatched}
               restarts={restarts}
+              pending={typing}
             />
           ) : null}
         </div>
@@ -373,13 +413,7 @@ export function GameDemaker() {
 
       <section class="pane">
         <h2>Game</h2>
-        <textarea
-          class="game-source"
-          aria-label="Demotic game source"
-          spellcheck={false}
-          value={source}
-          onInput={(e) => setSource((e.target as HTMLTextAreaElement).value)}
-        />
+        <SourceEditor value={draft} onInput={setDraft} label="Demotic game source" />
         <div class="game-diagnostics">
           {diagnostics.length === 0 ? (
             <p class="hint">No problems.</p>

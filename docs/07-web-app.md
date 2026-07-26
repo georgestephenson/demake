@@ -72,6 +72,51 @@ the d-pad must not leave a paddle running forever.
 A syntax error never blanks the preview — the parser recovers per line, and the
 page keeps running the last version that compiled.
 
+**The source is syntax-coloured, and the grammar is the engine's.**
+`@demake/demotic` exports `highlight()`, which scopes source with **TextMate
+scope names** (`keyword.control`, `string.quoted`, `constant.numeric`) — the
+convention every editor and every theme already speaks, so a theme matches on
+scope prefixes and a future `.tmLanguage` file is a translation of one table
+rather than a second grammar. Every word it knows comes from the language
+registry and every token boundary comes from the lexer, so a keyword added to the
+registry is coloured the day it is added, and the one thing a regular-expression
+highlighter always gets wrong here — `y--1` is a comment, `y - -1` is not — has
+exactly one answer. **Grammar in the engine, theme in the stylesheet**: the page
+picks the colours (the conventional ones — comments green, keywords blue, control
+flow magenta, strings red-brown, numbers pale green) and the engine never names
+one. A highlighter written in the page would be a second description of the
+language, which is the same mistake §The web app must never grow conversion logic
+exists to prevent.
+
+It is still an ordinary `<textarea>`, with a `<pre>` of colours stacked exactly
+underneath it — the conventional technique, and the one that keeps native
+editing, selection, mobile keyboards and the accessibility tree. Two things hold
+the layers together: they share one CSS grid cell so the wrapper is what scrolls
+(a scrollbar inside the textarea alone would narrow its lines and move every wrap
+point out from under the colours), and no scope may set a `font-weight` or
+`font-style`, because a bold run is a wider run in most monospace families.
+
+**Nothing downstream of the editor runs per keystroke.** The section holds two
+copies of the text: a *draft*, which the editor shows and which changes on every
+key, and the *source*, which is what the engine has been given and only catches
+up once typing pauses. The compile, the diagnostics, the interpreter and the
+cartridge all hang off the source, so a keystroke costs a lex for the colours and
+nothing else — and the interpreter is no longer restarted from scratch on every
+character. Only *typing* waits: picking a game or a console sets both copies at
+once, because a dropdown is one deliberate action and a pause after it would read
+as a fault. *Run tests* settles the draft on the way, so it can never report on
+the version from 300 ms ago.
+
+**And the pane says when it is demaking**, which is any time a cartridge is being
+built — after a typing pause, and after a game or console change alike. The ROM
+pane keeps playing the cartridge it has and shows a *demaking…* badge over the
+screen: a screen that blanked as you typed would be worse than one that is a
+version behind. The badge has to reach the screen *before* the work starts,
+because the build is synchronous and nothing repaints while it runs — so the
+build is scheduled from inside a `requestAnimationFrame` callback rather than a
+bare `setTimeout`, which is the difference between a badge and a tab that freezes
+for several seconds having shown nothing.
+
 ### Playing the real ROM in the page
 
 The preview runs the reference interpreter, which is the specification — but the

@@ -8,10 +8,15 @@ import { referenceIndex, referencePages } from "../src/docs/reference.js";
 import {
   BUTTON_NAMES,
   DIAGNOSTICS,
+  DIRECTIONS,
   EDGE_NAMES,
   FUNCTION_ARITY,
+  KEYWORD_NAMES,
+  KEYWORDS,
   PROPERTIES,
+  STATEMENT_KEYWORDS,
   STATEMENTS,
+  TRIGGERS,
   UNIT_NAMES,
 } from "../src/lang/spec.js";
 import { getProfile, profiles } from "../src/profiles.js";
@@ -157,6 +162,52 @@ describe("language registry", () => {
         example,
       ).toEqual([]);
     }
+  });
+
+  it("declares a keyword for every bare word in a syntax line", () => {
+    // A syntax line is where a new keyword first appears, so this is the check
+    // that stops one being added to the grammar without reaching the registry —
+    // and therefore without being highlighted or documented. Placeholders are
+    // in angle brackets; everything left is grammar.
+    const grammar = [...STATEMENTS.map((s) => s.syntax), ...TRIGGERS.map((t) => t.syntax)];
+    for (const syntax of grammar) {
+      const bare = syntax.replace(/<[^>]*>/g, " ").match(/[a-z]+/g) ?? [];
+      for (const word of bare) {
+        expect(
+          STATEMENT_KEYWORDS.has(word) || KEYWORD_NAMES.has(word),
+          `\`${word}\` appears in "${syntax}" but is in neither STATEMENTS nor KEYWORDS`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("uses every keyword it declares", () => {
+    // The other direction: a keyword nobody writes is a keyword that was removed
+    // from the grammar and left behind here. `as` lives inside `<assignments>`
+    // rather than in a syntax line, which is why the examples count too.
+    const written = [
+      ...STATEMENTS.flatMap((s) => [s.syntax, s.example]),
+      ...TRIGGERS.flatMap((t) => [t.syntax, t.example]),
+    ]
+      .join(" ")
+      .match(/[a-z]+/g);
+    const seen = new Set(written ?? []);
+    for (const keyword of KEYWORDS) {
+      expect(seen, `\`${keyword.name}\` is declared but never written`).toContain(keyword.name);
+    }
+  });
+
+  it("gives every compass direction a unit vector", () => {
+    // `direction` is write-only sugar for a pair, so the table is the feature.
+    // Diagonals are deliberately not normalised (doc 14): both components are 1.
+    expect(DIRECTIONS).toHaveLength(8);
+    for (const direction of DIRECTIONS) {
+      expect([-1, 0, 1], direction.name).toContain(direction.x);
+      expect([-1, 0, 1], direction.name).toContain(direction.y);
+      expect(Math.abs(direction.x) + Math.abs(direction.y), direction.name).toBeGreaterThan(0);
+    }
+    const names = DIRECTIONS.map((d) => d.name);
+    expect(new Set(names).size).toBe(names.length);
   });
 
   it("declares a unit and a builtin for everything the parser accepts", () => {

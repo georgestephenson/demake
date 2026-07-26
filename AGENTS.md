@@ -166,6 +166,8 @@ packages/dmg/        @demake/dmg — a self-hosted Game Boy core, DMG *and* CGB:
                      its output goes
 packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs 14, 15)
   src/lang/          lex → parse → flat statement AST (one statement per line, no nesting)
+  src/lang/highlight.ts  TextMate scopes for `.dmt` source — the registry's words,
+                     the lexer's boundaries, and no colours (those are the page's)
   src/compile.ts     AST + console profile → resolved Program tables (constants folded)
   src/sim.ts         the reference interpreter — the semantic definition of the language
   src/level/         .dmtl levels: parse, camera + tile collision, `stream` composition
@@ -380,6 +382,21 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   (`packages/demotic/fixtures/games/`). Each example is there for something the
   others do not exercise; `touches`, the `reaches` crossing rule and `visible`'s
   collision meaning were all found by writing one.
+- **The examples are the shop window: keep them spare** (doc 14 §The example
+  library). The web app shows a game's source beside the cartridge it built, and
+  the claim is that a whole game is sixty lines — an example whose commentary
+  outweighs its code argues the opposite. A comment earns its place only where
+  the line above it cannot be read without one (tick order, an absolute unit
+  chosen over a relative one, `touches` where `hits` looks right); everything
+  else belongs here or in doc 14, where it can be longer. Section rules stay
+  short enough not to wrap in the page's editor.
+- **The syntax highlighter is generated from the registry too.**
+  `lang/highlight.ts` scopes source with TextMate names and takes every word it
+  knows from `spec.ts` and every boundary from `lex()` — so a new keyword must be
+  added to `KEYWORDS` (a `spec.test.ts` check enforces it against the syntax
+  lines) and is then coloured for free. Never colour by regular expression: `--`
+  is a comment or two minus signs depending on what precedes it, and the lexer is
+  where that is decided once.
 - **A `.dmtl` grid is literal.** Every line after `map` is a row, blank ones
   included, and the only exception is the empty string a terminating newline
   leaves behind. Treating a blank line as a separator moves every row below it up

@@ -1,81 +1,38 @@
--- Pong — the fixture the prototype exists to run.
---
--- Nothing here names a console. Two unit systems do the work:
---
---   * absolute — `1 cell` is one 8x8 hardware cell. Use it where a thing is
---     what it is everywhere: a one-tile ball, a one-tile-tall paddle, a score
---     in the corner.
---   * relative — `15vw` is 15% of the playfield's width, `40vmin` is 40% of its
---     shorter side. Use it for anything that has to stay *balanced*: a paddle
---     must cover the same fraction of the wall, and a rally must take the same
---     number of seconds, whether the court is 20 cells wide or 40.
---
--- Sizes quantise to whole cells; speeds and positions do not.
+-- Pong. Nothing here names a console: `1 cell` is
+-- absolute, `15vw` is 15% of the playfield.
 
 start title
-
--- The opponent's aim wanders, and a wandering aim needs a generator. Fixing it
--- here rather than leaving it at the default is the same reason the runner does
--- it: the seed is part of the game, so a replay is a replay.
 seed 20260726
 
--- ---------------------------------------------------------------- title -----
+-- title ---------------------------------------
 
 scene title
 
--- The picture is demade by the image engine, at the screen's own size, into a
--- tilemap the background layer draws for nothing. It is the same fitter a
--- photograph goes through — which is the point: a title screen is the first
--- full-bleed thing this tool was ever pointed at.
 backdrop pong.title.svg
 
 create text prompt in title (x centerx - 7, y screenheight - 2, text "press a to play")
 
 when a pressed in title then scene as play
 
--- ----------------------------------------------------------------- play -----
+-- play ----------------------------------------
 
 scene play
 
--- The playfield is demade too, at the screen's own size, by the same fitter the
--- title screen went through. It is scenery and nothing else: the game reads
--- nothing from it and collides with none of it — what it costs is tiles.
 backdrop pong.play.svg
-
--- And the music is demade too, by the same arranger `demake arrange` uses: a
--- four-part MIDI fitted to the console's own chip, its tempo held. It belongs
--- to the scene, so a rally has a theme and the title screen does not.
 music rally.mid in play
 
--- Effects fire on the triggers rules already have. The bounce is the game's
--- one constant sound, so it is the one worth demaking well; the point is
--- louder and outranks it, which is what decides who gets the channel when a
--- rally ends on a wall.
 sound bounce.wav on ball hits paddle
 sound point.wav on ball hits screentop, screenbottom
 
-
--- The ball is one cell on every console — it is the smallest thing that can be
--- drawn — but it crosses the court in the same 1.8 seconds everywhere.
 create object ball (width 1 cell, height 1 cell, speed 55vmin, sprite ball.svg)
-
--- The paddle covers 15% of the wall and can traverse the court in 1.7 seconds,
--- on a Game Boy and on a Mega Drive alike.
 create object paddle (width 15vw, height 1 cell, speed 60vw, sprite paddle.svg)
 
 create ball ball1 in play (x centerx, y centery, direction southwest)
-
 create paddle paddle1 in play (x centerx, y screenheight - 1)
-
--- The opponent is slower than the player, and that is half of its handicap:
--- with the ball at 55vmin it can be beaten to a corner. Everything else about
--- it is the same object.
 create paddle paddle2 in play (x centerx, y 0, speed 32vw)
 
--- The other half of the handicap. `aim` is how far off the ball the opponent
--- means to meet it, redrawn on every bounce. It is a number with `visible 0`,
--- which is how a game holds a value nobody is meant to read: not drawn, not
--- collided with, not moved.
+-- How far off the ball the opponent aims. A number
+-- with `visible 0` is how a game holds a value.
 create number aim in play (value 0, visible 0)
 
 create text you in play (x 1, y 1, text "you:")
@@ -83,64 +40,27 @@ create number score1 in play (value 0, x 6, y 1)
 create text cpu in play (x screenwidth - 7, y 1, text "cpu:")
 create number score2 in play (value 0, x screenwidth - 2, y 1)
 
--- The player drives the bottom paddle. `on hold` restores the previous value
--- when the button comes up, so releasing left leaves the paddle stopped.
 control paddle1 left (xdirection -1) on hold
 control paddle1 right (xdirection 1) on hold
 
--- The opponent is one level-triggered rule, not a special "ai" feature.
---
--- It is *proportional*, not on/off: `xdirection` is how far away the ball is,
--- measured in ticks of the paddle's own travel, clamped to full speed. Far away
--- it runs flat out; as it arrives the number shrinks and it eases in and stops
--- exactly on target. An on/off version overshoots by a tick every tick and
--- either buzzes or, with a dead zone wide enough to stop that, moves in visible
--- blocks. This does neither.
---
--- `5vw` is the gain: with the paddle at 32vw per second and 60 ticks per second
--- it covers 0.53vw per tick, so the ball is at full chase about nine ticks out
--- and eases through the last stretch. Both numbers are relative, so the feel
--- ports unchanged.
---
--- Five percent is also one whole cell on this court, and that is not an
--- accident: a divisor that is a whole number of cells takes the runtime's byte
--- divider instead of its general one, and this rule runs every tick of every
--- rally. It is the sort of thing you only find by profiling the ROM, which is
--- why doc 14 says to.
---
--- What it chases is `ball1.centerx + aim.value`, not the ball itself. A machine
--- that tracks the centre perfectly returns every ball down the same line,
--- because the bounce angle below is measured from where on the paddle the ball
--- landed — so a perfect opponent is not only unbeatable, it is dull. The offset
--- gives it a *preferred contact point* that changes each rally, which is one
--- number and the difference between a wall and a player.
+-- The opponent, in one line: proportional, so it
+-- eases in and stops on target instead of buzzing.
 when always in play then paddle2.xdirection as clamp((ball1.centerx + aim.value - paddle2.centerx) / 5vw, -1, 1)
 
--- Walls.
 when ball hits screenleft, screenright then xdirection as flip
 when paddle hits screenleft, screenright then xdirection as 0
 
--- The bounce. `ball` and `paddle` bind to whichever two objects collided, and
--- the horizontal component comes out of where on the paddle the ball landed.
---
--- Every contact also draws the opponent a new aim for the leg after next. Nine
--- percent of the court either way is under half a paddle, so it still gets
--- there — it just gets there off-centre, and sends the ball back at an angle
--- instead of straight down the middle. Drawing it here rather than in a rule of
--- its own is deliberate: a draw is only reproducible if *when* it happens is
--- part of the game, and "on every bounce" is the simplest such moment there is.
+-- The bounce angle comes out of where on the paddle
+-- the ball landed, and every contact redraws `aim`.
 when ball hits paddle then (ydirection, xdirection, aim.value) as (flip, (ball.centerx - paddle.centerx) / paddle.width, random(-9, 9) * 1vw)
 
--- Scoring. A miss resets the ball to the middle, serving toward whoever
--- conceded, and every value in one rule is computed before any of them lands —
--- including the opponent's aim for the new rally.
 when ball hits screentop then (score1.value, ball1.x, ball1.y, ball1.ydirection, aim.value) as (score1.value + 1, centerx, centery, 1, random(-9, 9) * 1vw)
 when ball hits screenbottom then (score2.value, ball1.x, ball1.y, ball1.ydirection, aim.value) as (score2.value + 1, centerx, centery, -1, random(-9, 9) * 1vw)
 
 when score1.value reaches 10 in play then scene as gameover
 when score2.value reaches 10 in play then scene as gameover
 
--- ------------------------------------------------------------- game over ----
+-- game over -----------------------------------
 
 scene gameover
 

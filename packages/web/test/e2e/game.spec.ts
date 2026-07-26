@@ -148,11 +148,145 @@ async function painted(page: import("@playwright/test").Page): Promise<number> {
 test("reports a source error without blanking the preview", async ({ page }) => {
   await page.goto("/#section=game");
   await showPreview(page);
-  await page
-    .getByLabel("Demotic game source")
-    .fill("start play\nscene play\ncreate object d (wibble 1)");
+  const editor = page.getByLabel("Demotic game source");
+  await editor.fill("start play\nscene play\ncreate object d (wibble 1)");
   await expect(page.locator(".diag-error")).toContainText("E_UNKNOWN_PROP");
   await expect(page.locator(".game-canvas")).toBeVisible();
+
+  // The diagnostics wait for typing to stop along with everything else, so the
+  // thing worth pinning is that they *arrive* — a debounce that swallowed the
+  // last keystroke would be far worse than one that is slow — and that they go
+  // again when the mistake is fixed.
+  await editor.fill("start play\nscene play\ncreate object d (width 1)");
+  await expect(page.locator(".diag-error")).toHaveCount(0);
+});
+
+test("colours the source, and keeps the colours under the caret", async ({ page }) => {
+  await page.goto("/#section=game");
+  const editor = page.locator(".source-editor");
+  await expect(editor).toBeVisible();
+
+  // The grammar is `@demake/demotic`'s, so the scopes are the ones its tests
+  // pin. What this test owns is that they reach the DOM and get a colour.
+  for (const scope of ["comment.line.double-dash", "storage.type", "string.quoted"]) {
+    await expect(page.locator(`.source-highlight [data-scope="${scope}"]`).first()).toBeVisible();
+  }
+  const colours = await page
+    .locator(".source-highlight [data-scope]")
+    .evaluateAll((nodes) => new Set(nodes.map((n) => getComputedStyle(n).color)).size);
+  expect(colours).toBeGreaterThan(3);
+
+  // The two layers are stacked, so a difference in metrics shows up as text that
+  // has slid out from under its colours. Same box, same font, same wrap points:
+  // if they wrapped differently the textarea's content would be taller.
+  const aligned = await editor.evaluate((element) => {
+    const pre = element.querySelector(".source-highlight") as HTMLElement;
+    const area = element.querySelector("textarea") as HTMLTextAreaElement;
+    const a = getComputedStyle(pre);
+    const b = getComputedStyle(area);
+    return {
+      text: pre.textContent === `${area.value}\n`,
+      font: a.fontFamily === b.fontFamily && a.fontSize === b.fontSize,
+      leading: a.lineHeight === b.lineHeight && a.letterSpacing === b.letterSpacing,
+      wrapping: a.whiteSpace === b.whiteSpace && a.overflowWrap === b.overflowWrap,
+      width: pre.clientWidth === area.clientWidth,
+      height: area.scrollHeight <= pre.scrollHeight,
+      // Nothing may be bolded or italicised: in most monospace families that is
+      // a different advance width, and the layers would drift along the line.
+      plain: [...element.querySelectorAll("[data-scope]")].every((node) => {
+        const style = getComputedStyle(node);
+        return style.fontStyle === "normal" && style.fontWeight === a.fontWeight;
+      }),
+    };
+  });
+  expect(aligned).toEqual({
+    text: true,
+    font: true,
+    leading: true,
+    wrapping: true,
+    width: true,
+    height: true,
+    plain: true,
+  });
+
+  // Editing still works, and the colours follow what was typed.
+  await page.getByLabel("Demotic game source").fill("start play\nscene play\n-- a note");
+  await expect(
+    page.locator('.source-highlight [data-scope="comment.line.double-dash"]'),
+  ).toHaveText("-- a note");
+});
+
+test("waits for typing to stop before doing any work at all", async ({ page }) => {
+  await page.goto("/#section=game");
+  await expect(page.getByTestId("rom-canvas")).toBeVisible();
+  await expect.poll(async () => romPainted(page), { timeout: 8000 }).toBeGreaterThan(0);
+  await expect(page.getByTestId("rom-building")).toHaveCount(0);
+
+  // Nothing downstream of the editor runs per keystroke — not the compile, not
+  // the interpreter, not the cartridge. What a keystroke costs is a lex for the
+  // colours. Appending a *comment* is what makes this observable: the program is
+  // valid throughout, so the only thing that can change is when the work lands.
+  const editor = page.getByLabel("Demotic game source");
+  await editor.evaluate((element) => {
+    const area = element as HTMLTextAreaElement;
+    area.focus();
+    area.setSelectionRange(area.value.length, area.value.length);
+  });
+  await page.keyboard.type("\n-- a comment typed slowly", { delay: 60 });
+
+  // Mid-typing: the pane keeps playing the cartridge it has and says a newer one
+  // is coming. A screen that blanked as you typed would be worse than one that
+  // is a version behind.
+  await expect(page.getByTestId("rom-building")).toBeVisible();
+  await expect(page.getByTestId("rom-canvas")).toBeVisible();
+
+  // And once typing stops, everything lands together.
+  await expect(page.getByTestId("rom-building")).toHaveCount(0, { timeout: 30_000 });
+  await expect.poll(async () => romPainted(page), { timeout: 8000 }).toBeGreaterThan(0);
+  await expect(page.locator(".diag-error")).toHaveCount(0);
+});
+
+test("says it is demaking when the game or the console changes", async ({ page }) => {
+  await page.goto("/#section=game");
+  await expect(page.getByTestId("rom-canvas")).toBeVisible();
+  await expect.poll(async () => romPainted(page), { timeout: 8000 }).toBeGreaterThan(0);
+
+  // A dropdown is one deliberate action, so it takes effect at once — but the
+  // build behind it is still the whole art pipeline, and the pane has to say so.
+  //
+  // Watched rather than polled, and that is not a style choice: the build is
+  // *synchronous*, so from the moment it starts nothing in the page answers
+  // Playwright until it finishes — by which time the badge is gone. A poll can
+  // only ever catch the sliver before that, so `toBeVisible` here would be a
+  // coin toss. A `MutationObserver` callback is a microtask and runs the instant
+  // the badge is inserted, well before the work begins, so it records what
+  // happened rather than what a poll happened to see.
+  const watch = () =>
+    page.evaluate(() => {
+      const flag = { seen: false };
+      (globalThis as unknown as { __building: typeof flag }).__building = flag;
+      new MutationObserver(() => {
+        if (document.querySelector('[data-testid="rom-building"]')) flag.seen = true;
+      }).observe(document.body, { childList: true, subtree: true });
+    });
+  const sawBadge = () =>
+    page.evaluate(
+      () => (globalThis as unknown as { __building: { seen: boolean } }).__building.seen,
+    );
+
+  await watch();
+  await page.getByTestId("example-select").selectOption("caves");
+  await expect(page.getByTestId("rom-download")).toContainText("caves", { timeout: 60_000 });
+  await expect(page.getByTestId("rom-building")).toHaveCount(0, { timeout: 60_000 });
+  expect(await sawBadge(), "changing game").toBe(true);
+
+  // The colour build is the slow one — the whole `prep` tournament rather than
+  // the mono path — so this is the case the badge exists for.
+  await watch();
+  await page.getByTestId("console-select").selectOption("gbc");
+  await expect(page.getByTestId("rom-download")).toContainText(".gbc", { timeout: 60_000 });
+  await expect(page.getByTestId("rom-building")).toHaveCount(0, { timeout: 60_000 });
+  expect(await sawBadge(), "changing console").toBe(true);
 });
 
 test("drives the game from the on-screen pad on a touch device", async ({ browser }) => {

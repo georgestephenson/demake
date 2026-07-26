@@ -14,12 +14,15 @@ import {
   BUTTONS,
   CONSTANTS,
   DIAGNOSTICS,
+  DIRECTIONS,
   EDGES_SPEC,
   FUNCTIONS,
+  KEYWORDS,
   PROPERTIES,
   STATEMENTS,
   TRIGGERS,
   UNITS,
+  VALUE_WORDS,
 } from "@demake/demotic";
 
 type Topic = "statements" | "triggers" | "properties" | "expressions" | "input" | "diagnostics";
@@ -118,6 +121,16 @@ function Body({ topic }: { topic: Topic }) {
               ) : null}
             </section>
           ))}
+          <h3>Clause keywords</h3>
+          <p class="hint">
+            The words that join a statement&rsquo;s parts. Each is a keyword only where the grammar
+            expects it — <code>start</code> is also a button and <code>scene</code> is also an
+            assignment target.
+          </p>
+          <Table
+            head={["Keyword", "Meaning"]}
+            rows={KEYWORDS.map((k) => [`\`${k.name}\``, k.summary])}
+          />
         </>
       );
 
@@ -206,6 +219,21 @@ function Body({ topic }: { topic: Topic }) {
           <Table
             head={["Constant", "Value"]}
             rows={CONSTANTS.map((c) => [`\`${c.name}\``, c.summary])}
+          />
+          <h3>Compass directions</h3>
+          <p class="hint">
+            Write-only sugar for the <code>direction</code> property. Diagonals are deliberately not
+            normalised — <code>speed</code> applies per axis, which keeps the simulation in exact
+            integers.
+          </p>
+          <Table
+            head={["Direction", "xdirection", "ydirection"]}
+            rows={DIRECTIONS.map((d) => [`\`${d.name}\``, `\`${d.x}\``, `\`${d.y}\``])}
+          />
+          <h3>Value words</h3>
+          <Table
+            head={["Word", "Meaning"]}
+            rows={VALUE_WORDS.map((v) => [`\`${v.name}\``, v.summary])}
           />
         </>
       );
