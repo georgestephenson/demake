@@ -9,11 +9,33 @@
 --   * two independent level rules driving the same object (the enemy line
 --     advances and sways)
 
-start play
+start title
+
+-- ---------------------------------------------------------------- title -----
+--
+-- The artwork is demade by the image engine at the screen's own size, into a
+-- tilemap the background layer draws for nothing — the same fitter a photograph
+-- goes through. What it costs is tiles, and the compiler says so when a picture
+-- wants more than the game's own art has left.
+
+scene title
+
+backdrop shooter.title.svg
+
+create text prompt in title (x centerx - 7, y screenheight - 2, text "press a to play")
+
+when a pressed in title then scene as play
+
 
 scene play
 
-create object ship (width 1 cell, height 1 cell, speed 60vw, sprite hero.svg)
+-- The playfield is demade too, at the screen's own size, by the same fitter the
+-- title screen went through. It is scenery and nothing else: the game reads
+-- nothing from it and collides with none of it — what it costs is tiles.
+backdrop shooter.play.svg
+
+
+create object ship (width 1 cell, height 1 cell, speed 60vw, sprite fighter.svg)
 create object shot (width 1 cell, height 1 cell, speed 70vh, sprite shot.svg)
 create object alien (width 1 cell, height 1 cell, speed 8vw, sprite alien.svg)
 

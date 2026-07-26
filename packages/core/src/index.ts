@@ -38,7 +38,7 @@ export type {
 export type { DacModel } from "./image/dac.js";
 
 // --- prep --------------------------------------------------------------------
-export { prep } from "./pipeline/prep.js";
+export { prep, prepSync } from "./pipeline/prep.js";
 export {
   buildSpriteBank,
   paletteRegister,

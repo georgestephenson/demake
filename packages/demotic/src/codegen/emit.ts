@@ -44,6 +44,7 @@ import {
   collectLevels,
   emitLevelData,
   emitRuleTileTable,
+  emitMulConst16,
   emitTileAt,
   emitTileSeparate,
   emitTilesUnder,
@@ -114,6 +115,12 @@ export interface EmitOptions {
   tiles?: ReadonlyMap<string, number>;
   /** Extra tiles appended to the built-in bank. */
   extraTiles?: Uint8Array;
+  /**
+   * Demade backdrops by scene name: the map that places the picture's tiles,
+   * and the background palette its fit chose. The map holds bank indices, which
+   * may point anywhere — a picture's cells are pooled against the whole bank.
+   */
+  backdrops?: ReadonlyMap<string, { map: Uint8Array; bgp: number }>;
   /**
    * The object palette register, when converted art chose one.
    *
@@ -218,6 +225,15 @@ export function emitProgram(ctx: Ctx, options: EmitOptions = {}): void {
     }
   }
   emitInstanceDefaults(ctx);
+
+  // One demade tilemap per scene that has a backdrop: a screenful of bytes,
+  // each naming a tile in the bank the conversion filled.
+  for (const scene of scenes) {
+    const art = options.backdrops?.get(scene.def.name);
+    if (!art) continue;
+    asm.label(backdropLabel(scene));
+    asm.bytes(art.map);
+  }
 
   asm.label("TileBank");
   asm.bytes(builtinTiles());
@@ -971,7 +987,7 @@ function emitSceneRender(
   asm.lda(layout.redraw);
   asm.alu("or", "a");
   asm.jp(noRedraw, "z");
-  emitFullRedraw(ctx, scene, level);
+  emitFullRedraw(ctx, scene, level, options);
   asm.alu("xor", "a");
   asm.sta(layout.redraw);
   asm.sta(layout.plotPrevCount);
@@ -988,7 +1004,7 @@ function emitSceneRender(
     // Restore the level tiles the HUD covered last frame, then draw it again.
     // Only the objects that can change: the captions were painted with the
     // background and are still there.
-    emitHudErase(ctx, level);
+    emitHudErase(ctx, scene, level, options);
     asm.alu("xor", "a");
     asm.sta(layout.plotCount);
     emitHud(ctx, scene, "dynamic");
@@ -1035,9 +1051,51 @@ function emitPixelsFromFixed(ctx: Ctx, src: number, dst: number): void {
 }
 
 /** Draw the whole visible window, with the LCD off. */
-function emitFullRedraw(ctx: Ctx, scene: SceneCtx, level: LevelData | undefined): void {
+function emitFullRedraw(
+  ctx: Ctx,
+  scene: SceneCtx,
+  level: LevelData | undefined,
+  options: EmitOptions,
+): void {
   const { asm, layout } = ctx;
   asm.call("LcdOff");
+  // A picture brings its own palette; everything else uses the plain ramp the
+  // font and the level patterns were drawn for.
+  const backdrop = options.backdrops?.get(scene.def.name);
+  asm.ldn("a", backdrop?.bgp ?? 0b11100100);
+  asm.stha(R.BGP & 0xff);
+
+  // A backdrop is a whole screen of map bytes in order, so painting it is a
+  // block copy: one row of twenty, then twelve bytes of stride to the next.
+  // The general path below asks a routine for every one of the 360 cells to
+  // reach the same answer, and costs about as much ROM as the picture does.
+  if (backdrop && !level) {
+    const rowLoop = ctx.unique("bdRow");
+    const colLoop = ctx.unique("bdCol");
+    asm.ld16("hl", label(backdropLabel(scene)));
+    asm.ld16("de", VRAM_MAP);
+    asm.ldn("b", VIEW_H);
+    asm.label(rowLoop);
+    asm.ldn("c", VIEW_W);
+    asm.label(colLoop);
+    asm.ldaHLI();
+    asm.staDE();
+    asm.inc16("de");
+    asm.dec("c");
+    asm.jr(colLoop, "nz");
+    asm.ld("a", "e");
+    asm.aluN("add", 32 - VIEW_W);
+    asm.ld("e", "a");
+    asm.ld("a", "d");
+    asm.aluN("adc", 0);
+    asm.ld("d", "a");
+    asm.dec("b");
+    asm.jr(rowLoop, "nz");
+    if (!scrolls(ctx, scene)) emitHud(ctx, scene, "static");
+    asm.ldn("a", 0b10010011);
+    asm.stha(R.LCDC & 0xff);
+    return;
+  }
   // The map's origin is the camera's cell.
   emitOriginFromScroll(ctx, layout.words + W.mapCol * 2, layout.words + W.mapRow * 2);
   asm.lda(layout.words + W.mapCol * 2);
@@ -1049,24 +1107,22 @@ function emitFullRedraw(ctx: Ctx, scene: SceneCtx, level: LevelData | undefined)
   asm.lda(layout.words + W.mapRow * 2 + 1);
   asm.sta(layout.words + W.tileRow * 2 + 1);
 
+  // A backdrop is exactly the window, so the extra row and column a scrolling
+  // level needs would read past the end of its map.
+  const painted = options.backdrops?.has(scene.def.name) && !level ? 0 : 1;
   const rowLoop = ctx.unique("fullRow");
   const colLoop = ctx.unique("fullCol");
-  asm.ldn("b", VIEW_H + 1);
+  asm.ldn("b", VIEW_H + painted);
   asm.label(rowLoop);
   asm.push("bc");
   asm.lda(layout.words + W.firstCol * 2);
   asm.sta(layout.words + W.tileCol * 2);
   asm.lda(layout.words + W.firstCol * 2 + 1);
   asm.sta(layout.words + W.tileCol * 2 + 1);
-  asm.ldn("b", VIEW_W + 1);
+  asm.ldn("b", VIEW_W + painted);
   asm.label(colLoop);
   asm.push("bc");
-  if (level) {
-    asm.call(tileAtLabel(level));
-    emitLegendToTile(ctx, level);
-  } else {
-    asm.alu("xor", "a");
-  }
+  emitBackgroundTile(ctx, scene, level, options);
   asm.ld("c", "a");
   asm.call("VramFor");
   asm.ld("a", "c");
@@ -1085,6 +1141,75 @@ function emitFullRedraw(ctx: Ctx, scene: SceneCtx, level: LevelData | undefined)
   // The LCD comes back on with the picture already correct.
   asm.ldn("a", 0b10010011);
   asm.stha(R.LCDC & 0xff);
+}
+
+/** The label holding one scene's backdrop map. */
+function backdropLabel(scene: SceneCtx): string {
+  return `Backdrop_${scene.index}`;
+}
+
+/**
+ * `A` = the background tile that belongs at `words[tileCol], words[tileRow]`.
+ *
+ * Three kinds of scene answer it three ways — a level looks the cell up in its
+ * grid and through its legend, a backdrop reads the demade tilemap, and a scene
+ * with neither is blank — and both the full redraw and the HUD's erase pass need
+ * the same answer, so they ask here.
+ */
+function emitBackgroundTile(
+  ctx: Ctx,
+  scene: SceneCtx,
+  level: LevelData | undefined,
+  options: EmitOptions,
+): void {
+  const { asm, layout } = ctx;
+  if (level) {
+    asm.call(tileAtLabel(level));
+    emitLegendToTile(ctx, level);
+    return;
+  }
+  // A backdrop nobody supplied bytes for leaves the background blank, exactly
+  // as an object with no art draws the built-in block: absent, never half-drawn.
+  if (!options.backdrops?.has(scene.def.name)) {
+    asm.alu("xor", "a");
+    return;
+  }
+  const outside = ctx.unique("bdOutside");
+  const done = ctx.unique("bdDone");
+  // A cell off the picture is blank rather than a byte from whatever follows
+  // the map: the HUD is free to sit anywhere, including past the last column.
+  emitAtLeastConst(ctx, layout.words + W.tileCol * 2, VIEW_W, outside);
+  emitAtLeastConst(ctx, layout.words + W.tileRow * 2, VIEW_H, outside);
+  asm.lda(layout.words + W.tileRow * 2);
+  asm.ld("l", "a");
+  asm.lda(layout.words + W.tileRow * 2 + 1);
+  asm.ld("h", "a");
+  emitMulConst16(ctx, VIEW_W);
+  asm.lda(layout.words + W.tileCol * 2);
+  asm.ld("e", "a");
+  asm.lda(layout.words + W.tileCol * 2 + 1);
+  asm.ld("d", "a");
+  asm.addHL("de");
+  asm.ld16("de", label(backdropLabel(scene)));
+  asm.addHL("de");
+  asm.ld("a", "hlp");
+  asm.jp(done);
+  asm.label(outside);
+  asm.alu("xor", "a");
+  asm.label(done);
+}
+
+/** Jump to `target` when the unsigned word at `addr` is at least `value`. */
+function emitAtLeastConst(ctx: Ctx, addr: number, value: number, target: string): void {
+  const { asm } = ctx;
+  const below = ctx.unique("bdBelow");
+  asm.lda(addr + 1);
+  asm.alu("or", "a");
+  asm.jp(target, "nz");
+  asm.lda(addr);
+  asm.aluN("cp", value);
+  asm.jp(target, "nc");
+  asm.label(below);
 }
 
 /** `A = the background tile for the legend index in A`. */
@@ -1275,7 +1400,12 @@ function emitPaintEdge(ctx: Ctx, level: LevelData, isColumn: boolean, offset: nu
 }
 
 /** Put back the level tiles the HUD covered last frame. */
-function emitHudErase(ctx: Ctx, level: LevelData | undefined): void {
+function emitHudErase(
+  ctx: Ctx,
+  scene: SceneCtx,
+  level: LevelData | undefined,
+  options: EmitOptions,
+): void {
   const { asm, layout } = ctx;
   const loop = ctx.unique("eraseLoop");
   const done = ctx.unique("eraseDone");
@@ -1295,12 +1425,7 @@ function emitHudErase(ctx: Ctx, level: LevelData | undefined): void {
   asm.ldaHLI();
   asm.sta(layout.words + W.tileRow * 2 + 1);
   asm.push("hl");
-  if (level) {
-    asm.call(tileAtLabel(level));
-    emitLegendToTile(ctx, level);
-  } else {
-    asm.alu("xor", "a");
-  }
+  emitBackgroundTile(ctx, scene, level, options);
   asm.call("QueueCell");
   asm.pop("hl");
   asm.pop("bc");

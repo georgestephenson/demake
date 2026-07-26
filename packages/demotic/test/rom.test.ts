@@ -102,8 +102,14 @@ describe("what the generated code costs", () => {
     const runner = new RomRunner(program);
     const { machine, layout } = runner;
     const read = (address: number, length: number) => machine.readMemory(address, length);
-    // Settle past boot, then hold a direction so the camera scrolls and the
-    // rules that only fire while moving are in the measurement.
+    // Past the title screen first, or the figure would be the cost of drawing a
+    // still picture — which is nothing, and would report every game as fast.
+    for (let frame = 0; frame < 20; frame += 1) machine.runFrame();
+    machine.setButtons(["a"]);
+    for (let frame = 0; frame < 10; frame += 1) machine.runFrame();
+    machine.setButtons([]);
+    // Settle, then hold a direction so the camera scrolls and the rules that
+    // only fire while moving are in the measurement.
     for (let frame = 0; frame < 300; frame += 1) machine.runFrame();
     machine.setButtons(["right", "a"]);
 

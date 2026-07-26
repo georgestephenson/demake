@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- pipe — a segmented green stalk, banded so any width of it reads as one -->
+  <rect x="0" y="0" width="64" height="8" fill="#bbdec0"/>
+  <rect x="0" y="8" width="64" height="8" fill="#68b673"/>
+  <rect x="0" y="16" width="64" height="8" fill="#1d6027"/>
+  <rect x="0" y="24" width="64" height="8" fill="#1d6027"/>
+  <rect x="0" y="32" width="64" height="8" fill="#1d6027"/>
+  <rect x="0" y="40" width="64" height="8" fill="#1d6027"/>
+  <rect x="0" y="48" width="64" height="8" fill="#133e19"/>
+  <rect x="0" y="56" width="64" height="8" fill="#091c0b"/>
+</svg>

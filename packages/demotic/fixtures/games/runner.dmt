@@ -13,7 +13,23 @@
 -- reproducible only if every machine drew in the same order at the same tick,
 -- and that is a promise not worth making when a tilemap in ROM will do.
 
-start play
+start title
+
+-- ---------------------------------------------------------------- title -----
+--
+-- The artwork is demade by the image engine at the screen's own size, into a
+-- tilemap the background layer draws for nothing — the same fitter a photograph
+-- goes through. What it costs is tiles, and the compiler says so when a picture
+-- wants more than the game's own art has left.
+
+scene title
+
+backdrop runner.title.svg
+
+create text prompt in title (x centerx - 7, y screenheight - 2, text "press a to play")
+
+when a pressed in title then scene as play
+
 
 seed 20260725
 
@@ -31,7 +47,7 @@ camera follows bird1
 -- playfield is a *course*, 144 hand-drawn cells on every console, so "how fast"
 -- and "how hard" are both measured in cells: at 30vw the Mega Drive's bird would
 -- cover the same pipes at twice the speed and be playing a different game.
-create object bird (width 1 cell, height 1 cell, speed 6, sprite hero.svg)
+create object bird (width 1 cell, height 1 cell, speed 6, sprite bird.svg)
 create object prize (width 1 cell, height 1 cell, speed 0, sprite coin.svg)
 
 -- Rows 13 to 16 are the corridor every chunk leaves open: the low pipes stop

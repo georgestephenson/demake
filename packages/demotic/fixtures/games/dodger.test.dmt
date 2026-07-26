@@ -1,11 +1,18 @@
 -- Dodger — assertions about six objects, a generator, and a run you can lose.
+--
+-- Every case opens with `press a`, because every game opens on its title
+-- screen. That is one line of ceremony in exchange for the title screen
+-- being part of what the suite checks rather than something it routes
+-- around: a game that never reached `play` would fail every case below.
 
 test the rocks fall
+press a
 play 30 ticks
 expect r1.y > 0
 expect r4.y > 2
 
 test a rock that leaves the bottom is recycled to the top
+press a
 play 400 ticks
 expect r1.y < screenheight
 expect r2.y < screenheight
@@ -16,10 +23,12 @@ expect r3.y < screenheight
 -- else, and the seed is what makes "somewhere else" the same somewhere on every
 -- console and in every replay.
 test recycled rocks come back in new columns
+press a
 play 400 ticks
 expect abs(r1.x - 8vw) + abs(r2.x - 24vw) + abs(r3.x - 40vw) + abs(r4.x - 56vw) > 0
 
 test every rock stays on the playfield
+press a
 play 900 ticks
 expect r1.x >= 0
 expect r1.right <= screenwidth
@@ -27,6 +36,7 @@ expect r6.x >= 0
 expect r6.right <= screenwidth
 
 test dodging is what scores
+press a
 play 400 ticks
 expect score.value > 0
 
@@ -34,6 +44,7 @@ expect score.value > 0
 -- long enough to reach the wall, short enough to get there before the rocks
 -- spend all three lives and the scene changes underneath the assertion.
 test the ship runs to each edge and stops
+press a
 hold left for 120 ticks
 expect player.x = 0
 expect player.xdirection = 0
@@ -41,5 +52,6 @@ expect player.xdirection = 0
 -- Standing still used to be a winning strategy, because the rocks fell down
 -- columns that never moved. Now it is a losing one, on every console.
 test a ship that never moves loses all three lives
+press a
 play 1400 ticks
 expect scene gameover

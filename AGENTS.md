@@ -263,6 +263,42 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
 - **`.test.dmt` suites run on every console.** That is what makes a _balance_
   regression visible; a mechanical one would show up anywhere. Write assertions
   in the relative vocabulary or they will only be true on one machine.
+- **Every suite opens with `press a`,** because every game opens on its title
+  screen. It is one line of ceremony in exchange for the title screen being part
+  of what the suite checks rather than something it routes around.
+
+## Drawing art for the example library
+
+The fixtures are the tool's own shop window, so they are held to what the tool is
+_for_: hand them the artwork a modern game would have and let the demaker do the
+work. Generators live in the session scratchpad, not in the repo — the SVGs are
+the artefact. What is not obvious the first time:
+
+- **Never author at the smallest target's resolution.** A backdrop is fitted to
+  the screen of whichever console is being built, and those differ fourfold in
+  area (160×144 against 320×224). Art whose finest feature is one Game Boy pixel
+  hands a Mega Drive nothing to resolve. The screens here are drawn on a 640×576
+  canvas with detail down to a quarter of a Game Boy pixel.
+- **Sprites are eight pixels to a cell on _every_ one of these machines**, so
+  what a bigger console has more of is colour, not room. Put the silhouette and
+  anything that must stay legible on well-separated luminance tiers, and put the
+  modelling _between_ them: the mono fit quantises it away and loses nothing it
+  could have shown, while a Mega Drive sprite has fifteen colours and keeps it.
+  Art with four tones in it is art drawn for the smallest screen in the set.
+- **The mono fit is adaptive, so absolute colours mean less than spacing.** Two
+  colours a designer calls "light blue" and "slightly lighter blue" arrive as one
+  shade. Pick tiers, not tints.
+- **An outline decides which part of a sprite disappears.** The sprite path
+  auto-contrasts, so an asset's darkest colour lands on the darkest shade
+  whatever its absolute lightness. Against a white sky a dark outline _is_ the
+  silhouette; against black it is the silhouette going missing, and the rim has
+  to be the light one with the shading turned inward.
+- **A backdrop's cost is its variety, not its size.** Flat areas and repeated
+  motifs collapse to one tile; anything off the cell grid does not. Aligning four
+  clouds to the same phase is the difference between four tiles and forty, and
+  `E_BACKDROP_TILES` is how you find out you were wrong.
+- **Round shapes are the one thing not to draw.** Rectangles survive a demake;
+  a circle eight pixels across is four pixels and a guess about the other twelve.
 
 ## Working on the console backend
 

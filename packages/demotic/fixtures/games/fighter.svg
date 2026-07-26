@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- fighter — the cyan ship beneath three ranks on the SHOOTER cover -->
+  <rect x="24" y="0" width="16" height="8" fill="#def7ff"/>
+  <rect x="24" y="8" width="16" height="8" fill="#def7ff"/>
+  <rect x="16" y="16" width="8" height="8" fill="#def7ff"/>
+  <rect x="24" y="16" width="16" height="8" fill="#46d2ff"/>
+  <rect x="40" y="16" width="8" height="8" fill="#def7ff"/>
+  <rect x="16" y="24" width="8" height="8" fill="#def7ff"/>
+  <rect x="24" y="24" width="16" height="8" fill="#2884a2"/>
+  <rect x="40" y="24" width="8" height="8" fill="#def7ff"/>
+  <rect x="8" y="32" width="8" height="8" fill="#def7ff"/>
+  <rect x="16" y="32" width="8" height="8" fill="#46d2ff"/>
+  <rect x="24" y="32" width="16" height="8" fill="#2884a2"/>
+  <rect x="40" y="32" width="8" height="8" fill="#46d2ff"/>
+  <rect x="48" y="32" width="8" height="8" fill="#def7ff"/>
+  <rect x="8" y="40" width="8" height="8" fill="#def7ff"/>
+  <rect x="16" y="40" width="8" height="8" fill="#46d2ff"/>
+  <rect x="24" y="40" width="16" height="8" fill="#2884a2"/>
+  <rect x="40" y="40" width="8" height="8" fill="#46d2ff"/>
+  <rect x="48" y="40" width="8" height="8" fill="#def7ff"/>
+  <rect x="0" y="48" width="16" height="8" fill="#def7ff"/>
+  <rect x="16" y="48" width="8" height="8" fill="#46d2ff"/>
+  <rect x="24" y="48" width="16" height="8" fill="#2884a2"/>
+  <rect x="40" y="48" width="8" height="8" fill="#46d2ff"/>
+  <rect x="48" y="48" width="16" height="8" fill="#def7ff"/>
+  <rect x="0" y="56" width="8" height="8" fill="#def7ff"/>
+  <rect x="16" y="56" width="8" height="8" fill="#ffbc7b"/>
+  <rect x="40" y="56" width="8" height="8" fill="#ffbc7b"/>
+  <rect x="56" y="56" width="8" height="8" fill="#def7ff"/>
+</svg>

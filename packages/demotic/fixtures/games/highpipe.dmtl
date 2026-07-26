@@ -3,37 +3,39 @@
 -- The mirror of lowpipe.dmtl, and with it the whole difficulty curve of a
 -- flapper: a small vocabulary and an order nobody wrote down.
 
-tile #  pipe   solid  brick.svg
-tile _  ground solid  ledge.svg
+tile #  pipe   solid  pipe.svg
+tile _  ground solid  ground.svg
+tile o  cloud         cloud.svg
+tile .  sky           sky.svg
 
 map
-  ##
-  ##
-  ##
-  ##
-  ##
-  ##
-  ##
-  ##
-  ##
-  ##
-  ##
-  ##
-  ##
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+..##..
+..##..
+..##..
+..##..
+..##..
+..##..
+..##..
+..##..
+..##..
+..##..
+..##..
+..##..
+..##..
+......
+......
+......
+......
+......
+......
+...o..
+......
+o.....
+......
+......
+......
+......
+......
+......
 ______
 ______

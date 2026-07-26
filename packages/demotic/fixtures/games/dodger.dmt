@@ -10,7 +10,23 @@
 --   * objects at staggered speeds, so the per-scanline count keeps changing
 --   * a score, a target to reach, and a life count to lose it with
 
-start play
+start title
+
+-- ---------------------------------------------------------------- title -----
+--
+-- The artwork is demade by the image engine at the screen's own size, into a
+-- tilemap the background layer draws for nothing — the same fitter a photograph
+-- goes through. What it costs is tiles, and the compiler says so when a picture
+-- wants more than the game's own art has left.
+
+scene title
+
+backdrop dodger.title.svg
+
+create text prompt in title (x centerx - 7, y screenheight - 2, text "press a to play")
+
+when a pressed in title then scene as play
+
 
 -- One number decides every column every rock ever falls down. Change it and the
 -- run is different; leave it and a replay is a replay, on every console.
@@ -18,7 +34,13 @@ seed 20260726
 
 scene play
 
-create object ship (width 1 cell, height 1 cell, speed 65vw, sprite hero.svg)
+-- The playfield is demade too, at the screen's own size, by the same fitter the
+-- title screen went through. It is scenery and nothing else: the game reads
+-- nothing from it and collides with none of it — what it costs is tiles.
+backdrop dodger.play.svg
+
+
+create object ship (width 1 cell, height 1 cell, speed 65vw, sprite ship.svg)
 create object rock (width 1 cell, height 1 cell, sprite rock.svg)
 
 create ship player in play (x centerx, y screenheight - 2)

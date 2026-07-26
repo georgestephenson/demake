@@ -1,6 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 64" width="128" height="64">
-  <rect x="0" y="0" width="128" height="64" fill="#c1553f"/>
-  <rect x="0" y="0" width="128" height="8" fill="#e58b73"/>
-  <rect x="0" y="28" width="128" height="8" fill="#6d2a1d"/>
-  <rect x="0" y="56" width="128" height="8" fill="#6d2a1d"/>
+  <!-- brick — two courses to a brick, as on the BREAKOUT cover -->
+  <rect x="0" y="0" width="128" height="8" fill="#fcf0ec"/>
+  <rect x="0" y="8" width="128" height="8" fill="#efa188"/>
+  <rect x="0" y="16" width="128" height="8" fill="#cf5d39"/>
+  <rect x="0" y="24" width="128" height="8" fill="#5b2919"/>
+  <rect x="0" y="32" width="128" height="8" fill="#fcf0ec"/>
+  <rect x="0" y="40" width="128" height="8" fill="#efa188"/>
+  <rect x="0" y="48" width="128" height="8" fill="#cf5d39"/>
+  <rect x="0" y="56" width="128" height="8" fill="#5b2919"/>
 </svg>

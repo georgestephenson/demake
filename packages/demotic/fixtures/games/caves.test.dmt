@@ -4,18 +4,26 @@
 -- is 60x30 on every console, but the *view* is 20x18 on a Game Boy and 40x28 on
 -- a Mega Drive, so anything said in absolute screen terms would only be true on
 -- one machine. `levelwidth`/`screenwidth` say it once and mean it everywhere.
+--
+-- Every case opens with `press a`, because every game opens on its title
+-- screen. That is one line of ceremony in exchange for the title screen
+-- being part of what the suite checks rather than something it routes
+-- around: a game that never reached `play` would fail every case below.
 
 test the hero falls onto the cavern floor and stays there
+press a
 play 240 ticks
 expect player.ydirection <= 0.05
 expect player.bottom = levelheight - 2
 
 test the camera starts clamped into the bottom-left corner
+press a
 play 2 ticks
 expect camera.x = 0
 expect camera.y = levelheight - screenheight
 
 test running right scrolls the view, and never past the level
+press a
 hold right for 120 ticks
 expect camera.x > 0
 expect camera.x <= levelwidth - screenwidth
@@ -24,6 +32,7 @@ expect camera.x <= levelwidth - screenwidth
 -- surely as the number is — a counter that keeps up with the view while its
 -- caption is left behind in the cave is worse than neither.
 test the hud follows the camera rather than the world
+press a
 hold right for 120 ticks
 expect scoretag.x = camera.x + 1
 expect scoretag.y = camera.y + 1
@@ -31,6 +40,7 @@ expect score.x = camera.x + 8
 expect score.y = camera.y + 1
 
 test the spike pit is fatal, whichever console you fall into it on
+press a
 hold right for 300 ticks
 expect scene gameover
 
@@ -38,12 +48,14 @@ expect scene gameover
 -- cannot clear three cells makes most of the cavern scenery. Measured at the
 -- apex, which is 37 ticks after the press on every console.
 test a jump from the floor clears the first step of the climb
+press a
 play 240 ticks
 press a
 play 40 ticks
 expect player.bottom <= levelheight - 5
 
 test the hero cannot jump again in mid air
+press a
 play 240 ticks
 press a
 play 20 ticks
@@ -59,6 +71,7 @@ expect player.ydirection > -1
 -- a-second hero on a sixty-by-thirty level takes the same ticks to reach the
 -- same ledge on every console — so this is one climb, checked seven times.
 test a collected coin is gone for good
+press a
 play 240 ticks
 hold right for 42 ticks
 press a

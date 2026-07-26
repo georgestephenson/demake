@@ -346,7 +346,12 @@ describe("pong", () => {
     for (const id of ["gb", "gbc", "nes", "sms", "gg", "md", "snes"]) {
       const program = compile(PONG, { profile: getProfile(id) });
       expect(program.entryScene).toBe("title");
-      expect(program.assets).toEqual(["ball.svg", "paddle.svg"]);
+      expect([...program.assets].sort()).toEqual([
+        "ball.svg",
+        "paddle.svg",
+        "pong.play.svg",
+        "pong.title.svg",
+      ]);
     }
   });
 

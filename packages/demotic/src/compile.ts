@@ -185,9 +185,17 @@ class Compiler {
   private readonly sceneOrder: string[] = [];
   private readonly sceneSet = new Set<string>();
   private entry: string | undefined;
+  /**
+   * The scene whose statement is being compiled, when there is one — what
+   * `levelwidth`/`levelheight` fold against. Set around each scene-owned
+   * statement and cleared afterwards, because a class declaration or a rule with
+   * no `in` belongs to no scene and has to fall back to the entry.
+   */
+  private foldScene: string | undefined;
 
   private readonly levelsByScene = new Map<string, LevelFile>();
   private readonly cameraByScene = new Map<string, number>();
+  private readonly backdropByScene = new Map<string, string>();
   private readonly tileNames = new Set<string>();
   private seed = DEFAULT_SEED;
 
@@ -229,6 +237,21 @@ class Compiler {
     for (const statement of statements) {
       if (statement.kind === "scene") {
         currentScene = statement.name;
+        continue;
+      }
+      if (statement.kind === "backdrop") {
+        const target = this.resolveScene(statement.scene, currentScene, statement.line);
+        if (target === undefined) continue;
+        if (this.backdropByScene.has(target)) {
+          this.error(
+            statement.line,
+            "E_DUPLICATE_BACKDROP",
+            `scene '${target}' already has a backdrop`,
+            "a scene has one background",
+          );
+          continue;
+        }
+        this.backdropByScene.set(target, statement.file);
         continue;
       }
       if (statement.kind !== "level" && statement.kind !== "stream") continue;
@@ -461,7 +484,9 @@ class Compiler {
 
       const numbers: Record<string, Fixed> = { ...FIXED_DEFAULTS, ...(klass?.numbers ?? {}) };
       const strings: Record<string, string> = { ...(klass?.strings ?? {}) };
+      this.foldScene = scene;
       this.applyProps(statement.props, numbers, strings);
+      this.foldScene = undefined;
 
       const instance: InstanceDef = {
         id: this.instances.length,
@@ -684,9 +709,22 @@ class Compiler {
 
   compileRules(statements: readonly Stmt[]): RuleDef[] {
     const rules: RuleDef[] = [];
+    // Lexically, the way an author reads the file: a rule written under
+    // `scene play` folds `levelheight` against play's playfield, whether or not
+    // it also says `in play`. A rule's *runtime* scene is settled later, from
+    // the objects it names, and is no use to a constant that has to be a number
+    // before any of that is known.
+    let currentScene: string | undefined;
     for (const statement of statements) {
+      if (statement.kind === "scene") {
+        currentScene = statement.name;
+        continue;
+      }
       if (statement.kind !== "when") continue;
+      const scene = statement.scene ?? currentScene;
+      this.foldScene = scene !== undefined && this.sceneSet.has(scene) ? scene : undefined;
       const rule = this.compileRule(statement, rules.length);
+      this.foldScene = undefined;
       if (rule) rules.push(rule);
     }
     return rules;
@@ -1142,13 +1180,15 @@ class Compiler {
    * Console-dependent constants.
    *
    * `levelwidth`/`levelheight` are the playfield, which is the level's size when
-   * a scene has one. They fold to the *entry* scene's bounds, because a constant
-   * has to have one value at compile time; a game with differently-sized scenes
-   * should read them per scene through the level itself.
+   * a scene has one — so they fold against *the scene the statement is in*, the
+   * same bounds `checkGeometry` measures that statement's object against. They
+   * used to fold against the entry scene, which agreed with this exactly as long
+   * as the game began on the scene with the level in it; the day a game gained a
+   * title screen, every `levelheight` in the cavern silently became eighteen.
    */
   private screenConstant(name: string): Fixed | undefined {
     if (name === "levelwidth" || name === "levelheight") {
-      const bounds = this.boundsFor(this.entry ?? (this.sceneOrder[0] as string));
+      const bounds = this.boundsFor(this.foldScene ?? this.entry ?? (this.sceneOrder[0] as string));
       return fromInt(name === "levelwidth" ? bounds.width : bounds.height);
     }
     return screenConstant(name, this.profile);
@@ -1162,19 +1202,35 @@ class Compiler {
     const scenes: SceneDef[] = this.sceneOrder.map((name) => {
       const level = this.levelsByScene.get(name);
       const cameraTarget = this.cameraByScene.get(name);
+      const backdrop = this.backdropByScene.get(name);
       return {
         name,
         instanceIds: this.instances.filter((i) => i.scene === name).map((i) => i.id),
         ...(level === undefined ? {} : { level }),
         bounds: boundsOf(level, this.profile),
         ...(cameraTarget === undefined ? {} : { cameraTarget }),
+        ...(backdrop === undefined ? {} : { backdrop }),
       };
     });
+
+    // A scene's background is either a playfield or a picture; both would be two
+    // things claiming the same layer, so the compiler says which one to drop.
+    for (const scene of scenes) {
+      if (scene.level && scene.backdrop) {
+        this.error(
+          1,
+          "E_BACKDROP_WITH_LEVEL",
+          `scene '${scene.name}' has both a level and a backdrop`,
+          "a level *is* the background; a backdrop is for scenes that have none",
+        );
+      }
+    }
 
     const assets = [
       ...new Set([
         ...this.instances.map((i) => i.strings["sprite"]).filter((s): s is string => !!s),
         ...[...this.levelsByScene.values()].flatMap((level) => levelAssets(level)),
+        ...this.backdropByScene.values(),
       ]),
     ].sort();
 

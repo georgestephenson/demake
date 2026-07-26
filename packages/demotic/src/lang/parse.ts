@@ -209,6 +209,8 @@ function parseStatement(cursor: Cursor): Stmt {
       return parseSeed(cursor);
     case "camera":
       return parseCamera(cursor);
+    case "backdrop":
+      return parseBackdrop(cursor);
     case "create":
       return parseCreate(cursor);
     case "control":
@@ -219,7 +221,7 @@ function parseStatement(cursor: Cursor): Stmt {
       throw cursor.fail(
         "E_UNKNOWN_STATEMENT",
         `unknown statement '${token.raw}'`,
-        "statements start with start, seed, scene, level, stream, camera, create, control, or when",
+        "statements start with start, seed, scene, level, stream, backdrop, camera, create, control, or when",
       );
   }
 }
@@ -324,6 +326,16 @@ function parseCamera(cursor: Cursor): Stmt {
   let scene: string | undefined;
   if (cursor.eatKeyword("in")) scene = cursor.expectIdent("a scene name").value;
   return { kind: "camera", target: target.value, ...(scene ? { scene } : {}), line };
+}
+
+/** `backdrop <file> [in <scene>]` */
+function parseBackdrop(cursor: Cursor): Stmt {
+  const line = cursor.peek().line;
+  cursor.next();
+  const file = cursor.expectIdent("an image filename");
+  let scene: string | undefined;
+  if (cursor.eatKeyword("in")) scene = cursor.expectIdent("a scene name").value;
+  return { kind: "backdrop", file: file.raw, ...(scene ? { scene } : {}), line };
 }
 
 function parseCreate(cursor: Cursor): Stmt {

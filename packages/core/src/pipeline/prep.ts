@@ -134,8 +134,23 @@ function computeBackdrop(work: ReturnType<typeof normalize>, space: HwColorSpace
   return best ?? space.snapLinear(0, 0, 0);
 }
 
-/** Convert an arbitrary source image into a hardware-compliant image (doc 09). */
+/**
+ * Convert an arbitrary source image into a hardware-compliant image (doc 09).
+ *
+ * `prep` is the entry point almost everything uses; it is `async` so that a
+ * caller can `await` it uniformly alongside work that really does suspend.
+ * Nothing in the conversion itself does — it is deterministic arithmetic from
+ * end to end — so {@link prepSync} is the same function without the wrapper, for
+ * callers that cannot be asynchronous. `demake build` is one: a ROM is built
+ * synchronously so the browser and the CLI produce the same bytes through the
+ * same call, and a title screen is demade inside that call.
+ */
 export async function prep(input: Uint8Array, options: PrepOptions): Promise<PrepResult> {
+  return prepSync(input, options);
+}
+
+/** {@link prep} without the promise. Same conversion, same bytes. */
+export function prepSync(input: Uint8Array, options: PrepOptions): PrepResult {
   const spec = getConsole(options.console);
   const source = decodeImage(input);
   const analysis = analyze(source);

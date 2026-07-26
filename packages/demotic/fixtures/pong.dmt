@@ -23,13 +23,25 @@ seed 20260726
 
 scene title
 
-create text prompt in title (x centerx - 7, y centery, text "press a to play")
+-- The picture is demade by the image engine, at the screen's own size, into a
+-- tilemap the background layer draws for nothing. It is the same fitter a
+-- photograph goes through — which is the point: a title screen is the first
+-- full-bleed thing this tool was ever pointed at.
+backdrop pong.title.svg
+
+create text prompt in title (x centerx - 7, y screenheight - 2, text "press a to play")
 
 when a pressed in title then scene as play
 
 -- ----------------------------------------------------------------- play -----
 
 scene play
+
+-- The playfield is demade too, at the screen's own size, by the same fitter the
+-- title screen went through. It is scenery and nothing else: the game reads
+-- nothing from it and collides with none of it — what it costs is tiles.
+backdrop pong.play.svg
+
 
 -- The ball is one cell on every console — it is the smallest thing that can be
 -- drawn — but it crosses the court in the same 1.8 seconds everywhere.

@@ -169,7 +169,7 @@ function emitAtLeast16(ctx: Ctx, addr: number, value: number, target: string): v
 }
 
 /** `hl *= value`, with the constant expanded into doublings and adds. */
-function emitMulConst16(ctx: Ctx, value: number): void {
+export function emitMulConst16(ctx: Ctx, value: number): void {
   const { asm } = ctx;
   if (value === 0) {
     asm.ld16("hl", 0);

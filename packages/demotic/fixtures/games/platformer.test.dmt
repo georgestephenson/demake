@@ -3,18 +3,26 @@
 -- Written in the relative vocabulary as always, so one suite covers every
 -- console: the shelves are four cells apart everywhere, but the hero's jump is
 -- a multiple of its own `speed`, which is a share of the playfield's width.
+--
+-- Every case opens with `press a`, because every game opens on its title
+-- screen. That is one line of ceremony in exchange for the title screen
+-- being part of what the suite checks rather than something it routes
+-- around: a game that never reached `play` would fail every case below.
 
 test gravity pulls the hero down
+press a
 play 20 ticks
 expect player.ydirection > 0
 expect player.y > 2
 
 test the hero lands on the floor and stops falling
+press a
 play 240 ticks
 expect player.ydirection <= 0.05
 expect player.bottom <= screenheight
 
 test jumping from the ground lifts the hero
+press a
 play 240 ticks
 press a
 play 6 ticks
@@ -24,6 +32,7 @@ expect player.ydirection < 0
 -- course is scenery. Measured at the apex, which is 37 ticks after the press on
 -- every console because gravity and the impulse are both in `speed`.
 test a jump clears the step between shelves
+press a
 play 240 ticks
 press a
 play 40 ticks
@@ -33,6 +42,7 @@ expect player.bottom <= screenheight - 5
 -- pressing it again in mid-air renewed the impulse, and the hero climbed the sky
 -- one press at a time. The second press here must do nothing at all.
 test the hero cannot jump again in mid air
+press a
 play 240 ticks
 press a
 play 20 ticks
@@ -41,6 +51,7 @@ play 2 ticks
 expect player.ydirection > -1
 
 test the hero runs to the left edge and stops
+press a
 hold left for 300 ticks
 expect player.x = 0
 expect player.xdirection = 0
@@ -48,6 +59,7 @@ expect player.xdirection = 0
 -- `visible 0` is inert: not drawn, not collided with, not moved. So a coin
 -- scores exactly once however long the hero stands in it.
 test a collected coin is gone for good
+press a
 play 240 ticks
 hold right for 90 ticks
 expect score.value = 1

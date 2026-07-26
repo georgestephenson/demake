@@ -469,6 +469,57 @@ A rule reading the camera sees where the view was when the tick began, so a HUD
 trails by one tick while the world is moving and lands on the view the moment it
 stops. Invisible in play, and worth knowing before reading a trace.
 
+### Backgrounds that are pictures: `backdrop`
+
+A scene's background layer is either a playfield or a picture. `backdrop` names
+the picture:
+
+```
+scene title
+backdrop pong.title.svg
+```
+
+It is scenery and nothing else — nothing collides with it, no rule reads it, and
+it has no cells to name — so it is the one statement in the language whose entire
+effect is on the screen. A scene may have a level or a backdrop and not both,
+because both are the same hardware layer, and the compiler says which one to drop
+rather than picking.
+
+What makes it worth having is *where the pixels come from*. The file goes through
+the **image pipeline** — `prep`, at the console's own screen size, with the same
+fitter a photograph gets — and comes back as deduplicated tiles plus a tilemap.
+That is not a second art path bolted onto the game backend; it is the demaker
+this whole tool is about, pointed at a title screen. A game's first screen is
+therefore full-bleed artwork demade by the same code as everything else, and the
+proof is that it costs a game nothing at run time: the background layer draws a
+tilemap for free.
+
+What it costs is **tiles**, and a console has a fixed number of them shared
+between backgrounds and objects. A picture is as expensive as it is *varied*:
+flat areas and repeated motifs collapse to one tile each, and detail that does
+not land on the cell grid does not. Backdrops are pooled against the whole bank,
+so a cell already drawn by the font, by a sprite, or by another scene's picture
+is pointed at rather than stored twice. When the total still does not fit, the
+build stops and names the number — a title screen with holes in it is not a
+smaller title screen, it is a bug.
+
+Two things follow for anyone drawing one, and both are properties of the
+hardware rather than of taste:
+
+- **Author well above the smallest screen.** A backdrop is fitted to the console
+  being built for, and those screens differ by four times in area — 160×144 on a
+  Game Boy against 320×224 on a Mega Drive. Art whose smallest feature is one
+  Game Boy pixel gives the bigger machine nothing to resolve. The example
+  library's screens are drawn on a 640×576 canvas with detail down to a quarter
+  of a Game Boy pixel for exactly this reason.
+- **Keep the playfield at the ends of the ramp.** An object's colour 0 is
+  transparency, so the object palette is the three *darkest* shades (doc 15
+  §The conversion path). A background in the middle of the ramp is a background
+  objects vanish into; sky should be the lightest shade and space the darkest.
+  For the same reason a scene that draws its HUD on the background layer needs a
+  lit band where the counters go — the font's ink is the darkest shade, and a
+  status bar is what that constraint looks like when you take it seriously.
+
 ### Composed levels: `stream`
 
 An endless scroller is not an endless level. It is a short vocabulary of

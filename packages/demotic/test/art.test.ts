@@ -30,11 +30,15 @@ const pongAssets = () =>
   new Map([
     ["ball.svg", bytes("ball.svg")],
     ["paddle.svg", bytes("paddle.svg")],
+    ["pong.title.svg", bytes("pong.title.svg")],
+    ["pong.play.svg", bytes("pong.play.svg")],
   ]);
 
 describe("what art a program needs", () => {
   it("asks for each asset once, at the box the game gives it", () => {
     const requests = artRequests(pong());
+    // Backdrops are not in here: a picture is bound per *scene*, at the screen's
+    // own size, so it has no box for this list to carry.
     expect(requests.map((request) => request.name).sort()).toEqual(["ball.svg", "paddle.svg"]);
     const ball = requests.find((request) => request.name === "ball.svg");
     const paddle = requests.find((request) => request.name === "paddle.svg");
@@ -50,8 +54,8 @@ describe("what art a program needs", () => {
       levels: { "cavern.dmtl": text(join("games", "cavern.dmtl")) },
     });
     const requests = artRequests(caves);
-    const brick = requests.find((request) => request.name === "brick.svg");
-    expect(brick?.kind).toBe("tile");
+    const wall = requests.find((request) => request.name === "rockwall.svg");
+    expect(wall?.kind).toBe("tile");
     // Sprites and tiles are converted separately: an object's index 0 is
     // transparency and a tile's is a colour.
     expect(requests.some((request) => request.kind === "sprite")).toBe(true);
@@ -72,7 +76,12 @@ describe("binding art to a build", () => {
 
   it("names art it was not given rather than drawing something else silently", () => {
     const bound = bindArt(pong(), new Map());
-    expect(bound.missing.sort()).toEqual(["ball.svg", "paddle.svg"]);
+    expect(bound.missing.sort()).toEqual([
+      "ball.svg",
+      "paddle.svg",
+      "pong.play.svg",
+      "pong.title.svg",
+    ]);
     expect(bound.sprites).toBeUndefined();
   });
 

@@ -23,10 +23,14 @@ import { bindArt } from "./art.js";
 import { AsmError } from "./asm.js";
 import { Ctx } from "./ctx.js";
 import { emitProgram, type EmitOptions, type SpriteArt } from "./emit.js";
+import { BUILTIN_TILES } from "../rom/graphics.js";
 import { LayoutError, planLayout, type Layout } from "./layout.js";
 
 /** Bytes in a mapper-less Game Boy cartridge. */
 export const ROM_SIZE = 0x8000;
+
+/** Tiles the video hardware addresses at once, shared by background and objects. */
+export const TILE_SLOTS = 256;
 
 /** Header field offsets, for callers that read a built ROM back. */
 export const HEADER_OFFSETS = {
@@ -135,6 +139,20 @@ export function buildGbRom(program: Program, options: RomOptions = {}): BuiltRom
   // Explicit options win over converted art, so a caller can hand over a bank
   // it built itself; anything it left out comes from the conversion.
   const art = bindArt(program, options.assets ?? new Map());
+  // The bank is one 256-entry table shared by the background and the objects,
+  // so a title screen's tiles are what is left after the game's own art. Art
+  // that does not fit is named here rather than drawn with holes in it.
+  const tiles = BUILTIN_TILES + art.tiles8;
+  if (tiles > TILE_SLOTS) {
+    const backdrops = program.scenes.filter((scene) => scene.backdrop !== undefined).length;
+    throw new BuildError(
+      "E_BACKDROP_TILES",
+      `this game needs ${tiles} tiles and the Game Boy has ${TILE_SLOTS}`,
+      backdrops > 0
+        ? "a backdrop costs one tile per distinct 8x8 cell — flatter areas and repeated motifs cost fewer"
+        : "fewer objects, or smaller ones; every distinct 8x8 cell of art is a tile",
+    );
+  }
   const emitOptions: EmitOptions = { ...art, ...stripUndefined(options) };
 
   const ctx = new Ctx(program, analysis, layout, getProfile(program.profile.id), 0);

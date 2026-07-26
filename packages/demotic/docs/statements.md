@@ -95,6 +95,20 @@ stream course from gap.dmtl, low.dmtl, high.dmtl 24 wide
 
 An endless scroller is not an endless level — it is a short vocabulary of hand-made pieces played in an order nobody wrote down. Composition happens at compile time from the program's `seed`, so the result is an ordinary level: the simulator, the camera and a console runtime all see a tilemap and need no notion of streaming. Chunks share one legend, and must agree on the dimension they are not laid along.
 
+## `backdrop`
+
+Fills a scene's background with a demade picture.
+
+```
+backdrop <file> [in <scene>]
+```
+
+```
+backdrop title.svg
+```
+
+The picture goes through the *image* pipeline — the same fitter `prep` uses — so a title screen is demade exactly the way a photograph is, into tiles and a tilemap the background layer draws for free. It is scenery and nothing else: nothing collides with it, nothing reads it, and a scene that scrolls has a level instead. What it costs is tiles, and a console has a fixed number of them; art that needs more than are left over is a build error naming the number, because the alternative is a title screen with holes in it.
+
 ## `camera`
 
 Keeps the viewport centred on an object, clamped inside the level.

@@ -31,29 +31,37 @@ import lowpipeLevel from "@demake/demotic/fixtures/games/lowpipe.dmtl?raw";
 import highpipeLevel from "@demake/demotic/fixtures/games/highpipe.dmtl?raw";
 import pipemidLevel from "@demake/demotic/fixtures/games/pipemid.dmtl?raw";
 
-import ballUrl from "@demake/demotic/fixtures/ball.svg?url";
-import paddleUrl from "@demake/demotic/fixtures/paddle.svg?url";
-import brickUrl from "@demake/demotic/fixtures/games/brick.svg?url";
-import heroUrl from "@demake/demotic/fixtures/games/hero.svg?url";
-import coinUrl from "@demake/demotic/fixtures/games/coin.svg?url";
-import ledgeUrl from "@demake/demotic/fixtures/games/ledge.svg?url";
-import rockUrl from "@demake/demotic/fixtures/games/rock.svg?url";
-import shotUrl from "@demake/demotic/fixtures/games/shot.svg?url";
-import alienUrl from "@demake/demotic/fixtures/games/alien.svg?url";
-import spikesUrl from "@demake/demotic/fixtures/games/spikes.svg?url";
-import exitUrl from "@demake/demotic/fixtures/games/exit.svg?url";
+/**
+ * Every piece of art the library ships, found rather than listed.
+ *
+ * A hand-written list of imports is the drift this module's own header warns
+ * about: the games gained title screens, playfields and a dozen new sprites in
+ * one change, and a list would have shipped a page whose cartridges were missing
+ * art the CLI had. The glob is eager, so this is still a static bundle with no
+ * runtime fetching — it just cannot go stale.
+ *
+ * Keys are basenames, because that is how a `.dmt` or a `.dmtl` legend names a
+ * file: art is loaded from beside the source that named it.
+ */
+const ASSET_URLS = import.meta.glob<string>("../../../demotic/fixtures/**/*.svg", {
+  eager: true,
+  query: "?url",
+  import: "default",
+});
 
-import ballSvg from "@demake/demotic/fixtures/ball.svg?raw";
-import paddleSvg from "@demake/demotic/fixtures/paddle.svg?raw";
-import brickSvg from "@demake/demotic/fixtures/games/brick.svg?raw";
-import heroSvg from "@demake/demotic/fixtures/games/hero.svg?raw";
-import coinSvg from "@demake/demotic/fixtures/games/coin.svg?raw";
-import ledgeSvg from "@demake/demotic/fixtures/games/ledge.svg?raw";
-import rockSvg from "@demake/demotic/fixtures/games/rock.svg?raw";
-import shotSvg from "@demake/demotic/fixtures/games/shot.svg?raw";
-import alienSvg from "@demake/demotic/fixtures/games/alien.svg?raw";
-import spikesSvg from "@demake/demotic/fixtures/games/spikes.svg?raw";
-import exitSvg from "@demake/demotic/fixtures/games/exit.svg?raw";
+const ASSET_SOURCES = import.meta.glob<string>("../../../demotic/fixtures/**/*.svg", {
+  eager: true,
+  query: "?raw",
+  import: "default",
+});
+
+function byBasename(found: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [path, value] of Object.entries(found)) {
+    out[path.slice(path.lastIndexOf("/") + 1)] = value;
+  }
+  return out;
+}
 
 /** One bundled example. */
 export interface Example {
@@ -134,19 +142,7 @@ export const DEMO_LEVELS: Readonly<Record<string, string>> = {
 };
 
 /** Asset name (as written in a `.dmt`) → bundled URL. */
-export const DEMO_ASSETS: Readonly<Record<string, string>> = {
-  "ball.svg": ballUrl,
-  "paddle.svg": paddleUrl,
-  "brick.svg": brickUrl,
-  "hero.svg": heroUrl,
-  "coin.svg": coinUrl,
-  "ledge.svg": ledgeUrl,
-  "rock.svg": rockUrl,
-  "shot.svg": shotUrl,
-  "alien.svg": alienUrl,
-  "spikes.svg": spikesUrl,
-  "exit.svg": exitUrl,
-};
+export const DEMO_ASSETS: Readonly<Record<string, string>> = byBasename(ASSET_URLS);
 
 /**
  * The same assets as text, for the ROM build.
@@ -157,19 +153,7 @@ export const DEMO_ASSETS: Readonly<Record<string, string>> = {
  * `@demake/core`'s rasteriser instead — the same code, the same pixels, both
  * sides (doc 07 §parity).
  */
-export const DEMO_ASSET_SOURCES: Readonly<Record<string, string>> = {
-  "ball.svg": ballSvg,
-  "paddle.svg": paddleSvg,
-  "brick.svg": brickSvg,
-  "hero.svg": heroSvg,
-  "coin.svg": coinSvg,
-  "ledge.svg": ledgeSvg,
-  "rock.svg": rockSvg,
-  "shot.svg": shotSvg,
-  "alien.svg": alienSvg,
-  "spikes.svg": spikesSvg,
-  "exit.svg": exitSvg,
-};
+export const DEMO_ASSET_SOURCES: Readonly<Record<string, string>> = byBasename(ASSET_SOURCES);
 
 /** The bundled art, as the bytes a ROM build takes. */
 export function demoAssetBytes(): Map<string, Uint8Array> {
