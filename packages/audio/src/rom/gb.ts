@@ -34,6 +34,7 @@ import { Asm, AsmError, GB_ROM_SIZE, label, stampGbHeader } from "@demake/core";
 import type { ChipScript } from "../chipscript.js";
 
 import { packScript, PackError, type DriverData } from "./data.js";
+import { emitStream, emitStreamData } from "./gb-driver.js";
 
 /** The Game Boy's master clock, the numerator of every driver rate. */
 const GB_CLOCK = 4194304;
@@ -56,7 +57,9 @@ const H = {
   dataHi: 0x81,
   orderLo: 0x82,
   orderHi: 0x83,
-  rest: 0x84,
+  loopLo: 0x84,
+  loopHi: 0x85,
+  rest: 0x86,
 } as const;
 
 /** Interrupt-enable bits (Pan Docs §Interrupts). */
@@ -114,7 +117,7 @@ export class AudioRomError extends Error {
 }
 
 /** How the driver gets its tick, resolved to the registers that produce it. */
-interface Clock {
+export interface Clock {
   source: "timer" | "vblank";
   /** TAC value, for the timer source. */
   tac?: number;
@@ -134,7 +137,7 @@ interface Clock {
  * one source of truth, and it fails loudly if the two ever stop agreeing —
  * which is the only way a ROM could quietly play at the wrong tempo.
  */
-function resolveClock(script: ChipScript): Clock {
+export function resolveClock(script: ChipScript): Clock {
   const { rate, source, divisor } = script.driver;
   if (source === "vblank") {
     return {
@@ -273,9 +276,12 @@ function emitDriver(
   // The APU is powered on by the schedule's own first tick — the binding's
   // `init()` writes are prepended to tick 0 — so there is nothing to set up
   // here that the schedule does not already state.
-  asm.ld16("hl", "Order");
+  asm.ld16("hl", "Order0");
   asm.ld("a", "l").stha(H.orderLo);
   asm.ld("a", "h").stha(H.orderHi);
+  asm.ld16("hl", label("Order0", data.loopOrderIndex * 2));
+  asm.ld("a", "l").stha(H.loopLo);
+  asm.ld("a", "h").stha(H.loopHi);
   asm.call("NextBlock");
 
   if (clock.source === "timer") {
@@ -303,118 +309,17 @@ function emitDriver(
   asm.reti();
 
   // --- the tick --------------------------------------------------------------
-  emitTick(asm, data, helpers);
+  helpers.push(
+    ...emitStream(asm, {
+      prefix: "",
+      state: H,
+      data,
+    }),
+  );
 
   // --- the schedule ----------------------------------------------------------
-  const blockLabel = (index: number) => `Block${index}`;
   const dataStart = asm.pc;
-
-  asm.label("Order");
-  for (const index of data.order) asm.dw(blockLabel(index));
-  asm.dw(0x0000); // terminator: playback returns to the loop entry
-
-  for (let index = 0; index < data.blocks.length; index += 1) {
-    asm.label(blockLabel(index));
-    asm.bytes(data.blocks[index]!);
-  }
+  emitStreamData(asm, "", 0, data);
 
   return { helpers, dataStart };
-}
-
-/**
- * The tick routine, and only the parts of it this schedule needs.
- *
- * Register discipline: `hl` walks the data, `b` counts writes, `c` carries the
- * register number for `ld [$FF00+c], a`, and `de` is used only by
- * `NextBlock` — which is why the handler pushes all four pairs. `ld de, addr`
- * would clobber a live byte here exactly as it does in the game backend
- * (AGENTS.md §Gotchas), so nothing in the write loop touches `d` or `e`.
- */
-function emitTick(asm: Asm, data: DriverData, helpers: string[]): void {
-  asm.label("Tick");
-
-  if (data.hasRests) {
-    // A rest costs five instructions and reaches the common case first: most
-    // ticks of most tracks write nothing at all.
-    asm.ldha(H.rest);
-    asm.alu("or", "a");
-    asm.jr("TickPlay", "z");
-    asm.dec("a");
-    asm.stha(H.rest);
-    asm.ret();
-    helpers.push("rests");
-  }
-
-  asm.label("TickPlay");
-  asm.ldha(H.dataLo).ld("l", "a");
-  asm.ldha(H.dataHi).ld("h", "a");
-
-  asm.label("TickFetch");
-  asm.ldaHLI();
-  asm.alu("or", "a");
-  asm.jr("TickBlock", "z");
-  if (data.hasRests) {
-    asm.bit(7, "a");
-    asm.jr("TickRest", "nz");
-  }
-  asm.ld("b", "a");
-
-  asm.label("TickWrite");
-  asm.ldaHLI().ld("c", "a"); // register
-  asm.ldaHLI().staC(); // value → $FF00 + c
-  asm.dec("b");
-  asm.jr("TickWrite", "nz");
-  asm.jr("TickSave");
-
-  if (data.hasRests) {
-    asm.label("TickRest");
-    asm.aluN("and", 0x7f);
-    asm.stha(H.rest);
-  }
-
-  asm.label("TickSave");
-  asm.ld("a", "l").stha(H.dataLo);
-  asm.ld("a", "h").stha(H.dataHi);
-  asm.ret();
-
-  // Reaching the end of a block consumes no tick, so the fetch resumes in the
-  // next one — which is why a block always covers at least one tick and the
-  // walk cannot spin.
-  asm.label("TickBlock");
-  asm.call("NextBlock");
-  asm.ldha(H.dataLo).ld("l", "a");
-  asm.ldha(H.dataHi).ld("h", "a");
-  asm.jp("TickFetch");
-
-  emitNextBlock(asm, data);
-  helpers.push(data.hasOrder ? "order-walk" : "single-block");
-  if (data.oneShot) helpers.push("one-shot-stop");
-}
-
-/**
- * Take the next order entry into the data pointer, looping when it runs out.
- *
- * The terminator is `$0000` rather than a length, so the order list is walked
- * with a pointer and nothing counts. `Loop` is an address *inside* the order
- * list, so the reload leaves the pointer two bytes past it and the walk resumes
- * as if it had never ended.
- */
-function emitNextBlock(asm: Asm, data: DriverData): void {
-  asm.label("NextBlock");
-  asm.ldha(H.orderLo).ld("l", "a");
-  asm.ldha(H.orderHi).ld("h", "a");
-  asm.ldaHLI().ld("e", "a");
-  asm.ldaHLI().ld("d", "a");
-  asm.alu("or", "e"); // a still holds the high byte
-  asm.jr("NextBlockGot", "nz");
-  asm.ld16("hl", label("Order", data.loopOrderIndex * 2));
-  asm.ldaHLI().ld("e", "a");
-  asm.ldaHLI().ld("d", "a");
-
-  asm.label("NextBlockGot");
-  asm.ld("a", "l").stha(H.orderLo);
-  asm.ld("a", "h").stha(H.orderHi);
-  asm.ld("a", "e").stha(H.dataLo);
-  asm.ld("a", "d").stha(H.dataHi);
-  asm.ret();
 }

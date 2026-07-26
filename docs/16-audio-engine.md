@@ -503,6 +503,54 @@ patterns, patterns into an order list, and a pattern that recurs *transposed* is
 stored once with an offset. Over budget, the emitter reports what it dropped and
 `--strict` errors instead.
 
+## Two streams, one clock
+
+A cartridge whose only job is one track is the easy case, and it is not the case
+a *game* presents. A game has a track per scene and an effect per event, both
+wanting the same four channels at the same moment, on a machine with one timer.
+Three decisions follow, and they are all facts about the hardware rather than
+preferences.
+
+**One interrupt, one rate.** The Game Boy has one timer, so music and effects
+step on the same tick. The game states the rate and everything is fitted to it —
+`arrange` takes `driverHz` and `sfx` takes `rateHz`, and both go through the
+binding's own `fitRate`, so the two agree by construction rather than by
+arithmetic. The rate a game uses is half the rate a standalone effect gets:
+music barely notices it (row placement is absolute, so the tempo is exact at any
+rate), an effect notices it twice — a long one packs to fewer bytes, and eight
+milliseconds is still twice as fine as the sixty-hertz tick the machine's own
+games drove their drivers with.
+
+**Preemption is by run, not by write.** An effect takes a channel while it plays
+and gives it back when it ends; the music stream skips the writes that would
+fight it. Deciding that per write would cost the test on every write of every
+tick, so the packed data groups *consecutive* writes that agree about which
+channel they belong to and the decision is taken once per group. The grouping
+never reorders anything, which is the property the proof rests on: with nothing
+preempting, a run-packed stream performs exactly the writes the `ChipScript`
+lists, in the order it lists them, exactly as the flat encoding does.
+
+**`NR51` is merged, never stored.** One byte carries every channel's panning, so
+a stream that wrote it whole would erase the other stream's channels. Each stream
+keeps a shadow of the value it wants and the driver folds the two under the mask
+of what is currently borrowed — which means that with nothing preempting, the
+byte the chip receives is exactly the one the schedule asked for, and the
+exactness above survives the sharing.
+
+Two things are *not* in the schedules and are performed once at boot instead: the
+chip's power-up writes, and the wave-table upload. An effect that re-ran the
+chip's initialisation would silence the music every time it fired. And an effect
+is restricted to the channel it borrows — its schedule opens by stating every
+channel's state, which is right for a cartridge that owns the chip and wrong for
+one borrowing a voice — with the writes that were dropped counted in the build
+report, on the "never lose a part silently" rule.
+
+Only what a game uses is emitted. A game with music and no effects packs the flat
+format, stores `NR51` outright and has no preemption test anywhere in it; one
+with effects and no music has no music player at all. That is the same
+pulled-not-pushed discipline as everything else here, applied inside a routine
+rather than between routines.
+
 ## The proof
 
 Doc 10 gains an audio section; the summary of it belongs here because it is the
@@ -634,10 +682,10 @@ becomes an ADR when made.
    changes the arrangement problem completely. The image path's precedent
    (32X/Sega CD as possible "extended MD" specs) suggests these are separate spec
    entries selected by `--chip`, post-1.0.
-3. **Demotic integration.** Whether and how a `.dmt` names music and effects is a
-   **language change, and therefore the maintainer's call, not an agent's**
-   (AGENTS.md). Doc 17 §Demotic sets out the options and their trade-offs and
-   stops there.
+3. ~~**Demotic integration.**~~ **Decided and built**: `music <file>` scoped to a
+   scene and `sound <file> on <trigger>` reusing `when`'s triggers. Doc 17
+   §Demotic integration records the decision, doc 14 §Sound is the reference, and
+   §Two streams, one clock above is what the hardware does about it.
 4. **Which handful of consoles get `.dmm` instead of a standard artifact**, and
    whether `.dmm` is JSON or a compact text format. Decide when the first
    VGM-less console is implemented, not before.

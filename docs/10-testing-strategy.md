@@ -252,6 +252,15 @@ like game state, are small exact objects. **This is where the guarantee comes
 from.** A sound chip is a deterministic state machine; identical writes at
 identical ticks are identical sound.
 
+Level A runs twice, on the two cartridges that exist. `packages/audio/test/
+rom.test.ts` does it for a cartridge whose only job is one schedule;
+`packages/demotic/test/audio.test.ts` does it for a *game* — where the driver
+runs on a timer while the game runs on VBlank, and an effect borrows a channel
+from the music mid-track. The second is the harder claim and the same assertion:
+with nothing preempting, the music's register stream is the schedule's, byte for
+byte; while an effect plays, its own channel is its schedule's and the music's
+channels are untouched.
+
 **Level B — sample comparison against third-party cores (CI).** The libretro
 harness already receives an audio callback and discards it; writing those samples
 out is a small extension to `emu-harness/libretro/`. The core's audio is compared

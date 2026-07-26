@@ -27,9 +27,38 @@ export type HelperName = string;
 /** Emits a helper's body. Called once, after the main program. */
 export type HelperBody = (ctx: Ctx) => void;
 
+/**
+ * What a rule needs to fire a sound.
+ *
+ * Two bytes, and they are deliberately not the same one. The driver *consumes*
+ * its request on the next interrupt, and a trace has to be able to read what the
+ * game asked for after that has happened — so the request and the record of it
+ * are written separately (doc 17 §Demotic).
+ */
+export interface AudioHooks {
+  /**
+   * Whether this build embedded a driver at all.
+   *
+   * A game whose edge did not supply its music and effects still records what it
+   * *asked* for, so its trace is the same one it would produce with the audio in
+   * — which is what lets the conformance suite run without loading a byte of it.
+   */
+  driver: boolean;
+  /** High-RAM byte the driver reads for a track: the index plus one, or stop. */
+  music: number;
+  /** High-RAM byte the driver reads for an effect: the index plus one. */
+  request: number;
+  /** Work-RAM byte the trace reads: the effect index, or `$FF`. */
+  trace: number | null;
+  /** Driver index of each of the program's sounds; `-1` when unsupplied. */
+  effects: readonly number[];
+}
+
 /** Shared state for one compilation. */
 export class Ctx {
   readonly asm: Asm;
+  /** Set when the program has audio; absent leaves every rule as it was. */
+  audio: AudioHooks | undefined = undefined;
   /** 16.16 value → the label of its pooled ROM copy. */
   private readonly constants = new Map<number, string>();
   /** Helper name → its body, in request order so output stays deterministic. */

@@ -76,7 +76,7 @@ export {
   type InputTape,
   type RuntimeBudget,
 } from "./sim.js";
-export { trace, traceLine, tape, describeProgram } from "./trace.js";
+export { trace, traceLine, traceHeader, tracesAudio, tape, describeProgram } from "./trace.js";
 export { renderAscii, type AsciiOptions } from "./render/ascii.js";
 export { parseTests, type TestCase, type TestFile, type TestStep } from "./testing/parse.js";
 export {

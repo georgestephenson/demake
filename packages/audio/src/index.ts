@@ -83,6 +83,15 @@ export {
   type BuiltAudioRom,
   type DriverData,
 } from "./rom/index.js";
+export {
+  buildGameAudio,
+  gbChannelOf,
+  STOP as AUDIO_STOP,
+  type GameAudio,
+  type GameAudioInput,
+  type GameAudioStats,
+  type GameEffect,
+} from "./rom/gb-game.js";
 
 // --- hearing it --------------------------------------------------------------
 export { render, type RenderAudioOptions } from "./render.js";
@@ -92,6 +101,7 @@ export { encodeVgm, type VgmOptions } from "./encode/vgm.js";
 // --- the sound demaker -------------------------------------------------------
 export {
   demakeSfx,
+  SFX_RATE_HZ,
   SfxError,
   type SfxOptions,
   type SfxResult,

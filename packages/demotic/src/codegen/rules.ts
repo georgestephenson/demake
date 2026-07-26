@@ -235,6 +235,7 @@ function emitFire(ctx: Ctx, rule: RuleDef, bind: Binding, trigger?: Trigger): vo
     if (verdict === "runtime") branched = true;
   }
 
+  emitSound(ctx, rule);
   emitAssignments(ctx, rule.assignments, bind);
   if (!branched) return;
   if (rule.otherwise && rule.otherwise.length > 0) {
@@ -244,6 +245,31 @@ function emitFire(ctx: Ctx, rule: RuleDef, bind: Binding, trigger?: Trigger): vo
     asm.label(done);
   } else {
     asm.label(elseLabel);
+  }
+}
+
+/**
+ * Ask for this rule's sound, if it has one.
+ *
+ * Emitted inside the fired branch, alongside the assignments, so a sound fires
+ * on exactly the tick the interpreter says it does — which is the whole reason
+ * a `sound` statement compiles to a rule rather than to something of its own.
+ * The request is one byte because the driver reads it from an interrupt: a byte
+ * is written atomically, and a pointer arriving half-written would play half of
+ * one effect.
+ */
+export function emitSound(ctx: Ctx, rule: RuleDef): void {
+  if (rule.sound === undefined || ctx.audio === undefined) return;
+  const index = ctx.audio.effects[rule.sound] ?? -1;
+  // A sound whose file was never supplied still records the request, so a trace
+  // taken with the audio left out matches one taken with it in.
+  if (ctx.audio.driver && index >= 0) {
+    ctx.asm.ldn("a", index + 1);
+    ctx.asm.stha(ctx.audio.request & 0xff);
+  }
+  if (ctx.audio.trace !== null) {
+    ctx.asm.ldn("a", rule.sound);
+    ctx.asm.sta(ctx.audio.trace);
   }
 }
 

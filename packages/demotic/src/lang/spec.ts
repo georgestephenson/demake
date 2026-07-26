@@ -301,6 +301,20 @@ export const STATEMENTS: readonly StatementSpec[] = [
     note: "The picture goes through the *image* pipeline — the same fitter `prep` uses — so a title screen is demade exactly the way a photograph is, into tiles and a tilemap the background layer draws for free. It is scenery and nothing else: nothing collides with it, nothing reads it, and a scene that scrolls has a level instead. What it costs is tiles, and a console has a fixed number of them; art that needs more than are left over is a build error naming the number, because the alternative is a title screen with holes in it.",
   },
   {
+    keyword: "music",
+    syntax: "music <file> [in <scene>]",
+    summary: "Plays a demade track while a scene is on screen.",
+    example: "music theme.mid in play",
+    note: "The track goes through the *music* demaker — the same pipeline `demake arrange` uses — so a game's soundtrack is demade exactly the way a standalone track is: fitted to the console's chip, its tempo held, its dropped parts counted. It belongs to the scene, so entering the scene starts it from the top and leaving stops it; a scene with no `music` is silent, which is how a title screen stays quiet under a game that has a theme.",
+  },
+  {
+    keyword: "sound",
+    syntax: "sound <file> on <trigger> [in <scene>] [if <expr>]",
+    summary: "Fires a demade sound effect when something happens.",
+    example: "sound bounce.wav on ball hits paddle",
+    note: "The triggers are `when`'s, exactly: a sound fires on a collision, a button, a value being reached or a condition holding, and `in` and `if` narrow it the same way. What it does not have is `then` — a sound is not an assignment, and a rule that could both play a note and move an object would be two statements wearing one keyword. Effects share the chip with the music: one plays at a time, the louder one wins, and the channel it borrows goes back to the music when it ends.",
+  },
+  {
     keyword: "camera",
     syntax: "camera follows <object> [in <scene>]",
     summary: "Keeps the viewport centred on an object, clamped inside the level.",
@@ -443,6 +457,11 @@ export const DIAGNOSTICS: readonly DiagnosticSpec[] = [
     code: "E_BACKDROP_TILES",
     severity: "error",
     summary: "A backdrop needs more tiles than the console has left after the game's own art.",
+  },
+  {
+    code: "E_DUPLICATE_MUSIC",
+    severity: "error",
+    summary: "More than one track in a scene; a scene plays one piece of music.",
   },
   {
     code: "E_DUPLICATE_LEVEL",

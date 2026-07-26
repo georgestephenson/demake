@@ -31,6 +31,13 @@ scene play
 -- nothing from it and collides with none of it — what it costs is tiles.
 backdrop breakout.play.svg
 
+-- The music and the effects go through the demakers the CLI's own `arrange` and
+-- `sfx` commands use. A brick is the sound this game is *about*, so it is the
+-- one with a noise component; the bounce is a plain blip and gives way to it.
+music arcade.mid in play
+sound brick.wav on ball hits brick
+sound bounce.wav on ball hits paddle
+
 
 create object ball (width 1 cell, height 1 cell, speed 45vmin, sprite ball.svg)
 create object paddle (width 18vw, height 1 cell, speed 70vw, sprite paddle.svg)

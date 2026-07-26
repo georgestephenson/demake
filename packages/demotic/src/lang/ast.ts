@@ -96,6 +96,23 @@ export type Stmt =
   | { kind: "seed"; value: number; line: number }
   | { kind: "camera"; target: string; scene?: string; line: number }
   | { kind: "backdrop"; file: string; scene?: string; line: number }
+  | { kind: "music"; file: string; scene?: string; line: number }
+  /**
+   * `sound blip.wav on ball hits paddle` — an effect on one of `when`'s triggers.
+   *
+   * It carries a trigger and no assignments, which is the whole reason it is a
+   * statement of its own rather than a value a rule could assign: "play this"
+   * is not a property of anything, and the rule form has nowhere to put it that
+   * would not also allow half a dozen readings nobody wants.
+   */
+  | {
+      kind: "sound";
+      file: string;
+      event: Event;
+      scene?: string;
+      guard?: Expr;
+      line: number;
+    }
   | { kind: "class"; name: string; props: readonly Prop[]; line: number }
   | {
       kind: "instance";

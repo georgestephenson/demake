@@ -143,6 +143,14 @@ export interface Layout {
   self: number | null;
   /** Pointer to the entity it collided with. */
   other: number | null;
+  /**
+   * The effect a rule asked for this tick, or `$FF`; absent without sounds.
+   *
+   * Separate from the byte the driver reads, and deliberately so: the driver
+   * *consumes* its request, and a trace has to be able to read what the game
+   * asked for after the interrupt has already acted on it.
+   */
+  sound: number | null;
 
   // --- bookkeeping ----------------------------------------------------------
   /** Contact bitfields: this tick's, then last tick's. */
@@ -322,6 +330,7 @@ export function planLayout(program: Program, analysis: Analysis): Layout {
     staging.push(heap.take(PROP_SIZE));
   }
 
+  const sound = program.sounds.length > 0 ? heap.take(1) : null;
   const rng = analysis.usesRandom ? heap.take(4) : null;
   const camera = analysis.usesCamera || analysis.readsCamera ? heap.take(8) : null;
   const mapOrigin = analysis.usesLevels ? heap.take(4) : null;
@@ -416,6 +425,7 @@ export function planLayout(program: Program, analysis: Analysis): Layout {
     mathWork,
     temps,
     staging,
+    sound,
     rng,
     camera,
     mapOrigin,

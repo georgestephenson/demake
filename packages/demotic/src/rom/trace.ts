@@ -13,6 +13,7 @@
  */
 
 import type { Program } from "../program.js";
+import { tracesAudio } from "../trace.js";
 
 import { PROP_SLOT, PROP_SIZE, type Layout } from "../codegen/layout.js";
 
@@ -65,6 +66,26 @@ export function romProp(
   return raw >= 0x80000000 ? raw - 0x100000000 : raw;
 }
 
+/**
+ * The audio field: the track the running scene asks for, and this tick's effect.
+ *
+ * The track is *derived* from the scene rather than stored, exactly as the
+ * simulator derives it — a scene and its music cannot disagree if only one of
+ * them is written down. Only the effect needs a byte, because "a rule fired on
+ * this tick" is not recoverable from anything else.
+ */
+function romAudio(
+  program: Program,
+  layout: Layout,
+  read: MemoryReader,
+  sceneIndex: number,
+): string {
+  const file = program.scenes[sceneIndex]?.music;
+  const track = file === undefined ? -1 : program.tracks.indexOf(file);
+  const raw = layout.sound === null ? 0xff : (read(layout.sound, 1)[0] as number);
+  return ` audio=${track},${raw === 0xff ? -1 : raw}`;
+}
+
 /** The trace line for the tick the ROM has just finished. */
 export function romTraceLine(program: Program, layout: Layout, read: MemoryReader): string {
   const sceneIndex = romScene(layout, read);
@@ -76,5 +97,6 @@ export function romTraceLine(program: Program, layout: Layout, read: MemoryReade
       return `${name}=${values.join(",")}`;
     })
     .join(" ");
-  return `${romTick(layout, read)} ${scene?.name ?? "?"} ${entities}`;
+  const audio = tracesAudio(program) ? romAudio(program, layout, read, sceneIndex) : "";
+  return `${romTick(layout, read)} ${scene?.name ?? "?"} ${entities}${audio}`;
 }

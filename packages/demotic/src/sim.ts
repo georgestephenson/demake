@@ -125,6 +125,8 @@ export class Sim {
   private currentScene: string;
   private pendingScene: string | undefined;
   private tickCount = 0;
+  /** The effect asked for on the tick being run; the last one wins. */
+  private soundFired = -1;
 
   private budget: RuntimeBudget;
 
@@ -205,6 +207,23 @@ export class Sim {
     return this.tickCount;
   }
 
+  /**
+   * The track the running scene asks for, as an index into `program.tracks`.
+   *
+   * `-1` for a silent scene. Music follows the scene rather than being started
+   * by a rule, so this is derived rather than stored — there is no state here
+   * that could disagree with the scene the game is in.
+   */
+  get music(): number {
+    const file = this.sceneDef().music;
+    return file === undefined ? -1 : this.program.tracks.indexOf(file);
+  }
+
+  /** The effect a rule asked for on this tick, or `-1`. */
+  get sound(): number {
+    return this.soundFired;
+  }
+
   /** Hardware pressure observed so far. */
   get runtimeBudget(): Readonly<RuntimeBudget> {
     return this.budget;
@@ -236,6 +255,7 @@ export class Sim {
   /** Advance one logical tick. */
   step(input: InputState = EMPTY_INPUT): void {
     this.resolveInputEdges(input);
+    this.soundFired = -1;
 
     this.applyControls();
     this.applyLevelRules();
@@ -383,6 +403,11 @@ export class Sim {
   private fire(rule: RuleDef, triggered: boolean, context: RuleContext): void {
     const passed =
       triggered && (rule.guard === undefined || this.evaluate(rule.guard, context) !== 0);
+    // A sound is *asked for* here, and that is all the trace records. Whether
+    // the hardware could spare a channel for it is the driver's business, the
+    // way sprite priority is the PPU's: recording the request keeps the two
+    // implementations comparable without the simulator having to model an APU.
+    if (passed && rule.sound !== undefined) this.soundFired = rule.sound;
     if (passed) this.applyAssignments(rule.assignments, context);
     else if (rule.otherwise) this.applyAssignments(rule.otherwise, context);
   }

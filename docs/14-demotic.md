@@ -250,6 +250,8 @@ scene <name>                                   -- declare a scene
 level <name> [in <scene>] from <file.dmtl>     -- a hand-drawn playfield
 stream <name> [in <scene>] from <f>, <f>, … <n> wide|tall
 camera follows <object> [in <scene>]
+music <file> [in <scene>]                      -- a demade track, while the scene runs
+sound <file> on <trigger> [in <scene>] [if <expr>]  -- a demade effect, on a rule's trigger
 create object <class> ( <props> )              -- class definition with defaults
 create <class> <name> [in <scene>] ( <props> ) -- instance, overriding class defaults
 control <object> <button> ( <assigns> ) on hold|press|release
@@ -523,6 +525,68 @@ hardware rather than of taste:
   For the same reason a scene that draws its HUD on the background layer needs a
   lit band where the counters go — the font's ink is the darkest shade, and a
   status bar is what that constraint looks like when you take it seriously.
+
+### Sound: `music` and `sound`
+
+Audio arrives the way art does, and the split is the same one: `music` names a
+track a scene plays, `sound` names an effect an event fires, and both files go
+through the **demakers this tool is about** — the same `arrange` and `sfx`
+pipelines the CLI exposes — rather than through anything the game backend knows
+about notes.
+
+```
+scene play
+music rally.mid in play
+sound bounce.wav on ball hits paddle
+sound point.wav on ball hits screentop, screenbottom
+```
+
+**Music belongs to a scene.** Entering the scene starts its track from the top
+and leaving stops it, so a title screen is quiet under a game that has a theme
+and a game-over screen does not inherit the one the player just lost to. A scene
+has one track, for the reason it has one background.
+
+**An effect fires on a rule's trigger.** Not a new trigger vocabulary — `when`'s,
+exactly: a collision, a button edge, a value being reached, a condition holding,
+narrowed by `in` and guarded by `if` in the same words. What a `sound` does not
+have is `then`, and that is the whole reason it is a statement rather than
+something a rule could assign: playing a sound is not a property of anything, and
+a rule that could both move an object and make a noise would need `then` to mean
+two things.
+
+A `sound` whose trigger is *exactly* a rule the program already has rides that
+rule instead of becoming a second one — same trigger, same scene, same guard,
+same tick. That is worth knowing rather than tidy: a collision trigger is the
+expensive kind, and the natural way to write this
+
+```
+when shot hits alien then (alien.visible, shot.visible, score.value) as (0, 0, score.value + 1)
+sound boom.wav on shot hits alien
+```
+
+costs four and a half kilobytes of cartridge unmerged — a second pass over every
+shot-and-alien pair — and thirty bytes merged.
+
+Two hardware facts leak through, and it is better that they do:
+
+- **A `touches` trigger fires every tick of the contact**, so a one-shot effect
+  hung on one restarts every tick and stutters. Bounces and pickups want `hits`.
+- **Effects share the chip with the music.** One effect plays at a time; the
+  louder one wins when two collide (the sound demaker measures that, doc 18
+  §Placement); and the channel it borrows goes silent for a moment and then
+  belongs to the music again. Doc 16 §Two streams, one clock has the mechanism.
+
+What audio costs is **cartridge**, the way a backdrop costs tiles. A track is a
+few kilobytes of register schedule and an effect a few hundred bytes, on a
+machine with 32 KiB and no mapper — which is why the shooter's theme is two bars
+where the platformer's is eight, and why the build reports both numbers.
+
+Audio also joins the **trace** (§Conformance): a trace line carries
+`audio=<track>,<effect>` — the track the running scene asks for, and the effect a
+rule asked for on this tick. It records what the *game* asked for, not what the
+chip did, for the same reason the trace has never carried sprite priority: which
+channel an effect got is the hardware's business, but *when* a sound fires is the
+game's, and two implementations that could disagree about it would be two games.
 
 ### Composed levels: `stream`
 
@@ -806,14 +870,27 @@ fixed work-RAM addresses, and `@demake/dmg` — a Game Boy core of ours, ~1200
 lines with no dependencies — boots the ROM and reads them. So the loop that
 proves a runtime correct needs no toolchain and no emulator install, and it runs
 on every machine that can run `pnpm test`. `packages/demotic/test/rom.test.ts`
-does this for five of the seven example games; the two it omits are the ones the
-runtime refuses to build.
+does this for every game in the example library.
+
+A game with sound carries an extra field, and an extra header line saying so.
+`audio=<track>,<effect>` is the track the running scene asks for and the effect a
+rule asked for on this tick, `-1` for neither — what the *game* requested, not
+what the chip did (§Sound). A game with no `music` and no `sound` traces exactly
+as it did before audio existed, so no golden trace of one was re-baselined for a
+column of nothing.
 
 ```
 # demotic trace v1 console=gb
 # props=x,y,xdirection,ydirection,speed,value units=16.16
-1 play ball1=655360,589824,-65536,65536,524288,0 paddle1=655360,1114112,0,0,786432,0
+# audio=track,effect
+1 play ball1=655360,589824,-65536,65536,524288,0 paddle1=655360,1114112,0,0,786432,0 audio=0,-1
 ```
+
+The chip has its own conformance layer, one level below this one and sharper:
+`packages/demotic/test/audio.test.ts` boots a cartridge and diffs every register
+write the APU receives against the schedule the music demaker produced, tick for
+tick (doc 16 §The proof, Level A). A trace proves the game is the same game; that
+proves the sound is the same sound.
 
 **2. Framebuffer equality.** The existing pixel-perfect emulator E2E (doc 10),
 which by then tests only rendering, because the logic is already proven equal.
@@ -868,14 +945,12 @@ Named rather than hidden, in rough order of how much they matter.
   say so.
 - **No `destroy` or runtime spawn.** Pong does not need them; Breakout and Snake
   do. The schema has room.
-- **No sound.** The engine that would demake it is designed (docs
-  [16](16-audio-engine.md)–[18](18-sound-demaker.md)); what is missing is the
-  *language* surface — how a `.dmt` names a track and fires an effect. That is a
-  language change and therefore the maintainer's call, not an agent's, so doc 17
-  §Demotic sets out the options and their trade-offs and stops there. One
-  consequence should be decided with the surface: audio events would have to join
-  the conformance trace as per-tick event names, or the ROM and the interpreter
-  could disagree about *when* a sound fires and the oracle would not catch it.
+- ~~**No sound.**~~ `music` and `sound` are in the language (§Sound), the
+  demakers of docs [16](16-audio-engine.md)–[18](18-sound-demaker.md) produce
+  what a cartridge plays, and audio events are in the trace. What is still thin
+  is *how much* of it: one effect plays at a time, an effect cannot be stopped
+  once started, and there is no way to say "quieter here" — a track is as loud as
+  the arranger made it.
 - **Tiles cannot change at run time.** The tile layer is fixed once composed, so
   a door that opens or a block that breaks has to be an object. Editing the
   tilemap live is what a console does most cheaply, so this is a gap worth

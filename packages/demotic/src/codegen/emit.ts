@@ -39,6 +39,7 @@ import {
   emitEdgeRules,
   emitIntegrate,
   emitLevelRules,
+  emitSound,
   type SceneCtx,
 } from "./rules.js";
 import {
@@ -56,6 +57,8 @@ import {
   type LevelData,
 } from "./tiles.js";
 import { copy32, isZero32, set32, sub32 } from "./val.js";
+import { AUDIO_STOP, type GameAudio } from "@demake/audio";
+
 import {
   BUILTIN_TILES,
   builtinTiles,
@@ -85,6 +88,15 @@ const VRAM_TILES = 0x8000;
 const VRAM_MAP = 0x9800;
 /** Where the OAM DMA kernel is copied to; it must run outside the main bus. */
 const HRAM_DMA = 0xff80;
+
+/**
+ * The flag the main loop waits on, the first high-RAM byte after the DMA kernel.
+ *
+ * A flag rather than a bare `halt`, because with the audio driver running most
+ * wake-ups are the timer's. `ldh` is what makes setting it fit in the eight
+ * bytes the VBlank vector has before the LCD-STAT one.
+ */
+const HRAM_VBLANK = 0xff8a;
 
 /**
  * How converted art is looked up: by the file the game named *and* the box it
@@ -131,6 +143,18 @@ export interface EmitOptions {
    * arrives here rather than in the tile bytes.
    */
   objectPalette?: number;
+  /**
+   * The game's audio driver, already built from its demade tracks and effects.
+   *
+   * Absent for a game with no `music` and no `sound`, and everything about the
+   * ROM is then exactly what it was before audio existed — no timer, no vectors,
+   * no per-frame test. Audio is pulled in by a game that asks for it.
+   */
+  audio?: GameAudio;
+  /** The driver index of each of the program's sounds; `-1` when unsupplied. */
+  effectIndices?: readonly number[];
+  /** Track index each scene asks for, or `-1`; indexed by scene. */
+  sceneTracks?: readonly number[];
 }
 
 /** Scene index by name. */
@@ -184,16 +208,33 @@ export function emitProgram(ctx: Ctx, options: EmitOptions = {}): void {
 
   // --- cartridge header ------------------------------------------------------
   // The VBlank vector: the main loop uses `halt` to wait for it, so the handler
-  // only has to exist and return.
+  // only has to exist and return. With audio there is a second interrupt, and
+  // `halt` cannot tell them apart — so VBlank raises a flag the loop waits on,
+  // and a timer tick in between no longer looks like the start of a frame.
   asm.padTo(0x0040);
+  if (options.audio) {
+    asm.push("af");
+    asm.ldn("a", 1);
+    asm.stha(HRAM_VBLANK & 0xff);
+    asm.pop("af");
+  }
   asm.reti();
+  if (options.audio) {
+    // The timer vector, where the driver's tick is driven from. Every pair is
+    // saved because the game's own code is what was interrupted.
+    asm.padTo(0x0050);
+    asm.push("af").push("bc").push("de").push("hl");
+    asm.call("AudioTick");
+    asm.pop("hl").pop("de").pop("bc").pop("af");
+    asm.reti();
+  }
   asm.padTo(0x0100);
   asm.nop();
   asm.jp("Entry");
   asm.padTo(0x0150);
 
   emitEntry(ctx, scenes, levelFor, options);
-  emitMainLoop(ctx);
+  emitMainLoop(ctx, options.audio !== undefined);
   emitInput(ctx);
   emitTickDispatch(ctx, scenes);
   emitSceneChange(ctx, scenes);
@@ -207,6 +248,7 @@ export function emitProgram(ctx: Ctx, options: EmitOptions = {}): void {
 
   emitRenderHelpers(ctx);
   emitTileContactHelper(ctx);
+  if (options.audio) options.audio.emitCode(asm);
   ctx.finish();
 
   // --- data ------------------------------------------------------------------
@@ -234,6 +276,20 @@ export function emitProgram(ctx: Ctx, options: EmitOptions = {}): void {
     if (!art) continue;
     asm.label(backdropLabel(scene));
     asm.bytes(art.map);
+  }
+
+  if (options.audio) {
+    if (program.tracks.length > 0) {
+      asm.label("SceneTracks");
+      // One byte per scene: the request value that starts its track, or the one
+      // that stops the music. A table rather than a dispatch because a scene
+      // change already costs a redraw, and this is the cheapest thing in it.
+      for (const scene of scenes) {
+        const track = options.sceneTracks?.[scene.index] ?? -1;
+        asm.db(track < 0 ? AUDIO_STOP : track + 1);
+      }
+    }
+    options.audio.emitData(asm);
   }
 
   asm.label("TileBank");
@@ -334,10 +390,17 @@ function emitEntry(
   asm.call("BuildFrame");
   asm.call("UploadFrame");
 
+  if (options.audio) {
+    asm.alu("xor", "a");
+    asm.stha(HRAM_VBLANK & 0xff);
+    asm.call("AudioInit");
+    if (program.tracks.length > 0) asm.call("SceneMusic");
+  }
+
   // LCD on, BG on, OBJ on, tiles at $8000, map at $9800.
   asm.ldn("a", 0b10010011);
   asm.stha(R.LCDC & 0xff);
-  asm.ldn("a", 1);
+  asm.ldn("a", options.audio ? 1 | options.audio.clock.interrupt : 1);
   asm.stha(R.IE & 0xff);
   asm.alu("xor", "a");
   asm.stha(R.IF & 0xff);
@@ -368,11 +431,21 @@ function emitClearState(ctx: Ctx): void {
   }
 }
 
-function emitMainLoop(ctx: Ctx): void {
+function emitMainLoop(ctx: Ctx, audio: boolean): void {
   const { asm } = ctx;
   asm.label("Main");
   asm.halt();
   asm.nop();
+  if (audio) {
+    // `halt` wakes on any enabled interrupt, and with the driver running most
+    // of them are the timer's. Uploading a frame then would mean writing OAM
+    // and the scroll registers in the middle of a scanline.
+    asm.ldha(HRAM_VBLANK & 0xff);
+    asm.alu("or", "a");
+    asm.jr("Main", "z");
+    asm.alu("xor", "a");
+    asm.stha(HRAM_VBLANK & 0xff);
+  }
   asm.call("UploadFrame");
   asm.call("ReadInput");
   asm.call("Tick");
@@ -490,6 +563,12 @@ function emitInput(ctx: Ctx): void {
 function emitTickDispatch(ctx: Ctx, scenes: readonly SceneCtx[]): void {
   const { asm, layout } = ctx;
   asm.label("Tick");
+  // Nothing has asked for a sound yet this tick. Cleared here rather than after
+  // the rules run, because the byte is what a trace reads at the end of a tick.
+  if (layout.sound !== null) {
+    asm.ldn("a", 0xff);
+    asm.sta(layout.sound);
+  }
   emitSceneDispatch(
     ctx,
     scenes.map((scene) => `SceneTick_${scene.index}`),
@@ -520,6 +599,7 @@ function emitSceneChange(ctx: Ctx, scenes: readonly SceneCtx[]): void {
   asm.sta(layout.scene);
   asm.ldn("a", 0xff);
   asm.sta(layout.pending);
+  if (ctx.audio?.driver === true && program.tracks.length > 0) asm.call("SceneMusic");
   asm.call("ResetScene");
   if (layout.rng !== null) set32(ctx, layout.rng, program.seed | 0);
   emitClearState(ctx);
@@ -527,6 +607,21 @@ function emitSceneChange(ctx: Ctx, scenes: readonly SceneCtx[]): void {
   asm.ldn("a", 1);
   asm.sta(layout.redraw);
   asm.ret();
+
+  // Music follows the scene, so it starts where the scene does. Asking for it
+  // rather than starting it here is what keeps the request atomic: the driver
+  // runs on an interrupt and could arrive between any two instructions.
+  if (ctx.audio?.driver === true && program.tracks.length > 0) {
+    asm.label("SceneMusic");
+    asm.lda(layout.scene);
+    asm.ld("l", "a");
+    asm.ldn("h", 0);
+    asm.ld16("de", label("SceneTracks"));
+    asm.addHL("de");
+    asm.ld("a", "hlp");
+    asm.stha(ctx.audio.music & 0xff);
+    asm.ret();
+  }
 
   asm.label("ResetScene");
   emitSceneDispatch(
@@ -846,6 +941,7 @@ function emitFireTileRule(ctx: Ctx, rule: RuleDef, bind: Binding): void {
     }
     if (verdict === "runtime") branched = true;
   }
+  emitSound(ctx, rule);
   emitAssignments(ctx, rule.assignments, bind);
   if (!branched) return;
   if (rule.otherwise && rule.otherwise.length > 0) {
@@ -1965,7 +2061,12 @@ export function emitRenderHelpers(ctx: Ctx): void {
   asm.alu("xor", "a");
   asm.sta(layout.queueCount);
   asm.label(noQueue);
+  // The transfer holds the main bus, so the CPU can only reach high RAM while
+  // it runs — and an interrupt vector is not in high RAM. The driver's tick is
+  // delayed by the transfer's 160 cycles, which is a fortieth of its period.
+  if (ctx.audio?.driver === true) asm.di();
   asm.call(HRAM_DMA);
+  if (ctx.audio?.driver === true) asm.ei();
   asm.ret();
 
   // HL points at the low byte of a value's whole part; draw it in decimal.

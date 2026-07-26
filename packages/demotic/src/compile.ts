@@ -196,6 +196,9 @@ class Compiler {
   private readonly levelsByScene = new Map<string, LevelFile>();
   private readonly cameraByScene = new Map<string, number>();
   private readonly backdropByScene = new Map<string, string>();
+  private readonly musicByScene = new Map<string, string>();
+  /** Effect files, in first-mention order — the order the ROM indexes them by. */
+  private readonly soundFiles: string[] = [];
   private readonly tileNames = new Set<string>();
   private seed = DEFAULT_SEED;
 
@@ -252,6 +255,21 @@ class Compiler {
           continue;
         }
         this.backdropByScene.set(target, statement.file);
+        continue;
+      }
+      if (statement.kind === "music") {
+        const target = this.resolveScene(statement.scene, currentScene, statement.line);
+        if (target === undefined) continue;
+        if (this.musicByScene.has(target)) {
+          this.error(
+            statement.line,
+            "E_DUPLICATE_MUSIC",
+            `scene '${target}' already has music`,
+            "a scene plays one piece of music",
+          );
+          continue;
+        }
+        this.musicByScene.set(target, statement.file);
         continue;
       }
       if (statement.kind !== "level" && statement.kind !== "stream") continue;
@@ -761,17 +779,56 @@ class Compiler {
         currentScene = statement.name;
         continue;
       }
-      if (statement.kind !== "when") continue;
+      if (statement.kind !== "when" && statement.kind !== "sound") continue;
       const scene = statement.scene ?? currentScene;
       this.foldScene = scene !== undefined && this.sceneSet.has(scene) ? scene : undefined;
-      const rule = this.compileRule(statement, rules.length);
+      // A `sound` is a rule whose consequence is a sound. Compiling it through
+      // the same path is what makes `in`, `if` and every trigger form work on it
+      // without being implemented twice — and it is why an effect fires at
+      // exactly the tick the equivalent `when` would have fired on.
+      const rule =
+        statement.kind === "when"
+          ? this.compileRule(statement, rules.length)
+          : this.compileRule(
+              {
+                kind: "when",
+                event: statement.event,
+                ...(statement.scene === undefined ? {} : { scene: statement.scene }),
+                ...(statement.guard === undefined ? {} : { guard: statement.guard }),
+                assignments: [],
+                line: statement.line,
+              },
+              rules.length,
+              this.soundIndex(statement.file),
+            );
       this.foldScene = undefined;
       if (rule) rules.push(rule);
     }
-    return rules;
+    return mergeSounds(rules);
   }
 
-  private compileRule(statement: Extract<Stmt, { kind: "when" }>, id: number): RuleDef | undefined {
+  /**
+   * Whether two compiled rules fire at exactly the same moments.
+   *
+   * Structural equality over the trigger, the scene, the guard and the subject
+   * list — everything that decides *when*, and nothing that decides *what*.
+   * Compared as JSON because the compiled forms are plain data by construction
+   * (`program.ts`), and a hand-written comparison would go stale the first time
+   * a trigger grows a field.
+   */
+  /** The index a sound file is known by, assigning one on first mention. */
+  private soundIndex(file: string): number {
+    const seen = this.soundFiles.indexOf(file);
+    if (seen >= 0) return seen;
+    this.soundFiles.push(file);
+    return this.soundFiles.length - 1;
+  }
+
+  private compileRule(
+    statement: Extract<Stmt, { kind: "when" }>,
+    id: number,
+    sound?: number,
+  ): RuleDef | undefined {
     const line = statement.line;
     let event: CEvent;
     let bindings: Bindings = NO_BINDINGS;
@@ -887,7 +944,7 @@ class Compiler {
         ? undefined
         : this.compileAssignments(statement.otherwise, bindings, defaultTarget);
 
-    if (statement.assignments.length === 0) {
+    if (statement.assignments.length === 0 && sound === undefined) {
       this.warn(line, "W_EMPTY_RULE", "this rule triggers but assigns nothing");
     }
 
@@ -914,6 +971,7 @@ class Compiler {
       assignments,
       ...(otherwise === undefined ? {} : { otherwise }),
       ...(perInstance === undefined ? {} : { subjects: perInstance }),
+      ...(sound === undefined ? {} : { sound }),
       line,
     };
   }
@@ -1244,6 +1302,7 @@ class Compiler {
       const level = this.levelsByScene.get(name);
       const cameraTarget = this.cameraByScene.get(name);
       const backdrop = this.backdropByScene.get(name);
+      const music = this.musicByScene.get(name);
       return {
         name,
         instanceIds: this.instances.filter((i) => i.scene === name).map((i) => i.id),
@@ -1251,6 +1310,7 @@ class Compiler {
         bounds: boundsOf(level, this.profile),
         ...(cameraTarget === undefined ? {} : { cameraTarget }),
         ...(backdrop === undefined ? {} : { backdrop }),
+        ...(music === undefined ? {} : { music }),
       };
     });
 
@@ -1276,6 +1336,16 @@ class Compiler {
     ].sort();
 
     const budget = this.computeBudget(scenes);
+    // Tracks are indexed by first mention rather than sorted, because the index
+    // is what a ROM stores and a scene added later must not renumber the rest.
+    const tracks = [
+      ...new Set(
+        this.sceneOrder.flatMap((name) => {
+          const file = this.musicByScene.get(name);
+          return file === undefined ? [] : [file];
+        }),
+      ),
+    ];
 
     return {
       profile: this.profile,
@@ -1286,6 +1356,8 @@ class Compiler {
       controls,
       rules,
       assets,
+      tracks,
+      sounds: [...this.soundFiles],
       budget,
       warnings: this.diagnostics.filter((d) => d.severity === "warning"),
     };
@@ -1597,4 +1669,45 @@ export function check(
     if (error instanceof GameLangError) return { diagnostics: error.diagnostics };
     throw error;
   }
+}
+
+/**
+ * Fold each `sound` into a rule that already fires at exactly the same moments.
+ *
+ * A sound rule carries a trigger and nothing else, so one whose trigger, scene,
+ * guard and subject list match an ordinary rule's fires on precisely the ticks
+ * that rule does — and can ride it. That is worth doing rather than tidy:
+ * `when shot hits alien then …` next to `sound boom.wav on shot hits alien` is
+ * the natural way to write it, and a collision trigger is the expensive kind —
+ * unmerged, the shooter pays a second pass over every shot-and-alien pair, four
+ * and a half kilobytes of cartridge for a sound it already knew the moment of.
+ *
+ * Done in the compiler, not in a backend, so the interpreter and the ROM agree
+ * about the order sounds are asked for in — and done as a pass over the finished
+ * list rather than while compiling, so it does not matter whether the `sound`
+ * was written above the rule it joins or below it.
+ */
+function mergeSounds(rules: RuleDef[]): RuleDef[] {
+  const key = (rule: RuleDef): string =>
+    JSON.stringify([rule.event, rule.scene ?? null, rule.guard ?? null, rule.subjects ?? null]);
+  const hosts = new Map<string, RuleDef>();
+  for (const rule of rules) {
+    if (rule.sound !== undefined) continue;
+    const id = key(rule);
+    if (!hosts.has(id)) hosts.set(id, rule);
+  }
+
+  const kept: RuleDef[] = [];
+  for (const rule of rules) {
+    const host = rule.sound === undefined ? undefined : hosts.get(key(rule));
+    if (host !== undefined && host.sound === undefined) {
+      host.sound = rule.sound as number;
+      continue;
+    }
+    kept.push(rule);
+  }
+  // Ids number the surviving rules, because everything downstream — contact
+  // bitfields, `reaches` history — indexes by them.
+  for (const [index, rule] of kept.entries()) rule.id = index;
+  return kept;
 }

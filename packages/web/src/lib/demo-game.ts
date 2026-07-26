@@ -165,5 +165,41 @@ export function demoAssetBytes(): Map<string, Uint8Array> {
   return out;
 }
 
+/**
+ * The library's music and effects, by the name a `.dmt` writes.
+ *
+ * As URLs rather than inlined bytes, and fetched when a cartridge is built:
+ * these are binary, so bundling them means base64, and a hundred kilobytes of
+ * WAV becomes a hundred and thirty of JavaScript every visitor downloads whether
+ * they build a ROM or not. They are static files on the same origin, so the
+ * service worker caches them like anything else.
+ *
+ * They must be *bytes*, not something the page decoded: the ROM build hands them
+ * to `@demake/audio`, which is what makes the page's cartridge identical to the
+ * CLI's (doc 07 §parity). The page decodes nothing and demakes nothing itself.
+ */
+const AUDIO_URLS = import.meta.glob<string>("../../../demotic/fixtures/**/*.{mid,wav}", {
+  eager: true,
+  query: "?url",
+  import: "default",
+});
+
+let audioBytes: Map<string, Uint8Array> | undefined;
+
+/** Fetch the bundled audio once; later calls get the same map back. */
+export async function demoAudioBytes(): Promise<Map<string, Uint8Array>> {
+  if (audioBytes) return audioBytes;
+  const out = new Map<string, Uint8Array>();
+  const named = byBasename(AUDIO_URLS);
+  await Promise.all(
+    Object.entries(named).map(async ([name, url]) => {
+      const response = await fetch(url);
+      out.set(name, new Uint8Array(await response.arrayBuffer()));
+    }),
+  );
+  audioBytes = out;
+  return out;
+}
+
 /** The example the section opens with. */
 export const DEFAULT_EXAMPLE = EXAMPLES[0] as Example;

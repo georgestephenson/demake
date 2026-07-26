@@ -21,7 +21,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import { buildGbRom, romReady, unsupportedFeatures, type Program } from "@demake/demotic";
 import { Gameboy, SCREEN_HEIGHT, SCREEN_WIDTH, type Button } from "@demake/dmg";
 
-import { demoAssetBytes } from "../lib/demo-game.js";
+import { demoAssetBytes, demoAudioBytes } from "../lib/demo-game.js";
 import { download } from "../lib/download.js";
 
 /** The portable button set maps one for one onto the Game Boy's. */
@@ -52,9 +52,23 @@ export function RomPane({
   const canvas = useRef<HTMLCanvasElement | null>(null);
   const machine = useRef<Gameboy | null>(null);
   const [cost, setCost] = useState<number | null>(null);
+  // The music and the effects are binary and are fetched rather than bundled,
+  // so the build waits for them. It waits rather than building without them
+  // because a cartridge missing its audio would not be the one `demake build`
+  // writes, and that is the one thing this pane promises.
+  const [audio, setAudio] = useState<Map<string, Uint8Array> | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    void demoAudioBytes().then((bytes) => {
+      if (live) setAudio(bytes);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const built = useMemo(() => {
-    if (!program) return { rom: undefined, layout: undefined, error: undefined };
+    if (!program || !audio) return { rom: undefined, layout: undefined, error: undefined };
     const missing = unsupportedFeatures(program);
     if (missing.length > 0) {
       return {
@@ -68,7 +82,9 @@ export function RomPane({
     try {
       // The bundled art goes in as *source bytes*: the conversion happens
       // inside the build, so the page and the CLI cannot diverge on it.
-      const result = buildGbRom(program, { title: name, assets: demoAssetBytes() });
+      const assets = demoAssetBytes();
+      for (const [file, bytes] of audio) assets.set(file, bytes);
+      const result = buildGbRom(program, { title: name, assets });
       return { rom: result.bytes, layout: result.layout, error: undefined };
     } catch (error) {
       return {
@@ -77,7 +93,7 @@ export function RomPane({
         error: String((error as Error).message ?? error),
       };
     }
-  }, [program, name]);
+  }, [program, name, audio]);
 
   const { rom, layout } = built;
 
@@ -146,7 +162,10 @@ export function RomPane({
       <div class="rom-pane">
         <h3>The cartridge</h3>
         <p class="hint" data-testid="rom-unavailable">
-          {built.error ?? "Fix the errors above and a ROM will build."}
+          {built.error ??
+            (program && !audio
+              ? "Demaking this game\u2019s music and effects\u2026"
+              : "Fix the errors above and a ROM will build.")}
         </p>
       </div>
     );

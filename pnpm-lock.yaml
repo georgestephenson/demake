@@ -78,6 +78,9 @@ importers:
 
   packages/demotic:
     dependencies:
+      '@demake/audio':
+        specifier: workspace:*
+        version: link:../audio
       '@demake/core':
         specifier: workspace:*
         version: link:../core

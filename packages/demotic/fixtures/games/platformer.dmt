@@ -33,6 +33,13 @@ scene play
 -- nothing from it and collides with none of it — what it costs is tiles.
 backdrop platformer.play.svg
 
+-- A jump fires on the same rule that performs it, so the sound and the impulse
+-- cannot come apart: `sound ... on a pressed if footing.value > 0` is the jump
+-- rule's own trigger, guard included.
+music meadow.mid in play
+sound jump.wav on a pressed in play if footing.value > 0
+sound coin.wav on player hits coin
+
 
 create object hero (width 1 cell, height 2 cells, speed 55vw, sprite hero.svg)
 create object ledge (width 25vw, height 1 cell, sprite ledge.svg)

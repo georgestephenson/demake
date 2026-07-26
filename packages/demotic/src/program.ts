@@ -149,6 +149,14 @@ export interface RuleDef {
    * the collision, so this is empty for them.
    */
   subjects?: readonly number[];
+  /**
+   * Index into {@link Program.sounds} of the effect this rule fires.
+   *
+   * A `sound` statement compiles to a rule with no assignments and this set, so
+   * everything that decides *when* a rule fires — scenes, guards, per-instance
+   * binding, contact edges — decides when a sound fires, once, in one place.
+   */
+  sound?: number;
   line: number;
 }
 
@@ -170,6 +178,15 @@ export interface SceneDef {
    * pixels by the image pipeline at build time.
    */
   backdrop?: string;
+  /**
+   * Track playing while this scene is on screen, if it has one.
+   *
+   * The file name the `.dmt` wrote, resolved to a register schedule by the music
+   * demaker at build time — the same hand-off `backdrop` makes to the image
+   * pipeline, for the same reason: the game says what it wants heard, and the
+   * demaker decides what the hardware can do about it.
+   */
+  music?: string;
 }
 
 /** Static budget findings, reported without running the game. */
@@ -201,6 +218,10 @@ export interface Program {
   rules: readonly RuleDef[];
   /** Asset paths referenced by `sprite` properties, deduplicated and sorted. */
   assets: readonly string[];
+  /** Music files, in the order scenes first name them — the ROM's track order. */
+  tracks: readonly string[];
+  /** Sound-effect files, in the order rules first name them. */
+  sounds: readonly string[];
   budget: BudgetReport;
   /** Non-fatal findings: unused declarations, budget pressure, and so on. */
   warnings: readonly Diagnostic[];

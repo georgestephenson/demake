@@ -40,6 +40,20 @@ export interface TimingOptions {
    * cost of a tempo a listener would have to be told about.
    */
   tempo?: "exact" | "snap";
+  /**
+   * Pin the driver rate, in Hz, instead of choosing a multiple of the row rate.
+   *
+   * A track on its own picks whatever multiple of its row rate clears
+   * {@link MIN_DRIVER_HZ}, because nothing else is using the interrupt. A game
+   * cannot: one timer produces one rate and every track and every sound effect
+   * steps on it, so the game states the rate and each piece is fitted to it
+   * (doc 16 §Two streams, one clock).
+   *
+   * It never changes the tempo. Row placement is absolute, so a rate that is not
+   * a whole multiple of the row rate costs rounding — bounded at half a tick and
+   * reported — and not drift.
+   */
+  driverHz?: number;
 }
 
 /**
@@ -65,7 +79,7 @@ export function planTiming(
   // into a usable band and rows then span several ticks.
   let multiple = 1;
   while (rowHz * multiple < MIN_DRIVER_HZ) multiple += 1;
-  const desiredHz = rowHz * multiple;
+  const desiredHz = options.driverHz ?? rowHz * multiple;
 
   const fit = binding.fitRate(desiredHz);
   const achievedHz = fit.rate.num / fit.rate.den;

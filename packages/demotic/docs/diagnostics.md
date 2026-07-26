@@ -23,6 +23,7 @@ Every one of these is a mistake the cell-and-tick model makes easy to write and 
 | `E_DUPLICATE_BACKDROP` | More than one backdrop in a scene; a scene has one background. |
 | `E_BACKDROP_WITH_LEVEL` | A scene with both a level and a backdrop; the level is the background. |
 | `E_BACKDROP_TILES` | A backdrop needs more tiles than the console has left after the game's own art. |
+| `E_DUPLICATE_MUSIC` | More than one track in a scene; a scene plays one piece of music. |
 | `E_DUPLICATE_LEVEL` | More than one level in a scene; a scene has one playfield. |
 | `E_LEVEL_TOO_SMALL` | A level smaller than the screen on some console, so part of the view has nothing in it. |
 | `E_STREAM_MISMATCH` | Stream chunks that disagree on the dimension they are not laid along. |

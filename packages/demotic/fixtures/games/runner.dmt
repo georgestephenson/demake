@@ -39,6 +39,15 @@ scene play
 -- share a legend, so `#` is a pipe in all of them.
 stream course from open.dmtl, lowpipe.dmtl, highpipe.dmtl, pipemid.dmtl 24 wide
 
+-- The flap is bound to the same button the control is, and fires on the same
+-- edge — the two are separate statements because one moves the bird and the
+-- other makes a noise, and a language that let one statement do both would have
+-- to decide what `then` meant for a sound.
+music updraft.mid in play
+sound flap.wav on a pressed in play
+sound coin.wav on bird1 hits prize
+sound crash.wav on bird1 hits pipe, ground
+
 camera follows bird1
 
 -- Six cells a second, absolute, and that is the interesting choice in this file.

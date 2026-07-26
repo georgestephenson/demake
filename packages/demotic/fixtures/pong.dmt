@@ -42,6 +42,18 @@ scene play
 -- nothing from it and collides with none of it — what it costs is tiles.
 backdrop pong.play.svg
 
+-- And the music is demade too, by the same arranger `demake arrange` uses: a
+-- four-part MIDI fitted to the console's own chip, its tempo held. It belongs
+-- to the scene, so a rally has a theme and the title screen does not.
+music rally.mid in play
+
+-- Effects fire on the triggers rules already have. The bounce is the game's
+-- one constant sound, so it is the one worth demaking well; the point is
+-- louder and outranks it, which is what decides who gets the channel when a
+-- rally ends on a wall.
+sound bounce.wav on ball hits paddle
+sound point.wav on ball hits screentop, screenbottom
+
 
 -- The ball is one cell on every console — it is the smallest thing that can be
 -- drawn — but it crosses the court in the same 1.8 seconds everywhere.

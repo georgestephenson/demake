@@ -31,6 +31,7 @@
     "provenance": true
   },
   "dependencies": {
-    "@demake/core": "workspace:*"
+    "@demake/core": "workspace:*",
+    "@demake/audio": "workspace:*"
   }
 }
