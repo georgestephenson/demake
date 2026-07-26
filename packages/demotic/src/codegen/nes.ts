@@ -163,8 +163,14 @@ export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
       options,
       tracks: driver?.stats.tracks ?? 0,
       effects: driver?.stats.effects ?? 0,
-      code: driver?.stats.code ?? 0,
-      data: driver?.stats.data ?? 0,
+      // Getters: the driver has not been emitted yet, so its sizes are zero until
+      // `assemble` has run (`BoundAudioShape`).
+      get code() {
+        return driver?.stats.code ?? 0;
+      },
+      get data() {
+        return driver?.stats.data ?? 0;
+      },
       helpers: driver?.stats.helpers ?? [],
       rateHz: driver ? driver.stats.rate.num / driver.stats.rate.den : 0,
       writesRestricted: driver?.stats.writesRestricted ?? 0,

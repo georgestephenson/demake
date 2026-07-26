@@ -123,14 +123,24 @@ export interface Assembled {
 /** Raw bytes of the assets a program names, keyed by the file name it wrote. */
 export type AssetBytes = ReadonlyMap<string, Uint8Array>;
 
-/** What every console's audio binding has in common. */
+/**
+ * What every console's audio binding has in common.
+ *
+ * `code` and `data` are only known once the driver has been *emitted*, which
+ * happens inside `assemble` — long after a binding hands this back — so a backend
+ * exposes them as getters over the driver's own stats rather than copying the
+ * numbers out early. `helpers` reads correctly either way because it is the
+ * driver's own array, filled in by reference as routines are pulled.
+ */
 export interface BoundAudioShape {
   /** Absent for a game with no `music` and no `sound`. */
   present: boolean;
   tracks: number;
   effects: number;
-  code: number;
-  data: number;
+  /** Driver code bytes. Read after `assemble`, never before. */
+  readonly code: number;
+  /** Packed schedule bytes, tables included. Read after `assemble`. */
+  readonly data: number;
   helpers: readonly string[];
   rateHz: number;
   writesRestricted: number;

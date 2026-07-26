@@ -439,10 +439,9 @@ test("builds and plays a real Master System ROM in the page", async ({ page }) =
   await expect.poll(async () => romPainted(page), { timeout: 8000 }).not.toBe(title);
   await expect(page.getByTestId("rom-stat")).toContainText("per tick");
 
-  // And the sound button is *disabled* rather than silent, because the SN76489
-  // driver is not written yet. A switch that turns on nothing is worse than one
-  // that is plainly unavailable, and the pane says which this is.
-  await expect(page.getByTestId("rom-sound")).toBeDisabled();
+  // And the sound button works here too: the SN76489 has a generated Z80 driver
+  // now, so the third console offers what the other two do.
+  await expect(page.getByTestId("rom-sound")).toBeEnabled();
 });
 
 test("opens on the cartridge, and shows the interpreter when asked", async ({ page }) => {

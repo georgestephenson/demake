@@ -28,7 +28,7 @@
  * able to read either machine's entity table with one function.
  */
 
-import { NES_AUDIO_BYTES } from "@demake/audio";
+import { NES_AUDIO_BYTES, SMS_AUDIO_BYTES } from "@demake/audio";
 
 import type { Program } from "../program.js";
 
@@ -113,14 +113,15 @@ export interface MemoryPlan {
   /** Background cells `number` and `text` objects may occupy at once. */
   plotMax: number;
   /**
-   * Cheap bytes the console's audio driver keeps its own state in, or zero.
+   * Bytes the console's audio driver keeps its own state in, or zero.
    *
    * Zero where the driver has somewhere better to be: the Game Boy's lives in
-   * high RAM, which the allocator does not hand out at all. The NES has no such
-   * region — page zero *is* the cheap region, and the driver's two stream
-   * pointers have to be in it because `($nn),y` is the only indirection the CPU
-   * has — so it takes them from the same pool everything else does, and a game
-   * with no audio takes none.
+   * high RAM, which the allocator does not hand out at all. The other two take
+   * them from the same pool everything else does, for opposite reasons — the
+   * NES's two stream pointers *have* to be in page zero, because `($nn),y` is the
+   * only indirection that CPU has, while the Z80 makes every address the same
+   * width and so gives its driver nowhere better than anywhere else. A game with
+   * no audio takes none either way.
    */
   audioBytes: number;
 
@@ -238,10 +239,11 @@ export const SMS_MEMORY: MemoryPlan = {
   // thirty-three, painted in the same frame.
   queueMax: 60,
   plotMax: 40,
-  // Nothing to reserve while there is no SN76489 driver to reserve it for. When
-  // one arrives it takes bytes from this pool like everything else, because the
-  // Z80 has no cheap region to keep them in.
-  audioBytes: 0,
+  // Out of the same pool as everything else, because the Z80 has no cheap region
+  // to keep them in: a load and a store carry a full address wherever the byte
+  // lives, so there is nothing to be economical about. Both other consoles pay
+  // this reservation somewhere the allocator never sees.
+  audioBytes: SMS_AUDIO_BYTES,
   // A name-table entry carries its palette-select and flip bits in a second
   // byte, so a queued cell is a tile *and* an attribute — the same shape as the
   // Game Boy Color's, reached by different hardware.

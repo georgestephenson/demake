@@ -282,12 +282,25 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     that floors the wrong way makes a game that plays almost right and diverges a
     thousand ticks later.
 
-    Sound is the gap: there is no SN76489 driver yet (§A5), so a Sega build plays
-    silently and says so rather than dropping the request. The blocking design
-    question is in the packer — the SN76489 puts the channel in the *data* byte
-    and latches it across writes, so `channelOf(reg)` has to become
-    `channelOf(reg, value)` over a per-tick latch, and refuse rather than guess if
-    a schedule ever emits a data byte without its latch.
+    Sound is no longer the gap: there is a generated Z80 driver (§A5), and both
+    machines carry their music and effects. The design question that was blocking
+    it was in the packer, and it resolved the way it was expected to — the
+    SN76489 puts the channel in the *data* byte and latches it across writes, so
+    `channelOf(reg)` became a *factory* for a `channelOf(reg, value)` carrying a
+    per-schedule latch, and `buildSmsGameAudio` refuses (`E_PSG_LATCH`) rather
+    than guessing if a schedule ever opens a tick with a data byte and no latch in
+    front of it. That refusal is what makes preemption safe: every run of a PSG
+    stream begins with a latch byte, so a run the music skips takes its own
+    channel selection with it.
+
+    The clock is the other thing this console decided for itself. `psgBinding`
+    will fit a rate to the VDP's line interrupt, and for a *game* that is the
+    wrong answer — the line counter is reloaded on every scanline outside the
+    active display, so a line interrupt every N lines fires a handful of times
+    inside the picture and then not at all until the next frame. A game's driver
+    therefore rides the frame at 59.92 Hz, like the NES's and for the same kind of
+    reason, and `fitRate` now treats the frame as the candidate every other clock
+    has to beat rather than as a fallback for when none is in range.
   - **D5 — Play ROM in the page** *(done for `gb`, `gbc`, `nes`, `sms` and
     `gg`)*: the browser
     compiles the
@@ -406,13 +419,17 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     lead, harmony) with confidences, plus the decoders. *Done means*: an MP3
     becomes a playable cartridge, and the parts it found are reported honestly
     enough that a wrong one can be corrected in one flag.
-  - **A5 — breadth** *(`nes` done, inside a game)*: the 2A03 has a chip model, a
-    binding and a generated 6502 driver, and `demake build -c nes` puts music and
-    effects in the cartridge with doc 16's Level A proof over both. What it does
-    not have yet is a *standalone* audio cartridge — `demake gen … --format rom`
-    is still the Game Boy's alone — because a cartridge whose only job is one
-    track is what the next caller needs and not what a game needed. Remaining:
-    `sms`/`gg`, `md` (FM patch fitting), `snes` (BRR,
+  - **A5 — breadth** *(`nes`, `sms` and `gg` done, inside a game)*: the 2A03 and
+    the SN76489 each have a chip model, a binding and a generated driver — 6502
+    and Z80 — and `demake build -c nes`/`-c sms`/`-c gg` puts music and effects in
+    the cartridge with doc 16's Level A proof over all of them. What none of them
+    has yet is a *standalone* audio cartridge — `demake gen … --format rom` is
+    still the Game Boy's alone — because a cartridge whose only job is one track is
+    what the next caller needs and not what a game needed. The SN76489 is also the
+    one that stretched the shared packing layer: its channel is in the data byte
+    and latched, so `channelOf` became a factory over a per-schedule latch and a
+    schedule that opens a tick with a bare data byte is refused rather than
+    guessed at. Remaining: `md` (FM patch fitting), `snes` (BRR,
     the SPC700 driver, sample budgeting), `gba`, `nds` — each is a chip model, a
     driver backend and a Level A/B harness, on the per-console definition of done
     Phase 2 used for images. Each faces the choice doc 16 §The driver contract

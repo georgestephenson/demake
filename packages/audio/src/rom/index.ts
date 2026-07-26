@@ -7,12 +7,12 @@
  * cartridge that played a different arrangement from the preview would make the
  * schedule oracle report a divergence three layers from its cause.
  *
- * One family builds a *cartridge of its own* today, the Game Boy. A second CPU
- * has a driver — the NES's, in `nes-game.ts` — but only inside a game, because
- * that is what a cartridge whose only job is one track would need next and not
- * what a game needed. What either costs is not hidden: a register encoder (which
- * the binding already is), a driver emitter for its CPU, and a core to prove it
- * in — see doc 16 §The proof.
+ * One family builds a *cartridge of its own* today, the Game Boy. Two more CPUs
+ * have drivers — the NES's in `nes-game.ts`, the Sega 8-bits' in `sms-game.ts` —
+ * but only inside a game, because that is what a cartridge whose only job is one
+ * track would need next and not what a game needed. What any of them costs is not
+ * hidden: a register encoder (which the binding already is), a driver emitter for
+ * its CPU, and a core to prove it in — see doc 16 §The proof.
  */
 
 import { getConsole } from "@demake/core";
@@ -30,7 +30,13 @@ import {
 
 export { AudioRomError, buildGbAudioRom };
 export type { AudioRomOptions, AudioRomStats, BuiltAudioRom };
-export { packScript, PackError, MAX_WRITES_PER_TICK, type DriverData } from "./data.js";
+export {
+  packScript,
+  PackError,
+  MAX_WRITES_PER_TICK,
+  type ChannelTag,
+  type DriverData,
+} from "./data.js";
 
 /** Chips a driver backend exists for, keyed by the chip a console names. */
 const DRIVERS: Readonly<Record<string, "gb">> = { "gb-apu": "gb" };
@@ -47,6 +53,14 @@ const DRIVERS: Readonly<Record<string, "gb">> = { "gb-apu": "gb" };
 const GAME_CLOCKS: Readonly<Record<string, "timer" | "frame">> = {
   "gb-apu": "timer",
   "nes-apu": "frame",
+  // The Sega 8-bits' other candidate is the VDP's line interrupt, and on paper it
+  // is a timer: `psgBinding.fitRate` will hand back rates a long way above the
+  // frame. What it is not is *uniform* — the line counter is reloaded on every
+  // scanline outside the active display, so a line interrupt every N lines fires
+  // a handful of times inside the picture and then not at all until the next
+  // frame. A driver on it would perform the schedule correctly and play it
+  // unevenly, which is worse than a coarser clock.
+  sn76489: "frame",
 };
 
 /**

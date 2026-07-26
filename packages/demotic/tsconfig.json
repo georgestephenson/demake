@@ -12,6 +12,8 @@
     { "path": "../core/tsconfig.json" },
     { "path": "../audio/tsconfig.json" },
     { "path": "../chip/tsconfig.json" },
-    { "path": "../dmg/tsconfig.json" }
+    { "path": "../dmg/tsconfig.json" },
+    { "path": "../nes/tsconfig.json" },
+    { "path": "../sms/tsconfig.json" }
   ]
 }

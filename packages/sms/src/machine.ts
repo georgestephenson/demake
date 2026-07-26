@@ -93,8 +93,13 @@ export class Sms implements Bus {
    * proof, Level A). It observes rather than intercepts — the write still
    * reaches the PSG — because an oracle that changed what the hardware saw would
    * be testing itself.
+   *
+   * The register it reports is `@demake/chip`'s numbering, which is the numbering
+   * a `ChipScript` carries: `0` for the chip's one write port and `$06` for the
+   * Game Gear's stereo latch. Two different devices, so an oracle that saw only
+   * the byte could not tell a pan change from a note.
    */
-  psgTap: ((value: number) => void) | undefined = undefined;
+  psgTap: ((reg: number, value: number) => void) | undefined = undefined;
 
   /**
    * Where the PSG's samples go, when anything is listening.
@@ -178,14 +183,14 @@ export class Sms implements Bus {
     if (this.gameGear && at === 0x06) {
       // The Game Gear's stereo register lives on the PSG, not on the VDP.
       this.psg.write(0x06, byte);
-      this.psgTap?.(byte);
+      this.psgTap?.(0x06, byte);
       return;
     }
     if (at < 0x40) return; // memory control and I/O control: nothing to model
     if (at < 0x80) {
       // Both halves of this range are the sound chip's one write port.
       this.psg.write(0, byte);
-      this.psgTap?.(byte);
+      this.psgTap?.(0, byte);
       return;
     }
     if (at < 0xc0) {

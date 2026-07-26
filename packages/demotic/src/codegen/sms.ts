@@ -26,6 +26,7 @@
  *     VDP would hold.
  */
 
+import { buildSmsGameAudio } from "@demake/audio";
 import {
   AsmError,
   packSegaRom,
@@ -41,6 +42,7 @@ import { BUILTIN_TILES } from "../rom/graphics.js";
 
 import { type Analysis } from "./analyze.js";
 import type { AssetBytes } from "./art.js";
+import { bindAudio, effectIndices, trackForScene } from "./audio.js";
 import {
   buildRom,
   BuildError,
@@ -72,16 +74,18 @@ export const CODE_SIZE = SMS_HEADER_OFFSET;
 /**
  * What this backend's audio binding hands the emitter.
  *
- * An SN76489 driver is doc 13's work and does not exist yet, so this reports no
- * driver — and a game that *names* music and effects still builds, plays
- * silently, and says which files went unused. What it must also do is record the
- * request a rule made, because that is a field of the trace (doc 14
- * §Conformance): a build with no driver has to trace identically to one with a
- * driver, or the conformance suite would be comparing two different games.
+ * `gb.ts`'s and `nes.ts`'s shape: what the emitter needs to *play* the audio, and
+ * — separately — the bytes a rule writes to ask for it. The second is set
+ * whenever the program *names* audio, driver or no driver, because the request is
+ * a field of the trace (doc 14 §Conformance): a build whose files were not
+ * supplied has to trace identically to one with them in, or the conformance suite
+ * would be comparing two different games.
  */
 interface SmsAudio extends BoundAudioShape {
-  /** Set whenever the program names audio, driver or no driver. */
-  names: boolean;
+  /** The emitter options the driver contributes: itself, and its index tables. */
+  options: SmsEmitOptions;
+  /** The bytes a rule writes to ask for a sound; absent when none can. */
+  hooks?: { driver: boolean; music: number; request: number; effects: readonly number[] };
 }
 
 /** The Sega 8-bits' implementation of the build. */
@@ -124,45 +128,71 @@ export const smsBackend: Backend<SmsEmitOptions, SmsAudio> = {
     );
   },
 
-  bindAudio(program: Program): BoundAssets<SmsAudio> {
+  bindAudio(program: Program, assets: AssetBytes, layout: Layout): BoundAssets<SmsAudio> {
+    // The driver's state is work RAM the allocator set aside for it, which it only
+    // does for a program that names audio — so a game with none reaches here with
+    // nowhere to put a driver and does not need one.
+    const state = layout.audio;
+    const bound =
+      state === null
+        ? { driver: undefined, missing: [] as readonly string[], notes: [] as readonly string[] }
+        : bindAudio(program, assets, {
+            build: (tracks, effects) => buildSmsGameAudio({ tracks, effects, state }),
+          });
     const names = program.tracks.length > 0 || program.sounds.length > 0;
-    const missing = names ? [...program.tracks, ...program.sounds] : [];
-    return {
-      emit: {
-        present: false,
-        names,
-        tracks: 0,
-        effects: 0,
-        code: 0,
-        data: 0,
-        helpers: [],
-        rateHz: 0,
-        writesRestricted: 0,
+    const driver = bound.driver;
+    const options: SmsEmitOptions = driver
+      ? {
+          audio: driver,
+          effectIndices: effectIndices(program, bound),
+          sceneTracks: trackForScene(program, bound),
+        }
+      : {};
+    const emit: SmsAudio = {
+      present: driver !== undefined,
+      options,
+      tracks: driver?.stats.tracks ?? 0,
+      effects: driver?.stats.effects ?? 0,
+      // Getters: the driver has not been emitted yet, so its sizes are zero until
+      // `assemble` has run (`BoundAudioShape`).
+      get code() {
+        return driver?.stats.code ?? 0;
       },
-      tiles: 0,
-      missing,
-      notes: names ? ["the sms backend has no sound driver yet; the game plays silently"] : [],
+      get data() {
+        return driver?.stats.data ?? 0;
+      },
+      helpers: driver?.stats.helpers ?? [],
+      rateHz: driver ? driver.stats.rate.num / driver.stats.rate.den : 0,
+      writesRestricted: driver?.stats.writesRestricted ?? 0,
+      ...(names
+        ? {
+            hooks: {
+              driver: driver !== undefined,
+              music: driver?.request.music ?? 0,
+              request: driver?.request.sfx ?? 0,
+              effects: options.effectIndices ?? program.sounds.map(() => -1),
+            },
+          }
+        : {}),
     };
+    return { emit, tiles: 0, missing: bound.missing, notes: bound.notes };
   },
 
   assemble({ program, analysis, layout, art, audio, title }): Assembled {
     void title; // a Sega header carries no title field, only a product code
     const ctx = new SmsCtx(program, analysis, layout, getProfile(program.profile.id), SMS_ORIGIN);
-    if (audio.names) {
-      // No driver, so no request byte for one to read — but the trace's record of
-      // what a rule asked for is still written, which is what keeps a silent build
-      // and a sounding one the same game.
+    if (audio.hooks) {
       ctx.audio = {
-        driver: false,
-        music: 0,
-        request: 0,
+        driver: audio.hooks.driver,
+        music: audio.hooks.music,
+        request: audio.hooks.request,
         trace: layout.sound,
-        effects: program.sounds.map(() => -1),
+        effects: audio.hooks.effects,
       };
     }
     let code: Uint8Array;
     try {
-      emitProgram(ctx, art);
+      emitProgram(ctx, { ...art, ...audio.options });
       code = ctx.asm.assemble();
     } catch (error) {
       if (error instanceof AsmError) {

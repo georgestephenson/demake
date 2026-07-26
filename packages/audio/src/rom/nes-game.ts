@@ -204,7 +204,7 @@ export function buildNesGameAudio(input: NesGameAudioInput): NesGameAudio {
   // exactly as a cartridge that owns the chip does.
   const shared = input.tracks.length > 0 && input.effects.length > 0;
   const packOptions = shared
-    ? { channelOf: nesChannelOf, mergeRegs: new Set([SND_CHN - APU_BASE]) }
+    ? { channelOf: () => nesChannelOf, mergeRegs: new Set([SND_CHN - APU_BASE]) }
     : {};
 
   let restricted = 0;
