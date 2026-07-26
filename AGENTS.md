@@ -12,12 +12,12 @@ something 8/16-bit-era consoles and handhelds up to the Nintendo DS could
 actually run. Four demakers, sharing one engine and one proof (a real ROM, in a
 real emulator, compared pixel for pixel):
 
-| Demaker               | Docs   | State                                                                |
-| --------------------- | ------ | -------------------------------------------------------------------- |
-| art (images)          | 03–06  | working, ten consoles proven on hardware                             |
-| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable `gb`/`gbc` ROMs |
-| music (`arrange`)     | 16, 17 | MIDI → chip music, six consoles — and a Game Boy ROM that plays it   |
-| sound (`sfx`)         | 16, 18 | WAV → chip effects, six consoles — same ROM, same proof              |
+| Demaker               | Docs   | State                                                                      |
+| --------------------- | ------ | -------------------------------------------------------------------------- |
+| art (images)          | 03–06  | working, ten consoles proven on hardware                                   |
+| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on five consoles |
+| music (`arrange`)     | 16, 17 | MIDI → chip music, six consoles — and a Game Boy ROM that plays it         |
+| sound (`sfx`)         | 16, 18 | WAV → chip effects, six consoles — same ROM, same proof                    |
 
 The four are not four tools that share a repo any more: a `.dmt` says
 `music theme.mid` and `sound bounce.wav on ball hits paddle`, and `demake build`
@@ -86,6 +86,16 @@ traces identically on both consoles, and `rom.test.ts` runs the whole example
 library on both to say so. `@demake/dmg` is both machines too, decided by the
 cartridge header, so the DMG shows the authentic green LCD ramp and a `gbc`
 build comes up in colour.
+
+**And it builds for the Sega 8-bits.** `demake build -c sms` and `-c gg` produce
+real mapper-less cartridges — Z80 machine code with the art demade into a shared
+4bpp bank the boot code uploads to video RAM — and the whole example library
+traces identically on both, in the same battery, at the same one frame per tick.
+Two consoles from one backend: a Game Gear is a Master System with a smaller
+window and wider colour entries, so the machine code is the same and only the
+visible cell count and the palette upload differ. The page plays them too. Sound
+is the named gap — `bindAudio` says so and the build reports it, rather than a
+cartridge quietly playing a different game.
 
 **And it builds for a second machine.** `demake build -c nes` produces a real
 NROM cartridge — 6502 machine code written for the game, its art demade for a
@@ -216,7 +226,7 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
     registry.ts      which backend builds which console; the CLI reads this
     gb.ts, emit/rules/expr/val/tiles.ts   the SM83 backend
     nes.ts, nes-art.ts, nes/              the 6502 backend and its image path
-    sms/                                  the Z80 backend (in progress: ctx + val)
+    sms.ts, sms-art.ts, sms/              the Z80 backend and its image path
     audio.ts         the hand-off to @demake/audio, art.ts's twin
   demo/              terminal runner (play.mjs) and test runner (test.mjs)
 packages/chip/       @demake/chip — every sound chip as a register-driven model (doc 16)
@@ -685,10 +695,9 @@ packages/demotic/test/rom.test.ts` builds all seven fixture games and diffs raw
 
 ### The Z80 half
 
-The Sega backend is part-built: `sms/ctx.ts` and `sms/val.ts` exist and are proven
-by `packages/demotic/test/sms-arith.test.ts`; the expression, rule, tile and
-top-level emitters, the art path and the registry entry are not written yet, so
-`demake build -c sms` still reports no runtime.
+`demake build -c sms` and `-c gg` build playable cartridges, and the whole example
+library traces identically on both. What is _not_ there is sound: `bindAudio`
+names the gap, so a game that asks for music builds, plays silently and says so.
 
 - **A load says nothing about what it loaded.** `ld a,(nn)` sets no flags, where
   the 6502's `lda` sets N and Z. Every sign test therefore needs an explicit
@@ -720,6 +729,33 @@ top-level emitters, the art path and the registry entry are not written yet, so
 - **A name-table entry is two bytes**, so `cellAttributes` is true here: the
   second byte carries the palette-select, flip and priority bits. Same shape as
   the Game Boy Color's attribute byte, reached by different hardware.
+- **The bank is capped at 256 tiles, not the 448 that fit.** A sprite's tile
+  number in the attribute table is a single byte, so anything an object can draw
+  has to be below 256; letting the background reach higher would mean two budgets
+  to explain and a nine-bit index in the name table's second byte. Tiles are also
+  ROM _and_ video RAM here — they are uploaded at boot, not addressed in place —
+  so the bank costs cartridge twice.
+- **Which colour bank a background cell uses is decided by its tile number.**
+  Anything below `BUILTIN_TILES` is the font, the level patterns or the
+  placeholder block and draws in bank 1 alongside the sprites; art draws in bank 0. There is no third palette to reserve, so three _entries_ at the top of the
+  sprite bank are the reservation instead and `buildSpriteBank`'s `maxColors`
+  tells the fit about them. Never widen the sprite fit back to sixteen: the font
+  would take three of the art's colours and a caption would be the colour it is
+  written on.
+- **Do not reach for a render word without checking who owns it.** The renderer's
+  sixteen scratch words include `mapCol`/`mapRow`, which are the map origin and
+  have to survive from one frame to the next. The decimal renderer used them and
+  every frame looked like a camera teleport — the game played correctly and
+  repainted the whole screen seventy-eight frames in ninety, display off and on
+  each time. `sms-rom.test.ts` pins it now; the safe slots are the redraw's and
+  the walk's own loop counters, which have finished before a HUD is drawn.
+- **Sound is the named gap, and the shape of it is known.** An SN76489 driver
+  needs `audio/src/rom/`'s stream player emitted for the Z80 and the game
+  hand-off of `gb-game.ts` — both direct translations — plus one design decision
+  the Game Boy did not force: this chip puts the _channel_ in the data byte
+  rather than in the register number, and it is latched across writes, so
+  `packScript`'s `channelOf(reg)` has to become `channelOf(reg, value)` over a
+  per-call latch before an effect can preempt a channel of the music.
 
 ## Working on audio
 
@@ -867,6 +903,13 @@ Two files plus fixtures (doc 02 §Extensibility):
   `core`'s own Z80 assembler, so an encoder and a decoder that agreed with each
   other and not with the hardware would still fail against the published opcode
   bytes `packages/core/test/z80.test.ts` pins.
+- `packages/demotic/test/sms-rom.test.ts` is the same for the Sega 8-bits, and it
+  is where the things a trace cannot see are checked: that the tile bank reaches
+  video RAM, that every visible cell matches the level's own grid, that the seam
+  mask is on only where the level scrolls sideways, and that the reserved colours
+  survive whatever the art chose. Let the scene _settle_ before comparing — a
+  camera moving more than four cells in a tick asks for a full redraw next frame,
+  so a picture read four frames in is one the runtime has already discarded.
 - `packages/demotic/test/nes-rom.test.ts` is the rendering oracle the NES has
   until doc 10's scripted-input E2E exists: it checks the nametable against the
   level grid the cartridge carries, cell by cell, before and after the camera has
