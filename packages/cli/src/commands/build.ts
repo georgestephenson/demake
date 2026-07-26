@@ -272,8 +272,13 @@ export async function runBuild(
       for (const note of audio.notes) env.errOut(`  ${note}\n`);
     }
     if (stats.missingAudio.length > 0) {
+      // "not built" rather than "not found", because both are reasons to be here
+      // and only one of them is about the file: a console whose driver does not
+      // exist yet reports every track it was handed, and telling someone their
+      // `rally.mid` is missing when it is sitting next to the `.dmt` sends them
+      // looking in the wrong place.
       env.errOut(
-        `note: no audio found for ${stats.missingAudio.join(", ")}; the game plays without it\n`,
+        `note: no audio was built for ${stats.missingAudio.join(", ")}; the game plays without it\n`,
       );
     }
     if (program.warnings.length > 0) {

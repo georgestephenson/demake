@@ -3,17 +3,18 @@
  *
  * Doc 13 §D5 says the browser must never need a toolchain, and it does not: the
  * assemblers are ours and written in TypeScript, so the page *compiles* the game
- * — to SM83 for a Game Boy, to 6502 for an NES — the same way the CLI does and
- * gets the same bytes. What the Download button hands you is byte-identical to
+ * — to SM83 for a Game Boy, to 6502 for an NES, to Z80 for a Master System — the
+ * same way the CLI does and gets the same bytes. What the Download button hands you is byte-identical to
  * what `demake build` writes on the command line, which is the doc-07 parity
  * contract restated for games.
  *
- * The emulators are `@demake/dmg` and `@demake/nes`, ours, for the reason doc 07
- * gives: a core fetched from a CDN is forbidden, and a WASM core we cannot read
- * would be the same bargain in a different wrapper. Which one runs is decided by
- * the console the game was compiled for, and *within* the Game Boy family by the
- * cartridge itself — a `gbc` build carries the CGB flag in its header and comes
- * up in colour — so the console selector above this pane changes the
+ * The emulators are `@demake/dmg`, `@demake/nes` and `@demake/sms`, ours, for the
+ * reason doc 07 gives: a core fetched from a CDN is forbidden, and a WASM core we
+ * cannot read would be the same bargain in a different wrapper. Which one runs is
+ * decided by the console the game was compiled for, and *within* two of the three
+ * families by the cartridge itself — a `gbc` build carries the CGB flag in its
+ * header and comes up in colour, a `gg` build carries a Game Gear region nibble
+ * and comes up as a handheld — so the console selector above this pane changes the
  * **cartridge**, and the player follows it rather than being a setting of its own.
  *
  * **The frame counter under the screen is not decoration.** It is the measured
@@ -21,29 +22,32 @@
  * honest about hardware speed rather than hiding behind a multiplier.
  */
 
-import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 
-import {
-  buildGame,
-  familyFor,
-  romExtension,
-  romReady,
-  unsupportedFor,
-  type BuiltRom,
-  type Program,
-} from "@demake/demotic";
+import { romReady, type Layout, type Program } from "@demake/demotic";
 import { Gameboy, SCREEN_HEIGHT, SCREEN_WIDTH, type Button } from "@demake/dmg";
 import { Nes, SCREEN_HEIGHT as NES_HEIGHT, SCREEN_WIDTH as NES_WIDTH } from "@demake/nes";
+import {
+  FRAME_HEIGHT as SMS_HEIGHT,
+  FRAME_WIDTH as SMS_WIDTH,
+  GG_HEIGHT,
+  GG_WIDTH,
+  Sms,
+  type Button as SmsButton,
+} from "@demake/sms";
 
 import { demoAssetBytes, demoAudioBytes } from "../lib/demo-game.js";
 import { download } from "../lib/download.js";
 import { audioSupported, RomAudio, type Listenable } from "../lib/rom-audio.js";
+import { createEngine } from "../worker/client.js";
 
 /**
- * The portable button set maps one for one onto both machines' pads.
+ * The portable button set maps one for one onto every machine's pad.
  *
  * Which is what doc 14 §Buttons chose it for: the Game Boy has exactly these
- * seven, and the NES has them and a Select besides.
+ * seven, the NES has them and a Select besides, and a Master System has six and
+ * a Pause key — which is what `start` means there, and the cartridge already
+ * knows it.
  */
 const BUTTONS: Readonly<Record<string, Button>> = {
   left: "left",
@@ -63,6 +67,8 @@ const MACHINE: Readonly<Record<string, string>> = {
   gb: "a Game Boy",
   gbc: "a Game Boy Color",
   nes: "an NES",
+  sms: "a Master System",
+  gg: "a Game Gear",
 };
 
 /**
@@ -71,16 +77,17 @@ const MACHINE: Readonly<Record<string, string>> = {
  * Named rather than elided because the number means nothing without it: three
  * frames a tick is a different verdict on a 4 MHz SM83 than on a 1.8 MHz 6502.
  */
-const CPU: Readonly<Record<string, string>> = { gb: "an SM83", nes: "a 6502" };
+const CPU: Readonly<Record<string, string>> = { gb: "an SM83", nes: "a 6502", sms: "a Z80" };
 
 /**
  * A booted cartridge, whichever console it is for.
  *
  * The pane needs five things of a machine and no more, so this is those five —
- * and the two cores satisfy it without either learning about the page or about
- * each other. `chip` is the sound hardware the audio player attaches to, and
- * both consoles have one: the Game Boy's APU and the NES's 2A03, each
- * `@demake/chip`'s own model rather than a second copy living in a core.
+ * and the three cores satisfy it without any of them learning about the page or
+ * about each other. `chip` is the sound hardware the audio player attaches to,
+ * and every console has one: the Game Boy's APU, the NES's 2A03, the Master
+ * System's SN76489, each `@demake/chip`'s own model rather than a second copy
+ * living in a core.
  */
 interface Player {
   readonly width: number;
@@ -92,9 +99,49 @@ interface Player {
   readMemory(address: number, length: number): Uint8Array;
 }
 
-/** Boot a cartridge in the core its console needs. */
-function boot(rom: Uint8Array, consoleId: string): Player {
-  if (familyFor(consoleId) === "nes") {
+/**
+ * Boot a cartridge in the core its console needs.
+ *
+ * The family comes with the cartridge rather than being looked up here: which
+ * consoles have a backend is `codegen/registry.ts`'s one list, and the page
+ * reads it through the worker like everything else it knows about the engine.
+ */
+function boot(rom: Uint8Array, family: string): Player {
+  if (family === "sms") {
+    // Which of the two machines it is comes out of the cartridge's own region
+    // nibble, not from `consoleId` — the same rule the Game Boy family runs
+    // under, and the reason the selector changes the build rather than a setting.
+    const machine = new Sms(rom);
+    const view = machine.vdp.view();
+    return {
+      width: view.width,
+      height: view.height,
+      framebuffer: view.pixels,
+      // The Sega's sound chip is a PSG, not an APU, so it is adapted rather
+      // than renamed — the core keeps calling it what it is. Nothing writes to
+      // it yet (the SN76489 driver is doc 13's work) and the sound button is
+      // withheld below for exactly that reason; when the driver lands, the
+      // button is the only thing that changes.
+      chip: {
+        get audioSink() {
+          return machine.audioSink;
+        },
+        set audioSink(sink) {
+          machine.audioSink = sink;
+        },
+        apu: machine.psg,
+      },
+      // A Sega pad has no Select, so the one button the portable set does not
+      // include is dropped rather than mapped onto something else.
+      setButtons: (down) => machine.setButtons(down as readonly SmsButton[]),
+      runFrame: () => {
+        machine.runFrame();
+        machine.vdp.view();
+      },
+      readMemory: (address, length) => machine.readMemory(address, length),
+    };
+  }
+  if (family === "nes") {
     const machine = new Nes(rom);
     return {
       width: NES_WIDTH,
@@ -176,16 +223,18 @@ export function RomPane({
     };
   }, []);
 
-  // The build is deferred until after a paint rather than run inline, and that
-  // is not cosmetic: demaking a *colour* backdrop is the whole `prep`
-  // tournament, which is seconds of arithmetic the first time the page sees a
-  // picture, and it is synchronous — nothing repaints while it runs. A tab that
-  // simply stopped for those seconds would look broken, so the pane gets its
-  // "demaking" badge *on screen* first and does the work after. Repeat builds
-  // hit the conversion cache and are instant.
+  // The build happens in the engine worker, and that is not an optimisation:
+  // demaking a *colour* backdrop is the whole `prep` tournament, seconds of
+  // arithmetic the first time the page sees a picture, and it is synchronous.
+  // On this thread a tab would simply stop for those seconds and look broken.
+  // The pane's own worker, because the game section is not the art section and
+  // neither should wait on the other; the module is the same file either way,
+  // which is why the site still ships one copy of the engine.
+  const engine = useMemo(() => createEngine(), []);
   const [built, setBuilt] = useState<{
     /**
-     * The console this cartridge is for, and the extension it is named with.
+     * The console this cartridge is for, the extension it is named with, and
+     * the family whose core plays it.
      *
      * The pane keeps playing the ROM it has while the next one demakes, so for
      * those seconds the picker and the cartridge disagree — and everything on
@@ -194,14 +243,15 @@ export function RomPane({
      */
     consoleId?: string;
     extension?: string;
+    family?: string;
     rom?: Uint8Array;
-    layout?: BuiltRom["layout"];
+    layout?: Layout;
     error?: string;
   }>({});
   const [demaking, setDemaking] = useState(false);
 
   useEffect(() => {
-    // Both early exits clear the flag as well as the cartridge: a build that is
+    // The early exit clears the flag as well as the cartridge: a build that is
     // never going to start must not leave the pane saying it is demaking, which
     // is how "fix the errors above" came to be unreachable once the badge could
     // outlive its effect.
@@ -210,85 +260,77 @@ export function RomPane({
       setDemaking(false);
       return;
     }
-    const target = program.profile.id;
-    const named = romExtension(program);
-    const missing = unsupportedFor(program);
-    if (missing.length > 0) {
-      setBuilt({
-        consoleId: target,
-        extension: named,
-        error:
-          `This game needs ${missing.join(" and ")}. The preview above plays it correctly; ` +
-          `a ROM would play something else, so the build refuses rather than pretend.`,
-      });
-      setDemaking(false);
-      return;
-    }
     let live = true;
-    let timer = 0;
     setDemaking(true);
-    // `requestAnimationFrame` then `setTimeout`, and the order is the point: a
-    // rAF callback runs *before* the frame is painted, so scheduling the work
-    // inside it is scheduling it after the badge is actually on screen. A bare
-    // `setTimeout(0)` is a macrotask that can beat the paint, which on a slow
-    // colour build means the tab freezes for several seconds having shown
-    // nothing — the exact failure the deferral exists to avoid.
-    const frame = requestAnimationFrame(() => {
-      timer = setTimeout(() => {
+    // The bundled art goes in as *source bytes*: the conversion happens inside
+    // the build, so the page and the CLI cannot diverge on it.
+    const assets = demoAssetBytes();
+    for (const [file, bytes] of audio) assets.set(file, bytes);
+    void engine
+      .buildGame(program, name, assets)
+      .then((result) => {
         if (!live) return;
-        try {
-          // The bundled art goes in as *source bytes*: the conversion happens
-          // inside the build, so the page and the CLI cannot diverge on it.
-          const assets = demoAssetBytes();
-          for (const [file, bytes] of audio) assets.set(file, bytes);
-          const result = buildGame(program, { title: name, assets });
+        const where = {
+          consoleId: result.console,
+          extension: result.extension,
+          family: result.family,
+        };
+        if (result.unsupported.length > 0) {
           setBuilt({
-            consoleId: target,
-            extension: named,
-            rom: result.bytes,
-            layout: result.layout,
+            ...where,
+            error:
+              `This game needs ${result.unsupported.join(" and ")}. The preview above plays ` +
+              `it correctly; a ROM would play something else, so the build refuses rather ` +
+              `than pretend.`,
           });
-        } catch (error) {
-          setBuilt({
-            consoleId: target,
-            extension: named,
-            error: String((error as Error).message ?? error),
-          });
+          return;
         }
-        setDemaking(false);
-      }, 0) as unknown as number;
-    });
+        setBuilt({ ...where, rom: new Uint8Array(result.rom!), layout: result.layout! });
+      })
+      .catch((error: unknown) => {
+        if (!live) return;
+        setBuilt({
+          consoleId: program.profile.id,
+          error: String((error as Error).message ?? error),
+        });
+      })
+      .finally(() => {
+        if (live) setDemaking(false);
+      });
     return () => {
       live = false;
-      cancelAnimationFrame(frame);
-      clearTimeout(timer);
     };
-  }, [program, name, audio]);
+  }, [engine, program, name, audio]);
 
   const { rom, layout } = built;
   // The cartridge's console, not the picker's: they differ for as long as a build
   // takes, and everything below describes what is on screen. A colour build is a
   // different cartridge rather than a setting on this one, and so is an NES one.
   const consoleId = built.consoleId ?? program?.profile.id ?? "gb";
-  const family = familyFor(consoleId) ?? "gb";
+  const family = built.family ?? "gb";
   const extension = built.extension ?? "gb";
-  // Both consoles have a driver now, so the only thing that can withhold the
-  // button is the browser.
-  const canSound = audioSupported();
+  // Both Nintendo consoles have a driver now; the SN76489's is doc 13's work,
+  // and a button that turned on nothing would be worse than one that is plainly
+  // unavailable.
+  const canSound = audioSupported() && family !== "sms";
   // The canvas is sized by the console, not by CSS: these are two genuinely
   // different screens (160×144 against 256×240, and not the same aspect), and a
   // buffer put into a canvas of the wrong size is silently cropped.
   const screen =
     family === "nes"
       ? { width: NES_WIDTH, height: NES_HEIGHT }
-      : { width: SCREEN_WIDTH, height: SCREEN_HEIGHT };
+      : family === "sms"
+        ? consoleId === "gg"
+          ? { width: GG_WIDTH, height: GG_HEIGHT }
+          : { width: SMS_WIDTH, height: SMS_HEIGHT }
+        : { width: SCREEN_WIDTH, height: SCREEN_HEIGHT };
 
   useEffect(() => {
     if (!rom || !layout) {
       machine.current = null;
       return;
     }
-    const booted = boot(rom, consoleId);
+    const booted = boot(rom, family);
     machine.current = booted;
     player.current?.attach(booted.chip);
     const element = canvas.current;
@@ -357,7 +399,7 @@ export function RomPane({
 
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [rom, layout, consoleId, held, latched, restarts]);
+  }, [rom, layout, consoleId, family, held, latched, restarts]);
 
   // The context outlives every ROM built in the section, and is closed once.
   useEffect(() => () => player.current?.close(), []);
@@ -459,6 +501,9 @@ export function RomPane({
         {CPU[family] ?? "this console’s CPU"}.
         {sound
           ? " The sound is the cartridge's own chip, rendered by the same model the CLI writes WAVs with — the page synthesizes nothing."
+          : ""}
+        {family === "sms"
+          ? " There is no sound on this console yet: its driver is still to be written, and a button that turned on nothing would be worse than one that is plainly unavailable."
           : ""}
       </p>
       {sound && !playing ? (

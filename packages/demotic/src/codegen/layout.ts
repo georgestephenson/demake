@@ -200,6 +200,70 @@ export const NES_MEMORY: MemoryPlan = {
   cellAttributes: false,
 };
 
+/**
+ * The Master System's plan, which is the roomy one again.
+ *
+ * Eight kilobytes of work RAM, like the Game Boy's, and the same freedom with
+ * it. Three things about the range are the hardware's rather than a choice:
+ *
+ *   - It starts at `$C000` and is mirrored at `$E000`, so an address above
+ *     `$E000` is the same byte seen twice and there is nothing to gain from it.
+ *   - The **mapper's four control registers are decoded out of the mirror**, at
+ *     `$FFFC`–`$FFFF` — which is `$DFFC`–`$DFFF` in real RAM. A game that stored
+ *     state there would page a ROM bank out from under itself, so the heap stops
+ *     short of them and the stack sits below.
+ *   - There is **no cheaply-addressed region**, because this CPU does not have
+ *     one. The 6502's page zero and the Game Boy's high RAM both make some
+ *     addresses shorter to reach; the Z80 makes every address the same width and
+ *     puts its cheapness in the register file instead. So no `fastStart`, and the
+ *     allocator hands everything out of one pool.
+ *
+ * The object shadow is a plain RAM copy of the sprite attribute table, uploaded
+ * through the data port in the blanking window. There is no DMA on this machine
+ * to align it for — unlike both other consoles — but keeping it at the bottom of
+ * the heap costs nothing and keeps one upload contiguous.
+ */
+export const SMS_MEMORY: MemoryPlan = {
+  machine: "Master System",
+  heapStart: 0xc100,
+  heapEnd: 0xdf00,
+  oamShadow: 0xc000,
+  oamEntries: 64,
+  viewW: 32,
+  viewH: 24,
+  // A queued cell here carries its own address as well as two bytes of data, so
+  // an entry is four bytes and the count of them is a *byte* — which caps the
+  // queue at sixty rather than at what a blanking interval would hold. Sixty is
+  // what a diagonal scroll needs: a column of twenty-five and a row of
+  // thirty-three, painted in the same frame.
+  queueMax: 60,
+  plotMax: 40,
+  // Nothing to reserve while there is no SN76489 driver to reserve it for. When
+  // one arrives it takes bytes from this pool like everything else, because the
+  // Z80 has no cheap region to keep them in.
+  audioBytes: 0,
+  // A name-table entry carries its palette-select and flip bits in a second
+  // byte, so a queued cell is a tile *and* an attribute — the same shape as the
+  // Game Boy Color's, reached by different hardware.
+  cellAttributes: true,
+};
+
+/**
+ * The same, for a Game Gear: a 160×144 window on the identical VDP.
+ *
+ * The chip renders the whole 256×192 frame either way and the LCD shows the
+ * middle of it, so what changes is how much of the name table a game may treat
+ * as visible — twenty by eighteen cells rather than thirty-two by twenty-four.
+ * Nothing about the memory map differs, because nothing about the memory map is
+ * different.
+ */
+export const GG_MEMORY: MemoryPlan = {
+  ...SMS_MEMORY,
+  machine: "Game Gear",
+  viewW: 20,
+  viewH: 18,
+};
+
 /** Raised when a game needs more state than the machine has. */
 export class LayoutError extends Error {
   constructor(
