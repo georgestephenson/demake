@@ -16,6 +16,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { Gameboy } from "@demake/dmg";
+
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
 import { buildGbRom, HEADER_OFFSETS, ROM_SIZE, unsupportedFeatures } from "../src/codegen/gb.js";
@@ -32,8 +34,8 @@ const read = (name: string) => readFileSync(join(fixtures, name), "utf8");
 /** The tape the golden trace was recorded with (see determinism.test.ts). */
 const PONG_TAPE = "1:a,90:,90:left,120:right";
 
-function build(source: string, levels?: Record<string, string>) {
-  return compile(source, { profile: getProfile("gb"), levels });
+function build(source: string, levels?: Record<string, string>, consoleId = "gb") {
+  return compile(source, { profile: getProfile(consoleId), levels });
 }
 
 describe("gb ROM", () => {
@@ -87,13 +89,108 @@ describe("gb ROM conformance across the example library", () => {
     ],
   ];
 
-  for (const [file, script, levels] of cases) {
-    it(`matches the interpreter for ${file}`, () => {
-      const program = build(read(file), levels);
-      const frames = tape(script);
-      expect(romTrace(program, frames)).toBe(trace(new Sim(program), frames));
-    });
+  // Both Game Boys, because the colour backend is the same machine code with a
+  // second half bolted to the renderer: attributes, palettes and a VRAM bank.
+  // If that half ever leaked into the *simulation* — a cell walk that moved an
+  // object, a palette upload that clobbered a scratch byte — this is where it
+  // would show, and it would name the tick.
+  for (const consoleId of ["gb", "gbc"] as const) {
+    for (const [file, script, levels] of cases) {
+      it(`matches the interpreter for ${file} on ${consoleId}`, () => {
+        const program = build(read(file), levels, consoleId);
+        const frames = tape(script);
+        expect(romTrace(program, frames)).toBe(trace(new Sim(program), frames));
+      });
+    }
   }
+
+  it("plays the same game on both, whatever it looks like", () => {
+    const frames = tape(PONG_TAPE);
+    // Everything but the header line, which names the console it was built for.
+    const body = (consoleId: string): string =>
+      romTrace(build(read("pong.dmt"), undefined, consoleId), frames)
+        .split("\n")
+        .slice(1)
+        .join("\n");
+    expect(body("gbc")).toBe(body("gb"));
+  });
+});
+
+/**
+ * Headroom for a colour conversion.
+ *
+ * Demaking a picture for colour hardware is the whole `prep` tournament, which
+ * is seconds where the mono path is milliseconds — the cost `demake prep -c gbc`
+ * has always had. `bindArt` memoises it so only the first test here pays, but
+ * the default timeout is written for tests that run one pipeline and a loaded
+ * CI runner is several times slower than a developer's machine.
+ */
+const COLOUR_TIMEOUT = 120_000;
+
+describe("the colour cartridge", { timeout: COLOUR_TIMEOUT }, () => {
+  const assets = () =>
+    new Map(
+      ["ball.svg", "paddle.svg", "pong.title.svg", "pong.play.svg"].map((name) => [
+        name,
+        new Uint8Array(readFileSync(join(fixtures, name))),
+      ]),
+    );
+
+  it("declares itself a Game Boy Color cartridge, and a gb build does not", () => {
+    const color = buildGbRom(build(read("pong.dmt"), undefined, "gbc"), { title: "PONG" });
+    const mono = buildGbRom(build(read("pong.dmt")), { title: "PONG" });
+    // `$C0` is CGB-only: this build programs palette RAM from its first
+    // instruction, so a DMG running it would show the wrong thing.
+    expect(color.bytes[HEADER_OFFSETS.cgb]).toBe(0xc0);
+    expect(mono.bytes[HEADER_OFFSETS.cgb]).toBe(0x00);
+    // The flag is the last byte of the title field, so a colour cartridge's
+    // title is the same fifteen characters a monochrome one's is.
+    expect(String.fromCharCode(...color.bytes.subarray(0x134, 0x138))).toBe("PONG");
+    let header = 0;
+    for (let at = 0x0134; at <= 0x014c; at += 1)
+      header = (header - (color.bytes[at] as number) - 1) & 0xff;
+    expect(color.bytes[HEADER_OFFSETS.headerChecksum]).toBe(header);
+  });
+
+  it("boots the machine in colour mode and fills its palette RAM", () => {
+    const built = buildGbRom(build(read("pong.dmt"), undefined, "gbc"), { assets: assets() });
+    const machine = new Gameboy(built.bytes);
+    expect(machine.cgb).toBe(true);
+    for (let frame = 0; frame < 30; frame += 1) machine.runFrame();
+    // The reserved palette is the font's ramp: white through black, and never
+    // whatever the title screen's fit chose.
+    const system = machine.bgPaletteRam.subarray(7 * 8, 8 * 8);
+    expect([system[0], system[1]]).toEqual([0xff, 0x7f]); // white
+    expect([system[6], system[7]]).toEqual([0x00, 0x00]); // black
+    // And the picture's own palettes really arrived.
+    const art = machine.bgPaletteRam.subarray(0, 7 * 8);
+    expect(art.some((byte) => byte !== 0)).toBe(true);
+  });
+
+  it("draws the game in more colours than a Game Boy can show", () => {
+    const built = buildGbRom(build(read("pong.dmt"), undefined, "gbc"), { assets: assets() });
+    const machine = new Gameboy(built.bytes);
+    for (let frame = 0; frame < 30; frame += 1) machine.runFrame();
+    const seen = new Set<string>();
+    const frame = machine.framebuffer;
+    for (let at = 0; at < frame.length; at += 4) {
+      seen.add(`${frame[at]},${frame[at + 1]},${frame[at + 2]}`);
+    }
+    expect(seen.size).toBeGreaterThan(4);
+  });
+
+  it("gives every background cell a palette, including the ones it never painted", () => {
+    const built = buildGbRom(build(read("pong.dmt"), undefined, "gbc"), { assets: assets() });
+    const machine = new Gameboy(built.bytes);
+    for (let frame = 0; frame < 30; frame += 1) machine.runFrame();
+    // Bank 1 at the map's addresses is the attribute map; a cell the game has
+    // not drawn on still names the font's palette rather than palette 0, whose
+    // colours belong to the picture.
+    const attributes = machine.vram.subarray(0x2000 + 0x1800, 0x2000 + 0x1c00);
+    expect(attributes.every((byte) => (byte & 0x07) <= 7)).toBe(true);
+    const outsideTheView = attributes[31 * 32 + 31] as number;
+    expect(outsideTheView & 0x07).toBe(7);
+  });
 });
 
 describe("what the generated code costs", () => {

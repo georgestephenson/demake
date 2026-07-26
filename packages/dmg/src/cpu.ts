@@ -7,10 +7,12 @@
  * Demotic runtime's conformance test drives. A dependency we cannot read is a
  * dependency we cannot trust with any of those jobs.
  *
- * Scope is deliberately DMG: no CGB double speed, no MBC, no sound. That is
- * exactly what a `demake build` ROM needs, and every line not written is a line
- * that cannot be wrong. Instruction timings are the published machine-cycle
- * counts ×4, which is what the PPU and timer below are clocked with.
+ * Scope is deliberately narrow: no CGB double speed, no MBC, no sound. The
+ * colour hardware a `gbc` build uses is all in the machine around this — banks,
+ * attributes and palette RAM — and the processor is the same one either way.
+ * Every line not written is a line that cannot be wrong. Instruction timings are
+ * the published machine-cycle counts ×4, which is what the PPU and timer below
+ * are clocked with.
  */
 
 /** Everything the processor can reach. */

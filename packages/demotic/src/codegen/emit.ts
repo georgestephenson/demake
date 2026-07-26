@@ -81,11 +81,39 @@ const R = {
   BGP: 0xff47,
   OBP0: 0xff48,
   OBP1: 0xff49,
+  /** CGB: which VRAM bank `$8000`–`$9FFF` reaches. */
+  VBK: 0xff4f,
+  /** CGB: background palette index, then its data port. */
+  BCPS: 0xff68,
+  BCPD: 0xff69,
+  /** CGB: object palette index, then its data port. */
+  OCPS: 0xff6a,
+  OCPD: 0xff6b,
   IE: 0xffff,
 } as const;
 
 const VRAM_TILES = 0x8000;
 const VRAM_MAP = 0x9800;
+
+/** Tiles one VRAM bank holds; a Game Boy Color has two of them. */
+const BANK_TILES = 256;
+
+/** Bytes one four-colour CGB palette occupies in palette RAM. */
+export const PALETTE_BYTES = 8;
+
+/**
+ * The palette reserved for the font, the level patterns and the placeholder
+ * block — background and objects alike.
+ *
+ * Everything else on a colour build is demade art whose palette was chosen
+ * *for that art*: a title screen's fit is free to spend all four colours of a
+ * palette on sky. A caption drawn in one of those would be sky on sky, so one
+ * palette of each kind is kept back and the fitters are given the rest.
+ */
+export const SYSTEM_PALETTE = 7;
+
+/** Sub-palettes a colour build's art may use — every one but the system's. */
+export const ART_PALETTES = SYSTEM_PALETTE;
 /** Where the OAM DMA kernel is copied to; it must run outside the main bus. */
 const HRAM_DMA = 0xff80;
 
@@ -118,6 +146,8 @@ export interface SpriteArt {
   /** Size in cells, which is the collision box's size (doc 15 §art). */
   width: number;
   height: number;
+  /** Sub-palette the fit chose, on a colour build; 0 on a monochrome one. */
+  palette?: number;
 }
 
 /** Everything the emitter needs beyond the program itself. */
@@ -125,24 +155,39 @@ export interface EmitOptions {
   /** Converted sprite art, keyed by the asset name a `.dmt` wrote. */
   sprites?: ReadonlyMap<string, SpriteArt>;
   /** Converted tile art, keyed by the art file a `.dmtl` legend named. */
-  tiles?: ReadonlyMap<string, number>;
+  tiles?: ReadonlyMap<string, { tile: number; palette: number }>;
   /** Extra tiles appended to the built-in bank. */
   extraTiles?: Uint8Array;
   /**
    * Demade backdrops by scene name: the map that places the picture's tiles,
    * and the background palette its fit chose. The map holds bank indices, which
    * may point anywhere — a picture's cells are pooled against the whole bank.
+   *
+   * A colour build carries two more things, because on that hardware a cell is
+   * a tile *and* an attribute: `attr` is one byte per cell (its sub-palette,
+   * its flips and its VRAM bank) and `palettes` is the block of colours the
+   * scene uploads before it paints.
    */
-  backdrops?: ReadonlyMap<string, { map: Uint8Array; bgp: number }>;
+  backdrops?: ReadonlyMap<
+    string,
+    { map: Uint8Array; bgp: number; attr?: Uint8Array; palettes?: Uint8Array }
+  >;
   /**
    * The object palette register, when converted art chose one.
    *
    * The image pipeline picks which hardware shades an object's three colour
    * indices map to, over every asset in the build at once (doc 15 §The
    * conversion path). That choice only exists as a register value, so it
-   * arrives here rather than in the tile bytes.
+   * arrives here rather than in the tile bytes. Monochrome builds only: colour
+   * hardware has palette RAM instead, and {@link objectPalettes} carries it.
    */
   objectPalette?: number;
+  /** CGB object palette RAM, all eight palettes, ready to upload verbatim. */
+  objectPalettes?: Uint8Array;
+  /** CGB background palettes for level tile art — the scenes with a level. */
+  tilePalettes?: Uint8Array;
+  /** CGB background palette {@link SYSTEM_PALETTE}: the font's own ramp. */
+  systemPalette?: Uint8Array;
   /**
    * The game's audio driver, already built from its demade tracks and effects.
    *
@@ -253,13 +298,31 @@ export function emitProgram(ctx: Ctx, options: EmitOptions = {}): void {
 
   // --- data ------------------------------------------------------------------
   for (const level of levels) {
-    emitLevelData(ctx, level, (index) => {
+    const boundTile = (index: number): { tile: number; palette: number } => {
       const art = level.file.tiles[index]?.art;
       const bound = art
         ? (options.tiles?.get(artKey(art, 1, 1)) ?? options.tiles?.get(art))
         : undefined;
-      return bound ?? patternTile(index, level.file.tiles[index]?.solid ?? false);
-    });
+      return (
+        bound ?? {
+          // A legend entry with no art draws a built-in pattern, which lives in
+          // the first bank and is drawn with the font's own palette.
+          tile: patternTile(index, level.file.tiles[index]?.solid ?? false),
+          palette: SYSTEM_PALETTE,
+        }
+      );
+    };
+    emitLevelData(
+      ctx,
+      level,
+      (index) => boundTile(index).tile & 0xff,
+      ctx.color
+        ? (index) => {
+            const bound = boundTile(index);
+            return (bound.palette & 0x07) | (bound.tile > 0xff ? 0x08 : 0);
+          }
+        : undefined,
+    );
     emitTileAt(ctx, level);
     for (const rule of program.rules) {
       if (rule.event.kind === "hits" && rule.event.tiles.length > 0) {
@@ -270,12 +333,36 @@ export function emitProgram(ctx: Ctx, options: EmitOptions = {}): void {
   emitInstanceDefaults(ctx);
 
   // One demade tilemap per scene that has a backdrop: a screenful of bytes,
-  // each naming a tile in the bank the conversion filled.
+  // each naming a tile in the bank the conversion filled — followed, on a
+  // colour build, by the same screenful of attributes.
   for (const scene of scenes) {
     const art = options.backdrops?.get(scene.def.name);
     if (!art) continue;
     asm.label(backdropLabel(scene));
     asm.bytes(art.map);
+    if (ctx.color && art.attr) asm.bytes(art.attr);
+  }
+
+  if (ctx.color) {
+    // Palette blocks. The object palettes and the font's are the game's, so
+    // they are emitted once; a picture's are the picture's, and only a scene
+    // whose redraw uploads them is emitted at all.
+    if (options.objectPalettes) {
+      asm.label("ObjectPalettes");
+      asm.bytes(options.objectPalettes);
+    }
+    if (options.systemPalette) {
+      asm.label("SystemPalette");
+      asm.bytes(options.systemPalette);
+    }
+    const emitted = new Set<string>();
+    for (const scene of scenes) {
+      const block = scenePalettes(scene, levelFor.get(scene.index), options);
+      if (!block || emitted.has(block.name)) continue;
+      emitted.add(block.name);
+      asm.label(block.name);
+      asm.bytes(block.bytes);
+    }
   }
 
   if (options.audio) {
@@ -315,28 +402,66 @@ function emitEntry(
   asm.ld16("sp", 0xdff0);
   asm.call("LcdOff");
 
-  // Tiles into VRAM.
+  // Tiles into VRAM. Past the first bank's 256 they continue in the second, and
+  // only a colour build has one — which is most of why it can afford a demade
+  // backdrop and the game's own art at the same time.
+  const inBank0 = Math.min(tileCount, BANK_TILES);
   asm.ld16("hl", label("TileBank"));
   asm.ld16("de", VRAM_TILES);
-  asm.ld16("bc", tileCount * TILE_BYTES);
+  asm.ld16("bc", inBank0 * TILE_BYTES);
   asm.call("CopyBytes");
+  if (tileCount > inBank0) {
+    emitVramBank(ctx, 1);
+    asm.ld16("hl", label("TileBank", inBank0 * TILE_BYTES));
+    asm.ld16("de", VRAM_TILES);
+    asm.ld16("bc", (tileCount - inBank0) * TILE_BYTES);
+    asm.call("CopyBytes");
+    emitVramBank(ctx, 0);
+  }
 
   // A blank tilemap, so nothing stale shows through before the first draw.
   asm.ld16("hl", VRAM_MAP);
   asm.ld16("bc", 32 * 32);
   asm.call("ClearBytes");
 
-  asm.ldn("a", 0b11100100);
-  asm.stha(R.BGP & 0xff);
-  // Objects get whatever palette the art conversion chose; with no bound art
-  // the built-in block is drawn in the same shades as the background.
-  asm.ldn("a", options.objectPalette ?? 0b11100100);
-  asm.stha(R.OBP0 & 0xff);
-  // OBP1 stays the plain ramp, and that is what a HUD drawn with sprites uses.
-  // The art's palette is chosen for the art: it may well map the font's ink
-  // index onto the lightest shade, which is a score nobody can read.
-  asm.ldn("a", 0b11100100);
-  asm.stha(R.OBP1 & 0xff);
+  if (ctx.color) {
+    // Every cell carries a palette whether the game has painted it or not, so
+    // the blank map is attributed to the font's ramp rather than to whatever
+    // palette RAM powered up holding.
+    emitVramBank(ctx, 1);
+    asm.ld16("hl", VRAM_MAP);
+    asm.ld16("bc", 32 * 32);
+    asm.ldn("d", SYSTEM_PALETTE);
+    asm.call(needFillBytes(ctx));
+    emitVramBank(ctx, 0);
+    // The object palettes and the font's background palette are the build's,
+    // once, at boot. A scene's own background palettes go up with its redraw,
+    // because they are the scene's rather than the game's.
+    if (options.objectPalettes) {
+      emitUploadPalette(ctx, label("ObjectPalettes"), options.objectPalettes.length, 0, R.OCPS);
+    }
+    if (options.systemPalette) {
+      emitUploadPalette(
+        ctx,
+        label("SystemPalette"),
+        options.systemPalette.length,
+        SYSTEM_PALETTE,
+        R.BCPS,
+      );
+    }
+  } else {
+    asm.ldn("a", 0b11100100);
+    asm.stha(R.BGP & 0xff);
+    // Objects get whatever palette the art conversion chose; with no bound art
+    // the built-in block is drawn in the same shades as the background.
+    asm.ldn("a", options.objectPalette ?? 0b11100100);
+    asm.stha(R.OBP0 & 0xff);
+    // OBP1 stays the plain ramp, and that is what a HUD drawn with sprites
+    // uses. The art's palette is chosen for the art: it may well map the font's
+    // ink index onto the lightest shade, which is a score nobody can read.
+    asm.ldn("a", 0b11100100);
+    asm.stha(R.OBP1 & 0xff);
+  }
   asm.alu("xor", "a");
   asm.stha(R.SCX & 0xff);
   asm.stha(R.SCY & 0xff);
@@ -410,6 +535,82 @@ function emitEntry(
   asm.jp("Main");
   void scenes;
   void levelFor;
+}
+
+// --- colour ------------------------------------------------------------------
+
+/**
+ * Point VRAM at one of the Game Boy Color's two banks.
+ *
+ * Bank 0 holds tiles and the tile map; bank 1 holds the second half of the tile
+ * bank and, at the map's own addresses, one attribute byte per cell. Every
+ * write in this backend leaves the bank at 0, so a routine can assume it.
+ */
+function emitVramBank(ctx: Ctx, bank: number): void {
+  const { asm } = ctx;
+  if (bank === 0) asm.alu("xor", "a");
+  else asm.ldn("a", bank);
+  asm.stha(R.VBK & 0xff);
+}
+
+/** `HL` = destination, `BC` = count, `D` = the byte to write. */
+function needFillBytes(ctx: Ctx): string {
+  const name = "FillBytes";
+  ctx.need(name, (inner) => {
+    const { asm } = inner;
+    const loop = inner.unique("fillLoop");
+    asm.label(loop);
+    asm.ld("a", "d");
+    asm.staHLI();
+    asm.dec16("bc");
+    asm.ld("a", "b");
+    asm.alu("or", "c");
+    asm.jp(loop, "nz");
+    asm.ret();
+  });
+  return name;
+}
+
+/**
+ * Copy `B` bytes from `HL` into palette RAM, starting at the index in `A`.
+ *
+ * `C` is the *index* register's low address and the data port is the byte after
+ * it, which is what lets one routine serve both the background and the object
+ * palettes. The index auto-increments — bit 7 of the value written to it — so
+ * sixty-four bytes cost sixty-four writes rather than a hundred and twenty-eight.
+ */
+function needCopyPalette(ctx: Ctx): string {
+  const name = "CopyPalette";
+  ctx.need(name, (inner) => {
+    const { asm } = inner;
+    asm.staC();
+    asm.inc("c");
+    const loop = inner.unique("palLoop");
+    asm.label(loop);
+    asm.ldaHLI();
+    asm.staC();
+    asm.dec("b");
+    asm.jr(loop, "nz");
+    asm.ret();
+  });
+  return name;
+}
+
+/** Upload one palette block, `first` palettes into the given index register. */
+function emitUploadPalette(
+  ctx: Ctx,
+  source: ReturnType<typeof label>,
+  bytes: number,
+  first: number,
+  spec: number,
+): void {
+  const { asm } = ctx;
+  if (bytes === 0) return;
+  asm.ld16("hl", source);
+  asm.ldn("b", bytes);
+  asm.ldn("c", spec & 0xff);
+  asm.ldn("a", 0x80 | (first * PALETTE_BYTES));
+  asm.call(needCopyPalette(ctx));
 }
 
 /** Zero the contact, hold and reach bookkeeping — a fresh scene inherits none. */
@@ -1156,38 +1357,38 @@ function emitFullRedraw(
 ): void {
   const { asm, layout } = ctx;
   asm.call("LcdOff");
-  // A picture brings its own palette; everything else uses the plain ramp the
-  // font and the level patterns were drawn for.
   const backdrop = options.backdrops?.get(scene.def.name);
-  asm.ldn("a", backdrop?.bgp ?? 0b11100100);
-  asm.stha(R.BGP & 0xff);
+  if (ctx.color) {
+    // A scene's background palettes are the scene's: a picture's own where it
+    // is a title screen, the level art's where there is a level. They go up
+    // here rather than at boot because a scene change is exactly when they
+    // change, and it is already the one moment the LCD is off.
+    const block = scenePalettes(scene, level, options);
+    if (block) emitUploadPalette(ctx, label(block.name), block.bytes.length, 0, R.BCPS);
+  } else {
+    // A picture brings its own palette; everything else uses the plain ramp the
+    // font and the level patterns were drawn for.
+    asm.ldn("a", backdrop?.bgp ?? 0b11100100);
+    asm.stha(R.BGP & 0xff);
+  }
 
   // A backdrop is a whole screen of map bytes in order, so painting it is a
   // block copy: one row of twenty, then twelve bytes of stride to the next.
   // The general path below asks a routine for every one of the 360 cells to
   // reach the same answer, and costs about as much ROM as the picture does.
   if (backdrop && !level) {
-    const rowLoop = ctx.unique("bdRow");
-    const colLoop = ctx.unique("bdCol");
     asm.ld16("hl", label(backdropLabel(scene)));
     asm.ld16("de", VRAM_MAP);
-    asm.ldn("b", VIEW_H);
-    asm.label(rowLoop);
-    asm.ldn("c", VIEW_W);
-    asm.label(colLoop);
-    asm.ldaHLI();
-    asm.staDE();
-    asm.inc16("de");
-    asm.dec("c");
-    asm.jr(colLoop, "nz");
-    asm.ld("a", "e");
-    asm.aluN("add", 32 - VIEW_W);
-    asm.ld("e", "a");
-    asm.ld("a", "d");
-    asm.aluN("adc", 0);
-    asm.ld("d", "a");
-    asm.dec("b");
-    asm.jr(rowLoop, "nz");
+    asm.call(needCopyScreen(ctx));
+    if (ctx.color && backdrop.attr) {
+      // The attributes are the same screenful again, in the other bank, and
+      // they follow the map under the same label.
+      emitVramBank(ctx, 1);
+      asm.ld16("hl", label(backdropLabel(scene), backdrop.map.length));
+      asm.ld16("de", VRAM_MAP);
+      asm.call(needCopyScreen(ctx));
+      emitVramBank(ctx, 0);
+    }
     if (!scrolls(ctx, scene)) emitHud(ctx, scene, "static");
     asm.ldn("a", 0b10010011);
     asm.stha(R.LCDC & 0xff);
@@ -1224,6 +1425,14 @@ function emitFullRedraw(
   asm.call("VramFor");
   asm.ld("a", "c");
   asm.ld("hlp", "a");
+  if (ctx.color) {
+    // The attribute lives at the same address in the other bank, and `HL` is
+    // still pointing at it.
+    emitVramBank(ctx, 1);
+    asm.lda(layout.attr);
+    asm.ld("hlp", "a");
+    emitVramBank(ctx, 0);
+  }
   emitIncWord(ctx, layout.words + W.tileCol * 2);
   asm.pop("bc");
   asm.dec("b");
@@ -1240,9 +1449,75 @@ function emitFullRedraw(
   asm.stha(R.LCDC & 0xff);
 }
 
-/** The label holding one scene's backdrop map. */
+/** The label holding one scene's backdrop map, then its attributes. */
 function backdropLabel(scene: SceneCtx): string {
   return `Backdrop_${scene.index}`;
+}
+
+/** The label holding one backdrop scene's own background palettes. */
+function backdropPaletteLabel(scene: SceneCtx): string {
+  return `BackdropPal_${scene.index}`;
+}
+
+/**
+ * The background palette block a scene paints under, on a colour build.
+ *
+ * A level's art is fitted once for the whole game, so every level scene shares
+ * one block; a backdrop is fitted per picture, so a title screen brings its
+ * own. A scene with neither has nothing but system-palette cells on its
+ * background and needs no upload at all.
+ */
+function scenePalettes(
+  scene: SceneCtx,
+  level: LevelData | undefined,
+  options: EmitOptions,
+): { name: string; bytes: Uint8Array } | undefined {
+  if (!level) {
+    const backdrop = options.backdrops?.get(scene.def.name);
+    if (backdrop?.palettes && backdrop.palettes.length > 0) {
+      return { name: backdropPaletteLabel(scene), bytes: backdrop.palettes };
+    }
+  }
+  if (options.tilePalettes && options.tilePalettes.length > 0) {
+    return { name: "TilePalettes", bytes: options.tilePalettes };
+  }
+  return undefined;
+}
+
+/** Copy one screenful of cells into the tile map, twelve bytes of stride a row. */
+function needCopyScreen(ctx: Ctx): string {
+  const name = "CopyScreen";
+  ctx.need(name, (inner) => {
+    const { asm } = inner;
+    const rowLoop = inner.unique("scrRow");
+    const colLoop = inner.unique("scrCol");
+    asm.ldn("b", VIEW_H);
+    asm.label(rowLoop);
+    asm.ldn("c", VIEW_W);
+    asm.label(colLoop);
+    asm.ldaHLI();
+    asm.staDE();
+    asm.inc16("de");
+    asm.dec("c");
+    asm.jr(colLoop, "nz");
+    asm.ld("a", "e");
+    asm.aluN("add", 32 - VIEW_W);
+    asm.ld("e", "a");
+    asm.ld("a", "d");
+    asm.aluN("adc", 0);
+    asm.ld("d", "a");
+    asm.dec("b");
+    asm.jr(rowLoop, "nz");
+    asm.ret();
+  });
+  return name;
+}
+
+/** Record the system palette as the attribute of the cell about to be written. */
+function emitSystemAttr(ctx: Ctx): void {
+  if (!ctx.color) return;
+  ctx.asm.ldn("a", SYSTEM_PALETTE);
+  ctx.asm.sta(ctx.layout.attr);
 }
 
 /**
@@ -1268,6 +1543,7 @@ function emitBackgroundTile(
   // A backdrop nobody supplied bytes for leaves the background blank, exactly
   // as an object with no art draws the built-in block: absent, never half-drawn.
   if (!options.backdrops?.has(scene.def.name)) {
+    emitSystemAttr(ctx);
     asm.alu("xor", "a");
     return;
   }
@@ -1290,8 +1566,19 @@ function emitBackgroundTile(
   asm.ld16("de", label(backdropLabel(scene)));
   asm.addHL("de");
   asm.ld("a", "hlp");
+  if (ctx.color) {
+    // The picture's attributes are the same screenful again, right behind its
+    // map, so the cell's attribute is one fixed offset from its tile.
+    asm.ld("c", "a");
+    asm.ld16("de", VIEW_W * VIEW_H);
+    asm.addHL("de");
+    asm.ld("a", "hlp");
+    asm.sta(layout.attr);
+    asm.ld("a", "c");
+  }
   asm.jp(done);
   asm.label(outside);
+  emitSystemAttr(ctx);
   asm.alu("xor", "a");
   asm.label(done);
 }
@@ -1311,7 +1598,7 @@ function emitAtLeastConst(ctx: Ctx, addr: number, value: number, target: string)
 
 /** `A = the background tile for the legend index in A`. */
 function emitLegendToTile(ctx: Ctx, level: LevelData): void {
-  const { asm } = ctx;
+  const { asm, layout } = ctx;
   const empty = ctx.unique("legendEmpty");
   const done = ctx.unique("legendDone");
   asm.aluN("cp", GRID_EMPTY);
@@ -1321,8 +1608,19 @@ function emitLegendToTile(ctx: Ctx, level: LevelData): void {
   asm.ld16("hl", label(level.tileLabel));
   asm.addHL("de");
   asm.ld("a", "hlp");
+  if (ctx.color) {
+    // The legend's attributes are a parallel table, so the same index reaches
+    // both — and `DE` still holds it.
+    asm.ld("c", "a");
+    asm.ld16("hl", label(level.attrLabel));
+    asm.addHL("de");
+    asm.ld("a", "hlp");
+    asm.sta(layout.attr);
+    asm.ld("a", "c");
+  }
   asm.jp(done);
   asm.label(empty);
+  emitSystemAttr(ctx);
   asm.alu("xor", "a");
   asm.label(done);
 }
@@ -1625,6 +1923,14 @@ function needPokeCell(ctx: Ctx): string {
     asm.call("VramFor");
     asm.ld("a", "c");
     asm.ld("hlp", "a");
+    if (inner.color) {
+      // Painted with the LCD already off, so this writes both banks directly
+      // rather than going through the queue.
+      emitVramBank(inner, 1);
+      asm.ldn("a", SYSTEM_PALETTE);
+      asm.ld("hlp", "a");
+      emitVramBank(inner, 0);
+    }
     emitIncWord(inner, layout.words + W.tileCol * 2);
     asm.ret();
   });
@@ -1778,6 +2084,10 @@ function emitOam(ctx: Ctx, scene: SceneCtx, options: EmitOptions): void {
       emitPixelsFromFixed(ctx, temp, layout.words + W.count * 2);
     });
 
+    // On colour hardware an object names its own palette, and its tiles may sit
+    // in the second VRAM bank; both live in the attribute byte, and both are
+    // compile-time constants because the art was bound at build time.
+    const attribute = art ? (art.palette ?? 0) | (art.tile > 0xff ? 0x08 : 0) : SYSTEM_PALETTE;
     for (let row = 0; row < height; row += 1) {
       for (let column = 0; column < width; column += 1) {
         const tile = art ? art.tile + row * art.width + column : OBJECT_TILE;
@@ -1787,8 +2097,13 @@ function emitOam(ctx: Ctx, scene: SceneCtx, options: EmitOptions): void {
         asm.lda(layout.words + W.temp * 2);
         asm.aluN("add", column * 8 + 8);
         asm.ld("c", "a");
-        asm.ldn("d", tile);
-        asm.call("PushSprite");
+        asm.ldn("d", tile & 0xff);
+        if (ctx.color) {
+          asm.ldn("e", attribute);
+          asm.call("PushSpriteAttr");
+        } else {
+          asm.call("PushSprite");
+        }
       }
     }
     asm.label(skip);
@@ -1867,8 +2182,10 @@ function needHudGlyph(ctx: Ctx): string {
     asm.ld("b", "a");
     asm.lda(layout.words + W.temp * 2);
     asm.ld("c", "a");
-    // OBP1, which is the plain ramp — see `emitEntry`.
-    asm.ldn("e", 0x10);
+    // The font's own palette — OBP1 on a monochrome build, the reserved object
+    // palette on a colour one. Either way it is the plain ramp the glyphs were
+    // drawn for, and never the palette the art around them chose.
+    asm.ldn("e", inner.color ? SYSTEM_PALETTE : 0x10);
     asm.call("PushSpriteAttr");
     asm.lda(layout.words + W.temp * 2);
     asm.aluN("add", 8);
@@ -1912,7 +2229,8 @@ export function emitRenderHelpers(ctx: Ctx): void {
   asm.addHL("de");
   asm.ret();
 
-  // A = tile; queue it at the current cell.
+  // A = tile; queue it at the current cell, with the attribute the cell routine
+  // left behind on a colour build.
   asm.label("QueueCell");
   asm.ld("c", "a");
   asm.lda(layout.queueCount);
@@ -1926,11 +2244,18 @@ export function emitRenderHelpers(ctx: Ctx): void {
   asm.lda(layout.queueCount);
   asm.ld("l", "a");
   asm.ldn("h", 0);
+  if (layout.queueStride === 4) {
+    asm.addHL("hl");
+    asm.addHL("hl");
+  } else {
+    asm.push("de");
+    asm.ld("d", "h");
+    asm.ld("e", "l");
+    asm.addHL("hl");
+    asm.addHL("de");
+    asm.pop("de");
+  }
   asm.push("de");
-  asm.ld("d", "h");
-  asm.ld("e", "l");
-  asm.addHL("hl");
-  asm.addHL("de");
   asm.ld16("de", layout.queue);
   asm.addHL("de");
   asm.pop("de");
@@ -1940,6 +2265,10 @@ export function emitRenderHelpers(ctx: Ctx): void {
   asm.staHLI();
   asm.ld("a", "c");
   asm.staHLI();
+  if (layout.queueStride === 4) {
+    asm.lda(layout.attr);
+    asm.staHLI();
+  }
   asm.lda(layout.queueCount);
   asm.inc("a");
   asm.sta(layout.queueCount);
@@ -1947,6 +2276,13 @@ export function emitRenderHelpers(ctx: Ctx): void {
 
   // A = tile; queue it, record the cell for erasing, and advance the column.
   asm.label("PlotCell");
+  if (ctx.color) {
+    // A HUD cell is the font's, whatever the art it is drawn over chose. `B` is
+    // free here: every caller pushes it around the call.
+    asm.ld("b", "a");
+    emitSystemAttr(ctx);
+    asm.ld("a", "b");
+  }
   asm.push("af");
   asm.call("QueueCell");
   asm.pop("af");
@@ -2056,8 +2392,29 @@ export function emitRenderHelpers(ctx: Ctx): void {
   asm.ld("d", "a");
   asm.ldaHLI();
   asm.staDE();
+  if (layout.queueStride === 4) asm.inc16("hl");
   asm.dec("b");
   asm.jp(flush, "nz");
+  if (layout.queueStride === 4) {
+    // The attributes are a second pass rather than a bank switch per cell:
+    // switching costs two register writes each way, and the list is short.
+    emitVramBank(ctx, 1);
+    asm.lda(layout.queueCount);
+    asm.ld("b", "a");
+    asm.ld16("hl", layout.queue);
+    const attrFlush = ctx.unique("flushAttr");
+    asm.label(attrFlush);
+    asm.ldaHLI();
+    asm.ld("e", "a");
+    asm.ldaHLI();
+    asm.ld("d", "a");
+    asm.inc16("hl");
+    asm.ldaHLI();
+    asm.staDE();
+    asm.dec("b");
+    asm.jp(attrFlush, "nz");
+    emitVramBank(ctx, 0);
+  }
   asm.alu("xor", "a");
   asm.sta(layout.queueCount);
   asm.label(noQueue);

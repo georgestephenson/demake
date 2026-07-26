@@ -36,6 +36,14 @@ export interface FitParams {
   denoise?: boolean;
   /** Collapse k-means centroids to real member colors (see {@link latticeKmeans}). */
   collapse?: boolean;
+  /**
+   * Sub-palettes the fit may use, when fewer than the console has.
+   *
+   * A caller reserves the rest for something the picture does not own — a
+   * Game Boy Color game keeps one back for its font, which has to stay legible
+   * over a backdrop whose palettes were chosen for the backdrop.
+   */
+  maxPalettes?: number;
 }
 
 /** The fitter's raw output (pre-dither, pre-budget). */
@@ -173,7 +181,7 @@ export function fitTiled(
   const cellsX = Math.floor(img.width / cellW);
   const cellsY = Math.floor(img.height / cellH);
   const cellCount = cellsX * cellsY;
-  const P = layout.subPalettes.count;
+  const P = Math.max(1, Math.min(layout.subPalettes.count, params.maxPalettes ?? Infinity));
   const K = layout.subPalettes.size;
 
   const pre = precompute(img);

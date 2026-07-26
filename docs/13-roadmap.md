@@ -193,16 +193,31 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     demade through the image pipeline; and speed went from 3–11 Game Boy frames
     per tick to 1.00–1.03, so a game keeps up with the hardware. Doc 14 §2 has
     the reasoning for the reversal and the measurement.
+  - **D3b — colour (`gbc`)** *(done)*: `demake build -c gbc` produces a real
+    Game Boy Color cartridge. It is the *same machine code* with a second half
+    bolted to the renderer — an attribute byte per background cell in VRAM bank
+    1, eight background and eight object palettes of RGB555, a tile bank that
+    may spill into the second bank — so a game traces identically on both
+    consoles and `rom.test.ts` asserts exactly that. The art is demade by the
+    image engine's RGB-lattice path rather than its mono one, including a colour
+    sprite fit that decides *which objects share a palette*
+    (`core/src/pipeline/sprite.ts`); one background and one object palette are
+    reserved for the font, so a score stays legible over a title screen whose
+    palettes were chosen for the title screen. Colour costs cartridge — around a
+    kilobyte for a game with two demade backdrops — which is a fact the build
+    reports rather than hides.
   - **D4 — breadth**: `nes`, `sms`/`gg`, `md`, `snes` backends, each trace-green
     then framebuffer-green. A backend is per-family; the `Program` it compiles
     is not.
-  - **D5 — Play ROM in the page** *(done for `gb`)*: the browser compiles the
+  - **D5 — Play ROM in the page** *(done for `gb` and `gbc`)*: the browser compiles the
     game itself, because the assembler is ours and written in TypeScript, and
     demakes its art with our own rasteriser rather than the browser's. It boots
     the result in `@demake/dmg` — ours, because doc 07 forbids a CDN core and a
     WASM core we cannot read is the same bargain in a different wrapper. The
     bytes are identical to `demake build`'s, pinned by a Playwright spec, and
-    the pane offers them as a download.
+    the pane offers them as a download. Picking Game Boy Color in the console
+    selector builds a `.gbc` and the same core plays it in colour, because the
+    machine it comes up as is the cartridge header's decision.
   - **D6 — language growth**, driven by fixtures beyond Pong. Levels, tiles, a
     scrolling camera, `stream`-composed courses and a seeded `random` have
     landed (doc 14 §Levels, §Composed levels, §Randomness). What is left:

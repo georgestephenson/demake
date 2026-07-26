@@ -35,6 +35,9 @@ export interface LevelData {
   gridLabel: string;
   solidLabel: string;
   tileLabel: string;
+  /** Parallel to {@link tileLabel}: the CGB attribute each legend entry draws
+   * with. Emitted only on a colour build, where every cell carries one. */
+  attrLabel: string;
 }
 
 /** Collect the distinct levels a program uses, in scene order. */
@@ -49,6 +52,7 @@ export function collectLevels(scenes: readonly { level?: LevelFile }[]): LevelDa
       gridLabel: `LevelGrid_${out.length}`,
       solidLabel: `LevelSolid_${out.length}`,
       tileLabel: `LevelTiles_${out.length}`,
+      attrLabel: `LevelAttrs_${out.length}`,
     };
     seen.set(scene.level, data);
     out.push(data);
@@ -61,6 +65,7 @@ export function emitLevelData(
   ctx: Ctx,
   data: LevelData,
   tileForLegend: (index: number) => number,
+  attrForLegend?: (index: number) => number,
 ): void {
   const { asm } = ctx;
   const level = data.file;
@@ -80,6 +85,10 @@ export function emitLevelData(
 
   asm.label(data.tileLabel);
   for (const [index] of level.tiles.entries()) asm.db(tileForLegend(index));
+
+  if (!attrForLegend) return;
+  asm.label(data.attrLabel);
+  for (const [index] of level.tiles.entries()) asm.db(attrForLegend(index));
 }
 
 /**

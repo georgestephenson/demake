@@ -21,6 +21,12 @@
  * five-cell shelf drawn from the same run put six cells of solid-looking ledge
  * where nothing collides, and the player falls through it.
  *
+ * **Which console the art is demade for is the build's, not the runtime's.**
+ * A `gb` build takes the image engine's mono path, a `gbc` build takes its
+ * RGB-lattice one, and everything downstream — how many colours an object has,
+ * which sub-palette it names, how a backdrop's cells are attributed — is the
+ * engine's answer rather than a second one written here.
+ *
  * Art is optional at every step: a program with no assets, or an edge that
  * chose not to load them, builds exactly as before with the built-in block and
  * pattern tiles. That is what makes the browser and the CLI able to agree — the
@@ -33,17 +39,61 @@ import {
   getConsole,
   paletteRegister,
   prepSync,
+  type PaletteColor,
+  type SpriteBank,
   type SpriteSource,
 } from "@demake/core";
 
 import type { InstanceDef, Program } from "../program.js";
 import { BUILTIN_TILES, builtinTiles, TILE_BYTES } from "../rom/graphics.js";
 
-import { artKey, type EmitOptions } from "./emit.js";
+import { artKey, ART_PALETTES, PALETTE_BYTES, SYSTEM_PALETTE, type EmitOptions } from "./emit.js";
 import { VIEW_H, VIEW_W } from "./layout.js";
 
 /** Asset bytes by the name a `.dmt` or a `.dmtl` legend wrote. */
 export type AssetBytes = ReadonlyMap<string, Uint8Array>;
+
+/**
+ * Demaking is expensive, deterministic, and asked for over and over.
+ *
+ * A colour backdrop goes through the whole `prep` tournament — several
+ * candidates, each a constrained fit with restarts — and takes a few seconds
+ * where the monochrome path takes a fraction of one. Meanwhile the two callers
+ * that matter rebuild constantly: the web app compiles the game again on every
+ * keystroke, and the test suite builds the same fixture for both consoles.
+ *
+ * The conversion is a pure function of (bytes, box, console), so remembering
+ * its answer cannot change one — the same inputs produce the same cartridge
+ * whether it is the first build or the tenth, which is the parity contract
+ * restated. The cache is small and evicts in insertion order; it is a speed
+ * optimisation, never a correctness one.
+ */
+const CACHE_LIMIT = 24;
+
+function remember<T>(cache: Map<string, T>, key: string, make: () => T): T {
+  const hit = cache.get(key);
+  if (hit !== undefined) return hit;
+  const value = make();
+  cache.set(key, value);
+  if (cache.size > CACHE_LIMIT) {
+    const oldest = cache.keys().next();
+    if (!oldest.done) cache.delete(oldest.value);
+  }
+  return value;
+}
+
+/** FNV-1a over a byte string — a cache key, never a checksum anyone relies on. */
+function digest(bytes: Uint8Array): string {
+  let hash = 0x811c9dc5;
+  for (const byte of bytes) {
+    hash ^= byte;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `${hash.toString(16)}:${bytes.length}`;
+}
+
+const backdropCache = new Map<string, Backdrop>();
+const bankCache = new Map<string, SpriteBank>();
 
 /** One asset the program needs, with the box the game says it fills. */
 export interface AssetRequest {
@@ -102,6 +152,76 @@ export interface BoundArt extends EmitOptions {
 }
 
 /**
+ * The system ramp: what the built-in font, the level patterns and the HUD are
+ * drawn with on a colour build.
+ *
+ * One background palette and one object palette are reserved for it, and that
+ * reservation is the whole reason a score stays readable. Everything else on
+ * screen is demade art whose palettes were chosen *for that art* — a title
+ * screen's fit is free to spend all four of a palette's colours on sky — and a
+ * caption borrowing one of them would come out sky-on-sky. Plain white through
+ * black is also what the monochrome build shows, so the two look like the same
+ * game.
+ */
+const SYSTEM_RAMP: readonly (readonly [number, number, number])[] = [
+  [31, 31, 31],
+  [21, 21, 21],
+  [10, 10, 10],
+  [0, 0, 0],
+];
+
+/** BGR555, five bits a channel, blue high — the CGB's palette-RAM word order. */
+function bgr555(codes: readonly number[]): number {
+  return ((codes[0] ?? 0) & 31) | (((codes[1] ?? 0) & 31) << 5) | (((codes[2] ?? 0) & 31) << 10);
+}
+
+/**
+ * Pack fitted sub-palettes into the byte block the hardware is written from.
+ *
+ * Always `count` palettes long, padded with black: the upload is then a
+ * constant-size copy, and a palette nothing names cannot be seen whatever is in
+ * it. Anything past `count` is dropped rather than silently wrapping onto a
+ * palette that belongs to something else.
+ */
+function packPalettes(palettes: readonly (readonly PaletteColor[])[], count: number): Uint8Array {
+  const bytes = new Uint8Array(count * PALETTE_BYTES);
+  for (let index = 0; index < Math.min(count, palettes.length); index += 1) {
+    const palette = palettes[index] as readonly PaletteColor[];
+    for (let color = 0; color < 4; color += 1) {
+      const word = bgr555(palette[color]?.codes ?? [0, 0, 0]);
+      bytes[index * PALETTE_BYTES + color * 2] = word & 0xff;
+      bytes[index * PALETTE_BYTES + color * 2 + 1] = (word >> 8) & 0xff;
+    }
+  }
+  return bytes;
+}
+
+/** The system ramp as a palette block, with index 0 forced transparent or not. */
+function systemPalette(transparent: boolean): Uint8Array {
+  const bytes = new Uint8Array(PALETTE_BYTES);
+  for (let color = 0; color < 4; color += 1) {
+    // An object's colour 0 is never displayed; black there keeps the block the
+    // shape the hardware is written from without implying a colour.
+    const word = bgr555(transparent && color === 0 ? [0, 0, 0] : (SYSTEM_RAMP[color] ?? [0, 0, 0]));
+    bytes[color * 2] = word & 0xff;
+    bytes[color * 2 + 1] = (word >> 8) & 0xff;
+  }
+  return bytes;
+}
+
+/** What one demade backdrop contributed. */
+interface Backdrop {
+  tiles: Uint8Array;
+  map: Uint8Array;
+  /** CGB attribute per cell — palette and flip bits. Empty on a mono build. */
+  attr: Uint8Array;
+  /** The DMG background palette register the fit chose. */
+  bgp: number;
+  /** CGB sub-palettes the fit chose, as BCPD bytes. Empty on a mono build. */
+  palettes: Uint8Array;
+}
+
+/**
  * Demake one scene's backdrop through the *image* pipeline.
  *
  * Not the sprite path, and the difference is the whole reason a backdrop is
@@ -109,15 +229,19 @@ export interface BoundArt extends EmitOptions {
  * run of tiles, while a picture is a screenful of *deduplicated* tiles plus a
  * map that says where each one goes. That is exactly what `prep` and the `gb`
  * image backend already produce for a photograph, so a title screen is demade
- * by the same code, at the same size, with the same fitter.
+ * by the same code, at the same size, with the same fitter — and on a colour
+ * build the same call also produces the per-cell attributes and the palettes,
+ * because that is what the backend emits for the `gbc` spec.
  */
-function convertBackdrop(bytes: Uint8Array): {
-  tiles: Uint8Array;
-  map: Uint8Array;
-  bgp: number;
-} {
-  const consoleId = "dmg";
+function convertBackdrop(bytes: Uint8Array, consoleId: string): Backdrop {
+  return remember(backdropCache, `${consoleId}:${digest(bytes)}`, () =>
+    demakeBackdrop(bytes, consoleId),
+  );
+}
+
+function demakeBackdrop(bytes: Uint8Array, consoleId: string): Backdrop {
   const spec = getConsole(consoleId);
+  const color = spec.color.model === "rgb";
   // Exactly the window the renderer paints, in pixels. Letting `prep` choose
   // would fit the *source's* size, and a title screen has to be a screenful:
   // the map it produces and the loop that draws it are the same rectangle.
@@ -125,6 +249,10 @@ function convertBackdrop(bytes: Uint8Array): {
     console: consoleId,
     size: { w: VIEW_W * 8, h: VIEW_H * 8 },
     fit: "cover",
+    // One palette is the font's, so a picture gets the rest. Reserving it here
+    // rather than taking it back afterwards is what keeps the fit honest: the
+    // tournament optimises against the budget it will actually be shown with.
+    ...(color ? { maxSubPalettes: ART_PALETTES } : {}),
   });
   const palette = fitted.image.palettes[0];
   const backend = backendFor("gb");
@@ -142,9 +270,16 @@ function convertBackdrop(bytes: Uint8Array): {
   return {
     tiles: find(".tiles.bin"),
     map: find(".map.bin"),
+    attr: find(".attr.bin"),
     // The fitted ramp decides the background palette register; a mono fit that
     // came out in shade order leaves it as the identity the font expects.
     bgp: bgpFor(palette ? palette.colors : []),
+    palettes: color
+      ? packPalettes(
+          fitted.image.palettes.map((palette) => palette.colors),
+          ART_PALETTES,
+        )
+      : new Uint8Array(0),
   };
 }
 
@@ -161,7 +296,9 @@ function convertBackdrop(bytes: Uint8Array): {
  * Only backdrops can be pooled this way. A sprite's tiles have to stay in one
  * contiguous run because OAM addresses them by offset from the first, but a
  * backdrop is reached only through its map, so any index will do — including one
- * that lands in the built-in font or in another game object's art.
+ * that lands in the built-in font or in another game object's art. On a colour
+ * build it is *more* effective, not less: two cells with the same shape under
+ * different palettes are one tile and two attribute bytes.
  */
 class TilePool {
   private readonly byBytes = new Map<string, number>();
@@ -214,14 +351,35 @@ function bgpFor(colors: readonly { codes: readonly number[] }[]): number {
 }
 
 /**
+ * The attribute byte a background cell needs: its palette, its flips, its bank.
+ *
+ * The palette and the flips are the picture's own — the image backend chose
+ * them — but the VRAM bank is not, because pooling moved the tile. Recomputing
+ * it from the pooled index rather than trusting the one the backend emitted is
+ * the difference between a cell drawing its own art and drawing whatever sits at
+ * the same index in the other bank.
+ */
+function cellAttribute(source: number, tile: number): number {
+  return (source & 0x67) | (tile > 0xff ? 0x08 : 0);
+}
+
+/**
  * Convert a program's art and return the emitter options that bind it.
  *
  * Objects and background tiles go through the image pipeline separately, for
  * the reason doc 15 gives: an object's index 0 is transparency, so it has three
  * colours and a choice of *which* three, while a background tile has four and
- * no choice at all. Running them together would cost the objects a colour.
+ * no choice at all. Running them together would cost the objects a colour — and
+ * on a colour build they do not even share palette hardware, since the CGB has
+ * eight background palettes and eight object ones.
  */
 export function bindArt(program: Program, assets: AssetBytes): BoundArt {
+  // The image engine's path is chosen by the console the *build* targets: a
+  // `gb` cartridge is DMG art whichever Game Boy plays it, and a `gbc` one is
+  // fitted to the colour hardware it will really run on.
+  const color = program.profile.id === "gbc";
+  const consoleId = color ? "gbc" : "dmg";
+
   const requests = artRequests(program);
   const missing: string[] = [];
   const sources: Record<"sprite" | "tile", SpriteSource[]> = { sprite: [], tile: [] };
@@ -252,18 +410,30 @@ export function bindArt(program: Program, assets: AssetBytes): BoundArt {
     if (file !== undefined && !assets.has(file) && !missing.includes(file)) missing.push(file);
   }
   if (sources.sprite.length === 0 && sources.tile.length === 0 && backdropScenes.length === 0) {
-    return { missing, tiles8: 0 };
+    // Nothing was demade, but a colour build still needs the ramp its font and
+    // its placeholder blocks are drawn with — otherwise every palette is black.
+    return color ? { ...systemPalettes(), missing, tiles8: 0 } : { missing, tiles8: 0 };
   }
 
-  // The image engine's mono path is the DMG's, whichever Game Boy is targeted:
-  // this backend emits a DMG-compatible cartridge, so its art is DMG art.
-  const consoleId = "dmg";
-  const objects =
-    sources.sprite.length > 0 ? buildSpriteBank(sources.sprite, { console: consoleId }) : null;
-  const backgrounds =
-    sources.tile.length > 0
-      ? buildSpriteBank(sources.tile, { console: consoleId, opaque: true })
-      : null;
+  const demakeBank = (kind: "sprite" | "tile"): SpriteBank | null => {
+    const list = sources[kind];
+    if (list.length === 0) return null;
+    const key = list
+      .map(
+        (source) =>
+          `${source.name}@${source.cellsWide}x${source.cellsHigh}:${digest(source.bytes)}`,
+      )
+      .join("|");
+    return remember(bankCache, `${consoleId}:${kind}:${key}`, () =>
+      buildSpriteBank(list, {
+        console: consoleId,
+        maxPalettes: ART_PALETTES,
+        ...(kind === "tile" ? { opaque: true } : {}),
+      }),
+    );
+  };
+  const objects = demakeBank("sprite");
+  const backgrounds = demakeBank("tile");
 
   // The bank is the built-in tiles, then the objects, then the level tiles;
   // both halves are addressed from the same base, so their offsets differ only
@@ -276,32 +446,49 @@ export function bindArt(program: Program, assets: AssetBytes): BoundArt {
   if (objects) extraTiles.set(objects.tiles, 0);
   if (backgrounds) extraTiles.set(backgrounds.tiles, objects?.tiles.length ?? 0);
 
-  const sprites = new Map<string, { tile: number; width: number; height: number }>();
+  const sprites = new Map<
+    string,
+    { tile: number; width: number; height: number; palette: number }
+  >();
   for (const [name, art] of objects?.art ?? []) {
-    sprites.set(name, { tile: objectBase + art.tile, width: art.width, height: art.height });
+    sprites.set(name, {
+      tile: objectBase + art.tile,
+      width: art.width,
+      height: art.height,
+      palette: art.palette,
+    });
   }
-  const tiles = new Map<string, number>();
+  const tiles = new Map<string, { tile: number; palette: number }>();
   for (const [name, art] of backgrounds?.art ?? []) {
-    tiles.set(name, backgroundBase + art.tile);
+    tiles.set(name, { tile: backgroundBase + art.tile, palette: art.palette });
   }
 
   // Backdrops come last in the bank, and go in through a pool: a cell already
   // drawn by the built-in font, by an object's art or by an earlier picture is
   // pointed at rather than stored again. Two screenfuls of the same night sky
   // then cost one tile between them instead of two.
-  const backdrops = new Map<string, { map: Uint8Array; bgp: number }>();
+  const backdrops = new Map<
+    string,
+    { map: Uint8Array; bgp: number; attr?: Uint8Array; palettes?: Uint8Array }
+  >();
   const known = new Uint8Array(builtinTiles().length + extraTiles.length);
   known.set(builtinTiles(), 0);
   known.set(extraTiles, builtinTiles().length);
   const pool = new TilePool(known, BUILTIN_TILES + extraTiles.length / TILE_BYTES);
   for (const scene of backdropScenes) {
-    const art = convertBackdrop(assets.get(scene.backdrop as string) as Uint8Array);
+    const art = convertBackdrop(assets.get(scene.backdrop as string) as Uint8Array, consoleId);
     const map = new Uint8Array(art.map.length);
+    const attr = new Uint8Array(color ? art.map.length : 0);
     for (let cell = 0; cell < art.map.length; cell += 1) {
       const local = (art.map[cell] as number) * TILE_BYTES;
-      map[cell] = pool.intern(art.tiles.subarray(local, local + TILE_BYTES));
+      const tile = pool.intern(art.tiles.subarray(local, local + TILE_BYTES));
+      map[cell] = tile & 0xff;
+      if (color) attr[cell] = cellAttribute(art.attr[cell] ?? 0, tile);
     }
-    backdrops.set(scene.name, { map, bgp: art.bgp });
+    backdrops.set(
+      scene.name,
+      color ? { map, bgp: art.bgp, attr, palettes: art.palettes } : { map, bgp: art.bgp },
+    );
   }
 
   const tail = pool.tail();
@@ -317,6 +504,24 @@ export function bindArt(program: Program, assets: AssetBytes): BoundArt {
     tiles8: bank.length / TILE_BYTES,
   };
   if (backdrops.size > 0) bound.backdrops = backdrops;
-  if (objects) bound.objectPalette = paletteRegister(objects.shades);
+  if (color) {
+    Object.assign(bound, systemPalettes());
+    // Objects take palettes 0–6 of the object hardware; the font's HUD sprites
+    // take the seventh, which is why the fit was capped rather than trimmed.
+    const objectBlock = new Uint8Array(8 * PALETTE_BYTES);
+    objectBlock.set(packPalettes(objects?.palettes ?? [], ART_PALETTES), 0);
+    objectBlock.set(systemPalette(true), SYSTEM_PALETTE * PALETTE_BYTES);
+    bound.objectPalettes = objectBlock;
+    if (backgrounds) bound.tilePalettes = packPalettes(backgrounds.palettes, ART_PALETTES);
+  } else if (objects) {
+    bound.objectPalette = paletteRegister(objects.shades);
+  }
   return bound;
+}
+
+/** The reserved background palette, for a build that has colour hardware. */
+function systemPalettes(): Pick<EmitOptions, "systemPalette" | "objectPalettes"> {
+  const objectBlock = new Uint8Array(8 * PALETTE_BYTES);
+  objectBlock.set(systemPalette(true), SYSTEM_PALETTE * PALETTE_BYTES);
+  return { systemPalette: systemPalette(false), objectPalettes: objectBlock };
 }

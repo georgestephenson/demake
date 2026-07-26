@@ -78,6 +78,21 @@ export class Ctx {
     this.asm = new Asm(origin);
   }
 
+  /**
+   * Whether this build targets colour hardware.
+   *
+   * The one fact that changes what the renderer emits: on a Game Boy Color
+   * every background cell carries an attribute byte in a second VRAM bank and
+   * every object names one of eight palettes, so the cell routines, the write
+   * queue and the OAM builder all have a second half. Nothing else in the
+   * backend branches on the console — the machine code a rule compiles to is
+   * the same on both, which is why a `gb` and a `gbc` build of one game trace
+   * identically.
+   */
+  get color(): boolean {
+    return this.profile.id === "gbc";
+  }
+
   /** A label nobody else will use. */
   unique(prefix: string): string {
     this.counter += 1;

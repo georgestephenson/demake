@@ -2,15 +2,26 @@
  * The sprite path (doc 15 §The conversion path, steps 3–4).
  *
  * A sprite is not a small background. Index 0 is *transparency*, not a colour,
- * so a Game Boy object has three shades where a tile has four — and which three
- * is decided by what an object is drawn *over*, not by what its source happens
- * to look like. Colour 0 shows the background through, and this runtime's
- * background is the lightest shade, so an object painted in that shade is an
- * object nobody can see. The three darkest shades are therefore the object
- * palette, and the art is stretched across them by auto-contrast rather than
- * matched to them by absolute lightness. That is doc 04 §The objective restated
- * at eight pixels across: under this much palette pressure, keeping a shape
- * legible beats minimising its error.
+ * so a Game Boy object has three colours where a tile has four — and which
+ * three is decided by what an object is drawn *over*, not by what its source
+ * happens to look like.
+ *
+ * On a **mono** console that plays out as a shade choice: colour 0 shows the
+ * background through, and this runtime's background is the lightest shade, so an
+ * object painted in that shade is an object nobody can see. The three darkest
+ * shades are therefore the object palette, and the art is stretched across them
+ * by auto-contrast rather than matched to them by absolute lightness. That is
+ * doc 04 §The objective restated at eight pixels across: under this much palette
+ * pressure, keeping a shape legible beats minimising its error.
+ *
+ * On a **colour** console the same pressure buys something else. The hardware
+ * has several small sub-palettes and an object names one of them, so the choice
+ * is no longer "which shades" but "which objects share a palette" — the
+ * constrained assignment problem `fit-tiled.ts` solves for an image's attribute
+ * cells, with an *asset* in place of a cell. It is solved here rather than
+ * there because the unit differs: a cell is eight pixels square and an asset is
+ * whatever box the game gave it, and an asset must end up under one palette
+ * however many cells it spans.
  *
  * The rest is the existing pipeline's shape, restated with alpha carried
  * through. Downscaling averages in linear light over *premultiplied* alpha,
@@ -20,19 +31,29 @@
  *
  * Deduplication is across the whole build rather than per asset (step 4): two
  * assets that share a blank corner share the tile, which on a machine with 256
- * object tiles is not a micro-optimisation.
+ * object tiles is not a micro-optimisation. It stays valid in colour, and gets
+ * better: two assets drawn with the same *shape* under different palettes are
+ * one tile and two attribute bytes.
  */
 
-import { linearToOklab } from "../color/oklab.js";
+import { deltaESq, linearToOklab, type Oklab } from "../color/oklab.js";
 import { srgbToLinear } from "../color/srgb.js";
 import { DemakeError } from "../errors.js";
 import { decodeImage } from "../image/decode.js";
 import type { RgbaImage } from "../image/rgba.js";
+import { makePrng, type Prng } from "../math/prng.js";
 import { getConsole } from "../consoles/registry.js";
-import type { TileLayout } from "../consoles/types.js";
+import type { ConsoleSpec, TileLayout } from "../consoles/types.js";
+
+import { makeColorSpace, type HwColor, type HwColorSpace } from "./hwcolor.js";
+import { latticeKmeans, type Points } from "./kmeans.js";
+import type { PaletteColor } from "./types.js";
 
 /** Bytes per 8×8 2bpp tile — the only sprite format this path emits today. */
 const TILE_BYTES = 16;
+
+/** Default seed for the colour fit, matching `prep`'s. */
+const DEFAULT_SEED = 0x9e3779b9;
 
 /** One converted asset: where its tiles start, and how big it is in cells. */
 export interface SpriteArt {
@@ -41,6 +62,14 @@ export interface SpriteArt {
   /** Size in whole cells. Tiles are row-major within that box. */
   width: number;
   height: number;
+  /**
+   * Sub-palette this asset was fitted into.
+   *
+   * Always 0 on a mono console, where there is only one. On a colour console it
+   * is the palette number the hardware attribute has to name — for a Game Boy
+   * Color object, the low three bits of its OAM attribute byte.
+   */
+  palette: number;
 }
 
 /** An asset to convert: its name, its bytes, and the box it must fill. */
@@ -63,9 +92,20 @@ export interface SpriteBank {
    * Hardware shade per usable colour index, in index order.
    *
    * For objects that is indices 1–3, index 0 being transparent, and it becomes
-   * the object palette register `demake build` writes to OBP0.
+   * the object palette register `demake build` writes to OBP0. Empty on a
+   * colour console, where {@link palettes} carries the answer instead.
    */
   shades: number[];
+  /**
+   * Fitted sub-palettes, on a colour console.
+   *
+   * One entry per palette the fit used, each holding exactly the console's
+   * sub-palette size in index order — so `palettes[art.palette][index]` is the
+   * colour a pixel of value `index` shows. Index 0 of an object palette is
+   * never displayed, and is emitted as a black placeholder so the array can be
+   * written to the hardware verbatim. Empty on a mono console.
+   */
+  palettes: PaletteColor[][];
   /** Distinct tiles the bank holds, after deduplication. */
   uniqueTiles: number;
   /** Tiles the assets would have needed without it. */
@@ -81,13 +121,23 @@ export interface SpriteOptions {
   /**
    * Convert as background tiles rather than objects.
    *
-   * Background tiles have no transparency, so every shade is available and
-   * index 0 is the lightest one rather than "not drawn". The mapping is the
-   * identity — the background palette register is shared with the built-in
-   * font and level patterns, and a build that re-chose it would change how
-   * those look to suit a tile the player barely notices.
+   * Background tiles have no transparency, so every colour is available and
+   * index 0 is a colour rather than "not drawn". On a mono console the mapping
+   * is then the identity — the background palette register is shared with the
+   * built-in font and level patterns, and a build that re-chose it would change
+   * how those look to suit a tile the player barely notices.
    */
   opaque?: boolean;
+  /**
+   * Sub-palettes this bank may use, when the console has more than one.
+   *
+   * Defaults to all of them. A caller reserves the rest: `demake build` keeps
+   * one back for the font and the HUD, which must stay legible over art whose
+   * own palette was chosen for the art.
+   */
+  maxPalettes?: number;
+  /** Seed for the deterministic colour fit. */
+  seed?: number;
 }
 
 /** A downscaled sprite in linear light, with straight alpha kept separate. */
@@ -98,6 +148,19 @@ interface Sampled {
   color: Float32Array;
   /** Coverage 0–1 per pixel. */
   alpha: Float32Array;
+}
+
+/** One asset, decoded and measured, before any palette decision. */
+interface Decoded {
+  source: SpriteSource;
+  sampled: Sampled;
+  /** Perceptual lightness per pixel; only meaningful where opaque. */
+  light: Float32Array;
+  /** Oklab per opaque pixel, 3 per pixel; zero elsewhere. */
+  lab: Float32Array;
+  /** Importance weight per pixel. */
+  weight: Float32Array;
+  opaque: Uint8Array;
 }
 
 /**
@@ -150,22 +213,58 @@ function sample(image: RgbaImage, width: number, height: number): Sampled {
   return { width, height, color, alpha };
 }
 
-/** Perceptual lightness of every opaque pixel, and the pixels' opacity. */
-function lightness(sampled: Sampled, cutoff: number): { light: Float32Array; opaque: Uint8Array } {
+/**
+ * Oklab, lightness, opacity and importance for one sampled asset.
+ *
+ * The weight is the tiled fitter's, narrowed to what an eight-pixel sprite can
+ * show: one plus local contrast, so a two-pixel eye highlight is not averaged
+ * into the face around it. Transparent neighbours contribute no contrast, or
+ * every silhouette edge would out-weigh everything inside it.
+ */
+function measure(sampled: Sampled, cutoff: number): Omit<Decoded, "source" | "sampled"> {
   const count = sampled.width * sampled.height;
   const light = new Float32Array(count);
+  const lab = new Float32Array(count * 3);
+  const weight = new Float32Array(count).fill(1);
   const opaque = new Uint8Array(count);
   for (let index = 0; index < count; index += 1) {
     if ((sampled.alpha[index] as number) < cutoff) continue;
     opaque[index] = 1;
     const at = index * 3;
-    light[index] = linearToOklab(
+    const color = linearToOklab(
       sampled.color[at] as number,
       sampled.color[at + 1] as number,
       sampled.color[at + 2] as number,
-    ).L;
+    );
+    light[index] = color.L;
+    lab[at] = color.L;
+    lab[at + 1] = color.a;
+    lab[at + 2] = color.b;
   }
-  return { light, opaque };
+  for (let y = 0; y < sampled.height; y += 1) {
+    for (let x = 0; x < sampled.width; x += 1) {
+      const index = y * sampled.width + x;
+      if (opaque[index] === 0) continue;
+      let contrast = 0;
+      let neighbours = 0;
+      const consider = (other: number): void => {
+        if (opaque[other] === 0) return;
+        const a = index * 3;
+        const b = other * 3;
+        const dL = (lab[a] as number) - (lab[b] as number);
+        const da = (lab[a + 1] as number) - (lab[b + 1] as number);
+        const db = (lab[a + 2] as number) - (lab[b + 2] as number);
+        contrast += dL * dL + da * da + db * db;
+        neighbours += 1;
+      };
+      if (x > 0) consider(index - 1);
+      if (x < sampled.width - 1) consider(index + 1);
+      if (y > 0) consider(index - sampled.width);
+      if (y < sampled.height - 1) consider(index + sampled.width);
+      weight[index] = 1 + 8 * (neighbours > 0 ? contrast / neighbours : 0);
+    }
+  }
+  return { light, lab, weight, opaque };
 }
 
 /** Percentile of a copy-sorted array, `p` in 0–1. */
@@ -212,12 +311,183 @@ function packTile(
   return bytes;
 }
 
+/** The point set one asset contributes to a palette fit. */
+function pointsFor(entry: Decoded): Points {
+  const members: number[] = [];
+  for (let index = 0; index < entry.opaque.length; index += 1) {
+    if (entry.opaque[index] === 1) members.push(index);
+  }
+  const lab = new Float32Array(members.length * 3);
+  const weight = new Float32Array(members.length);
+  members.forEach((pixel, at) => {
+    lab[at * 3] = entry.lab[pixel * 3] as number;
+    lab[at * 3 + 1] = entry.lab[pixel * 3 + 1] as number;
+    lab[at * 3 + 2] = entry.lab[pixel * 3 + 2] as number;
+    weight[at] = entry.weight[pixel] as number;
+  });
+  return { lab, weight, count: members.length };
+}
+
+/** Concatenate several point sets into one. */
+function mergePoints(sets: readonly Points[]): Points {
+  const count = sets.reduce((total, set) => total + set.count, 0);
+  const lab = new Float32Array(count * 3);
+  const weight = new Float32Array(count);
+  let at = 0;
+  for (const set of sets) {
+    lab.set(set.lab.subarray(0, set.count * 3), at * 3);
+    weight.set(set.weight.subarray(0, set.count), at);
+    at += set.count;
+  }
+  return { lab, weight, count };
+}
+
+/** Weighted error of fitting one asset's pixels to one palette. */
+function fitError(points: Points, palette: readonly HwColor[]): number {
+  if (palette.length === 0) return Infinity;
+  let total = 0;
+  for (let index = 0; index < points.count; index += 1) {
+    const lab: Oklab = {
+      L: points.lab[index * 3] as number,
+      a: points.lab[index * 3 + 1] as number,
+      b: points.lab[index * 3 + 2] as number,
+    };
+    let best = Infinity;
+    for (const color of palette) {
+      const distance = deltaESq(lab, color.lab, 1);
+      if (distance < best) best = distance;
+    }
+    total += best * (points.weight[index] as number);
+  }
+  return total;
+}
+
+/**
+ * Choose which assets share a sub-palette, and what is in each one.
+ *
+ * The alternating refinement `fit-tiled.ts` runs over attribute cells, with an
+ * asset as the unit: seed the groups from the assets' mean colours, then repeat
+ * { assign each asset to its cheapest palette; refit each palette over the
+ * pixels of the assets that chose it }. An asset is indivisible because the
+ * hardware names one palette per object, so a sprite whose halves want different
+ * colours pays for it here rather than being quietly split.
+ */
+function assignPalettes(
+  decoded: readonly Decoded[],
+  perAsset: readonly Points[],
+  count: number,
+  size: number,
+  space: HwColorSpace,
+  prng: Prng,
+): { palettes: HwColor[][]; choice: number[] } {
+  const assets = decoded.length;
+  const groups = Math.max(1, Math.min(count, assets));
+  const choice = new Array<number>(assets).fill(0);
+
+  // Seed: order the assets by mean lightness and deal them round-robin, which
+  // puts unlike art in unlike groups without a second clustering pass. The
+  // refinement below is what actually decides; this only has to be a spread.
+  const order = decoded
+    .map((entry, index) => ({ index, mean: meanLightness(entry) }))
+    .sort((a, b) => a.mean - b.mean || a.index - b.index);
+  order.forEach((entry, rank) => {
+    choice[entry.index] = rank % groups;
+  });
+
+  let palettes = refit(perAsset, choice, groups, size, space, prng);
+  for (let round = 0; round < 8; round += 1) {
+    let moved = false;
+    for (let asset = 0; asset < assets; asset += 1) {
+      let best = choice[asset] as number;
+      let bestError = Infinity;
+      for (let palette = 0; palette < groups; palette += 1) {
+        const error = fitError(perAsset[asset] as Points, palettes[palette] as HwColor[]);
+        if (error < bestError) {
+          bestError = error;
+          best = palette;
+        }
+      }
+      if (choice[asset] !== best) moved = true;
+      choice[asset] = best;
+    }
+    palettes = refit(perAsset, choice, groups, size, space, prng);
+    if (!moved) break;
+  }
+  return { palettes, choice };
+}
+
+/** Mean lightness over an asset's opaque pixels; 0 when it has none. */
+function meanLightness(entry: Decoded): number {
+  let total = 0;
+  let count = 0;
+  for (let index = 0; index < entry.opaque.length; index += 1) {
+    if (entry.opaque[index] === 0) continue;
+    total += entry.light[index] as number;
+    count += 1;
+  }
+  return count === 0 ? 0 : total / count;
+}
+
+/** Refit every sub-palette over the pixels of the assets assigned to it. */
+function refit(
+  perAsset: readonly Points[],
+  choice: readonly number[],
+  groups: number,
+  size: number,
+  space: HwColorSpace,
+  prng: Prng,
+): HwColor[][] {
+  const palettes: HwColor[][] = [];
+  for (let palette = 0; palette < groups; palette += 1) {
+    const members = perAsset.filter(
+      (points, asset) => choice[asset] === palette && points.count > 0,
+    );
+    if (members.length === 0) {
+      palettes.push([]);
+      continue;
+    }
+    palettes.push(latticeKmeans(mergePoints(members), size, space, prng, 12, 1, false));
+  }
+  return palettes;
+}
+
+/**
+ * Order a fitted palette lightest first, and pad it to the hardware's size.
+ *
+ * Lightest first because that is the order every other Game Boy palette in this
+ * repository is in — the DMG's shade ramp, the built-in font's, the mono fit's —
+ * so an index means the same thing whichever machine is being built for. Ties
+ * break on the raw codes so the order is a function of the colours alone.
+ */
+function orderPalette(fitted: readonly HwColor[], size: number): HwColor[] {
+  const sorted = [...fitted].sort(
+    (a, b) => b.lab.L - a.lab.L || a.codes.join(",").localeCompare(b.codes.join(",")),
+  );
+  while (sorted.length > 0 && sorted.length < size)
+    sorted.push(sorted[sorted.length - 1] as HwColor);
+  return sorted.slice(0, size);
+}
+
+/** Index of the nearest colour in a palette, in Oklab. */
+function nearest(palette: readonly HwColor[], lab: Oklab): number {
+  let best = 0;
+  let bestDistance = Infinity;
+  for (let index = 0; index < palette.length; index += 1) {
+    const distance = deltaESq(lab, (palette[index] as HwColor).lab, 1);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = index;
+    }
+  }
+  return best;
+}
+
 /**
  * Convert every asset in a build into one deduplicated tile bank.
  *
- * The whole build at once is the point: the shade choice and the tile dedup are
- * both global decisions, and doing them per asset would give a different — and
- * worse — answer for reasons that have nothing to do with the asset.
+ * The whole build at once is the point: the palette choice and the tile dedup
+ * are both global decisions, and doing them per asset would give a different —
+ * and worse — answer for reasons that have nothing to do with the asset.
  */
 export function buildSpriteBank(
   sources: readonly SpriteSource[],
@@ -244,16 +514,96 @@ export function buildSpriteBank(
 
   const cutoff = options.alphaCutoff ?? 0.5;
   const opaque = options.opaque === true;
-  const total = spec.color.shades ?? (layout as TileLayout).subPalettes.size;
+  const tiles = layout as TileLayout;
+  const total = spec.color.shades ?? tiles.subPalettes.size;
   // Index 0 is transparency, so an object has one fewer colour than a tile.
   const usable = Math.max(1, opaque ? total : total - 1);
 
-  const decoded = sources.map((source) => {
+  const decoded: Decoded[] = sources.map((source) => {
     const image = decodeImage(source.bytes);
     const sampled = sample(image, source.cellsWide * 8, source.cellsHigh * 8);
-    return { source, sampled, ...lightness(sampled, cutoff) };
+    return { source, sampled, ...measure(sampled, cutoff) };
   });
 
+  const color = spec.color.model !== "mono";
+  const fit = color
+    ? colorIndices(decoded, spec, tiles, usable, opaque, options)
+    : monoIndices(decoded, total, usable, opaque);
+
+  const bank: Uint8Array[] = [];
+  const seen = new Map<string, number>();
+  const art = new Map<string, SpriteArt>();
+  let totalTiles = 0;
+
+  decoded.forEach((entry, asset) => {
+    const { source, sampled } = entry;
+    const width = sampled.width;
+    const indices = fit.indices[asset] as Uint8Array;
+
+    const placements: number[] = [];
+    for (let row = 0; row < source.cellsHigh; row += 1) {
+      for (let column = 0; column < source.cellsWide; column += 1) {
+        const packed = packTile(indices, width, column * 8, row * 8);
+        // A hex key rather than an object identity: two identical tiles from
+        // different assets must collapse, which is the whole point of step 4.
+        let key = "";
+        for (const byte of packed) key += byte.toString(16).padStart(2, "0");
+        totalTiles += 1;
+        let at = seen.get(key);
+        if (at === undefined) {
+          at = bank.length;
+          bank.push(packed);
+          seen.set(key, at);
+        }
+        placements.push(at);
+      }
+    }
+    // The runtime addresses an asset's tiles as one contiguous run, so an asset
+    // whose tiles deduplicated out of order needs its own copies. Emitting them
+    // only when the run is not already contiguous keeps the common case free.
+    const contiguous = placements.every(
+      (value, index) => value === (placements[0] as number) + index,
+    );
+    let base = placements[0] ?? 0;
+    if (!contiguous) {
+      base = bank.length;
+      for (const at of placements) bank.push(bank[at] as Uint8Array);
+    }
+    art.set(source.name, {
+      tile: base,
+      width: source.cellsWide,
+      height: source.cellsHigh,
+      palette: fit.palette[asset] ?? 0,
+    });
+  });
+
+  const bytes = new Uint8Array(bank.length * TILE_BYTES);
+  bank.forEach((tile, index) => bytes.set(tile, index * TILE_BYTES));
+  return {
+    tiles: bytes,
+    art,
+    shades: fit.shades,
+    palettes: fit.palettes,
+    uniqueTiles: bank.length,
+    totalTiles,
+  };
+}
+
+/** What either fitter hands back: per-asset pixel indices and palette choice. */
+interface Fitted {
+  indices: Uint8Array[];
+  palette: number[];
+  shades: number[];
+  palettes: PaletteColor[][];
+}
+
+/** The mono fit: one auto-contrast ramp across every asset in the build. */
+function monoIndices(
+  decoded: readonly Decoded[],
+  total: number,
+  usable: number,
+  opaque: boolean,
+): Fitted {
   // Objects take the darkest shades; a background tile has the whole ramp.
   const first = total - usable;
   const shades = Array.from({ length: usable }, (_, index) => first + index);
@@ -268,62 +618,71 @@ export function buildSpriteBank(
   const hi = percentile(values, 0.98);
   const span = hi - lo > 1e-6 ? hi - lo : 1;
 
-  const tiles: Uint8Array[] = [];
-  const seen = new Map<string, number>();
-  const art = new Map<string, SpriteArt>();
-  let totalTiles = 0;
-
-  for (const entry of decoded) {
-    const { source, sampled } = entry;
-    const width = sampled.width;
-    const indices = new Uint8Array(width * sampled.height);
-    for (let index = 0; index < indices.length; index += 1) {
+  const indices = decoded.map((entry) => {
+    const out = new Uint8Array(entry.opaque.length);
+    for (let index = 0; index < out.length; index += 1) {
       // A transparent pixel is index 0 either way: "not drawn" for an object,
       // the lightest shade for a tile, which is what a hole in a tile means.
       if (entry.opaque[index] === 0) continue;
       const level = stretch(entry.light[index] as number, lo, span, usable);
-      indices[index] = opaque ? level : level + 1;
+      out[index] = opaque ? level : level + 1;
     }
+    return out;
+  });
+  return { indices, palette: decoded.map(() => 0), shades, palettes: [] };
+}
 
-    const placements: number[] = [];
-    for (let row = 0; row < source.cellsHigh; row += 1) {
-      for (let column = 0; column < source.cellsWide; column += 1) {
-        const packed = packTile(indices, width, column * 8, row * 8);
-        // A hex key rather than an object identity: two identical tiles from
-        // different assets must collapse, which is the whole point of step 4.
-        let key = "";
-        for (const byte of packed) key += byte.toString(16).padStart(2, "0");
-        totalTiles += 1;
-        let at = seen.get(key);
-        if (at === undefined) {
-          at = tiles.length;
-          tiles.push(packed);
-          seen.set(key, at);
-        }
-        placements.push(at);
-      }
-    }
-    // The runtime addresses an asset's tiles as one contiguous run, so an asset
-    // whose tiles deduplicated out of order needs its own copies. Emitting them
-    // only when the run is not already contiguous keeps the common case free.
-    const contiguous = placements.every(
-      (value, index) => value === (placements[0] as number) + index,
-    );
-    let base = placements[0] ?? 0;
-    if (!contiguous) {
-      base = tiles.length;
-      for (const at of placements) tiles.push(tiles[at] as Uint8Array);
-    }
-    art.set(source.name, {
-      tile: base,
-      width: source.cellsWide,
-      height: source.cellsHigh,
-    });
-  }
+/** The colour fit: sub-palettes shared between assets, one palette per asset. */
+function colorIndices(
+  decoded: readonly Decoded[],
+  spec: ConsoleSpec,
+  tiles: TileLayout,
+  usable: number,
+  opaque: boolean,
+  options: SpriteOptions,
+): Fitted {
+  const space = makeColorSpace(spec);
+  const prng = makePrng((options.seed ?? DEFAULT_SEED) >>> 0);
+  const count = Math.max(1, Math.min(tiles.subPalettes.count, options.maxPalettes ?? Infinity));
+  const perAsset = decoded.map(pointsFor);
+  const { palettes, choice } = assignPalettes(decoded, perAsset, count, usable, space, prng);
 
-  const bank = new Uint8Array(tiles.length * TILE_BYTES);
-  tiles.forEach((tile, index) => bank.set(tile, index * TILE_BYTES));
-  return { tiles: bank, art, shades, uniqueTiles: tiles.length, totalTiles };
+  // Index 0 of an object palette is never displayed, so it is emitted as black:
+  // a placeholder keeps the array the shape the hardware is written from, and a
+  // fitted colour there would only be a colour the machine cannot show.
+  const transparent = space.fromCodes([0, 0, 0]);
+  const ordered = palettes.map((palette) => {
+    const fitted = orderPalette(palette.length > 0 ? palette : [transparent], usable);
+    return opaque ? fitted : [transparent, ...fitted];
+  });
+
+  const indices = decoded.map((entry, asset) => {
+    const palette = ordered[choice[asset] as number] as HwColor[];
+    // Objects match against the colours the hardware will really show, which
+    // starts one past the transparent slot.
+    const candidates = opaque ? palette : palette.slice(1);
+    const out = new Uint8Array(entry.opaque.length);
+    for (let index = 0; index < out.length; index += 1) {
+      if (entry.opaque[index] === 0) continue;
+      const at = index * 3;
+      const lab: Oklab = {
+        L: entry.lab[at] as number,
+        a: entry.lab[at + 1] as number,
+        b: entry.lab[at + 2] as number,
+      };
+      out[index] = nearest(candidates, lab) + (opaque ? 0 : 1);
+    }
+    return out;
+  });
+
+  return {
+    indices,
+    palette: choice,
+    shades: [],
+    palettes: ordered.map((palette) =>
+      palette.map((entry) => ({ codes: entry.codes, display: entry.display, raw: entry.raw })),
+    ),
+  };
 }
 
 /** Pack chosen shades into a Game Boy palette register, index 0 first. */

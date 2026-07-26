@@ -82,6 +82,7 @@ function runCandidate(
     lWeight: profile === "art" ? 1.2 : 1,
     denoise: candidate.clean === true,
     collapse: candidate.clean === true,
+    ...(opts.maxSubPalettes === undefined ? {} : { maxPalettes: opts.maxSubPalettes }),
   };
   const space = makeColorSpace(spec);
   const layout = spec.layout as TileLayout;

@@ -104,6 +104,15 @@ export interface PrepOptions {
   background?: string;
   keepTransparency?: boolean;
   strict?: boolean;
+  /**
+   * Fit into at most this many of the console's sub-palettes.
+   *
+   * Defaults to all of them. A caller reserves the rest for something the
+   * picture does not own: `demake build` keeps one Game Boy Color background
+   * palette back for the font, so a score stays legible over a title screen
+   * whose palettes were chosen for the title screen.
+   */
+  maxSubPalettes?: number;
   /** Force raw lattice-expansion colors in the output (the default for panel-filter consoles). */
   rawColors?: boolean;
   /** Force DAC-simulated display colors in the output (`--dac-colors`). */

@@ -212,9 +212,20 @@ export interface Layout {
   cull: number;
 
   // --- rendering ------------------------------------------------------------
-  /** Pending VRAM writes: address low, address high, tile. */
+  /** Pending VRAM writes: address low, address high, tile, and — on the Game
+   * Boy Color, where every background cell also carries a palette — its
+   * attribute byte. */
   queue: number;
+  queueStride: number;
   queueCount: number;
+  /**
+   * The attribute byte that belongs with the tile a cell routine just produced.
+   *
+   * Zero on a monochrome build, which has no attributes at all. It is a byte of
+   * RAM rather than a register because the routines that produce a tile already
+   * use every register there is, and the queue reads it one call later.
+   */
+  attr: number;
   /** Cells the HUD occupied last frame and this one, as 16-bit indices. */
   plot: number;
   plotPrev: number;
@@ -397,8 +408,14 @@ export function planLayout(program: Program, analysis: Analysis): Layout {
   const pairWork = usesPairs ? heap.take(4 * PROP_SIZE) : null;
   const cull = heap.take(2);
 
-  const queue = heap.take(QUEUE_MAX * 3);
+  // A colour build carries an attribute byte alongside every queued tile; a
+  // monochrome one allocates neither the fourth byte nor the scratch, so its
+  // work-RAM usage is exactly what it was before colour existed.
+  const color = program.profile.id === "gbc";
+  const queueStride = color ? 4 : 3;
+  const queue = heap.take(QUEUE_MAX * queueStride);
   const queueCount = heap.take(1);
+  const attr = color ? heap.take(1) : 0;
   const plot = heap.take(PLOT_MAX * 2);
   const plotPrev = heap.take(PLOT_MAX * 2);
   const plotCount = heap.take(1);
@@ -453,7 +470,9 @@ export function planLayout(program: Program, analysis: Analysis): Layout {
     pairWork,
     cull,
     queue,
+    queueStride,
     queueCount,
+    attr,
     plot,
     plotPrev,
     plotCount,

@@ -526,6 +526,34 @@ hardware rather than of taste:
   lit band where the counters go — the font's ink is the darkest shade, and a
   status bar is what that constraint looks like when you take it seriously.
 
+#### Colour, on the machine that has it
+
+A `gbc` build demakes the same art through the image engine's **RGB-lattice**
+path instead of its mono one, and everything that follows is the hardware's
+shape rather than a second set of decisions: a background cell names one of
+eight four-colour palettes, an object names one of eight more, and both live in
+an attribute the renderer writes alongside the tile. The interesting choice is
+not "which colours" but **which assets share a palette** — the constrained
+assignment `prep` already solves for an image's attribute cells, with an asset
+in place of a cell, because the hardware names one palette per object and a
+sprite whose halves want different colours has to pay for it somewhere.
+
+Two consequences are worth knowing before drawing for it:
+
+- **One palette of each kind is reserved for the font.** A picture's fit is free
+  to spend all four colours of a palette on sky; a caption borrowing one would
+  come out sky on sky. So the art gets seven and the HUD gets the eighth, which
+  is a plain white-through-black ramp — the same thing the monochrome build
+  shows, so the two read as one game.
+- **Colour costs cartridge, the way audio does.** Every background cell carries
+  an attribute byte, so a demade backdrop is 360 bytes of tile map *and* 360 of
+  attributes; the palettes are uploaded per scene; and colour art deduplicates
+  less than monochrome art, because two cells that differ only in tone are one
+  tile on a Game Boy and two here. That is around a kilobyte for a game with two
+  backdrops, out of 32. The build reports what is left, and a game that no longer
+  fits is an error naming the number rather than a picture with holes in it. The
+  second VRAM bank is what makes it affordable at all: 512 tiles rather than 256.
+
 ### Sound: `music` and `sound`
 
 Audio arrives the way art does, and the split is the same one: `music` names a

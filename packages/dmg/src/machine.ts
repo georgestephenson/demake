@@ -7,6 +7,13 @@
  * per-scanline picture is what a fixed-tick game needs and a pixel-FIFO would
  * buy accuracy no demade game can observe.
  *
+ * **Both machines, decided by the cartridge.** A ROM whose header carries the
+ * CGB flag runs as a Game Boy Color: two VRAM banks, eight background and eight
+ * object palettes of RGB555, per-cell attributes, and eight WRAM banks. A ROM
+ * without it runs as a DMG and is shown on the green LCD ramp the hardware
+ * really had. Which one a cartridge gets is never a setting here — it is the
+ * header byte, so the machine a player sees is the machine the build targeted.
+ *
  * The APU is not implemented here: it is `@demake/chip`'s `GbApu`, the same
  * model the audio pipeline renders previews with (doc 16 §Packages). That is
  * the whole reason the package exists — the preview and the emulator cannot
@@ -14,12 +21,15 @@
  * `$FF10`–`$FF3F` to it, and offers the write tap the audio proof reads
  * (§apuTap).
  *
- * Two things are deliberately absent. There is no MBC: a build is 32 KiB, and
+ * Three things are deliberately absent. There is no MBC: a build is 32 KiB, and
  * the day a game needs banking the runtime gains a mapper and this gains the
- * three lines to match. And VRAM is *not* blocked outside VBlank — a real DMG
- * drops those writes, and the runtime is written to do its VRAM work in the
- * VBlank window regardless, so modelling the block here would only convert a
- * discipline failure into a mystery. The SameBoy E2E is where that gets caught.
+ * three lines to match. There is no CGB double speed and no HDMA, because the
+ * generated runtime programs neither — `KEY1` and the HDMA registers are plain
+ * storage, so a ROM that tried would be visibly wrong here rather than subtly
+ * wrong. And VRAM is *not* blocked outside VBlank — a real Game Boy drops those
+ * writes, and the runtime is written to do its VRAM work in the VBlank window
+ * regardless, so modelling the block here would only convert a discipline
+ * failure into a mystery. The SameBoy E2E is where that gets caught.
  */
 
 import { GbApu, type SampleSink } from "@demake/chip";
@@ -39,33 +49,91 @@ export const BUTTONS = ["right", "left", "up", "down", "a", "b", "select", "star
 /** One joypad button. */
 export type Button = (typeof BUTTONS)[number];
 
-/** The four DMG shades, darkest last, as 8-bit grey. */
-const SHADES = [0xe8, 0xa0, 0x58, 0x10];
+/**
+ * The four DMG shades, lightest first, as the green LCD really showed them.
+ *
+ * Not grey. The original Game Boy's screen is a reflective green LCD, and the
+ * four shades below are the ramp the `dmg` console spec carries as its
+ * `mono-ramp` DAC model and the SameBoy capturer compares against — a DAC model
+ * is a tested artifact here, not decoration, so the player, the console spec and
+ * the pixel-perfect E2E all show the same four colours.
+ * `test/ppu.test.ts` pins them against `@demake/core`'s spec.
+ */
+export const DMG_SHADES: readonly (readonly [number, number, number])[] = [
+  [155, 188, 15],
+  [139, 172, 15],
+  [48, 98, 48],
+  [15, 56, 15],
+];
 
 /** Sound registers, as offsets from `$FF00`: NR10–NR52, then wave RAM. */
 const APU_FIRST = 0x10;
 const APU_LAST = 0x3f;
 
-/** A DMG with a 32 KiB cartridge in it. */
+/** Bytes in one VRAM bank; a CGB has two, a DMG one. */
+const VRAM_BANK = 0x2000;
+
+/** Bytes in one switchable work-RAM bank; a CGB has seven plus the fixed one. */
+const WRAM_BANK = 0x1000;
+
+/** Header byte carrying the CGB flag: `$80` CGB-aware, `$C0` CGB-only. */
+const HEADER_CGB = 0x0143;
+
+/**
+ * Expand a 5-bit channel to eight bits by bit replication.
+ *
+ * The CGB's own LCD applies a panel curve on top of this, but that curve is a
+ * *simulation* and the author space is the raw expansion (doc 04 §author space)
+ * — which is also what the emulator E2E compares against, with SameBoy's colour
+ * correction disabled. Showing the raw expansion here keeps the page, the CLI's
+ * PNG and the hardware comparison in one colour space.
+ */
+function expand5(code: number): number {
+  const value = code & 31;
+  return (value << 3) | (value >> 2);
+}
+
+/** A Game Boy with a 32 KiB cartridge in it — DMG or CGB, per the header. */
 export class Gameboy implements Bus {
   readonly cpu = new Cpu(this);
   /** The sound hardware — `@demake/chip`'s model, not a second one. */
   readonly apu = new GbApu();
   readonly rom: Uint8Array;
-  readonly vram = new Uint8Array(0x2000);
-  readonly wram = new Uint8Array(0x2000);
+  /** Whether this cartridge asked for Game Boy Color hardware. */
+  readonly cgb: boolean;
+  /** Both VRAM banks, back to back; a DMG only ever addresses the first. */
+  readonly vram = new Uint8Array(VRAM_BANK * 2);
+  /** Eight work-RAM banks; a DMG only ever addresses the first two. */
+  readonly wram = new Uint8Array(WRAM_BANK * 8);
   readonly oam = new Uint8Array(0xa0);
   readonly hram = new Uint8Array(0x7f);
   readonly io = new Uint8Array(0x80);
+  /** CGB palette RAM: eight palettes of four BGR555 colours, low byte first. */
+  readonly bgPaletteRam = new Uint8Array(64);
+  readonly objPaletteRam = new Uint8Array(64);
+  private vramBank = 0;
+  private wramBank = 1;
   private interruptEnable = 0;
 
-  /** One byte per pixel: the shade index 0–3, before palette colouring. */
+  /**
+   * One byte per pixel: the raw colour index the tile carried, 0–3.
+   *
+   * On a DMG that is the shade after the palette register has been applied; on
+   * a CGB it is the index *within* the cell's palette, and {@link colors} holds
+   * what the screen actually shows.
+   */
   readonly indices = new Uint8Array(SCREEN_WIDTH * SCREEN_HEIGHT);
+  /** BGR555 per pixel, filled only in CGB mode. */
+  readonly colors = new Uint16Array(SCREEN_WIDTH * SCREEN_HEIGHT);
   /** RGBA, ready for `putImageData`. */
   readonly framebuffer = new Uint8ClampedArray(SCREEN_WIDTH * SCREEN_HEIGHT * 4);
 
   /** Raw background colour indices for the line being drawn, for OBJ priority. */
   private readonly bgRow = new Uint8Array(SCREEN_WIDTH);
+  /** CGB: whether the background cell at this pixel asked to sit above objects. */
+  private readonly bgAbove = new Uint8Array(SCREEN_WIDTH);
+  /** Which pixels of this line an object has already claimed. */
+  private readonly objRow = new Uint8Array(SCREEN_WIDTH);
   private dot = 0;
   private divCounter = 0;
   private timerCounter = 0;
@@ -94,6 +162,7 @@ export class Gameboy implements Bus {
 
   constructor(rom: Uint8Array) {
     this.rom = rom;
+    this.cgb = ((rom[HEADER_CGB] ?? 0) & 0x80) !== 0;
     // Post-boot-ROM register state, so a cartridge that assumes the boot ROM ran
     // sees what it expects without us shipping Nintendo's copyrighted code.
     this.io[0x00] = 0xcf;
@@ -107,6 +176,10 @@ export class Gameboy implements Bus {
     this.io[0x47] = 0xfc;
     this.io[0x48] = 0xff;
     this.io[0x49] = 0xff;
+    // The one register state a CGB cartridge is entitled to read: the boot ROM
+    // leaves `A` at $11, which is how a dual-mode cartridge knows which machine
+    // it woke up on.
+    if (this.cgb) this.cpu.a = 0x11;
     this.framebuffer.fill(0xff);
   }
 
@@ -115,10 +188,10 @@ export class Gameboy implements Bus {
   read(address: number): number {
     const at = address & 0xffff;
     if (at < 0x8000) return this.rom[at] ?? 0xff;
-    if (at < 0xa000) return this.vram[at - 0x8000] as number;
+    if (at < 0xa000) return this.vram[this.vramBank * VRAM_BANK + (at - 0x8000)] as number;
     if (at < 0xc000) return 0xff; // no cartridge RAM
-    if (at < 0xe000) return this.wram[at - 0xc000] as number;
-    if (at < 0xfe00) return this.wram[at - 0xe000] as number; // echo
+    if (at < 0xe000) return this.wram[this.wramOffset(at)] as number;
+    if (at < 0xfe00) return this.wram[this.wramOffset(at - 0x2000)] as number; // echo
     if (at < 0xfea0) return this.oam[at - 0xfe00] as number;
     if (at < 0xff00) return 0xff;
     if (at < 0xff80) return this.readIo(at - 0xff00);
@@ -131,16 +204,16 @@ export class Gameboy implements Bus {
     const byte = value & 0xff;
     if (at < 0x8000) return; // ROM is read-only; no mapper to poke
     if (at < 0xa000) {
-      this.vram[at - 0x8000] = byte;
+      this.vram[this.vramBank * VRAM_BANK + (at - 0x8000)] = byte;
       return;
     }
     if (at < 0xc000) return;
     if (at < 0xe000) {
-      this.wram[at - 0xc000] = byte;
+      this.wram[this.wramOffset(at)] = byte;
       return;
     }
     if (at < 0xfe00) {
-      this.wram[at - 0xe000] = byte;
+      this.wram[this.wramOffset(at - 0x2000)] = byte;
       return;
     }
     if (at < 0xfea0) {
@@ -159,6 +232,18 @@ export class Gameboy implements Bus {
     this.interruptEnable = byte;
   }
 
+  /**
+   * Where a work-RAM address really lands.
+   *
+   * `$C000`–`$CFFF` is always bank 0; `$D000`–`$DFFF` is the bank `SVBK`
+   * selects, and bank 0 selected there means bank 1 — which is why a DMG game
+   * that never writes `SVBK` sees the flat 8 KiB it expects.
+   */
+  private wramOffset(address: number): number {
+    if (address < 0xd000) return address - 0xc000;
+    return this.wramBank * WRAM_BANK + (address - 0xd000);
+  }
+
   private readIo(register: number): number {
     if (register >= APU_FIRST && register <= APU_LAST) return this.apu.read(register);
     switch (register) {
@@ -166,6 +251,14 @@ export class Gameboy implements Bus {
         return this.joypadRegister();
       case 0x0f:
         return (this.io[0x0f] as number) | 0xe0;
+      case 0x4f:
+        return this.cgb ? this.vramBank | 0xfe : 0xff;
+      case 0x69:
+        return this.cgb ? (this.bgPaletteRam[(this.io[0x68] as number) & 0x3f] as number) : 0xff;
+      case 0x6b:
+        return this.cgb ? (this.objPaletteRam[(this.io[0x6a] as number) & 0x3f] as number) : 0xff;
+      case 0x70:
+        return this.cgb ? this.wramBank | 0xf8 : 0xff;
       default:
         return this.io[register] as number;
     }
@@ -196,6 +289,30 @@ export class Gameboy implements Bus {
         this.io[0x46] = value;
         return;
       }
+      case 0x4f:
+        if (this.cgb) this.vramBank = value & 1;
+        this.io[0x4f] = value;
+        return;
+      case 0x69:
+      case 0x6b: {
+        if (!this.cgb) {
+          this.io[register] = value;
+          return;
+        }
+        // BCPD/OCPD write through the index register, which auto-increments when
+        // its top bit is set — the only way a ROM ever fills 64 bytes of palette
+        // RAM in a VBlank, and therefore the only path worth being exact about.
+        const control = register === 0x69 ? 0x68 : 0x6a;
+        const ram = register === 0x69 ? this.bgPaletteRam : this.objPaletteRam;
+        const spec = this.io[control] as number;
+        ram[spec & 0x3f] = value;
+        if ((spec & 0x80) !== 0) this.io[control] = 0x80 | ((spec + 1) & 0x3f);
+        return;
+      }
+      case 0x70:
+        if (this.cgb) this.wramBank = (value & 7) === 0 ? 1 : value & 7;
+        this.io[0x70] = value;
+        return;
       default:
         this.io[register] = value;
     }
@@ -330,34 +447,45 @@ export class Gameboy implements Bus {
 
   // --- rendering -------------------------------------------------------------
 
+  /** One BGR555 colour out of a CGB palette RAM block. */
+  private paletteColor(ram: Uint8Array, palette: number, index: number): number {
+    const at = (palette & 7) * 8 + (index & 3) * 2;
+    return ((ram[at] as number) | ((ram[at + 1] as number) << 8)) & 0x7fff;
+  }
+
   /**
    * Draw one scanline: background, then window, then sprites.
    *
-   * Sprite priority on a DMG is by X coordinate and then by OAM index, and the
-   * ten-per-line limit is real hardware behaviour a demade game is *supposed*
-   * to run into — doc 14 §Budgets has the compiler warn about it, so the core
-   * must actually enforce it or the warning would be unfalsifiable.
+   * Sprite priority on a DMG is by X coordinate and then by OAM index — a CGB
+   * drops the X rule and goes by OAM index alone — and the ten-per-line limit is
+   * real hardware behaviour a demade game is *supposed* to run into: doc 14
+   * §Budgets has the compiler warn about it, so the core must actually enforce
+   * it or the warning would be unfalsifiable.
    */
   private renderLine(line: number): void {
     const control = this.io[0x40] as number;
-    const row = this.indices.subarray(line * SCREEN_WIDTH, (line + 1) * SCREEN_WIDTH);
+    const base = line * SCREEN_WIDTH;
+    const row = this.indices.subarray(base, base + SCREEN_WIDTH);
     row.fill(0);
     this.bgRow.fill(0);
+    this.bgAbove.fill(0);
+    this.objRow.fill(0);
+    if (this.cgb) this.colors.fill(0, base, base + SCREEN_WIDTH);
     if ((control & 0x80) === 0) return;
 
     const bgp = this.io[0x47] as number;
     const tileBase = (control & 0x10) !== 0 ? 0x0000 : 0x1000;
 
-    if ((control & 0x01) !== 0) {
+    // LCDC bit 0 means two different things: on a DMG it turns the background
+    // off entirely, on a CGB it only decides whether the background may sit
+    // above objects. So a CGB always paints it.
+    if (this.cgb || (control & 0x01) !== 0) {
       const scy = this.io[0x42] as number;
       const scx = this.io[0x43] as number;
       const mapBase = (control & 0x08) !== 0 ? 0x1c00 : 0x1800;
       const y = (line + scy) & 0xff;
       for (let x = 0; x < SCREEN_WIDTH; x += 1) {
-        const worldX = (x + scx) & 0xff;
-        const index = this.tilePixel(mapBase, tileBase, worldX, y);
-        this.bgRow[x] = index;
-        row[x] = (bgp >> (index * 2)) & 3;
+        this.plotBackground(base, x, mapBase, tileBase, (x + scx) & 0xff, y, bgp);
       }
 
       // The window, drawn over the background from (WX-7, WY).
@@ -366,9 +494,7 @@ export class Gameboy implements Bus {
       if ((control & 0x20) !== 0 && line >= wy && wx < SCREEN_WIDTH) {
         const windowMap = (control & 0x40) !== 0 ? 0x1c00 : 0x1800;
         for (let x = Math.max(0, wx); x < SCREEN_WIDTH; x += 1) {
-          const index = this.tilePixel(windowMap, tileBase, x - wx, line - wy);
-          this.bgRow[x] = index;
-          row[x] = (bgp >> (index * 2)) & 3;
+          this.plotBackground(base, x, windowMap, tileBase, x - wx, line - wy, bgp);
         }
       }
     }
@@ -380,12 +506,16 @@ export class Gameboy implements Bus {
       const top = (this.oam[entry * 4] as number) - 16;
       if (line >= top && line < top + tall) candidates.push(entry);
     }
-    // Later entries draw first so that lower-X, lower-index sprites end on top.
-    candidates.sort((a, b) => {
-      const ax = this.oam[a * 4 + 1] as number;
-      const bx = this.oam[b * 4 + 1] as number;
-      return ax === bx ? b - a : bx - ax;
-    });
+    // Highest priority first, and a pixel belongs to the first sprite that
+    // claims it — including when that sprite then loses to the background,
+    // which is what stops a sprite behind it showing through the gap.
+    if (!this.cgb) {
+      candidates.sort((a, b) => {
+        const ax = this.oam[a * 4 + 1] as number;
+        const bx = this.oam[b * 4 + 1] as number;
+        return ax === bx ? a - b : ax - bx;
+      });
+    }
 
     for (const entry of candidates) {
       const top = (this.oam[entry * 4] as number) - 16;
@@ -395,41 +525,85 @@ export class Gameboy implements Bus {
       if (tall === 16) tile &= 0xfe;
       let inner = line - top;
       if ((flags & 0x40) !== 0) inner = tall - 1 - inner;
-      const address = tile * 16 + inner * 2;
+      const bank = this.cgb && (flags & 0x08) !== 0 ? VRAM_BANK : 0;
+      const address = bank + tile * 16 + inner * 2;
       const low = this.vram[address] as number;
       const high = this.vram[address + 1] as number;
       const palette = this.io[(flags & 0x10) !== 0 ? 0x49 : 0x48] as number;
       for (let bit = 0; bit < 8; bit += 1) {
         const x = left + ((flags & 0x20) !== 0 ? 7 - bit : bit);
         if (x < 0 || x >= SCREEN_WIDTH) continue;
+        if (this.objRow[x] === 1) continue; // a higher-priority sprite has it
         const shift = 7 - bit;
         const index = ((low >> shift) & 1) | (((high >> shift) & 1) << 1);
         if (index === 0) continue; // colour 0 is transparent for sprites
-        // OBJ-behind-BG: the sprite loses to background colours 1–3.
-        if ((flags & 0x80) !== 0 && (this.bgRow[x] as number) !== 0) continue;
-        row[x] = (palette >> (index * 2)) & 3;
+        this.objRow[x] = 1;
+        // OBJ-behind-BG: the sprite loses to background colours 1–3, either
+        // because it asked to or — on a CGB, and only while the background
+        // holds priority at all — because the background cell did.
+        const behind =
+          (flags & 0x80) !== 0 || (this.cgb && (control & 0x01) !== 0 && this.bgAbove[x] === 1);
+        if (behind && (this.bgRow[x] as number) !== 0) continue;
+        if (this.cgb) {
+          this.colors[base + x] = this.paletteColor(this.objPaletteRam, flags & 0x07, index);
+          row[x] = index;
+        } else {
+          row[x] = (palette >> (index * 2)) & 3;
+        }
       }
     }
   }
 
-  private tilePixel(mapBase: number, tileBase: number, x: number, y: number): number {
-    const map = mapBase + ((y >> 3) & 31) * 32 + ((x >> 3) & 31);
+  /** One background (or window) pixel, including its CGB attribute. */
+  private plotBackground(
+    base: number,
+    x: number,
+    mapBase: number,
+    tileBase: number,
+    worldX: number,
+    worldY: number,
+    bgp: number,
+  ): void {
+    const map = mapBase + ((worldY >> 3) & 31) * 32 + ((worldX >> 3) & 31);
     const id = this.vram[map] as number;
-    const address = tileBase === 0 ? id * 16 + (y & 7) * 2 : 0x1000 + signed(id) * 16 + (y & 7) * 2;
+    const attr = this.cgb ? (this.vram[VRAM_BANK + map] as number) : 0;
+    const inner = (attr & 0x40) !== 0 ? 7 - (worldY & 7) : worldY & 7;
+    const bank = (attr & 0x08) !== 0 ? VRAM_BANK : 0;
+    const address =
+      bank + (tileBase === 0 ? id * 16 + inner * 2 : 0x1000 + signed(id) * 16 + inner * 2);
     const low = this.vram[address] as number;
     const high = this.vram[address + 1] as number;
-    const shift = 7 - (x & 7);
-    return ((low >> shift) & 1) | (((high >> shift) & 1) << 1);
+    const shift = (attr & 0x20) !== 0 ? worldX & 7 : 7 - (worldX & 7);
+    const index = ((low >> shift) & 1) | (((high >> shift) & 1) << 1);
+    this.bgRow[x] = index;
+    if (this.cgb) {
+      this.bgAbove[x] = (attr & 0x80) !== 0 ? 1 : 0;
+      this.colors[base + x] = this.paletteColor(this.bgPaletteRam, attr & 0x07, index);
+      this.indices[base + x] = index;
+      return;
+    }
+    this.indices[base + x] = (bgp >> (index * 2)) & 3;
   }
 
   /** Colour the finished frame into RGBA. */
   private present(): void {
+    if (this.cgb) {
+      for (let pixel = 0; pixel < this.colors.length; pixel += 1) {
+        const color = this.colors[pixel] as number;
+        const at = pixel * 4;
+        this.framebuffer[at] = expand5(color);
+        this.framebuffer[at + 1] = expand5(color >> 5);
+        this.framebuffer[at + 2] = expand5(color >> 10);
+        this.framebuffer[at + 3] = 0xff;
+      }
+      return;
+    }
     for (let pixel = 0; pixel < this.indices.length; pixel += 1) {
-      const shade = SHADES[this.indices[pixel] as number] as number;
+      const shade = DMG_SHADES[this.indices[pixel] as number] as readonly [number, number, number];
       const at = pixel * 4;
-      this.framebuffer[at] = shade;
-      this.framebuffer[at + 1] = shade;
-      this.framebuffer[at + 2] = shade;
+      this.framebuffer[at] = shade[0];
+      this.framebuffer[at + 1] = shade[1];
+      this.framebuffer[at + 2] = shade[2];
       this.framebuffer[at + 3] = 0xff;
     }
   }

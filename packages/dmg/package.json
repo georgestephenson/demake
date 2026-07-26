@@ -2,7 +2,7 @@
   "name": "@demake/dmg",
   "version": "0.0.0",
   "private": true,
-  "description": "A self-hosted Game Boy (DMG) core: the Demotic and audio conformance harnesses, and the web app's in-page player. Platform-pure.",
+  "description": "A self-hosted Game Boy core, DMG and CGB: the Demotic and audio conformance harnesses, and the web app's in-page player. Platform-pure.",
   "type": "module",
   "license": "MIT",
   "sideEffects": false,

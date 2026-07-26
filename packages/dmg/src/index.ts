@@ -30,6 +30,7 @@
 export { Cpu, INT, type Bus } from "./cpu.js";
 export {
   BUTTONS,
+  DMG_SHADES,
   FRAME_CYCLES,
   Gameboy,
   SCREEN_HEIGHT,

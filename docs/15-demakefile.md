@@ -240,6 +240,14 @@ Each sprite goes through the existing image pipeline — no second implementatio
    asset at once — doc 04 §The objective at eight pixels across, where
    legibility beats error. Downscaling averages premultiplied, or a shape grows
    a halo out of the transparency around it.
+
+   On a **colour** console the same step answers a different question. The
+   hardware has several small sub-palettes and an object names one of them, so
+   the choice is not which shades but *which assets share a palette* — the
+   constrained assignment stage 4 already solves for an image's attribute cells,
+   with an asset in place of a cell. An asset is indivisible there because the
+   attribute is per object, not per pixel; a build reserves one sub-palette for
+   the font and gives the fit the rest.
 4. Deduplicate tiles across every asset in the build and pack them into the
    family's tile bank.
 5. Emit alongside the compiled game (doc 14 §Runtime model).
