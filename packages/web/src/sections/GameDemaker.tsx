@@ -153,13 +153,15 @@ export function GameDemaker() {
     if (!program) return;
     sim.current = new Sim(program);
     for (const name of program.assets) loadAsset(assets.current, name);
+  }, [program]);
+
+  // The canvas only exists while the preview is on screen, so it is sized when
+  // the view brings it back as well as when the console changes under it.
+  useEffect(() => {
     const element = canvas.current;
-    if (element) {
-      element.width = program.profile.screenWidth * 32;
-      element.height = program.profile.screenHeight * 32;
-    }
-    // `view` is a dependency because the canvas does not exist while the
-    // preview is hidden, and it is here that it is given the console's size.
+    if (!element || !program) return;
+    element.width = program.profile.screenWidth * 32;
+    element.height = program.profile.screenHeight * 32;
   }, [program, view]);
 
   useEffect(() => {
@@ -167,9 +169,6 @@ export function GameDemaker() {
     // specification, not a service the cartridge needs: the ROM is machine code
     // and does not consult it, so a hidden preview is work nobody sees.
     if (!program || !showPreview) return;
-    // A tap taken while the preview was hidden would otherwise fire the moment
-    // it came back, a minute later and out of nowhere.
-    latched.current.clear();
     let raf = 0;
     let last = performance.now();
     let accumulator = 0;
@@ -284,7 +283,23 @@ export function GameDemaker() {
             <select
               data-testid="view-select"
               value={view}
-              onChange={(e) => choose(e, (value) => setView(value as View))}
+              onChange={(e) =>
+                choose(e, (value) => {
+                  // Both machines start together, because a view change is when
+                  // that becomes possible to see: the cartridge is rebooted by
+                  // being remounted anyway, and a preview resuming from wherever
+                  // it was frozen would sit next to it playing a different
+                  // moment of the same game.
+                  //
+                  // The latch is dropped *here* rather than in the effect that
+                  // starts the preview: an effect runs after the next paint, and
+                  // a key pressed in that window would be cleared instead of
+                  // played.
+                  latched.current.clear();
+                  setView(value as View);
+                  restart();
+                })
+              }
             >
               {VIEWS.map((option) => (
                 <option key={option.id} value={option.id}>

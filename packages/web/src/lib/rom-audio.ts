@@ -40,6 +40,15 @@ export function audioSupported(): boolean {
   return typeof globalThis.AudioContext === "function";
 }
 
+/** An `AudioContext` at 48 kHz, or at whatever the browser would give instead. */
+function openContext(): AudioContext {
+  try {
+    return new AudioContext({ sampleRate: WANTED_RATE });
+  } catch {
+    return new AudioContext();
+  }
+}
+
 export class RomAudio {
   private readonly context: AudioContext;
   private readonly scratchLeft: Float32Array;
@@ -51,10 +60,12 @@ export class RomAudio {
 
   constructor() {
     // An explicit rate, because a buffer whose rate differs from the context's
-    // is resampled *by the browser*, differently per engine (doc 07). Where the
-    // constructor refuses it the context reports what it did give us, and the
-    // chip is rendered at that rate instead — resampling nothing, either way.
-    this.context = new AudioContext({ sampleRate: WANTED_RATE });
+    // is resampled *by the browser*, differently per engine (doc 07). A browser
+    // is allowed to refuse the rate, and one of them refuses by throwing rather
+    // than by giving a different one — so both answers are taken, and the chip
+    // is rendered at whatever rate the context ended up with. Nothing is
+    // resampled either way.
+    this.context = openContext();
     this.sink = this.newSink();
     this.scratchLeft = new Float32Array(this.context.sampleRate);
     this.scratchRight = new Float32Array(this.context.sampleRate);
@@ -85,6 +96,18 @@ export class RomAudio {
     this.sink = this.newSink();
     machine.audioSink = this.sink;
     this.cursor = 0;
+  }
+
+  /**
+   * Be told when the device starts or stops.
+   *
+   * `resume()` resolving is not the same as the context running: a browser may
+   * hold it suspended and start it later, or refuse it entirely, and Firefox
+   * routinely resolves the promise before the state has flipped. So the page
+   * asks rather than assuming, and corrects itself when the answer changes.
+   */
+  watch(listener: () => void): void {
+    this.context.onstatechange = listener;
   }
 
   /** Start (or restart) playback; a browser needs a user gesture for the first. */

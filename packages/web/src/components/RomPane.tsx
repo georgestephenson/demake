@@ -67,7 +67,14 @@ export function RomPane({
   // it is created on the first click because a browser will not start an
   // `AudioContext` without a user gesture.
   const player = useRef<RomAudio | null>(null);
+  // Two states, because they are two different facts. `sound` is what the
+  // *listener* asked for and flips the moment they ask; `playing` is whether the
+  // device is really running, which is the browser's decision and can arrive
+  // later or never — Firefox resolves `resume()` before the state flips, and a
+  // machine with no audio device never flips it at all. Reporting the first as
+  // if it were the second is how a button comes to lie in one browser.
   const [sound, setSound] = useState(false);
+  const [playing, setPlaying] = useState(false);
   // The music and the effects are binary and are fetched rather than bundled,
   // so the build waits for them. It waits rather than building without them
   // because a cartridge missing its audio would not be the one `demake build`
@@ -193,18 +200,28 @@ export function RomPane({
 
   const toggleSound = useCallback(() => {
     if (!audioSupported()) return;
-    const audio = (player.current ??= new RomAudio());
+    let audio = player.current;
+    if (!audio) {
+      audio = new RomAudio();
+      player.current = audio;
+      const created = audio;
+      created.watch(() => setPlaying(created.active));
+    }
     if (sound) {
-      void audio.suspend(machine.current);
       setSound(false);
+      void audio.suspend(machine.current).then(() => setPlaying(audio.active));
       return;
     }
     // The click *is* the gesture a browser wants before it will start a
     // context, which is the whole reason this is a button and not a default.
-    void audio.resume().then(() => {
-      if (machine.current) audio.attach(machine.current);
-      setSound(audio.active);
-    });
+    setSound(true);
+    void audio
+      .resume()
+      .then(() => {
+        if (machine.current) audio.attach(machine.current);
+        setPlaying(audio.active);
+      })
+      .catch(() => setPlaying(false));
   }, [sound]);
 
   const save = useCallback(() => {
@@ -266,6 +283,12 @@ export function RomPane({
           ? " The sound is the cartridge's own APU, rendered by the same chip model the CLI writes WAVs with — the page synthesizes nothing."
           : ""}
       </p>
+      {sound && !playing ? (
+        <p class="hint" data-testid="rom-sound-blocked">
+          Your browser has not started audio yet. Click the screen, or check that this tab is
+          allowed to play sound.
+        </p>
+      ) : null}
     </div>
   );
 }

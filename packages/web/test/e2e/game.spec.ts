@@ -94,21 +94,23 @@ test("scrolls a level bigger than the screen, and draws its tiles", async ({ pag
   await expect(page.locator(".diag-error")).toHaveCount(0);
 
   // Past the title screen — every game opens on one, and a title screen has no
-  // level to scroll.
+  // level to scroll. Wait for the scene rather than for a timeout: on a slow
+  // engine the press can land before the first tick has run.
   await page.keyboard.press("KeyZ");
+  await expect(page.locator(".game-status")).toContainText("scene play", { timeout: 8000 });
 
   // The canvas is not blank before anything moves: a scene with a level draws
   // its tiles, which is the whole of the background layer.
   await expect.poll(() => painted(page), { timeout: 5000 }).toBeGreaterThan(0.05);
 
   // Holding right moves the hero into the level, and the view has to follow —
-  // the level is 60 cells wide and no console shows more than 40.
+  // the level is 60 cells wide and no console shows more than 40. Polled rather
+  // than sampled after a fixed wait: how long a browser takes to run a second of
+  // game is not something this test has an opinion about.
   await page.keyboard.down("ArrowRight");
   const before = await painted(page);
-  await page.waitForTimeout(1200);
-  const after = await painted(page);
+  await expect.poll(() => painted(page), { timeout: 8000 }).not.toBe(before);
   await page.keyboard.up("ArrowRight");
-  expect(after).not.toBe(before);
 });
 
 /** Fraction of the canvas that is not the background colour. */
@@ -278,6 +280,7 @@ test("plays the cartridge's own APU through Web Audio", async ({ page }) => {
         },
       });
     }
+    if (typeof AudioContext !== "function") return;
     for (const name of ["createOscillator", "createBiquadFilter", "createGain"] as const) {
       const proto = AudioContext.prototype as unknown as Record<string, unknown>;
       const original = proto[name];
@@ -295,6 +298,12 @@ test("plays the cartridge's own APU through Web Audio", async ({ page }) => {
   // The click is the user gesture a browser wants before it will start an
   // `AudioContext`, which is the whole reason the page has a button here rather
   // than starting sound on its own.
+  //
+  // What the button reports is what the *listener asked for*, not whether the
+  // device agreed: a browser may hold a context suspended, resolve `resume()`
+  // before the state flips, or have no audio device at all — all three happen on
+  // CI. The page says so separately, and the pane keeps working either way,
+  // which is the part worth asserting here.
   await toggle.click();
   await expect(toggle).toHaveText("Sound on");
   await expect(toggle).toHaveAttribute("aria-pressed", "true");

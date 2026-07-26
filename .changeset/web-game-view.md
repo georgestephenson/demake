@@ -29,3 +29,10 @@ same thing to one of them — and **a dropdown gives the keyboard back** when yo
 change it. A focused `<select>` keeps the keys, so pressing Z to start playing
 right after picking a game went to the dropdown's type-ahead instead of the
 player's A button.
+
+The sound button reports **what the listener asked for**, and whether the device
+agreed is reported separately. `resume()` resolving is not the same as a context
+running — Firefox resolves it before the state flips, a browser may hold it
+suspended, and a machine with no audio device never starts one at all — so the
+page watches for the state change and says "your browser has not started audio
+yet" rather than silently snapping the button back off.
