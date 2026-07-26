@@ -13,7 +13,7 @@ same shape:
 
 > **constrain → fit → emit → prove it on emulated hardware.**
 
-**Status: the spine is built, and the Game Boy boots.** `@demake/chip` models
+**Status: the spine is built, and two consoles boot.** `@demake/chip` models
 the Game Boy APU, the SN76489 and the NES 2A03; `@demake/audio` implements both
 demakers over them; `arrange`, `sfx` and `render` are live in the CLI for `dmg`,
 `gbc`, `nes`, `sms`, `gg` and `sg1000`. `demake gen <schedule> --format rom`
@@ -21,11 +21,24 @@ builds a bootable Game Boy cartridge that plays a track or an effect, from a
 driver generated for it (§The driver contract), and **Level A of §The proof runs
 in `pnpm test`** — the ROM boots in `@demake/dmg`, whose APU is now
 `@demake/chip`'s, and every register write it makes is diffed against the
-`ChipScript` tick for tick. The web app's two audio sections are live over the same
-engine, and the browser's `.vgm`, sidecar, WAV and cartridge are byte-identical
-to the CLI's (doc 07 §The audio sections). What is not built: the remaining chips
-(YM2612, S-DSP, the handhelds), driver backends for the other consoles,
-`bin`/`asm`/`c` emit, Level B sample comparison, and the lossy encoders.
+`ChipScript` tick for tick.
+
+**And there is a second CPU's driver**, generated the same way: `demake build -c
+nes` puts a game's music and effects in an NROM cartridge as 6502 machine code,
+and `packages/demotic/test/audio.test.ts` runs the whole Level A battery on both
+machines — the Game Boy's driver on its timer at 120 Hz and the NES's on the
+picture's own interrupt at 60, diffed against the same schedules with the same
+tolerance, which is none. What the second driver proves is that the *contract* is
+the contract rather than a description of one emitter: the two share the packed
+format and nothing below it.
+
+The web app's audio sections are live over the same engine, the browser's `.vgm`,
+sidecar, WAV and cartridge are byte-identical to the CLI's (doc 07 §The audio
+sections), and the ROM pane plays whichever chip the running cartridge has. What
+is not built: the remaining chips (YM2612, S-DSP, the handhelds), a *standalone*
+audio cartridge for anything but the Game Boy, driver backends for the other
+consoles, `bin`/`asm`/`c` emit, Level B sample comparison, and the lossy
+encoders.
 
 ## The load-bearing idea, restated for sound
 
@@ -488,7 +501,9 @@ code does. The rules that follow from it:
 | `c` | the data as arrays plus a header, for GBDK/SGDK/devkit users |
 | `rom` | a bootable ROM that plays the track — the audio counterpart of the display harness, and the foundation of the proof loop |
 
-**Built today: `rom`, for the Game Boy family.** `bin`/`asm`/`c` are named
+**Built today: `rom`, for the Game Boy family** — and, inside a game rather than
+as a cartridge of its own, a 6502 driver for the NES (§Two streams, one clock).
+`bin`/`asm`/`c` are named
 errors rather than approximations, because the order list holds *absolute
 addresses* the driver resolves at assembly time: a relocatable blob would be a
 second data format, and two formats is how the ROM and the blob quietly stop
@@ -500,9 +515,10 @@ per CPU family, so buying eight assemblers off the shelf was far cheaper than
 writing eight encoders — but it costs the browser, which has none of them. A
 driver is generated code and there is no harness to check in, so the Game Boy
 backend does what the Demotic backend already does: emits SM83 through `core`'s
-own assembler (`packages/core/src/asm/sm83.ts`, shared by both). That is what
-makes Level A a test with no toolchain and the page a place a cartridge can be
-built.
+own assembler (`packages/core/src/asm/sm83.ts`, shared by both), and the NES
+driver emits 6502 through `core`'s (`asm/mos6502.ts`, shared with that game
+backend the same way). That is what makes Level A a test with no toolchain and
+the page a place a cartridge can be built — on either console.
 
 The driver is generated, not fixed, and for exactly the reason doc 14 §2 gives
 for games: *a fixed engine ships every feature because it cannot know which ones
@@ -535,11 +551,26 @@ preferences.
 step on the same tick. The game states the rate and everything is fitted to it —
 `arrange` takes `driverHz` and `sfx` takes `rateHz`, and both go through the
 binding's own `fitRate`, so the two agree by construction rather than by
-arithmetic. The rate a game uses is half the rate a standalone effect gets:
-music barely notices it (row placement is absolute, so the tempo is exact at any
-rate), an effect notices it twice — a long one packs to fewer bytes, and eight
-milliseconds is still twice as fine as the sixty-hertz tick the machine's own
-games drove their drivers with.
+arithmetic. The rate a game uses on that machine is half the rate a standalone
+effect gets: music barely notices it (row placement is absolute, so the tempo is
+exact at any rate), an effect notices it twice — a long one packs to fewer bytes,
+and eight milliseconds is still twice as fine as the sixty-hertz tick the
+machine's own games drove their drivers with.
+
+**And *which* interrupt is the console's answer, not the game's.** The NES has no
+general-purpose timer a driver can have without burning the DMC channel, so its
+one honest clock is the frame the picture already runs on, and its games run at
+the console's frame rate rather than at 120 Hz. Asking for a finer rate there
+would not buy resolution: the driver would tick twice in a row at the top of a
+frame and then not at all for sixteen milliseconds — a schedule performed
+correctly and heard wrongly. `gameDriverRate` is where that is decided, in the
+package that owns the drivers, because it is a fact about the code that has to
+keep the rate rather than about the game asking for one.
+
+The frame is also *counted* rather than ridden directly: the NMI increments a
+byte and the main loop performs whatever it says, so a frame the game overran is
+caught up rather than lost, and the vertical blank stays the picture's. A driver
+tick taken inside the handler is a driver tick the tilemap upload waits behind.
 
 **Preemption is by run, not by write.** An effect takes a channel while it plays
 and gives it back when it ends; the music stream skips the writes that would
@@ -555,7 +586,11 @@ a stream that wrote it whole would erase the other stream's channels. Each strea
 keeps a shadow of the value it wants and the driver folds the two under the mask
 of what is currently borrowed — which means that with nothing preempting, the
 byte the chip receives is exactly the one the schedule asked for, and the
-exactness above survives the sharing.
+exactness above survives the sharing. Every chip has such a byte and the rule
+generalises unchanged: on the NES it is `$4015`, the channel enable mask, whose
+four bits *are* the four channel bits — so the fold is two `and`s where the Game
+Boy needs a nibble swapped first, and clearing a bit is also how that machine
+silences a channel at all.
 
 Two things are *not* in the schedules and are performed once at boot instead: the
 chip's power-up writes, and the wave-table upload. An effect that re-ran the
@@ -577,7 +612,9 @@ Doc 10 gains an audio section; the summary of it belongs here because it is the
 justification for the whole ChipScript design.
 
 **Level A — schedule equality (exact, runs in `pnpm test`).** *Built for the Game
-Boy: `packages/audio/test/rom.test.ts`.* Boot the generated ROM in a core we own,
+Boy as a cartridge of its own (`packages/audio/test/rom.test.ts`), and for both
+the Game Boy and the NES inside a game (`packages/demotic/test/audio.test.ts`).*
+Boot the generated ROM in a core we own,
 log every write to the chip with its tick, and diff against the ChipScript.
 `@demake/dmg` grew its APU by consuming `@demake/chip` — which it needed anyway
 for the web app to have sound — and the audio conformance suite is a plain unit

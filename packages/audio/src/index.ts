@@ -77,6 +77,7 @@ export {
   packScript,
   AudioRomError,
   PackError,
+  gameDriverRate,
   MAX_WRITES_PER_TICK,
   type AudioRomOptions,
   type AudioRomStats,
@@ -92,6 +93,15 @@ export {
   type GameAudioStats,
   type GameEffect,
 } from "./rom/gb-game.js";
+export {
+  buildNesGameAudio,
+  nesChannelOf,
+  resolveNesClock,
+  NES_AUDIO_BYTES,
+  type NesGameAudio,
+  type NesGameAudioInput,
+  type NesGameAudioStats,
+} from "./rom/nes-game.js";
 
 // --- hearing it --------------------------------------------------------------
 export { render, type RenderAudioOptions } from "./render.js";

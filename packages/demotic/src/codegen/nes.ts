@@ -24,6 +24,7 @@
  *     two layouts in the ROM for no gain.
  */
 
+import { buildNesGameAudio } from "@demake/audio";
 import { AsmError, NES_CHR_SIZE, NES_PRG_ORIGIN, NES_PRG_SIZE, packInesRom } from "@demake/core";
 
 import { getProfile } from "../profiles.js";
@@ -32,6 +33,7 @@ import { BUILTIN_TILES } from "../rom/graphics.js";
 
 import { type Analysis } from "./analyze.js";
 import type { AssetBytes } from "./art.js";
+import { bindAudio, effectIndices, trackForScene } from "./audio.js";
 import {
   buildRom,
   BuildError,
@@ -65,16 +67,18 @@ const VECTOR_OFFSET = { nmi: NES_PRG_SIZE - 6, reset: NES_PRG_SIZE - 4, irq: NES
 /**
  * What the NES's audio binding hands the emitter.
  *
- * A 2A03 driver is doc 13 §A5's work and does not exist yet, so this reports no
- * driver — and a game that *names* music and effects still builds, plays silently,
- * and says which files went unused. What it must also do is record the request a
- * rule made, because that is a field of the trace (doc 14 §Conformance): a build
- * with no driver has to trace identically to one with a driver, or the conformance
- * suite would be comparing two different games.
+ * The same shape the Game Boy's has, and it carries the same two things for the
+ * same reason: what the emitter needs to *play* the audio, and — separately —
+ * what a rule needs to record that it asked for a sound. The second survives a
+ * build with the files left out, because that is a field of the trace (doc 14
+ * §Conformance): a silent build has to trace identically to a sounding one, or
+ * the conformance suite would be comparing two different games.
  */
 interface NesAudio extends BoundAudioShape {
-  /** Set whenever the program names audio, driver or no driver. */
-  names: boolean;
+  /** The emitter options the driver contributes: itself, and its index tables. */
+  options: NesEmitOptions;
+  /** The bytes a rule writes to ask for a sound; absent when none can. */
+  hooks?: { driver: boolean; music: number; request: number; effects: readonly number[] };
 }
 
 /** The NES's implementation of the build. */
@@ -90,10 +94,11 @@ export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
   /**
    * Language features this backend does not implement.
    *
-   * Sound is the one gap, and it is named rather than ignored: a cartridge that
-   * silently dropped a `sound` would still trace correctly, so nothing downstream
-   * would catch it, and a player would hear the difference. The music and effects a
-   * game names are still demade by nothing and reported as unsupplied.
+   * Empty, now that the 2A03 has a driver: levels, tiles, the camera, scrolling,
+   * music and effects all compile. It stays as the place a future gap is *named*,
+   * because a cartridge that silently dropped one would still trace correctly —
+   * nothing downstream would catch it, and a player would see or hear the
+   * difference.
    */
   unsupported(program: Program): string[] {
     const missing: string[] = [];
@@ -133,25 +138,48 @@ export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
     over("object", bound.objectPatterns);
   },
 
-  bindAudio(program: Program): BoundAssets<NesAudio> {
+  bindAudio(program: Program, assets: AssetBytes, layout: Layout): BoundAssets<NesAudio> {
+    // The driver's state is page zero the allocator set aside for it, which it
+    // only does for a program that names audio — so a game with none reaches
+    // `bindAudio` with nowhere to put a driver and does not need one.
+    const state = layout.audio;
+    const bound =
+      state === null
+        ? { driver: undefined, missing: [] as readonly string[], notes: [] as readonly string[] }
+        : bindAudio(program, assets, {
+            build: (tracks, effects) => buildNesGameAudio({ tracks, effects, state }),
+          });
     const names = program.tracks.length > 0 || program.sounds.length > 0;
-    const missing = names ? [...program.tracks, ...program.sounds] : [];
-    return {
-      emit: {
-        present: false,
-        names,
-        tracks: 0,
-        effects: 0,
-        code: 0,
-        data: 0,
-        helpers: [],
-        rateHz: 0,
-        writesRestricted: 0,
-      },
-      tiles: 0,
-      missing,
-      notes: names ? ["the nes backend has no sound driver yet; the game plays silently"] : [],
+    const driver = bound.driver;
+    const options: NesEmitOptions = driver
+      ? {
+          audio: driver,
+          effectIndices: effectIndices(program, bound),
+          sceneTracks: trackForScene(program, bound),
+        }
+      : {};
+    const emit: NesAudio = {
+      present: driver !== undefined,
+      options,
+      tracks: driver?.stats.tracks ?? 0,
+      effects: driver?.stats.effects ?? 0,
+      code: driver?.stats.code ?? 0,
+      data: driver?.stats.data ?? 0,
+      helpers: driver?.stats.helpers ?? [],
+      rateHz: driver ? driver.stats.rate.num / driver.stats.rate.den : 0,
+      writesRestricted: driver?.stats.writesRestricted ?? 0,
+      ...(names
+        ? {
+            hooks: {
+              driver: driver !== undefined,
+              music: driver?.request.music ?? 0,
+              request: driver?.request.sfx ?? 0,
+              effects: options.effectIndices ?? program.sounds.map(() => -1),
+            },
+          }
+        : {}),
     };
+    return { emit, tiles: 0, missing: bound.missing, notes: bound.notes };
   },
 
   assemble({ program, analysis, layout, art, audio, title }): Assembled {
@@ -163,21 +191,18 @@ export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
       getProfile(program.profile.id),
       NES_PRG_ORIGIN,
     );
-    if (audio.names) {
-      // No driver, so no request byte for one to read — but the trace's record of
-      // what a rule asked for is still written, which is what keeps a silent build
-      // and a sounding one the same game.
+    if (audio.hooks) {
       ctx.audio = {
-        driver: false,
-        music: 0,
-        request: 0,
+        driver: audio.hooks.driver,
+        music: audio.hooks.music,
+        request: audio.hooks.request,
         trace: layout.sound,
-        effects: program.sounds.map(() => -1),
+        effects: audio.hooks.effects,
       };
     }
     let code: Uint8Array;
     try {
-      emitProgram(ctx, art);
+      emitProgram(ctx, { ...art, ...audio.options });
       code = ctx.asm.assemble();
     } catch (error) {
       if (error instanceof AsmError) {

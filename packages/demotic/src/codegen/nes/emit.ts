@@ -30,6 +30,7 @@
  * what the game does.
  */
 
+import { AUDIO_STOP, type NesGameAudio } from "@demake/audio";
 import { abs, absX, imm, immHigh, immLow, indY, label, type Ref } from "@demake/core";
 
 import type { InstanceDef, RuleDef } from "../../program.js";
@@ -154,6 +155,18 @@ export interface NesEmitOptions {
   levelPalette?: Uint8Array;
   /** The object palettes: three the art chose, then the font's ramp. */
   objectPalette?: Uint8Array;
+  /**
+   * The game's audio driver, already built from its demade tracks and effects.
+   *
+   * Absent for a game with nothing to play, and then the ROM is exactly what it
+   * was before audio existed — no counter in the NMI, no service call in the
+   * loop, no page zero set aside.
+   */
+  audio?: NesGameAudio;
+  /** Driver index of each of the program's sounds, or `-1` when unsupplied. */
+  effectIndices?: readonly number[];
+  /** Which track each scene plays, as an index, or `-1` for a silent one. */
+  sceneTracks?: readonly number[];
 }
 
 /** Dispatch on the running scene to one of a set of labels. */
@@ -186,8 +199,8 @@ export function emitProgram(ctx: NesCtx, options: NesEmitOptions = {}): void {
   }
 
   emitReset(ctx, options);
-  emitNmi(ctx);
-  emitMainLoop(ctx);
+  emitNmi(ctx, options);
+  emitMainLoop(ctx, options);
   emitInput(ctx);
   emitTickDispatch(ctx, scenes);
   emitSceneChange(ctx, scenes);
@@ -201,6 +214,7 @@ export function emitProgram(ctx: NesCtx, options: NesEmitOptions = {}): void {
 
   emitRenderHelpers(ctx);
   emitTileContactHelper(ctx);
+  if (options.audio) options.audio.emitCode(ctx.asm);
   ctx.finish();
 
   // --- data ------------------------------------------------------------------
@@ -240,6 +254,20 @@ export function emitProgram(ctx: NesCtx, options: NesEmitOptions = {}): void {
   asm.bytes(options.levelPalette ?? defaultBackgroundPalette());
   asm.label("ObjectPalette");
   asm.bytes(options.objectPalette ?? defaultObjectPalette());
+
+  if (options.audio) {
+    if (program.tracks.length > 0) {
+      asm.label("SceneTracks");
+      // One byte per scene: the request value that starts its track, or the one
+      // that stops the music. A table rather than a dispatch because a scene
+      // change already costs a redraw, and this is the cheapest thing in it.
+      for (const scene of scenes) {
+        const track = options.sceneTracks?.[scene.index] ?? -1;
+        asm.db(track < 0 ? AUDIO_STOP : track + 1);
+      }
+    }
+    options.audio.emitData(asm);
+  }
 }
 
 /**
@@ -359,6 +387,11 @@ function emitReset(ctx: NesCtx, options: NesEmitOptions): void {
   asm.jsr("BuildFrame");
   asm.jsr("UploadFrame");
 
+  if (options.audio) {
+    asm.jsr("AudioInit");
+    if (program.tracks.length > 0) asm.jsr("SceneMusic");
+  }
+
   // Rendering on, and the NMI with it: background and objects, patterns at
   // $0000 for the background and $1000 for the objects.
   asm.lda(imm(0x1e));
@@ -459,12 +492,17 @@ function emitClearState(ctx: NesCtx): void {
  * uses and no interrupt can arrive in the middle of a tick's use of it. The
  * handler is eleven cycles, so the upload still begins at the top of the window.
  */
-function emitNmi(ctx: NesCtx): void {
+function emitNmi(ctx: NesCtx, options: NesEmitOptions): void {
   const { asm, layout } = ctx;
   asm.label("Nmi");
   asm.pha();
   asm.lda(imm(1));
   asm.sta(mem(layout.scratch + 7));
+  // The audio driver is *counted* here and performed in the main loop. The
+  // vertical blank is the picture's — a driver tick taken in the handler is a
+  // tick the tilemap upload waits behind — and the frame is still what keeps the
+  // tempo, because a frame the game overran is owed rather than lost.
+  if (options.audio) asm.jsr(options.audio.routines.frame);
   asm.pla();
   asm.rti();
 
@@ -474,7 +512,7 @@ function emitNmi(ctx: NesCtx): void {
   asm.rti();
 }
 
-function emitMainLoop(ctx: NesCtx): void {
+function emitMainLoop(ctx: NesCtx, options: NesEmitOptions): void {
   const { asm, layout } = ctx;
   const wait = ctx.unique("waitVblank");
   // The flag is cleared *after* it is seen, not before the wait: a tick that
@@ -488,6 +526,9 @@ function emitMainLoop(ctx: NesCtx): void {
   asm.jsr("UploadFrame");
   asm.jsr("ReadInput");
   asm.jsr("Tick");
+  // After the tick, so an effect a rule asked for is heard this frame rather
+  // than next; after the upload, so the frame it delays is nobody's.
+  if (options.audio) asm.jsr(options.audio.routines.service);
   asm.jsr("BuildFrame");
   asm.jmp("Main");
 }
@@ -591,6 +632,7 @@ function emitSceneChange(ctx: NesCtx, scenes: readonly SceneCtx[]): void {
   asm.sta(mem(layout.scene));
   asm.lda(imm(0xff));
   asm.sta(mem(layout.pending));
+  if (ctx.audio?.driver === true && program.tracks.length > 0) asm.jsr("SceneMusic");
   asm.jsr("ResetScene");
   if (layout.rng !== null) {
     const seed = program.seed | 0;
@@ -604,6 +646,17 @@ function emitSceneChange(ctx: NesCtx, scenes: readonly SceneCtx[]): void {
   asm.lda(imm(1));
   asm.sta(mem(layout.redraw));
   asm.rts();
+
+  // Music follows the scene, so it starts where the scene does. Asking for it
+  // rather than starting it here is what keeps the request one byte: the driver
+  // is serviced from the loop, and a scene change is not where it happens.
+  if (ctx.audio?.driver === true && program.tracks.length > 0) {
+    asm.label("SceneMusic");
+    asm.ldx(mem(layout.scene));
+    asm.lda(absX("SceneTracks"));
+    asm.sta(mem(ctx.audio.music));
+    asm.rts();
+  }
 
   asm.label("ResetScene");
   emitSceneDispatch(

@@ -607,7 +607,10 @@ Two hardware facts leak through, and it is better that they do:
 What audio costs is **cartridge**, the way a backdrop costs tiles. A track is a
 few kilobytes of register schedule and an effect a few hundred bytes, on a
 machine with 32 KiB and no mapper — which is why the shooter's theme is two bars
-where the platformer's is eight, and why the build reports both numbers.
+where the platformer's is eight, and why the build reports both numbers. The
+budget is per console and one example runs out of it: the shooter's NES cartridge
+cannot hold its music, and `demake build -c nes` says so rather than dropping it
+(doc 13 §D4).
 
 Audio also joins the **trace** (§Conformance): a trace line carries
 `audio=<track>,<effect>` — the track the running scene asks for, and the effect a
@@ -996,9 +999,8 @@ Named rather than hidden, in rough order of how much they matter.
 
 - ~~**No console runtimes.**~~ The `gb` and `nes` backends exist and their gap
   lists are empty of *language* features (§Runtime model): levels, tiles, the
-  camera and scrolling all compile on both. The NES has no sound driver yet and
-  says so rather than dropping a `sound` silently. `sms`/`gg`, `md` and `snes`
-  are doc 13 §D4.
+  camera, scrolling, music and effects all compile on both. `sms`/`gg`, `md` and
+  `snes` are doc 13 §D4.
 - ~~**No deterministic art rasterisation.**~~ `@demake/core` has its own SVG
   rasteriser (doc 15 §The conversion path, step 2), so a `.dmt`'s art is demade
   by the image engine and appears in the cartridge. The subset is deliberate —

@@ -10,10 +10,13 @@
  * about notes and registers is made in the audio engine.
  *
  * The one decision that *is* made here belongs to the game rather than to any
- * track: **the rate**. The Game Boy has one timer, so music and effects step on
- * one interrupt, and a game that let each piece pick its own rate could not play
- * two of them. The game states the rate and everything is fitted to it (doc 16
- * §Two streams, one clock).
+ * track: **the rate**. A console has one interrupt a driver can ride, so music
+ * and effects step on the same tick; the game states the rate and everything is
+ * fitted to it through the binding's own `fitRate` (doc 16 §Two streams, one
+ * clock). What the rate *is* is the driver backend's business rather than this
+ * file's, and the two machines answer differently — a Game Boy has a
+ * programmable timer and an NES has the frame the picture already runs on and
+ * nothing else — which is why `gameDriverRate` is asked rather than assumed.
  *
  * Audio is optional at every step. A program with no `music` and no `sound`
  * builds exactly as before, and so does one whose edge chose not to load the
@@ -22,13 +25,12 @@
  */
 
 import {
-  buildGameAudio,
   demakeSfx,
   arrangeScore,
+  gameDriverRate,
   parseMidi,
   SFX_RATE_HZ,
   type ChipScript,
-  type GameAudio,
   type GameEffect,
 } from "@demake/audio";
 import { getConsole } from "@demake/core";
@@ -38,7 +40,7 @@ import type { Program } from "../program.js";
 import type { AssetBytes } from "./art.js";
 
 /**
- * The tick rate a game's audio runs at.
+ * The tick rate a game's audio runs at on the Game Boy family.
  *
  * Half the rate a standalone effect gets ({@link SFX_RATE_HZ}), and the halving
  * is where the game's constraints show. Music barely notices the rate at all —
@@ -51,18 +53,34 @@ import type { AssetBytes } from "./art.js";
  */
 export const GAME_AUDIO_HZ = SFX_RATE_HZ / 2;
 
-/** What the program's audio came to. */
-export interface BoundAudio {
+/** What the program's audio came to, whichever console's driver was built. */
+export interface BoundAudio<Driver> {
   /** The driver, or `undefined` for a game with nothing to play. */
-  driver?: GameAudio;
+  driver?: Driver;
   /** Files the program names that no bytes were supplied for. */
   missing: readonly string[];
   /** Notes worth reporting: parts dropped, effects trimmed, channels borrowed. */
   notes: readonly string[];
 }
 
+/**
+ * How one console turns demade schedules into a driver.
+ *
+ * A backend supplies this rather than a driver builder's arguments, because
+ * *where* a driver keeps its state is the console's answer and not something a
+ * shared binding pass could hold an opinion about: the Game Boy's lives in high
+ * RAM at a fixed address, the NES's in page zero at one the allocator chose.
+ */
+export interface AudioTarget<Driver> {
+  build(tracks: readonly ChipScript[], effects: readonly GameEffect[]): Driver;
+}
+
 /** Demake every track and effect the program names, and build its driver. */
-export function bindAudio(program: Program, assets: AssetBytes, hram: number): BoundAudio {
+export function bindAudio<Driver>(
+  program: Program,
+  assets: AssetBytes,
+  target: AudioTarget<Driver>,
+): BoundAudio<Driver> {
   const missing: string[] = [];
   const notes: string[] = [];
   if (program.tracks.length === 0 && program.sounds.length === 0) {
@@ -72,6 +90,9 @@ export function bindAudio(program: Program, assets: AssetBytes, hram: number): B
   const consoleId = program.profile.id;
   const spec = getConsole(consoleId).audio;
   if (spec === undefined) return { missing: [...program.tracks, ...program.sounds], notes };
+  // What clock the driver rides is the driver backend's answer, not this file's:
+  // a Game Boy has a timer and an NES has the frame and nothing else.
+  const rateHz = gameDriverRate(consoleId);
 
   const tracks: ChipScript[] = [];
   for (const file of program.tracks) {
@@ -82,7 +103,7 @@ export function bindAudio(program: Program, assets: AssetBytes, hram: number): B
     }
     const result = arrangeScore(parseMidi(bytes), {
       console: consoleId,
-      driverHz: GAME_AUDIO_HZ,
+      driverHz: rateHz,
       title: file,
     });
     for (const dropped of result.dropped) {
@@ -100,7 +121,7 @@ export function bindAudio(program: Program, assets: AssetBytes, hram: number): B
       missing.push(file);
       continue;
     }
-    const result = demakeSfx(bytes, { console: consoleId, rateHz: GAME_AUDIO_HZ, title: file });
+    const result = demakeSfx(bytes, { console: consoleId, rateHz, title: file });
     const channel = spec.channels.findIndex((one) => one.id === result.placement.channelId);
     notes.push(`${file}: ${result.tournament.winner} on ${result.placement.channelId}`);
     effects.push({ script: result.script, channel, priority: result.placement.priority });
@@ -110,7 +131,7 @@ export function bindAudio(program: Program, assets: AssetBytes, hram: number): B
   // error: the same edge may simply not have loaded them (see `art.ts`).
   if (tracks.length === 0 && effects.length === 0) return { missing, notes };
 
-  return { driver: buildGameAudio({ tracks, effects, hram }), missing, notes };
+  return { driver: target.build(tracks, effects), missing, notes };
 }
 
 /**
@@ -119,7 +140,7 @@ export function bindAudio(program: Program, assets: AssetBytes, hram: number): B
  * `-1` for a silent scene, and for one whose file was not supplied — a game
  * missing its music plays silently rather than playing the wrong scene's theme.
  */
-export function trackForScene(program: Program, bound: BoundAudio): number[] {
+export function trackForScene(program: Program, bound: BoundAudio<unknown>): number[] {
   const supplied = program.tracks.filter((file) => !bound.missing.includes(file));
   return program.scenes.map((scene) =>
     scene.music === undefined ? -1 : supplied.indexOf(scene.music),
@@ -127,7 +148,7 @@ export function trackForScene(program: Program, bound: BoundAudio): number[] {
 }
 
 /** The driver index of each of the program's sounds, or `-1` when unsupplied. */
-export function effectIndices(program: Program, bound: BoundAudio): number[] {
+export function effectIndices(program: Program, bound: BoundAudio<unknown>): number[] {
   const supplied = program.sounds.filter((file) => !bound.missing.includes(file));
   return program.sounds.map((file) => supplied.indexOf(file));
 }

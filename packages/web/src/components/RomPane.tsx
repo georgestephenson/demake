@@ -46,7 +46,7 @@ import {
 
 import { demoAssetBytes, demoAudioBytes } from "../lib/demo-game.js";
 import { download } from "../lib/download.js";
-import { audioSupported, RomAudio } from "../lib/rom-audio.js";
+import { audioSupported, RomAudio, type Listenable } from "../lib/rom-audio.js";
 
 /**
  * The portable button set maps one for one onto every machine's pad.
@@ -90,16 +90,17 @@ const CPU: Readonly<Record<string, string>> = { gb: "an SM83", nes: "a 6502", sm
  * A booted cartridge, whichever console it is for.
  *
  * The pane needs five things of a machine and no more, so this is those five —
- * and the two cores satisfy it without either learning about the page or about
- * each other. `apu` is present only where there is one the audio player knows
- * how to attach to, which is how the sound button ends up disabled on a console
- * whose driver has not been written yet rather than lying about it.
+ * and the three cores satisfy it without any of them learning about the page or
+ * about each other. `chip` is the sound hardware the audio player attaches to,
+ * and every console has one: the Game Boy's APU, the NES's 2A03, the Master
+ * System's SN76489, each `@demake/chip`'s own model rather than a second copy
+ * living in a core.
  */
 interface Player {
   readonly width: number;
   readonly height: number;
   readonly framebuffer: Uint8ClampedArray;
-  readonly gameboy: Gameboy | null;
+  readonly chip: Listenable;
   setButtons(down: Button[]): void;
   runFrame(): void;
   readMemory(address: number, length: number): Uint8Array;
@@ -117,7 +118,20 @@ function boot(rom: Uint8Array, consoleId: string): Player {
       width: view.width,
       height: view.height,
       framebuffer: view.pixels,
-      gameboy: null,
+      // The Sega's sound chip is a PSG, not an APU, so it is adapted rather
+      // than renamed — the core keeps calling it what it is. Nothing writes to
+      // it yet (the SN76489 driver is doc 13's work) and the sound button is
+      // withheld below for exactly that reason; when the driver lands, the
+      // button is the only thing that changes.
+      chip: {
+        get audioSink() {
+          return machine.audioSink;
+        },
+        set audioSink(sink) {
+          machine.audioSink = sink;
+        },
+        apu: machine.psg,
+      },
       // A Sega pad has no Select, so the one button the portable set does not
       // include is dropped rather than mapped onto something else.
       setButtons: (down) => machine.setButtons(down as readonly SmsButton[]),
@@ -134,7 +148,7 @@ function boot(rom: Uint8Array, consoleId: string): Player {
       width: NES_WIDTH,
       height: NES_HEIGHT,
       framebuffer: machine.framebuffer,
-      gameboy: null,
+      chip: machine,
       setButtons: (down) => machine.setButtons(down),
       runFrame: () => void machine.runFrame(),
       readMemory: (address, length) => machine.readMemory(address, length),
@@ -145,7 +159,7 @@ function boot(rom: Uint8Array, consoleId: string): Player {
     width: SCREEN_WIDTH,
     height: SCREEN_HEIGHT,
     framebuffer: machine.framebuffer,
-    gameboy: machine,
+    chip: machine,
     setButtons: (down) => machine.setButtons(down),
     runFrame: () => void machine.runFrame(),
     readMemory: (address, length) => machine.readMemory(address, length),
@@ -306,10 +320,10 @@ export function RomPane({
   const consoleId = built.consoleId ?? program?.profile.id ?? "gb";
   const family = familyFor(consoleId) ?? "gb";
   const extension = built.extension ?? "gb";
-  // Sound is the Game Boy's for now: the 2A03 and SN76489 drivers are doc 13's
-  // work, and a button that turned on nothing would be worse than one that is
-  // plainly unavailable.
-  const canSound = audioSupported() && family === "gb";
+  // Both Nintendo consoles have a driver now; the SN76489's is doc 13's work,
+  // and a button that turned on nothing would be worse than one that is plainly
+  // unavailable.
+  const canSound = audioSupported() && family !== "sms";
   // The canvas is sized by the console, not by CSS: these are two genuinely
   // different screens (160×144 against 256×240, and not the same aspect), and a
   // buffer put into a canvas of the wrong size is silently cropped.
@@ -329,7 +343,7 @@ export function RomPane({
     }
     const booted = boot(rom, consoleId);
     machine.current = booted;
-    if (booted.gameboy) player.current?.attach(booted.gameboy);
+    player.current?.attach(booted.chip);
     const element = canvas.current;
     const context = element?.getContext("2d");
     if (!context) return;
@@ -365,8 +379,7 @@ export function RomPane({
       // running.
       const current = machine.current;
       if (!current) return;
-      const audio =
-        current.gameboy !== null && player.current?.active === true ? player.current : null;
+      const audio = player.current?.active === true ? player.current : null;
 
       if (audio) {
         // Audio has no tolerance for a late buffer, so with sound on the device
@@ -413,7 +426,7 @@ export function RomPane({
     }
     if (sound) {
       setSound(false);
-      void audio.suspend(machine.current?.gameboy ?? null).then(() => setPlaying(audio.active));
+      void audio.suspend(machine.current?.chip ?? null).then(() => setPlaying(audio.active));
       return;
     }
     // The click *is* the gesture a browser wants before it will start a
@@ -422,7 +435,7 @@ export function RomPane({
     void audio
       .resume()
       .then(() => {
-        if (machine.current?.gameboy) audio.attach(machine.current.gameboy);
+        if (machine.current) audio.attach(machine.current.chip);
         setPlaying(audio.active);
       })
       .catch(() => setPlaying(false));
@@ -498,11 +511,11 @@ export function RomPane({
         hardware speed, and the frames-per-tick figure is the measured cost on{" "}
         {CPU[family] ?? "this console’s CPU"}.
         {sound
-          ? " The sound is the cartridge's own APU, rendered by the same chip model the CLI writes WAVs with — the page synthesizes nothing."
+          ? " The sound is the cartridge's own chip, rendered by the same model the CLI writes WAVs with — the page synthesizes nothing."
           : ""}
-        {family === "gb"
-          ? ""
-          : " There is no sound on this console yet: its driver is still to be written, and a button that turned on nothing would be worse than one that is plainly unavailable."}
+        {family === "sms"
+          ? " There is no sound on this console yet: its driver is still to be written, and a button that turned on nothing would be worse than one that is plainly unavailable."
+          : ""}
       </p>
       {sound && !playing ? (
         <p class="hint" data-testid="rom-sound-blocked">

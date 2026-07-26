@@ -23,9 +23,10 @@ const DIST = process.argv[2] ?? "packages/web/dist";
  *
  * It is close, and deliberately not moved: the NES cost 4.6 KB gzipped end to
  * end — a second instruction set, a second emulator and a second set of hardware
- * tables, all of it in the bundle because doc 07 forbids fetching a core — and it
- * still fits. The next thing that does not fit should be made smaller rather than
- * given more room.
+ * tables, all of it in the bundle because doc 07 forbids fetching a core — and
+ * its sound driver a further 1.5 KB. The site sits at 298 KB with both in it, so
+ * there is under two kilobytes of room left. The next thing that does not fit
+ * should be made smaller rather than given more room.
  */
 const BUDGET_KB = 300;
 

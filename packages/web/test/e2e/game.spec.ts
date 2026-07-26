@@ -400,9 +400,17 @@ test("builds and plays a real NES ROM in the page", async ({ page }) => {
   await expect.poll(async () => romPainted(page), { timeout: 8000 }).not.toBe(title);
   await expect(page.getByTestId("rom-stat")).toContainText("per tick");
 
-  // And the 2A03 driver is doc 13 §A5, so the button is unavailable rather than
-  // being a switch that turns on nothing.
-  await expect(page.getByTestId("rom-sound")).toBeDisabled();
+  // And it has sound, because the 2A03 has a driver: the same button, over the
+  // same chip model, playing the same schedules the CLI writes WAVs of. Turning
+  // it on must not stop the machine — with sound on the audio device is what
+  // clocks the emulator, and this console reaches that path through a different
+  // core than the Game Boy does.
+  const toggle = page.getByTestId("rom-sound");
+  await expect(toggle).toBeEnabled();
+  await toggle.click();
+  await expect(toggle).toHaveText("Sound on");
+  await expect.poll(async () => romPainted(page), { timeout: 8000 }).toBeGreaterThan(0);
+  await expect(page.getByTestId("rom-stat")).toContainText("per tick", { timeout: 8000 });
 });
 
 test("opens on the cartridge, and shows the interpreter when asked", async ({ page }) => {

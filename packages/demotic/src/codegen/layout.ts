@@ -28,6 +28,8 @@
  * able to read either machine's entity table with one function.
  */
 
+import { NES_AUDIO_BYTES } from "@demake/audio";
+
 import type { Program } from "../program.js";
 
 import type { Analysis } from "./analyze.js";
@@ -111,6 +113,18 @@ export interface MemoryPlan {
   /** Background cells `number` and `text` objects may occupy at once. */
   plotMax: number;
   /**
+   * Cheap bytes the console's audio driver keeps its own state in, or zero.
+   *
+   * Zero where the driver has somewhere better to be: the Game Boy's lives in
+   * high RAM, which the allocator does not hand out at all. The NES has no such
+   * region — page zero *is* the cheap region, and the driver's two stream
+   * pointers have to be in it because `($nn),y` is the only indirection the CPU
+   * has — so it takes them from the same pool everything else does, and a game
+   * with no audio takes none.
+   */
+  audioBytes: number;
+
+  /**
    * Whether a queued cell carries an attribute byte alongside its tile.
    *
    * True only where the hardware attributes a cell at a time: a Game Boy Color
@@ -138,6 +152,7 @@ export const GB_MEMORY: MemoryPlan = {
   viewH: 18,
   queueMax: 192,
   plotMax: 96,
+  audioBytes: 0,
   cellAttributes: false,
 };
 
@@ -181,6 +196,7 @@ export const NES_MEMORY: MemoryPlan = {
   // and not its captions, which are painted once with the background they sit on.
   // Two counters of five digits is ten.
   plotMax: 16,
+  audioBytes: NES_AUDIO_BYTES,
   cellAttributes: false,
 };
 
@@ -222,6 +238,10 @@ export const SMS_MEMORY: MemoryPlan = {
   // thirty-three, painted in the same frame.
   queueMax: 60,
   plotMax: 40,
+  // Nothing to reserve while there is no SN76489 driver to reserve it for. When
+  // one arrives it takes bytes from this pool like everything else, because the
+  // Z80 has no cheap region to keep them in.
+  audioBytes: 0,
   // A name-table entry carries its palette-select and flip bits in a second
   // byte, so a queued cell is a tile *and* an attribute — the same shape as the
   // Game Boy Color's, reached by different hardware.
@@ -286,6 +306,19 @@ export interface Layout {
   released: number;
   /** Non-zero when the whole background must be rebuilt before the next frame. */
   redraw: number;
+  /**
+   * The audio driver's own state, or `null`.
+   *
+   * `null` for a game with nothing to play, and for every console whose driver
+   * keeps its state somewhere the allocator does not own. Allocated last, so
+   * adding it moved no other address.
+   *
+   * It follows what the *program* names, not which files an edge happened to
+   * load: a build with the audio bytes left out reserves the same bytes and
+   * therefore has the same memory map, which is what makes a silent build's
+   * trace comparable with a sounding one's byte for byte.
+   */
+  audio: number | null;
   /** Scratch the emitters use for pointers and counters. */
   scratch: number;
   /** The multiply/divide helpers' operands and workspace. */
@@ -615,6 +648,12 @@ export function planLayout(program: Program, analysis: Analysis, memory: MemoryP
   const oamCount = fast(1);
   const oamPrev = fast(1);
   const words = fast(16 * 2);
+  // Last, deliberately: the order of these calls is the order of the addresses,
+  // so anything added anywhere else would move every entity record.
+  const audio =
+    memory.audioBytes > 0 && program.tracks.length + program.sounds.length > 0
+      ? fast(memory.audioBytes)
+      : null;
 
   return {
     memory,
@@ -674,6 +713,7 @@ export function planLayout(program: Program, analysis: Analysis, memory: MemoryP
     oamCount,
     oamPrev,
     words,
+    audio,
   };
 }
 
