@@ -523,18 +523,25 @@ describe("the example library", () => {
   ] as const;
 
   /**
-   * The one fixture whose NES cartridge cannot hold its audio, and by how much.
+   * Bytes a build has to have left over, by console.
    *
-   * Not a skip: the overflow is *asserted*, so the day a codegen change makes it
-   * fit, this test fails and someone moves it into the sweep above. The shooter is
-   * the tightest game in the library on every console — two demade backdrops, nine
-   * aliens, a theme and its effects — and on this one it runs out. Two facts add
-   * up to it and both are measured rather than guessed: the game's 6502 code is
-   * around 3.8 KiB larger than its SM83 code, and an NES backdrop is a 960-cell
-   * nametable against a Game Boy's 360. There is no mapper on an NROM cartridge to
-   * spend the difference from.
+   * A kilobyte everywhere except the NES, and the exception is measured rather
+   * than granted. The shooter is the tightest game in the library on every
+   * console — two demade backdrops, nine aliens, a theme and its effects — and on
+   * an NROM cartridge two facts eat the difference: its 6502 code is around
+   * 3.8 KiB larger than its SM83 code, and a backdrop is a 960-cell nametable
+   * against a Game Boy's 360. There is no mapper to spend it from.
+   *
+   * It did not fit at all until the nametables were packed as literals and runs,
+   * which is worth about 940 bytes to this game; it now finishes with a bit over
+   * 500. That is the same floor the Game Boy Color build carries, for the same
+   * reason — a real hardware cost, asserted so the next code-generator change is
+   * visible rather than a mystery. The next lever, if this gets tight again, is
+   * the unrolled per-object rule code: nine aliens produce a dozen near-identical
+   * 190-byte blocks, which a loop over a class's instances would fold.
    */
-  const OVER_BUDGET: Readonly<Record<string, readonly string[]>> = { nes: ["shooter.dmt"] };
+  const HEADROOM: Readonly<Record<string, number>> = { nes: 512 };
+  const DEFAULT_HEADROOM = 1024;
 
   /**
    * What one of these builds is allowed to take.
@@ -548,7 +555,6 @@ describe("the example library", () => {
 
   for (const target of TARGETS) {
     for (const [file, dir] of cases) {
-      if (OVER_BUDGET[target.id]?.includes(file)) continue;
       it(
         `${file} fits in a ${target.name} cartridge with its music and effects`,
         () => {
@@ -557,18 +563,7 @@ describe("the example library", () => {
           expect(built.stats.audio?.effects ?? 0).toBeGreaterThan(0);
           // Headroom, deliberately asserted: a fixture built to the last hundred
           // bytes turns the next code-generator change into a mystery.
-          expect(built.stats.free).toBeGreaterThan(1024);
-        },
-        BUILD_TIMEOUT,
-      );
-    }
-
-    for (const file of OVER_BUDGET[target.id] ?? []) {
-      it(
-        `${file} does not fit in a ${target.name} cartridge with its music`,
-        () => {
-          const source = readFileSync(join(games, file), "utf8");
-          expect(() => build(target, source, games)).toThrowError(/E_GAME_TOO_LARGE|holds/);
+          expect(built.stats.free).toBeGreaterThan(HEADROOM[target.id] ?? DEFAULT_HEADROOM);
         },
         BUILD_TIMEOUT,
       );
