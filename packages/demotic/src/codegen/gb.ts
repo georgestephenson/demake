@@ -99,6 +99,10 @@ export const gbBackend: Backend<EmitOptions, GbAudio> = {
   consoles: ["gb", "gbc"],
   cartridge: "a mapper-less cartridge",
 
+  extension(program: Program): string {
+    return program.profile.id === "gbc" ? "gbc" : "gb";
+  },
+
   /**
    * Language features this backend does not implement.
    *

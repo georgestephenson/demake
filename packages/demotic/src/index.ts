@@ -138,6 +138,15 @@ export {
   type BoundArt,
 } from "./codegen/art.js";
 export {
+  buildGame,
+  familyFor,
+  hasRuntime,
+  romExtension,
+  runtimeConsoles,
+  unsupportedFor,
+} from "./codegen/registry.js";
+export { buildNesRom, nesBackend, unsupportedNesFeatures } from "./codegen/nes.js";
+export {
   buildGbRom,
   BuildError,
   unsupportedFeatures,

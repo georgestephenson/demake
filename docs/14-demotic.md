@@ -820,11 +820,32 @@ controls and rules, console-specific only in that constants are folded — and a
 backend then compiles that `Program` into code written for this game and no
 other (§2).
 
-The `gb` backend exists, in `packages/demotic/src/codegen/`: an SM83 assembler
-(`asm.ts`), a mutability analysis (`analyze.ts`), a work-RAM plan (`layout.ts`),
-expression and rule emitters, and the level and tile paths. Nothing about it is
-a table format, so there is no format contract to keep in step with an assembly
-file.
+Two backends exist, in `packages/demotic/src/codegen/`: `gb` (SM83, both Game
+Boys) and `nes` (6502, NROM). Nothing about either is a table format, so there is
+no format contract to keep in step with an assembly file.
+
+**A backend is an implementation of an interface, not a file that resembles
+another one.** `codegen/backend.ts` is the contract: a console answers six
+questions — where its state goes, what it cannot compile, how its art and its
+audio are demade, how many tiles it has, and how a plan becomes a cartridge — and
+everything between those answers happens once, in code no console owns. That
+includes both orders that matter: the build's, and the *tick's*, which is the
+list below emitted by one function with a method per step. A backend supplies the
+instructions for a step and has no say in the sequence, which is what turns "the
+order is load-bearing" from a warning into a property.
+
+What a program *means* is shared for the same reason (`codegen/shape.ts`):
+whether a rule can fire in this scene, whether a caption can ever change, which
+cells a tile rule may cache, what a tick of movement comes to, how far a camera
+may travel, and the level tables themselves. Those answers have to be identical
+on every console or the trace oracle would be comparing two different games.
+
+The dividing line is exact, and it is what stops the sharing becoming a fake
+common denominator: **anything that would emit an instruction stays in the
+backend.** A machine with seven registers and one with three do not want the same
+code, and pretending otherwise would make both worse. The 6502 backend is a third
+smaller than the SM83 one for its arithmetic and a third larger for its
+addressing, which is exactly what the two instruction sets are like.
 
 **A build is an assembly, and the assembler is ours.** It is written in
 TypeScript with no dependencies, so:
@@ -880,7 +901,11 @@ turned out to be neither.
 Families map onto the existing codegen families (doc 06): `gb`, `nes`, `sms`
 (SMS + GG), `md`, `snes`. Each is a backend module beside the `gb` one, and each
 brings its own instruction encoder — which is the N × M cost §2 accepts
-deliberately.
+deliberately. What the second one showed is that the cost really is only the
+encoder and the emitters: of the Game Boy backend's code, the RAM plan, the
+program-shape decisions, the level tables, the constant pool, the pull-only
+helper registry, the trace reader and the build's own sequence all turned out to
+be the console's business in no way at all, and are now shared.
 
 ## Conformance
 
@@ -957,9 +982,11 @@ The language's semantics are **output bytes**, and carry the same guarantees as
 
 Named rather than hidden, in rough order of how much they matter.
 
-- ~~**No console runtimes.**~~ The `gb` backend exists and its gap list is empty
-  (§Runtime model): levels, tiles, the camera and scrolling all compile. `nes`,
-  `sms`/`gg`, `md` and `snes` are doc 13 §D4.
+- ~~**No console runtimes.**~~ The `gb` and `nes` backends exist and their gap
+  lists are empty of *language* features (§Runtime model): levels, tiles, the
+  camera and scrolling all compile on both. The NES has no sound driver yet and
+  says so rather than dropping a `sound` silently. `sms`/`gg`, `md` and `snes`
+  are doc 13 §D4.
 - ~~**No deterministic art rasterisation.**~~ `@demake/core` has its own SVG
   rasteriser (doc 15 §The conversion path, step 2), so a `.dmt`'s art is demade
   by the image engine and appears in the cartridge. The subset is deliberate —

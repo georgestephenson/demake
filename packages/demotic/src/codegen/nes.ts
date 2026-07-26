@@ -83,6 +83,10 @@ export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
   consoles: ["nes"],
   cartridge: "an NROM cartridge",
 
+  extension(): string {
+    return "nes";
+  },
+
   /**
    * Language features this backend does not implement.
    *

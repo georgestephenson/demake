@@ -151,6 +151,8 @@ export interface Backend<Art, Audio extends BoundAudioShape> {
   readonly consoles: readonly string[];
   /** What to call the cartridge in a message. */
   readonly cartridge: string;
+  /** The file extension a built cartridge takes, which the console decides. */
+  extension(program: Program): string;
 
   /**
    * Language features this backend does not implement, named.
@@ -188,6 +190,36 @@ export interface Backend<Art, Audio extends BoundAudioShape> {
     audio: Audio;
     title: string | undefined;
   }): Assembled;
+}
+
+/**
+ * A backend with its binding types erased.
+ *
+ * `Backend` is generic in what a console's art and audio bindings *are*, which is
+ * what lets a Game Boy Color palette block and an NES attribute table both be
+ * "the art" without either pretending to be the other. A registry cannot be
+ * generic in two things at once, and does not need to be: what it deals in is the
+ * contract — build this, for that console, into a file with this extension.
+ */
+export interface AnyBackend {
+  readonly family: string;
+  readonly consoles: readonly string[];
+  extension(program: Program): string;
+  unsupported(program: Program): string[];
+  build(program: Program, options: BuildOptions): BuiltRom;
+}
+
+/** Erase a backend's binding types, keeping the contract. */
+export function anyBackend<Art, Audio extends BoundAudioShape>(
+  backend: Backend<Art, Audio>,
+): AnyBackend {
+  return {
+    family: backend.family,
+    consoles: backend.consoles,
+    extension: (program) => backend.extension(program),
+    unsupported: (program) => backend.unsupported(program),
+    build: (program, options) => buildRom(program, backend, options),
+  };
 }
 
 /** Options every backend's build accepts. */
