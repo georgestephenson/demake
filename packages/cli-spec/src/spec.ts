@@ -470,10 +470,10 @@ export const CLI_SPEC: CliSpec = {
     },
     {
       name: "gen",
-      summary: "Convert an image into console data/code (bin/asm/c)",
+      summary: "Convert an image or a chip schedule into console data/code",
       positional: {
         name: "input",
-        help: "Compliant or raw image (path, or - for stdin).",
+        help: "Compliant or raw image, or an arrange/sfx schedule manifest (path, or - for stdin).",
         optional: true,
       },
       flags: GEN_FLAGS,
@@ -487,6 +487,10 @@ export const CLI_SPEC: CliSpec = {
           note: "implicit prep, then C arrays",
         },
         { cmd: "demake gen tiles.png -c dmg --format bin -o tiles", note: "raw blobs for incbin" },
+        {
+          cmd: "demake gen song.json -c dmg --format rom -o song.gb",
+          note: "a cartridge that plays the track",
+        },
       ],
     },
     {

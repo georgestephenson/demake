@@ -1,11 +1,18 @@
 /**
- * The Game Boy around the processor: memory map, PPU, timer, and joypad.
+ * The Game Boy around the processor: memory map, PPU, APU, timer, and joypad.
  *
  * Enough hardware to run a `demake build` ROM faithfully and nothing more. The
  * PPU is a scanline renderer on the published 456-dot line — mode 2 for 80,
  * mode 3 for 172, mode 0 for the rest, ten lines of VBlank — because a
  * per-scanline picture is what a fixed-tick game needs and a pixel-FIFO would
  * buy accuracy no demade game can observe.
+ *
+ * The APU is not implemented here: it is `@demake/chip`'s `GbApu`, the same
+ * model the audio pipeline renders previews with (doc 16 §Packages). That is
+ * the whole reason the package exists — the preview and the emulator cannot
+ * quietly stop agreeing about a chip they share. This module only routes
+ * `$FF10`–`$FF3F` to it, and offers the write tap the audio proof reads
+ * (§apuTap).
  *
  * Two things are deliberately absent. There is no MBC: a build is 32 KiB, and
  * the day a game needs banking the runtime gains a mapper and this gains the
@@ -14,6 +21,8 @@
  * VBlank window regardless, so modelling the block here would only convert a
  * discipline failure into a mystery. The SameBoy E2E is where that gets caught.
  */
+
+import { GbApu, type SampleSink } from "@demake/chip";
 
 import { type Bus, Cpu, INT } from "./cpu.js";
 
@@ -33,9 +42,15 @@ export type Button = (typeof BUTTONS)[number];
 /** The four DMG shades, darkest last, as 8-bit grey. */
 const SHADES = [0xe8, 0xa0, 0x58, 0x10];
 
+/** Sound registers, as offsets from `$FF00`: NR10–NR52, then wave RAM. */
+const APU_FIRST = 0x10;
+const APU_LAST = 0x3f;
+
 /** A DMG with a 32 KiB cartridge in it. */
 export class Gameboy implements Bus {
   readonly cpu = new Cpu(this);
+  /** The sound hardware — `@demake/chip`'s model, not a second one. */
+  readonly apu = new GbApu();
   readonly rom: Uint8Array;
   readonly vram = new Uint8Array(0x2000);
   readonly wram = new Uint8Array(0x2000);
@@ -57,6 +72,25 @@ export class Gameboy implements Bus {
   private held = 0;
   /** Frames completed since power-on — the harness's clock. */
   frames = 0;
+
+  /**
+   * Called for every write the CPU makes to a sound register.
+   *
+   * This is the audio conformance oracle's entire interface to the machine
+   * (doc 16 §The proof, Level A). It observes rather than intercepts — the
+   * write still reaches the APU — because an oracle that changed what the
+   * hardware saw would be testing itself.
+   */
+  apuTap: ((reg: number, value: number) => void) | undefined = undefined;
+
+  /**
+   * Where the APU's samples go, when anything is listening.
+   *
+   * Left unset the chip still receives every write and keeps its state; it is
+   * only *rendered* when a sink is attached, so the game conformance suite pays
+   * nothing for hardware it never listens to.
+   */
+  audioSink: SampleSink | undefined = undefined;
 
   constructor(rom: Uint8Array) {
     this.rom = rom;
@@ -126,6 +160,7 @@ export class Gameboy implements Bus {
   }
 
   private readIo(register: number): number {
+    if (register >= APU_FIRST && register <= APU_LAST) return this.apu.read(register);
     switch (register) {
       case 0x00:
         return this.joypadRegister();
@@ -137,6 +172,11 @@ export class Gameboy implements Bus {
   }
 
   private writeIo(register: number, value: number): void {
+    if (register >= APU_FIRST && register <= APU_LAST) {
+      this.apu.write(register, value);
+      this.apuTap?.(register, value);
+      return;
+    }
     switch (register) {
       case 0x04:
         // Any write resets the divider, and with it the timer's prescaler.
@@ -217,6 +257,9 @@ export class Gameboy implements Bus {
   private advance(cycles: number): void {
     this.clockTimer(cycles);
     this.clockPpu(cycles);
+    // A DMG's APU runs on the same master clock the CPU counts in, so one
+    // T-cycle is one APU clock and there is no ratio to get wrong.
+    if (this.audioSink) this.apu.run(cycles, this.audioSink);
   }
 
   private clockTimer(cycles: number): void {

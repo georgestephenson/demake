@@ -32,6 +32,41 @@ function str(values: Record<string, ParsedValue>, key: string): string | undefin
   return typeof values[key] === "string" ? (values[key] as string) : undefined;
 }
 
+/**
+ * Read a chip schedule out of input bytes, or `null` if that is not what it is.
+ *
+ * Both `render` and `gen` dispatch on this, which is why it lives here rather
+ * than in either of them: the two commands must agree exactly about what counts
+ * as a chip artifact, or `gen` would decline something `render` plays.
+ *
+ * It reads the manifest sidecar rather than a `.vgm` because a VGM's timing is
+ * quantized to its 44.1 kHz timebase (doc 16 §Artifacts) — the schedule is the
+ * exact thing, and the driver has to write it exactly.
+ */
+export function readChipScript(bytes: Uint8Array): ChipScript | null {
+  // A JSON document starts with `{` after any whitespace; a PNG or a MIDI file
+  // does not, so this rejects an image in one byte instead of on a decode.
+  let at = 0;
+  while (at < bytes.length && bytes[at]! <= 0x20) at += 1;
+  if (bytes[at] !== 0x7b) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return null;
+  }
+  const script = (
+    parsed !== null && typeof parsed === "object" && "script" in parsed
+      ? (parsed as { script: unknown }).script
+      : parsed
+  ) as ChipScript | null;
+  if (!script || typeof script !== "object") return null;
+  if (!Array.isArray(script.ticks) || !script.driver || typeof script.console !== "string") {
+    return null;
+  }
+  return script;
+}
+
 function list(values: Record<string, ParsedValue>, key: string): string[] {
   const value = values[key];
   if (Array.isArray(value)) return value.map(String);
@@ -243,6 +278,16 @@ export async function runSfx(
     json,
   );
   const preview = writePreview(env, result.script, values);
+  // The same sidecar `arrange` writes, and for the same reason: it carries the
+  // exact schedule, which is what `render` and `gen --format rom` both read.
+  const manifest = writeManifest(env, values, {
+    schemaVersion: 1,
+    script: result.script,
+    soundClass: result.soundClass,
+    placement: result.placement,
+    diagnostics: result.diagnostics,
+    tournament: result.tournament,
+  });
 
   if (json) {
     env.out(
@@ -251,6 +296,7 @@ export async function runSfx(
           schemaVersion: 1,
           output: emit.wroteTo,
           preview,
+          manifest,
           soundClass: result.soundClass,
           seconds: scriptSeconds(result.script),
           placement: result.placement,
@@ -285,24 +331,13 @@ export async function runRender(
   positionals: string[],
 ): Promise<ExitCode> {
   const { bytes, source } = resolveInput(env, positionals);
-  let script: ChipScript;
-  try {
-    const parsed = JSON.parse(new TextDecoder().decode(bytes)) as
-      ChipScript | { script: ChipScript };
-    script = "script" in parsed ? parsed.script : parsed;
-  } catch {
+  const script = readChipScript(bytes);
+  if (!script) {
     throw new CliError(
       EXIT.BAD_INPUT,
       "E_UNSUPPORTED_ARTIFACT",
       `cannot render '${source}'`,
       "render reads the schedule manifest that --emit-manifest writes; reading .vgm back lands with the artifact importer.",
-    );
-  }
-  if (!Array.isArray(script.ticks) || !script.driver) {
-    throw new CliError(
-      EXIT.BAD_INPUT,
-      "E_UNSUPPORTED_ARTIFACT",
-      `'${source}' is not a chip schedule`,
     );
   }
 

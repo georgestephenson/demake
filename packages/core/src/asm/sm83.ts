@@ -1,19 +1,24 @@
 /**
  * An SM83 assembler.
  *
- * The Demotic backend emits *machine code*, not a table for an interpreter to
- * walk (doc 14 §Runtime model), and it emits that code in TypeScript rather
- * than by shelling out to RGBDS. Both halves of that are load-bearing:
+ * Two backends emit Game Boy *machine code* rather than shelling out to RGBDS —
+ * the Demotic game backend (doc 14 §Runtime model) and the audio driver
+ * (doc 16 §The driver contract) — so the encoder lives here, in `core`, where
+ * both reach it and neither owns it. Both halves of that are load-bearing:
  *
  *   - **Machine code, because the machine is small.** A game's entities are
  *     known at compile time, so every property is a constant address; a rule's
  *     subject is usually one object, so its collision test is straight-line
- *     code; a feature no game uses emits no bytes at all. An interpreter can do
- *     none of that — it pays the general case on every tick of every game.
+ *     code; a feature no game uses emits no bytes at all. A track with no noise
+ *     channel ships no noise handling, for the same reason. An interpreter can
+ *     do none of that — it pays the general case on every tick of every input.
  *   - **In TypeScript, because the browser has no assembler.** Doc 07 wants the
  *     page to build the same ROM the CLI builds, byte for byte, with nothing
  *     installed. Owning the encoder is what makes that a fact rather than an
  *     aspiration.
+ *
+ * It is pure integer arithmetic over a byte array, so it sits inside `core`'s
+ * platform-purity and determinism rules without qualification.
  *
  * The design is deliberately dull: one method per addressing form, explicit
  * encodings, and a fixup list for forward references. There is no macro layer

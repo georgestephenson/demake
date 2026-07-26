@@ -69,6 +69,21 @@ export {
   type SnappedPitch,
 } from "./pitch.js";
 
+// --- the console hand-off ----------------------------------------------------
+export {
+  audioRomConsoles,
+  buildAudioRom,
+  buildGbAudioRom,
+  packScript,
+  AudioRomError,
+  PackError,
+  MAX_WRITES_PER_TICK,
+  type AudioRomOptions,
+  type AudioRomStats,
+  type BuiltAudioRom,
+  type DriverData,
+} from "./rom/index.js";
+
 // --- hearing it --------------------------------------------------------------
 export { render, type RenderAudioOptions } from "./render.js";
 export { encodeWav, type WavOptions } from "./encode/wav.js";

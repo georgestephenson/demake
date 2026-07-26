@@ -13,7 +13,8 @@ demake <command> [options] [input]
 
 Commands:
   prep       Convert any image into a hardware-compliant image for a console
-  gen        Convert an image (raw or prepped) into console data/code/ROM
+  gen        Convert an image (raw or prepped) or a chip schedule into
+             console data/code/ROM
   consoles   List supported consoles and their constraints
   inspect    Analyze an image: is it compliant? for which consoles? why not?
              With --source, also judge it: fidelity metrics vs the source image
@@ -133,9 +134,11 @@ demake sfx coin.wav -c gb --max-length 1.5 -o coin.vgm
 demake render song.vgm -o song.flac
 demake render song.vgm --output-stage board -o song-as-heard.wav
 
-# Driver data + player code, then a ROM that plays the track
-demake gen song.vgm -c gb --format asm -o song.asm
-demake gen song.vgm -c gb --format rom -o jukebox.gb
+# A ROM that plays the track, from the schedule --emit-manifest wrote.
+# The driver is generated for this schedule and assembled by our own SM83
+# encoder, so there is no toolchain in the path (doc 16 §The driver contract).
+demake arrange song.mid -c gb -o song.vgm --emit-manifest song.json
+demake gen song.json -c gb --format rom -o jukebox.gb
 
 # Score the result against its source with the same judge the tournament used
 demake inspect song.vgm --source song.mid --json

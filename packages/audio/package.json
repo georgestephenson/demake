@@ -25,5 +25,8 @@
   },
   "scripts": {
     "build": "tsc --build"
+  },
+  "devDependencies": {
+    "@demake/dmg": "workspace:*"
   }
 }

@@ -25,7 +25,8 @@
  *     deduplicates.
  */
 
-import { type Ref } from "./asm.js";
+import { type Ref } from "@demake/core";
+
 import type { Ctx } from "./ctx.js";
 
 /** 1.0 in 16.16. */

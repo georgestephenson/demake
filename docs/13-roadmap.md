@@ -262,21 +262,38 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     the GB APU, the SN76489 and the NES 2A03; `AudioSpec` and specs for six
     consoles live in `core`; the exact box-integration renderer and WAV encode
     are done, and `render` is the single path every surface makes sound through.
-    Eighteen analytic vectors pass. Outstanding: the hardware test ROMs and
-    their provisioner, FLAC, and `@demake/dmg` consuming these models for its
-    own APU.
-  - **A2 — `arrange`** *(built for MIDI, no ROM yet)*: ingest, analysis, the
-    arrangement tournament, absolute-placement timing, the judge and the `.vgm`
-    artifact run on all six consoles. Tempo is preserved outright rather than
-    approximately, and a test shows the error shrinking with length rather than
-    compounding. Outstanding: tracker ingest, the driver and ROM emit, Level A
-    schedule equality, and the listening sheets the judge weights get frozen
-    against.
-  - **A3 — `sfx`** *(built for WAV)*: eight gesture families, the class gate,
+    Eighteen analytic vectors pass, and `@demake/dmg` now *is* a consumer: its
+    APU is `@demake/chip`'s `GbApu`, so the emulator and the preview cannot
+    disagree about a chip they share. Outstanding: the hardware test ROMs and
+    their provisioner, and FLAC.
+  - **A2 — `arrange`** *(built for MIDI; the Game Boy boots)*: ingest, analysis,
+    the arrangement tournament, absolute-placement timing, the judge and the
+    `.vgm` artifact run on all six consoles. Tempo is preserved outright rather
+    than approximately, and a test shows the error shrinking with length rather
+    than compounding. Outstanding: tracker ingest, `bin`/`asm`/`c` emit, driver
+    backends beyond the Game Boy, and the listening sheets the judge weights get
+    frozen against.
+  - **A2.5 — the driver and the proof** *(done for the `gb` family)*: `demake gen
+    <schedule> --format rom` generates an SM83 driver *for this schedule* — rests
+    pulled only if it rests, an order walk only if it has one, a stop path only
+    for a one-shot — packs the schedule into deduplicated blocks behind an order
+    list, and assembles a 32 KiB cartridge with `core`'s own assembler. Level A
+    of doc 16 §The proof runs in `pnpm test`: the ROM boots in `@demake/dmg` and
+    every register write it makes is diffed against the `ChipScript`, tick for
+    tick, with no tolerance and no toolchain. Both demakers are covered, because
+    a track and a one-shot exercise different halves of the driver.
+
+    This is the point at which the audio domain reaches the shape the image
+    domain has — constrain → fit → emit → prove on emulated hardware — for one
+    family. Level B (sample comparison against a third-party core, via the
+    libretro harness's audio callback) and the other consoles' drivers are what
+    remain.
+  - **A3 — `sfx`** *(built for WAV; the Game Boy boots)*: eight gesture families, the class gate,
     deterministic coordinate descent with every candidate rendered through the
     chip model, and the placement contract each effect declares. Outstanding:
     banks, `--variations`, the driver-side stealing and restore, and the
-    bank-in-a-ROM E2E that proves them.
+    bank-in-a-ROM E2E that proves them. A single effect already builds into a
+    cartridge and is proven by A2.5's Level A suite.
   - **A4 — audio input**: the transcription front end (beat, percussion, bass,
     lead, harmony) with confidences, plus the decoders. *Done means*: an MP3
     becomes a playable cartridge, and the parts it found are reported honestly
@@ -284,7 +301,11 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   - **A5 — breadth**: `nes`, `sms`/`gg`, `md` (FM patch fitting), `snes` (BRR,
     the SPC700 driver, sample budgeting), `gba`, `nds` — each is a chip model, a
     driver backend and a Level A/B harness, on the per-console definition of done
-    Phase 2 used for images.
+    Phase 2 used for images. Each faces the choice doc 16 §The driver contract
+    records: own the CPU's encoder (as the Game Boy does, which buys the browser
+    and a toolchain-free proof) or pair generated data with a checked-in driver
+    source for a stock assembler (as the image harnesses do). Level A also needs
+    a core we own or one that exposes scripted register access.
   - **A6 — the surfaces**: the two web sections (doc 07), the desktop wiring, and
     the Demotic integration *if and when the maintainer settles the language
     surface* (doc 17 §Demotic — a proposal, not a decision).

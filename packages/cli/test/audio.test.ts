@@ -2,8 +2,9 @@
  * `demake arrange`, `demake sfx` and `demake render` through the CLI (doc 05).
  *
  * Exercises the surface a user actually touches: the prime directive (one input,
- * one artifact), the JSON report an agent reads, `--strict`, and the chain that
- * matters most — arrange, keep the schedule, render it back, and get audio.
+ * one artifact), the JSON report an agent reads, `--strict`, and the two chains
+ * that matter most — arrange, keep the schedule, render it back, and get audio;
+ * and arrange, keep the schedule, and build a cartridge that plays it.
  */
 
 import { describe, expect, it } from "vitest";
@@ -293,5 +294,71 @@ describe("demake render", () => {
     const code = await run(["render", "song.vgm", "-o", "x.wav"], env);
     expect(code).not.toBe(0);
     expect(env.stderr).toMatch(/cannot render/);
+  });
+});
+
+describe("demake gen — a chip schedule into a cartridge", () => {
+  /** Arrange a bar and keep the schedule sidecar `gen` reads. */
+  async function arranged(env: ReturnType<typeof makeEnv>, consoleId: string): Promise<void> {
+    const code = await run(
+      ["arrange", "band.mid", "-c", consoleId, "-o", "song.vgm", "--emit-manifest", "song.json"],
+      env,
+    );
+    expect(code).toBe(0);
+  }
+
+  it("builds a bootable Game Boy ROM from the schedule", async () => {
+    const env = makeEnv({ "band.mid": bandMidi(140, 1) });
+    await arranged(env, "dmg");
+    const code = await run(
+      ["gen", "song.json", "-c", "dmg", "--format", "rom", "-o", "song.gb", "--json"],
+      env,
+    );
+    expect(code).toBe(0);
+    const rom = env.written["song.gb"]!;
+    expect(rom).toBeDefined();
+    expect(rom.length).toBe(0x8000);
+    // The title comes from the output name, so no flag is needed for it.
+    expect(String.fromCharCode(...rom.subarray(0x134, 0x138))).toBe("SONG");
+
+    const report = JSON.parse(env.stdout) as {
+      console: string;
+      stats: { data: number; ticks: number; helpers: string[]; ratePpmError: number };
+    };
+    expect(report.console).toBe("dmg");
+    expect(report.stats.ticks).toBeGreaterThan(0);
+    expect(report.stats.data).toBeGreaterThan(0);
+    expect(report.stats.ratePpmError).toBe(0);
+    expect(report.stats.helpers).toContain("tick");
+  });
+
+  it("refuses to build a schedule for a console it was not arranged for", async () => {
+    const env = makeEnv({ "band.mid": bandMidi(140, 1) });
+    await arranged(env, "dmg");
+    const code = await run(
+      ["gen", "song.json", "-c", "nes", "--format", "rom", "-o", "x.nes"],
+      env,
+    );
+    expect(code).not.toBe(0);
+    expect(env.stderr).toMatch(/arranged for dmg, not nes/);
+  });
+
+  it("names the console that has no driver backend yet, rather than emitting silence", async () => {
+    const env = makeEnv({ "band.mid": bandMidi(140, 1) });
+    await arranged(env, "nes");
+    const code = await run(
+      ["gen", "song.json", "-c", "nes", "--format", "rom", "-o", "x.nes"],
+      env,
+    );
+    expect(code).not.toBe(0);
+    expect(env.stderr).toMatch(/no audio driver backend/);
+  });
+
+  it("says which formats a schedule has, instead of emitting an image artifact", async () => {
+    const env = makeEnv({ "band.mid": bandMidi(140, 1) });
+    await arranged(env, "dmg");
+    const code = await run(["gen", "song.json", "-c", "dmg", "--format", "c", "-o", "song"], env);
+    expect(code).not.toBe(0);
+    expect(env.stderr).toMatch(/not available for a chip schedule/);
   });
 });
