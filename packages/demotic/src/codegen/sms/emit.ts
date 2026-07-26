@@ -2154,13 +2154,23 @@ function emitDecimal(ctx: SmsCtx, plot: Ref): void {
   // Everything here has to survive a call to `plot`, and `plot` reaches the cell
   // address routine, the write queue and the object builder — which between them
   // use every byte of the helper scratch. So the digit loop keeps its state in
-  // the render words instead, in slots nothing on that path touches: not the pen
-  // (`cell`, `count`), not the cell being written (`tileCol`, `tileRow`), and not
-  // the scroll the frame is about to be uploaded with.
-  const value = layout.words + W.mapCol * 2;
-  const flag = layout.words + W.mapRow * 2;
-  const digit = layout.words + W.mapRow * 2 + 1;
-  const power = layout.words + W.firstCol * 2;
+  // the render words instead, in slots nothing on that path touches.
+  //
+  // Which slots those are is not a matter of taste. Not the pen (`cell`,
+  // `count`); not the cell being written (`tileCol`, `tileRow`); not the queued
+  // address (`target`); and — the one that actually bit — **not the map origin**.
+  // `mapCol`/`mapRow` are where the renderer remembers which cell the name table
+  // starts at, and they have to survive from one frame to the next; a HUD counter
+  // that scribbled on them made the scroll walk read a nonsense origin, decide
+  // the camera had teleported, and ask for a full redraw. The game looked right
+  // and repainted the whole screen seventy-eight frames in ninety.
+  //
+  // What is safe is the redraw's and the walk's own loop counters, because both
+  // have finished by the time a HUD is drawn.
+  const value = layout.words + W.firstCol * 2;
+  const flag = layout.words + W.firstRow * 2;
+  const digit = layout.words + W.firstRow * 2 + 1;
+  const power = layout.words + W.lastCol * 2;
 
   asm.exDEHL();
   asm.ld("e", "hlp");
