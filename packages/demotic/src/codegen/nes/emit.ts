@@ -113,6 +113,20 @@ const MAP_W = 32;
 const MAP_H = 30;
 
 /**
+ * Whether this level's vertical axis can be scrolled by repainting.
+ *
+ * Only where the level is taller than the map. Thirty rows of nametable against
+ * thirty rows of screen leave nothing spare, so for a level no taller than the map
+ * there is no "next row" to paint — every row is already at its own address and
+ * stays there, and the two overscan rows such a level scrolls into show its own
+ * top two. That is the NROM constraint stated rather than worked around; a taller
+ * level wraps properly and is painted a row at a time like the columns.
+ */
+function scrollsRows(level: LevelData): boolean {
+  return level.file.height > MAP_H;
+}
+
+/**
  * The palette reserved for the font, the level patterns and the placeholder block.
  *
  * The last of the four, background and objects alike, for the reason the Game Boy
@@ -209,16 +223,18 @@ export function emitProgram(ctx: NesCtx, options: NesEmitOptions = {}): void {
   }
   emitInstanceDefaults(asm, program, PROPS);
 
-  // One demade nametable per scene that has a backdrop, then its attributes.
+  // One demade nametable per scene that has a backdrop, and one attribute table
+  // per scene whatever it draws — see {@link sceneAttributes}.
   for (const scene of scenes) {
     const art = options.backdrops?.get(scene.def.name);
-    if (!art) continue;
-    asm.label(backdropLabel(scene));
-    asm.bytes(art.map);
-    asm.label(backdropAttrLabel(scene));
-    asm.bytes(art.attr);
-    asm.label(backdropPaletteLabel(scene));
-    asm.bytes(art.palette);
+    if (art) {
+      asm.label(backdropLabel(scene));
+      asm.bytes(art.map);
+      asm.label(backdropPaletteLabel(scene));
+      asm.bytes(art.palette);
+    }
+    asm.label(sceneAttrLabel(scene));
+    asm.bytes(sceneAttributes(ctx, scene, options));
   }
   asm.label("LevelPalette");
   asm.bytes(options.levelPalette ?? defaultBackgroundPalette());
@@ -1074,12 +1090,9 @@ function emitFullRedraw(
 
   const backdrop = options.backdrops?.get(scene.def.name);
   if (backdrop) {
-    // A backdrop is a whole nametable in order, so painting it is two block
-    // copies: the map, then the attribute table it brought with it.
+    // A backdrop is a whole nametable in order, so painting it is a block copy.
     emitPpuAddress(ctx, NAMETABLE);
     emitPpuBlock(ctx, backdropLabel(scene), MAP_W * MAP_H);
-    emitPpuAddress(ctx, ATTRIBUTES);
-    emitPpuBlock(ctx, backdropAttrLabel(scene), 64);
     emitPpuAddress(ctx, PALETTE);
     emitPpuBlock(ctx, backdropPaletteLabel(scene), 16);
   } else {
@@ -1089,7 +1102,19 @@ function emitFullRedraw(
     // cells and two adjacent legend entries would otherwise fight over it.
     emitPpuAddress(ctx, PALETTE);
     emitPpuBlock(ctx, "LevelPalette", 16);
+    // The window, and the one column the first scroll step will need before it has
+    // had a chance to paint one — and nothing else. Painting a whole level here
+    // instead would draw cells nobody has looked at yet and hold the screen off
+    // while it did; the rule on both consoles is that a cell is drawn when it is
+    // about to be seen.
     emitOriginFromScroll(ctx, layout.words + W.mapCol * 2, layout.words + W.mapRow * 2);
+    // A level no taller than the map does not scroll vertically at all, so its rows
+    // sit at their own addresses from the origin and the redraw starts at row zero.
+    if (level !== undefined && !scrollsRows(level)) {
+      asm.lda(imm(0));
+      asm.sta(mem(layout.words + W.mapRow * 2));
+      asm.sta(mem(layout.words + W.mapRow * 2 + 1));
+    }
     copy16(ctx, layout.words + W.firstCol * 2, layout.words + W.mapCol * 2);
     copy16(ctx, layout.words + W.tileRow * 2, layout.words + W.mapRow * 2);
 
@@ -1097,25 +1122,43 @@ function emitFullRedraw(
     const colLoop = ctx.unique("fullCol");
     const rows = layout.words + W.firstRow * 2;
     const columns = layout.words + W.lastCol * 2;
-    asm.lda(imm(layout.memory.viewH));
+    // One spare column for a level, because the first scroll step needs it; a
+    // spare row only where the level is tall enough for the wrap to serve one,
+    // since otherwise the row after the last *is* the first.
+    const height = layout.memory.viewH + (level !== undefined && scrollsRows(level) ? 1 : 0);
+    const width = layout.memory.viewW + (level === undefined ? 0 : 1);
+    asm.lda(imm(height));
     asm.sta(mem(rows));
     asm.label(rowLoop);
     copy16(ctx, layout.words + W.tileCol * 2, layout.words + W.firstCol * 2);
-    asm.lda(imm(layout.memory.viewW));
+    asm.lda(imm(width));
     asm.sta(mem(columns));
+    // The address is set once per row and the PPU steps it — the whole point of
+    // an auto-incrementing port. It has to be reset where the map wraps into the
+    // other nametable, because the attribute table sits between the two, so the
+    // column's low five bits rolling over is the signal.
+    asm.jsr("VramFor");
     asm.label(colLoop);
     emitBackgroundTile(ctx, scene, level);
-    asm.sta(mem(ZP.t2));
-    asm.jsr("VramFor");
-    asm.lda(mem(ZP.t2));
     asm.sta(abs(R.PPUDATA));
     inc16(ctx, layout.words + W.tileCol * 2);
+    const noWrap = ctx.unique("fullNoWrap");
+    asm.lda(mem(layout.words + W.tileCol * 2));
+    asm.and(imm(MAP_W - 1));
+    asm.bne(noWrap);
+    asm.jsr("VramFor");
+    asm.label(noWrap);
     asm.dec(mem(columns));
     ctx.far("ne", colLoop);
     inc16(ctx, layout.words + W.tileRow * 2);
     asm.dec(mem(rows));
     ctx.far("ne", rowLoop);
   }
+
+  // The attribute table, whatever the scene drew: a picture's own, or a level's
+  // single palette, with the blocks a caption covers switched to the font's ramp.
+  emitPpuAddress(ctx, ATTRIBUTES);
+  emitPpuBlock(ctx, sceneAttrLabel(scene), 64);
 
   // Captions go on now, with the background they sit on. A scrolling scene draws
   // its whole HUD with sprites instead, so it has none to paint here.
@@ -1168,15 +1211,61 @@ function emitPpuBlock(ctx: NesCtx, source: string, count: number): void {
   }
 }
 
-/** The label holding one scene's backdrop nametable, attributes and palette. */
+/** The labels holding one scene's nametable, attribute table and palette. */
 function backdropLabel(scene: SceneCtx): string {
   return `Backdrop_${scene.index}`;
 }
-function backdropAttrLabel(scene: SceneCtx): string {
-  return `BackdropAttr_${scene.index}`;
+function sceneAttrLabel(scene: SceneCtx): string {
+  return `SceneAttr_${scene.index}`;
 }
 function backdropPaletteLabel(scene: SceneCtx): string {
   return `BackdropPal_${scene.index}`;
+}
+
+/**
+ * One scene's attribute table, decided at compile time.
+ *
+ * A background palette covers a 16×16 block on this console, so *where* the font's
+ * palette is needed is a question about cells rather than about pixels — and every
+ * cell a caption occupies is known when the game is compiled. So the table is
+ * built here: a picture's own attributes, or a level's single palette, with the
+ * blocks a background HUD covers switched to the font's ramp.
+ *
+ * That is the same reservation the Game Boy Color build makes with its
+ * `SYSTEM_PALETTE`, arriving a different way. There it is an attribute per cell
+ * written as the cell is drawn; here it is sixty-four bytes uploaded with the
+ * redraw and never touched again, which is why a HUD costs nothing per frame.
+ *
+ * An object whose *position* a rule can change is skipped: its blocks are not
+ * knowable here, and switching a block it has left would leave the picture behind
+ * it wearing the font's colours. Nothing in the example library moves a caption.
+ */
+function sceneAttributes(ctx: NesCtx, scene: SceneCtx, options: NesEmitOptions): Uint8Array {
+  const table = new Uint8Array(64);
+  const backdrop = options.backdrops?.get(scene.def.name);
+  if (backdrop) table.set(backdrop.attr.subarray(0, 64), 0);
+  if (scrolls(ctx, scene)) return table; // a scrolling scene draws its HUD with objects
+
+  const set = (column: number, row: number): void => {
+    if (column < 0 || row < 0 || column >= MAP_W || row >= MAP_H) return;
+    const at = (row >> 2) * 8 + (column >> 2);
+    const quadrant = ((row & 2) << 1) | (column & 2);
+    table[at] = ((table[at] as number) & ~(3 << quadrant)) | (SYSTEM_PALETTE << quadrant);
+  };
+  for (const id of scene.def.instanceIds) {
+    const instance = ctx.program.instances[id] as InstanceDef;
+    const isNumber = instance.className === "number";
+    const isText = instance.className === "text";
+    if (!isNumber && !isText) continue;
+    if (isMutable(ctx.analysis, id, "x") || isMutable(ctx.analysis, id, "y")) continue;
+    const column = Math.round((instance.numbers["x"] ?? 0) / 65536);
+    const row = Math.round((instance.numbers["y"] ?? 0) / 65536);
+    // A caption is as wide as its text; a counter is as wide as the decimal
+    // renderer can print, which is five digits and a sign.
+    const width = isText ? [...(instance.strings["text"] ?? "")].length : 6;
+    for (let cell = 0; cell < width; cell += 1) set(column + cell, row);
+  }
+  return table;
 }
 
 /**
@@ -1246,7 +1335,12 @@ function emitScrollUpdate(ctx: NesCtx, level: LevelData): void {
   const bail = ctx.unique("scrollBail");
   const done = ctx.unique("scrollDone");
   emitWalkAxis(ctx, level, layout.words + W.mapCol * 2, wantCol, bail, true);
-  emitWalkAxis(ctx, level, layout.words + W.mapRow * 2, wantRow, bail, false);
+  // The vertical axis is walked only where the wrap can serve it: a level no
+  // taller than the map has every row painted already, and painting a "new" row
+  // would overwrite the one the top of the screen is still showing.
+  if (scrollsRows(level)) {
+    emitWalkAxis(ctx, level, layout.words + W.mapRow * 2, wantRow, bail, false);
+  }
   asm.jmp(done);
   asm.label(bail);
   // Too far to walk: repaint everything next frame rather than tear.
@@ -1309,7 +1403,10 @@ function emitPaintEdge(ctx: NesCtx, level: LevelData, isColumn: boolean, offset:
   const originAcross = isColumn ? layout.words + W.mapCol * 2 : layout.words + W.mapRow * 2;
   const originAlong = isColumn ? layout.words + W.mapRow * 2 : layout.words + W.mapCol * 2;
   const count = (isColumn ? layout.memory.viewH : layout.memory.viewW) + 1;
-  const remaining = layout.words + W.temp * 2;
+  // Not `temp`: the grid lookup uses that word for its row-times-width multiply,
+  // and a counter clobbered mid-loop paints a strip of whatever tile the count
+  // happened to land on — which is how a scrolled edge came to show the font.
+  const remaining = layout.words + W.lastRow * 2;
 
   copy16(ctx, across, originAcross);
   if (offset !== 0) {
@@ -1324,12 +1421,16 @@ function emitPaintEdge(ctx: NesCtx, level: LevelData, isColumn: boolean, offset:
   copy16(ctx, along, originAlong);
 
   const loop = ctx.unique("paintLoop");
+  // One run for the whole strip: a column steps a row at a time through the
+  // nametable, which is what the control byte's top bit asks the flush for.
+  asm.lda(imm(isColumn ? 0x80 : 0x00));
+  asm.jsr("QueueOpen");
   asm.lda(imm(count));
   asm.sta(mem(remaining));
   asm.label(loop);
   asm.jsr(tileAtLabel(level));
   emitLegendToTile(ctx, level);
-  asm.jsr("QueueCell");
+  asm.jsr("QueueTile");
   inc16(ctx, along);
   asm.dec(mem(remaining));
   ctx.far("ne", loop);
@@ -1362,7 +1463,7 @@ function emitHudErase(
   asm.lda(absX(layout.plotPrev + 3));
   asm.sta(mem(layout.words + W.tileRow * 2 + 1));
   emitBackgroundTile(ctx, scene, level);
-  asm.jsr("QueueCell");
+  asm.jsr("QueueOne");
   asm.clc();
   asm.lda(mem(cursor));
   asm.adc(imm(4));
@@ -1747,6 +1848,15 @@ function needClearRestOfOam(ctx: NesCtx): Ref {
 /** Emit the render helpers the scene code calls. */
 export function emitRenderHelpers(ctx: NesCtx): void {
   const { asm, layout } = ctx;
+  // The queue is a byte stream of runs rather than a list of cells, so its size is
+  // the bytes the plan allowed for it. A scrolled column is one run of thirty-one
+  // tiles — thirty-four bytes — where a cell at a time would have been ninety-three
+  // and would not have fitted beside the row a diagonal scroll also paints.
+  const QUEUE_BYTES = layout.memory.queueMax * layout.queueStride;
+  // Where the open run's control byte sits, so appending can count it. A render
+  // word rather than page zero, because the grid lookup between two appends uses
+  // every byte of the helper scratch.
+  const runIndex = layout.words + W.cell * 2;
 
   // Point PPUADDR at the cell in words[tileCol]/words[tileRow]. The map wraps
   // every 64 columns and every 30 rows, and the column's bit 5 chooses which of
@@ -1759,35 +1869,67 @@ export function emitRenderHelpers(ctx: NesCtx): void {
   asm.sta(abs(R.PPUADDR));
   asm.rts();
 
-  // A = tile; queue it at the current cell for the next vertical blank.
-  asm.label("QueueCell");
-  const noRoom = ctx.unique("queueFull");
-  asm.sta(mem(ZP.t2));
-  asm.lda(mem(layout.queueCount));
-  asm.cmp(imm(layout.memory.queueMax));
-  asm.bcc(noRoom);
-  asm.rts();
-  asm.label(noRoom);
-  emitCellAddress(ctx);
-  asm.lda(mem(layout.queueCount));
+  // Open a run at the current cell. `A` is zero for a run that steps one cell to
+  // the right and `$80` for one that steps a row down — which is what makes a
+  // scrolled column thirty-four bytes of queue instead of ninety-three, and a
+  // handful of cycles a cell in the vertical blank instead of a dozen.
+  asm.label("QueueOpen");
+  const noRoomForRun = ctx.unique("queueRunFull");
   asm.sta(mem(ZP.t3));
-  asm.asl();
-  asm.clc();
-  asm.adc(mem(ZP.t3));
-  asm.tax();
+  asm.lda(mem(layout.queueCount));
+  asm.cmp(imm(QUEUE_BYTES - 3));
+  asm.bcc(noRoomForRun);
+  // No room for even an empty run: repaint the whole background next frame rather
+  // than leave a strip of it stale for ever.
+  asm.lda(imm(1));
+  asm.sta(mem(layout.redraw));
+  asm.rts();
+  asm.label(noRoomForRun);
+  emitCellAddress(ctx);
+  asm.ldx(mem(layout.queueCount));
   asm.lda(mem(ZP.t0));
   asm.sta(absX(layout.queue));
   asm.lda(mem(ZP.t1));
   asm.sta(absX(layout.queue + 1));
-  asm.lda(mem(ZP.t2));
+  asm.lda(mem(ZP.t3));
   asm.sta(absX(layout.queue + 2));
-  asm.inc(mem(layout.queueCount));
+  // Remember where this run's control byte is, so appending can count it.
+  asm.lda(mem(layout.queueCount));
+  asm.sta(mem(runIndex));
+  asm.clc();
+  asm.adc(imm(3));
+  asm.sta(mem(layout.queueCount));
   asm.rts();
 
-  // A = tile; queue it, record the cell for erasing, and advance the column.
+  // `A` = a tile: append it to the open run.
+  asm.label("QueueTile");
+  const roomForTile = ctx.unique("queueTileRoom");
+  asm.sta(mem(ZP.t2));
+  asm.lda(mem(layout.queueCount));
+  asm.cmp(imm(QUEUE_BYTES));
+  asm.bcc(roomForTile);
+  asm.lda(imm(1));
+  asm.sta(mem(layout.redraw));
+  asm.rts();
+  asm.label(roomForTile);
+  asm.ldx(mem(layout.queueCount));
+  asm.lda(mem(ZP.t2));
+  asm.sta(absX(layout.queue));
+  asm.inc(mem(layout.queueCount));
+  asm.ldx(mem(runIndex));
+  asm.inc(absX(layout.queue + 2));
+  asm.rts();
+
+  // A = tile; queue it as a run of one, record the cell for erasing, and advance
+  // the column. The HUD is scattered cells rather than a strip, so each is its own
+  // run — four bytes against a strip's one, and there are never many of them.
   asm.label("PlotCell");
   const plotFull = ctx.unique("plotFull");
-  asm.jsr("QueueCell");
+  asm.sta(mem(ZP.saved));
+  asm.lda(imm(0));
+  asm.jsr("QueueOpen");
+  asm.lda(mem(ZP.saved));
+  asm.jsr("QueueTile");
   asm.lda(mem(layout.plotCount));
   asm.cmp(imm(layout.memory.plotMax));
   asm.bcc(plotFull);
@@ -1809,35 +1951,75 @@ export function emitRenderHelpers(ctx: NesCtx): void {
   inc16(ctx, layout.words + W.tileCol * 2);
   asm.rts();
 
+  // The same without the erase list: putting a level tile back where the HUD was.
+  asm.label("QueueOne");
+  asm.sta(mem(ZP.saved));
+  asm.lda(imm(0));
+  asm.jsr("QueueOpen");
+  asm.lda(mem(ZP.saved));
+  asm.jmp("QueueTile");
+
   // Flush the queue, hand the objects to the DMA, and set the scroll. All three
-  // fit inside the vertical blank by construction: the queue is capped and
-  // anything over spills to the next frame.
+  // fit inside the vertical blank by construction: the queue is capped at what one
+  // will hold and anything over sets the redraw flag instead of being dropped.
   asm.label("UploadFrame");
   const noQueue = ctx.unique("noQueue");
+  const runLoop = ctx.unique("runLoop");
+  const tileLoop = ctx.unique("tileLoop");
   asm.lda(mem(layout.queueCount));
   asm.beq(noQueue);
+  ctx.pointer(ZP.p0, layout.queue);
   asm.lda(imm(0));
-  asm.sta(mem(ZP.t0));
-  const flush = ctx.unique("flushLoop");
-  asm.label(flush);
-  asm.ldx(mem(ZP.t0));
-  asm.lda(absX(layout.queue + 1));
+  asm.sta(mem(ZP.t0)); // bytes consumed
+  asm.label(runLoop);
+  // The control byte decides the address step, which is bit 2 of PPUCTRL.
+  asm.ldy(imm(2));
+  asm.lda(indY(ZP.p0));
+  asm.sta(mem(ZP.t1));
+  asm.and(imm(0x80));
+  const acrossRun = ctx.unique("runAcross");
+  asm.beq(acrossRun);
+  asm.lda(imm(0x8c));
+  const setStep = ctx.unique("runStep");
+  asm.bne(setStep);
+  asm.label(acrossRun);
+  asm.lda(imm(0x88));
+  asm.label(setStep);
+  asm.sta(abs(R.PPUCTRL));
+  asm.ldy(imm(1));
+  asm.lda(indY(ZP.p0));
   asm.sta(abs(R.PPUADDR));
-  asm.lda(absX(layout.queue));
+  asm.ldy(imm(0));
+  asm.lda(indY(ZP.p0));
   asm.sta(abs(R.PPUADDR));
-  asm.lda(absX(layout.queue + 2));
+  // Three bytes of header plus the run's tiles is both where the tile loop stops
+  // and how far the next run is.
+  asm.clc();
+  asm.lda(mem(ZP.t1));
+  asm.and(imm(0x7f));
+  asm.adc(imm(3));
+  asm.sta(mem(ZP.t3));
+  asm.ldy(imm(3));
+  asm.label(tileLoop);
+  asm.lda(indY(ZP.p0));
   asm.sta(abs(R.PPUDATA));
+  asm.iny();
+  asm.cpy(mem(ZP.t3));
+  asm.bne(tileLoop);
+  // On to the next run.
+  asm.clc();
+  asm.lda(mem(ZP.p0));
+  asm.adc(mem(ZP.t3));
+  asm.sta(mem(ZP.p0));
+  asm.lda(mem(ZP.p0, 1));
+  asm.adc(imm(0));
+  asm.sta(mem(ZP.p0, 1));
   asm.clc();
   asm.lda(mem(ZP.t0));
-  asm.adc(imm(3));
+  asm.adc(mem(ZP.t3));
   asm.sta(mem(ZP.t0));
-  asm.lda(mem(layout.queueCount));
-  asm.sta(mem(ZP.t1));
-  asm.asl();
-  asm.clc();
-  asm.adc(mem(ZP.t1));
-  asm.cmp(mem(ZP.t0));
-  asm.bne(flush);
+  asm.cmp(mem(layout.queueCount));
+  ctx.far("cc", runLoop);
   asm.lda(imm(0));
   asm.sta(mem(layout.queueCount));
   asm.label(noQueue);

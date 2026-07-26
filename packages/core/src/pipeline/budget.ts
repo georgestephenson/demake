@@ -114,9 +114,14 @@ export function enforceBudget(
   image: CompliantImage,
   spec: ConsoleSpec,
   strict: boolean,
+  reserved?: number,
 ): BudgetResult {
   const layout = spec.layout as TileLayout;
-  const budget = layout.tileBudget ?? null;
+  // A caller may own less of the bank than the console has, and says so; the
+  // hardware's own limit still applies on top of whatever it asked for.
+  const hardware = layout.tileBudget ?? null;
+  const budget =
+    reserved === undefined ? hardware : hardware === null ? reserved : Math.min(hardware, reserved);
   const flip = layout.flip === true;
   let unique = countUniqueTiles(image, flip);
   if (budget === null || unique <= budget) {

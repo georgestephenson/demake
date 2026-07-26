@@ -299,8 +299,11 @@ function demakeBackdrop(bytes: Uint8Array, consoleId: string): Backdrop {
  * that lands in the built-in font or in another game object's art. On a colour
  * build it is *more* effective, not less: two cells with the same shape under
  * different palettes are one tile and two attribute bytes.
+ *
+ * Exported because the NES needs it more, not less: a full-screen picture there is
+ * 960 cells against a Game Boy's 360, and the bank it goes into is the same size.
  */
-class TilePool {
+export class TilePool {
   private readonly byBytes = new Map<string, number>();
   private readonly added: Uint8Array[] = [];
 

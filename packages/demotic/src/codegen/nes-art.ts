@@ -39,7 +39,7 @@ import {
 import type { Program } from "../program.js";
 import { builtinChr, BUILTIN_TILES, TILE_BYTES } from "../rom/graphics.js";
 
-import { artRequests, type AssetBytes } from "./art.js";
+import { artRequests, TilePool, type AssetBytes } from "./art.js";
 import { NES_MEMORY } from "./layout.js";
 import { ART_PALETTES, SYSTEM_PALETTE, type NesEmitOptions } from "./nes/emit.js";
 
@@ -64,13 +64,26 @@ export interface BoundNesArt {
 }
 
 /**
- * The font's own ramp, as master-palette indices.
+ * The font's own ramp, chosen against the backdrop it will be read on.
  *
- * Black, then the three greys of the 2C02's own ramp. Reserved so that a caption
- * over a title screen is legible whatever the picture's fit chose — the same
- * reservation the Game Boy Color build makes, one palette of each kind.
+ * The Game Boy Color reserves a palette for the font and fills it with a fixed
+ * white-through-black ramp, because all four of its colours are free. Here colour
+ * zero of *every* background palette is the one universal backdrop — the hardware
+ * reads `$3F00` for all of them — so a font palette gets three colours and has to
+ * live with the fourth. A glyph's unlit pixels are therefore the picture's
+ * backdrop, whatever that is, and the only thing left to choose is the ink.
+ *
+ * So it is chosen: dark ink over a light backdrop and light ink over a dark one.
+ * A fixed ramp would have been white ink, which is exactly invisible on the one
+ * scene in the example library whose backdrop the fit made white.
  */
-const SYSTEM_RAMP: readonly number[] = [0x0f, 0x00, 0x10, 0x30];
+function systemRamp(backdrop: number): readonly number[] {
+  const master = getConsole("nes").color;
+  const colour = master.masterPalette?.[backdrop & 0x3f];
+  // Rec. 601 luma, which is what "light or dark" means to an eye.
+  const luma = colour ? 0.299 * colour.r + 0.587 * colour.g + 0.114 * colour.b : 0;
+  return luma > 128 ? [backdrop, 0x10, 0x00, 0x0f] : [backdrop, 0x00, 0x10, 0x30];
+}
 
 /** Pack four palettes of four master indices into the sixteen bytes the PPU takes. */
 function packPalette(
@@ -84,8 +97,10 @@ function packPalette(
     // byte four times.
     bytes[palette * 4] = backdrop;
     if (palette === SYSTEM_PALETTE) {
-      for (let colour = 1; colour < 4; colour += 1)
-        bytes[palette * 4 + colour] = SYSTEM_RAMP[colour] as number;
+      const ramp = systemRamp(backdrop);
+      for (let colour = 1; colour < 4; colour += 1) {
+        bytes[palette * 4 + colour] = ramp[colour] as number;
+      }
       continue;
     }
     const colours = palettes[palette] ?? [];
@@ -99,9 +114,10 @@ function packPalette(
 /** The palette a build with no demade art uses: the font's ramp, four times. */
 function systemOnlyPalette(): Uint8Array {
   const bytes = new Uint8Array(16);
+  const ramp = systemRamp(0x0f);
   for (let palette = 0; palette < 4; palette += 1) {
     for (let colour = 0; colour < 4; colour += 1) {
-      bytes[palette * 4 + colour] = SYSTEM_RAMP[colour] as number;
+      bytes[palette * 4 + colour] = ramp[colour] as number;
     }
   }
   return bytes;
@@ -137,7 +153,7 @@ interface Backdrop {
  * the nametable it produces and the block copy that paints it are the same
  * rectangle.
  */
-function demakeBackdrop(bytes: Uint8Array): Backdrop {
+function demakeBackdrop(bytes: Uint8Array, maxTiles: number): Backdrop {
   const spec = getConsole("nes");
   const fitted = prepSync(bytes, {
     console: "nes",
@@ -147,6 +163,10 @@ function demakeBackdrop(bytes: Uint8Array): Backdrop {
     // rather than taking it back afterwards keeps the fit honest: the tournament
     // optimises against the budget it will actually be shown with.
     maxSubPalettes: ART_PALETTES,
+    // And the same for the bank. A screenful here is 960 cells against a Game
+    // Boy's 360, and the pattern table is the same 256 either way, so a picture
+    // that was not told what it could afford would always overrun.
+    maxTiles,
   });
   const backend = backendFor("nes");
   if (!backend) throw new Error("the nes image backend is missing");
@@ -226,6 +246,7 @@ export function bindNesArt(program: Program, assets: AssetBytes): BoundNesArt {
   const options: NesEmitOptions = {};
   const backgroundArt: Uint8Array[] = [];
   let backgroundNext = BUILTIN_TILES;
+  let levelBackdrop = 0x0f;
 
   if (backgrounds) {
     const tiles = new Map<string, { tile: number }>();
@@ -235,10 +256,8 @@ export function bindNesArt(program: Program, assets: AssetBytes): BoundNesArt {
     options.tiles = tiles;
     backgroundArt.push(backgrounds.tiles);
     backgroundNext += backgrounds.uniqueTiles;
-    options.levelPalette = packPalette(
-      backgrounds.palettes,
-      backgrounds.palettes[0]?.[0]?.codes[0] ?? 0x0f,
-    );
+    levelBackdrop = backgrounds.palettes[0]?.[0]?.codes[0] ?? 0x0f;
+    options.levelPalette = packPalette(backgrounds.palettes, levelBackdrop);
   }
 
   if (objects) {
@@ -255,28 +274,42 @@ export function bindNesArt(program: Program, assets: AssetBytes): BoundNesArt {
       });
     }
     options.sprites = sprites;
-    options.objectPalette = packPalette(
-      objects.palettes,
-      // An object's colour 0 is never displayed, so the shared entry is the
-      // background's business; black keeps the block the shape the hardware reads.
-      0x0f,
-    );
+    // An object's colour 0 is never displayed, so the shared entry is the
+    // background's business — but the font ramp still has to be chosen against
+    // something, and what a HUD sprite is read *over* is the level's backdrop.
+    options.objectPalette = packPalette(objects.palettes, levelBackdrop);
   }
 
-  // A backdrop's own characters go after the level art in the background table,
-  // and its map is remapped onto them.
+  // Backdrops go after the level art in the background table, and through a pool:
+  // a cell already drawn by the built-in font, by a level tile or by an earlier
+  // picture is pointed at rather than stored again. Two title screens that share a
+  // night sky then cost one pattern between them.
+  //
+  // The budget is divided evenly among the pictures rather than given to the first
+  // one, because "whichever screen the author wrote first gets to look better" is
+  // not a decision a build should be making. Pooling can only return room, never
+  // take it, so a later picture that shares with an earlier one gets its share back.
   const backdrops = new Map<string, { map: Uint8Array; attr: Uint8Array; palette: Uint8Array }>();
-  for (const scene of backdropScenes) {
-    const art = demakeBackdrop(assets.get(scene.backdrop as string) as Uint8Array);
-    const base = backgroundNext;
+  const builtin = builtinChr();
+  const known = new Uint8Array(builtin.length + (backgrounds?.tiles.length ?? 0));
+  known.set(builtin, 0);
+  if (backgrounds) known.set(backgrounds.tiles, builtin.length);
+  const pool = new TilePool(known, backgroundNext);
+  for (const [index, scene] of backdropScenes.entries()) {
+    const left = ART_PATTERNS + BUILTIN_TILES - backgroundNext;
+    const share = Math.max(1, Math.floor(left / (backdropScenes.length - index)));
+    const art = demakeBackdrop(assets.get(scene.backdrop as string) as Uint8Array, share);
     const map = new Uint8Array(art.map.length);
     for (let cell = 0; cell < art.map.length; cell += 1) {
-      map[cell] = (base + (art.map[cell] as number)) & 0xff;
+      const local = (art.map[cell] as number) * TILE_BYTES;
+      map[cell] = pool.intern(art.chr.subarray(local, local + TILE_BYTES)) & 0xff;
     }
-    backgroundArt.push(art.chr);
-    backgroundNext += art.chr.length / TILE_BYTES;
+    backgroundNext =
+      BUILTIN_TILES + (backgrounds?.uniqueTiles ?? 0) + pool.tail().length / TILE_BYTES;
     backdrops.set(scene.name, { map, attr: art.attr, palette: art.palette });
   }
+  const pooled = pool.tail();
+  if (pooled.length > 0) backgroundArt.push(pooled);
   if (backdrops.size > 0) options.backdrops = backdrops;
   if (options.levelPalette === undefined) options.levelPalette = systemOnlyPalette();
   if (options.objectPalette === undefined) options.objectPalette = systemOnlyPalette();
