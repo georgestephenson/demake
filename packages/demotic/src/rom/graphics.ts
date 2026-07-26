@@ -234,6 +234,70 @@ function packBuiltin(encode: (rows: readonly string[]) => Uint8Array): Uint8Arra
 }
 
 /**
+ * A pattern bank holding only what one build draws, and where each thing landed.
+ *
+ * The whole bank is 64 patterns and a game uses about half of them — nobody's
+ * score needs a `?`, and a screen with no level needs no wall pattern. That is
+ * cheap on a Game Boy, whose 384 tiles are more than any of these games fill, and
+ * expensive on an NES, where the bank comes out of the same 256 a *picture* is
+ * fitted into: 34 unused glyphs are 34 patterns a title screen did not get.
+ *
+ * So the bank is pulled rather than pushed, the same rule the ROM's routines run
+ * under. The blank stays at index zero whatever else is in it, because that is
+ * what an empty cell draws and the runtime writes the number rather than looks it
+ * up.
+ */
+export interface SelectedBank {
+  /** The bank, in the plane-grouped layout the NES addresses. */
+  chr: Uint8Array;
+  /** Patterns in it. */
+  count: number;
+  /** The tile one character draws as, or the blank for one not in the bank. */
+  glyph(character: string): number;
+  /** The tile a level legend entry draws as, when it has no art. */
+  pattern(legendIndex: number, solid: boolean): number;
+  /** The tile an object draws as, when it has none. */
+  objectTile: number;
+}
+
+/** Build a bank from what a program actually draws. */
+export function selectBank(want: {
+  characters: Iterable<string>;
+  patterns: boolean;
+  objectBlock: boolean;
+}): SelectedBank {
+  const codes = new Set<number>();
+  for (const character of want.characters) {
+    const code = character.toUpperCase().charCodeAt(0);
+    if (!Number.isNaN(code) && code > FONT_FIRST && code <= FONT_LAST) codes.add(code);
+  }
+  // Sorted, so the bank is a function of the set and not of the order a program
+  // happened to mention its captions in.
+  const ordered = [...codes].sort((a, b) => a - b);
+  const cells: (readonly string[])[] = [glyphRows(" ")];
+  const index = new Map<number, number>();
+  for (const code of ordered) {
+    index.set(code, cells.length);
+    cells.push(glyphRows(String.fromCharCode(code)));
+  }
+  const patternBase = cells.length;
+  if (want.patterns) for (const pattern of PATTERNS) cells.push(pattern);
+  const objectTile = want.objectBlock ? cells.length : FONT_BASE;
+  if (want.objectBlock) cells.push(OBJECT_BLOCK);
+
+  const chr = new Uint8Array(cells.length * TILE_BYTES);
+  for (const [at, cell] of cells.entries()) chr.set(encodeChrTile(cell), at * TILE_BYTES);
+  return {
+    chr,
+    count: cells.length,
+    glyph: (character) => index.get(character.toUpperCase().charCodeAt(0)) ?? FONT_BASE,
+    pattern: (legendIndex, solid) =>
+      want.patterns ? patternBase + (solid ? 0 : 2) + (legendIndex % 2) : FONT_BASE,
+    objectTile,
+  };
+}
+
+/**
  * The tile a level legend entry draws as.
  *
  * Solid entries get a dense pattern and scenery a sparse one — see

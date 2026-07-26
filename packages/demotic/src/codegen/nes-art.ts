@@ -37,17 +37,18 @@ import {
 } from "@demake/core";
 
 import type { Program } from "../program.js";
-import { builtinChr, BUILTIN_TILES, TILE_BYTES } from "../rom/graphics.js";
+import { selectBank, TILE_BYTES, type SelectedBank } from "../rom/graphics.js";
 
 import { artRequests, TilePool, type AssetBytes } from "./art.js";
+import { artKey, instanceCells } from "./shape.js";
 import { NES_MEMORY } from "./layout.js";
 import { ART_PALETTES, SYSTEM_PALETTE, type NesEmitOptions } from "./nes/emit.js";
 
 /** Patterns one table holds; the console has two, and they do not share. */
 export const PATTERNS_PER_TABLE = 256;
 
-/** Patterns left for art once the built-in bank has its share of a table. */
-export const ART_PATTERNS = PATTERNS_PER_TABLE - BUILTIN_TILES;
+/** Background sub-palettes a picture may use: all of them (see `packBackdropPalette`). */
+export const BACKDROP_PALETTES = 4;
 
 /** What the art binding produced, beyond the emitter's own options. */
 export interface BoundNesArt {
@@ -59,6 +60,8 @@ export interface BoundNesArt {
   /** Patterns it added to each table, which is what the hardware budget is. */
   backgroundPatterns: number;
   objectPatterns: number;
+  /** Patterns the built-in bank took out of both tables. */
+  bankPatterns: number;
   /**
    * What each scene's picture was demade against, by scene name.
    *
@@ -87,11 +90,60 @@ export interface BoundNesArt {
  * scene in the example library whose backdrop the fit made white.
  */
 function systemRamp(backdrop: number): readonly number[] {
-  const master = getConsole("nes").color;
-  const colour = master.masterPalette?.[backdrop & 0x3f];
-  // Rec. 601 luma, which is what "light or dark" means to an eye.
-  const luma = colour ? 0.299 * colour.r + 0.587 * colour.g + 0.114 * colour.b : 0;
-  return luma > 128 ? [backdrop, 0x10, 0x00, 0x0f] : [backdrop, 0x00, 0x10, 0x30];
+  return luma(backdrop) > 128 ? [backdrop, 0x10, 0x00, 0x0f] : [backdrop, 0x00, 0x10, 0x30];
+}
+
+/** Rec. 601 luma of a master-palette entry, which is what "light or dark" means. */
+function luma(code: number): number {
+  const colour = getConsole("nes").color.masterPalette?.[code & 0x3f];
+  return colour ? 0.299 * colour.r + 0.587 * colour.g + 0.114 * colour.b : 0;
+}
+
+/**
+ * Pack a picture's palettes, and find the caption a colour to be read in.
+ *
+ * The Game Boy Color reserves a whole sub-palette for the font, and this build
+ * used to as well — which cost a picture a quarter of its colour. It does not have
+ * to: a caption's cells are *replaced* by glyph tiles, so the only two colours
+ * that matter there are the universal backdrop, which every palette shares, and
+ * whatever sits at the ink's index. And the fitter rarely fills every slot — three
+ * colours and a backdrop is a common answer — so the font takes a slot the picture
+ * left empty and the picture keeps all four palettes.
+ *
+ * Where the fit really did use all sixteen, the caption goes in whichever palette
+ * has the most contrast at the ink's index. That is a worse caption and a whole
+ * picture, rather than a better caption and a picture missing a palette, and it is
+ * the only case where the choice is a compromise at all.
+ */
+function packBackdropPalette(
+  palettes: readonly (readonly { codes: readonly number[] }[])[],
+  backdrop: number,
+): { bytes: Uint8Array; fontPalette: number } {
+  const bytes = new Uint8Array(16);
+  for (let palette = 0; palette < 4; palette += 1) {
+    bytes[palette * 4] = backdrop;
+    const colours = palettes[palette] ?? [];
+    for (let colour = 1; colour < 4; colour += 1) {
+      bytes[palette * 4 + colour] = colours[colour]?.codes[0] ?? backdrop;
+    }
+  }
+  const ink = systemRamp(backdrop)[3] as number;
+  for (let palette = 0; palette < 4; palette += 1) {
+    if ((palettes[palette]?.length ?? 0) <= 3) {
+      bytes[palette * 4 + 3] = ink;
+      return { bytes, fontPalette: palette };
+    }
+  }
+  let best = 0;
+  let apart = -1;
+  for (let palette = 0; palette < 4; palette += 1) {
+    const distance = Math.abs(luma(bytes[palette * 4 + 3] as number) - luma(backdrop));
+    if (distance > apart) {
+      apart = distance;
+      best = palette;
+    }
+  }
+  return { bytes, fontPalette: best };
 }
 
 /** Pack four palettes of four master indices into the sixteen bytes the PPU takes. */
@@ -133,9 +185,8 @@ function systemOnlyPalette(): Uint8Array {
 }
 
 /** Assemble the character bank: the built-in tiles in both tables, then the art. */
-function buildChr(background: Uint8Array, objects: Uint8Array): Uint8Array {
+function buildChr(builtin: Uint8Array, background: Uint8Array, objects: Uint8Array): Uint8Array {
   const chr = new Uint8Array(0x2000);
-  const builtin = builtinChr();
   // The same tiles in both tables, at the same indices. The bank is a fixed 8 KiB
   // whatever is in it, so this costs nothing and means a glyph can be drawn on
   // either layer without the runtime knowing which table it came from.
@@ -144,6 +195,53 @@ function buildChr(background: Uint8Array, objects: Uint8Array): Uint8Array {
   chr.set(background.subarray(0, 0x1000 - builtin.length), builtin.length);
   chr.set(objects.subarray(0, 0x1000 - builtin.length), 0x1000 + builtin.length);
   return chr;
+}
+
+/**
+ * The bank this program needs: the characters it draws, and whether it draws the
+ * placeholders at all.
+ *
+ * A `number` brings the ten digits and the minus sign the decimal renderer emits
+ * for a negative; a `text` brings its own letters. The level patterns come along
+ * only where a legend entry has no art to draw, and the object block only where an
+ * object has none — both of which are known once the art has been demade, which is
+ * why this is asked after the fits rather than from the program alone.
+ */
+function bankFor(
+  program: Program,
+  bound: { tiles?: ReadonlyMap<string, unknown>; sprites?: ReadonlyMap<string, unknown> },
+): SelectedBank {
+  const characters = new Set<string>([" "]);
+  let numbers = false;
+  for (const instance of program.instances) {
+    if (instance.className === "text") {
+      for (const character of instance.strings["text"] ?? "") characters.add(character);
+    }
+    if (instance.className === "number") numbers = true;
+  }
+  if (numbers) for (const character of "0123456789-") characters.add(character);
+
+  // A legend entry with art draws it; one without falls back to a pattern.
+  let patterns = false;
+  for (const scene of program.scenes) {
+    for (const tile of scene.level?.tiles ?? []) {
+      const art = tile.art;
+      if (art === undefined || !(bound.tiles?.has(artKey(art, 1, 1)) || bound.tiles?.has(art))) {
+        patterns = true;
+      }
+    }
+  }
+  let objectBlock = false;
+  for (const instance of program.instances) {
+    const asset = instance.strings["sprite"];
+    if (asset === undefined) continue;
+    const width = instanceCells(instance, "width");
+    const height = instanceCells(instance, "height");
+    if (!(bound.sprites?.has(artKey(asset, width, height)) || bound.sprites?.has(asset))) {
+      objectBlock = true;
+    }
+  }
+  return selectBank({ characters, patterns, objectBlock });
 }
 
 /**
@@ -173,6 +271,8 @@ interface Backdrop {
   map: Uint8Array;
   attr: Uint8Array;
   palette: Uint8Array;
+  /** The palette a caption over it is drawn in — see {@link packBackdropPalette}. */
+  fontPalette: number;
 }
 
 /**
@@ -189,10 +289,10 @@ function demakeBackdrop(bytes: Uint8Array, maxTiles: number): Backdrop {
     console: "nes",
     size: { w: NES_MEMORY.viewW * 8, h: NES_MEMORY.viewH * 8 },
     fit: "cover",
-    // One palette is the font's, so a picture gets the rest. Reserving it here
-    // rather than taking it back afterwards keeps the fit honest: the tournament
-    // optimises against the budget it will actually be shown with.
-    maxSubPalettes: ART_PALETTES,
+    // All four. A picture is not asked to give one up for the font any more: a
+    // caption takes a colour slot the fit left empty, and only compromises where
+    // it left none (see {@link packBackdropPalette}).
+    maxSubPalettes: BACKDROP_PALETTES,
     // And the same for the bank. A screenful here is 960 cells against a Game
     // Boy's 360, and the pattern table is the same 256 either way, so a picture
     // that was not told what it could afford would always overrun.
@@ -209,14 +309,16 @@ function demakeBackdrop(bytes: Uint8Array, maxTiles: number): Backdrop {
   const find = (suffix: string): Uint8Array =>
     artifacts.find((artifact) => artifact.suffix === suffix)?.bytes ?? new Uint8Array(0);
   const backdrop = fitted.image.palettes[0]?.colors[0]?.codes[0] ?? 0x0f;
+  const packed = packBackdropPalette(
+    fitted.image.palettes.map((palette) => palette.colors),
+    backdrop,
+  );
   return {
     chr: find(".chr.bin"),
     map: find(".nam.bin"),
     attr: find(".attr.bin"),
-    palette: packPalette(
-      fitted.image.palettes.map((palette) => palette.colors),
-      backdrop,
-    ),
+    palette: packed.bytes,
+    fontPalette: packed.fontPalette,
   };
 }
 
@@ -273,9 +375,18 @@ export function bindNesArt(program: Program, assets: AssetBytes): BoundNesArt {
   const objects = demakeBank("sprite");
   const backgrounds = demakeBank("tile");
 
-  const options: NesEmitOptions = {};
+  // What the built-in bank has to hold is known once the art is demade: a legend
+  // entry or an object that got real art needs no placeholder. The bank's size
+  // then sets where everything else in the table starts.
+  const bank = bankFor(program, {
+    tiles: new Map((backgrounds?.art ?? new Map()).entries()),
+    sprites: new Map((objects?.art ?? new Map()).entries()),
+  });
+  const BANK = bank.count;
+
+  const options: NesEmitOptions = { bank };
   const backgroundArt: Uint8Array[] = [];
-  let backgroundNext = BUILTIN_TILES;
+  let backgroundNext = BANK;
   let levelBackdrop = 0x0f;
 
   if (backgrounds) {
@@ -297,7 +408,7 @@ export function bindNesArt(program: Program, assets: AssetBytes): BoundNesArt {
     >();
     for (const [name, art] of objects.art) {
       sprites.set(name, {
-        tile: BUILTIN_TILES + art.tile,
+        tile: BANK + art.tile,
         width: art.width,
         height: art.height,
         palette: art.palette,
@@ -327,13 +438,18 @@ export function bindNesArt(program: Program, assets: AssetBytes): BoundNesArt {
   // objects are read from.
   const backdrops = new Map<
     string,
-    { map: Uint8Array; attr: Uint8Array; palette: Uint8Array; table: 0 | 1 }
+    {
+      map: Uint8Array;
+      attr: Uint8Array;
+      palette: Uint8Array;
+      table: 0 | 1;
+      fontPalette: number;
+    }
   >();
-  const builtin = builtinChr();
   const objectArt = objects?.tiles ?? new Uint8Array(0);
   const pools = [
-    newPool(builtin, backgrounds?.tiles, backgroundNext),
-    newPool(builtin, objectArt, BUILTIN_TILES + objectArt.length / TILE_BYTES),
+    newPool(bank.chr, backgrounds?.tiles, backgroundNext),
+    newPool(bank.chr, objectArt, BANK + objectArt.length / TILE_BYTES),
   ] as const;
   const backdropFits = new Map<string, { table: 0 | 1; budget: number }>();
   for (const scene of backdropScenes) {
@@ -350,7 +466,13 @@ export function bindNesArt(program: Program, assets: AssetBytes): BoundNesArt {
       const local = (art.map[cell] as number) * TILE_BYTES;
       map[cell] = pool.intern(art.chr.subarray(local, local + TILE_BYTES)) & 0xff;
     }
-    backdrops.set(scene.name, { map, attr: art.attr, palette: art.palette, table });
+    backdrops.set(scene.name, {
+      map,
+      attr: art.attr,
+      palette: art.palette,
+      table,
+      fontPalette: art.fontPalette,
+    });
   }
   const pooled = pools[0].tail();
   if (pooled.length > 0) backgroundArt.push(pooled);
@@ -365,10 +487,11 @@ export function bindNesArt(program: Program, assets: AssetBytes): BoundNesArt {
 
   return {
     options,
-    chr: buildChr(background, objectTiles),
+    chr: buildChr(bank.chr, background, objectTiles),
     tiles: background.length / TILE_BYTES + objectTiles.length / TILE_BYTES,
     backgroundPatterns: background.length / TILE_BYTES,
     objectPatterns: objectTiles.length / TILE_BYTES,
+    bankPatterns: BANK,
     backdropFits,
     missing,
   };

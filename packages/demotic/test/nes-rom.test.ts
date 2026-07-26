@@ -38,11 +38,11 @@ import {
 import { Nes } from "@demake/nes";
 
 import { buildNesRom } from "../src/codegen/nes.js";
-import { bindNesArt } from "../src/codegen/nes-art.js";
-import { ART_PALETTES } from "../src/codegen/nes/emit.js";
+import { bindNesArt, BACKDROP_PALETTES } from "../src/codegen/nes-art.js";
+import { SYSTEM_PALETTE } from "../src/codegen/nes/emit.js";
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
-import { builtinChr, BUILTIN_TILES, TILE_BYTES } from "../src/rom/graphics.js";
+import { BUILTIN_TILES, TILE_BYTES, type SelectedBank } from "../src/rom/graphics.js";
 
 const fixtures = join(import.meta.dirname, "..", "fixtures");
 const read = (name: string) => readFileSync(join(fixtures, name), "utf8");
@@ -76,15 +76,39 @@ describe("the NES cartridge", () => {
   });
 
   it("puts the built-in patterns in both tables, because the bank is fixed anyway", () => {
-    const builtin = builtinChr();
-    const background = built.bytes.subarray(NES_CHR_OFFSET, NES_CHR_OFFSET + builtin.length);
+    const bank = bindNesArt(build("pong.dmt"), new Map()).options.bank as SelectedBank;
+    const background = built.bytes.subarray(NES_CHR_OFFSET, NES_CHR_OFFSET + bank.chr.length);
     const objects = built.bytes.subarray(
       NES_CHR_OFFSET + 0x1000,
-      NES_CHR_OFFSET + 0x1000 + builtin.length,
+      NES_CHR_OFFSET + 0x1000 + bank.chr.length,
     );
-    expect([...background]).toEqual([...builtin]);
-    expect([...objects]).toEqual([...builtin]);
-    expect(builtin.length).toBe(BUILTIN_TILES * TILE_BYTES);
+    expect([...background]).toEqual([...bank.chr]);
+    expect([...objects]).toEqual([...bank.chr]);
+    expect(bank.chr.length).toBe(bank.count * TILE_BYTES);
+  });
+
+  it("pulls the bank, so a game pays for the characters it draws", () => {
+    // The whole font is 59 glyphs and pong writes about a dozen. On a Game Boy
+    // that costs nothing — 384 tiles is more than these games fill — and here it
+    // comes out of the 256 a *picture* is fitted into.
+    const bank = bindNesArt(build("pong.dmt"), new Map()).options.bank as SelectedBank;
+    expect(bank.count).toBeLessThan(BUILTIN_TILES);
+    // The blank stays at zero whatever else is in the bank: it is what an empty
+    // cell draws, and the runtime writes that number rather than looking it up.
+    expect(bank.glyph(" ")).toBe(0);
+    expect(bank.glyph("?")).toBe(0); // not drawn by this game, so it is the blank
+    // And what the game does draw is in it, at distinct indices — every character
+    // of every caption it writes, taken from the program rather than guessed at.
+    const program = build("pong.dmt");
+    const captions = program.instances
+      .filter((instance) => instance.className === "text")
+      .flatMap((instance) => [...(instance.strings["text"] ?? "")])
+      .map((character) => character.toUpperCase())
+      .filter((character) => character !== " ");
+    expect(captions.length).toBeGreaterThan(0);
+    const tiles = [...new Set(captions)].map((character) => bank.glyph(character));
+    expect(tiles.every((tile) => tile > 0)).toBe(true);
+    expect(new Set(tiles).size).toBe(tiles.length);
   });
 });
 
@@ -155,7 +179,7 @@ describe("the NES art budget", { timeout: ART_TIMEOUT }, () => {
         console: "nes",
         size: { w: 32 * 8, h: 30 * 8 },
         fit: "cover",
-        maxSubPalettes: ART_PALETTES,
+        maxSubPalettes: BACKDROP_PALETTES,
         maxTiles: (fit as { budget: number }).budget,
       }).image;
       const artifacts = backend?.emitBin(image, spec, {
@@ -364,10 +388,29 @@ describe("what the NES actually draws", () => {
     const built = buildNesRom(program, { assets });
     const machine = new Nes(built.bytes);
     for (let frame = 0; frame < 40; frame += 1) machine.runFrame();
-    // The font's palette is the last of the four; its ink is colour three, and the
-    // backdrop every palette shares is colour zero of the first.
+    // No palette is reserved for the font any more — the caption goes in whichever
+    // one the picture left a colour slot in — so the test asks the build which it
+    // chose rather than assuming the last. The ink is colour three of it, and the
+    // backdrop every palette shares is colour zero.
+    // This build supplies object art but no title picture, so there is no palette
+    // pressure and the font keeps the reserved one; a scene *with* a picture is
+    // told which palette the fit left room in.
+    const bound = bindNesArt(program, assets);
+    const font = bound.options.backdrops?.get("title")?.fontPalette ?? SYSTEM_PALETTE;
     const backdrop = machine.ppu.palette[0] as number;
-    const ink = machine.ppu.palette[3 * 4 + 3] as number;
+    const ink = machine.ppu.palette[font * 4 + 3] as number;
     expect(ink).not.toBe(backdrop);
+    // And it is a real difference, not a neighbouring shade of the same colour.
+    expect(contrast(ink, backdrop)).toBeGreaterThan(60);
   });
 });
+
+/** How far apart two master-palette entries look, as Rec. 601 luma. */
+function contrast(a: number, b: number): number {
+  const master = getConsole("nes").color.masterPalette ?? [];
+  const luma = (code: number): number => {
+    const colour = master[code & 0x3f];
+    return colour ? 0.299 * colour.r + 0.587 * colour.g + 0.114 * colour.b : 0;
+  };
+  return Math.abs(luma(a) - luma(b));
+}

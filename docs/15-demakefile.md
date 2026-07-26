@@ -262,12 +262,28 @@ pattern behind all 960 cells, so "no second art converter" is checked rather tha
 asserted from the call graph.
 
 Which makes the budget the whole of the quality, and it is worth spending the
-hardware on. The NES has **two** pattern tables and `PPUCTRL` bit 4 chooses which
-one the background layer reads, so a game's pictures are given one each rather
-than halving a single table between them: 96 patterns became 162–192 across the
-example library, and the shooter's title screen went from merging 216 of its 960
-cells to merging 57. A console with one table shares it, and the reported budget
-says so.
+hardware on. Three things came out of doing that on the NES, and the first two are
+the console's own facilities rather than cleverness:
+
+- **Two pattern tables.** `PPUCTRL` bit 4 chooses which one the background layer
+  reads, so a game's pictures are given one each rather than halving a single
+  table between them.
+- **A pulled built-in bank.** The font, the level patterns and the placeholder
+  block are 64 patterns and a game draws about 25 of them — nobody's score needs
+  a `?`. On a Game Boy that costs nothing; here it comes out of the same 256 a
+  picture is fitted into, so only what a program actually writes is emitted. The
+  blank stays at index zero, because that is what an empty cell draws.
+- **No reserved palette.** A caption's cells are *replaced* by glyph tiles, so
+  only two colours matter there: the universal backdrop every palette shares, and
+  whatever sits at the ink's index. The fitter rarely fills all sixteen slots, so
+  the font takes one the picture left empty and the picture keeps all four
+  sub-palettes. Where the fit really did use every slot, the caption goes in the
+  palette with the most contrast at that index — a worse caption and a whole
+  picture, rather than the reverse.
+
+Together those took a title screen from **96 patterns to 201–231** and from three
+sub-palettes to four; the shooter's merged 216 of its 960 cells and now merges
+none. A console with one table shares it, and the reported budget says so.
 
 Steps 3–4 live in `packages/core/src/pipeline/sprite.ts`, beside the rest of the
 pipeline. The Demakefile only decides what is fed in and with which options; with

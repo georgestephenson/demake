@@ -34,7 +34,7 @@ import { AUDIO_STOP, type NesGameAudio } from "@demake/audio";
 import { abs, absX, imm, immHigh, immLow, indY, label, type Ref } from "@demake/core";
 
 import type { InstanceDef, RuleDef } from "../../program.js";
-import { glyphTile, OBJECT_TILE, patternTile } from "../../rom/graphics.js";
+import type { SelectedBank } from "../../rom/graphics.js";
 import { isMutable } from "../analyze.js";
 import { emitTickSteps, type TickSteps } from "../backend.js";
 import { ENTITY_SIZE, PROPS, TILE_CONTACT_MAX, W } from "../layout.js";
@@ -158,8 +158,16 @@ export interface NesEmitOptions {
       palette: Uint8Array;
       /** Which pattern table this picture's tiles went into (doc 15 §Budgets). */
       table: 0 | 1;
+      /** The palette a caption over this picture is drawn in. */
+      fontPalette: number;
     }
   >;
+  /**
+   * The built-in bank this build pulled, and where each glyph and pattern is in
+   * it. Absent only in a context that emits no code — everything that draws a
+   * character asks it rather than computing an index from a character code.
+   */
+  bank?: SelectedBank;
   /** The palette a level's tile art and the built-in patterns are drawn with. */
   levelPalette?: Uint8Array;
   /** The object palettes: three the art chose, then the font's ramp. */
@@ -234,7 +242,7 @@ export function emitProgram(ctx: NesCtx, options: NesEmitOptions = {}): void {
         ? (options.tiles?.get(artKey(art, 1, 1)) ?? options.tiles?.get(art))
         : undefined;
       // A legend entry with no art draws a built-in pattern.
-      return bound?.tile ?? patternTile(index, level.file.tiles[index]?.solid ?? false);
+      return bound?.tile ?? ctx.bank.pattern(index, level.file.tiles[index]?.solid ?? false);
     };
     emitLevelData(asm, level, (index) => boundTile(index) & 0xff);
     emitTileAt(ctx, level);
@@ -1412,11 +1420,15 @@ function sceneAttributes(ctx: NesCtx, scene: SceneCtx, options: NesEmitOptions):
   if (backdrop) table.set(backdrop.attr.subarray(0, 64), 0);
   if (scrolls(ctx, scene)) return table; // a scrolling scene draws its HUD with objects
 
+  // The palette a caption is drawn in is the one the picture left room in, not a
+  // reserved one — see `nes-art.ts` §the font's slot. A scene with no picture has
+  // all four to itself and keeps the last.
+  const font = backdrop?.fontPalette ?? SYSTEM_PALETTE;
   const set = (column: number, row: number): void => {
     if (column < 0 || row < 0 || column >= MAP_W || row >= MAP_H) return;
     const at = (row >> 2) * 8 + (column >> 2);
     const quadrant = ((row & 2) << 1) | (column & 2);
-    table[at] = ((table[at] as number) & ~(3 << quadrant)) | (SYSTEM_PALETTE << quadrant);
+    table[at] = ((table[at] as number) & ~(3 << quadrant)) | (font << quadrant);
   };
   for (const id of scene.def.instanceIds) {
     const instance = ctx.program.instances[id] as InstanceDef;
@@ -1707,7 +1719,7 @@ function emitHud(ctx: NesCtx, scene: SceneCtx, want: "static" | "dynamic"): void
     if (isText) {
       const text = instance.strings["text"] ?? "";
       for (const character of [...text].slice(0, MAP_W)) {
-        asm.lda(imm(glyphTile(character)));
+        asm.lda(imm(ctx.bank.glyph(character)));
         asm.jsr(plot);
       }
     } else {
@@ -1850,7 +1862,7 @@ function emitOam(ctx: NesCtx, scene: SceneCtx, options: NesEmitOptions, pinnedRo
     const palette = art?.palette ?? SYSTEM_PALETTE;
     for (let row = 0; row < height; row += 1) {
       for (let column = 0; column < width; column += 1) {
-        const tile = art ? art.tile + row * art.width + column : OBJECT_TILE;
+        const tile = art ? art.tile + row * art.width + column : ctx.bank.objectTile;
         emitSpriteCell(ctx, column, row, tile, palette);
       }
     }
@@ -1901,7 +1913,7 @@ function emitHudSprites(ctx: NesCtx, scene: SceneCtx): void {
     if (isText) {
       const text = instance.strings["text"] ?? "";
       for (const character of [...text].slice(0, MAP_W)) {
-        asm.lda(imm(glyphTile(character)));
+        asm.lda(imm(ctx.bank.glyph(character)));
         asm.jsr(needHudGlyph(ctx));
       }
     } else {
@@ -2421,7 +2433,7 @@ function emitDecimal(ctx: NesCtx, plot: Ref): void {
   asm.lda(imm(0));
   asm.sbc(mem(value, 1));
   asm.sta(mem(value, 1));
-  asm.lda(imm(glyphTile("-")));
+  asm.lda(imm(ctx.bank.glyph("-")));
   asm.jsr(plot);
   asm.label(positive);
 
@@ -2465,7 +2477,7 @@ function emitDecimal(ctx: NesCtx, plot: Ref): void {
   asm.sta(mem(flag));
   asm.clc();
   asm.lda(mem(digit));
-  asm.adc(imm(glyphTile("0")));
+  asm.adc(imm(ctx.bank.glyph("0")));
   asm.jsr(plot);
   asm.label(skipDigit);
   asm.clc();

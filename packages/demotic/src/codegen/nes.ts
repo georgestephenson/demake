@@ -29,7 +29,6 @@ import { AsmError, NES_CHR_SIZE, NES_PRG_ORIGIN, NES_PRG_SIZE, packInesRom } fro
 
 import { getProfile } from "../profiles.js";
 import type { Program } from "../program.js";
-import { BUILTIN_TILES } from "../rom/graphics.js";
 
 import { type Analysis } from "./analyze.js";
 import type { AssetBytes } from "./art.js";
@@ -45,7 +44,7 @@ import {
   type BuiltRom,
 } from "./backend.js";
 import { NES_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
-import { ART_PATTERNS, bindNesArt, type BoundNesArt } from "./nes-art.js";
+import { bindNesArt, PATTERNS_PER_TABLE, type BoundNesArt } from "./nes-art.js";
 import { NesCtx } from "./nes/ctx.js";
 import { emitProgram, type NesEmitOptions } from "./nes/emit.js";
 
@@ -123,12 +122,13 @@ export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
   checkTiles(program: Program, art: BoundAssets<NesEmitOptions>): void {
     const bound = banks.get(art.emit);
     if (!bound) return;
+    const room = PATTERNS_PER_TABLE - bound.bankPatterns;
     const over = (kind: string, used: number): void => {
-      if (used <= ART_PATTERNS) return;
+      if (used <= room) return;
       const backdrops = program.scenes.filter((scene) => scene.backdrop !== undefined).length;
       throw new BuildError(
         "E_BACKDROP_TILES",
-        `this game needs ${used + BUILTIN_TILES} ${kind} patterns and the NES has ${ART_PATTERNS + BUILTIN_TILES}`,
+        `this game needs ${used + bound.bankPatterns} ${kind} patterns and the NES has ${PATTERNS_PER_TABLE}`,
         backdrops > 0
           ? "a backdrop costs one pattern per distinct 8x8 cell — flatter areas and repeated motifs cost fewer"
           : "fewer objects, or smaller ones; every distinct 8x8 cell of art is a pattern",
@@ -190,6 +190,7 @@ export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
       layout,
       getProfile(program.profile.id),
       NES_PRG_ORIGIN,
+      art.bank,
     );
     if (audio.hooks) {
       ctx.audio = {
