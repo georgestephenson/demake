@@ -215,12 +215,13 @@ export const SMS_MEMORY: MemoryPlan = {
   oamEntries: 64,
   viewW: 32,
   viewH: 24,
-  // A blanking interval here is about 2900 CPU cycles and a queued cell is two
-  // bytes through one port, so the budget is between the Game Boy's and the
-  // NES's — and the *cells* are twice as expensive, because a name-table entry
-  // is two bytes rather than one.
-  queueMax: 96,
-  plotMax: 48,
+  // A queued cell here carries its own address as well as two bytes of data, so
+  // an entry is four bytes and the count of them is a *byte* — which caps the
+  // queue at sixty rather than at what a blanking interval would hold. Sixty is
+  // what a diagonal scroll needs: a column of twenty-five and a row of
+  // thirty-three, painted in the same frame.
+  queueMax: 60,
+  plotMax: 40,
   // A name-table entry carries its palette-select and flip bits in a second
   // byte, so a queued cell is a tile *and* an attribute — the same shape as the
   // Game Boy Color's, reached by different hardware.

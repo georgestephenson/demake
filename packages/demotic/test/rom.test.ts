@@ -26,7 +26,15 @@ import { tape, trace } from "../src/trace.js";
 
 import { romReady } from "../src/rom/trace.js";
 
-import { gbTarget, gbcTarget, nesTarget, RomRunner, romTrace } from "./_rom-harness.js";
+import {
+  gbTarget,
+  gbcTarget,
+  ggTarget,
+  nesTarget,
+  RomRunner,
+  romTrace,
+  smsTarget,
+} from "./_rom-harness.js";
 
 const fixtures = join(import.meta.dirname, "..", "fixtures");
 const read = (name: string) => readFileSync(join(fixtures, name), "utf8");
@@ -97,7 +105,7 @@ describe("ROM conformance across the example library", () => {
   // byte — this is where it would show, and it would name the tick. And the NES,
   // because a second CPU is where an arithmetic or an ordering difference would
   // surface, and the whole point of the shared spine is that neither can.
-  for (const target of [gbTarget, gbcTarget, nesTarget]) {
+  for (const target of [gbTarget, gbcTarget, nesTarget, smsTarget, ggTarget]) {
     for (const [file, script, levels] of cases) {
       it(`matches the interpreter for ${file} on ${target.console}`, () => {
         const program = build(read(file), levels, target.console);

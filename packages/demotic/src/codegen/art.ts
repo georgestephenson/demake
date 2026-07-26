@@ -307,14 +307,23 @@ export class TilePool {
   private readonly byBytes = new Map<string, number>();
   private readonly added: Uint8Array[] = [];
 
-  /** `existing` is everything already in the bank, in bank order. */
+  /**
+   * `existing` is everything already in the bank, in bank order.
+   *
+   * `stride` is how many bytes one tile takes, which is the *hardware's*
+   * business and not the pool's: a Game Boy tile is sixteen bytes, an NES
+   * character sixteen, a Sega 4bpp tile thirty-two. Nothing else about this
+   * class depends on what is inside a tile, which is why one parameter is
+   * enough to make it serve all three.
+   */
   constructor(
     existing: Uint8Array,
     private readonly base: number,
+    private readonly stride: number = TILE_BYTES,
   ) {
-    for (let at = 0; at + TILE_BYTES <= existing.length; at += TILE_BYTES) {
-      const key = TilePool.key(existing.subarray(at, at + TILE_BYTES));
-      if (!this.byBytes.has(key)) this.byBytes.set(key, at / TILE_BYTES);
+    for (let at = 0; at + stride <= existing.length; at += stride) {
+      const key = TilePool.key(existing.subarray(at, at + stride));
+      if (!this.byBytes.has(key)) this.byBytes.set(key, at / stride);
     }
   }
 
@@ -335,8 +344,8 @@ export class TilePool {
 
   /** Tiles this pool appended, in bank order. */
   tail(): Uint8Array {
-    const out = new Uint8Array(this.added.length * TILE_BYTES);
-    this.added.forEach((tile, index) => out.set(tile, index * TILE_BYTES));
+    const out = new Uint8Array(this.added.length * this.stride);
+    this.added.forEach((tile, index) => out.set(tile, index * this.stride));
     return out;
   }
 }

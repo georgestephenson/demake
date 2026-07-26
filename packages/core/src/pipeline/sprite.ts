@@ -49,9 +49,6 @@ import { makeColorSpace, type HwColor, type HwColorSpace } from "./hwcolor.js";
 import { latticeKmeans, type Points } from "./kmeans.js";
 import type { PaletteColor } from "./types.js";
 
-/** Bytes per 8×8 2bpp tile — the only sprite format this path emits today. */
-const TILE_BYTES = 16;
-
 /** Default seed for the colour fit, matching `prep`'s. */
 const DEFAULT_SEED = 0x9e3779b9;
 
@@ -141,14 +138,30 @@ export interface SpriteOptions {
   /**
    * How the two bitplanes of a tile are arranged.
    *
-   * `interleaved` puts them byte by byte down the rows, which is what the Game Boy
-   * addresses; `grouped` stores the whole low plane then the whole high plane,
-   * which is what the NES does. It is the hardware's business and not the art's —
-   * the same picture, packed two ways — so it is a flag here rather than a second
-   * conversion, and the `nes` image backend packs its character data the same way.
+   * `interleaved` puts them byte by byte down the rows, which is what the Game
+   * Boy addresses; `grouped` stores the whole low plane then the whole high
+   * plane, which is what the NES does; `planar` writes every plane of a row
+   * before the next row, which is the Sega VDP's layout and the only one that
+   * generalises past two bits. It is the hardware's business and not the art's —
+   * the same picture, packed three ways — so it is a flag here rather than a
+   * second conversion, and each family's image backend packs its own data the
+   * same way.
    */
-  packing?: "interleaved" | "grouped";
+  packing?: Packing;
+  /**
+   * Colours one palette may use, rather than the console's whole palette.
+   *
+   * The same reservation `maxPalettes` makes, for a machine that has no spare
+   * palette to reserve. A Sega VDP has exactly two sixteen-colour banks and the
+   * sprites must have one of them, so `demake build` keeps three entries at the
+   * top back for the font and says so here — the fit then chooses thirteen
+   * colours it can really have instead of sixteen it cannot.
+   */
+  maxColors?: number;
 }
+
+/** How a tile's bitplanes are arranged in memory. */
+export type Packing = "interleaved" | "grouped" | "planar";
 
 /** A downscaled sprite in linear light, with straight alpha kept separate. */
 interface Sampled {
@@ -299,29 +312,38 @@ function stretch(light: number, lo: number, span: number, steps: number): number
   return Math.round((1 - clamped) * (steps - 1));
 }
 
-/** Pack one 8×8 block of colour indices into 2bpp, in the console's layout. */
+/**
+ * Pack one 8×8 block of colour indices, in the console's own bitplane layout.
+ *
+ * Three layouts, one picture. `interleaved` puts the two planes byte by byte
+ * down the rows, which is what the Game Boy addresses; `grouped` stores the
+ * whole low plane then the whole high plane, which is the NES's character
+ * format; `planar` writes every plane of a row before moving on, which is what
+ * the Sega VDP reads and is the only one of the three that generalises past two
+ * bits. Which one a console wants is the hardware's business and not the art's.
+ */
 function packTile(
   indices: Uint8Array,
   width: number,
   originX: number,
   originY: number,
-  packing: "interleaved" | "grouped",
+  packing: Packing,
+  bpp: number,
 ): Uint8Array {
-  const bytes = new Uint8Array(TILE_BYTES);
+  const bytes = new Uint8Array(8 * bpp);
   for (let row = 0; row < 8; row += 1) {
-    let low = 0;
-    let high = 0;
+    const planes = new Uint8Array(bpp);
     for (let column = 0; column < 8; column += 1) {
       const value = indices[(originY + row) * width + originX + column] as number;
-      if (value & 1) low |= 0x80 >> column;
-      if (value & 2) high |= 0x80 >> column;
+      for (let plane = 0; plane < bpp; plane += 1) {
+        if ((value >> plane) & 1) planes[plane] = (planes[plane] as number) | (0x80 >> column);
+      }
     }
-    if (packing === "grouped") {
-      bytes[row] = low;
-      bytes[row + 8] = high;
-    } else {
-      bytes[row * 2] = low;
-      bytes[row * 2 + 1] = high;
+    for (let plane = 0; plane < bpp; plane += 1) {
+      const byte = planes[plane] as number;
+      if (packing === "grouped") bytes[plane * 8 + row] = byte;
+      else if (packing === "planar") bytes[row * bpp + plane] = byte;
+      else bytes[row * bpp + plane] = byte;
     }
   }
   return bytes;
@@ -521,17 +543,22 @@ export function buildSpriteBank(
       `the sprite path emits 8×8 tiles and ${spec.name} does not use them`,
     );
   }
-  if ((layout as TileLayout).bpp !== 2) {
+  const bpp = (layout as TileLayout).bpp;
+  if (bpp !== 2 && bpp !== 4) {
     throw new DemakeError(
       "E_UNSUPPORTED_FAMILY",
-      `the sprite path emits 2bpp tiles and ${spec.name} uses ${(layout as TileLayout).bpp}bpp`,
+      `the sprite path emits 2bpp and 4bpp tiles and ${spec.name} uses ${bpp}bpp`,
     );
   }
 
   const cutoff = options.alphaCutoff ?? 0.5;
   const opaque = options.opaque === true;
   const tiles = layout as TileLayout;
-  const total = spec.color.shades ?? tiles.subPalettes.size;
+  const declared = spec.color.shades ?? tiles.subPalettes.size;
+  // A caller that does not own the whole palette says so, exactly as it does for
+  // sub-palettes and for tiles; the fit is then honest about what it has rather
+  // than being trimmed after the fact.
+  const total = Math.max(2, Math.min(declared, options.maxColors ?? declared));
   // Index 0 is transparency, so an object has one fewer colour than a tile.
   const usable = Math.max(1, opaque ? total : total - 1);
 
@@ -560,7 +587,7 @@ export function buildSpriteBank(
     const placements: number[] = [];
     for (let row = 0; row < source.cellsHigh; row += 1) {
       for (let column = 0; column < source.cellsWide; column += 1) {
-        const packed = packTile(indices, width, column * 8, row * 8, packing);
+        const packed = packTile(indices, width, column * 8, row * 8, packing, bpp);
         // A hex key rather than an object identity: two identical tiles from
         // different assets must collapse, which is the whole point of step 4.
         let key = "";
@@ -594,8 +621,9 @@ export function buildSpriteBank(
     });
   });
 
-  const bytes = new Uint8Array(bank.length * TILE_BYTES);
-  bank.forEach((tile, index) => bytes.set(tile, index * TILE_BYTES));
+  const stride = 8 * bpp;
+  const bytes = new Uint8Array(bank.length * stride);
+  bank.forEach((tile, index) => bytes.set(tile, index * stride));
   return {
     tiles: bytes,
     art,

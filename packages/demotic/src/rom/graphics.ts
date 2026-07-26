@@ -212,6 +212,45 @@ export function builtinChr(): Uint8Array {
   return packBuiltin(encodeChrTile);
 }
 
+/** Bytes per Sega 4bpp tile: four bitplane bytes per row. */
+export const SEGA_TILE_BYTES = 32;
+
+/**
+ * The same bank again, as Sega 4bpp — four bitplanes interleaved by row.
+ *
+ * `ink` is where the brightest of the four authored shades lands, and the two
+ * below it follow. The parameter exists because *which* colours the runtime art
+ * may use is the backend's decision and not the font's: the Sega VDP has two
+ * sixteen-colour banks and no third to reserve, so `demake build` keeps three
+ * entries at the top of one of them and re-indexes these pictures onto exactly
+ * those. Shade zero stays index zero, which is transparency for a sprite and the
+ * bank's own colour zero for a background cell — so one glyph draws correctly on
+ * either layer.
+ */
+export function builtinSega(ink: number): Uint8Array {
+  const bank = new Uint8Array(BUILTIN_TILES * SEGA_TILE_BYTES);
+  // Shades 1, 2 and 3 become the three reserved entries, brightest last.
+  const map = [0, ink - 2, ink - 1, ink];
+  let at = 0;
+  for (const cell of builtinCells()) {
+    for (let y = 0; y < 8; y += 1) {
+      const row = cell[y] ?? "";
+      for (let x = 0; x < 8; x += 1) {
+        const shade = Number.parseInt(row[x] ?? "0", 10) || 0;
+        const colour = map[shade] as number;
+        for (let plane = 0; plane < 4; plane += 1) {
+          if ((colour >> plane) & 1) {
+            const index = at + y * 4 + plane;
+            bank[index] = (bank[index] as number) | (0x80 >> x);
+          }
+        }
+      }
+    }
+    at += SEGA_TILE_BYTES;
+  }
+  return bank;
+}
+
 /** The cells of the built-in bank, in order, as 8×8 colour-index rows. */
 export function builtinCells(): readonly (readonly string[])[] {
   const cells: (readonly string[])[] = [];
