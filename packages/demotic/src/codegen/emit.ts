@@ -576,6 +576,111 @@ function emitSceneCamera(ctx: Ctx, scene: SceneCtx): void {
 // --- 6. tiles ----------------------------------------------------------------
 
 /**
+ * Can this object's overlapped cells be walked once and read by every rule?
+ *
+ * Only if nothing in the tile phase can move it: the interpreter recomputes the
+ * list per rule, so caching it is equivalent exactly when the answer cannot have
+ * changed in between. That is a compile-time question — which assignments a tile
+ * rule makes — so it is asked here rather than guessed.
+ */
+function tileCellsCacheable(ctx: Ctx, scene: SceneCtx, subjectId: number): boolean {
+  const box = new Set(["x", "y", "width", "height"]);
+  for (const rule of ctx.program.rules) {
+    if (rule.event.kind !== "hits" || rule.event.tiles.length === 0) continue;
+    if (rule.scene !== undefined && rule.scene !== scene.def.name) continue;
+    for (const assignment of [...rule.assignments, ...(rule.otherwise ?? [])]) {
+      if (assignment.target.kind !== "prop" || !box.has(assignment.target.prop)) continue;
+      const entity = assignment.target.entity;
+      if (entity.kind === "instance" && entity.id === subjectId) return false;
+      if (entity.kind === "subject" && rule.event.subjects.includes(subjectId)) return false;
+      if (entity.kind === "other") return false;
+    }
+  }
+  return true;
+}
+
+/** Where one subject's cell list lives. */
+function cellSlot(ctx: Ctx, subjectId: number): number {
+  const index = ctx.layout.tileCellSlots.get(subjectId);
+  if (index === undefined) throw new Error(`no tile cell list for object ${subjectId}`);
+  return ctx.layout.tileCells + index * ctx.layout.tileCellStride;
+}
+
+/** Walk the grid once and record every cell this object overlaps. */
+function emitFillCells(ctx: Ctx, subjectId: number, level: LevelData): void {
+  const { asm, layout } = ctx;
+  const base = layout.entities[subjectId] as number;
+  const list = cellSlot(ctx, subjectId);
+  const col = layout.words + W.tileCol * 2;
+  const row = layout.words + W.tileRow * 2;
+
+  asm.alu("xor", "a");
+  asm.sta(list);
+  emitTilesUnder(ctx, base, level, () => {
+    const next = ctx.unique("cellSkip");
+    asm.aluN("cp", GRID_EMPTY);
+    asm.jp(next, "z");
+    asm.ld("c", "a");
+    asm.lda(list);
+    asm.aluN("cp", TILE_CONTACT_MAX);
+    asm.jp(next, "nc");
+    // hl = list + 1 + count * 5
+    asm.ld("l", "a");
+    asm.ldn("h", 0);
+    asm.addHL("hl");
+    asm.addHL("hl");
+    asm.ld("d", "h");
+    asm.ld("e", "l");
+    asm.lda(list);
+    asm.ld("l", "a");
+    asm.ldn("h", 0);
+    asm.addHL("de");
+    asm.ld16("de", list + 1);
+    asm.addHL("de");
+    for (const address of [col, col + 1, row, row + 1]) {
+      asm.lda(address);
+      asm.staHLI();
+    }
+    asm.ld("a", "c");
+    asm.staHLI();
+    asm.lda(list);
+    asm.inc("a");
+    asm.sta(list);
+    asm.label(next);
+  });
+}
+
+/** Run `body` for each recorded cell, with its legend index in `A`. */
+function emitOverCells(ctx: Ctx, subjectId: number, body: () => void): void {
+  const { asm, layout } = ctx;
+  const list = cellSlot(ctx, subjectId);
+  const col = layout.words + W.tileCol * 2;
+  const row = layout.words + W.tileRow * 2;
+  const loop = ctx.unique("cellLoop");
+  const done = ctx.unique("cellDone");
+
+  asm.lda(list);
+  asm.alu("or", "a");
+  asm.jp(done, "z");
+  asm.ld("b", "a");
+  asm.ld16("hl", list + 1);
+  asm.label(loop);
+  for (const address of [col, col + 1, row, row + 1]) {
+    asm.ldaHLI();
+    asm.sta(address);
+  }
+  asm.ldaHLI();
+  asm.push("hl");
+  asm.push("bc");
+  body();
+  asm.pop("bc");
+  asm.pop("hl");
+  asm.dec("b");
+  asm.jp(loop, "nz");
+  asm.label(done);
+}
+
+/**
  * Tile collision, in the interpreter's two passes: fire the rules that name a
  * tile, then push objects out of the solid ones.
  *
@@ -588,6 +693,25 @@ function emitTileRules(ctx: Ctx, scene: SceneCtx, level: LevelData): void {
   // Which tiles can stop which subject: the union over every rule, in first
   // appearance order, exactly as the interpreter builds it.
   const blockers = new Map<number, Set<string>>();
+
+  // Objects whose overlapped cells are the same for every rule this tick get
+  // walked once, here, and every pass below reads the list instead of the grid.
+  const cached = new Set<number>();
+  for (const rule of program.rules) {
+    if (rule.event.kind !== "hits" || rule.event.tiles.length === 0) continue;
+    if (rule.scene !== undefined && rule.scene !== scene.def.name) continue;
+    for (const subjectId of rule.event.subjects) {
+      const instance = program.instances[subjectId];
+      if (!instance || instance.scene !== scene.def.name) continue;
+      if (cached.has(subjectId) || !tileCellsCacheable(ctx, scene, subjectId)) continue;
+      cached.add(subjectId);
+      emitFillCells(ctx, subjectId, level);
+    }
+  }
+  const walk = (subjectId: number, base: number, body: () => void): void => {
+    if (cached.has(subjectId)) emitOverCells(ctx, subjectId, body);
+    else emitTilesUnder(ctx, base, level, body);
+  };
 
   for (const rule of program.rules) {
     if (rule.event.kind !== "hits" || rule.event.tiles.length === 0) continue;
@@ -615,7 +739,7 @@ function emitTileRules(ctx: Ctx, scene: SceneCtx, level: LevelData): void {
       // one, so the comparison is never against a half-overwritten list.
       emitBeginContacts(ctx, listBase);
 
-      emitTilesUnder(ctx, base, level, () => {
+      walk(subjectId, base, () => {
         const next = ctx.unique("tileNext");
         asm.aluN("cp", GRID_EMPTY);
         asm.jp(next, "z");
@@ -662,7 +786,7 @@ function emitTileRules(ctx: Ctx, scene: SceneCtx, level: LevelData): void {
     const base = layout.entities[subjectId] as number;
     const solidTable = `${level.solidLabel}`;
     const namedTable = `BlockNames_${scene.index}_${subjectId}`;
-    emitTilesUnder(ctx, base, level, () => {
+    walk(subjectId, base, () => {
       const next = ctx.unique("sepNext");
       asm.aluN("cp", GRID_EMPTY);
       asm.jp(next, "z");
@@ -1294,6 +1418,91 @@ function needPokeNumber(ctx: Ctx): string {
   return name;
 }
 
+/**
+ * Is this object's footprint a compile-time constant?
+ *
+ * The cheap culls below work in whole cells and need a margin wide enough to
+ * cover the object, so they only apply where the size cannot change under them.
+ * Nothing in the example library resizes anything; the test is here so that the
+ * day something does, it gets the slow, always-correct path instead of being
+ * quietly culled while half on screen.
+ */
+function fixedCells(ctx: Ctx, id: number): boolean {
+  return !isMutable(ctx.analysis, id, "width") && !isMutable(ctx.analysis, id, "height");
+}
+
+/**
+ * `HL` = entity base, `B` = cells wide, `C` = cells high → `A` is zero when the
+ * object is certainly outside the view.
+ *
+ * It compares whole cells, not positions, which is what makes it cheap: the
+ * high half of a 16.16 coordinate *is* the cell it sits in, so this is a
+ * sixteen-bit subtract and two sign tests per axis and touches no fixed-point
+ * arithmetic at all. The margins are rounded outward by a cell, so an object
+ * straddling the edge is never culled — the test may say "maybe" when the answer
+ * is no, and never the other way round.
+ */
+function needOnscreen(ctx: Ctx): string {
+  const name = "Onscreen";
+  ctx.need(name, (inner) => {
+    const { asm, layout } = inner;
+    const camera = layout.camera as number;
+    const apart = inner.unique("cullOff");
+
+    asm.ld("a", "l");
+    asm.sta(layout.cull);
+    asm.ld("a", "h");
+    asm.sta(layout.cull + 1);
+
+    /** `HL = entity.<prop> cell − camera.<axis> cell`, then range-test it. */
+    const axis = (offset: number, margin: "b" | "c", span: number): void => {
+      asm.lda(layout.cull);
+      asm.ld("l", "a");
+      asm.lda(layout.cull + 1);
+      asm.ld("h", "a");
+      asm.ld16("de", offset + 2);
+      asm.addHL("de");
+      asm.ldaHLI();
+      asm.ld("e", "a");
+      asm.ld("a", "hlp");
+      asm.ld("d", "a");
+      asm.ld16("hl", camera + offset + 2);
+      asm.ld("a", "e");
+      asm.alu("sub", "hlp");
+      asm.ld("e", "a");
+      asm.inc16("hl");
+      asm.ld("a", "d");
+      asm.alu("sbc", "hlp");
+      asm.ld("d", "a");
+      asm.ld("h", "d");
+      asm.ld("l", "e");
+      // Off the near side: the object's far edge is left of (or above) the view.
+      asm.ldn("d", 0);
+      asm.ld("e", margin);
+      asm.push("hl");
+      asm.addHL("de");
+      asm.ld("a", "h");
+      asm.pop("hl");
+      asm.bit(7, "a");
+      asm.jp(apart, "nz");
+      // Off the far side: the object's near edge is past the last visible cell.
+      asm.ld16("de", (0x10000 - (span + 1)) & 0xffff);
+      asm.addHL("de");
+      asm.bit(7, "h");
+      asm.jp(apart, "z");
+    };
+    axis(propOffset("x"), "b", VIEW_W);
+    axis(propOffset("y"), "c", VIEW_H);
+
+    asm.ldn("a", 1);
+    asm.ret();
+    asm.label(apart);
+    asm.alu("xor", "a");
+    asm.ret();
+  });
+  return name;
+}
+
 /** Build the OAM shadow from the scene's sprite objects. */
 function emitOam(ctx: Ctx, scene: SceneCtx, options: EmitOptions): void {
   const { asm, layout, program } = ctx;
@@ -1324,6 +1533,18 @@ function emitOam(ctx: Ctx, scene: SceneCtx, options: EmitOptions): void {
       continue;
     }
     const base = layout.entities[id] as number;
+    // An object the view does not cover needs none of the work below: not the
+    // subtraction, not the shifts, not an OAM entry. In a level bigger than the
+    // screen that is most of them most of the time — a cavern's worth of coins
+    // is eleven objects off screen and one on it.
+    if (layout.camera !== null && fixedCells(ctx, id)) {
+      asm.ld16("hl", base);
+      asm.ldn("b", width);
+      asm.ldn("c", height);
+      asm.call(needOnscreen(ctx));
+      asm.alu("or", "a");
+      asm.jp(skip, "z");
+    }
     // Screen pixels are level pixels minus the camera's.
     ctx.scoped(() => {
       const temp = ctx.pushTemp();

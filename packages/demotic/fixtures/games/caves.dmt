@@ -25,8 +25,31 @@ camera follows player
 -- sixty by thirty cells everywhere, so crossing it should take the same time
 -- everywhere, and the jump should clear the same two-cell step.
 create object hero (width 1 cell, height 2 cells, speed 11, sprite hero.svg)
+create object coin (width 1 cell, height 1 cell, sprite coin.svg)
 
 create hero player in play (x 2, y levelheight - 5)
+
+-- A coin above each ledge of the climb, in level coordinates — absolute, because
+-- the cavern is the same sixty by thirty cells on every console and a coin sits
+-- on the ledge it sits on.
+--
+-- Objects, not tiles, and that is the whole point of them: a tile has no
+-- `visible`, so a collected coin stayed drawn and scored again the next time the
+-- hero entered its cell from outside. Twelve of them in a level four screens
+-- wide is only affordable because the backend culls what the view does not
+-- cover — see the note on `hits coin` below.
+create coin c1 in play (x 5, y 23)
+create coin c2 in play (x 13, y 20)
+create coin c3 in play (x 23, y 22)
+create coin c4 in play (x 41, y 21)
+create coin c5 in play (x 32, y 18)
+create coin c6 in play (x 19, y 14)
+create coin c7 in play (x 49, y 16)
+create coin c8 in play (x 34, y 11)
+create coin c9 in play (x 10, y 9)
+create coin c10 in play (x 46, y 8)
+create coin c11 in play (x 25, y 5)
+create coin c12 in play (x 41, y 2)
 
 
 -- Whether the hero has ground under its feet this tick — cleared with the level
@@ -70,17 +93,15 @@ when a pressed if footing.value > 0 then player.ydirection as -1.5
 when player touches spikes then scene as gameover
 when player hits exit then scene as won
 
--- A coin scores on contact. Tiles have no `visible`, so a collected coin stays
--- drawn and scores again the next time the hero enters that cell from outside
--- it — a real limit of tiles-as-scenery, and the reason a game that wants a coin
--- to *vanish* uses an object for it, as the platformer does.
+-- A collected coin is gone for good, which is what `visible 0` is for: not
+-- drawn, not collided with, not moved.
 --
--- Twelve objects is what that costs here, and it does not fit: measured in
--- `@demake/dmg`, a dozen collectibles in a scrolling level put this game's tick
--- at about 1.4 Game Boy frames, against the 1.0 every other example holds. The
--- cavern keeps its coins as tiles because the machine says so, which is the
--- whole point of demaking against a real one.
-when player hits coin then score.value as score.value + 1
+-- Twelve collectibles in a scrolling level is more than the tick used to hold.
+-- What made it fit is that the cavern is four screens wide, so eleven of the
+-- twelve are off the view at any moment — and the backend now says so cheaply,
+-- in whole cells, before it stages a box or builds a sprite. Work you can prove
+-- is invisible is work you do not have to do.
+when player hits coin then (coin.visible, score.value) as (0, score.value + 1)
 
 -- The HUD is two ordinary objects at level coordinates, so without this they
 -- would be left behind the moment the view moved. Pinning them to the camera is

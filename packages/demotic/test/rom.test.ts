@@ -69,7 +69,10 @@ describe("gb ROM conformance across the example library", () => {
     [join("games", "shooter.dmt"), "20:,20:a,40:left,20:a,60:right,40:"],
     [
       join("games", "caves.dmt"),
-      "20:,20:a,60:up,40:,60:up,40:",
+      // Climbs onto the first ledge, takes the coin there, then runs right into
+      // the spikes: tile rules, tile separation, a vanishing object and a scene
+      // change, all in one tape.
+      "240:,42:right,1:a,18:,26:left,60:,200:right,40:",
       { "cavern.dmtl": read(join("games", "cavern.dmtl")) },
     ],
     [

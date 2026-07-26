@@ -695,6 +695,100 @@ function needSeparatePair(ctx: Ctx): string {
   return name;
 }
 
+/**
+ * `HL` = the other object's base, `B`/`C` = the margins in cells → `A` is zero
+ * when the two boxes are certainly apart.
+ *
+ * The subject is whatever is staged in `pairA`, which every path through a pair
+ * keeps current. Like the OAM cull this compares *cells* — the high half of a
+ * 16.16 coordinate — so it is a sixteen-bit subtract and two sign tests per
+ * axis, against the ~900 clocks a staged box and a full overlap test cost. Two
+ * boxes can only overlap if their cells are within the wider of the two, so
+ * rounding the margin outward by one keeps it conservative: it may say "maybe"
+ * when the answer is no, never the reverse.
+ */
+function needNearBox(ctx: Ctx): string {
+  const name = "NearBox";
+  ctx.need(name, (inner) => {
+    const { asm, layout } = inner;
+    const subject = layout.pairA as number;
+    const apart = inner.unique("nearNo");
+
+    asm.ld("a", "l");
+    asm.sta(layout.cull);
+    asm.ld("a", "h");
+    asm.sta(layout.cull + 1);
+
+    const axis = (offset: number, margin: "b" | "c"): void => {
+      asm.lda(layout.cull);
+      asm.ld("l", "a");
+      asm.lda(layout.cull + 1);
+      asm.ld("h", "a");
+      asm.ld16("de", offset + 2);
+      asm.addHL("de");
+      asm.ldaHLI();
+      asm.ld("e", "a");
+      asm.ld("a", "hlp");
+      asm.ld("d", "a");
+      asm.ld16("hl", subject + offset + 2);
+      asm.ld("a", "e");
+      asm.alu("sub", "hlp");
+      asm.ld("e", "a");
+      asm.inc16("hl");
+      asm.ld("a", "d");
+      asm.alu("sbc", "hlp");
+      asm.ld("d", "a");
+      asm.ld("h", "d");
+      asm.ld("l", "e");
+      // delta + margin < 0 — the other is that far to the near side.
+      asm.ldn("d", 0);
+      asm.ld("e", margin);
+      asm.push("hl");
+      asm.addHL("de");
+      asm.ld("a", "h");
+      asm.pop("hl");
+      asm.bit(7, "a");
+      asm.jp(apart, "nz");
+      // delta − margin − 1 >= 0 — that far to the far side.
+      asm.ld("a", margin);
+      asm.cpl();
+      asm.ld("e", "a");
+      asm.ldn("d", 0xff);
+      asm.addHL("de");
+      asm.bit(7, "h");
+      asm.jp(apart, "z");
+    };
+    axis(propOffset("x"), "b");
+    axis(propOffset("y"), "c");
+
+    asm.ldn("a", 1);
+    asm.ret();
+    asm.label(apart);
+    asm.alu("xor", "a");
+    asm.ret();
+  });
+  return name;
+}
+
+/**
+ * Margins for {@link needNearBox}, or `undefined` where a size can change and
+ * the cheap test therefore cannot be trusted.
+ */
+function nearMargins(ctx: Ctx, a: number, b: number): { x: number; y: number } | undefined {
+  const cells = (id: number, prop: string): number | undefined => {
+    if (isMutable(ctx.analysis, id, prop)) return undefined;
+    const value = (ctx.program.instances[id] as InstanceDef).numbers[prop] ?? 0;
+    return Math.max(1, Math.ceil(value / FIXED_ONE));
+  };
+  const width = [cells(a, "width"), cells(b, "width")];
+  const height = [cells(a, "height"), cells(b, "height")];
+  if (width.some((v) => v === undefined) || height.some((v) => v === undefined)) return undefined;
+  const x = Math.max(...(width as number[]));
+  const y = Math.max(...(height as number[]));
+  // The margin goes in a byte and a sane object is nowhere near that big.
+  return x > 120 || y > 120 ? undefined : { x, y };
+}
+
 /** Write the staged subject's position back to the entity it came from. */
 function emitCommitPair(ctx: Ctx, a: number): void {
   const { asm, layout } = ctx;
@@ -782,6 +876,19 @@ export function emitCollisions(ctx: Ctx, scene: SceneCtx): void {
           continue;
         }
         const otherBase = layout.entities[otherId] as number;
+        // Reject the pair on whole cells first. Most pairs in most games are
+        // nowhere near each other — in a scrolling level, most of them are not
+        // even on the same screen — and this answers that in a couple of dozen
+        // clocks instead of staging a box and running the full overlap test.
+        const margins = nearMargins(ctx, subjectId, otherId);
+        if (margins) {
+          asm.ld16("hl", otherBase);
+          asm.ldn("b", margins.x);
+          asm.ldn("c", margins.y);
+          asm.call(needNearBox(ctx));
+          asm.alu("or", "a");
+          asm.jp(skip, "z");
+        }
         // Only the other box is staged here: the subject's was staged before the
         // loop and every path below leaves it current, so the per-tick cost of a
         // pair that is not touching anything is one box copy and a call.

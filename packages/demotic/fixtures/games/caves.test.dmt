@@ -50,3 +50,22 @@ play 20 ticks
 press a
 play 2 ticks
 expect player.ydirection > -1
+
+-- The whole reason the cavern's coins are objects rather than tiles: a collected
+-- one is gone. As tiles they stayed drawn and scored again every time the hero
+-- re-entered the cell, which is a counter nobody can trust.
+--
+-- The script is portable because everything in it is absolute — an eleven-cell-
+-- a-second hero on a sixty-by-thirty level takes the same ticks to reach the
+-- same ledge on every console — so this is one climb, checked seven times.
+test a collected coin is gone for good
+play 240 ticks
+hold right for 42 ticks
+press a
+play 18 ticks
+hold left for 26 ticks
+play 60 ticks
+expect score.value = 1
+expect c1.visible = 0
+play 120 ticks
+expect score.value = 1

@@ -309,8 +309,19 @@ packages/demotic/test/rom.test.ts` builds all seven fixture games and diffs raw
   level contribute nothing either way, so bounding the walk up front is
   equivalent to asking `TileAt` about every cell — and it is the difference
   between a load-and-increment inner loop and four bounds comparisons plus a
-  multiply. An object standing still walks the same six cells every tick, once
-  per tile rule.
+  multiply.
+- **And it happens once per object, not once per rule.** The cells an object
+  overlaps are walked into a list (`emitFillCells`) and every tile rule _and_ the
+  separation pass reads that list. It is only valid where no tile rule can move
+  its subject, which `tileCellsCacheable` decides at compile time — the
+  interpreter recomputes the list per rule, so caching it is equivalent exactly
+  when the answer cannot have changed. In the caves this was 37% of the tick.
+- **Work you can prove is invisible is work you do not do.** `Onscreen` culls
+  objects the view does not cover before the OAM build touches them, and
+  `NearBox` rejects a collision pair before staging a box. Both compare _whole
+  cells_ — the high half of a 16.16 coordinate — and both round their margins
+  outward, so they may answer "maybe" when the truth is no and never the reverse.
+  A cavern's worth of coins is eleven objects off screen and one on it.
 - **A divisor that is a whole number of cells takes the byte divider.** The
   general path is a 48-bit shift-and-subtract loop, and a rule that divides every
   tick pays for it every tick. Pong's opponent uses a `5vw` gain — one whole cell

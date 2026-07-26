@@ -697,10 +697,16 @@ Boy frames per game tick rather than running the emulator fast enough to
 disguise the cost, because a person writing a game needs to know what their
 rules cost. Every example in the library is at 1.00–1.03 frames per tick, so a
 game keeps up with the hardware; a rule set expensive enough to overrun a frame
-will say so in that figure. It is a *budget*, and it has been spent: the cavern
-would like its coins to be objects, so that a collected one could vanish, and a
-dozen of them in a scrolling level costs about 0.4 of a frame per tick. They are
-tiles because the number said no.
+will say so in that figure.
+
+It is also what tells you *what to fix*. A dozen collectible objects in a level
+four screens wide first arrived at 1.4 frames a tick, and the profile named the
+reason twice: the game was doing per-object work for objects nobody could see,
+and it was walking the grid under the hero once per tile rule to reach the same
+answer each time. Culling what the view does not cover, and walking those cells
+once, put it back at 1.03 — with the coins kept as objects, so that a collected
+one is gone. The measurement decided which of the two to give up, and the answer
+turned out to be neither.
 
 Families map onto the existing codegen families (doc 06): `gb`, `nes`, `sms`
 (SMS + GG), `md`, `snes`. Each is a backend module beside the `gb` one, and each

@@ -25,9 +25,14 @@ sliding with the background and snapping back. And `visible 0` now stops
 separation as well as collision, so collecting a coin no longer shoves the
 player off it.
 
-Output bytes change for every game: object-versus-object collision is a shared
-routine rather than inlined per pair, the tile walk is clipped to the grid once
-rather than bounds-checked per cell, and a static caption is painted with the
-background instead of repainted every frame. Together those pay for the games
-above — the shooter's three shots against nine aliens would not otherwise fit in
-a 32 KiB cartridge.
+Output bytes change for every game, because the generated code got a good deal
+cheaper — which is what paid for the games above. Object-versus-object collision
+is a shared routine over a staged box rather than inlined per pair; the cells an
+object overlaps are walked once and read by every tile rule and the separation
+pass, rather than walked once per rule; the walk is clipped to the grid up front
+rather than bounds-checked per cell; a static caption is painted with the
+background instead of repainted every frame; and objects the view does not cover
+are culled, in whole cells, before either the OAM build or a collision pair
+touches them. Without the first the shooter's three shots against nine aliens
+would not fit in a 32 KiB cartridge; without the rest the cavern's twelve
+collectibles would not fit in a Game Boy's tick.

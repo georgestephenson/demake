@@ -169,6 +169,19 @@ export interface Layout {
    * because the rule bodies it runs use every register there is. */
   tilePtr: number;
   /**
+   * The cells one object overlaps, walked once and read by every tile rule.
+   *
+   * A count byte then `column`, `row`, `legend` per cell. An object standing
+   * still overlaps the same handful of cells every tick, and a game with four
+   * tile rules and a separation pass used to walk the grid for all five —
+   * multiply, bounds-check and all — to reach the same answer each time. The
+   * list is only used where no tile rule can move its subject, so that "the same
+   * answer" is a compile-time fact rather than a hope.
+   */
+  tileCells: number;
+  tileCellStride: number;
+  tileCellSlots: ReadonlyMap<number, number>;
+  /**
    * Staging for the two boxes of an object-versus-object contact, and the
    * workspace the shared overlap and separation routines use.
    *
@@ -181,6 +194,14 @@ export interface Layout {
   pairA: number | null;
   pairB: number | null;
   pairWork: number | null;
+  /**
+   * Two bytes the cheap "is it anywhere near" tests keep an entity pointer in.
+   *
+   * Both of them — the OAM cull and the collision pre-test — need the base
+   * address across arithmetic that wants every register, and both run often
+   * enough that a stack round trip is worth avoiding.
+   */
+  cull: number;
 
   // --- rendering ------------------------------------------------------------
   /** Pending VRAM writes: address low, address high, tile. */
@@ -343,6 +364,21 @@ export function planLayout(program: Program, analysis: Analysis): Layout {
   const tileScratch = analysis.usesTiles ? heap.take(tileContactStride) : 0;
   const tilePtr = analysis.usesLevels ? heap.take(2) : 0;
 
+  // One cell list per object any tile rule names as a subject.
+  const tileCellSlots = new Map<number, number>();
+  if (analysis.usesTiles) {
+    for (const rule of program.rules) {
+      if (rule.event.kind !== "hits" || rule.event.tiles.length === 0) continue;
+      for (const subject of rule.event.subjects) {
+        if (!tileCellSlots.has(subject)) tileCellSlots.set(subject, tileCellSlots.size);
+      }
+    }
+  }
+  const tileCellStride = 1 + TILE_CONTACT_MAX * 5;
+  const tileCells = analysis.usesTiles
+    ? heap.take(Math.max(1, tileCellSlots.size) * tileCellStride)
+    : 0;
+
   // Only games where two objects can meet pay for the pair staging.
   const usesPairs = program.rules.some(
     (rule) => rule.event.kind === "hits" && rule.event.others.length > 0,
@@ -350,6 +386,7 @@ export function planLayout(program: Program, analysis: Analysis): Layout {
   const pairA = usesPairs ? heap.take(BOX_SIZE) : null;
   const pairB = usesPairs ? heap.take(BOX_SIZE) : null;
   const pairWork = usesPairs ? heap.take(4 * PROP_SIZE) : null;
+  const cull = heap.take(2);
 
   const queue = heap.take(QUEUE_MAX * 3);
   const queueCount = heap.take(1);
@@ -398,9 +435,13 @@ export function planLayout(program: Program, analysis: Analysis): Layout {
     tileContactSlots,
     tileScratch,
     tilePtr,
+    tileCells,
+    tileCellStride,
+    tileCellSlots,
     pairA,
     pairB,
     pairWork,
+    cull,
     queue,
     queueCount,
     plot,

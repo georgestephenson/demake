@@ -20,7 +20,7 @@ describe(".dmtl", () => {
     expect(parsed.diagnostics).toEqual([]);
     expect(parsed.width).toBe(60);
     expect(parsed.height).toBe(30);
-    expect(parsed.tiles.map((t) => t.name)).toEqual(["wall", "ledge", "spikes", "coin", "exit"]);
+    expect(parsed.tiles.map((t) => t.name)).toEqual(["wall", "ledge", "spikes", "exit"]);
     // Spikes are named but not solid: a rule fires on them, and nothing stops
     // the hero falling in. That split is the tile equivalent of `visible`.
     expect(parsed.tiles.filter((t) => t.solid).map((t) => t.name)).toEqual(["wall", "ledge"]);
@@ -36,7 +36,6 @@ describe(".dmtl", () => {
   it("collects the art each tile needs", () => {
     expect(levelAssets(parseLevel(CAVERN))).toEqual([
       "brick.svg",
-      "coin.svg",
       "exit.svg",
       "ledge.svg",
       "spikes.svg",
