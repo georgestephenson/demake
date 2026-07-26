@@ -650,6 +650,13 @@ packages/demotic/test/rom.test.ts` builds all seven fixture games and diffs raw
   three, where the tables cost more than the copies. When you add an emitter that
   reads or writes a bound entity, take an `EntityAddr` rather than an address, or
   it will be the one thing that cannot be looped.
+- **The integrator groups by what it would have compiled to.** `moveShape` is
+  every compile-time question `emitAxis` asks — can speed change, can each
+  direction, and what are they where they cannot — so objects in one group would
+  have produced identical instructions and sharing a body is a proof rather than a
+  hope. A property the emitter reads _and_ writes goes through `openProp`: the
+  property's own address for a named instance, a staged temporary for a looped
+  one, so an unrolled object's code is byte-for-byte what it always was.
 - **The tile walk is clipped to the grid once, not per cell.** Cells outside a
   level contribute nothing either way, so bounding the walk up front is
   equivalent to asking `TileAt` about every cell — and it is the difference

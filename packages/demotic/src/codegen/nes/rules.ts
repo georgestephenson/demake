@@ -46,6 +46,7 @@ import {
 
 import type { NesCtx } from "./ctx.js";
 import {
+  copyFromPtr,
   copyToPtr,
   emitExpr,
   emitTest,
@@ -350,36 +351,153 @@ export function emitLevelRules(ctx: NesCtx, scene: SceneCtx): void {
 
 // --- 4. integration ----------------------------------------------------------
 
+/**
+ * What the integrator compiles a moving object into.
+ *
+ * Every branch of `emitAxis` is chosen from these, so two objects that answer
+ * them identically compile to identical code — which is the whole condition for
+ * running them through one loop rather than a copy each (see {@link emitMoveLoop}).
+ */
+function moveShape(ctx: NesCtx, id: number): string {
+  const instance = ctx.program.instances[id] as InstanceDef;
+  const mutable = (prop: string): string => (isMutable(ctx.analysis, id, prop) ? "m" : "f");
+  const fixed = (prop: string): string =>
+    isMutable(ctx.analysis, id, prop) ? "" : String(instance.numbers[prop] ?? 0);
+  return [
+    mutable("speed"),
+    fixed("speed"),
+    mutable("xdirection"),
+    fixed("xdirection"),
+    mutable("ydirection"),
+    fixed("ydirection"),
+    mutable("visible"),
+    fixed("visible"),
+  ].join(":");
+}
+
 export function emitIntegrate(ctx: NesCtx, scene: SceneCtx): void {
   const { asm } = ctx;
+  // Group first: an object's movement reads and writes only its own record, so
+  // objects that compile the same way can share one body without reordering
+  // anything observable.
+  const groups = new Map<string, number[]>();
   for (const id of scene.def.instanceIds) {
     const instance = ctx.program.instances[id] as InstanceDef;
     const speedFixed = instance.numbers["speed"] ?? 0;
-    const speedMutable = isMutable(ctx.analysis, id, "speed");
     // An object that starts at rest and that nothing can accelerate never moves,
     // so it is not in the integrator at all.
-    if (!speedMutable && speedFixed === 0) continue;
-
-    const skip = ctx.unique("intSkip");
-    const base = ctx.layout.entities[id] as number;
-    if (speedMutable) branchZero32(ctx, base + propOffset("speed"), skip);
-    if (guardVisible(ctx, id, skip) === "never") {
-      asm.label(skip);
+    if (!isMutable(ctx.analysis, id, "speed") && speedFixed === 0) continue;
+    if (!isMutable(ctx.analysis, id, "visible") && (instance.numbers["visible"] ?? 0) === 0) {
       continue;
     }
-    emitAxis(ctx, id, "x", "xdirection");
-    emitAxis(ctx, id, "y", "ydirection");
-    asm.label(skip);
+    const shape = moveShape(ctx, id);
+    const group = groups.get(shape);
+    if (group) group.push(id);
+    else groups.set(shape, [id]);
+  }
+
+  for (const ids of groups.values()) {
+    if (ids.length >= LOOP_PAIRS && emitMoveLoop(ctx, ids)) continue;
+    for (const id of ids) {
+      const skip = ctx.unique("intSkip");
+      const entity = entityOf(ctx, id);
+      const base = ctx.layout.entities[id] as number;
+      if (isMutable(ctx.analysis, id, "speed")) {
+        branchZero32(ctx, base + propOffset("speed"), skip);
+      }
+      guardVisible(ctx, id, skip);
+      emitAxis(ctx, entity, id, "x", "xdirection");
+      emitAxis(ctx, entity, id, "y", "ydirection");
+      asm.label(skip);
+    }
   }
 }
 
-function emitAxis(ctx: NesCtx, id: number, posProp: string, dirProp: string): void {
-  const { asm, layout, profile } = ctx;
+/**
+ * One movement body for every object that moves the same way.
+ *
+ * Nine aliens with one speed and a direction they flip compiled to nine copies of
+ * the same two hundred bytes. They go through the pair loop's pointer instead —
+ * the third emitter to use it, and by now nothing here knows or cares whether the
+ * record it is stepping belongs to an instance the compiler named.
+ *
+ * The group key is every compile-time question `emitAxis` asks, so a shared body
+ * is a proof rather than a hope: two objects in one group would have produced the
+ * same instructions anyway.
+ */
+function emitMoveLoop(ctx: NesCtx, ids: readonly number[]): boolean {
+  const { asm } = ctx;
+  const first = ids[0] as number;
+  const table = ctx.unique("moveTable");
+  const loop = ctx.unique("moveLoop");
+  const next = ctx.unique("moveNext");
+  const entity: EntityAddr = { kind: "ptr", ptr: ZP.pair };
+
+  asm.lda(imm(0));
+  asm.sta(mem(ZP.pairIndex));
+  asm.label(loop);
+  asm.ldx(mem(ZP.pairIndex));
+  asm.lda(absX(label(`${table}Lo`)));
+  asm.sta(mem(ZP.pair));
+  asm.lda(absX(label(`${table}Hi`)));
+  asm.sta(mem(ZP.pair, 1));
+
+  if (isMutable(ctx.analysis, first, "speed")) {
+    ctx.scoped(() => branchZero32(ctx, readProp(ctx, entity, "speed").addr, next));
+  }
+  if (isMutable(ctx.analysis, first, "visible")) emitGuardVisiblePtr(ctx, next);
+  emitAxis(ctx, entity, first, "x", "xdirection");
+  emitAxis(ctx, entity, first, "y", "ydirection");
+
+  asm.label(next);
+  asm.inc(mem(ZP.pairIndex));
+  asm.lda(mem(ZP.pairIndex));
+  asm.cmp(imm(ids.length));
+  ctx.far("cc", loop);
+
+  ctx.data((data) => {
+    const bases = ids.map((id) => ctx.layout.entities[id] as number);
+    data.label(`${table}Lo`);
+    data.db(...bases.map((base) => base & 0xff));
+    data.label(`${table}Hi`);
+    data.db(...bases.map((base) => (base >> 8) & 0xff));
+  });
+  return true;
+}
+
+/**
+ * A property this emitter reads *and* writes, wherever the record lives.
+ *
+ * For an instance the compiler named it is the property's own address and the
+ * close is nothing, so the unrolled form is byte-for-byte what it always was. For
+ * one behind a pointer it is a temporary, staged in and copied back — the four
+ * bytes each way that make a shared body possible at all.
+ */
+function openProp(ctx: NesCtx, entity: EntityAddr, prop: string): { addr: Ref; close: () => void } {
+  if (entity.kind === "const") {
+    return { addr: entity.base + propOffset(prop), close: () => undefined };
+  }
+  const temp = ctx.pushTemp();
+  if (entity.kind === "ptr") copyFromPtr(ctx, entity.ptr, propOffset(prop), temp);
+  else set32(ctx, temp, 0);
+  return {
+    addr: temp,
+    close: () => {
+      if (entity.kind === "ptr") copyToPtr(ctx, entity.ptr, propOffset(prop), temp);
+      ctx.popTemp();
+    },
+  };
+}
+
+function emitAxis(
+  ctx: NesCtx,
+  entity: EntityAddr,
+  id: number,
+  posProp: string,
+  dirProp: string,
+): void {
+  const { asm, profile } = ctx;
   const instance = ctx.program.instances[id] as InstanceDef;
-  const base = layout.entities[id] as number;
-  const posAddr = base + propOffset(posProp);
-  const dirAddr = base + propOffset(dirProp);
-  const speedAddr = base + propOffset("speed");
 
   const dirFixed = instance.numbers[dirProp] ?? 0;
   const speedFixed = instance.numbers["speed"] ?? 0;
@@ -389,12 +507,22 @@ function emitAxis(ctx: NesCtx, id: number, posProp: string, dirProp: string): vo
   // Nothing on this axis can ever be non-zero.
   if (!dirMutable && dirFixed === 0) return;
 
+  const position = openProp(ctx, entity, posProp);
+  const posAddr = position.addr;
+  // Read-only, so they are the record's own addresses for a named instance and
+  // staged copies for a looped one.
+  const dirAddr = readProp(ctx, entity, dirProp).addr;
+  const speedAddr = readProp(ctx, entity, "speed").addr;
+  const finish = (): void => {
+    position.close();
+  };
+
   if (!dirMutable && !speedMutable) {
     const step = perTick(dirFixed, speedFixed, profile.fps);
-    if (step === 0) return;
+    if (step === 0) return finish();
     addConst32(ctx, posAddr, step);
     clamp32(ctx, posAddr);
-    return;
+    return finish();
   }
 
   const done = ctx.unique("axisDone");
@@ -439,6 +567,7 @@ function emitAxis(ctx: NesCtx, id: number, posProp: string, dirProp: string): vo
   });
   asm.label(skipZero);
   asm.label(done);
+  finish();
 }
 
 // --- 5. collisions -----------------------------------------------------------

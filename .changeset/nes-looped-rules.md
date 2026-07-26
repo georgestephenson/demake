@@ -21,8 +21,17 @@ A loop is taken only where the objects agree about what the unrolled form baked
 in — the near-test margins, whether `visible` can change, and (on the subject
 side) their size — and below three objects the unrolled form is still smaller.
 
-The shooter's collision code goes from 12,217 bytes to 2,472, which takes the
-cartridge from not fitting at all to 10,291 bytes free. Every fixture's trace is
-unchanged, which is what `rom.test.ts` checks tick by tick on all three consoles.
+The integrator goes the same way: objects are grouped by every compile-time
+question `emitAxis` asks — whether speed and each direction can change, and their
+values where they cannot — so a shared body is a proof rather than a hope, since
+two objects in one group would have compiled to the same instructions anyway. A
+property the emitter both reads and writes goes through `openProp`, which is the
+property's own address for a named instance and a staged temporary for a looped
+one, so the unrolled form is byte-for-byte what it was.
+
+In the shooter: collisions 12,217 bytes to 2,472, movement 4,116 to 1,012. The
+cartridge goes from not fitting at all to 13,371 bytes free. Every fixture's trace
+is unchanged, which is what `rom.test.ts` checks tick by tick on all three
+consoles.
 
 NES cartridge bytes change.
