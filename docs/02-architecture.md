@@ -47,6 +47,9 @@ demake/          # repo
 │   │   └── test/
 │   ├── dmg/                 # @demake/dmg — our Game Boy core: the conformance harness
 │   │                        #   (doc 10) and the web app's in-page player (doc 07)
+│   ├── chip/                # @demake/chip — every sound chip as a register-driven model,
+│   │                        #   plus the deterministic mixer/resampler (doc 16)
+│   ├── audio/               # @demake/audio — the music + sound demakers (docs 16, 17, 18)
 │   ├── web/                 # Vite app → GitHub Pages (doc 07)
 │   ├── desktop/             # Tauri app, bundles CLI as sidecar (doc 08)
 │   └── cli-spec/            # single-source-of-truth command spec → --help, man, docs, JSON schema
@@ -74,6 +77,18 @@ demake/          # repo
   dependency is what keeps that honest: `demotic` uses it in tests, `web` uses it
   to play a ROM, and neither ships a second implementation of anything. Nothing
   depends on it at run time except the page's cartridge pane.
+- `chip` depends on **nothing at all**, on exactly `dmg`'s terms and for the same
+  reason: it is a hardware model, not conversion logic. It is the one place a
+  sound chip is implemented, so `dmg`'s APU, the audio pipeline's preview and the
+  web app's player are the same synthesis rather than three that agree by
+  coincidence (doc 16 §Packages).
+- `audio` depends on `core` (console specs, math kernels, PRNG) and on `chip`,
+  and on nothing platform-specific — its judge and its chip models decide what a
+  user hears, so the same determinism rules apply, and more strictly: audio DSP
+  reaches for transcendentals constantly and every one of them must come from the
+  in-house kernels (doc 16 §Determinism engineering). **Nothing in `core` may
+  depend on `audio` or `chip`**; `core` holds the `AudioSpec` *data* and no audio
+  code.
 - `cli` = argument parsing + file I/O + process conventions + calls into `core`.
 - `web` = UI + Web Worker hosting `core`.
 - `desktop` = UI shell + sidecar invocation of the built `cli` binary. It contains
@@ -120,6 +135,11 @@ libraries (sharp). Therefore:
   fails by name rather than rendering as nothing.
 - **JPEG / WebP / GIF / BMP**: pinned WASM codecs (the jSquash/Squoosh codec builds)
   used identically on both platforms. WASM is bit-deterministic by spec.
+- **Audio (MP3 / AAC / Vorbis / Opus)**: pinned WASM decoders on the same
+  reasoning; WAV/AIFF/FLAC are integer formats and get pure-TS codecs. Resampling
+  is ours, never the platform's — a browser `AudioContext` resamples on its own
+  terms, which is the audio form of the `<canvas>` decoder trap (doc 16 §The
+  render contract).
 - All randomized algorithms (k-means init, annealing) use a seeded PRNG
   (PCG32/xoshiro, our implementation) with a fixed default seed; `--seed` overrides.
 - **Floating-point discipline**: IEEE-754 basic ops (+, −, ×, ÷, sqrt) are

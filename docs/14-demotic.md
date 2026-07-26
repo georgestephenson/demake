@@ -229,9 +229,12 @@ Two further consequences of authoring in cells, unchanged:
 ## Language reference
 
 Case-insensitive throughout — keywords and identifiers alike. `--` begins a
-comment to end of line. **One statement per line, no nesting.** Declaration order
-is irrelevant: `loop play` may precede `scene play`, and an instance may name a
-class declared later.
+comment to end of line, and **must be preceded by a space or start the line**:
+`--` is also two minus signs, so `y--1` would otherwise be a comment where the
+author meant `y - -1`, silently discarding the rest of the statement rather than
+failing. **One statement per line, no nesting.** Declaration order is irrelevant:
+`loop play` may precede `scene play`, and an instance may name a class declared
+later.
 
 Flatness is not stylistic. It buys total error recovery: a malformed statement
 fails on its own line and every other statement still parses, so one pass reports
@@ -438,8 +441,9 @@ opposite — unreadable, and something editing one miscounts a column and silent
 moves a wall. Two consequences follow from taking that seriously: **one row per
 line, however long** (a hundred-cell level makes a hundred-character line), and
 **no comments inside the grid** — `--` is a comment in the legend, but past `map`
-every character is a cell and `-` is a perfectly good tile. A blank line inside
-the grid is a row of empty cells, not a separator.
+every character is a cell and `-` is a perfectly good tile. The legend takes the
+same space-before rule the language does, so `brick--old.svg` stays one filename.
+A blank line inside the grid is a row of empty cells, not a separator.
 
 **Tiles are named, and the names are what rules collide with.**
 `when player touches spikes then scene as gameover` reads as a sentence precisely
@@ -694,6 +698,28 @@ Game Boy, and the same file is asked about both.
 The dynamic counterpart is the per-scanline sprite count, which depends on where
 things are and so is watched by the simulator as it runs (§Budgets).
 
+### The readings the language will not guess between
+
+A second family, console-independent, and with a different justification. Each
+of these *parses* — under the obvious reading it produces a perfectly good
+program, just not the one that was written down. There is no emulator run that
+would reveal them as syntax, only a game that plays wrong, so the compiler
+refuses the ambiguity instead of resolving it.
+
+| Code | Catches |
+|---|---|
+| `E_GLUED_COMMENT` | `--` run onto the token before it: `y as y--1` is `y as y`, and the rest of the line is gone |
+| `E_UNTERMINATED_STRING` | a string with no closing quote, which swallows the line and gets a bracket blamed for it |
+| `E_UNKNOWN_UNIT` | a word attached to a number that is not a unit — `40vmn` is a misspelling, not two tokens |
+| `E_DUPLICATE_PROP` | one list setting the same property twice, where the first value is written down and does nothing |
+| `E_DUPLICATE_CONTROL` | two bindings writing one property from one button, whose `on hold` restores unwind into each other |
+| `E_DUPLICATE_CAMERA` | two cameras in one scene, where the second silently wins |
+
+The last three share a shape with `E_DUPLICATE_SCENE`, `E_DUPLICATE_INSTANCE`
+and `E_DUPLICATE_LEVEL`: *two of a thing that should be one*, where a "last one
+wins" rule would be easy to specify and impossible to see. Nothing in the
+language resolves a conflict quietly.
+
 ## Runtime model
 
 A build produces one thing per target: **machine code for the game**. The
@@ -842,7 +868,14 @@ Named rather than hidden, in rough order of how much they matter.
   say so.
 - **No `destroy` or runtime spawn.** Pong does not need them; Breakout and Snake
   do. The schema has room.
-- **No sound.** Overlaps with the audio demake entry in doc 13 §Phase 7+.
+- **No sound.** The engine that would demake it is designed (docs
+  [16](16-audio-engine.md)–[18](18-sound-demaker.md)); what is missing is the
+  *language* surface — how a `.dmt` names a track and fires an effect. That is a
+  language change and therefore the maintainer's call, not an agent's, so doc 17
+  §Demotic sets out the options and their trade-offs and stops there. One
+  consequence should be decided with the surface: audio events would have to join
+  the conformance trace as per-tick event names, or the ROM and the interpreter
+  could disagree about *when* a sound fires and the oracle would not catch it.
 - **Tiles cannot change at run time.** The tile layer is fixed once composed, so
   a door that opens or a block that breaks has to be an object. Editing the
   tilemap live is what a console does most cheaply, so this is a gap worth

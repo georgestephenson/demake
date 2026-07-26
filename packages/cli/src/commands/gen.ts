@@ -1,13 +1,20 @@
 /**
- * `demake gen` — the code-generation command (doc 05, doc 06).
+ * `demake gen` — the code-generation command (doc 05, doc 06, doc 16).
  *
  * Turns an image into console data/code. A compliant image (or a pinned
  * manifest) takes the lossless exact path; anything else is implicitly prepped
  * first (unless `--strict`). Emits one file per artifact under an output stem
  * (`-o`), or a single `asm` blob to stdout when piped. `--json` reports every
  * file written with byte sizes and content hashes (doc 06 §Output hygiene).
+ *
+ * It also takes a **chip schedule** — what `arrange --emit-manifest` and
+ * `sfx --emit-manifest` write — and builds a cartridge that plays it. `gen`
+ * extends rather than forks because its job is already "emit code for this
+ * console" (doc 16 §CLI surface), and the dispatch is on what the input *is*,
+ * exactly as the image path already dispatches on a compliant PNG.
  */
 
+import { buildAudioRom, AudioRomError, type AudioRomStats, type ChipScript } from "@demake/audio";
 import {
   gen,
   getConsole,
@@ -21,14 +28,17 @@ import type { ParsedValue } from "@demake/cli-spec";
 import type { CliEnv } from "../env.js";
 import { EXIT, type ExitCode } from "../exit-codes.js";
 import { CliError, resolveInput } from "../io.js";
+import { readChipScript } from "./audio.js";
 import { buildGbRom } from "../rom/gb.js";
 import { buildGbaRom } from "../rom/gba.js";
 import { buildMdRom } from "../rom/md.js";
 import { buildNdsRom } from "../rom/nds.js";
 import { buildNesRom } from "../rom/nes.js";
+import { buildPceRom } from "../rom/pce.js";
 import { buildSg1000Rom } from "../rom/sg1000.js";
 import { buildSmsRom } from "../rom/sms.js";
 import { buildSnesRom } from "../rom/snes.js";
+import { buildWscRom } from "../rom/wsc.js";
 
 function str(values: Record<string, ParsedValue>, key: string): string | undefined {
   return typeof values[key] === "string" ? (values[key] as string) : undefined;
@@ -77,6 +87,11 @@ export async function runGen(
   const { bytes, source } = resolveInput(env, positionals);
   const format = (str(values, "format") ?? "asm") as CodegenFormat;
   const output = str(values, "output");
+
+  const schedule = readChipScript(bytes);
+  if (schedule) {
+    return runAudioGen(env, values, schedule, source, format, output);
+  }
 
   let manifest: Uint8Array | undefined;
   const manifestPath = str(values, "manifest");
@@ -149,6 +164,12 @@ export async function runGen(
     } else if (spec.codegen.family === "nds") {
       const rom = buildNdsRom(env, spec, result);
       artifacts = [{ suffix: ".nds", kind: "rom", bytes: rom }];
+    } else if (spec.codegen.family === "pce") {
+      const rom = buildPceRom(env, spec, result);
+      artifacts = [{ suffix: ".pce", kind: "rom", bytes: rom }];
+    } else if (spec.codegen.family === "wsc") {
+      const rom = buildWscRom(env, spec, result);
+      artifacts = [{ suffix: ".wsc", kind: "rom", bytes: rom }];
     } else {
       throw new CliError(
         EXIT.UNAVAILABLE,
@@ -180,6 +201,84 @@ export async function runGen(
     for (const w of result.warnings) env.errOut(`demake: warning: ${w.message}\n`);
   }
   return EXIT.OK;
+}
+
+/**
+ * Build a cartridge from a chip schedule (doc 16 §The driver contract).
+ *
+ * The console comes from the *schedule*, not the flag: a schedule was fitted to
+ * one console's channels, lattice and driver clock, so building it for another
+ * would be a different arrangement rather than a different output format. A
+ * mismatched `--console` therefore says what to re-run instead of quietly
+ * emitting something the user did not ask for.
+ */
+async function runAudioGen(
+  env: CliEnv,
+  values: Record<string, ParsedValue>,
+  script: ChipScript,
+  source: string,
+  format: CodegenFormat,
+  output: string | undefined,
+): Promise<ExitCode> {
+  const json = values.json === true;
+  const asked = str(values, "console");
+  if (asked && getConsole(asked).id !== getConsole(script.console).id) {
+    throw new CliError(
+      EXIT.USAGE,
+      "E_CONSOLE_MISMATCH",
+      `this schedule was arranged for ${script.console}, not ${asked}`,
+      `re-run arrange/sfx with --console ${asked} to fit the track to that hardware.`,
+    );
+  }
+  if (format !== "rom") {
+    throw new CliError(
+      EXIT.UNAVAILABLE,
+      "E_UNSUPPORTED_OUTPUT",
+      `--format ${format} is not available for a chip schedule yet`,
+      "the driver is generated machine code, so `--format rom` is the format that exists today (doc 16 §The driver contract); `demake render` writes the exact audio.",
+    );
+  }
+
+  let built: ReturnType<typeof buildAudioRom>;
+  try {
+    built = buildAudioRom(script, { title: titleFor(output ?? source) });
+  } catch (error) {
+    if (error instanceof AudioRomError) {
+      throw new CliError(EXIT.FAILURE, error.code, error.message, error.hint);
+    }
+    throw error;
+  }
+
+  const written = writeArtifacts(
+    env,
+    [{ suffix: built.suffix, kind: "rom", bytes: built.bytes }],
+    output,
+    source,
+    values.force === true,
+    json,
+  );
+
+  if (json) {
+    const stats: AudioRomStats = built.stats;
+    env.out(
+      JSON.stringify(
+        { schemaVersion: 1, console: script.console, format, stats, files: written },
+        null,
+        2,
+      ) + "\n",
+    );
+  } else if (values.quiet !== true && built.stats.ratePpmError !== 0) {
+    env.errOut(
+      `demake: warning: the driver clock is ${built.stats.ratePpmError} ppm from the schedule's rate.\n`,
+    );
+  }
+  return EXIT.OK;
+}
+
+/** A cartridge title from the output or input name — no flag needed for it. */
+function titleFor(path: string): string {
+  const base = path.replace(/^.*[/\\]/, "").replace(/\.[^.]+$/, "");
+  return base.length > 0 ? base : "DEMAKE";
 }
 
 /** Write artifacts to files (or a single asm blob to stdout when piped). */

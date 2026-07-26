@@ -6,6 +6,7 @@
  * lattice dominates error, so the fitter's importance weighting earns its keep.
  */
 
+import { smsAudio } from "./audio-specs.js";
 import type { ConsoleSpec } from "./types.js";
 
 export const sms = {
@@ -26,6 +27,7 @@ export const sms = {
     flip: true,
   },
   codegen: { family: "sms", formats: ["bin", "asm", "c", "rom"] },
+  audio: smsAudio,
   docs: {
     sources: [
       "SMS Power! — VDP Palette (RGB222): https://www.smspower.org/Development/Palette",

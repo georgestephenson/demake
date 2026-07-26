@@ -74,6 +74,14 @@ describe(".dmtl", () => {
     expect(parsed.tiles[0]).toMatchObject({ name: "wall", solid: true });
   });
 
+  it("takes the same space-before rule for a comment that the language does", () => {
+    // Truncating at any `--` would leave `brick`, which is then rejected for
+    // being neither a flag nor a piece of art — an error naming the wrong thing.
+    const parsed = level("tile # wall solid brick--old.svg", "map", "##");
+    expect(parsed.diagnostics).toEqual([]);
+    expect(parsed.tiles[0]).toMatchObject({ name: "wall", art: "brick--old.svg" });
+  });
+
   it("names an unknown character once, with where to find it", () => {
     const parsed = level("tile # wall", "map", "##?#", "###?");
     expect(parsed.diagnostics).toHaveLength(1);

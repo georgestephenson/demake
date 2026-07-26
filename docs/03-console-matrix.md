@@ -103,9 +103,17 @@ interface ConsoleSpec {
     | { kind: "scanline"; strategy: "tms-rowpair" | "a2600-kernel" | "a7800-displaylist"; ... };
   modes?: ConsoleSpec["layout"][];       // selectable modes (SNES mode1/3/7, GBA 0/3/4, ANTIC/GTIA)
   codegen: { family: string; formats: ("bin"|"asm"|"c"|"rom")[] };
+  audio?: AudioSpec;                     // the console's sound hardware — doc 16 defines it
   docs: { sources: string[] };           // primary references the numbers came from
 }
 ```
+
+**Audio lives in a parallel schema, not in this table.** `AudioSpec` (chips,
+channel kinds, pitch and volume lattices, driver clocks, budgets) is defined in
+[doc 16](16-audio-engine.md) along with the per-console sound-chip matrix, for
+the same reason the display constraints are here: it is the data the generic
+optimizer consumes. It hangs off `ConsoleSpec` so one console stays one object
+and `demake consoles --json` describes a machine completely.
 
 Design rules:
 

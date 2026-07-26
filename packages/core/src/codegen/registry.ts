@@ -12,9 +12,11 @@ import { gbaBackend } from "./gba.js";
 import { mdBackend } from "./md.js";
 import { ndsBackend } from "./nds.js";
 import { nesBackend } from "./nes.js";
+import { pceBackend } from "./pce.js";
 import { sg1000Backend } from "./sg1000.js";
 import { smsBackend } from "./sms.js";
 import { snesBackend } from "./snes.js";
+import { wscBackend } from "./wsc.js";
 import type { CodegenBackend } from "./types.js";
 
 const BACKENDS = new Map<string, CodegenBackend>([
@@ -23,9 +25,11 @@ const BACKENDS = new Map<string, CodegenBackend>([
   [mdBackend.family, mdBackend],
   [ndsBackend.family, ndsBackend],
   [nesBackend.family, nesBackend],
+  [pceBackend.family, pceBackend],
   [sg1000Backend.family, sg1000Backend],
   [smsBackend.family, smsBackend],
   [snesBackend.family, snesBackend],
+  [wscBackend.family, wscBackend],
 ]);
 
 /** The backend for a family, or `undefined` if none is registered yet. */

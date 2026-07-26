@@ -11,7 +11,7 @@ demake converts arbitrary images into hardware\-compliant art and code for retro
 Convert any image into a hardware\-compliant image for a console
 .TP
 \fBgen\fR
-Convert an image into console data/code (bin/asm/c)
+Convert an image or a chip schedule into console data/code
 .TP
 \fBbuild\fR
 Build a Demotic game (.dmt) into a playable ROM
@@ -21,6 +21,15 @@ List supported consoles and their constraints
 .TP
 \fBinspect\fR
 Analyze an image: is it compliant, for which consoles, and why not
+.TP
+\fBarrange\fR
+Convert any track into hardware\-compliant chip music
+.TP
+\fBsfx\fR
+Convert any sound into a hardware\-compliant chip sound effect
+.TP
+\fBrender\fR
+Render a compliant audio artifact to a playable audio file
 .TP
 \fBcompletion\fR
 Emit shell completion (bash/zsh/fish) (planned)
@@ -57,4 +66,4 @@ An internal invariant broke (EX_SOFTWARE).
 \fB73\fR
 The output could not be created (EX_CANTCREAT).
 .SH SEE ALSO
-\fBdemake-prep\fR(1), \fBdemake-gen\fR(1), \fBdemake-build\fR(1), \fBdemake-consoles\fR(1), \fBdemake-inspect\fR(1)
+\fBdemake-prep\fR(1), \fBdemake-gen\fR(1), \fBdemake-build\fR(1), \fBdemake-consoles\fR(1), \fBdemake-inspect\fR(1), \fBdemake-arrange\fR(1), \fBdemake-sfx\fR(1), \fBdemake-render\fR(1)

@@ -12,12 +12,12 @@ something 8/16-bit-era consoles and handhelds up to the Nintendo DS could
 actually run. Four demakers, sharing one engine and one proof (a real ROM, in a
 real emulator, compared pixel for pixel):
 
-| Demaker               | Docs         | State                                                           |
-| --------------------- | ------------ | --------------------------------------------------------------- |
-| art (images)          | 03–06        | working, eight Tier 1 consoles proven                           |
-| game (Demotic `.dmt`) | 14, 15       | language, interpreter, tests, preview — and a playable `gb` ROM |
-| music                 | 13 §Phase 7+ | planned                                                         |
-| sound                 | 13 §Phase 7+ | planned                                                         |
+| Demaker               | Docs   | State                                                              |
+| --------------------- | ------ | ------------------------------------------------------------------ |
+| art (images)          | 03–06  | working, ten consoles proven on hardware                           |
+| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and a playable `gb` ROM    |
+| music (`arrange`)     | 16, 17 | MIDI → chip music, six consoles — and a Game Boy ROM that plays it |
+| sound (`sfx`)         | 16, 18 | WAV → chip effects, six consoles — same ROM, same proof            |
 
 Every domain has the same shape, which is why they share a repo: **constrain →
 fit → emit → prove it on emulated hardware**. Each reuses the layer below — a
@@ -38,19 +38,29 @@ full proof loop for **all eight Tier 1 consoles**:
   Graphics II per-row two-color path (`pipeline/fit-tms.ts`). NES added
   `fixed-master` color, 16×16 attribute cells, and the shared-backdrop constraint.
 - **Codegen** (`bin`/`asm`/`c`) for the `gb`, `nes`, `snes`, `sms`, `md`,
-  `sg1000`, `gba`, and `nds` families, reached via an exact-path detector, a
-  manifest sidecar, or implicit `prep`.
+  `sg1000`, `gba`, `nds`, `pce`, and `wsc` families, reached via an exact-path
+  detector, a manifest sidecar, or implicit `prep`.
 - **`--format rom`** builds bootable ROMs for GB (RGBDS), NES (cc65 NROM), SMS +
-  GG + SG-1000 (WLA-DX / Z80), SNES (WLA-DX / 65816, LoROM), MD/Genesis (GNU m68k
-  binutils), and GBA + NDS (GNU ARM binutils). The z80/6502/65816 assemblers are
-  pinned source builds; the m68k and ARM binutils are stock distro packages (apt,
-  main archive) since well-tested ones ship there — all via `pnpm toolchains`, no
-  Docker, and no devkitARM/ndstool (demake packs the GBA and NDS cartridge
-  headers itself).
-- **Pixel-perfect emulator E2E** for every Tier 1 console — GB/GBC (SameBoy) and
-  NES + SMS + GG + MD + SG-1000 + SNES + GBA + NDS (libretro cores via one
-  generic `emu-harness/libretro/` runner) — all marching through the same shared
-  extensive image battery (`packages/cli/test/_emu-battery.ts`).
+  GG + SG-1000 (WLA-DX / Z80), SNES (WLA-DX / 65816, LoROM), PC Engine (WLA-DX /
+  HuC6280, 64 KiB HuCard), MD/Genesis (GNU m68k binutils), GBA + NDS (GNU ARM
+  binutils), and WonderSwan Color (NASM — the V30MZ is an 8086-compatible core).
+  The z80/6502/65816/huc6280 assemblers are pinned source builds; the m68k and
+  ARM binutils and NASM are stock distro packages (apt, main archive) since
+  well-tested ones ship there — all via `pnpm toolchains`, no Docker, and no
+  devkitARM/ndstool (demake packs the GBA, NDS and WonderSwan cartridge headers
+  itself).
+- **Pixel-perfect emulator E2E** for every Tier 1 console plus the PC Engine and
+  WonderSwan Color — GB/GBC (SameBoy) and NES + SMS + GG + MD + SG-1000 + SNES +
+  GBA + NDS + PCE + WSC (libretro cores via one generic `emu-harness/libretro/`
+  runner) — all marching through the same shared extensive image battery
+  (`packages/cli/test/_emu-battery.ts`).
+
+Phase 5 then opened Tier 2 with the **PC Engine** and the **WonderSwan Color**,
+both riding that same loop end to end (`wla-huc6280` on the existing WLA-DX
+build and beetle-pce-fast; NASM and beetle-wswan). Doc 13 §Phase 5 records what
+blocks each remaining Tier 2 console — including that the mono WonderSwan is
+blocked on a _tiled-mono fitter_, not on a toolchain, and that its current spec
+is optimistic about what that hardware can display.
 
 Phase 7+ then opened the **Demotic backend**: `demake build` _compiles_ a `.dmt`
 into a real 32 KiB Game Boy cartridge — SM83 machine code written for that game,
@@ -67,31 +77,60 @@ framebuffer/scanline layout paths (Lynx, GBA/NDS bitmap modes, 2600/7800), and
 the rest of the Demotic runtime story (levels, art binding, the other CPU
 families, and the speed work doc 14 §Runtime model names).
 
+**The audio spine is built, and the Game Boy boots** (docs
+[16](docs/16-audio-engine.md), [17](docs/17-music-demaker.md),
+[18](docs/18-sound-demaker.md)): `@demake/chip` models the Game Boy APU, the
+SN76489 and the NES 2A03; `@demake/audio` holds both demakers; and
+`demake arrange`, `demake sfx` and `demake render` work for `dmg`, `gbc`, `nes`,
+`sms`, `gg` and `sg1000`. A track becomes a `.vgm` plus a WAV that is exactly
+what the schedule produces.
+
+`demake gen <schedule> -c dmg --format rom` then turns that schedule into a real
+32 KiB cartridge, with an SM83 driver **generated for it** — no fixed player, no
+checked-in harness, no toolchain — and **doc 16's Level A proof runs in
+`pnpm test`**: the ROM boots in `@demake/dmg`, whose APU is now `@demake/chip`'s,
+and every register write it makes is diffed against the `ChipScript` tick for
+tick, with no tolerance (`packages/audio/test/rom.test.ts`). That is the audio
+counterpart of the pixel-perfect emulator E2E, and it is sharper, because the
+artifact _is_ the schedule.
+
+Still to come for audio: `bin`/`asm`/`c` emit, driver backends for the other
+consoles (each needs a CPU encoder or a checked-in driver source, plus a core to
+prove it in), Level B sample comparison against third-party cores, the remaining
+chips (YM2612, S-DSP, the handhelds), tracker and lossy-audio input with the
+transcription front end, FLAC/M4A export, and the two web sections. Read doc 16
+before touching any of it — several of its decisions are load-bearing and easy to
+undo by accident (§Working on audio).
+
 ## Layout map
 
 ```
 packages/core/       @demake/core — the engine (zero platform deps; ESM; ships types)
+  src/asm/           the SM83 assembler + GB cartridge header — shared by the
+                     Demotic game backend and the audio driver, so neither owns it
   src/math/          deterministic kernels (exp/log/pow/cbrt/sin) + PCG32 PRNG
   src/color/         sRGB/linear/Oklab, hardware-lattice snapping, color parsing
   src/image/         PNG codec (inflate/deflate/decode/encode), DAC models, decode dispatch
   src/consoles/      ConsoleSpec schema + one declarative spec per console (21 of them)
   src/pipeline/      stages 0–7, the tiled fitter, mono + TMS row-pair paths, tournament
-  src/codegen/       gen: per-family backends (gb, nes, snes, sms, md, sg1000, gba, nds), detector
+  src/codegen/       gen: per-family backends (gb, nes, snes, sms, md, sg1000, gba, nds, pce, wsc), detector
   src/image/svg/     our SVG rasteriser: XML, shapes, paint, scanline fill (doc 15 step 2)
   src/pipeline/sprite.ts  object + tile art for games: transparency, shades, dedup
   src/inspect/       compliance oracle (inspect) + fidelity judge
 packages/cli-spec/   @demake/cli-spec — single source of truth: spec → parser, help, man
 packages/cli/        demake — thin CLI over core; re-exports core for scripting
-  src/rom/           edge: assemble `--format rom` per family (RGBDS / cc65 / WLA-DX / m68k / ARM)
+  src/rom/           edge: assemble `--format rom` per family (RGBDS / cc65 / WLA-DX / m68k / ARM / NASM)
   man/               generated roff man pages (never hand-edited)
-rom-harness/{gb,nes,snes,sms,md,sg1000,gba,nds}/  the display programs `gen --format rom` assembles
+rom-harness/{gb,nes,snes,sms,md,sg1000,gba,nds,pce,wsc}/  the display programs `gen --format rom` assembles
 emu-harness/gb/      SameBoy headless capturer for the GB pixel-perfect E2E (doc 10)
 emu-harness/libretro/  generic retrorun frontend — one capturer for every libretro core
 tools/toolchains/    provisioners (cached): RGBDS, cc65, WLA-DX, SameBoy source builds;
-                     GNU m68k + arm-none-eabi binutils (apt); libretro cores
-                     (fceumm, genesis-plus-gx, snes9x, mgba, desmume)
-packages/dmg/        @demake/dmg — a self-hosted Game Boy core: the Demotic conformance
-                     harness in Vitest, and the web app's in-page player (doc 07: no CDN)
+                     GNU m68k + arm-none-eabi binutils and NASM (apt); libretro
+                     cores (fceumm, genesis-plus-gx, snes9x, mgba, desmume,
+                     mednafen_pce_fast, mednafen_wswan)
+packages/dmg/        @demake/dmg — a self-hosted Game Boy core: the Demotic and audio
+                     conformance harnesses in Vitest, and the web app's in-page
+                     player (doc 07: no CDN). Its APU is @demake/chip's, not a second one
 packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs 14, 15)
   src/lang/          lex → parse → flat statement AST (one statement per line, no nesting)
   src/compile.ts     AST + console profile → resolved Program tables (constants folded)
@@ -105,6 +144,22 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
   src/codegen/       the console backend: SM83 assembler, analysis, RAM layout,
                      expression/rule/level emitters, and the `gb` ROM builder
   demo/              terminal runner (play.mjs) and test runner (test.mjs)
+packages/chip/       @demake/chip — every sound chip as a register-driven model (doc 16)
+  src/gb-apu.ts      Game Boy APU: 2 pulse + wave + noise, envelopes, panning
+  src/sn76489.ts     the SMS/GG/SG-1000 PSG: no envelopes, ~109 Hz pitch floor
+  src/nes-apu.ts     the 2A03: volume-less triangle, non-linear mixing
+  src/mix.ts         exact box-integration render, DC block, the one renderer
+packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 18)
+  src/score/         Score: the hardware-free representation, and the MIDI parser
+  src/analysis.ts    roles, salience, sections, loop choice
+  src/arrange/       assignment, exchange refinement, and the schedule compiler
+  src/binding/       per-console register encoders + the driver-rate fits
+  src/timing.ts      absolute row placement: the tempo guarantee lives here
+  src/sfx/           gesture families, class gate, hardware-in-the-loop fitting
+  src/rom/           the console hand-off: schedule packing + the generated SM83
+                     driver, assembled into a bootable cartridge (doc 16)
+  src/dsp.ts         deterministic FFT/resampler/pitch, all on core's kernels
+  src/render.ts      ChipScript → PCM; the only way anything makes sound
 tools/eslint-rules/  custom ESLint rules: platform-purity + determinism
 tools/ci/            CI guards: E2E prerequisites, web JS budget
 docs/                the design plan; source of truth for decisions
@@ -211,6 +266,14 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   §Diagnostics): sprite budgets, tunnelling, sub-tick speeds, offscreen starts,
   aspect mismatch, size rounding. Adding a new class of known trap means adding a
   diagnostic, not a doc note.
+- **The language never resolves an ambiguity quietly** (doc 14 §The readings the
+  language will not guess between). A comment needs a space before it, because
+  `y--1` is `y - -1` to a reader and a truncated statement to the lexer; a word
+  glued to a number is a misspelled unit, not two tokens; and setting one thing
+  twice — a property in a list, a property from a button, a camera in a scene —
+  is an error, never last-write-wins. These parse fine under the obvious reading,
+  so nothing downstream can catch them: the program is simply not the one in the
+  file. When a new construct has two readings, reject it rather than pick one.
 - **`hits` fires once per contact; `touches` fires every tick of it.** Bounces
   want the first, resting contact wants the second — a platformer that lands with
   `hits` accumulates gravity into `ydirection` while standing still, and looks
@@ -375,6 +438,63 @@ packages/demotic/test/rom.test.ts` builds all seven fixture games and diffs raw
   as an infinite loop somewhere unrelated. `packages/dmg/test/cpu.test.ts` pins
   it because it actually happened.
 
+## Working on audio
+
+The spine, both demakers and the Game Boy driver are built; these are the rules
+that keep them from being undone. All of them come from doc 16.
+
+- **A chip is implemented once, in `@demake/chip`.** `@demake/dmg` needs a Game
+  Boy APU for the web player and the audio pipeline needs one for previews;
+  those must be the same code. A second implementation of a chip is how the
+  preview and the emulator quietly stop agreeing — the exact failure the "no
+  second art converter" and "the web app must never grow conversion logic" rules
+  already exist to prevent.
+- **The compliant artifact is a timed register-write schedule**, not a song.
+  That is what makes four things the same object: what our synth renders, what
+  the driver must write, what an emulator's chip actually receives, and what the
+  compliance oracle checks. Any "musical" layer left in the artifact is a place
+  two implementations can disagree.
+- **One renderer feeds every surface.** The CLI writes files with `render()`, the
+  page plays the _same_ PCM through a bare `AudioBufferSourceNode`, the desktop
+  plays the CLI's file. Web Audio is a playback device, never a synthesizer — no
+  `OscillatorNode`, no filters, no worklet DSP. Construct the `AudioContext` with
+  an explicit `{ sampleRate: 48000 }` or the browser resamples the buffer on its
+  own terms, differently per engine.
+- **Lossless carries the guarantee; lossy does not.** WAV and FLAC are
+  sample-exact and byte-golden. M4A/Opus/MP3 are convenience exports and must be
+  labelled as approximations everywhere they appear — the project does not make
+  "transparent to most listeners" claims anywhere else.
+- **Exactness lives in the schedule, not in a waveform diff.** Level A (diff the
+  register writes an owned core observes against the `ChipScript`) is exact and
+  runs in `pnpm test`. Comparing our audio to a third-party core's is a
+  tolerance-based cross-check and must never be written as if it were bit-exact —
+  cores resample and filter on their own terms.
+- **Audio DSP is where determinism breaks first.** FFT twiddles, windows, mel
+  banks, dB conversions and resampler kernels all come from
+  `packages/core/src/math/kernels.ts`. An FFT seeded with `Math.cos` returns
+  different low bits in Firefox and every metric downstream inherits it.
+- **Tempo is a budget, not a metric.** The requirement is that timing error does
+  not _accumulate_; a bar boundary must land where it should after ninety
+  seconds. Report requested BPM, achieved BPM, ppm error and worst onset
+  deviation every time.
+- **Never lose a part silently.** Every dropped note, merged voice and stolen
+  channel is counted in the manifest and `--json`; `--strict` turns any of them
+  into an error. The image path's tile-merge reporting is the precedent.
+- **The driver is generated, and helpers are pulled.** `packages/audio/src/rom/`
+  emits SM83 _for this schedule_: a track that never rests ships no rest
+  handling, a one-shot ships a stop path and a track does not. Never add a
+  routine unconditionally and never prune afterwards — the same rule the Demotic
+  backend runs under, and `stats.helpers` is what makes it checkable.
+- **The driver format is not part of the contract.** The only guarantee is that
+  on tick N the driver performs exactly the writes `ChipScript.ticks[N]` lists,
+  in order. Blocks, dedup, the order list and the opcodes can all change freely;
+  what may not change is the register stream, and `rom.test.ts` is what says so.
+- **Anything that stores a driver rate must store the register that makes it.**
+  A `ChipScript` carries the reload (`divisor`) as well as the exact rate,
+  because a ROM programs a register and re-deriving one from a rational would be
+  a second timing fit that could disagree with the first. The `sfx` path dropped
+  it once and the ROM builder simply could not be written.
+
 ## How to add a console
 
 Two files plus fixtures (doc 02 §Extensibility):
@@ -402,6 +522,12 @@ Two files plus fixtures (doc 02 §Extensibility):
   a cartridge from each fixture game and runs it in `@demake/dmg`, asserting the
   trace matches the reference interpreter tick for tick — no toolchain, no
   emulator install, so it runs everywhere `pnpm test` does.
+- The audio ROM conformance suite (`packages/audio/test/rom.test.ts`) is its
+  counterpart for sound, and doc 16 §The proof's Level A: it builds a cartridge
+  from an arranged track and from a demade effect, boots each in `@demake/dmg`,
+  and diffs the register writes the APU receives against the `ChipScript`, tick
+  for tick. Ticks are attributed by watching the driver's `Tick` symbol, so
+  nothing is added to the ROM to make it observable. Also toolchain-free.
 - The pixel-perfect emulator E2E (`packages/cli/test/emu.e2e.test.ts`, doc 10)
   boots the ROM in SameBoy and asserts the framebuffer matches the DAC reference
   byte-for-byte; it self-skips without the capturer, so run `pnpm emulator`
@@ -454,6 +580,34 @@ Two files plus fixtures (doc 02 §Extensibility):
   crop margin so the Game Gear's 160×144 window lands on the art; the MD harness
   addresses its data with absolute (not PC-relative) loads because the tile blob
   can exceed the 68000's ±32 KiB PC-relative range.
+- **The WonderSwan's screen orientation is a setting, not a fact.** The core
+  defaults to landscape but takes `wswan_rotate_display` as an option, and a
+  rotated capture fails in a way that reads like a fitter bug — so the E2E asks
+  for landscape explicitly. Its cartridge is packed by demake
+  (`cli/src/rom/wsc.ts`): NASM assembles only the _last_ 64 KiB bank, which is
+  the one the V30MZ answers segment $F with after reset, and the builder
+  prepends the rest of the 4 Mbit cartridge and patches the footer checksum
+  (the sum of every byte but the two it lives in — computable only once the
+  whole cartridge exists).
+- **The mono WonderSwan (`ws`) spec is knowingly optimistic** and is _not_ the
+  `wsc` family: it declares one eight-entry palette at 4bpp, but the hardware
+  has 2bpp tiles and four-entry palettes drawing from an eight-shade pool. Doing
+  it properly needs a tiled-mono fitter (doc 13 §Phase 5) — do not "fix" it by
+  pointing `ws` at the colour backend, which would emit tiles the mono display
+  controller cannot decode.
+- **The PC Engine's BAT is fixed at VRAM word $0000**, so characters cannot start
+  there: the harness gives the BAT 32×32 entries (words $0000–$03FF) and puts the
+  first character at word $0400 — character 64 — which `cli/src/rom/pce.ts` adds
+  to every BAT entry, along with a blank character for the cells the image does
+  not cover (otherwise the area outside the image renders the BAT _as pixels_).
+  The harness also programs VDS + VSW = 14, because beetle-pce-fast captures from
+  scanline 14 onward: that puts the first active line on the frame's first line,
+  the same trick as the SNES's `BG1VOFS = -1`.
+- The PC Engine needs **no new DAC model**, and that is a fact worth keeping:
+  beetle-pce-fast expands each 3-bit VCE code as `36 × code` while demake's
+  `expandChannel` replicates bits, and the two agree on all eight codes once
+  reduced to RGB565 — which is the core's own framebuffer depth. Compare in 565
+  (`to565`) and it is exact; do not "fix" the disagreement in 8-bit space.
 - **The SNES scrolls by one line**: the PPU renders screen scanline N from BG
   line `BGnVOFS + N + 1`, so the harness sets `BG1VOFS = -1` ($3FF). With zero
   there the whole image is one pixel low and every E2E case fails by exactly a
@@ -479,6 +633,17 @@ Two files plus fixtures (doc 02 §Extensibility):
   dedicated oracle branch (there is no `subPalettes` on a `scanline` spec — don't
   cast it to `TileLayout`). Its Z80 harness reuses WLA-DX; the master palette is
   derived from genesis-plus-gx's native RGB565 `tms_palette`, not the 32-bit one.
+- **A driver tick is attributed by program counter, never by a marker.** The
+  audio proof watches `cpu.pc` for the driver's `Tick` label (from the build's
+  symbol table) and taps `Gameboy.apuTap`, which _observes_ rather than
+  intercepts. A ROM that had to be instrumented to be testable would not be the
+  ROM that ships, and an oracle that changed what the hardware saw would be
+  testing itself.
+- **`ld [$FF00+c], a` is why packed register numbers are low bytes.** The audio
+  driver's data holds `$26`, not `$FF26`, because the write loop carries the
+  register in `c`. A chip whose registers are not in high RAM would need a full
+  address and therefore a different packing — do not assume the format
+  generalises for free.
 - **The web app must never grow conversion logic.** Everything it shows comes
   from `@demake/core` through `src/worker/core.worker.ts` — console list,
   strategy portfolio, palettes, stats, manifest bytes. A second implementation

@@ -35,7 +35,25 @@ export type {
   RGB8,
   Ratio,
 } from "./consoles/types.js";
+export { latticeMaxHz, latticeMinHz } from "./consoles/audio.js";
+export type {
+  AudioSpec,
+  AudioChannelSpec,
+  ChannelKind,
+  DriverClock,
+  HardwareEnvelope,
+  PitchLattice,
+  RateSpec,
+  VolumeLattice,
+} from "./consoles/audio.js";
 export type { DacModel } from "./image/dac.js";
+
+// --- deterministic math ------------------------------------------------------
+// The engine's own transcendentals and PRNG, public because every package under
+// the determinism rule needs them and a second implementation would defeat the
+// point (doc 02 §Floating-point discipline, doc 16 §Determinism engineering).
+export * as math from "./math/kernels.js";
+export { makePrng, type Prng } from "./math/prng.js";
 
 // --- prep --------------------------------------------------------------------
 export { prep, prepSync } from "./pipeline/prep.js";
@@ -89,3 +107,8 @@ export {
   type CodegenManifest,
 } from "./codegen/manifest.js";
 export { sourceHash } from "./codegen/provenance.js";
+
+// --- assemblers: the encoders the browser needs because it has no toolchain --
+export { Asm, AsmError, label } from "./asm/sm83.js";
+export type { AluOp, CC, LabelRef, R8, R16, Ref, ShiftOp } from "./asm/sm83.js";
+export { GB_HEADER_OFFSETS, GB_ROM_SIZE, stampGbHeader } from "./asm/gb-cart.js";

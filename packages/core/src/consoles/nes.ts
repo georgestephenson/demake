@@ -14,6 +14,7 @@
  * (doc 10), exactly as the GB DAC models are. Non-square pixels: 8:7 PAR.
  */
 
+import { nesAudio } from "./audio-specs.js";
 import type { ConsoleSpec, RGB8 } from "./types.js";
 
 /** The 64-entry NES master palette (indices $00–$3F), sRGB. */
@@ -120,6 +121,7 @@ export const nes = {
     flip: false,
   },
   codegen: { family: "nes", formats: ["bin", "asm", "c", "rom"] },
+  audio: nesAudio,
   docs: {
     sources: [
       "NESdev Wiki — PPU palettes (2C02, 64-entry master): https://www.nesdev.org/wiki/PPU_palettes",

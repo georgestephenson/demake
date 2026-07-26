@@ -14,7 +14,7 @@
 
 /** The value type a flag parses into. */
 export type FlagType =
-  "string" | "boolean" | "int" | "enum" | "size" | "color" | "colorlist" | "count";
+  "string" | "boolean" | "int" | "enum" | "size" | "color" | "colorlist" | "list" | "count";
 
 /** One command-line flag. */
 export interface FlagSpec {
@@ -299,6 +299,147 @@ const BUILD_FLAGS: readonly FlagSpec[] = [
   ...OUTPUT_FLAGS,
 ];
 
+/**
+ * Flags the audio demakers share (docs 16, 17, 18).
+ *
+ * `--preview-format` is the one worth reading twice: `wav` is sample-exact and
+ * carries the doc-16 guarantee that the file sounds like the cartridge, and the
+ * lossy formats cannot, so they say so in `--json` rather than being quietly
+ * treated as equivalent.
+ */
+const AUDIO_COMMON_FLAGS: readonly FlagSpec[] = [
+  {
+    name: "console",
+    short: "c",
+    type: "string",
+    required: true,
+    metavar: "<id>",
+    help: "Target console id or alias (e.g. gb, nes, sms).",
+  },
+  {
+    name: "preview",
+    type: "string",
+    metavar: "<file>",
+    help: "Also write a playable audio file of the exact result.",
+  },
+  {
+    name: "preview-format",
+    type: "enum",
+    values: ["wav"],
+    default: "wav",
+    help: "Preview encoding. WAV is sample-exact; lossy formats land with their encoders.",
+  },
+  {
+    name: "output-stage",
+    type: "enum",
+    values: ["raw", "board"],
+    default: "raw",
+    help: "Raw chip output, or the console's analog stage simulated.",
+  },
+  {
+    name: "effort",
+    type: "enum",
+    values: ["fast", "default", "max"],
+    default: "default",
+    help: "Search budget: one candidate, a pruned portfolio, or the full one.",
+  },
+  {
+    name: "strategy",
+    type: "string",
+    default: "auto",
+    metavar: "auto|<name>|list",
+    help: "Tournament control: auto (default), a candidate name, or list.",
+  },
+  { name: "strict", type: "boolean", help: "Fail rather than degrade." },
+  {
+    name: "emit-manifest",
+    type: "string",
+    metavar: "[path]",
+    help: "Also write the sidecar JSON: channel plan, timing, budgets, provenance.",
+  },
+];
+
+const ARRANGE_FLAGS: readonly FlagSpec[] = [
+  ...AUDIO_COMMON_FLAGS,
+  {
+    name: "bpm",
+    type: "int",
+    metavar: "<n>",
+    help: "Override the detected tempo.",
+  },
+  {
+    name: "tempo",
+    type: "enum",
+    values: ["exact", "snap"],
+    default: "exact",
+    help: "Hold the source tempo, or let the bounded tempo grade pick a cheaper grid.",
+  },
+  {
+    name: "role",
+    type: "list",
+    metavar: "<part>=<role>",
+    help: "Override a part's role (percussion|bass|lead|harmony|pad|arp|fx); repeatable.",
+  },
+  {
+    name: "drop",
+    type: "list",
+    metavar: "<part>",
+    help: "Exclude a part outright; repeatable.",
+  },
+  {
+    name: "channels",
+    type: "int",
+    metavar: "<n>",
+    help: "Cap the channels used; the rest stay silent.",
+  },
+  {
+    name: "reserve",
+    type: "list",
+    metavar: "<channel>",
+    help: "Keep a channel free for sound effects; repeatable.",
+  },
+  { name: "title", type: "string", metavar: "<text>", help: "Track title, stored in the file." },
+  ...OUTPUT_FLAGS,
+];
+
+const SFX_FLAGS: readonly FlagSpec[] = [
+  ...AUDIO_COMMON_FLAGS,
+  {
+    name: "max-length",
+    type: "string",
+    metavar: "<seconds>",
+    default: "5",
+    help: "The effect's length budget (doc 18 §The five-second rule).",
+  },
+  { name: "title", type: "string", metavar: "<text>", help: "Effect name, stored in the file." },
+  ...OUTPUT_FLAGS,
+];
+
+const RENDER_FLAGS: readonly FlagSpec[] = [
+  {
+    name: "output-stage",
+    type: "enum",
+    values: ["raw", "board"],
+    default: "raw",
+    help: "Raw chip output, or the console's analog stage simulated.",
+  },
+  {
+    name: "sample-rate",
+    type: "int",
+    default: 48000,
+    metavar: "<hz>",
+    help: "Delivery rate; 48000 unless you have a reason.",
+  },
+  {
+    name: "loops",
+    type: "int",
+    default: 0,
+    metavar: "<n>",
+    help: "Repeat from the loop point this many extra times.",
+  },
+  ...OUTPUT_FLAGS,
+];
+
 const CONSOLES_FLAGS: readonly FlagSpec[] = [
   { name: "json", type: "boolean", help: "Emit every ConsoleSpec as a single JSON object." },
 ];
@@ -329,10 +470,10 @@ export const CLI_SPEC: CliSpec = {
     },
     {
       name: "gen",
-      summary: "Convert an image into console data/code (bin/asm/c)",
+      summary: "Convert an image or a chip schedule into console data/code",
       positional: {
         name: "input",
-        help: "Compliant or raw image (path, or - for stdin).",
+        help: "Compliant or raw image, or an arrange/sfx schedule manifest (path, or - for stdin).",
         optional: true,
       },
       flags: GEN_FLAGS,
@@ -346,6 +487,10 @@ export const CLI_SPEC: CliSpec = {
           note: "implicit prep, then C arrays",
         },
         { cmd: "demake gen tiles.png -c dmg --format bin -o tiles", note: "raw blobs for incbin" },
+        {
+          cmd: "demake gen song.json -c dmg --format rom -o song.gb",
+          note: "a cartridge that plays the track",
+        },
       ],
     },
     {
@@ -387,6 +532,58 @@ export const CLI_SPEC: CliSpec = {
       examples: [
         { cmd: "demake inspect out.png --json" },
         { cmd: "demake inspect out.png --source photo.jpg --json", note: "also score fidelity" },
+      ],
+    },
+    {
+      name: "arrange",
+      summary: "Convert any track into hardware-compliant chip music",
+      positional: {
+        name: "input",
+        help: "MIDI file (path, or - for stdin).",
+        optional: true,
+      },
+      flags: ARRANGE_FLAGS,
+      examples: [
+        {
+          cmd: "demake arrange song.mid -c gb -o song.vgm --preview song.wav",
+          note: "chip music, plus audio that is exactly what the cartridge plays",
+        },
+        {
+          cmd: "demake arrange track.mid -c nes --bpm 128 --role 3=bass",
+          note: "pin the tempo, correct a role",
+        },
+        {
+          cmd: "demake arrange song.mid -c sms --json",
+          note: "channel plan, timing, drops, scoreboard",
+        },
+      ],
+    },
+    {
+      name: "sfx",
+      summary: "Convert any sound into a hardware-compliant chip sound effect",
+      positional: {
+        name: "input",
+        help: "WAV file (path, or - for stdin).",
+        optional: true,
+      },
+      flags: SFX_FLAGS,
+      examples: [
+        { cmd: "demake sfx coin.wav -c gb --max-length 1.5 -o coin.vgm" },
+        { cmd: "demake sfx explosion.wav -c nes --preview boom.wav" },
+      ],
+    },
+    {
+      name: "render",
+      summary: "Render a compliant audio artifact to a playable audio file",
+      positional: {
+        name: "input",
+        help: "Chip audio artifact (path, or - for stdin).",
+        optional: true,
+      },
+      flags: RENDER_FLAGS,
+      examples: [
+        { cmd: "demake render song.vgm -o song.wav", note: "hear it as the hardware plays it" },
+        { cmd: "demake render song.vgm --loops 2 -o song.wav" },
       ],
     },
     {

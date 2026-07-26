@@ -111,6 +111,40 @@ optimizer polish (SNES/GBA/ANTIC).
 **Done means**: all Tier 2 consoles E2E-green in nightly CI; docs/README support
 table auto-updated.
 
+**Status: started.** Two Tier 2 verticals are complete and ride the same loop as
+Tier 1, each reusing an existing edge rather than adding one:
+
+- **PC Engine** — a `pce` codegen backend (word-planar HuC6270 characters, BAT
+  words, 9-bit VCE palettes), a 64 KiB HuCard harness assembled by
+  `wla-huc6280` (a fourth CPU target on the WLA-DX build the SMS/SG-1000/SNES
+  families already provision), and a pixel-perfect E2E against beetle-pce-fast
+  through the generic libretro runner.
+- **WonderSwan Color** — a `wsc` backend (packed 4bpp tiles, screen-map words
+  with palette/bank/flip, 16 RGB444 palettes), a 4 Mbit cartridge assembled by
+  **NASM** (the V30MZ is an 8086-compatible core, so a stock x86 assembler is
+  the native tool, not an approximation) with the cartridge footer and its
+  checksum packed by demake itself, and a pixel-perfect E2E against
+  beetle-wswan.
+
+Both march the shared image battery. The Game Gear shipped with the SMS family
+in Phase 2 and SG-1000 with the TMS9918 path.
+
+What remains of Tier 2 splits by what is blocking it:
+
+- **WonderSwan (mono)** is blocked on the engine, not the toolchain — its ROM
+  path would be the `wsc` one with 2bpp tiles. The hardware shows four shades
+  per tile through sixteen palettes that pick from an eight-shade pool, itself
+  picked from sixteen LCD levels: a *two-level* mono palette with per-tile
+  selection, which no fit path expresses (the mono path is single-palette;
+  the tiled path fits RGB lattices). Its current `ConsoleSpec` papers over that
+  with one eight-entry palette at 4bpp, which the mono hardware cannot display —
+  so `prep -c ws` is, today, optimistic. Fixing it means a **tiled-mono fitter**
+  and is the next engine increment here, not a backend.
+- **ColecoVision**, **Neo Geo** and **Lynx** are gated on emulators that require
+  copyrighted BIOS images, which the doc-10 loop will not ship.
+- **Atari 7800** needs a display-list layout path that does not exist yet.
+- **NGP/NGPC** has no assembler for the TLCS-900H in any distro archive.
+
 ## Phase 6 — 1.0
 
 Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs complete
@@ -123,6 +157,14 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
 - **Tier 3 long tail**: 2600 kernels, Atari 8-bit/5200, Intellivision, Virtual Boy,
   Pokémon Mini, and the remainder — each lands with its harness or ships prep-only
   with a documented "codegen pending toolchain validation" status.
+  - **Mega Duck** is the closest of these: its *data* formats are the DMG's
+    exactly, so it already rides the `gb` codegen family for `bin`/`asm`/`c`.
+    What it does not share is the display program — its LCD registers live at
+    `$FF10`–`$FF1B` instead of `$FF40`–`$FF4B` and LCDC's bits are shuffled — so
+    `rom` is withheld rather than quietly assembling a Game Boy cartridge. The
+    vertical is a `gb`-family harness variant plus the **SameDuck** libretro
+    core (a SameBoy fork, no BIOS files); `Core/gb.h` there is the register map
+    and its `display.c` the LCDC bit meanings.
 - In-browser ROM assembly for more families; WASM-accelerated hot kernels if
   profiling asks; palette-cycling & per-scanline tricks as opt-in "expert" flags;
   sprite/animation mode (the reserved schema slot); home-computer specs if demand
@@ -207,13 +249,66 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   framing is a *tile budget inspector* that explains what was merged and why,
   rather than a manual editor.
 
-- **Audio demake (new domain, exploratory)**: extend beyond images — convert
-  modern music and sound effects into hardware-compliant chip audio and playable
-  driver data for the same consoles (GB pulse/wave/noise, NES 2A03, SNES SPC700
-  BRR samples, MD YM2612 FM patches). Same shape as the image pipeline:
-  constrain → fit → emit → prove in an emulator, with audio-capture E2E standing
-  in for pixel-perfect. Starts as a spike plus its own design doc before any
-  tier commitment.
+- **Audio — the music and sound demakers (new domain)**: docs
+  [16](16-audio-engine.md), [17](17-music-demaker.md) and
+  [18](18-sound-demaker.md). Convert modern music and sound effects into
+  hardware-compliant chip audio, driver data and ROMs for the same consoles.
+  Same shape as the image pipeline — constrain → fit → emit → prove on emulated
+  hardware — with **register-schedule equality** standing in for pixel-perfect,
+  and one addition images do not need: a file you can play anywhere that is
+  guaranteed to sound like the cartridge (doc 16 §The render contract). Ordered
+  so each step is provable before the next begins:
+  - **A1 — the chip layer** *(built, bar the test ROMs)*: `@demake/chip` models
+    the GB APU, the SN76489 and the NES 2A03; `AudioSpec` and specs for six
+    consoles live in `core`; the exact box-integration renderer and WAV encode
+    are done, and `render` is the single path every surface makes sound through.
+    Eighteen analytic vectors pass, and `@demake/dmg` now *is* a consumer: its
+    APU is `@demake/chip`'s `GbApu`, so the emulator and the preview cannot
+    disagree about a chip they share. Outstanding: the hardware test ROMs and
+    their provisioner, and FLAC.
+  - **A2 — `arrange`** *(built for MIDI; the Game Boy boots)*: ingest, analysis,
+    the arrangement tournament, absolute-placement timing, the judge and the
+    `.vgm` artifact run on all six consoles. Tempo is preserved outright rather
+    than approximately, and a test shows the error shrinking with length rather
+    than compounding. Outstanding: tracker ingest, `bin`/`asm`/`c` emit, driver
+    backends beyond the Game Boy, and the listening sheets the judge weights get
+    frozen against.
+  - **A2.5 — the driver and the proof** *(done for the `gb` family)*: `demake gen
+    <schedule> --format rom` generates an SM83 driver *for this schedule* — rests
+    pulled only if it rests, an order walk only if it has one, a stop path only
+    for a one-shot — packs the schedule into deduplicated blocks behind an order
+    list, and assembles a 32 KiB cartridge with `core`'s own assembler. Level A
+    of doc 16 §The proof runs in `pnpm test`: the ROM boots in `@demake/dmg` and
+    every register write it makes is diffed against the `ChipScript`, tick for
+    tick, with no tolerance and no toolchain. Both demakers are covered, because
+    a track and a one-shot exercise different halves of the driver.
+
+    This is the point at which the audio domain reaches the shape the image
+    domain has — constrain → fit → emit → prove on emulated hardware — for one
+    family. Level B (sample comparison against a third-party core, via the
+    libretro harness's audio callback) and the other consoles' drivers are what
+    remain.
+  - **A3 — `sfx`** *(built for WAV; the Game Boy boots)*: eight gesture families, the class gate,
+    deterministic coordinate descent with every candidate rendered through the
+    chip model, and the placement contract each effect declares. Outstanding:
+    banks, `--variations`, the driver-side stealing and restore, and the
+    bank-in-a-ROM E2E that proves them. A single effect already builds into a
+    cartridge and is proven by A2.5's Level A suite.
+  - **A4 — audio input**: the transcription front end (beat, percussion, bass,
+    lead, harmony) with confidences, plus the decoders. *Done means*: an MP3
+    becomes a playable cartridge, and the parts it found are reported honestly
+    enough that a wrong one can be corrected in one flag.
+  - **A5 — breadth**: `nes`, `sms`/`gg`, `md` (FM patch fitting), `snes` (BRR,
+    the SPC700 driver, sample budgeting), `gba`, `nds` — each is a chip model, a
+    driver backend and a Level A/B harness, on the per-console definition of done
+    Phase 2 used for images. Each faces the choice doc 16 §The driver contract
+    records: own the CPU's encoder (as the Game Boy does, which buys the browser
+    and a toolchain-free proof) or pair generated data with a checked-in driver
+    source for a stock assembler (as the image harnesses do). Level A also needs
+    a core we own or one that exposes scripted register access.
+  - **A6 — the surfaces**: the two web sections (doc 07), the desktop wiring, and
+    the Demotic integration *if and when the maintainer settles the language
+    surface* (doc 17 §Demotic — a proposal, not a decision).
 - **3D asset demake (new domain, exploratory)**: apply the same treatment to the
   32/64-bit 3D era — take a common modern 3D asset and emit PS1/N64/Saturn-
   compatible ones: polygon budgets and retopology, texture quantization through
@@ -233,4 +328,6 @@ unrunnable in CI without shipping copyrighted files. · Node SEA vs
 Bun compile (Phase 1 spike) · final name confirmation (Phase 0) · MD 32X/Sega CD
 "extended spec" inclusion (post-1.0) · Oklab L-weight and judge metric-weight
 calibration values (Phase 2, frozen thereafter) · initial candidate-portfolio
-composition per console class (Phase 2, revisited per tier rollout).
+composition per console class (Phase 2, revisited per tier rollout) · the four
+audio decisions in doc 16 §Open decisions (verb names, expansion sound chips,
+the Demotic audio surface, and the `.dmm` fallback format).

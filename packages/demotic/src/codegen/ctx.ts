@@ -13,10 +13,11 @@
  * prune, because nothing was ever added.
  */
 
+import { Asm, label, type Ref } from "@demake/core";
+
 import type { ConsoleProfile } from "../profiles.js";
 import type { Program } from "../program.js";
 
-import { Asm, label, type Ref } from "./asm.js";
 import type { Analysis } from "./analyze.js";
 import type { Layout } from "./layout.js";
 

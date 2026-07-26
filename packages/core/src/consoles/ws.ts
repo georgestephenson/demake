@@ -1,6 +1,14 @@
 /**
  * WonderSwan (`ws`) — doc 03 Tier 2, mono pipeline. 224×144, eight grayscale
  * shades (the LCD has a faint tint). DMG mono path with an 8-level gray ramp.
+ *
+ * **Known optimistic** (doc 13 §Phase 5): the mono display controller has 2bpp
+ * tiles and sixteen *four*-entry palettes whose entries index an eight-shade
+ * pool, itself chosen from sixteen LCD levels — so no single tile can show the
+ * eight shades this spec offers. Modelling it faithfully needs a tiled-mono fit
+ * path (the mono path is single-palette; the tiled path fits RGB lattices),
+ * which is why `ws` has no codegen backend and the WonderSwan **Color** is its
+ * own `wsc` family rather than a sibling of this one.
  */
 import type { ConsoleSpec, RGB8 } from "./types.js";
 const GRAY8: readonly RGB8[] = Array.from({ length: 8 }, (_, i) => {

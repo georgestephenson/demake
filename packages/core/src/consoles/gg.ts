@@ -3,6 +3,7 @@
  * same 8×8 4bpp tiles and single 16-color BG palette, but a richer RGB444 LCD
  * (4096 colors) and a 160×144 viewport (a windowed crop of the SMS 256×192 VDP).
  */
+import { ggAudio } from "./audio-specs.js";
 import type { ConsoleSpec } from "./types.js";
 export const gg = {
   id: "gg",
@@ -22,6 +23,7 @@ export const gg = {
     flip: true,
   },
   codegen: { family: "sms", formats: ["bin", "asm", "c", "rom"] },
+  audio: ggAudio,
   docs: {
     sources: ["SMS Power! — Game Gear VDP (RGB444): https://www.smspower.org/Development/Palette"],
   },

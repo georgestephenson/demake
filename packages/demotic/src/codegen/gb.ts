@@ -4,9 +4,9 @@
  * There is no fixed engine and no blob to patch. A game is compiled to SM83
  * machine code specialised to it — its entities at constant addresses, its
  * rules unrolled into the scenes they can fire in, and only the runtime
- * routines something actually called. The assembler is ours
- * ({@link module:codegen/asm}), so this runs in a browser with nothing
- * installed and produces the same bytes the CLI does.
+ * routines something actually called. The assembler is ours (`core`'s
+ * {@link Asm}, shared with the audio driver backend), so this runs in a browser
+ * with nothing installed and produces the same bytes the CLI does.
  *
  * The Nintendo logo area is left as zeros, exactly as the NDS builder leaves
  * its logo area (doc 06): we ship no copyrighted data. Emulators that direct
@@ -15,34 +15,35 @@
  * RGBDS happens to be installed, and says so when it is not.
  */
 
+import { AsmError, GB_HEADER_OFFSETS, GB_ROM_SIZE, stampGbHeader } from "@demake/core";
+
 import { getProfile } from "../profiles.js";
 import type { Program } from "../program.js";
 
 import { analyze, type Analysis } from "./analyze.js";
 import { bindArt } from "./art.js";
-import { AsmError } from "./asm.js";
 import { Ctx } from "./ctx.js";
 import { emitProgram, type EmitOptions, type SpriteArt } from "./emit.js";
 import { BUILTIN_TILES } from "../rom/graphics.js";
 import { LayoutError, planLayout, type Layout } from "./layout.js";
 
-/** Bytes in a mapper-less Game Boy cartridge. */
-export const ROM_SIZE = 0x8000;
+/**
+ * The cartridge wrapper, re-exported from `core`.
+ *
+ * The header and both checksums are `core`'s (`asm/gb-cart.ts`) because the
+ * audio driver builds Game Boy ROMs too, and a header implemented twice is a
+ * header that disagrees in one byte in one of them.
+ */
+export const ROM_SIZE = GB_ROM_SIZE;
+export const HEADER_OFFSETS = GB_HEADER_OFFSETS;
 
-/** Tiles the video hardware addresses at once, shared by background and objects. */
+/**
+ * Tiles the video hardware addresses at once, shared by background and objects.
+ *
+ * Not a cartridge fact and so not `core`'s: it is what the PPU can reach, and
+ * it is the budget a scene's backdrop competes with the game's own art for.
+ */
 export const TILE_SLOTS = 256;
-
-/** Header field offsets, for callers that read a built ROM back. */
-export const HEADER_OFFSETS = {
-  logo: 0x0104,
-  title: 0x0134,
-  cgb: 0x0143,
-  cartridgeType: 0x0147,
-  romSize: 0x0148,
-  ramSize: 0x0149,
-  headerChecksum: 0x014d,
-  globalChecksum: 0x014e,
-} as const;
 
 /** What to stamp in the cartridge header, and what art to bind. */
 export interface RomOptions extends EmitOptions {
@@ -180,7 +181,7 @@ export function buildGbRom(program: Program, options: RomOptions = {}): BuiltRom
 
   const rom = new Uint8Array(ROM_SIZE);
   rom.set(code, 0);
-  writeHeader(rom, options.title ?? "DEMOTIC");
+  stampGbHeader(rom, options.title ?? "DEMOTIC");
 
   return {
     bytes: rom,
@@ -208,44 +209,6 @@ function stripUndefined(options: RomOptions): EmitOptions {
     if (options[key] !== undefined) out[key] = options[key];
   }
   return out as EmitOptions;
-}
-
-/**
- * Stamp the cartridge header and both checksums.
- *
- * Checksums are computed and never authored — the same rule doc 15 §header
- * states for every family, and the reason a Demakefile cannot produce an
- * invalid header by omission.
- */
-function writeHeader(rom: Uint8Array, title: string): void {
-  const clean = title
-    .toUpperCase()
-    .replace(/[^\x20-\x5f]/g, " ")
-    .slice(0, 15);
-  for (let index = 0; index < 16; index += 1) {
-    rom[HEADER_OFFSETS.title + index] = index < clean.length ? clean.charCodeAt(index) : 0;
-  }
-  rom[HEADER_OFFSETS.cgb] = 0x00;
-  rom[0x0144] = 0x00;
-  rom[0x0145] = 0x00;
-  rom[0x0146] = 0x00; // no Super Game Boy functions
-  rom[HEADER_OFFSETS.cartridgeType] = 0x00; // ROM only: 32 KiB, no mapper
-  rom[HEADER_OFFSETS.romSize] = 0x00;
-  rom[HEADER_OFFSETS.ramSize] = 0x00;
-  rom[0x014a] = 0x01; // non-Japanese
-  rom[0x014b] = 0x33; // "see the new licensee code"
-  rom[0x014c] = 0x00; // version
-
-  let header = 0;
-  for (let at = 0x0134; at <= 0x014c; at += 1) header = (header - (rom[at] as number) - 1) & 0xff;
-  rom[HEADER_OFFSETS.headerChecksum] = header;
-
-  rom[HEADER_OFFSETS.globalChecksum] = 0;
-  rom[HEADER_OFFSETS.globalChecksum + 1] = 0;
-  let global = 0;
-  for (const byte of rom) global = (global + byte) & 0xffff;
-  rom[HEADER_OFFSETS.globalChecksum] = (global >> 8) & 0xff;
-  rom[HEADER_OFFSETS.globalChecksum + 1] = global & 0xff;
 }
 
 export type { SpriteArt, EmitOptions, Layout, Analysis };
