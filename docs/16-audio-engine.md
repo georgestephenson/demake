@@ -240,6 +240,24 @@ faces" rule and doc 07's "the web app must never grow conversion logic":
 - The **desktop app** plays the file the sidecar CLI produced (doc 08's parity
   argument, unchanged).
 
+There is a fourth face, and it is the one that made the rule concrete: a
+**running cartridge**. The page's ROM pane plays a game's sound while the
+emulator executes it, which is the same claim with no schedule to render ahead of
+time — the chip has to be listened to as it goes. `StreamSink` is that, and it is
+deliberately not a second renderer: same box integration, same boundary
+arithmetic from an absolute sample index, same DC blocker, carried across calls
+rather than restarted (restarting it per chunk is a step at every frame boundary,
+which is sixty clicks a second). `packages/chip/test/stream.test.ts` asserts the
+two produce identical samples for identical writes, in any chunk size, which is
+what keeps "the page plays the chip" true of the emulator as well as of a
+preview.
+
+One consequence for whoever drives it: **with sound on, the audio device is the
+clock.** The pane runs emulator frames until the chip has produced the samples
+the player still needs, rather than on the frame clock. A tab's display and audio
+clocks differ by a few parts per million, which is a click every few minutes if
+the emulator follows the wrong one.
+
 Two browser traps this rule walks straight into, both documented because both
 will otherwise be found the hard way:
 

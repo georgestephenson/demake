@@ -208,6 +208,62 @@ test("builds and plays a real Game Boy ROM in the page", async ({ page }) => {
   await expect(page.getByTestId("rom-stat")).toContainText("per tick");
 });
 
+test("plays the cartridge's own APU through Web Audio", async ({ page }) => {
+  // Doc 07 §The audio sections: Web Audio is a playback device here, never a
+  // synthesizer. Recording the constructors before the app loads is the only
+  // way to assert that from outside — an `OscillatorNode` anywhere in the graph
+  // would be a second implementation of the hardware, and it would *sound*
+  // fine, which is exactly why it needs a test rather than a review.
+  await page.addInitScript(() => {
+    const record = (globalThis as unknown as { __synth: string[] }).__synth ?? [];
+    (globalThis as unknown as { __synth: string[] }).__synth = record;
+    for (const name of ["OscillatorNode", "BiquadFilterNode", "AudioWorkletNode", "GainNode"]) {
+      const original = (globalThis as unknown as Record<string, unknown>)[name];
+      if (typeof original !== "function") continue;
+      (globalThis as unknown as Record<string, unknown>)[name] = new Proxy(original, {
+        construct(target, args, newTarget) {
+          record.push(name);
+          return Reflect.construct(target as never, args, newTarget);
+        },
+      });
+    }
+    for (const name of ["createOscillator", "createBiquadFilter", "createGain"] as const) {
+      const proto = AudioContext.prototype as unknown as Record<string, unknown>;
+      const original = proto[name];
+      if (typeof original !== "function") continue;
+      proto[name] = function patched(this: AudioContext, ...args: unknown[]) {
+        record.push(name);
+        return (original as (...rest: unknown[]) => unknown).apply(this, args);
+      };
+    }
+  });
+  await page.goto("/#section=game");
+  const toggle = page.getByTestId("rom-sound");
+  await expect(toggle).toHaveText("Sound off");
+
+  // The click is the user gesture a browser wants before it will start an
+  // `AudioContext`, which is the whole reason the page has a button here rather
+  // than starting sound on its own.
+  await toggle.click();
+  await expect(toggle).toHaveText("Sound on");
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+  // With sound on the audio device is what clocks the emulator, so the thing to
+  // check is that the game is still *running* — a mistake here stops it dead
+  // rather than making it quiet.
+  await expect.poll(async () => romPainted(page), { timeout: 8000 }).toBeGreaterThan(0);
+  await page.locator(".rom-canvas").click();
+  await page.keyboard.press("KeyZ");
+  await expect(page.getByTestId("rom-stat")).toContainText("per tick", { timeout: 8000 });
+
+  // Nothing but a buffer source was ever built.
+  const synth = await page.evaluate(() => (globalThis as unknown as { __synth: string[] }).__synth);
+  expect(synth).toEqual([]);
+
+  await toggle.click();
+  await expect(toggle).toHaveText("Sound off");
+});
+
 test("builds a level game with a camera, which the fixed engine could not", async ({ page }) => {
   await page.goto("/#section=game");
   await page.getByTestId("example-select").selectOption("caves");

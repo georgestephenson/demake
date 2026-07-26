@@ -314,8 +314,11 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     and built — `music` and `sound` are in the language, every example game has
     a theme and effects, and the cartridge the page hands you is byte-identical
     to the CLI's with the audio demade into it (doc 17 §Demotic integration).
-    Still to come: the two web sections of doc 07 — a music demaker and a sound
-    demaker of their own — and the desktop wiring.
+    The page also *plays* a cartridge now: the ROM pane pipes `@demake/dmg`'s
+    APU — which is `@demake/chip`'s — through a bare `AudioBufferSourceNode`,
+    with the audio device clocking the emulator (doc 07 §Sound in the cartridge
+    pane). Still to come: the two web sections of doc 07 — a music demaker and a
+    sound demaker of their own — and the desktop wiring.
 - **3D asset demake (new domain, exploratory)**: apply the same treatment to the
   32/64-bit 3D era — take a common modern 3D asset and emit PS1/N64/Saturn-
   compatible ones: polygon budgets and retopology, texture quantization through

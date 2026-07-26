@@ -12,11 +12,12 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@demake/chip": "workspace:*",
     "@demake/cli-spec": "workspace:*",
     "@demake/core": "workspace:*",
     "@demake/demotic": "workspace:*",
-    "preact": "^10.29.7",
-    "@demake/dmg": "workspace:*"
+    "@demake/dmg": "workspace:*",
+    "preact": "^10.29.7"
   },
   "devDependencies": {
     "@lhci/cli": "^0.15.1",

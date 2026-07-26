@@ -112,23 +112,40 @@ class BoxSink implements SampleSink {
 }
 
 /**
- * Remove DC with a first-order high-pass.
+ * A first-order DC blocker: `y[n] = a × (y[n-1] + x[n] − x[n-1])`.
  *
- * `y[n] = a × (y[n-1] + x[n] − x[n-1])`, the standard DC blocker. Multiplies and
- * adds only, so it is bit-identical on every engine (doc 02 §Floating-point
- * discipline) — which is exactly why the coefficient is computed from a literal
- * rather than through `Math.exp`.
+ * Multiplies and adds only, so it is bit-identical on every engine (doc 02
+ * §Floating-point discipline) — which is exactly why the coefficient is computed
+ * from a literal rather than through `Math.exp`.
+ *
+ * A class rather than a loop because a *live* stream needs the same recurrence
+ * carried across calls (`stream.ts`): the offline render can start it at zero
+ * once, an emulator handing over a frame at a time cannot, and two
+ * implementations of one filter is two things to keep in step.
  */
+export class DcBlocker {
+  private prevIn = 0;
+  private prevOut = 0;
+
+  constructor(private readonly a: number) {}
+
+  static forRate(sampleRate: number, cutoffHz = DC_CUTOFF_HZ): DcBlocker {
+    return new DcBlocker(1 - (TWO_PI * cutoffHz) / sampleRate);
+  }
+
+  step(x: number): number {
+    const y = this.a * (this.prevOut + x - this.prevIn);
+    this.prevIn = x;
+    this.prevOut = y;
+    return y;
+  }
+}
+
+/** Remove DC from a finished render, in place. */
 export function blockDc(samples: Float32Array, sampleRate: number, cutoffHz = DC_CUTOFF_HZ): void {
-  const a = 1 - (TWO_PI * cutoffHz) / sampleRate;
-  let prevIn = 0;
-  let prevOut = 0;
+  const filter = DcBlocker.forRate(sampleRate, cutoffHz);
   for (let i = 0; i < samples.length; i += 1) {
-    const x = samples[i]!;
-    const y = a * (prevOut + x - prevIn);
-    prevIn = x;
-    prevOut = y;
-    samples[i] = y;
+    samples[i] = filter.step(samples[i] as number);
   }
 }
 

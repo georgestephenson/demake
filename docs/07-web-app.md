@@ -107,6 +107,32 @@ A game the runtime cannot run — one with a level or a camera, today — gets a
 message naming the feature instead of a cartridge that would play something
 else.
 
+### Sound in the cartridge pane *(built)*
+
+The ROM pane plays the cartridge's own sound, and every sample of it comes out of
+`@demake/chip`'s Game Boy APU — the same model the audio pipeline renders WAVs
+with, the same one the conformance suite diffs register writes against. The page
+computes nothing: `StreamSink` box-integrates and DC-blocks the chip's output
+exactly as the offline renderer does (`packages/chip/test/stream.test.ts` pins
+the two as bit-identical, in any chunk size), and what reaches Web Audio is a
+buffer.
+
+Three things about it are decisions rather than details:
+
+- **Nothing but an `AudioBufferSourceNode` is ever constructed**, and a
+  Playwright spec asserts it by recording the constructors before the app loads.
+  Not even a `GainNode`: muting is the context suspended and the stream detached,
+  because a graph with one node in it cannot grow a second implementation of the
+  hardware by accident.
+- **The audio device is the clock while sound is on.** The emulator runs until
+  the chip has produced the samples the player still needs, rather than on the
+  frame clock — a browser tab whose display and audio clocks differ by a few ppm
+  drifts into a click every few minutes otherwise. With sound off the frame
+  clock takes over again, unchanged.
+- **It is a button, off by default.** A browser will not start an `AudioContext`
+  without a user gesture, so a page that tried to start sound on its own would be
+  quiet and would have no way to say why; the click is the gesture.
+
 ### The audio sections
 
 Drop a track (or a sound) in, pick a console, press play, and hear exactly what

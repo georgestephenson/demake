@@ -25,6 +25,7 @@ export { Sn76489, SN76489_CLOCK_HZ } from "./sn76489.js";
 export { NesApu, NES_CLOCK_HZ } from "./nes-apu.js";
 export {
   blockDc,
+  DcBlocker,
   mix,
   normalize,
   renderSchedule,
@@ -33,6 +34,7 @@ export {
   type RenderOptions,
   type ScheduleTick,
 } from "./mix.js";
+export { StreamSink, type StreamOptions } from "./stream.js";
 
 /** Construct a chip model by id — the one place a chip id becomes an object. */
 export function createChip(id: ChipId, options: { stereo?: boolean } = {}): ChipModel {

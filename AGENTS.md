@@ -140,7 +140,8 @@ tools/toolchains/    provisioners (cached): RGBDS, cc65, WLA-DX, SameBoy source 
                      mednafen_pce_fast, mednafen_wswan)
 packages/dmg/        @demake/dmg — a self-hosted Game Boy core: the Demotic and audio
                      conformance harnesses in Vitest, and the web app's in-page
-                     player (doc 07: no CDN). Its APU is @demake/chip's, not a second one
+                     player (doc 07: no CDN). Its APU is @demake/chip's, not a
+                     second one, and `audioSink` is where its output goes
 packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs 14, 15)
   src/lang/          lex → parse → flat statement AST (one statement per line, no nesting)
   src/compile.ts     AST + console profile → resolved Program tables (constants folded)
@@ -160,6 +161,8 @@ packages/chip/       @demake/chip — every sound chip as a register-driven mode
   src/sn76489.ts     the SMS/GG/SG-1000 PSG: no envelopes, ~109 Hz pitch floor
   src/nes-apu.ts     the 2A03: volume-less triangle, non-linear mixing
   src/mix.ts         exact box-integration render, DC block, the one renderer
+  src/stream.ts      the same renderer for a chip that is still running: the
+                     ring buffer the web app's ROM pane plays from
 packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 18)
   src/score/         Score: the hardware-free representation, and the MIDI parser
   src/analysis.ts    roles, salience, sections, loop choice
@@ -509,6 +512,18 @@ that keep them from being undone. All of them come from doc 16.
   `OscillatorNode`, no filters, no worklet DSP. Construct the `AudioContext` with
   an explicit `{ sampleRate: 48000 }` or the browser resamples the buffer on its
   own terms, differently per engine.
+- **A live stream is the same renderer, not a second one.** `StreamSink`
+  (`@demake/chip`) box-integrates a _running_ chip into a ring buffer with the
+  same boundary arithmetic and the same DC blocker the offline render uses, and
+  `packages/chip/test/stream.test.ts` pins them as bit-identical in any chunk
+  size. Two details are load-bearing and easy to undo: the DC blocker's state
+  carries across calls (restarting it per chunk is sixty clicks a second), and
+  the integrated value is rounded to single precision _before_ it reaches the
+  filter, because that is what filtering a `Float32Array` in place does.
+- **With sound on, the audio device clocks the emulator.** The ROM pane runs
+  frames until the chip has produced the samples the player still needs, not on
+  the frame clock: a tab whose display and audio clocks differ by a few ppm
+  drifts into a click every few minutes otherwise.
 - **Lossless carries the guarantee; lossy does not.** WAV and FLAC are
   sample-exact and byte-golden. M4A/Opus/MP3 are convenience exports and must be
   labelled as approximations everywhere they appear — the project does not make

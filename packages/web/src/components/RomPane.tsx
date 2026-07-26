@@ -23,6 +23,7 @@ import { Gameboy, SCREEN_HEIGHT, SCREEN_WIDTH, type Button } from "@demake/dmg";
 
 import { demoAssetBytes, demoAudioBytes } from "../lib/demo-game.js";
 import { download } from "../lib/download.js";
+import { audioSupported, RomAudio } from "../lib/rom-audio.js";
 
 /** The portable button set maps one for one onto the Game Boy's. */
 const BUTTONS: Readonly<Record<string, Button>> = {
@@ -52,6 +53,12 @@ export function RomPane({
   const canvas = useRef<HTMLCanvasElement | null>(null);
   const machine = useRef<Gameboy | null>(null);
   const [cost, setCost] = useState<number | null>(null);
+  // The player, and whether the user has asked for it. It lives in a ref so the
+  // frame loop can read it without being rebuilt every time it is toggled, and
+  // it is created on the first click because a browser will not start an
+  // `AudioContext` without a user gesture.
+  const player = useRef<RomAudio | null>(null);
+  const [sound, setSound] = useState(false);
   // The music and the effects are binary and are fetched rather than bundled,
   // so the build waits for them. It waits rather than building without them
   // because a cartridge missing its audio would not be the one `demake build`
@@ -102,8 +109,8 @@ export function RomPane({
       machine.current = null;
       return;
     }
-    const gameboy = new Gameboy(rom);
-    machine.current = gameboy;
+    machine.current = new Gameboy(rom);
+    player.current?.attach(machine.current);
     const element = canvas.current;
     const context = element?.getContext("2d");
     if (!context) return;
@@ -115,29 +122,52 @@ export function RomPane({
     let lastTick = 0;
     const image = context.createImageData(SCREEN_WIDTH, SCREEN_HEIGHT);
 
+    /** One Game Boy frame, with the pad and the tick bookkeeping around it. */
+    const runFrame = (gameboy: Gameboy) => {
+      const down: Button[] = [];
+      for (const action of held.current) if (BUTTONS[action]) down.push(BUTTONS[action]);
+      for (const action of latched.current) if (BUTTONS[action]) down.push(BUTTONS[action]);
+      gameboy.setButtons(down);
+      gameboy.runFrame();
+      sinceTick += 1;
+      const tick = romReady(layout, (address, length) => gameboy.readMemory(address, length));
+      if (tick !== lastTick) {
+        lastTick = tick;
+        latched.current.clear();
+        setCost(sinceTick);
+        sinceTick = 0;
+      }
+    };
+
     const frame = (now: number) => {
       raf = requestAnimationFrame(frame);
-      // Real hardware time, not wall-clock catch-up: a game that needs three
-      // frames per tick should *look* like it needs three frames per tick.
-      accumulator += Math.min(now - last, 250);
-      last = now;
-      const step = 1000 / FRAME_RATE;
+      // Read the machine each frame rather than closing over it, so Reset
+      // actually resets and a stream stays attached to the machine that is
+      // running.
+      const gameboy = machine.current;
+      if (!gameboy) return;
+      const audio = player.current?.active === true ? player.current : null;
 
-      let budget = 4;
-      while (accumulator >= step && budget-- > 0) {
-        const down: Button[] = [];
-        for (const action of held.current) if (BUTTONS[action]) down.push(BUTTONS[action]);
-        for (const action of latched.current) if (BUTTONS[action]) down.push(BUTTONS[action]);
-        gameboy.setButtons(down);
-        gameboy.runFrame();
-        accumulator -= step;
-        sinceTick += 1;
-        const tick = romReady(layout, (address, length) => gameboy.readMemory(address, length));
-        if (tick !== lastTick) {
-          lastTick = tick;
-          latched.current.clear();
-          setCost(sinceTick);
-          sinceTick = 0;
+      if (audio) {
+        // Audio has no tolerance for a late buffer, so with sound on the device
+        // is the clock: run until the chip has produced what the player still
+        // needs. The wall clock is reset alongside it, or turning sound off
+        // would leave a backlog to sprint through.
+        let budget = 8;
+        while (budget-- > 0 && audio.demand() > 0) runFrame(gameboy);
+        audio.flush();
+        last = now;
+        accumulator = 0;
+      } else {
+        // Real hardware time, not wall-clock catch-up: a game that needs three
+        // frames per tick should *look* like it needs three frames per tick.
+        accumulator += Math.min(now - last, 250);
+        last = now;
+        const step = 1000 / FRAME_RATE;
+        let budget = 4;
+        while (accumulator >= step && budget-- > 0) {
+          runFrame(gameboy);
+          accumulator -= step;
         }
       }
 
@@ -148,6 +178,25 @@ export function RomPane({
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
   }, [rom, layout, held, latched]);
+
+  // The context outlives every ROM built in the section, and is closed once.
+  useEffect(() => () => player.current?.close(), []);
+
+  const toggleSound = useCallback(() => {
+    if (!audioSupported()) return;
+    const audio = (player.current ??= new RomAudio());
+    if (sound) {
+      void audio.suspend(machine.current);
+      setSound(false);
+      return;
+    }
+    // The click *is* the gesture a browser wants before it will start a
+    // context, which is the whole reason this is a button and not a default.
+    void audio.resume().then(() => {
+      if (machine.current) audio.attach(machine.current);
+      setSound(audio.active);
+    });
+  }, [sound]);
 
   const save = useCallback(() => {
     if (rom) download(`${name}.gb`, rom);
@@ -187,6 +236,15 @@ export function RomPane({
         <button type="button" onClick={reset}>
           Reset
         </button>
+        <button
+          type="button"
+          data-testid="rom-sound"
+          aria-pressed={sound}
+          onClick={toggleSound}
+          disabled={!audioSupported()}
+        >
+          {sound ? "Sound on" : "Sound off"}
+        </button>
         <button type="button" data-testid="rom-download" onClick={save}>
           Download {name}.gb
         </button>
@@ -202,6 +260,9 @@ export function RomPane({
         <code>demake build</code>
         &rsquo;s. Your game is machine code here, not a table an interpreter walks: it runs at
         hardware speed, and the frames-per-tick figure is the measured cost on an SM83.
+        {sound
+          ? " The sound is the cartridge's own APU, rendered by the same chip model the CLI writes WAVs with — the page synthesizes nothing."
+          : ""}
       </p>
     </div>
   );

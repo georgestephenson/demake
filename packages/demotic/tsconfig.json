@@ -11,6 +11,7 @@
   "references": [
     { "path": "../core/tsconfig.json" },
     { "path": "../audio/tsconfig.json" },
+    { "path": "../chip/tsconfig.json" },
     { "path": "../dmg/tsconfig.json" }
   ]
 }

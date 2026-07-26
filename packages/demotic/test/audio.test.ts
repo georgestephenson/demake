@@ -23,6 +23,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { gbChannelOf } from "@demake/audio";
+import { GB_CLOCK_HZ, StreamSink } from "@demake/chip";
 import { Gameboy } from "@demake/dmg";
 
 import { compile } from "../src/compile.js";
@@ -250,6 +251,48 @@ describe("an effect borrowing a channel", () => {
     expect(panning.length).toBeGreaterThan(0);
     const musical = (owned | (owned << 4)) ^ 0xff;
     expect(panning.some((write) => (write.value & musical) !== 0)).toBe(true);
+  });
+});
+
+describe("listening to a running cartridge", () => {
+  it("emits audible samples at the delivery rate the page asks for", () => {
+    // The last link in doc 07's chain: the page plays what the chip emitted, so
+    // what the chip emits from a *running game* has to be real audio. The
+    // stream is `@demake/chip`'s, bit-identical to the offline renderer
+    // (`packages/chip/test/stream.test.ts`), which is what makes the page a
+    // playback device rather than a second implementation of the hardware.
+    const { built } = build(MUSIC_ONLY);
+    const machine = new Gameboy(built.bytes);
+    const sink = new StreamSink(GB_CLOCK_HZ, { sampleRate: 48000, capacitySeconds: 3 });
+    machine.audioSink = sink;
+    for (let frame = 0; frame < 120; frame += 1) machine.runFrame();
+
+    // Two seconds of frames, two seconds of samples: the APU is clocked by the
+    // same master clock the CPU counts in, and a ratio slipped in anywhere here
+    // would show up as a tempo that is not the one the arranger reported. The
+    // band is loose by a few percent because `runFrame` stops at the *next*
+    // VBlank rather than after an exact number of clocks; a wrong ratio would
+    // miss by a factor, not by three percent.
+    const left = new Float32Array(sink.available);
+    const right = new Float32Array(sink.available);
+    const count = sink.read(left, right, left.length);
+    const seconds = count / 48000;
+    expect(seconds).toBeGreaterThan(1.9);
+    expect(seconds).toBeLessThan(2.2);
+    expect(sink.dropped).toBe(0);
+
+    let peak = 0;
+    for (let i = 0; i < count; i += 1) peak = Math.max(peak, Math.abs(left[i] as number));
+    expect(peak, "the cartridge played silence").toBeGreaterThan(0.05);
+  });
+
+  it("stays silent when nothing is listening", () => {
+    // The conformance suites run without a sink, and must pay nothing for it.
+    const { built } = build(MUSIC_ONLY);
+    const machine = new Gameboy(built.bytes);
+    expect(machine.audioSink).toBeUndefined();
+    for (let frame = 0; frame < 10; frame += 1) machine.runFrame();
+    expect(machine.audioSink).toBeUndefined();
   });
 });
 
