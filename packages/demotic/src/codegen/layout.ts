@@ -33,6 +33,7 @@ import { NES_AUDIO_BYTES } from "@demake/audio";
 import type { Program } from "../program.js";
 
 import type { Analysis } from "./analyze.js";
+import { ZP_FREE } from "./nes/zp.js";
 
 /** Stored properties, in record order. Index × 4 is the byte offset. */
 export const PROPS = [
@@ -175,16 +176,16 @@ export const GBC_MEMORY: MemoryPlan = { ...GB_MEMORY, cellAttributes: true };
  * of them, and a queued cell costs more here because the address goes out through
  * a register rather than being the store's own operand.
  *
- * The cheap region starts at `$0010` rather than `$0000` because the backend keeps
- * a handful of named pointers of its own below it (`codegen/nes/zp.ts`): a routine
- * that walks a table needs a pointer at a *fixed* address, not one the allocator
- * chose, and sixteen bytes is what the routines between them use.
+ * The cheap region starts above the backend's own named pointers rather than at
+ * `$0000` (`codegen/nes/zp.ts` owns them, and states where the allocator may
+ * begin): a routine that walks a table needs a pointer at a *fixed* address, not
+ * one the allocator chose.
  */
 export const NES_MEMORY: MemoryPlan = {
   machine: "NES",
   heapStart: 0x0300,
   heapEnd: 0x0800,
-  fastStart: 0x0010,
+  fastStart: ZP_FREE,
   fastEnd: 0x0100,
   oamShadow: 0x0200,
   oamEntries: 64,

@@ -523,18 +523,16 @@ describe("the example library", () => {
   ] as const;
 
   /**
-   * The one fixture whose NES cartridge cannot hold its audio, and by how much.
+   * Bytes a build has to have left over — a kilobyte, on every console.
    *
-   * Not a skip: the overflow is *asserted*, so the day a codegen change makes it
-   * fit, this test fails and someone moves it into the sweep above. The shooter is
-   * the tightest game in the library on every console — two demade backdrops, nine
-   * aliens, a theme and its effects — and on this one it runs out. Two facts add
-   * up to it and both are measured rather than guessed: the game's 6502 code is
-   * around 3.8 KiB larger than its SM83 code, and an NES backdrop is a 960-cell
-   * nametable against a Game Boy's 360. There is no mapper on an NROM cartridge to
-   * spend the difference from.
+   * The shooter is the tightest game in the library and it did not fit on the NES
+   * at all when the audio driver landed: nine aliens against three shots is
+   * twenty-seven collision pairs, and each pair was a copy of the same code with
+   * a different address in it. Packing the backdrop nametables bought about 940
+   * bytes and looping the pairs bought six thousand, so the exception this test
+   * briefly carried is gone and the floor is the same one everywhere.
    */
-  const OVER_BUDGET: Readonly<Record<string, readonly string[]>> = { nes: ["shooter.dmt"] };
+  const HEADROOM = 1024;
 
   /**
    * What one of these builds is allowed to take.
@@ -548,7 +546,6 @@ describe("the example library", () => {
 
   for (const target of TARGETS) {
     for (const [file, dir] of cases) {
-      if (OVER_BUDGET[target.id]?.includes(file)) continue;
       it(
         `${file} fits in a ${target.name} cartridge with its music and effects`,
         () => {
@@ -557,18 +554,7 @@ describe("the example library", () => {
           expect(built.stats.audio?.effects ?? 0).toBeGreaterThan(0);
           // Headroom, deliberately asserted: a fixture built to the last hundred
           // bytes turns the next code-generator change into a mystery.
-          expect(built.stats.free).toBeGreaterThan(1024);
-        },
-        BUILD_TIMEOUT,
-      );
-    }
-
-    for (const file of OVER_BUDGET[target.id] ?? []) {
-      it(
-        `${file} does not fit in a ${target.name} cartridge with its music`,
-        () => {
-          const source = readFileSync(join(games, file), "utf8");
-          expect(() => build(target, source, games)).toThrowError(/E_GAME_TOO_LARGE|holds/);
+          expect(built.stats.free).toBeGreaterThan(HEADROOM);
         },
         BUILD_TIMEOUT,
       );
