@@ -163,6 +163,21 @@ export class Ppu {
   private frameScrollY = 0;
   private frameNametable = 0;
 
+  /**
+   * Where this frame is being drawn from, for a harness that needs to say which
+   * cell of a map ended up on which cell of the screen. Observation only: the
+   * renderer reads the private fields, so nothing here can change what is drawn.
+   */
+  get scrollX(): number {
+    return this.frameScrollX;
+  }
+  get scrollY(): number {
+    return this.frameScrollY;
+  }
+  get nametable(): number {
+    return this.frameNametable;
+  }
+
   /** Raised when VBlank starts and the control register asked for it. */
   nmi = false;
 

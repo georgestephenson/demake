@@ -116,6 +116,13 @@ describe("what the NES actually draws", () => {
    * The tables are read out of the cartridge rather than recomputed here, so this
    * checks the *renderer* — where a cell was put — and not the level format, which
    * `shape.ts` emits for both consoles and `level.test.ts` already covers.
+   *
+   * All thirty rows, not the game's twenty-eight: the last two are the overscan a
+   * television would crop, and they are exactly where this console goes wrong. A
+   * level the nametable holds whole cannot scroll vertically — thirty rows of map
+   * against thirty of raster leave nothing to scroll into but the level's own top
+   * — so the renderer pins the vertical scroll, and the rows the game camera has
+   * "scrolled past" have to still show the level's own bottom.
    */
   function mismatches(
     machine: Nes,
@@ -130,11 +137,14 @@ describe("what the NES actually draws", () => {
       const legend = prg(tables.grid + row * size.width + column);
       return legend === 0xff ? 0 : prg(tables.tiles + legend);
     };
+    // The renderer's origin, which is the camera's only where the level is tall
+    // enough to scroll a row into.
+    const originRow = size.height > 30 ? camera.row : 0;
     let bad = 0;
-    for (let screenRow = 0; screenRow < 28; screenRow += 1) {
+    for (let screenRow = 0; screenRow < 30; screenRow += 1) {
       for (let screenColumn = 0; screenColumn < 32; screenColumn += 1) {
         const column = camera.column + screenColumn;
-        const row = camera.row + screenRow;
+        const row = originRow + screenRow;
         const mapColumn = column % 64;
         const table = mapColumn >= 32 ? 1 : 0;
         const got = machine.ppu.nametables[table * 0x400 + (row % 30) * 32 + (mapColumn % 32)];
@@ -142,6 +152,11 @@ describe("what the NES actually draws", () => {
       }
     }
     return bad;
+  }
+
+  /** The vertical scroll the PPU is actually being given. */
+  function scrollRow(machine: Nes): number {
+    return Math.floor(machine.ppu.scrollY / 8);
   }
 
   /** Where the camera is, in whole cells, read out of the runtime's own state. */
@@ -190,6 +205,12 @@ describe("what the NES actually draws", () => {
     const moved = cameraCells(machine, camera);
     expect(moved.column).toBeGreaterThan(0);
     expect(mismatches(machine, built.bytes, tables, size, moved)).toBe(0);
+
+    // The game camera really has travelled down this level — it is thirty rows
+    // against a twenty-eight-row screen — and the PPU has not, which is the whole
+    // of why the bottom of the screen is the cavern's floor and not its ceiling.
+    expect(moved.row).toBeGreaterThan(0);
+    expect(scrollRow(machine)).toBe(0);
   });
 
   it("keeps a level wider than the pair correct as the edge painter walks it", () => {
