@@ -1,0 +1,60 @@
+.TH DEMAKE\-SFX 1 "" "" "Convert any sound into a hardware\-compliant chip sound effect"
+.SH NAME
+demake-sfx \- Convert any sound into a hardware\-compliant chip sound effect
+.SH SYNOPSIS
+\fBdemake sfx\fR [\fIoptions\fR] [\fIinput\fR]
+.SH DESCRIPTION
+Convert any sound into a hardware\-compliant chip sound effect.
+.SH OPTIONS
+.TP
+\fB\-c\fR, \fB\-\-console\fR \fI<id>\fR
+Target console id or alias (e.g. gb, nes, sms). [required]
+.TP
+\fB\-\-preview\fR \fI<file>\fR
+Also write a playable audio file of the exact result.
+.TP
+\fB\-\-preview-format\fR \fIvalue\fR
+Preview encoding. WAV is sample\-exact; lossy formats land with their encoders. (default: wav)
+.TP
+\fB\-\-output-stage\fR \fIvalue\fR
+Raw chip output, or the console's analog stage simulated. (default: raw)
+.TP
+\fB\-\-effort\fR \fIvalue\fR
+Search budget: one candidate, a pruned portfolio, or the full one. (default: default)
+.TP
+\fB\-\-strategy\fR \fIauto|<name>|list\fR
+Tournament control: auto (default), a candidate name, or list. (default: auto)
+.TP
+\fB\-\-strict\fR
+Fail rather than degrade.
+.TP
+\fB\-\-emit-manifest\fR \fI[path]\fR
+Also write the sidecar JSON: channel plan, timing, budgets, provenance.
+.TP
+\fB\-\-max-length\fR \fI<seconds>\fR
+The effect's length budget (doc 18 §The five\-second rule). (default: 5)
+.TP
+\fB\-\-title\fR \fI<text>\fR
+Effect name, stored in the file.
+.TP
+\fB\-o\fR, \fB\-\-output\fR \fI<file>\fR
+Write the artifact to <file> (default: stdout when piped).
+.TP
+\fB\-\-json\fR
+Emit a single JSON object on stdout (product goes to \-o).
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Increase diagnostic detail (repeatable).
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Suppress warnings.
+.TP
+\fB\-f\fR, \fB\-\-force\fR
+Overwrite an existing output file.
+.SH EXAMPLES
+.PP
+demake sfx coin.wav \-c gb \-\-max\-length 1.5 \-o coin.vgm
+.PP
+demake sfx explosion.wav \-c nes \-\-preview boom.wav
+.SH SEE ALSO
+\fBdemake\fR(1)

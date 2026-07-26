@@ -26,13 +26,27 @@ Commands:
   init       Scaffold a Demakefile reproducing the current defaults
   fmt        Canonicalize .dmt, .test.dmt and Demakefile formatting
 
+  arrange    Convert any track into hardware-compliant chip music for a console
+  sfx        Convert any sound into a hardware-compliant chip sound effect
+  render     Render a compliant audio artifact to a playable audio file
+
   completion Emit shell completion (bash/zsh/fish)
   help       Help for any command
 ```
 
-The second group is the Demotic surface (docs 14 and 15). Verbs are flat, like
-the first group, rather than nested under a `game` noun — one command tree, one
-`--help`, one completion script.
+The second group is the Demotic surface (docs 14 and 15); the third is the audio
+surface (docs [16](16-audio-engine.md), [17](17-music-demaker.md),
+[18](18-sound-demaker.md)). Verbs are flat, like the first group, rather than
+nested under a `game` or `audio` noun — one command tree, one `--help`, one
+completion script.
+
+`gen` is shared rather than duplicated: its job is already "emit code for this
+console", and its exact-path detector has a precise audio counterpart — a `.vgm`
+whose chip, driver rate and register usage already satisfy the target takes the
+lossless path, and anything else runs `arrange` implicitly unless `--strict`.
+`render` is its own verb because *play me what this will sound like on the
+hardware* is the audio domain's central question, applies to artifacts demake did
+not produce, and is what the web and desktop apps call.
 
 **Of that group, `build` exists today**, in the zero-config shape doc 15 §You do
 not need one describes: it takes a `.dmt` and writes a cartridge for the one
@@ -104,6 +118,28 @@ demake trace pong.dmt -c gb --tape 1:a,90:,90:left > pong.gb.trace
 demake build pong.dmt -o pong.gb --title PONG
 demake build pong.dmt --json          # tables, budgets, free ROM space
 
+# --- audio (docs 16, 17, 18) -------------------------------------------------
+
+# Any track → chip music for a console, plus a file you can actually play
+demake arrange song.mid -c gb -o song.vgm --preview song.flac
+
+# An MP3, with the tempo pinned and the roles corrected
+demake arrange track.mp3 -c nes --bpm 128 --role 3=bass -o track.vgm
+
+# Any sound → a chip effect, one channel, under five seconds
+demake sfx coin.wav -c gb --max-length 1.5 -o coin.vgm
+
+# Hear it exactly as the cartridge will play it (doc 16 §The render contract)
+demake render song.vgm -o song.flac
+demake render song.vgm --output-stage board -o song-as-heard.wav
+
+# Driver data + player code, then a ROM that plays the track
+demake gen song.vgm -c gb --format asm -o song.asm
+demake gen song.vgm -c gb --format rom -o jukebox.gb
+
+# Score the result against its source with the same judge the tournament used
+demake inspect song.vgm --source song.mid --json
+
 # See / pin the algorithm choice
 demake prep photo.jpg -c nes --strategy list
 demake prep photo.jpg -c nes --strategy photo-lanczos-fs -o out.png
@@ -141,7 +177,8 @@ demake prep photo.jpg -c nes --strategy photo-lanczos-fs -o out.png
 - **Man pages**: `demake(1)`, `demake-prep(1)`, `demake-gen(1)`,
   `demake-consoles(1)`, `demake-inspect(1)`, `demake-build(1)`, `demake-run(1)`,
   `demake-check(1)`, `demake-test(1)`, `demake-trace(1)`, `demake-init(1)`,
-  `demake-fmt(1)`, plus `demake-formats(5)` for the manifest/JSON schemas,
+  `demake-fmt(1)`, `demake-arrange(1)`, `demake-sfx(1)`, `demake-render(1)`,
+  plus `demake-formats(5)` for the manifest/JSON schemas,
   `demotic(5)` for the game language, and `demakefile(5)` for the build manifest.
   Generated (never hand-drifted) — §Single source of truth.
 - **Environment**: honors `NO_COLOR`, `CLICOLOR_FORCE`, `TERM=dumb`; no config file
@@ -223,6 +260,33 @@ demake prep photo.jpg -c nes --strategy photo-lanczos-fs -o out.png
 | `--title <text>` | build | Cartridge title; default is the source file's name |
 | `--format rom\|sym` | build | A playable ROM, or the symbol map of the code generated for it |
 | `--boot-logo` | build | Stamp the boot logo via `rgbfix`, for original hardware |
+
+### Audio flags (docs 16, 17, 18)
+
+| Flag | Applies to | Meaning |
+|---|---|---|
+| `--preview <file>` | arrange/sfx | Also write a playable audio file of the exact result; extension picks the format |
+| `--preview-format wav\|flac\|m4a\|opus\|mp3` | arrange/sfx/render | `wav` and `flac` are sample-exact and carry the doc-16 guarantee; the lossy three are convenience and say so in `--json` |
+| `--output-stage raw\|board` | arrange/sfx/render | Raw chip output (default, and the encoding comparisons happen in) or the console's analog output stage simulated |
+| `--bpm <n>` | arrange | Override detected tempo |
+| `--tempo exact\|snap` | arrange | Hold the source tempo, or allow the bounded global tempo grade to land on a cheaper grid |
+| `--role <part>=<role>` | arrange | Override role classification (`percussion\|bass\|lead\|harmony\|pad\|arp\|fx`); repeatable |
+| `--drop <part>` | arrange | Exclude a part outright; repeatable |
+| `--channels N` | arrange/sfx | Cap the channels used (default: all available for music, one for an effect) |
+| `--reserve <channel>` | arrange | Keep a channel free for sound effects |
+| `--loop <bar:bar>\|auto\|none` | arrange | Loop points; `auto` is detected structure (doc 17 §Stage 1) |
+| `--transpose <semitones>\|auto` | arrange | Pin the global transpose instead of letting the judge choose it |
+| `--max-length <seconds>` | sfx | Effect budget, default 5 |
+| `--variations N` | sfx | Emit N bounded variations of the fitted effect |
+| `--chip <id>` | all audio | Select an expansion chip where a console has one (post-1.0, doc 16 §Open decisions) |
+| `--allow-lossy` | inspect | Permit scoring against a lossy audio file, with the caveat recorded |
+
+`arrange` and `sfx` report, in `--json`: the detected tempo with its alternatives
+and the achieved tempo in ppm, every part with its role and confidence, the
+channel plan span by span, every note and part dropped with its salience, the
+fitted timbres, budget usage against each limit, the tournament scoreboard, and
+every diagnostic. That is enough for an agent to fix a budget or balance failure
+without listening to anything.
 
 `build` and `check` report, in `--json`: the resolved source, every target with
 its console and region, every asset with its final option set and prepped size,

@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@demake/cli-spec": "workspace:*",
+    "@demake/audio": "workspace:*",
     "@demake/core": "workspace:*",
     "@demake/demotic": "workspace:*"
   },

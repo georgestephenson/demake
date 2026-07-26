@@ -136,7 +136,29 @@ bytes the game names and converts them itself (doc 15 §The conversion path), so
 the browser and the CLI cannot diverge on a tile: both hand over the same source
 and every decision from rasterising to dedup happens in one place.
 
-`gen` emits *image* artifacts and is unchanged by any of this.
+`gen` emits *image* artifacts from images and is unchanged by any of this.
+
+## The audio backends (doc 16)
+
+`gen` on an audio artifact emits the same four formats, plus the one thing images
+never need: **the player code**. `bin` is the packed music or effect data,
+`asm`/`c` add the driver source, and `rom` is a bootable cartridge that plays the
+track — the counterpart of the display harness, and the foundation of the audio
+proof loop (doc 10).
+
+The driver is *generated for this track*, on exactly the reasoning doc 14 §2
+records for games: a fixed player ships every feature because it cannot know
+which ones this song uses, and on a cartridge that is the budget rather than an
+abstraction cost. A track with no vibrato ships no vibrato code. The same
+pull-based `ctx.need(name, body)` discipline applies — helpers are pulled, never
+pushed, never pruned afterwards.
+
+What the driver must guarantee is narrow, exact and testable: **on tick N it
+performs exactly the writes the `ChipScript` lists for tick N, in order, within
+the cycle budget.** How the data is compressed, whether patterns are shared, how
+the order list is walked — none of it is observable in the register stream, so
+none of it is part of the contract. Doc 16 §The driver contract has the detail;
+doc 16 §The proof has the oracle that checks it.
 
 The Nintendo boot logo stays zero, on the same principle as the NDS builder: we
 ship no copyrighted data. A built ROM therefore direct-boots in emulators and

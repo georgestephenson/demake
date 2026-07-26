@@ -51,7 +51,16 @@ export default tseslint.config(
     // invariants: the simulator is the semantic spec a console runtime must
     // match bit-for-bit, so it cannot reach for a platform API or drift by an
     // ulp (doc 14 §Simulate constrained).
-    files: ["packages/core/src/**/*.ts", "packages/demotic/src/**/*.ts"],
+    // `chip` and `audio` join them for the same reason, and audio needs it
+    // most: DSP reaches for transcendentals constantly, and an FFT seeded with
+    // `Math.cos` returns different low bits per engine — which every metric
+    // downstream then inherits (doc 16 §Determinism engineering).
+    files: [
+      "packages/core/src/**/*.ts",
+      "packages/demotic/src/**/*.ts",
+      "packages/chip/src/**/*.ts",
+      "packages/audio/src/**/*.ts",
+    ],
     languageOptions: {
       globals: { ...globals.es2021 },
     },

@@ -11,6 +11,7 @@
  */
 
 import type { RGB8 } from "./types.js";
+import { gbAudio } from "./audio-specs.js";
 import type { ConsoleSpec } from "./types.js";
 
 /** Classic Game Boy green LCD ramp, lightest → darkest. */
@@ -50,6 +51,7 @@ export const dmg = {
     flip: false,
   },
   codegen: { family: "gb", formats: ["bin", "asm", "c", "rom"] },
+  audio: gbAudio,
   docs: {
     sources: [
       "Pan Docs — LCD Monochrome Palettes (BGP): https://gbdev.io/pandocs/Palettes.html",

@@ -12,11 +12,14 @@ asserted:
 | --------- | --------------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------- |
 | **art**   | any image                                           | hardware-compliant art, palettes, tile maps, asm/C/binary, bootable ROMs | working                                       |
 | **game**  | a [Demotic](docs/14-demotic.md) `.dmt` script + art | one game, every console                                                  | language, preview and a playable Game Boy ROM |
-| **music** | a track                                             | chip music and driver data                                               | planned                                       |
-| **sound** | an effect                                           | chip sound                                                               | planned                                       |
+| **music** | a MIDI track                                        | chip music, plus audio that sounds exactly like the hardware will        | six consoles; ROM emit to come                |
+| **sound** | a WAV effect                                        | a chip sound effect, placed and prioritised                              | six consoles; ROM emit to come                |
 
-The two working demakers share one engine, one determinism guarantee, and one
-proof: a real ROM, booted in a real emulator, compared pixel for pixel in CI.
+Every demaker shares one engine and one determinism guarantee. Art and games
+also share the proof: a real ROM, booted in a real emulator, compared pixel for
+pixel in CI. Audio's counterpart — the ROM, and the register schedule an
+emulator's chip actually receives — is the next step, so a track is exact audio
+today but not yet a cartridge.
 
 ## Why
 
@@ -93,6 +96,8 @@ byte-for-byte across an extensive image battery.
 | [`demake`](packages/cli)              | The CLI wrapper (doc 05). Re-exports core for scripting.                        |
 | [`@demake/demotic`](packages/demotic) | Demotic: the game language, its interpreter, and the ROM builder (docs 14, 15). |
 | [`@demake/dmg`](packages/dmg)         | A Game Boy core: the conformance harness, and the web app's player.             |
+| [`@demake/chip`](packages/chip)       | Every sound chip as a register-driven model (doc 16). Depends on nothing.       |
+| [`@demake/audio`](packages/audio)     | The music and sound demakers (docs 16, 17, 18).                                 |
 | [`@demake/web`](packages/web)         | The browser app (doc 07): the same core in a worker, no server.                 |
 
 ## Develop

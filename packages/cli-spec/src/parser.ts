@@ -58,6 +58,7 @@ function coerce(flag: FlagSpec, raw: string): ParsedValue {
       return raw;
     }
     case "colorlist":
+    case "list":
       return raw
         .split(",")
         .map((s) => s.trim())
@@ -72,6 +73,21 @@ function coerce(flag: FlagSpec, raw: string): ParsedValue {
 
 function needsValue(flag: FlagSpec): boolean {
   return flag.type !== "boolean" && flag.type !== "count";
+}
+
+/**
+ * Store a coerced value, accumulating for repeatable list flags.
+ *
+ * `--role 1=bass --role 2=lead` has to mean both, not the last one — a flag
+ * documented as repeatable that silently keeps only the final occurrence is
+ * worse than one that rejects the second.
+ */
+function assign(flag: FlagSpec, values: Record<string, ParsedValue>, value: ParsedValue): void {
+  if (flag.type === "list" && Array.isArray(values[flag.name]) && Array.isArray(value)) {
+    values[flag.name] = [...(values[flag.name] as string[]), ...(value as string[])];
+    return;
+  }
+  values[flag.name] = value;
 }
 
 /** Parse `argv` (already sliced past the command) against a command spec. */
@@ -134,10 +150,10 @@ function handleLong(
     if (value === undefined) {
       throw new ParseError(`option '--${name}' requires a value`);
     }
-    values[flag.name] = coerce(flag, value);
+    assign(flag, values, coerce(flag, value));
     return i + 1;
   }
-  values[flag.name] = coerce(flag, value);
+  assign(flag, values, coerce(flag, value));
   return i;
 }
 
@@ -164,14 +180,14 @@ function handleShortBundle(
     const rest = chars.slice(k + 1);
     if (rest.length > 0) {
       const raw = rest.startsWith("=") ? rest.slice(1) : rest;
-      values[flag.name] = coerce(flag, raw);
+      assign(flag, values, coerce(flag, raw));
       return i;
     }
     const next = argv[i + 1];
     if (next === undefined) {
       throw new ParseError(`option '-${ch}' requires a value`);
     }
-    values[flag.name] = coerce(flag, next);
+    assign(flag, values, coerce(flag, next));
     return i + 1;
   }
   return i;

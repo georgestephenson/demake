@@ -12,6 +12,7 @@
  * ultimately locked by emulator tests (doc 10), not by these constants.
  */
 
+import { gbAudio } from "./audio-specs.js";
 import type { ConsoleSpec } from "./types.js";
 
 export const gbc = {
@@ -42,6 +43,7 @@ export const gbc = {
     flip: true,
   },
   codegen: { family: "gb", formats: ["bin", "asm", "c", "rom"] },
+  audio: gbAudio,
   docs: {
     sources: [
       "Pan Docs — Video Display / LCD Color Palettes (CGB): https://gbdev.io/pandocs/Palettes.html",

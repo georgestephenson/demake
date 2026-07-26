@@ -10,8 +10,10 @@ this exact API — nothing they can do is unavailable to library users.
 |---|---|
 | `@demake/core` | The engine: pipeline, console specs, codegen. Zero platform deps; ESM; ships types. |
 | `@demake/demotic` | The game language (doc 14) and the Demakefile (doc 15): compiler, reference interpreter, `.test.dmt` runner, trace oracle, and the console backend — an SM83 assembler and the `gb` code generator. Depends on `core`; zero platform deps. |
-| `@demake/dmg` | A Game Boy core: the Demotic conformance harness (doc 10) and the web app's in-page player (doc 07). Depends on nothing; zero platform deps. |
-| `demake` | The CLI (`bin`). Depends on all three. Also re-exports them so `npm i demake` alone suffices for scripting. |
+| `@demake/dmg` | A Game Boy core: the Demotic conformance harness (doc 10) and the web app's in-page player (doc 07). Depends on `chip`; zero platform deps. |
+| `@demake/chip` | Every sound chip as a cycle-clocked, register-driven model, plus the deterministic mixer and resampler (doc 16). Depends on nothing; zero platform deps. |
+| `@demake/audio` | The music (doc 17) and sound (doc 18) demakers: ingest, analysis, arrangement, timbre fitting, the judge, drivers and emitters. Depends on `core` and `chip`; zero platform deps. |
+| `demake` | The CLI (`bin`). Depends on all of them. Also re-exports them so `npm i demake` alone suffices for scripting. |
 
 `@demake/demotic` is separate from `core` for three reasons: image-only consumers
 should not pay for a game language; the two domains' output-stability clocks are
@@ -140,6 +142,52 @@ survived, and any art the program named but was not given.
 writing files are the CLI's job, exactly as `gen`'s `rom-plan` already works. The package stays platform-pure, so the same calls back the web
 app's Demotic section.
 
+## `@demake/audio` surface (docs 16, 17, 18)
+
+```ts
+import {
+  arrange, sfx, render, inspectAudio, judgeAudio,
+  ingest, analyze,                                  // Score construction, exposed
+  type Score, type ChipScript, type ArrangeOptions, type SfxOptions,
+} from "@demake/audio";
+
+const music = await arrange(midiBytes, {
+  console: "gb",
+  strategy?: "auto" | string,     // the doc-17 tournament, or one named candidate
+  bpm?: number, tempo?: "exact" | "snap",
+  roles?: Record<string, Role>, drop?: string[],
+  channels?: number, reserve?: string[],
+  loop?: { startBar: number; endBar: number } | "auto" | "none",
+  transpose?: number | "auto",
+  effort?: "fast" | "default" | "max",
+  seed?: number, strict?: boolean,
+  onProgress?, signal?,
+});
+// music: { script: ChipScript; artifact: Uint8Array;  // the .vgm/.spc/.dmm
+//          manifest: AudioManifest; score: Score;     // what analysis understood
+//          plan: ChannelPlan; decisions: AutoDecisions; timing: TimingReport;
+//          dropped: DroppedItem[]; diagnostics: Diagnostic[];
+//          tournament: { winner: string; candidates: CandidateScore[] } }
+
+// The render contract (doc 16), and the only way any surface makes sound:
+const pcm = render(music.script, {
+  sampleRate?: 48000,
+  outputStage?: "raw" | "board",
+});                               // → { channels, sampleRate, samples: Float32Array[] }
+encodeWav(pcm) / encodeFlac(pcm); // sample-exact; the lossy encoders are separate
+                                  // and labelled, because they cannot carry the guarantee
+```
+
+`render` is the load-bearing export. The CLI writes files with it, the web app
+plays its output through a bare `AudioBufferSourceNode`, and the desktop app
+plays the file the CLI produced — three surfaces, one synthesis, which is what
+makes "it sounds exactly like the cartridge" a testable claim rather than a hope
+(doc 16 §Claim 3).
+
+`inspectAudio` is the compliance oracle and `judgeAudio` the tournament's own
+scorer, both public on the same principle as their image counterparts: tests,
+agents and users can measure exactly what the tournament measured.
+
 ## Stability & determinism guarantees (documented, tested)
 
 - **API stability**: semver on the TS surface; deprecations live one major.
@@ -152,7 +200,13 @@ app's Demotic section.
 - **Demotic semantics are output bytes too**: a change that alters any golden
   trace is a minor bump on `@demake/demotic`, with traces re-baselined, a
   changeset and a release-note line, in the same PR. Patch releases never change
-  a trace. The two packages version independently (doc 14 §Stability).
+  a trace. The packages version independently (doc 14 §Stability).
+- **Rendered audio is output bytes too**, and this is the sharpest golden the
+  project has: because `@demake/chip` is deterministic and integer, the WAV a
+  `ChipScript` renders to is byte-compared like a PNG. A change to a chip model
+  is therefore never quiet — it moves goldens, needs a minor bump and a release
+  note, and must be justified by a hardware-behaviour test (doc 16 §Claim 2), not
+  by taste.
 
 ## Docs
 

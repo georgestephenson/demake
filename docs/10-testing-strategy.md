@@ -228,6 +228,72 @@ Plus a tabs-and-spaces matrix: the same Demakefile indented either way must pars
 to the identical model, and mixing them within one file must fail naming both
 offending lines.
 
+## 6c. Audio conformance (docs 16, 17, 18)
+
+The credo restated for sound: **"it sounds like the hardware" is proven, not
+asserted** — and the proof is stronger than the image path's, because a register
+schedule is an exact object and a framebuffer comparison is the best you can do
+for pixels.
+
+The equality is *not* "our WAV bytes equal the emulator's WAV bytes", and
+pretending otherwise would be the audio version of claiming byte-identity across
+browsers without deterministic math. Cores resample, filter, and model the analog
+stage on their own terms. What is exact, and what actually carries the claim, is
+split in three (doc 16 §The render contract):
+
+**Level A — schedule equality (exact; runs wherever `pnpm test` runs).** Boot the
+generated ROM in a core we own, log every write the chip receives with its driver
+tick, and diff against the `ChipScript`. No tolerance, no metric. For the Game
+Boy this needs `@demake/dmg` to grow an APU — which doc 07 needs anyway for the
+page to make sound — after which the audio conformance suite is a plain unit test
+with no toolchain and no emulator install, exactly as
+`packages/demotic/test/rom.test.ts` is, and for the same reason: register writes,
+like game state, are small exact objects. **This is where the guarantee comes
+from.** A sound chip is a deterministic state machine; identical writes at
+identical ticks are identical sound.
+
+**Level B — sample comparison against third-party cores (CI).** The libretro
+harness already receives an audio callback and discards it; writing those samples
+out is a small extension to `emu-harness/libretro/`. The core's audio is compared
+against our chip model's render at the core's native rate with its own
+post-processing disabled where the core allows. This level is **not bit-exact and
+does not claim to be** — it is a pinned spectral-and-envelope distance per core,
+plus **exact equality of transient onset ticks**, which is the half that would
+catch a driver-timing bug. Where a core exposes scripted register access (Mesen
+2's Lua interface), that console gets Level A too and Level B becomes a
+cross-check.
+
+**Level C — chip-model validation.** The models decide every comparison above, so
+they are tested artifacts in the same sense the DAC models are: the community's
+hardware-behaviour ROMs (`dmg_sound`, `cgb_sound`, the NES APU suites) run inside
+our own cores and must pass; analytic unit tests check frequency formulas,
+envelope step timing, LFSR tap sequences and the NES's non-linear mixing curve
+against hand-computed vectors; and reference cores cross-check the result.
+
+Test ROMs are fetched by a provisioner and never checked in, and the suite
+self-skips without them — the discipline the emulator harnesses already use.
+
+**Goldens.** Rendered WAVs are byte-compared, per doc 09 §Stability. This is
+cheap, sharp, and only possible because there is exactly one renderer.
+
+**Determinism.** The audio export joins the doc-10 §5 matrix: the same track
+demade in Node and in Chromium/Firefox/WebKit must produce byte-identical audio.
+This is the test that keeps the browser from quietly synthesizing anything of its
+own (doc 07 §The audio sections).
+
+**Judge tests**, mirroring §4: metric unit tests against analytic fixtures (a
+transposed copy must score perfectly on interval preservation and poorly on
+absolute pitch; a track with the backbeat removed must crater the onset metric
+while barely moving spectral distance); glitch-gate tests for accumulating tempo
+drift, loop-seam discontinuity and envelope clicks; anti-gaming fixtures where a
+single metric disagrees with the ear; and a human-ranked listening corpus that
+weights are fitted to once, then frozen.
+
+**And the ears.** Doc 04's rule that quality changes need eyes on the eval sheets
+applies with more force here, because audio metrics sit further from perception
+than image metrics do. No judge weight moves without listening to the sheets
+first (doc 17 §Evaluation).
+
 ## 7. Surface tests
 
 - CLI: `--help`/`--version`/exit codes/stdin-stdout/signals via integration harness
