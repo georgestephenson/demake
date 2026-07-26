@@ -138,13 +138,14 @@ says so.
 | SNES | WLA-DX (`wla-65816`) | **snes9x** via the libretro harness (compared in RGB565) |
 | Mega Drive | vasm m68k | **BlastEm** (headless mode) or Genesis Plus GX via libretro harness |
 | SMS / GG / SG-1000 / Coleco | WLA-DX / z88dk | **Emulicious** (headless automation) or Mednafen; Gearsystem as fallback |
-| PC Engine | PCEAS | **Mednafen** (pce_fast off, accuracy core) frame dump |
+| PC Engine | WLA-DX (`wla-huc6280`) | **beetle-pce-fast** (Mednafen's pce_fast) via the libretro harness (compared in RGB565) |
 | Neo Geo | ngdevkit | ngdevkit's GnGeo fork or **FBNeo** via libretro harness |
 | Atari 2600 | dasm | **Stella** (debugger CLI can script + `screenshot`) |
 | Atari 7800 | dasm | **a7800** (MAME-derived, scriptable) or MAME with `-seconds_to_run`/`-snapname` |
 | Atari 5200/8-bit | MADS | **Atari800** (`-headless` build, screenshot on exit) |
 | Lynx | cc65 | **Mednafen** lynx core |
-| WS / WSC / NGPC | Wonderful toolchain | **Mednafen** cores |
+| WS / WSC | NASM (the V30MZ is 8086-compatible) | **beetle-wswan** (Mednafen's wswan) via the libretro harness (compared in RGB565, landscape forced by core option) |
+| NGPC | Wonderful toolchain | **Mednafen** cores |
 | Intellivision | as1600 | **jzIntv** (frame dump support) |
 | Tier-3 mono/etc. | per platform | **MAME** as the universal fallback: `-video none -sound none -statename/-snapshot` scripting covers nearly every remaining system |
 

@@ -54,13 +54,14 @@ where the data formats genuinely coincide.
 | `tms` | SG-1000, ColecoVision | Graphics II pattern/color/name tables | z88dk harness per BIOS/boot quirks |
 | `gba` | GBA | mode0 4bpp tiles (low-nibble-first) + screen entries + 16 BGR555 pals (mode3/4 bitmaps later) | GNU ARM binutils (`arm-none-eabi-as/ld/objcopy`); header in the harness |
 | `nds` | NDS | engine-A text BG: the `gba` formats unchanged (ext. palettes / framebuffer later) | GNU ARM binutils; `.nds` cartridge packed by demake itself, no ndstool |
-| `pce` | PC Engine | 4bpp planar-pair tiles, BAT entries, 9-bit palettes | PCEAS or HuC harness |
+| `pce` | PC Engine | 4bpp word-planar characters (bitplanes 0/1 then 2/3), BAT entries, 9-bit VCE palettes | WLA-DX (`wla-huc6280` + `wlalink`), 64 KiB HuCard harness |
 | `neogeo` | Neo Geo | fix-layer + sprite-strip C-ROM format, palette RAM | ngdevkit |
 | `a26` | Atari 2600 | kernel-specific playfield/sprite tables **plus the kernel itself** (the display code *is* the format) | dasm |
 | `a78` | Atari 7800 | display lists + graphics data + palette regs | dasm/cc7800 harness |
 | `a8` | Atari 5200/8-bit | ANTIC display list + screen data + GTIA regs | MADS/cc65 |
 | `lynx` | Lynx | 4bpp framebuffer + palette (+ optional per-line reload table) | cc65 lynx target |
-| `ws` | WonderSwan/Color | 2/4bpp tiles, screen map, palettes | Wonderful toolchain |
+| `wsc` | WonderSwan Color | 4bpp packed tiles (left pixel high nibble), screen-map words (tile/palette/bank/flip), 16 RGB444 palettes | NASM (16-bit x86 for the V30MZ); 4 Mbit cartridge packed by demake itself |
+| `ws` | WonderSwan (mono) | 2bpp tiles, screen map, shade-pool + 4-entry palettes | NASM; awaits the tiled-mono fit path (doc 13 §Phase 5) |
 | `ngpc` | NGP/NGPC | 2bpp tiles, scroll map, palettes | Wonderful toolchain / ngpc sdk |
 | `intv` | Intellivision | GRAM cards + BACKTAB words | jzIntv as1600 |
 | `mono-misc` | Virtual Boy, Pokémon Mini, Supervision, Game.com | per-platform tile/fb formats | per-platform assemblers, validated in Tier 3 rollout |

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Provision the WLA-DX toolchain (wla-z80 + wla-65816 + wlalink) for the SMS/GG,
-# SG-1000 and SNES `--format rom` paths — one build serves every WLA-DX target
-# family. Pinned source build (git clone + cmake), cached and idempotent —
+# Provision the WLA-DX toolchain (wla-z80 + wla-65816 + wla-huc6280 + wlalink)
+# for the SMS/GG, SG-1000, SNES and PC Engine `--format rom` paths — one build
+# serves every WLA-DX target family. Pinned source build (git clone + cmake),
+# cached and idempotent —
 # the same mechanism as the other assemblers. No Docker; needs git egress, a C
 # compiler, and cmake. Best-effort (exits 0 unless WLADX_STRICT=1).
 set -uo pipefail
@@ -11,7 +12,7 @@ CACHE_ROOT="${DEMAKE_TOOLCHAIN_DIR:-$HOME/.cache/demake/toolchains}"
 PREFIX="$CACHE_ROOT/wladx-${WLADX_VERSION}"
 BIN_DIR="$PREFIX/bin"
 LINK_DIR="${DEMAKE_TOOLCHAIN_BIN:-/usr/local/bin}"
-TOOLS=(wla-z80 wla-65816 wlalink)
+TOOLS=(wla-z80 wla-65816 wla-huc6280 wlalink)
 
 log() { printf 'install-wladx: %s\n' "$*" >&2; }
 die() {

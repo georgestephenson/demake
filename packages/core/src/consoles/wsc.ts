@@ -21,6 +21,6 @@ export const wsc = {
     tileBudget: 512,
     flip: true,
   },
-  codegen: { family: "ws", formats: ["bin", "asm", "c", "rom"] },
+  codegen: { family: "wsc", formats: ["bin", "asm", "c", "rom"] },
   docs: { sources: ["WSdev — Display controller & palettes (RGB444)"] },
 } satisfies ConsoleSpec;

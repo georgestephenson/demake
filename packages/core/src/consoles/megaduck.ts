@@ -1,7 +1,15 @@
 /**
  * Mega Duck / Cougar Boy (`megaduck`) — doc 03 Tier 3. A Game Boy clone: 160×144,
- * four shades at 2bpp, differing from the DMG only in register layout (a codegen
- * detail). Uses a neutral grey ramp.
+ * four shades at 2bpp. Uses a neutral grey ramp.
+ *
+ * Its *data* formats are the DMG's exactly — 2bpp planar tiles, a background
+ * map, a two-bit-per-shade palette register — so it shares the `gb` codegen
+ * family and `bin`/`asm`/`c` are correct for it. Its *display program* is not:
+ * the LCD registers sit at $FF10–$FF1B rather than $FF40–$FF4B and LCDC's bits
+ * are shuffled, so the `gb` ROM harness would assemble a cartridge that runs on
+ * a Game Boy and shows nothing here. `rom` is therefore withheld until the
+ * console has its own harness and an emulator to prove it against (doc 13
+ * §Phase 7+); SameDuck's `Core/gb.h` is the register map to build it from.
  */
 import type { ConsoleSpec, RGB8 } from "./types.js";
 const RAMP: readonly RGB8[] = [
@@ -27,6 +35,6 @@ export const megaduck = {
     tileBudget: 256,
     flip: false,
   },
-  codegen: { family: "gb", formats: ["bin", "asm", "c", "rom"] },
+  codegen: { family: "gb", formats: ["bin", "asm", "c"] },
   docs: { sources: ["Mega Duck technical notes — GB-clone LCD (4 shades)"] },
 } satisfies ConsoleSpec;
