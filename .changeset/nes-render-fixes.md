@@ -8,7 +8,7 @@ simulation state, so every trace was already correct — which is why they neede
 looking at rather than diffing.
 
 - **The picture is uploaded from the VBlank handler**, not the main loop. The
-  loop's flag says a VBlank *happened*, not that we are in one, so a tick that
+  loop's flag says a VBlank _happened_, not that we are in one, so a tick that
   overran its frame uploaded during active rendering — where the PPU reloads its
   address register from the scroll latch, dropping the tail of a scrolled column
   back at the top of the column. That was the flicker a scrolling level showed
