@@ -151,9 +151,9 @@ it — several of its decisions are load-bearing and easy to undo by accident
 
 ```
 packages/core/       @demake/core — the engine (zero platform deps; ESM; ships types)
-  src/asm/           the SM83 and 6502 assemblers + the GB and iNES cartridge
-                     wrappers — shared by the Demotic game backends and the audio
-                     driver, so no backend owns the encoder for its own CPU
+  src/asm/           the SM83, 6502 and Z80 assemblers + the GB, iNES and Sega
+                     cartridge wrappers — shared by the Demotic game backends and
+                     the audio driver, so no backend owns the encoder for its own CPU
   src/math/          deterministic kernels (exp/log/pow/cbrt/sin) + PCG32 PRNG
   src/color/         sRGB/linear/Oklab, hardware-lattice snapping, color parsing
   src/image/         PNG codec (inflate/deflate/decode/encode), DAC models, decode dispatch
@@ -188,6 +188,11 @@ packages/dmg/        @demake/dmg — a self-hosted Game Boy core, DMG *and* CGB:
                      as is the cartridge header's decision, never a setting. Its APU
                      is @demake/chip's, not a second one, and `audioSink` is where
                      its output goes
+packages/sms/        @demake/sms — a self-hosted Sega 8-bit core, Master System *and*
+                     Game Gear, decided by the cartridge's region nibble the way
+                     @demake/dmg is decided by its header. Mode 4 only: the SG-1000's
+                     Graphics II is a different renderer, not a flag on this one. Its
+                     PSG is @demake/chip's SN76489
 packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs 14, 15)
   src/lang/          lex → parse → flat statement AST (one statement per line, no nesting)
   src/lang/highlight.ts  TextMate scopes for `.dmt` source — the registry's words,
@@ -211,6 +216,7 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
     registry.ts      which backend builds which console; the CLI reads this
     gb.ts, emit/rules/expr/val/tiles.ts   the SM83 backend
     nes.ts, nes-art.ts, nes/              the 6502 backend and its image path
+    sms/                                  the Z80 backend (in progress: ctx + val)
     audio.ts         the hand-off to @demake/audio, art.ts's twin
   demo/              terminal runner (play.mjs) and test runner (test.mjs)
 packages/chip/       @demake/chip — every sound chip as a register-driven model (doc 16)
@@ -677,6 +683,44 @@ packages/demotic/test/rom.test.ts` builds all seven fixture games and diffs raw
   a level scrolls into show its own top two. A taller level wraps properly and is
   painted a row at a time like the columns.
 
+### The Z80 half
+
+The Sega backend is part-built: `sms/ctx.ts` and `sms/val.ts` exist and are proven
+by `packages/demotic/test/sms-arith.test.ts`; the expression, rule, tile and
+top-level emitters, the art path and the registry entry are not written yet, so
+`demake build -c sms` still reports no runtime.
+
+- **A load says nothing about what it loaded.** `ld a,(nn)` sets no flags, where
+  the 6502's `lda` sets N and Z. Every sign test therefore needs an explicit
+  `or a` after the load, and the omission does not fail — it branches on whatever
+  the _previous_ instruction decided, which is usually right by accident until it
+  is not.
+- **`or a` clears the carry and keeps the accumulator.** It computes `a | a`, so
+  only the flags move. That is what lets a subtraction chain start without saving
+  anything, and it is why the block negate uses `ld a,0` instead: `xor a` would
+  clear the borrow the chain is carrying.
+- **Every conditional jump reaches, so `far` is one instruction.** `jp cc,nn`
+  takes a sixteen-bit target, unlike the 6502's ±128-byte branches. `jr` is still
+  eight bits and is still only for a target defined a few instructions away.
+- **The sign of a difference is the signed comparison**, because the operands are
+  clamped: both are inside ±2^26, so their difference cannot wrap and `jp m` after
+  two `sbc hl,de` is the whole test. Reaching for `pe`/`po` — the general Z80
+  signed-compare idiom, sign exclusive-or overflow — would be correct and three
+  instructions longer.
+- **The mapper's registers are decoded out of the RAM mirror.** `$FFFC`–`$FFFF`
+  is `$DFFC`–`$DFFF` in real RAM, so those four bytes read back as ordinary
+  memory and page a ROM bank out from under the program when written. The heap
+  stops short of them; the allocator must never be given them back.
+- **A Game Gear is a Master System with a smaller window.** The VDP renders the
+  whole 256×192 frame and the LCD shows the middle 160×144, so only `viewW`/
+  `viewH` differ between the two memory plans and only the palette upload differs
+  in the emitter. Anything that made a _rule_ compile differently per console
+  would break the property that makes the second machine trustworthy — the same
+  one the Game Boy Color build rests on.
+- **A name-table entry is two bytes**, so `cellAttributes` is true here: the
+  second byte carries the palette-select, flip and priority bits. Same shape as
+  the Game Boy Color's attribute byte, reached by different hardware.
+
 ## Working on audio
 
 The spine, both demakers and the Game Boy driver are built; these are the rules
@@ -815,6 +859,14 @@ Two files plus fixtures (doc 02 §Extensibility):
   `fixed.ts`. A multiply that floors the wrong way for negative operands makes a
   game that plays _almost_ right and diverges a thousand ticks later, by which
   point the trace names a position rather than an operation.
+- `packages/demotic/test/sms-arith.test.ts` is the same test for the Z80, and it
+  is the first thing that runs code the Sega backend wrote. Until the rest of that
+  backend exists it is also the only one — so it is where a new value-layer
+  emitter is proven, and the file to run when touching `codegen/sms/val.ts`.
+  `packages/sms/test/{cpu,vdp}.test.ts` sit under it: the CPU is driven by
+  `core`'s own Z80 assembler, so an encoder and a decoder that agreed with each
+  other and not with the hardware would still fail against the published opcode
+  bytes `packages/core/test/z80.test.ts` pins.
 - `packages/demotic/test/nes-rom.test.ts` is the rendering oracle the NES has
   until doc 10's scripted-input E2E exists: it checks the nametable against the
   level grid the cartridge carries, cell by cell, before and after the camera has
