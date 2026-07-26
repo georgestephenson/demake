@@ -8,6 +8,7 @@
 
 import { useState } from "preact/hooks";
 
+import { CommandLine } from "./CommandLine.js";
 import { equivalentCommand } from "../lib/options.js";
 import type { ConsoleInfo, PrepOptionsUi } from "../worker/protocol.js";
 import type { StrategyInfo } from "@demake/core";
@@ -48,7 +49,6 @@ export function ControlsPane({
   sourceName,
 }: Props) {
   const [advanced, setAdvanced] = useState(false);
-  const [copied, setCopied] = useState(false);
   const set = <K extends keyof PrepOptionsUi>(key: K, value: PrepOptionsUi[K]): void =>
     onChange({ ...options, [key]: value });
 
@@ -305,24 +305,7 @@ export function ControlsPane({
         </div>
       )}
 
-      <div class="command">
-        <span class="command-label">Equivalent command</span>
-        <code data-testid="equivalent-command">{command}</code>
-        <button
-          type="button"
-          onClick={() => {
-            void navigator.clipboard?.writeText(command).then(
-              () => {
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1200);
-              },
-              () => {},
-            );
-          }}
-        >
-          {copied ? "Copied" : "Copy"}
-        </button>
-      </div>
+      <CommandLine command={command} />
     </section>
   );
 }

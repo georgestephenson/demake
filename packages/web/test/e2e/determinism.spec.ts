@@ -20,6 +20,12 @@
  * rasteriser, so the cartridge it hands you must be byte-identical to the one
  * `demake build` writes. That is the harder half — a cartridge is 32 KiB of
  * code, tile bytes and checksums, and every one of those has to agree.
+ *
+ * And for *audio*, where doc 07 states it outright: the audio exported in the
+ * page must be byte-identical to the audio exported in Node. That is what makes
+ * "Web Audio is a playback device, never a synthesizer" a checkable claim rather
+ * than an intention — a browser-synthesized approximation would fail here in the
+ * first hundred samples.
  */
 
 import { createHash } from "node:crypto";
@@ -27,10 +33,28 @@ import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 
+import {
+  arrangeScore,
+  buildAudioRom,
+  demakeSfx,
+  encodeAudioManifest,
+  encodeWav,
+  parseMidi,
+  arrangeManifest,
+  render,
+  sfxManifest,
+} from "@demake/audio";
 import { encodeRgbaPng, prep } from "@demake/core";
 import { buildGbRom, compile, getProfile } from "@demake/demotic";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
+import {
+  DEFAULT_ARRANGE,
+  DEFAULT_SFX,
+  toArrangeOptions,
+  toRenderOptions,
+  toSfxOptions,
+} from "../../src/lib/audio-options.ts";
 import { buildDemoImage } from "../../src/lib/demo-image.ts";
 import { toPrepOptions, DEFAULT_OPTIONS } from "../../src/lib/options.ts";
 import type { PrepOptionsUi } from "../../src/worker/protocol.ts";
@@ -135,4 +159,82 @@ test("the ROM the page builds is byte-identical to the CLI's", async ({ page }) 
 
   expect(actual.length).toBe(expected.length);
   expect(sha256(actual)).toBe(sha256(expected));
+});
+
+/** The bytes behind one of the page's download buttons. */
+async function save(page: Page, testId: string): Promise<Uint8Array> {
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByTestId(testId).click(),
+  ]);
+  const path = await download.path();
+  expect(path).toBeTruthy();
+  return new Uint8Array(await readFile(path as string));
+}
+
+/** Where the example library lives on disk. */
+function fixtureDir(): string {
+  return dirname(createRequire(import.meta.url).resolve("@demake/demotic/fixtures/pong.dmt"));
+}
+
+/**
+ * The music demaker's four outputs, in the page and in Node.
+ *
+ * The WAV is the one doc 07 names, and it is the strictest: a difference of a
+ * single least-significant bit anywhere in the chip model, the mixer, the DC
+ * blocker or the box integration shows up as a different hash. The `.vgm`, the
+ * sidecar and the cartridge come along because they are what the buttons offer,
+ * and a page that produced a different *cartridge* from the CLI would break the
+ * same promise in a place nobody would think to listen for.
+ */
+test("the music demaker's artifacts are byte-identical to Node's", async ({ page }) => {
+  // 1. Node: the engine, called exactly as the CLI calls it. The subject is the
+  //    first bundled track, which is what the section loads on its own.
+  const source = new Uint8Array(await readFile(join(fixtureDir(), "rally.mid")));
+  const result = arrangeScore(parseMidi(source), toArrangeOptions(DEFAULT_ARRANGE));
+  const expected = {
+    vgm: result.artifact,
+    wav: encodeWav(render(result.script, toRenderOptions(DEFAULT_ARRANGE))),
+    manifest: encodeAudioManifest(arrangeManifest(result)),
+    rom: buildAudioRom(result.script, { title: "rally" }).bytes,
+  };
+
+  // 2. Browser: the same conversion, driven through the page's own buttons.
+  await page.goto("/#section=music");
+  await expect(page.getByTestId("channel-plan")).toBeVisible();
+
+  for (const [what, bytes] of Object.entries(expected)) {
+    const actual = await save(page, `export-${what}`);
+    expect(actual.length, `${what} length`).toBe(bytes.length);
+    expect(sha256(actual), `${what} bytes`).toBe(sha256(bytes));
+  }
+});
+
+/**
+ * And the sound demaker's, which exercises a different half of the engine.
+ *
+ * `sfx` reaches the chip models through the fitting loop rather than the
+ * arranger — every candidate is *rendered* to be scored — so an engine-dependent
+ * transcendental in the DSP would change which gesture won, not merely how the
+ * winner sounds. That failure would be invisible in a waveform diff and obvious
+ * here.
+ */
+test("the sound demaker's artifacts are byte-identical to Node's", async ({ page }) => {
+  const source = new Uint8Array(await readFile(join(fixtureDir(), "bounce.wav")));
+  const result = demakeSfx(source, toSfxOptions(DEFAULT_SFX));
+  const expected = {
+    vgm: result.artifact,
+    wav: encodeWav(render(result.script, toRenderOptions(DEFAULT_SFX))),
+    manifest: encodeAudioManifest(sfxManifest(result)),
+    rom: buildAudioRom(result.script, { title: "bounce" }).bytes,
+  };
+
+  await page.goto("/#section=sound");
+  await expect(page.getByTestId("envelope")).toBeVisible();
+
+  for (const [what, bytes] of Object.entries(expected)) {
+    const actual = await save(page, `export-${what}`);
+    expect(actual.length, `${what} length`).toBe(bytes.length);
+    expect(sha256(actual), `${what} bytes`).toBe(sha256(bytes));
+  }
 });

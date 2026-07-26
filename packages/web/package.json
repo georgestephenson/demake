@@ -12,6 +12,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@demake/audio": "workspace:*",
     "@demake/chip": "workspace:*",
     "@demake/cli-spec": "workspace:*",
     "@demake/core": "workspace:*",

@@ -17,6 +17,11 @@ export default defineConfig({
     target: "es2022",
     // The budget in doc 07 is < 300 KB gzipped; warn well before that.
     chunkSizeWarningLimit: 700,
+    // Never inline an asset as a data URI. The example library's MIDIs are small
+    // enough to fall under Vite's default threshold, and base64 in a JS chunk is
+    // both a third larger than the file and counted against the JS budget — the
+    // exact thing `lib/demo-audio.ts` keeps them out of the bundle to avoid.
+    assetsInlineLimit: 0,
   },
   server: { port: 5173 },
 });

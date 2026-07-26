@@ -81,7 +81,7 @@ export function toPrepOptions(ui: PrepOptionsUi): PrepOptions {
 }
 
 /** Quote a value for a shell command line only when it needs it. */
-function shellQuote(value: string): string {
+export function shellQuote(value: string): string {
   return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
 }
 

@@ -9,14 +9,18 @@
  */
 
 import {
+  arrangeManifest,
   arrangeScore,
   candidates,
   demakeSfx,
+  encodeAudioManifest,
   encodeWav,
   parseMidi,
   render,
   scriptSeconds,
+  sfxManifest,
   type ArrangeOptions,
+  type AudioManifest,
   type ChipScript,
   type PartRole,
   type SfxOptions,
@@ -196,13 +200,7 @@ export async function runArrange(
   // The sidecar carries the *whole* schedule, exact tick timing included, which
   // is what doc 16 §Artifacts asks of it and what lets `render` reproduce this
   // audio rather than the VGM's 44.1 kHz-quantized approximation of it.
-  const manifest = writeManifest(env, values, {
-    schemaVersion: 1,
-    script: result.script,
-    dropped: result.dropped,
-    diagnostics: result.diagnostics,
-    tournament: result.tournament,
-  });
+  const manifest = writeManifest(env, values, arrangeManifest(result));
 
   if (json) {
     env.out(
@@ -280,14 +278,7 @@ export async function runSfx(
   const preview = writePreview(env, result.script, values);
   // The same sidecar `arrange` writes, and for the same reason: it carries the
   // exact schedule, which is what `render` and `gen --format rom` both read.
-  const manifest = writeManifest(env, values, {
-    schemaVersion: 1,
-    script: result.script,
-    soundClass: result.soundClass,
-    placement: result.placement,
-    diagnostics: result.diagnostics,
-    tournament: result.tournament,
-  });
+  const manifest = writeManifest(env, values, sfxManifest(result));
 
   if (json) {
     env.out(
@@ -375,7 +366,7 @@ export async function runRender(
 function writeManifest(
   env: CliEnv,
   values: Record<string, ParsedValue>,
-  payload: unknown,
+  payload: AudioManifest,
 ): string | null {
   const raw = values["emit-manifest"];
   if (raw === undefined) return null;
@@ -386,10 +377,6 @@ function writeManifest(
       : output
         ? output.replace(/\.[^.]+$/, "") + ".json"
         : "manifest.json";
-  env.writeFileAtomic(
-    path,
-    new TextEncoder().encode(JSON.stringify(payload, null, 2) + "\n"),
-    values.force === true,
-  );
+  env.writeFileAtomic(path, encodeAudioManifest(payload), values.force === true);
   return path;
 }
