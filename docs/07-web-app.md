@@ -36,8 +36,8 @@ images are only one kind (doc 01 §Scope):
 |---|---|---|
 | **demotic game demaker** | write a `.dmt`, play it on any console, run its `.test.dmt` suite | live |
 | **art demaker** | the image pipeline described below | live |
-| **music demaker** | tracks → chip music (docs 16, 17) | engine built, section not |
-| **sound demaker** | effects → chip sound (docs 16, 18) | engine built, section not |
+| **music demaker** | tracks → chip music (docs 16, 17) | live |
+| **sound demaker** | effects → chip sound (docs 16, 18) | live |
 
 The route lives in the hash as `#section=<id>`, and the **art demaker is the
 unmarked default** — so every option permalink shared before the site grew
@@ -157,7 +157,7 @@ Three things about it are decisions rather than details:
   without a user gesture, so a page that tried to start sound on its own would be
   quiet and would have no way to say why; the click is the gesture.
 
-### The audio sections
+### The audio sections *(built)*
 
 Drop a track (or a sound) in, pick a console, press play, and hear exactly what
 the cartridge will play. That last word is the whole design constraint, and it
@@ -179,23 +179,51 @@ someone compares waveforms:
 - The `AudioContext` is constructed with an explicit `{ sampleRate: 48000 }` and
   the render matches it. A buffer whose rate differs from the context's is
   resampled *by the browser*, differently per engine. Where the constructor
-  refuses the rate, the page renders at the context's rate through our own
-  resampler and says which it did.
+  refuses the rate, the page **renders the schedule again** at the rate the
+  context chose — nothing is resampled at all — and says which rate it played at.
 - Nothing else goes in the graph — no gain automation, no compressor, no
   `preservesPitch`. Volume is applied inside the render or not at all.
 
-The panes: **Source** (the file, its analysis — detected BPM, key, structure,
-the parts and the roles the classifier gave them, all editable), **Arrangement**
-(the channel plan as a piano roll, one lane per hardware channel, showing which
-part owns which channel bar by bar and what was dropped), and **Listen** (play
-source and result A/B, the tournament scoreboard doubling as a strategy picker
-exactly as the art demaker's does, and downloads: the `.vgm`, the manifest, the
-driver data, and a FLAC or WAV that carries the doc-16 guarantee — with the lossy
-formats offered under a label that says they do not).
+The panes: **Source** (the file, its analysis, and — for music — the parts with
+the roles the classifier gave them, each editable, which is `--role`, and a tick
+per part, which is `--drop`), **Console & options** (every remaining flag, with
+the equivalent command line underneath), **Arrangement** (the channel plan as a
+piano roll, one lane per hardware channel over a bar grid drawn from the
+*achieved* tempo, plus the timing report, the budgets, what was dropped, and the
+tournament scoreboard doubling as a strategy picker exactly as the art demaker's
+does), and **Listen** (play it, and the downloads: the `.vgm`, the
+`--emit-manifest` sidecar, the sample-exact WAV that carries the doc-16
+guarantee, and the cartridge that plays it).
+
+Four things the built sections settled that the sketch above did not:
+
+- **There is no key detection**, so the Source pane does not claim one. It
+  reports what analysis actually produces — tempo, meter, sections, parts, roles
+  and confidences — because a number with nothing behind it is worse than a
+  missing one (the same rule doc 17 §The judge applies to timbral metrics).
+- **The music section's Listen pane has one side, not an A/B.** A MIDI file is a
+  score, not a recording: playing it would mean synthesizing it. The *sound*
+  section does have the A/B, and both its sides come out of `@demake/audio` —
+  its own WAV decoder for the recording, its own chip models for the result —
+  trimmed the way the demaker trims, so the comparison is between two things the
+  engine produced.
+- **The sound section draws both envelopes**, the recording's and the chip's,
+  measured by the same function at the same frame rate, because that shape is
+  what the fitting loop was chasing (doc 18 §Stage 3). It is the audio
+  counterpart of the image demaker's side-by-side.
+- **The cartridge is offered here too**, not only in the game section: the driver
+  is generated for the schedule and assembled by our own SM83 assembler, so
+  `gen --format rom` needs no toolchain in the browser either. Where a console
+  has no driver backend the button says so and names `render` as the exact
+  alternative, rather than being silently absent.
 
 **Code-split**, like the Demotic section: the chip models, the decoders and the
 analysis DSP are a large payload and someone who came to convert an image must
-not download any of it.
+not download any of it. The engine runs in its own worker
+(`src/worker/audio.worker.ts`), separate from the image one for the same reason —
+and it holds each schedule it produces, so the sidecar, a cartridge and a
+re-render at another rate are asked for by token rather than shipped across the
+boundary on every keystroke.
 
 ## UX specification
 
@@ -227,6 +255,10 @@ for that console).
 
 **Permalinks**: options (not the image) serialize into the URL hash so settings are
 shareable; "Load demo image" ships a bundled test image so the page demos itself.
+The hash is the art demaker's alone — the audio sections keep only `#section=`,
+because their option names overlap the art demaker's and a shared hash would
+carry a gesture id into `--strategy` on the way back. Each of them loads a
+bundled track or effect on arrival instead, so every section demos itself.
 
 ## Quality bar
 

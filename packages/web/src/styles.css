@@ -513,16 +513,6 @@ a {
   font-weight: 600;
 }
 
-.section-link .soon {
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  padding: 0 0.25rem;
-}
-
 /* --- the Demotic section --------------------------------------------------- */
 
 main.game-layout {
@@ -602,11 +592,6 @@ main.game-layout {
 
 .diag-hint {
   color: var(--muted);
-}
-
-.coming-soon .blurb {
-  font-size: 1.05rem;
-  margin: 0.4rem 0 0.8rem;
 }
 
 kbd {
@@ -893,4 +878,224 @@ main.docs-layout {
   font-family: var(--mono, ui-monospace, monospace);
   font-size: 0.8rem;
   opacity: 0.8;
+}
+
+/* --- the audio sections ---------------------------------------------------- */
+
+/*
+ * Three columns like the art demaker, with the third carrying two stacked panes:
+ * what the console did with the material, and the transport that lets you hear
+ * it. The pair belong side by side — a channel plan is an argument the Listen
+ * pane settles.
+ */
+main.audio-layout {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(260px, 1fr) minmax(280px, 1fr) minmax(340px, 1.6fr);
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  main.audio-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.audio-results {
+  display: grid;
+  gap: 1rem;
+}
+
+.audio-dropzone {
+  min-height: 0;
+  padding: 1rem;
+  text-align: center;
+  word-break: break-all;
+}
+
+.parts {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.parts th,
+.parts td {
+  text-align: left;
+  padding: 0.25rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+.parts th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.parts select {
+  width: 100%;
+  padding: 0.15rem 0.25rem;
+  font: inherit;
+}
+
+.part-dropped td:not(:first-child) {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.muted-note {
+  color: var(--muted);
+  font-size: 0.85em;
+}
+
+/* --- the channel plan ------------------------------------------------------ */
+
+.roll {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0.2rem 0 0.9rem;
+}
+
+.roll-lane {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.roll-label {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.roll-track {
+  position: relative;
+  height: 1.6rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.roll-span {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  min-width: 2px;
+  padding: 0 0.3rem;
+  border-radius: 3px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 0.72rem;
+  line-height: 1.4rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * Treatment is carried by a border rather than by hue alone: "arpeggiated" and
+ * "direct" have to be distinguishable without colour vision, and the tooltip
+ * spells it out either way.
+ */
+.roll-span[data-treatment="arpeggiated"] {
+  border: 2px dashed var(--accent-ink);
+}
+
+.roll-span[data-treatment="folded"] {
+  border: 2px dotted var(--accent-ink);
+}
+
+.roll-span[data-treatment="merged"] {
+  border: 2px double var(--accent-ink);
+}
+
+.roll-silent {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.roll-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.roll-loop {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--warn);
+}
+
+/* --- the envelope comparison ----------------------------------------------- */
+
+.envelope {
+  width: 100%;
+  height: 7rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  margin-bottom: 0.5rem;
+}
+
+.envelope polyline {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+  stroke-width: 1.5;
+}
+
+.envelope-source {
+  stroke: var(--muted);
+}
+
+.envelope-fitted {
+  stroke: var(--accent);
+}
+
+.envelope-figure {
+  margin: 0 0 0.6rem;
+}
+
+/*
+ * The key is a colour swatch, so it needs an explicit shape as well: a legend
+ * that can only be read in colour is not a legend.
+ */
+.envelope-key {
+  display: inline-block;
+  width: 1.1rem;
+  height: 0;
+  vertical-align: middle;
+  border-top-width: 2px;
+}
+
+.envelope-key-source {
+  border-top: 2px solid var(--muted);
+}
+
+.envelope-key-fitted {
+  border-top: 2px solid var(--accent);
+}
+
+/* --- listening ------------------------------------------------------------- */
+
+.listen-transport {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.audio-stat {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  color: var(--muted);
 }

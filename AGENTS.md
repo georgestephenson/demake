@@ -104,13 +104,21 @@ effect per event, one timer serving both, and the same proof one level up —
 `packages/demotic/test/audio.test.ts` boots a cartridge that is playing a game
 and diffs every register write against the schedules the demakers produced.
 
+**And both demakers are on the web** (doc 07 §The audio sections): a music
+section and a sound section over their own worker, carrying the whole
+`arrange`/`sfx`/`render` flag surface — roles and drops per part, the channel
+plan as a piano roll, the tournament as a strategy picker — and handing back the
+`.vgm`, the `--emit-manifest` sidecar, the sample-exact WAV and a cartridge, all
+four pinned byte-identical to the CLI's by
+`packages/web/test/e2e/determinism.spec.ts`.
+
 Still to come for audio: `bin`/`asm`/`c` emit, driver backends for the other
 consoles (each needs a CPU encoder or a checked-in driver source, plus a core to
 prove it in), Level B sample comparison against third-party cores, the remaining
 chips (YM2612, S-DSP, the handhelds), tracker and lossy-audio input with the
-transcription front end, FLAC/M4A export, and the two web sections. Read doc 16
-before touching any of it — several of its decisions are load-bearing and easy to
-undo by accident (§Working on audio).
+transcription front end, and FLAC/M4A export. Read doc 16 before touching any of
+it — several of its decisions are load-bearing and easy to undo by accident
+(§Working on audio).
 
 ## Layout map
 
@@ -174,7 +182,15 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
                      driver (doc 16). One stream player, two callers: the
                      cartridge (gb.ts) and the driver a game embeds (gb-game.ts)
   src/dsp.ts         deterministic FFT/resampler/pitch, all on core's kernels
+  src/manifest.ts    the --emit-manifest sidecar: one shape, two callers (CLI, web)
   src/render.ts      ChipScript → PCM; the only way anything makes sound
+packages/web/        the site (doc 07): one shell over five sections, all but the
+                     art demaker code-split
+  src/worker/        core.worker.ts (images) and audio.worker.ts (music + sound):
+                     the only places the page touches an engine
+  src/sections/      the lazy sections; art's panes live in src/components/
+  src/lib/           option records ⇄ engine options ⇄ equivalent command line,
+                     the bundled demo library, and audio-player.ts (playback only)
 tools/eslint-rules/  custom ESLint rules: platform-purity + determinism
 tools/ci/            CI guards: E2E prerequisites, web JS budget
 docs/                the design plan; source of truth for decisions
@@ -578,6 +594,18 @@ that keep them from being undone. All of them come from doc 16.
   because a ROM programs a register and re-deriving one from a rational would be
   a second timing fit that could disagree with the first. The `sfx` path dropped
   it once and the ROM builder simply could not be written.
+- **An artifact shape with two callers belongs in the package, not in an edge.**
+  The `--emit-manifest` sidecar was built inline in the CLI until the web app
+  needed to hand you the same file; it lives in `src/manifest.ts` now, encoding
+  and trailing newline included, because those are output bytes and a second
+  writer is a second answer. Same precedent as the image path's
+  `buildManifest`/`encodeManifest` (doc 07 §The web app must never grow
+  conversion logic).
+- **The page renders at the audio device's rate; it never resamples to it.** If
+  a browser refuses a 48 kHz `AudioContext`, the schedule is rendered again at
+  whatever rate it gave. Handing Web Audio a buffer at the wrong rate lets the
+  _browser_ resample, differently per engine — which is a second implementation
+  of the output stage arriving through the back door.
 
 ## How to add a console
 
@@ -628,13 +656,20 @@ Two files plus fixtures (doc 02 §Extensibility):
   the binary test skips when `dist` is absent, so run `pnpm build` first to
   include it (CI always does).
 - The web suite is Playwright, not Vitest: `pnpm test:browser` builds the app,
-  serves the _built_ bundle, and runs both specs in Chromium + Firefox + WebKit.
-  `packages/web/test/e2e/determinism.spec.ts` is the doc-07 parity contract —
-  it converts the bundled demo image in Node through `@demake/core` and in the
-  page through its worker, then compares the exported PNGs byte-for-byte. Narrow
-  the browsers with `DEMAKE_BROWSERS=chromium`, and point at a browser already on
-  the machine with `DEMAKE_CHROMIUM=/path/to/chrome` (managed containers ship
-  one; CI runs `playwright install`).
+  serves the _built_ bundle, and runs every spec in Chromium + Firefox + WebKit.
+  `packages/web/test/e2e/determinism.spec.ts` is the doc-07 parity contract, and
+  it now covers all four domains: it converts the bundled demo image, builds
+  `caves`, arranges a track and demakes an effect — in Node through the engine
+  packages and in the page through its workers — and compares the exported PNG,
+  the cartridge, and the audio's `.vgm` + sidecar + WAV + cartridge
+  byte-for-byte. Narrow the browsers with `DEMAKE_BROWSERS=chromium`, and point
+  at a browser already on the machine with `DEMAKE_CHROMIUM=/path/to/chrome`
+  (managed containers ship one; CI runs `playwright install`).
+- **The audio E2E is where a browser-synthesized shortcut would surface.**
+  `audio.spec.ts` records the Web Audio constructors before the app loads and
+  asserts none of them ran, the way the game section's cartridge test does — an
+  `OscillatorNode` anywhere in the graph would _sound_ fine, which is exactly why
+  it needs a test rather than a review.
 
 ## Gotchas
 

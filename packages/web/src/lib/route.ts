@@ -6,7 +6,7 @@
  * site grew sections still opens exactly what it used to (doc 07 §UX).
  */
 
-/** The four top-level sections. */
+/** The top-level sections, in nav order. */
 export const SECTIONS = ["game", "language", "art", "music", "sound"] as const;
 
 /** One section id. */
@@ -21,8 +21,15 @@ export const SECTION_LABELS: Readonly<Record<Section, string>> = {
   sound: "sound demaker",
 };
 
-/** Sections that are announced but not yet built. */
-export const COMING_SOON: readonly Section[] = ["music", "sound"];
+/**
+ * Sections that load on demand.
+ *
+ * Everything except the art demaker, which is the unmarked default and therefore
+ * has to be in the entry chunk. Between them the others carry the whole game
+ * language and the whole audio engine, and someone who came to convert an image
+ * should download neither (doc 07 §Quality bar).
+ */
+export const LAZY: readonly Section[] = ["game", "language", "music", "sound"];
 
 const DEFAULT_SECTION: Section = "art";
 

@@ -104,6 +104,9 @@ importers:
 
   packages/web:
     dependencies:
+      '@demake/audio':
+        specifier: workspace:*
+        version: link:../audio
       '@demake/chip':
         specifier: workspace:*
         version: link:../chip

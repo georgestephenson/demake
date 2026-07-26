@@ -117,6 +117,16 @@ export {
 export { decodeSound, isWav, SoundDecodeError, type DecodedSound } from "./sfx/decode.js";
 export { GESTURES, gesturesFor, type Gesture, type GestureParams } from "./sfx/gestures.js";
 
+// --- the sidecar -------------------------------------------------------------
+export {
+  arrangeManifest,
+  encodeAudioManifest,
+  sfxManifest,
+  type ArrangeManifest,
+  type AudioManifest,
+  type SfxManifest,
+} from "./manifest.js";
+
 // --- checking it -------------------------------------------------------------
 export { inspectScript, type AudioInspectResult, type AudioViolation } from "./inspect.js";
 export { judgeArrangement, type JudgeResult, type MetricScore } from "./judge.js";

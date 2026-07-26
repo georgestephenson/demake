@@ -21,9 +21,11 @@ builds a bootable Game Boy cartridge that plays a track or an effect, from a
 driver generated for it (§The driver contract), and **Level A of §The proof runs
 in `pnpm test`** — the ROM boots in `@demake/dmg`, whose APU is now
 `@demake/chip`'s, and every register write it makes is diffed against the
-`ChipScript` tick for tick. What is not built: the remaining chips (YM2612,
-S-DSP, the handhelds), driver backends for the other consoles, `bin`/`asm`/`c`
-emit, Level B sample comparison, the lossy encoders, and the web sections.
+`ChipScript` tick for tick. The web app's two audio sections are live over the same
+engine, and the browser's `.vgm`, sidecar, WAV and cartridge are byte-identical
+to the CLI's (doc 07 §The audio sections). What is not built: the remaining chips
+(YM2612, S-DSP, the handhelds), driver backends for the other consoles,
+`bin`/`asm`/`c` emit, Level B sample comparison, and the lossy encoders.
 
 ## The load-bearing idea, restated for sound
 

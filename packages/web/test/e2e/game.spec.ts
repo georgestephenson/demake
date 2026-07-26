@@ -193,12 +193,6 @@ test("renders the language reference from the registry", async ({ page }) => {
   await expect(page.locator(".doc-body")).toContainText("touches");
 });
 
-test("announces the sections that are not built yet", async ({ page }) => {
-  await page.goto("/");
-  await page.getByRole("link", { name: /music demaker/i }).click();
-  await expect(page.getByRole("heading", { name: "Coming soon" })).toBeVisible();
-});
-
 async function readTick(page: import("@playwright/test").Page): Promise<number> {
   const text = (await page.locator(".game-status").first().textContent()) ?? "";
   return Number(/tick (\d+)/.exec(text)?.[1] ?? 0);
