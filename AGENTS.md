@@ -241,7 +241,9 @@ packages/web/        the site (doc 07): one shell over five sections, all but th
   src/lib/           option records ⇄ engine options ⇄ equivalent command line,
                      the bundled demo library, and audio-player.ts (playback only)
 tools/eslint-rules/  custom ESLint rules: platform-purity + determinism
-tools/ci/            CI guards: E2E prerequisites, web JS budget
+tools/ci/            CI guards: E2E prerequisites, web JS budget, and
+                     affected.mjs — which gates a change can break, read off the
+                     workspace graph rather than a hand-written path list
 docs/                the design plan; source of truth for decisions
 ```
 
@@ -266,6 +268,7 @@ pnpm cli -- build packages/demotic/fixtures/pong.dmt -o pong.gb  # a playable ca
 pnpm cli -- build packages/demotic/fixtures/pong.dmt -c nes -o pong.nes  # the same game, 6502
 pnpm dev:web       # run the web app against the workspace core (build core first)
 pnpm build:web     # typecheck + bundle the web app into packages/web/dist
+pnpm test:rom-e2e  # just the emulator E2E suites (needs toolchains + emulator)
 pnpm test:browser  # Playwright: web functional + browser-vs-Node determinism
 pnpm check:web-budget  # assert the app's gzipped JS stays under the doc-07 budget
 pnpm toolchains    # provision every assembler `gen --format rom` needs (cached)
@@ -858,6 +861,22 @@ Two files plus fixtures (doc 02 §Extensibility):
   asserts none of them ran, the way the game section's cartridge test does — an
   `OscillatorNode` anywhere in the graph would _sound_ fine, which is exactly why
   it needs a test rather than a review.
+- **A PR runs only the gates it can break, and the gate list is derived** (doc 11
+  §Affected-only gates). `tools/ci/affected.mjs` maps changed files onto packages
+  and closes over their _dependents_ using the manifests' own `workspace:*`
+  entries, so giving a package a dependency widens the gate with no CI edit —
+  the same reason `codegen/registry.ts` is the one list that says which consoles
+  build. Never replace it with a `paths:` list per job: that is a second graph,
+  and it goes stale silently the first time a package gains a dependency. It
+  fails open by construction — an unrecognised path runs everything, and only
+  paths explicitly named inert can turn a gate off — so a new top-level
+  directory is loud rather than quietly untested. `main` is never gated.
+- **Branch protection requires `gate`, not the job names.** Which jobs a PR runs
+  is now a CI decision, so a single aggregate check stands in for all of them:
+  it passes when every job that ran succeeded and treats a skipped job as a
+  pass. Adding, splitting or renaming a job therefore needs no change in the
+  repo settings — but removing it from `gate`'s `needs:` list would make it
+  unenforced, which is the one way to make a green PR mean less than it says.
 
 ## Gotchas
 

@@ -18,6 +18,7 @@
     "test:watch": "vitest",
     "dev:web": "pnpm --filter @demake/web dev",
     "test:browser": "pnpm --filter @demake/web test:e2e",
+    "test:rom-e2e": "vitest run e2e.test.ts",
     "check:web-budget": "pnpm build:web && node tools/ci/check-web-budget.mjs",
     "lint": "eslint . && prettier --check .",
     "lint:fix": "eslint . --fix && prettier --write .",
