@@ -500,6 +500,36 @@ export const DIAGNOSTICS: readonly DiagnosticSpec[] = [
   { code: "E_SYNTAX", severity: "error", summary: "The statement could not be parsed." },
   { code: "E_UNKNOWN_STATEMENT", severity: "error", summary: "Not a statement keyword." },
   {
+    code: "E_GLUED_COMMENT",
+    severity: "error",
+    summary: "`--` run onto the token before it, which discards the rest of the line.",
+  },
+  {
+    code: "E_UNTERMINATED_STRING",
+    severity: "error",
+    summary: "A string with no closing quote, which swallows the rest of the line.",
+  },
+  {
+    code: "E_UNKNOWN_UNIT",
+    severity: "error",
+    summary: "A word attached to a number that is not one of the units.",
+  },
+  {
+    code: "E_DUPLICATE_PROP",
+    severity: "error",
+    summary: "One list setting the same property twice, where the first value does nothing.",
+  },
+  {
+    code: "E_DUPLICATE_CONTROL",
+    severity: "error",
+    summary: "Two bindings setting one property from one button, whose `on hold` restores fight.",
+  },
+  {
+    code: "E_DUPLICATE_CAMERA",
+    severity: "error",
+    summary: "More than one camera in a scene; a scene has one viewport.",
+  },
+  {
     code: "E_SPRITE_BUDGET",
     severity: "error",
     summary: "A scene needs more hardware sprites than the console has.",

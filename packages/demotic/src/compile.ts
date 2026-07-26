@@ -324,6 +324,18 @@ class Compiler {
         this.error(statement.line, "E_UNKNOWN_INSTANCE", `no object named '${statement.target}'`);
         continue;
       }
+      // A scene has one viewport for the same reason it has one playfield: the
+      // second `camera follows` would silently win, and a view that tracks the
+      // wrong object looks like a camera bug rather than a duplicated line.
+      if (this.cameraByScene.has(scene)) {
+        this.error(
+          statement.line,
+          "E_DUPLICATE_CAMERA",
+          `scene '${scene}' already has a camera`,
+          "a scene has one viewport; one `camera follows` decides what it tracks",
+        );
+        continue;
+      }
       this.cameraByScene.set(scene, instance.id);
     }
   }
@@ -631,6 +643,11 @@ class Compiler {
 
   compileControls(statements: readonly Stmt[]): ControlDef[] {
     const controls: ControlDef[] = [];
+    // Which line already binds a given (object, button, mode, property). Two
+    // bindings that set *different* properties from one button are ordinary —
+    // that is how a jump both rises and changes animation — so only the exact
+    // repeat is an error.
+    const bound = new Map<string, number>();
     for (const statement of statements) {
       if (statement.kind !== "control") continue;
 
@@ -665,6 +682,30 @@ class Compiler {
           "prefer `a` for anything the player must be able to press mid-game",
         );
       }
+
+      // `on hold` snapshots the value it overwrites and restores it on release,
+      // per binding. Two bindings on one button writing one property therefore
+      // snapshot each other, and which value comes back depends on the order
+      // they unwind in — a bug that only shows up on the *second* press.
+      let repeated = false;
+      for (const assignment of statement.assignments) {
+        const key = `${instance.id} ${statement.action} ${statement.mode} ${
+          assignment.target.entity ?? statement.entity
+        }.${assignment.target.prop}`;
+        const first = bound.get(key);
+        if (first !== undefined) {
+          this.error(
+            statement.line,
+            "E_DUPLICATE_CONTROL",
+            `'${statement.entity}' already sets ${assignment.target.prop} on \`${statement.action}\` (line ${first})`,
+            "one button sets a property once; `on hold` restores what each binding overwrote, and two of them cannot both be right",
+          );
+          repeated = true;
+          break;
+        }
+        bound.set(key, statement.line);
+      }
+      if (repeated) continue;
 
       const self: EntityRef = { kind: "instance", id: instance.id };
       controls.push({

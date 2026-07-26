@@ -105,3 +105,69 @@ describe("parse", () => {
     expect(result.diagnostics[0]?.hint).toContain("one per line");
   });
 });
+
+/**
+ * Every case here parses to *something* under the obvious reading, which is the
+ * only reason they need catching: a wrong program that compiles is found in an
+ * emulator, three layers from its cause.
+ */
+describe("parse rejects what it would otherwise misread", () => {
+  it("catches `--` glued to the token before it, which would eat the rest of the line", () => {
+    const result = parse("when always then y as y--1");
+    expect(result.diagnostics[0]).toMatchObject({ code: "E_GLUED_COMMENT", line: 1 });
+    expect(result.diagnostics[0]?.hint).toContain("- -");
+  });
+
+  it("still allows a comment that starts a line or follows a space", () => {
+    expect(statements("start title -- enters here\n--start play\n")).toHaveLength(1);
+  });
+
+  it("does not mistake a subtraction for a comment when the spaces are there", () => {
+    const [statement] = statements("when always then y as y - -1");
+    expect(statement).toMatchObject({
+      assignments: [{ value: { kind: "binary", op: "-", right: { kind: "unary" } } }],
+    });
+  });
+
+  it("catches a string with no closing quote instead of blaming a later bracket", () => {
+    const result = parse('create text t in play (text "press a to play, x 1)');
+    expect(result.diagnostics[0]).toMatchObject({ code: "E_UNTERMINATED_STRING", line: 1 });
+  });
+
+  it("catches a misspelled unit attached to a number", () => {
+    const result = parse("create object ball (speed 40vmn)");
+    expect(result.diagnostics[0]).toMatchObject({ code: "E_UNKNOWN_UNIT" });
+    expect(result.diagnostics[0]?.hint).toContain("vmin");
+  });
+
+  it("tells a digit-leading filename to quote itself rather than calling it a unit", () => {
+    const result = parse("create object ball (sprite 8bit.png)");
+    expect(result.diagnostics[0]?.message).toContain("'8bit.png' is not a name");
+    expect(result.diagnostics[0]?.hint).toContain('"8bit.png"');
+    expect(statements('create object ball (sprite "8bit.png")')).toHaveLength(1);
+  });
+
+  it("leaves a spaced keyword after a number alone", () => {
+    expect(statements("stream course from gap.dmtl, pipe.dmtl 20 wide")).toHaveLength(1);
+    expect(statements("when score1.value reaches 10 in play then scene as gameover")).toHaveLength(
+      1,
+    );
+  });
+
+  it("catches one list setting the same property twice, in either form", () => {
+    for (const source of [
+      "create ball ball1 in play (x 1, y 2, x 9)",
+      "create ball ball1 in play (x, y, x) as (1, 2, 9)",
+      "when always in play then (ball1.x 1, ball1.x 9)",
+    ]) {
+      expect(parse(source).diagnostics[0], source).toMatchObject({ code: "E_DUPLICATE_PROP" });
+    }
+  });
+
+  it("allows the same property on two different objects, and in then vs else", () => {
+    expect(statements("when always in play then (ball1.x 1, ball2.x 9)")).toHaveLength(1);
+    expect(statements("when ball1.x > 1 in play then ball1.y as 1 else ball1.y as 3")).toHaveLength(
+      1,
+    );
+  });
+});

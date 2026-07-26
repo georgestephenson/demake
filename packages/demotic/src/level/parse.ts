@@ -78,8 +78,15 @@ const ART = /\.(svg|png|gif|bmp|jpe?g|webp)$/i;
  */
 export const EMPTY = " ";
 
+/**
+ * A comment must be preceded by whitespace or start the line, exactly as in
+ * `.dmt` — so `brick--old.svg` stays one filename instead of being truncated to
+ * `brick` and then rejected for not looking like art.
+ */
+const COMMENT = /(?:^|\s)--/;
+
 function strip(line: string): string {
-  const at = line.indexOf("--");
+  const at = line.search(COMMENT);
   return (at < 0 ? line : line.slice(0, at)).trimEnd();
 }
 
@@ -239,7 +246,7 @@ export function tileAt(level: LevelFile, column: number, row: number): TileSpec 
 export function levelFiles(source: string): readonly string[] {
   const files: string[] = [];
   for (const raw of source.split("\n")) {
-    const line = raw.replace(/--.*$/, "").trim();
+    const line = raw.replace(/(?:^|\s)--.*$/, "").trim();
     const match = /^(?:level|stream)\s+.*?\bfrom\s+(.+?)(?:\s+\d[\d.]*\s+(?:wide|tall))?$/i.exec(
       line,
     );

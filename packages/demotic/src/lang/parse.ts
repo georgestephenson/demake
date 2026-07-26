@@ -33,7 +33,7 @@ import type {
   TargetRef,
   Unit,
 } from "./ast.js";
-import { lex, type Token } from "./lex.js";
+import { lex, type LexNote, type Token } from "./lex.js";
 import { FUNCTION_ARITY, UNIT_NAMES } from "./spec.js";
 
 /** Result of a parse: statements plus any recovered syntax errors. */
@@ -161,11 +161,43 @@ function describe(token: Token): string {
   return `'${token.raw}'`;
 }
 
+/** The units a numeric literal may carry, for a hint. */
+const UNIT_LIST = [...UNITS].sort().join(", ");
+
+/**
+ * Turn the lexer's observations into diagnostics.
+ *
+ * Both are cases where the lexer's reading is defensible but probably not the
+ * one that was meant, and where saying nothing costs the author far more than a
+ * false positive does: the glued comment silently truncates a statement, and the
+ * runaway string silently swallows the rest of the line, so the error that
+ * eventually surfaces names a bracket somewhere downstream instead.
+ */
+function noteDiagnostic(note: LexNote): Diagnostic {
+  if (note.kind === "glued-comment") {
+    return {
+      severity: "error",
+      code: "E_GLUED_COMMENT",
+      message: "`--` with nothing before it starts a comment, discarding the rest of the line",
+      line: note.line,
+      hint: "put a space before `--` for a comment, or write `- -` to subtract a negative",
+    };
+  }
+  return {
+    severity: "error",
+    code: "E_UNTERMINATED_STRING",
+    message: `${note.raw} has no closing quote before the end of the line`,
+    line: note.line,
+    hint: "strings do not span lines; close it on the line it opens",
+  };
+}
+
 /** Parse source text into statements, recovering from per-line syntax errors. */
 export function parse(source: string): ParseResult {
-  const cursor = new Cursor(lex(source));
+  const { tokens, notes } = lex(source);
+  const cursor = new Cursor(tokens);
   const statements: Stmt[] = [];
-  const diagnostics: Diagnostic[] = [];
+  const diagnostics: Diagnostic[] = notes.map(noteDiagnostic);
 
   cursor.skipBlankLines();
   while (!cursor.atEnd()) {
@@ -187,6 +219,9 @@ export function parse(source: string): ParseResult {
     cursor.skipBlankLines();
   }
 
+  // Lexer notes are collected up front, so sort back into source order — a list
+  // that jumps from line 40 to line 3 reads as two unrelated failures.
+  diagnostics.sort((a, b) => a.line - b.line);
   return { statements, diagnostics };
 }
 
@@ -500,18 +535,21 @@ function parsePairs(cursor: Cursor): Prop[] {
   cursor.expectPunct(")");
 
   if (!cursor.eatKeyword("as")) {
-    return names.map((name, index) => {
-      const value = values[index];
-      const line = lines[index] ?? 0;
-      if (name === undefined || value === undefined) {
-        throw cursor.fail(
-          "E_SYNTAX",
-          "each entry needs a name and a value, e.g. `(x 8, y 4)`",
-          "or use the positional form: `(x, y) as (8, 4)`",
-        );
-      }
-      return { name, value, line };
-    });
+    return noDuplicates(
+      cursor,
+      names.map((name, index) => {
+        const value = values[index];
+        const line = lines[index] ?? 0;
+        if (name === undefined || value === undefined) {
+          throw cursor.fail(
+            "E_SYNTAX",
+            "each entry needs a name and a value, e.g. `(x 8, y 4)`",
+            "or use the positional form: `(x, y) as (8, 4)`",
+          );
+        }
+        return { name, value, line };
+      }),
+    );
   }
 
   // Positional form: the group just parsed was a column list; values follow.
@@ -534,11 +572,48 @@ function parsePairs(cursor: Cursor): Prop[] {
     );
   }
 
-  return columns.map((name, index) => ({
-    name,
-    value: provided[index] as Expr,
-    line: lines[index] ?? 0,
-  }));
+  return noDuplicates(
+    cursor,
+    columns.map((name, index) => ({
+      name,
+      value: provided[index] as Expr,
+      line: lines[index] ?? 0,
+    })),
+  );
+}
+
+/**
+ * Reject a list that names the same thing twice.
+ *
+ * `(x 1, x 9)` has an obvious reading — the last one wins — and that is exactly
+ * why it has to be an error: the losing value is written down, in the file, and
+ * does nothing. Every other "two of a thing that should be one" in the language
+ * is an error already (`E_DUPLICATE_SCENE`, `E_DUPLICATE_INSTANCE`, and the
+ * rest), and a property list is the one place where the mistake is easiest to
+ * make, because the list is long and horizontal.
+ *
+ * The comparison is on the name as written, so `(ball1.x 1, ball2.x 9)` is two
+ * different targets and fine. `direction` is not expanded here: it sets
+ * `xdirection` and `ydirection`, but writing one of those next to it is a
+ * legitimate way to say "south-west, but faster across", and the last write
+ * wins in an order the reader can see on one line.
+ */
+function noDuplicates(cursor: Cursor, pairs: Prop[]): Prop[] {
+  const seen = new Map<string, number>();
+  for (const pair of pairs) {
+    const first = seen.get(pair.name);
+    if (first !== undefined) {
+      throw cursor.fail(
+        "E_DUPLICATE_PROP",
+        `'${pair.name}' is set twice in one list`,
+        first === pair.line
+          ? "the second value wins and the first does nothing"
+          : `already set on line ${first}; the second value wins and the first does nothing`,
+      );
+    }
+    seen.set(pair.name, pair.line);
+  }
+  return pairs;
 }
 
 /** True when the identifier at the cursor is a bare column name (`,` or `)` next). */
@@ -654,6 +729,27 @@ function parsePrefix(cursor: Cursor): Expr {
       const unit = (next.value === "cell" ? "cells" : next.value) as Unit;
       return { kind: "number", value, unit, line: token.line };
     }
+    // Attached and *not* a unit: nothing else in the language runs a word onto
+    // the end of a number, so this is a typo the parser can name. Left alone it
+    // surfaces as a stray token later and the error blames the bracket that
+    // noticed it. A dot in the word means an asset was meant — `8bit.png` is one
+    // filename to a reader and a number to the lexer, because a name has to
+    // start with a letter — and quoting it is the fix, not a unit.
+    if (next.kind === "ident" && !next.spaceBefore) {
+      const glued = `${token.raw}${next.raw}`;
+      if (next.value.includes(".")) {
+        throw cursor.fail(
+          "E_SYNTAX",
+          `'${glued}' is not a name; names start with a letter or an underscore`,
+          `quote it if it is a filename: "${glued}"`,
+        );
+      }
+      throw cursor.fail(
+        "E_UNKNOWN_UNIT",
+        `'${next.raw}' is not a unit`,
+        `units are: ${UNIT_LIST} — or leave it off for cells`,
+      );
+    }
     return { kind: "number", value, line: token.line };
   }
 
@@ -705,7 +801,10 @@ function parsePrefix(cursor: Cursor): Expr {
  * assertion is written in exactly the expression language the game is.
  */
 export function parseExpression(source: string, line = 1): { expr?: Expr; error?: Diagnostic } {
-  const cursor = new Cursor(lex(source));
+  const { tokens, notes } = lex(source);
+  const note = notes[0];
+  if (note) return { error: { ...noteDiagnostic(note), line } };
+  const cursor = new Cursor(tokens);
   try {
     const expr = parseExpr(cursor, 0);
     if (!cursor.atStatementEnd()) {

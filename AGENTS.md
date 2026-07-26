@@ -249,6 +249,14 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   §Diagnostics): sprite budgets, tunnelling, sub-tick speeds, offscreen starts,
   aspect mismatch, size rounding. Adding a new class of known trap means adding a
   diagnostic, not a doc note.
+- **The language never resolves an ambiguity quietly** (doc 14 §The readings the
+  language will not guess between). A comment needs a space before it, because
+  `y--1` is `y - -1` to a reader and a truncated statement to the lexer; a word
+  glued to a number is a misspelled unit, not two tokens; and setting one thing
+  twice — a property in a list, a property from a button, a camera in a scene —
+  is an error, never last-write-wins. These parse fine under the obvious reading,
+  so nothing downstream can catch them: the program is simply not the one in the
+  file. When a new construct has two readings, reject it rather than pick one.
 - **`hits` fires once per contact; `touches` fires every tick of it.** Bounces
   want the first, resting contact wants the second — a platformer that lands with
   `hits` accumulates gravity into `ydirection` while standing still, and looks
