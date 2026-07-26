@@ -250,10 +250,11 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     console in the selector changes the **cartridge**, not a setting on one:
     Game Boy Color builds a `.gbc` that the same core plays in colour because the
     machine it comes up as is the cartridge header's decision, and NES builds a
-    `.nes` that a second core plays on a screen of its own shape. The pane clears
-    while a new console demakes, because a Game Boy running under an NES heading
-    would be the one thing it must not show. Sound stays the Game Boy's until
-    §A5, and the button is disabled rather than silent.
+    `.nes` that a second core plays on a screen of its own shape. While the next
+    cartridge demakes the pane keeps playing the one it has, so everything on
+    screen — the machine's name, the canvas shape, the download's extension —
+    describes the ROM that is running rather than the picker. Sound stays the
+    Game Boy's until §A5, and the button is disabled rather than silent.
   - **D6 — language growth**, driven by fixtures beyond Pong. Levels, tiles, a
     scrolling camera, `stream`-composed courses and a seeded `random` have
     landed (doc 14 §Levels, §Composed levels, §Randomness). What is left:

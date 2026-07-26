@@ -124,11 +124,18 @@ export function RomPane({
   held,
   latched,
   restarts,
+  pending = false,
 }: {
   program: Program | undefined;
   name: string;
   held: { current: Set<string> };
   latched: { current: Set<string> };
+  /**
+   * True while the editor is still being typed in and this cartridge is a
+   * version behind. The pane keeps playing the ROM it has — a screen that
+   * blanked on every keystroke would be worse than a stale one — and says so.
+   */
+  pending?: boolean;
   /**
    * Bumped by the section's Restart button.
    *
@@ -169,15 +176,24 @@ export function RomPane({
     };
   }, []);
 
-  // The build is deferred by a frame rather than run inline, and that is not
-  // cosmetic: demaking a *colour* backdrop is the whole `prep` tournament, which
-  // is seconds of arithmetic the first time the page sees a picture. A tab that
-  // simply stopped for those seconds would look broken, so the pane paints
-  // "demaking" first and does the work after. Repeat builds — every keystroke in
-  // the editor — hit the conversion cache and are instant.
+  // The build is deferred until after a paint rather than run inline, and that
+  // is not cosmetic: demaking a *colour* backdrop is the whole `prep`
+  // tournament, which is seconds of arithmetic the first time the page sees a
+  // picture, and it is synchronous — nothing repaints while it runs. A tab that
+  // simply stopped for those seconds would look broken, so the pane gets its
+  // "demaking" badge *on screen* first and does the work after. Repeat builds
+  // hit the conversion cache and are instant.
   const [built, setBuilt] = useState<{
-    /** The console this cartridge is for, so a stale one is never shown as it. */
+    /**
+     * The console this cartridge is for, and the extension it is named with.
+     *
+     * The pane keeps playing the ROM it has while the next one demakes, so for
+     * those seconds the picker and the cartridge disagree — and everything on
+     * screen describes the *cartridge*. Without this the Download button would
+     * offer `.nes` and hand you a Game Boy.
+     */
     consoleId?: string;
+    extension?: string;
     rom?: Uint8Array;
     layout?: BuiltRom["layout"];
     error?: string;
@@ -185,44 +201,66 @@ export function RomPane({
   const [demaking, setDemaking] = useState(false);
 
   useEffect(() => {
+    // Both early exits clear the flag as well as the cartridge: a build that is
+    // never going to start must not leave the pane saying it is demaking, which
+    // is how "fix the errors above" came to be unreachable once the badge could
+    // outlive its effect.
     if (!program || !audio) {
       setBuilt({});
+      setDemaking(false);
       return;
     }
     const target = program.profile.id;
-    // An edit keeps the cartridge on screen while the next one builds — the
-    // rebuild is a cache hit and the flicker would be for nothing. A *console*
-    // change does not: what is on screen is a Game Boy running while the pane
-    // says NES, which is the one thing this pane must never show.
-    setBuilt((previous) => (previous.consoleId === target ? previous : {}));
+    const named = romExtension(program);
     const missing = unsupportedFor(program);
     if (missing.length > 0) {
       setBuilt({
         consoleId: target,
+        extension: named,
         error:
           `This game needs ${missing.join(" and ")}. The preview above plays it correctly; ` +
           `a ROM would play something else, so the build refuses rather than pretend.`,
       });
+      setDemaking(false);
       return;
     }
     let live = true;
+    let timer = 0;
     setDemaking(true);
-    const timer = setTimeout(() => {
-      if (!live) return;
-      try {
-        // The bundled art goes in as *source bytes*: the conversion happens
-        // inside the build, so the page and the CLI cannot diverge on it.
-        const assets = demoAssetBytes();
-        for (const [file, bytes] of audio) assets.set(file, bytes);
-        const result = buildGame(program, { title: name, assets });
-        setBuilt({ consoleId: target, rom: result.bytes, layout: result.layout });
-      } catch (error) {
-        setBuilt({ consoleId: target, error: String((error as Error).message ?? error) });
-      }
-      setDemaking(false);
-    }, 0);
+    // `requestAnimationFrame` then `setTimeout`, and the order is the point: a
+    // rAF callback runs *before* the frame is painted, so scheduling the work
+    // inside it is scheduling it after the badge is actually on screen. A bare
+    // `setTimeout(0)` is a macrotask that can beat the paint, which on a slow
+    // colour build means the tab freezes for several seconds having shown
+    // nothing — the exact failure the deferral exists to avoid.
+    const frame = requestAnimationFrame(() => {
+      timer = setTimeout(() => {
+        if (!live) return;
+        try {
+          // The bundled art goes in as *source bytes*: the conversion happens
+          // inside the build, so the page and the CLI cannot diverge on it.
+          const assets = demoAssetBytes();
+          for (const [file, bytes] of audio) assets.set(file, bytes);
+          const result = buildGame(program, { title: name, assets });
+          setBuilt({
+            consoleId: target,
+            extension: named,
+            rom: result.bytes,
+            layout: result.layout,
+          });
+        } catch (error) {
+          setBuilt({
+            consoleId: target,
+            extension: named,
+            error: String((error as Error).message ?? error),
+          });
+        }
+        setDemaking(false);
+      }, 0) as unknown as number;
+    });
     return () => {
       live = false;
+      cancelAnimationFrame(frame);
       clearTimeout(timer);
     };
   }, [program, name, audio]);
@@ -233,7 +271,7 @@ export function RomPane({
   // different cartridge rather than a setting on this one, and so is an NES one.
   const consoleId = built.consoleId ?? program?.profile.id ?? "gb";
   const family = familyFor(consoleId) ?? "gb";
-  const extension = program ? romExtension(program) : "gb";
+  const extension = built.extension ?? "gb";
   // Sound is the Game Boy's for now: the NES driver is doc 13 §A5, and a button
   // that turned on nothing would be worse than one that is plainly unavailable.
   const canSound = audioSupported() && family === "gb";
@@ -374,20 +412,27 @@ export function RomPane({
   return (
     <div class="rom-pane">
       <h3>The cartridge</h3>
-      <canvas
-        ref={canvas}
-        class="rom-canvas"
-        data-testid="rom-canvas"
-        // Which machine is running, for anything that needs to wait for a
-        // particular one: the picker changes the moment it is clicked, and the
-        // cartridge arrives a demake later.
-        data-console={consoleId}
-        width={screen.width}
-        height={screen.height}
-        role="img"
-        aria-label={`The game, running as ${MACHINE[consoleId] ?? "a console"} ROM`}
-        style={{ aspectRatio: `${screen.width} / ${screen.height}` }}
-      />
+      <div class="rom-screen">
+        <canvas
+          ref={canvas}
+          class="rom-canvas"
+          data-testid="rom-canvas"
+          // Which machine is running, for anything that needs to wait for a
+          // particular one: the picker changes the moment it is clicked, and the
+          // cartridge arrives a demake later.
+          data-console={consoleId}
+          width={screen.width}
+          height={screen.height}
+          role="img"
+          aria-label={`The game, running as ${MACHINE[consoleId] ?? "a console"} ROM`}
+          style={{ aspectRatio: `${screen.width} / ${screen.height}` }}
+        />
+        {pending || demaking ? (
+          <p class="rom-building" data-testid="rom-building" role="status">
+            Demaking&hellip;
+          </p>
+        ) : null}
+      </div>
       <div class="rom-toolbar">
         <button
           type="button"

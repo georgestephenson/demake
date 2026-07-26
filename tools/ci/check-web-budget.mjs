@@ -21,14 +21,13 @@ const DIST = process.argv[2] ?? "packages/web/dist";
 /**
  * The ceiling, in gzipped kilobytes, over the whole site's JavaScript.
  *
- * Raised from 300 when the NES landed: the page now compiles a game to *two*
- * instruction sets and plays the result in two emulators, all of it ours and all
- * of it in the bundle because doc 07 forbids fetching a core. The second console
- * costs 4.6 KB gzipped end to end — a whole machine for a page and a half of
- * text — and the room it needed was not there because the Game Boy Color work
- * had already spent it.
+ * It is close, and deliberately not moved: the NES cost 4.6 KB gzipped end to
+ * end — a second instruction set, a second emulator and a second set of hardware
+ * tables, all of it in the bundle because doc 07 forbids fetching a core — and it
+ * still fits. The next thing that does not fit should be made smaller rather than
+ * given more room.
  */
-const BUDGET_KB = 320;
+const BUDGET_KB = 300;
 
 function walk(dir) {
   const out = [];

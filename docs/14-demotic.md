@@ -693,6 +693,18 @@ All seven compile for all seven consoles, stay inside every sprite budget, and
 pass their own `.test.dmt` suites on every one — run in the unit suite, from the
 CLI, and in the browser.
 
+**They are also the shop window, so they are written to be read at a glance.**
+The web app shows a game's source beside the cartridge it built, and the claim
+being made there is that a whole game is sixty lines. An example whose commentary
+outweighs its code argues the opposite, however good the commentary is: a reader
+skimming Pong should see five statements that declare a court and eight rules
+that play it. So a comment earns its place only where the line above it cannot be
+read without one — tick order, an absolute unit chosen over a relative one, why a
+rule is `touches` and not `hits` — and the rationale that used to sit in the
+fixtures lives in this document and in `AGENTS.md`, where it can be longer and is
+read by the people it is for. Section rules are kept short enough not to wrap in
+the page's editor.
+
 Writing them changed the language, which is the point of writing them before the
 runtime rather than after: `touches` and the `reaches` crossing rule both come
 from here, and `visible` gained its collision meaning here too.

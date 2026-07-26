@@ -178,3 +178,29 @@ when ball hits screenleft, screenright then xdirection as flip
 ```
 
 `then` separates the condition from the consequence, which is what makes a long rule readable. `if` guards a trigger with a condition — `when a pressed if shot.visible = 0` is how a rule fires only when the state allows it. `else` runs when the rule was evaluated and did not fire, so it is allowed on level triggers and on any guarded rule, but not on a bare edge trigger, where "did not fire" would mean every other tick of the game. Brackets are optional around a single `name as value`.
+
+## Clause keywords
+
+The words that join a statement's parts. Each is a keyword only where the grammar expects it — `start` is also a button and `scene` is also an assignment target.
+
+| Keyword | Meaning |
+|---|---|
+| `object` | Declares a class rather than an instance, in `create object`. |
+| `in` | Narrows a declaration or a rule to one scene. |
+| `from` | Names the file a level or a stream is built from. |
+| `follows` | The camera's one verb. |
+| `wide` | Lays a stream's chunks left to right. |
+| `tall` | Lays a stream's chunks top to bottom. |
+| `on` | Introduces a control's timing, or a sound's trigger. |
+| `hold` | A control that restores the previous value on release. |
+| `press` | A control that fires on the press and stays. |
+| `release` | A control that fires on the release. |
+| `if` | Guards a trigger with a condition. |
+| `then` | Separates a rule's condition from its consequence. |
+| `else` | Runs when an evaluated rule did not fire. |
+| `as` | Assigns a value to a property. |
+| `hits` | Contact, once — an edge trigger. |
+| `touches` | Overlap, every tick — a level trigger. |
+| `pressed` | A button's press edge. |
+| `released` | A button's release edge. |
+| `reaches` | A value landing on a target, or crossing it. |

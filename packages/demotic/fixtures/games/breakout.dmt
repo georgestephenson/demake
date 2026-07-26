@@ -1,19 +1,9 @@
--- Breakout — bricks, removal, and a wall that thins as you play.
---
--- What this one exercises that Pong does not:
---   * many objects of one class, laid out in a grid
---   * removal: `visible 0` makes a brick inert — not drawn, not collided with
---   * a win condition counted rather than reached
---   * real sprite-budget pressure (a brick wall is a lot of hardware sprites)
+-- Breakout. A grid of objects, removal by `visible 0`,
+-- and real sprite-budget pressure.
 
 start title
 
--- ---------------------------------------------------------------- title -----
---
--- The artwork is demade by the image engine at the screen's own size, into a
--- tilemap the background layer draws for nothing — the same fitter a photograph
--- goes through. What it costs is tiles, and the compiler says so when a picture
--- wants more than the game's own art has left.
+-- title ---------------------------------------
 
 scene title
 
@@ -23,21 +13,15 @@ create text prompt in title (x centerx - 7, y screenheight - 2, text "press a to
 
 when a pressed in title then scene as play
 
+-- play ----------------------------------------
 
 scene play
 
--- The playfield is demade too, at the screen's own size, by the same fitter the
--- title screen went through. It is scenery and nothing else: the game reads
--- nothing from it and collides with none of it — what it costs is tiles.
 backdrop breakout.play.svg
 
--- The music and the effects go through the demakers the CLI's own `arrange` and
--- `sfx` commands use. A brick is the sound this game is *about*, so it is the
--- one with a noise component; the bounce is a plain blip and gives way to it.
 music arcade.mid in play
 sound brick.wav on ball hits brick
 sound bounce.wav on ball hits paddle
-
 
 create object ball (width 1 cell, height 1 cell, speed 45vmin, sprite ball.svg)
 create object paddle (width 18vw, height 1 cell, speed 70vw, sprite paddle.svg)
@@ -46,16 +30,12 @@ create object brick (width 12vw, height 1 cell, sprite brick.svg)
 create ball ball1 in play (x centerx, y centery + 2, direction northeast)
 create paddle bat in play (x centerx, y screenheight - 2)
 
--- A counter with no caption is a number nobody can read. The label is an
--- ordinary `text` object beside it — same font, same layer, no new concept.
 create text scoretag in play (x 1, y 1, text "score:")
 create number score in play (value 0, x 8, y 1)
 create text lefttag in play (x screenwidth - 9, y 1, text "left:")
 create number left in play (value 8, x screenwidth - 3, y 1)
 
--- Two rows of four. Positions are relative, so the wall spans the same share of
--- every playfield even though a Game Boy brick is 2 cells and a Mega Drive one
--- is 5.
+-- Two rows of four, placed relative to the playfield.
 create brick b1 in play (x 4vw, y 3)
 create brick b2 in play (x 28vw, y 3)
 create brick b3 in play (x 52vw, y 3)
@@ -72,17 +52,17 @@ when bat hits screenleft, screenright then xdirection as 0
 
 when ball hits screenleft, screenright then xdirection as flip
 when ball hits screentop then ydirection as flip
-
--- Losing the ball costs nothing but the serve: this is a demo, not a punishment.
 when ball hits screenbottom then (ball1.y, ball1.x, ball1.ydirection) as (centery + 2, centerx, -1)
 
 when ball hits paddle then (ydirection, xdirection) as (flip, (ball.centerx - paddle.centerx) / paddle.width)
 
--- A brick that has been hit stops being drawn *and* stops being solid, so the
--- ball passes through where it used to be. One property, both meanings.
+-- `visible 0` makes a brick inert: not drawn, and not
+-- collided with either.
 when ball hits brick then (ydirection, brick.visible, score.value, left.value) as (flip, 0, score.value + 1, left.value - 1)
 
 when score.value reaches 8 in play then scene as cleared
+
+-- cleared -------------------------------------
 
 scene cleared
 

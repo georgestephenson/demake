@@ -72,6 +72,51 @@ the d-pad must not leave a paddle running forever.
 A syntax error never blanks the preview — the parser recovers per line, and the
 page keeps running the last version that compiled.
 
+**The source is syntax-coloured, and the grammar is the engine's.**
+`@demake/demotic` exports `highlight()`, which scopes source with **TextMate
+scope names** (`keyword.control`, `string.quoted`, `constant.numeric`) — the
+convention every editor and every theme already speaks, so a theme matches on
+scope prefixes and a future `.tmLanguage` file is a translation of one table
+rather than a second grammar. Every word it knows comes from the language
+registry and every token boundary comes from the lexer, so a keyword added to the
+registry is coloured the day it is added, and the one thing a regular-expression
+highlighter always gets wrong here — `y--1` is a comment, `y - -1` is not — has
+exactly one answer. **Grammar in the engine, theme in the stylesheet**: the page
+picks the colours (the conventional ones — comments green, keywords blue, control
+flow magenta, strings red-brown, numbers pale green) and the engine never names
+one. A highlighter written in the page would be a second description of the
+language, which is the same mistake §The web app must never grow conversion logic
+exists to prevent.
+
+It is still an ordinary `<textarea>`, with a `<pre>` of colours stacked exactly
+underneath it — the conventional technique, and the one that keeps native
+editing, selection, mobile keyboards and the accessibility tree. Two things hold
+the layers together: they share one CSS grid cell so the wrapper is what scrolls
+(a scrollbar inside the textarea alone would narrow its lines and move every wrap
+point out from under the colours), and no scope may set a `font-weight` or
+`font-style`, because a bold run is a wider run in most monospace families.
+
+**Nothing downstream of the editor runs per keystroke.** The section holds two
+copies of the text: a *draft*, which the editor shows and which changes on every
+key, and the *source*, which is what the engine has been given and only catches
+up once typing pauses. The compile, the diagnostics, the interpreter and the
+cartridge all hang off the source, so a keystroke costs a lex for the colours and
+nothing else — and the interpreter is no longer restarted from scratch on every
+character. Only *typing* waits: picking a game or a console sets both copies at
+once, because a dropdown is one deliberate action and a pause after it would read
+as a fault. *Run tests* settles the draft on the way, so it can never report on
+the version from 300 ms ago.
+
+**And the pane says when it is demaking**, which is any time a cartridge is being
+built — after a typing pause, and after a game or console change alike. The ROM
+pane keeps playing the cartridge it has and shows a *demaking…* badge over the
+screen: a screen that blanked as you typed would be worse than one that is a
+version behind. The badge has to reach the screen *before* the work starts,
+because the build is synchronous and nothing repaints while it runs — so the
+build is scheduled from inside a `requestAnimationFrame` callback rather than a
+bare `setTimeout`, which is the difference between a badge and a tab that freezes
+for several seconds having shown nothing.
+
 ### Playing the real ROM in the page
 
 The preview runs the reference interpreter, which is the specification — but the
@@ -103,13 +148,16 @@ option, because the Demotic conformance suite (doc 10) needed a headless machine
 for each console anyway, and one core now serves both jobs. Together they cost
 about 13 KB gzipped inside the already code-split game chunk.
 
-**Which cartridge is on screen is never in doubt.** The console selector changes
-the *cartridge*, and a cartridge takes a demake to arrive — seconds, when the art
-is being fitted in colour. So the pane clears when the console changes and says
-what it is doing, rather than leaving a Game Boy running under an NES heading;
-an ordinary edit does not clear it, because that rebuild is a cache hit and the
-flicker would buy nothing. The canvas is sized by the machine it is showing,
-because 160×144 and 256×240 are not the same rectangle.
+**Everything on screen describes the cartridge, not the picker.** The selector
+changes the *cartridge*, and a cartridge takes a demake to arrive — seconds, when
+the art is being fitted in colour. The pane keeps playing the one it has for
+those seconds (§the demaking badge), so for those seconds the two disagree, and
+the machine name, the canvas size, the download's extension and the CPU the
+frames-per-tick figure names all follow the ROM that is actually running. Get
+that backwards and the Download button offers you `.nes` and hands you a Game
+Boy. The canvas is sized by the machine it is showing rather than by the
+stylesheet, because 160×144 and 256×240 are not the same rectangle and a ratio
+pinned in CSS could only ever be right for one of them.
 
 **The pane reports frames per tick**, and that is deliberate. It is the measured
 cost of one game tick on that console's CPU — currently right on one frame for
@@ -288,15 +336,14 @@ bundled track or effect on arrival instead, so every section demos itself.
   Contrast is always set with an explicit colour, **never with opacity** — a
   translucent foreground composites against whatever is behind it, which is both
   a measured contrast failure and genuinely harder to read.
-- Budget: < 320 KB JS gzipped before WASM codecs (lazy-loaded per input format);
+- Budget: < 300 KB JS gzipped before WASM codecs (lazy-loaded per input format);
   Lighthouse ≥ 95 across the board, checked in CI. The figure is a **sum over the
-  whole site** — entry chunk, all five lazy sections, both workers — which is why
-  it is larger than what a visit costs: opening the heaviest section downloads
-  about 210 KB. It was 300 KB until the NES arrived, and the twenty is what a
-  second instruction set, a second emulator and a second set of hardware tables
-  come to (4.6 KB of it the NES itself, the rest the headroom the Game Boy Color
-  work had already spent). A sum is the honest shape for this check: it cannot be
-  satisfied by moving code from one chunk to another, only by there being less of
-  it.
+  whole site** — entry chunk, all five lazy sections, both workers — which is more
+  than any one visit costs: opening the heaviest section downloads about 200 KB.
+  A sum is the honest shape for this check, because it cannot be satisfied by
+  moving code from one chunk to another, only by there being less of it. It is
+  close: a second console — a second instruction set, a second emulator, a second
+  set of hardware tables — came to 4.6 KB of it. The next thing that does not fit
+  should be made smaller rather than given more room.
 - Browser matrix: last 2 versions of Chrome/Firefox/Safari/Edge, tested via
   Playwright in CI (functional + determinism suites).

@@ -554,7 +554,17 @@ main.game-layout {
   overflow-x: auto;
 }
 
-.game-source {
+/* --- the source editor (see components/SourceEditor.tsx) -------------------- */
+
+/*
+ * The wrapper is the scroller and the only thing with a border, and the two
+ * layers inside it share one grid cell so the row is sized by the taller of them
+ * — the highlight. Neither layer scrolls on its own, which is what removes the
+ * scrollbar that would otherwise narrow the textarea's lines and move every wrap
+ * point out from under the colours.
+ */
+.source-editor {
+  display: grid;
   width: 100%;
   height: 44vh;
   min-height: 280px;
@@ -562,14 +572,139 @@ main.game-layout {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--bg);
-  color: var(--ink);
+  overflow: auto;
+  resize: vertical;
+}
+
+.source-editor:focus-within {
+  border-color: var(--accent);
+}
+
+/*
+ * Everything that decides where a glyph lands is set once, for both layers.
+ * `font-weight` and `font-style` are deliberately absent from the scope rules
+ * below for the same reason: a bold or italic run is a differently sized run in
+ * most monospace families, and the layers would drift apart along the line.
+ */
+.source-highlight,
+.source-input {
+  grid-area: 1 / 1;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
   font:
     0.78rem/1.6 ui-monospace,
     "SF Mono",
     Menlo,
     monospace;
-  resize: vertical;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
   tab-size: 2;
+  letter-spacing: normal;
+}
+
+.source-highlight {
+  color: var(--ink);
+  pointer-events: none;
+}
+
+.source-input {
+  height: 100%;
+  background: transparent;
+  /* The text itself is the layer underneath; only the caret is drawn here. */
+  color: transparent;
+  caret-color: var(--ink);
+  resize: none;
+  overflow: hidden;
+  outline: none;
+}
+
+/* Translucent, so a selected line keeps its colours instead of going flat. */
+.source-input::selection {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/*
+ * The theme. Scopes are TextMate's (`@demake/demotic`'s `highlight()`), so these
+ * are prefix matches — the same way an editor theme matches — and a scope this
+ * file does not name simply inherits the ink colour.
+ *
+ * The colours are the conventional ones: comments green, keywords blue, control
+ * flow magenta, strings red-brown, numbers pale green, functions yellow, types
+ * teal. Anyone who has read code in an editor already knows this palette, which
+ * is the point of not inventing one.
+ */
+:root {
+  --tok-comment: #008000;
+  --tok-keyword: #0000ff;
+  --tok-control: #af00db;
+  --tok-string: #a31515;
+  --tok-number: #098658;
+  --tok-function: #795e26;
+  --tok-type: #267f99;
+  --tok-support: #0070c1;
+  --tok-variable: #001080;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --tok-comment: #6a9955;
+    --tok-keyword: #569cd6;
+    --tok-control: #c586c0;
+    --tok-string: #ce9178;
+    --tok-number: #b5cea8;
+    --tok-function: #dcdcaa;
+    --tok-type: #4ec9b0;
+    --tok-support: #4fc1ff;
+    --tok-variable: #9cdcfe;
+  }
+}
+
+.source-highlight [data-scope^="comment"] {
+  color: var(--tok-comment);
+}
+
+.source-highlight [data-scope^="keyword.control"] {
+  color: var(--tok-control);
+}
+
+.source-highlight [data-scope^="keyword.other"],
+.source-highlight [data-scope^="storage"],
+.source-highlight [data-scope^="constant.language"] {
+  color: var(--tok-keyword);
+}
+
+.source-highlight [data-scope^="keyword.operator"] {
+  color: var(--ink);
+}
+
+.source-highlight [data-scope^="string"] {
+  color: var(--tok-string);
+}
+
+.source-highlight [data-scope^="constant.numeric"] {
+  color: var(--tok-number);
+}
+
+.source-highlight [data-scope^="support.function"] {
+  color: var(--tok-function);
+}
+
+.source-highlight [data-scope^="support.constant"] {
+  color: var(--tok-support);
+}
+
+.source-highlight [data-scope^="entity.name"] {
+  color: var(--tok-type);
+}
+
+.source-highlight [data-scope^="variable"] {
+  color: var(--tok-variable);
+}
+
+.source-highlight [data-scope^="punctuation"] {
+  color: var(--muted);
 }
 
 .game-diagnostics {
@@ -866,6 +1001,32 @@ main.docs-layout {
   background: #e8e8e8;
   border-radius: 6px;
   image-rendering: pixelated;
+}
+
+/*
+ * The rebuild badge sits *over* the screen rather than replacing it: the
+ * cartridge on show is a version behind, not gone, and it keeps playing. The
+ * canvas carries its own aspect ratio, so the wrapper is sized by it and the
+ * badge is positioned against it.
+ */
+.rom-screen {
+  position: relative;
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.rom-building {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  margin: 0;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 85%, transparent);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-family: ui-monospace, monospace;
+  pointer-events: none;
 }
 
 .rom-toolbar {
