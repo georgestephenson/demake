@@ -285,6 +285,17 @@ Together those took a title screen from **96 patterns to 201–231** and from th
 sub-palettes to four; the shooter's merged 216 of its 960 cells and now merges
 none. A console with one table shares it, and the reported budget says so.
 
+**And the nametable is packed, because a picture costs program space too.** A
+screenful is 960 cells and an NROM cartridge is 32 KiB, so two pictures stored raw
+were six per cent of the whole program — which is what put the shooter, whose nine
+aliens generate a lot of collision code, within a few hundred bytes of not
+fitting. A demade screen is mostly runs, so the cells and the attribute table go
+in as literals and runs and come out through one walk: 960 bytes becomes 279–682,
+and a fixture gains 280–560 per picture. What is guaranteed is the bytes that
+reach the PPU, never the encoding — the same rule the audio driver's packing runs
+under (doc 16 §The driver format is not part of the contract) — and the test boots
+the cartridge and reads the PPU's own memory rather than checking the format.
+
 Steps 3–4 live in `packages/core/src/pipeline/sprite.ts`, beside the rest of the
 pipeline. The Demakefile only decides what is fed in and with which options; with
 no Demakefile, `demake build` loads the art next to the source and converts it

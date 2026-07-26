@@ -39,7 +39,7 @@ import { Nes } from "@demake/nes";
 
 import { buildNesRom } from "../src/codegen/nes.js";
 import { bindNesArt, BACKDROP_PALETTES } from "../src/codegen/nes-art.js";
-import { SYSTEM_PALETTE } from "../src/codegen/nes/emit.js";
+import { packCells, SYSTEM_PALETTE } from "../src/codegen/nes/emit.js";
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
 import { BUILTIN_TILES, TILE_BYTES, type SelectedBank } from "../src/rom/graphics.js";
@@ -160,6 +160,51 @@ describe("the NES art budget", { timeout: ART_TIMEOUT }, () => {
    * cells, which is what makes "no second art converter" checkable rather than a
    * claim about who calls what.
    */
+  /**
+   * The packed nametable reaches the PPU as the picture, byte for byte.
+   *
+   * A backdrop is stored as literals and runs, because 960 raw bytes a picture is
+   * three per cent of an NROM cartridge and the shooter has nine aliens' worth of
+   * collision code to fit beside two of them. What is guaranteed is not the
+   * encoding but what comes out of it, so this boots the cartridge and reads the
+   * PPU's own memory: the picture's own cells, and the attribute table that
+   * colours them.
+   *
+   * The caption is painted over the picture afterwards, so the last rows are the
+   * game's rather than the fit's — which is why the exact comparison stops above
+   * them and what is asserted below them is that only a caption's worth of cells
+   * moved.
+   */
+  it("unpacks a backdrop into exactly the cells the build produced", () => {
+    const program = build("pong.dmt");
+    const assets = pongAssets();
+    const built = buildNesRom(program, { assets });
+    const bound = bindNesArt(program, assets);
+    const machine = new Nes(built.bytes);
+    for (let frame = 0; frame < 8; frame += 1) machine.runFrame();
+
+    const title = bound.options.backdrops?.get("title");
+    expect(title).toBeDefined();
+    const { map, attr } = title as { map: Uint8Array; attr: Uint8Array };
+    expect(map.length).toBe(32 * 30);
+    const painted = machine.ppu.nametables;
+    const clear = 24 * 32; // above anything the HUD writes
+    expect([...painted.subarray(0, clear)]).toEqual([...map.subarray(0, clear)]);
+    let differing = 0;
+    for (let cell = clear; cell < map.length; cell += 1) {
+      if (painted[cell] !== map[cell]) differing += 1;
+    }
+    expect(differing).toBeLessThan(64);
+    // The attribute table is packed and unpacked the same way, and above the
+    // caption it is the picture's own. The blocks the caption covers are switched
+    // to its palette when the table is *built*, so those are the build's answer
+    // rather than the fit's and are not compared here.
+    expect([...painted.subarray(0x3c0, 0x3c0 + 48)]).toEqual([...attr.subarray(0, 48)]);
+    // And the encoding is worth having: a picture that packed to its full size
+    // would mean the walk was costing bytes rather than saving them.
+    expect(packCells(map).length).toBeLessThan(map.length * 0.8);
+  });
+
   it("draws exactly what `demake prep -c nes` would, at the budget it was given", () => {
     const program = build("pong.dmt");
     const bound = bindNesArt(program, pongAssets());

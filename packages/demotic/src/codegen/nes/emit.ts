@@ -260,12 +260,12 @@ export function emitProgram(ctx: NesCtx, options: NesEmitOptions = {}): void {
     const art = options.backdrops?.get(scene.def.name);
     if (art) {
       asm.label(backdropLabel(scene));
-      asm.bytes(art.map);
+      asm.bytes(packCells(art.map));
       asm.label(backdropPaletteLabel(scene));
       asm.bytes(art.palette);
     }
     asm.label(sceneAttrLabel(scene));
-    asm.bytes(sceneAttributes(ctx, scene, options));
+    asm.bytes(packCells(sceneAttributes(ctx, scene, options)));
   }
   asm.label("LevelPalette");
   asm.bytes(options.levelPalette ?? defaultBackgroundPalette());
@@ -1264,9 +1264,12 @@ function emitFullRedraw(
 
   const backdrop = options.backdrops?.get(scene.def.name);
   if (backdrop) {
-    // A backdrop is a whole nametable in order, so painting it is a block copy.
+    // A backdrop is a whole nametable in order, so painting it is one walk from
+    // the first cell — but it is *packed*, because 960 raw bytes a picture is
+    // three per cent of the cartridge each and a demade screen is mostly runs.
     emitPpuAddress(ctx, NAMETABLE);
-    emitPpuBlock(ctx, backdropLabel(scene), MAP_W * MAP_H);
+    ctx.pointer(ZP.p0, label(backdropLabel(scene)));
+    asm.jsr(needBlitCells(ctx));
     emitPpuAddress(ctx, PALETTE);
     emitPpuBlock(ctx, backdropPaletteLabel(scene), 16);
   } else {
@@ -1332,13 +1335,123 @@ function emitFullRedraw(
   // The attribute table, whatever the scene drew: a picture's own, or a level's
   // single palette, with the blocks a caption covers switched to the font's ramp.
   emitPpuAddress(ctx, ATTRIBUTES);
-  emitPpuBlock(ctx, sceneAttrLabel(scene), 64);
+  ctx.pointer(ZP.p0, label(sceneAttrLabel(scene)));
+  asm.jsr(needBlitCells(ctx));
 
   // Captions go on now, with the background they sit on. A scrolling scene draws
   // its whole HUD with sprites instead, so it has none to paint here.
   if (!scrolls(ctx, scene)) emitHud(ctx, scene, "static");
   asm.lda(imm(0x1e));
   asm.sta(abs(R.PPUMASK));
+}
+
+/**
+ * A packed nametable: literals and runs, and the walk that unpacks it.
+ *
+ * ```text
+ *   $00        the end
+ *   $01..$7F   n cells follow, one byte each
+ *   $81..$FF   the next byte, (n & $7F) times
+ * ```
+ *
+ * A screenful is 960 cells and an NROM cartridge is 32 KiB, so two pictures
+ * stored raw were six per cent of the whole program — which is what put the
+ * shooter, with nine aliens' worth of collision code, within a few hundred bytes
+ * of not fitting. A demade screen is mostly runs (sky, a floor, a wall) and packs
+ * to a third of that.
+ *
+ * The format is the encoder's and the decoder's business and nothing else's: what
+ * is guaranteed is the 960 bytes that reach the PPU, and `nes-rom.test.ts` checks
+ * those against the map the build produced rather than checking this encoding.
+ * Same rule the audio driver's packing runs under (doc 16 §The driver format is
+ * not part of the contract).
+ */
+export function packCells(cells: Uint8Array): Uint8Array {
+  const out: number[] = [];
+  let at = 0;
+  while (at < cells.length) {
+    let run = 1;
+    while (run < 127 && at + run < cells.length && cells[at + run] === cells[at]) run += 1;
+    // Two of a kind is a wash — three bytes either way — so a run has to be worth
+    // the control byte before it is taken, and pairs go through as literals.
+    if (run >= 3) {
+      out.push(0x80 | run, cells[at] as number);
+      at += run;
+      continue;
+    }
+    // Literals up to the next run worth taking, or the cap.
+    const start = at;
+    while (at < cells.length && at - start < 127) {
+      let ahead = 1;
+      while (ahead < 3 && at + ahead < cells.length && cells[at + ahead] === cells[at]) ahead += 1;
+      if (ahead >= 3) break;
+      at += 1;
+    }
+    out.push(at - start, ...cells.subarray(start, at));
+  }
+  out.push(0x00);
+  return Uint8Array.from(out);
+}
+
+/** `p0` = a packed nametable; write it to the PPU's data port. */
+function needBlitCells(ctx: NesCtx): Ref {
+  return ctx.need("BlitCells", (inner) => {
+    const { asm } = inner;
+    const next = inner.unique("blitNext");
+    const literal = inner.unique("blitLiteral");
+    const run = inner.unique("blitRun");
+    const runLoop = inner.unique("blitRunLoop");
+    const done = inner.unique("blitDone");
+    const wrapA = inner.unique("blitWrapA");
+    const wrapB = inner.unique("blitWrapB");
+    const wrapC = inner.unique("blitWrapC");
+
+    // The cursor is `y` with the pointer's high byte bumped as it wraps, rather
+    // than a 16-bit add per byte: a packed screen is a few hundred bytes, and the
+    // inner loops are what this routine is.
+    asm.ldy(imm(0));
+    asm.label(next);
+    asm.lda(indY(ZP.p0));
+    asm.iny();
+    asm.bne(wrapA);
+    asm.inc(mem(ZP.p0, 1));
+    asm.label(wrapA);
+    // The cursor's own flags are in the way, so the control byte is re-tested
+    // rather than branched on where it was loaded. `cmp #0` restores both: zero
+    // for the terminator, and the sign bit that tells a run from a literal.
+    asm.cmp(imm(0));
+    asm.beq(done);
+    asm.bmi(run);
+
+    asm.tax();
+    asm.label(literal);
+    asm.lda(indY(ZP.p0));
+    asm.iny();
+    asm.bne(wrapB);
+    asm.inc(mem(ZP.p0, 1));
+    asm.label(wrapB);
+    asm.sta(abs(R.PPUDATA));
+    asm.dex();
+    asm.bne(literal);
+    asm.beq(next); // always: the count reached zero
+
+    asm.label(run);
+    asm.and(imm(0x7f));
+    asm.tax();
+    asm.lda(indY(ZP.p0));
+    asm.iny();
+    asm.bne(wrapC);
+    asm.inc(mem(ZP.p0, 1));
+    asm.label(wrapC);
+    asm.label(runLoop);
+    asm.sta(abs(R.PPUDATA));
+    asm.dex();
+    asm.bne(runLoop);
+    asm.beq(next); // always, for the same reason
+
+    asm.label(done);
+    asm.rts();
+  });
 }
 
 /** Copy a compile-time block of bytes straight into the PPU. */

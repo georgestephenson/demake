@@ -356,6 +356,14 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   ink. Together: 96 patterns to 201–231, three sub-palettes to four, and the
   shooter's title screen from 216 merged cells to none. Look for the same kind of
   headroom before touching a fitter: an under-fed fit looks like a bad fit.
+- **A picture costs program space as well as patterns, so it is packed.** An NES
+  nametable is 960 cells against a 32 KiB cartridge with no mapper, and two raw
+  ones were six per cent of the program — which is what nearly stopped the shooter
+  fitting once it had music. Cells and attributes go in as literals and runs
+  (`packCells`) and come out through one walk with rendering off, at 279–682 bytes
+  a picture. The encoding is never the contract: what is guaranteed is the bytes
+  that reach the PPU, so `nes-rom.test.ts` boots the cartridge and reads the PPU's
+  own memory rather than checking the format.
 - **And music and effects are demade by the audio engine, the same way.** The
   same `assets` map carries `.mid` and `.wav` bytes, `codegen/audio.ts` hands
   them to `@demake/audio`, and the driver that plays them is `@demake/audio`'s
