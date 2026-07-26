@@ -42,8 +42,9 @@ function str(values: Record<string, ParsedValue>, key: string): string | undefin
 
 /**
  * Consoles with a code-generation backend today. Everything else is an honest
- * error. `gbc` builds the same DMG-compatible cartridge as `gb` until the
- * colour work lands — the machine code is identical, so its trace is too.
+ * error. `gbc` is a real Game Boy Color cartridge — demade in colour, with
+ * per-cell palettes and two VRAM banks — and it is the same machine code with a
+ * second half bolted to the renderer, so a game traces identically on both.
  */
 const RUNTIME_CONSOLES = ["gb", "gbc"] as const;
 

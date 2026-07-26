@@ -17,6 +17,7 @@ import { Gameboy } from "@demake/dmg";
 
 import { artRequests, bindArt } from "../src/codegen/art.js";
 import { buildGbRom } from "../src/codegen/gb.js";
+import { PALETTE_BYTES, SYSTEM_PALETTE } from "../src/codegen/emit.js";
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
 import { BUILTIN_TILES, TILE_BYTES } from "../src/rom/graphics.js";
@@ -148,5 +149,81 @@ describe("the art on screen", () => {
     const drawn = [...Array(40).keys()].filter((entry) => oam[entry * 4] !== 0);
     expect(drawn.length).toBeGreaterThan(0);
     for (const entry of drawn) expect(oam[entry * 4 + 2]).toBeLessThan(BUILTIN_TILES);
+  });
+});
+
+describe("art demade for colour hardware", () => {
+  const pongColor = () => compile(text("pong.dmt"), { profile: getProfile("gbc") });
+
+  it("fits the art into sub-palettes and leaves one for the font", () => {
+    const bound = bindArt(pongColor(), pongAssets());
+    // Objects name a palette; the reserved one is never one of them.
+    for (const art of bound.sprites?.values() ?? []) {
+      expect(art.palette).toBeGreaterThanOrEqual(0);
+      expect(art.palette).toBeLessThan(SYSTEM_PALETTE);
+    }
+    // The object block is all eight palettes, with the font's in the last slot
+    // and something other than black in it.
+    expect(bound.objectPalettes?.length).toBe(8 * PALETTE_BYTES);
+    const font = bound.objectPalettes?.subarray(SYSTEM_PALETTE * PALETTE_BYTES);
+    expect(font?.some((byte) => byte !== 0)).toBe(true);
+    // …and a mono build has none of it, because that hardware has no palettes.
+    expect(bindArt(pong(), pongAssets()).objectPalettes).toBeUndefined();
+  });
+
+  it("attributes every backdrop cell, and never to the font's palette", () => {
+    const bound = bindArt(pongColor(), pongAssets());
+    const backdrops = [...(bound.backdrops?.values() ?? [])];
+    expect(backdrops.length).toBeGreaterThan(0);
+    for (const backdrop of backdrops) {
+      expect(backdrop.attr?.length).toBe(backdrop.map.length);
+      for (const attribute of backdrop.attr ?? []) {
+        expect(attribute & 0x07).toBeLessThan(SYSTEM_PALETTE);
+      }
+      // A picture brings its own palettes, and they are not all black.
+      expect(backdrop.palettes?.length).toBe(SYSTEM_PALETTE * PALETTE_BYTES);
+      expect(backdrop.palettes?.some((byte) => byte !== 0)).toBe(true);
+    }
+  });
+
+  it("puts a cell's tile and its attribute in the same bank pair", () => {
+    const bound = bindArt(pongColor(), pongAssets());
+    const tiles = BUILTIN_TILES + bound.tiles8;
+    for (const backdrop of bound.backdrops?.values() ?? []) {
+      for (let cell = 0; cell < backdrop.map.length; cell += 1) {
+        const bank = ((backdrop.attr?.[cell] ?? 0) & 0x08) >> 3;
+        // The pooled index the cell really points at has to exist in the bank.
+        expect(bank * 256 + (backdrop.map[cell] as number)).toBeLessThan(tiles);
+      }
+    }
+  });
+
+  it("produces the same colour cartridge every time it converts the same art", () => {
+    const first = buildGbRom(pongColor(), { assets: pongAssets() });
+    const second = buildGbRom(pongColor(), { assets: pongAssets() });
+    expect([...first.bytes]).toEqual([...second.bytes]);
+  });
+
+  it("draws the game in colours the monochrome build cannot show", () => {
+    const shades = (consoleId: string): Set<string> => {
+      const built = buildGbRom(compile(text("pong.dmt"), { profile: getProfile(consoleId) }), {
+        assets: pongAssets(),
+      });
+      const machine = new Gameboy(built.bytes);
+      for (let frame = 0; frame < 200; frame += 1) {
+        machine.setButtons(frame > 5 && frame < 12 ? ["a"] : []);
+        machine.runFrame();
+      }
+      const seen = new Set<string>();
+      const frame = machine.framebuffer;
+      for (let at = 0; at < frame.length; at += 4) {
+        seen.add(`${frame[at]},${frame[at + 1]},${frame[at + 2]}`);
+      }
+      return seen;
+    };
+    // A Game Boy has exactly four, and they are the green ramp; the colour
+    // build has more than that on one screen.
+    expect(shades("gb").size).toBeLessThanOrEqual(4);
+    expect(shades("gbc").size).toBeGreaterThan(8);
   });
 });

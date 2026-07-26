@@ -35,13 +35,32 @@ export const GB_HEADER_OFFSETS = {
   globalChecksum: 0x014e,
 } as const;
 
+/** What a cartridge declares beyond its title. */
+export interface GbHeaderOptions {
+  /**
+   * Ask for Game Boy Color hardware.
+   *
+   * `$C0` — CGB *only* — rather than `$80`, because a build that targets the
+   * colour hardware writes colour palettes and a second VRAM bank from its first
+   * instruction, and a DMG asked to run it would show the game in whatever the
+   * background palette register happened to hold. A cartridge that will not run
+   * is a better answer than one that runs wrong, and `demake build -c gb` is the
+   * cartridge for that machine.
+   *
+   * Note that this byte is the last of the title field, so a colour cartridge's
+   * title is fifteen characters like a monochrome one's — the flag replaces the
+   * sixteenth, which was already reserved.
+   */
+  cgb?: boolean;
+}
+
 /**
  * Stamp the cartridge header and both checksums in place.
  *
  * `rom` must already hold the whole cartridge — the global checksum covers every
  * byte of it, so this is the last thing a builder does.
  */
-export function stampGbHeader(rom: Uint8Array, title: string): void {
+export function stampGbHeader(rom: Uint8Array, title: string, options: GbHeaderOptions = {}): void {
   const clean = title
     .toUpperCase()
     .replace(/[^\x20-\x5f]/g, " ")
@@ -49,7 +68,7 @@ export function stampGbHeader(rom: Uint8Array, title: string): void {
   for (let index = 0; index < 16; index += 1) {
     rom[GB_HEADER_OFFSETS.title + index] = index < clean.length ? clean.charCodeAt(index) : 0;
   }
-  rom[GB_HEADER_OFFSETS.cgb] = 0x00;
+  rom[GB_HEADER_OFFSETS.cgb] = options.cgb === true ? 0xc0 : 0x00;
   rom[0x0144] = 0x00;
   rom[0x0145] = 0x00;
   rom[0x0146] = 0x00; // no Super Game Boy functions

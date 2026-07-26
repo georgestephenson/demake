@@ -9,14 +9,17 @@
  *
  * The emulator is `@demake/dmg`, ours, for the reason doc 07 gives: a core
  * fetched from a CDN is forbidden, and a WASM core we cannot read would be the
- * same bargain in a different wrapper.
+ * same bargain in a different wrapper. Which machine it runs as is the
+ * cartridge's own decision — a `gbc` build carries the CGB flag in its header
+ * and comes up in colour, a `gb` build on the green LCD — so the console
+ * selector above this pane changes the *cartridge*, never the player.
  *
  * **The frame counter under the screen is not decoration.** It is the measured
  * cost of one game tick on a 4 MHz 8-bit CPU, and reporting it is how the pane
  * stays honest about hardware speed rather than hiding behind a multiplier.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 
 import { buildGbRom, romReady, unsupportedFeatures, type Program } from "@demake/demotic";
 import { Gameboy, SCREEN_HEIGHT, SCREEN_WIDTH, type Button } from "@demake/dmg";
@@ -90,35 +93,60 @@ export function RomPane({
     };
   }, []);
 
-  const built = useMemo(() => {
-    if (!program || !audio) return { rom: undefined, layout: undefined, error: undefined };
+  // The build is deferred by a frame rather than run inline, and that is not
+  // cosmetic: demaking a *colour* backdrop is the whole `prep` tournament, which
+  // is seconds of arithmetic the first time the page sees a picture. A tab that
+  // simply stopped for those seconds would look broken, so the pane paints
+  // "demaking" first and does the work after. Repeat builds — every keystroke in
+  // the editor — hit the conversion cache and are instant.
+  const [built, setBuilt] = useState<{
+    rom?: Uint8Array;
+    layout?: ReturnType<typeof buildGbRom>["layout"];
+    error?: string;
+  }>({});
+  const [demaking, setDemaking] = useState(false);
+
+  useEffect(() => {
+    if (!program || !audio) {
+      setBuilt({});
+      return;
+    }
     const missing = unsupportedFeatures(program);
     if (missing.length > 0) {
-      return {
-        rom: undefined,
-        layout: undefined,
+      setBuilt({
         error:
           `This game needs ${missing.join(" and ")}. The preview above plays it correctly; ` +
           `a ROM would play something else, so the build refuses rather than pretend.`,
-      };
+      });
+      return;
     }
-    try {
-      // The bundled art goes in as *source bytes*: the conversion happens
-      // inside the build, so the page and the CLI cannot diverge on it.
-      const assets = demoAssetBytes();
-      for (const [file, bytes] of audio) assets.set(file, bytes);
-      const result = buildGbRom(program, { title: name, assets });
-      return { rom: result.bytes, layout: result.layout, error: undefined };
-    } catch (error) {
-      return {
-        rom: undefined,
-        layout: undefined,
-        error: String((error as Error).message ?? error),
-      };
-    }
+    let live = true;
+    setDemaking(true);
+    const timer = setTimeout(() => {
+      if (!live) return;
+      try {
+        // The bundled art goes in as *source bytes*: the conversion happens
+        // inside the build, so the page and the CLI cannot diverge on it.
+        const assets = demoAssetBytes();
+        for (const [file, bytes] of audio) assets.set(file, bytes);
+        const result = buildGbRom(program, { title: name, assets });
+        setBuilt({ rom: result.bytes, layout: result.layout });
+      } catch (error) {
+        setBuilt({ error: String((error as Error).message ?? error) });
+      }
+      setDemaking(false);
+    }, 0);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
   }, [program, name, audio]);
 
   const { rom, layout } = built;
+  // A colour build is a different cartridge, not a setting on this one: the
+  // extension follows the console the game was compiled for, exactly as
+  // `demake build` names its output.
+  const extension = program?.profile.id === "gbc" ? "gbc" : "gb";
 
   useEffect(() => {
     if (!rom || !layout) {
@@ -225,8 +253,8 @@ export function RomPane({
   }, [sound]);
 
   const save = useCallback(() => {
-    if (rom) download(`${name}.gb`, rom);
-  }, [rom, name]);
+    if (rom) download(`${name}.${extension}`, rom);
+  }, [rom, name, extension]);
 
   if (!rom) {
     return (
@@ -236,7 +264,9 @@ export function RomPane({
           {built.error ??
             (program && !audio
               ? "Demaking this game\u2019s music and effects\u2026"
-              : "Fix the errors above and a ROM will build.")}
+              : demaking
+                ? "Demaking this game\u2019s art and building the cartridge\u2026"
+                : "Fix the errors above and a ROM will build.")}
         </p>
       </div>
     );
@@ -252,7 +282,11 @@ export function RomPane({
         width={SCREEN_WIDTH}
         height={SCREEN_HEIGHT}
         role="img"
-        aria-label="The game, running as a Game Boy ROM"
+        aria-label={
+          extension === "gbc"
+            ? "The game, running as a Game Boy Color ROM"
+            : "The game, running as a Game Boy ROM"
+        }
       />
       <div class="rom-toolbar">
         <button
@@ -265,7 +299,7 @@ export function RomPane({
           {sound ? "Sound on" : "Sound off"}
         </button>
         <button type="button" data-testid="rom-download" onClick={save}>
-          Download {name}.gb
+          Download {name}.{extension}
         </button>
         <span class="rom-stat" data-testid="rom-stat">
           {(rom.length / 1024).toFixed(0)} KiB

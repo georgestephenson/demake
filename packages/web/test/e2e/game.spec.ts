@@ -65,6 +65,23 @@ test("retargets the game at another console", async ({ page }) => {
   await expect(page.locator(".game-status")).toContainText("40x28 cells");
 });
 
+test("builds the same game as a Game Boy Color cartridge, in colour", async ({ page }) => {
+  await page.goto("/#section=game");
+  const canvas = page.getByTestId("rom-canvas");
+  await expect(canvas).toBeVisible();
+  await expect.poll(async () => romPainted(page), { timeout: 8000 }).toBeGreaterThan(0);
+  // A Game Boy shows four shades of green and nothing else.
+  expect(await romColors(page)).toBeLessThanOrEqual(4);
+
+  await page.getByTestId("console-select").selectOption("gbc");
+  // Demaking a picture in colour is the whole tournament, so the pane says so
+  // and the cartridge arrives after it — the first colour build is seconds.
+  await expect(canvas).toBeVisible({ timeout: 60_000 });
+  await expect.poll(async () => romColors(page), { timeout: 60_000 }).toBeGreaterThan(4);
+  // And it is a different cartridge, not a filter over the same one.
+  await expect(page.getByTestId("rom-download")).toContainText(".gbc");
+});
+
 test("every bundled example loads, compiles and passes its suite", async ({ page }) => {
   await page.goto("/#section=game");
   // The section is code-split, so wait for it to arrive before reading its DOM.
@@ -333,15 +350,48 @@ test("builds a level game with a camera, which the fixed engine could not", asyn
   await expect.poll(async () => romPainted(page), { timeout: 8000 }).toBeGreaterThan(0);
 });
 
-/** Fraction of the ROM screen that is not the lightest shade. */
+/**
+ * Fraction of the ROM screen that is *not* its most common colour.
+ *
+ * Ink, in other words — used both to tell that something has been drawn at all
+ * and to tell that the picture changed. It is written against the modal colour
+ * rather than a brightness threshold because the screen is not grey: a Game Boy
+ * shows the green LCD ramp, whose lightest shade is `(155, 188, 15)`, and a
+ * Game Boy Color build shows whatever the fit chose. Any fixed channel cutoff
+ * would call a whole green screen "dark" and stop distinguishing anything.
+ */
+/** Distinct colours on the ROM screen — four on a Game Boy, more on a CGB. */
+async function romColors(page: import("@playwright/test").Page): Promise<number> {
+  return page.locator(".rom-canvas").evaluate((element) => {
+    const canvas = element as HTMLCanvasElement;
+    const context = canvas.getContext("2d");
+    if (!context) return 0;
+    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+    const seen = new Set<number>();
+    for (let i = 0; i < data.length; i += 4) {
+      seen.add(
+        ((data[i] as number) << 16) | ((data[i + 1] as number) << 8) | (data[i + 2] as number),
+      );
+    }
+    return seen.size;
+  });
+}
+
 async function romPainted(page: import("@playwright/test").Page): Promise<number> {
   return page.locator(".rom-canvas").evaluate((element) => {
     const canvas = element as HTMLCanvasElement;
     const context = canvas.getContext("2d");
     if (!context) return 0;
     const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
-    let dark = 0;
-    for (let i = 0; i < data.length; i += 4) if ((data[i] as number) < 0xd0) dark += 1;
-    return dark / (data.length / 4);
+    const counts = new Map<number, number>();
+    for (let i = 0; i < data.length; i += 4) {
+      const key =
+        ((data[i] as number) << 16) | ((data[i + 1] as number) << 8) | (data[i + 2] as number);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    let background = 0;
+    for (const count of counts.values()) if (count > background) background = count;
+    const pixels = data.length / 4;
+    return (pixels - background) / pixels;
   });
 }

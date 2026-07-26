@@ -12,12 +12,12 @@ something 8/16-bit-era consoles and handhelds up to the Nintendo DS could
 actually run. Four demakers, sharing one engine and one proof (a real ROM, in a
 real emulator, compared pixel for pixel):
 
-| Demaker               | Docs   | State                                                              |
-| --------------------- | ------ | ------------------------------------------------------------------ |
-| art (images)          | 03–06  | working, ten consoles proven on hardware                           |
-| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and a playable `gb` ROM    |
-| music (`arrange`)     | 16, 17 | MIDI → chip music, six consoles — and a Game Boy ROM that plays it |
-| sound (`sfx`)         | 16, 18 | WAV → chip effects, six consoles — same ROM, same proof            |
+| Demaker               | Docs   | State                                                                |
+| --------------------- | ------ | -------------------------------------------------------------------- |
+| art (images)          | 03–06  | working, ten consoles proven on hardware                             |
+| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable `gb`/`gbc` ROMs |
+| music (`arrange`)     | 16, 17 | MIDI → chip music, six consoles — and a Game Boy ROM that plays it   |
+| sound (`sfx`)         | 16, 18 | WAV → chip effects, six consoles — same ROM, same proof              |
 
 The four are not four tools that share a repo any more: a `.dmt` says
 `music theme.mid` and `sound bounce.wav on ball hits paddle`, and `demake build`
@@ -76,6 +76,17 @@ the browser produces byte-identical cartridges with no toolchain. Every game in
 the example library is proven against the reference interpreter tick for tick by
 `packages/demotic/test/rom.test.ts`.
 
+**And it builds in colour.** `demake build -c gbc` produces a real Game Boy
+Color cartridge: the same machine code with a second half bolted to the
+renderer — an attribute byte per background cell in VRAM bank 1, eight
+background and eight object palettes of RGB555, a tile bank that may spill into
+the second bank — with the art demade through the image engine's RGB-lattice
+path, colour sprites included (`packages/core/src/pipeline/sprite.ts`). A game
+traces identically on both consoles, and `rom.test.ts` runs the whole example
+library on both to say so. `@demake/dmg` is both machines too, decided by the
+cartridge header, so the DMG shows the authentic green LCD ramp and a `gbc`
+build comes up in colour.
+
 Still to come: the remaining Tier 2/3 consoles (each = a codegen backend, a ROM
 harness + toolchain, and a libretro core + DAC calibration), the remaining
 framebuffer/scanline layout paths (Lynx, GBA/NDS bitmap modes, 2600/7800), and
@@ -125,7 +136,8 @@ packages/core/       @demake/core — the engine (zero platform deps; ESM; ships
   src/pipeline/      stages 0–7, the tiled fitter, mono + TMS row-pair paths, tournament
   src/codegen/       gen: per-family backends (gb, nes, snes, sms, md, sg1000, gba, nds, pce, wsc), detector
   src/image/svg/     our SVG rasteriser: XML, shapes, paint, scanline fill (doc 15 step 2)
-  src/pipeline/sprite.ts  object + tile art for games: transparency, shades, dedup
+  src/pipeline/sprite.ts  object + tile art for games: transparency, shades or
+                     sub-palettes (the colour fit decides which assets share one), dedup
   src/inspect/       compliance oracle (inspect) + fidelity judge
 packages/cli-spec/   @demake/cli-spec — single source of truth: spec → parser, help, man
 packages/cli/        demake — thin CLI over core; re-exports core for scripting
@@ -138,10 +150,12 @@ tools/toolchains/    provisioners (cached): RGBDS, cc65, WLA-DX, SameBoy source 
                      GNU m68k + arm-none-eabi binutils and NASM (apt); libretro
                      cores (fceumm, genesis-plus-gx, snes9x, mgba, desmume,
                      mednafen_pce_fast, mednafen_wswan)
-packages/dmg/        @demake/dmg — a self-hosted Game Boy core: the Demotic and audio
-                     conformance harnesses in Vitest, and the web app's in-page
-                     player (doc 07: no CDN). Its APU is @demake/chip's, not a
-                     second one, and `audioSink` is where its output goes
+packages/dmg/        @demake/dmg — a self-hosted Game Boy core, DMG *and* CGB: the
+                     Demotic and audio conformance harnesses in Vitest, and the web
+                     app's in-page player (doc 07: no CDN). Which machine it comes up
+                     as is the cartridge header's decision, never a setting. Its APU
+                     is @demake/chip's, not a second one, and `audioSink` is where
+                     its output goes
 packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs 14, 15)
   src/lang/          lex → parse → flat statement AST (one statement per line, no nesting)
   src/compile.ts     AST + console profile → resolved Program tables (constants folded)
@@ -153,8 +167,8 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
   src/rom/           the console hand-off: table format, expression bytecode, the
                      built-in tile bank and the trace readers
   src/codegen/       the console backend: SM83 assembler, analysis, RAM layout,
-                     expression/rule/level emitters, the `gb` ROM builder, and
-                     audio.ts — the hand-off to @demake/audio, art.ts's twin
+                     expression/rule/level emitters, the `gb`/`gbc` ROM builder,
+                     and audio.ts — the hand-off to @demake/audio, art.ts's twin
   demo/              terminal runner (play.mjs) and test runner (test.mjs)
 packages/chip/       @demake/chip — every sound chip as a register-driven model (doc 16)
   src/gb-apu.ts      Game Boy APU: 2 pulse + wave + noise, envelopes, panning
@@ -435,6 +449,44 @@ packages/demotic/test/rom.test.ts` builds all seven fixture games and diffs raw
 - **Emitters must leave the temp stack as they found it.** `ctx.scoped()` exists
   for that; a `pushTemp` without its `popTemp` corrupts a sibling expression
   rather than failing, and the symptom appears somewhere else entirely.
+- **Colour is a second half of the renderer, never a second backend.** A `gbc`
+  build is the same machine code as a `gb` one plus: an attribute byte per
+  background cell (VRAM bank 1, at the map's own addresses), palette RAM instead
+  of BGP/OBP, an OAM attribute carrying the object's palette and tile bank, and a
+  tile bank that may run past 256 into the second bank. Everything else — every
+  rule, every collision, every tick — is byte-for-byte the same code, and
+  `rom.test.ts` runs the whole example library on both consoles to keep it that
+  way. A change that made a rule compile differently per console would break the
+  one property that makes the colour build trustworthy.
+- **Every path that writes a background cell must write its attribute.** There
+  are five of them — the full redraw, the backdrop block copy, the scroll edge
+  painter, the HUD's queued plot and the HUD's direct poke — and a cell whose
+  tile is updated without its attribute keeps the palette of whatever was there
+  before. `emitBackgroundTile` and `emitLegendToTile` leave the attribute in
+  `layout.attr` for exactly that reason; the queue carries it as a fourth byte
+  and flushes it in a second pass, because switching VRAM banks per cell costs
+  more than walking a short list twice.
+- **One palette of each kind is the font's, and the fitters are told so.** The
+  art gets seven background and seven object sub-palettes; `SYSTEM_PALETTE` is
+  reserved and holds a plain white-through-black ramp. Never "reclaim" it by
+  letting a picture use all eight — the HUD, the built-in patterns and the
+  placeholder block all draw with it, and a caption in a title screen's palette
+  is a caption nobody can read. `prep`'s `maxSubPalettes` and `buildSpriteBank`'s
+  `maxPalettes` are how the reservation reaches the engine.
+- **Colour costs cartridge, the way audio does.** An attribute byte per backdrop
+  cell (360 a picture), the palettes each scene uploads, and the extra tiles
+  colour art costs — two cells that differ only in tone are one tile on a DMG and
+  two here — come to about a kilobyte for a game with two backdrops. The shooter
+  is the tightest fixture; `audio.test.ts` holds the three biggest above 512
+  bytes free, against 1 KiB for the monochrome build, and the difference is
+  measured rather than a policy.
+- **Demaking a picture in colour is seconds, not milliseconds**, because it is
+  the whole `prep` tournament rather than the mono path. `bindArt` memoises the
+  conversion by content hash, which is what keeps the web app's per-keystroke
+  rebuild instant and the test suite under its budget; the cache is a speed
+  optimisation over a pure function and must never become one that changes
+  bytes. The web app's ROM pane defers its build by a frame and says
+  "demaking…", because a tab that silently stopped for five seconds looks broken.
 - **Art is sized by the _instance_, not the class.** One asset used at two
   different `width`s is converted twice, at both boxes, and keyed by
   `name@WxH` — because the box is the collision box, and drawing the larger
@@ -603,9 +655,12 @@ Two files plus fixtures (doc 02 §Extensibility):
   (`tools/toolchains/install-rgbds.sh`), and web sessions get it automatically
   via the `.claude/` SessionStart hook.
 - The Demotic ROM conformance suite (`packages/demotic/test/rom.test.ts`) builds
-  a cartridge from each fixture game and runs it in `@demake/dmg`, asserting the
-  trace matches the reference interpreter tick for tick — no toolchain, no
-  emulator install, so it runs everywhere `pnpm test` does.
+  a cartridge from each fixture game **for both Game Boys** and runs it in
+  `@demake/dmg`, asserting the trace matches the reference interpreter tick for
+  tick — no toolchain, no emulator install, so it runs everywhere `pnpm test`
+  does. Running it twice is what pins the colour work as a renderer change: if
+  an attribute walk or a palette upload ever touched simulation state, it would
+  name the tick.
 - The audio ROM conformance suite (`packages/audio/test/rom.test.ts`) is its
   counterpart for sound, and doc 16 §The proof's Level A: it builds a cartridge
   from an arranged track and from a demade effect, boots each in `@demake/dmg`,
@@ -776,6 +831,19 @@ Two files plus fixtures (doc 02 §Extensibility):
   address is `ld h, HIGH(shadow)` plus a shifted count — cheaper as well as
   correct. Check the register a helper takes its arguments in before reaching for
   a 16-bit load.
+- **A Game Boy screen is green, and that is a tested artifact.** `@demake/dmg`'s
+  four DMG shades are the `dmg` console spec's `mono-ramp` DAC model, pinned
+  against it by `packages/dmg/test/ppu.test.ts`, and the same four the SameBoy
+  capturer compares in. Anything that measures "brightness" on that framebuffer
+  has to account for it: the web E2E's `romPainted` counts pixels that differ
+  from the modal colour precisely because a red-channel threshold called the
+  whole green screen dark and stopped distinguishing anything.
+- **A `gbc` cartridge declares itself CGB-_only_ (`$C0`), not CGB-aware.** It
+  programs palette RAM and the second VRAM bank from its first instruction, so a
+  DMG running it would show the game in whatever BGP happened to hold. A
+  cartridge that refuses to run is a better answer than one that runs wrong, and
+  `demake build -c gb` is the cartridge for that machine. The flag is the last
+  byte of the title field, so a colour title is still fifteen characters.
 - **The Nintendo boot logo is never checked in.** The build leaves that area
   zero, so a built ROM direct-boots in emulators and does not boot on original
   hardware; `demake build --boot-logo` asks `rgbfix` to stamp it. Default output

@@ -45,8 +45,8 @@ demake/          # repo
 │   │   │   ├── rom/         # the built-in tile bank and the trace readers
 │   │   │   └── demakefile/  # the build manifest: parse, resolve, emit (doc 15)
 │   │   └── test/
-│   ├── dmg/                 # @demake/dmg — our Game Boy core: the conformance harness
-│   │                        #   (doc 10) and the web app's in-page player (doc 07)
+│   ├── dmg/                 # @demake/dmg — our Game Boy core, DMG and CGB: the conformance
+│   │                        #   harness (doc 10) and the web app's in-page player (doc 07)
 │   ├── chip/                # @demake/chip — every sound chip as a register-driven model,
 │   │                        #   plus the deterministic mixer/resampler (doc 16)
 │   ├── audio/               # @demake/audio — the music + sound demakers (docs 16, 17, 18)
@@ -76,7 +76,12 @@ demake/          # repo
   `core`. It is an emulator, not conversion logic, and the direction of the
   dependency is what keeps that honest: `demotic` uses it in tests, `web` uses it
   to play a ROM, and neither ships a second implementation of anything. Nothing
-  depends on it at run time except the page's cartridge pane.
+  depends on it at run time except the page's cartridge pane. It is both Game
+  Boys, and *which* is the cartridge's own decision: a header carrying the CGB
+  flag comes up with two VRAM banks, per-cell attributes and RGB555 palette RAM,
+  and one without it comes up on the green LCD the hardware really had. There is
+  no switch, because a machine you can set independently of the cartridge is a
+  machine that can be set wrong.
 - `chip` depends on **nothing at all**, on exactly `dmg`'s terms and for the same
   reason: it is a hardware model, not conversion logic. It is the one place a
   sound chip is implemented, so `dmg`'s APU, the audio pipeline's preview and the

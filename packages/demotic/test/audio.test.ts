@@ -363,4 +363,28 @@ describe("the example library", () => {
       expect(built.stats.free).toBeGreaterThan(1024);
     });
   }
+
+  // Colour costs cartridge, the way audio does. A Game Boy Color build of the
+  // same game carries one attribute byte per backdrop cell (360 a picture), the
+  // palettes it uploads, and the extra tiles colour art costs — two cells that
+  // differ only in tone are one tile on a DMG and two here. That is a bit over
+  // a kilobyte for a game with two demade backdrops, so the floor below is
+  // lower than the monochrome one. Not because the budget matters less: it is a
+  // *measured* fact about the hardware, and asserting it is what makes the next
+  // code-generator change visible rather than a mystery.
+  //
+  // Three fixtures rather than seven, and the three biggest: demaking a picture
+  // in colour is the whole `prep` tournament — seconds, where the mono path is
+  // a fraction of one — and a kilobyte can only decide the cartridges that are
+  // already near the edge. The shooter is the tightest in the library, the
+  // caves are a level with tile art, and the runner composes its levels.
+  for (const file of ["shooter.dmt", "caves.dmt", "runner.dmt"]) {
+    it(`${file} still fits when it is demade in colour`, () => {
+      const source = readFileSync(join(games, file), "utf8");
+      const program = compile(source, { profile: getProfile("gbc"), levels: levelsIn(games) });
+      const built = buildGbRom(program, { assets: assetsIn(games) });
+      expect(built.stats.missingAudio).toEqual([]);
+      expect(built.stats.free).toBeGreaterThan(512);
+    });
+  }
 });

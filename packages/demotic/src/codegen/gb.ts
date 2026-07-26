@@ -42,9 +42,21 @@ export const HEADER_OFFSETS = GB_HEADER_OFFSETS;
  * Tiles the video hardware addresses at once, shared by background and objects.
  *
  * Not a cartridge fact and so not `core`'s: it is what the PPU can reach, and
- * it is the budget a scene's backdrop competes with the game's own art for.
+ * it is the budget a scene's backdrop competes with the game's own art for. A
+ * Game Boy Color has two VRAM banks and therefore twice the room, which is what
+ * makes a colour backdrop affordable at all: colour art deduplicates less than
+ * monochrome art does, because two cells that differ only in tone are one tile
+ * on a DMG and two here.
  */
 export const TILE_SLOTS = 256;
+
+/** The same, on colour hardware: both banks. */
+export const TILE_SLOTS_COLOR = 512;
+
+/** Tiles this program's console can hold. */
+function tileSlots(program: Program): number {
+  return program.profile.id === "gbc" ? TILE_SLOTS_COLOR : TILE_SLOTS;
+}
 
 /**
  * The first high-RAM byte the audio driver may use.
@@ -173,11 +185,12 @@ export function buildGbRom(program: Program, options: RomOptions = {}): BuiltRom
   // so a title screen's tiles are what is left after the game's own art. Art
   // that does not fit is named here rather than drawn with holes in it.
   const tiles = BUILTIN_TILES + art.tiles8;
-  if (tiles > TILE_SLOTS) {
+  const slots = tileSlots(program);
+  if (tiles > slots) {
     const backdrops = program.scenes.filter((scene) => scene.backdrop !== undefined).length;
     throw new BuildError(
       "E_BACKDROP_TILES",
-      `this game needs ${tiles} tiles and the Game Boy has ${TILE_SLOTS}`,
+      `this game needs ${tiles} tiles and the ${program.profile.name} has ${slots}`,
       backdrops > 0
         ? "a backdrop costs one tile per distinct 8x8 cell — flatter areas and repeated motifs cost fewer"
         : "fewer objects, or smaller ones; every distinct 8x8 cell of art is a tile",
@@ -242,7 +255,11 @@ export function buildGbRom(program: Program, options: RomOptions = {}): BuiltRom
 
   const rom = new Uint8Array(ROM_SIZE);
   rom.set(code, 0);
-  stampGbHeader(rom, options.title ?? "DEMOTIC");
+  // A colour build declares itself CGB-only, because it programs palette RAM
+  // and a second VRAM bank from its first instruction: a DMG asked to run it
+  // would show the game in whatever BGP happened to hold, and a cartridge that
+  // refuses is a better answer than one that runs wrong.
+  stampGbHeader(rom, options.title ?? "DEMOTIC", { cgb: program.profile.id === "gbc" });
 
   return {
     bytes: rom,
@@ -281,7 +298,15 @@ export function buildGbRom(program: Program, options: RomOptions = {}): BuiltRom
 /** Drop absent keys so a spread cannot overwrite a value with `undefined`. */
 function stripUndefined(options: RomOptions): EmitOptions {
   const out: Record<string, unknown> = {};
-  for (const key of ["sprites", "tiles", "extraTiles", "objectPalette"] as const) {
+  for (const key of [
+    "sprites",
+    "tiles",
+    "extraTiles",
+    "objectPalette",
+    "objectPalettes",
+    "tilePalettes",
+    "systemPalette",
+  ] as const) {
     if (options[key] !== undefined) out[key] = options[key];
   }
   return out as EmitOptions;
