@@ -536,28 +536,42 @@ describe("the example library", () => {
    */
   const OVER_BUDGET: Readonly<Record<string, readonly string[]>> = { nes: ["shooter.dmt"] };
 
+  /**
+   * What one of these builds is allowed to take.
+   *
+   * Demaking a game's art for the NES is the whole `prep` tournament per picture,
+   * which is seconds rather than the fraction of one the mono path costs — so the
+   * sweep states its own budget instead of inheriting one written for a test that
+   * runs a single pipeline.
+   */
+  const BUILD_TIMEOUT = 60_000;
+
   for (const target of TARGETS) {
     for (const [file, dir] of cases) {
       if (OVER_BUDGET[target.id]?.includes(file)) continue;
-      it(`${file} fits in a ${target.name} cartridge with its music and effects`, () => {
-        const { built } = build(target, readFileSync(join(dir, file), "utf8"), dir);
-        expect(built.stats.missingAudio).toEqual([]);
-        expect(built.stats.audio?.effects ?? 0).toBeGreaterThan(0);
-        // Headroom, deliberately asserted: a fixture built to the last hundred
-        // bytes turns the next code-generator change into a mystery.
-        expect(built.stats.free).toBeGreaterThan(1024);
-      }, // Demaking a game's art for the NES is the whole `prep` tournament per
-      // picture, which is seconds rather than the fraction of one the mono path
-      // costs — so this states its own budget instead of inheriting one written
-      // for a single pipeline.
-      60_000);
+      it(
+        `${file} fits in a ${target.name} cartridge with its music and effects`,
+        () => {
+          const { built } = build(target, readFileSync(join(dir, file), "utf8"), dir);
+          expect(built.stats.missingAudio).toEqual([]);
+          expect(built.stats.audio?.effects ?? 0).toBeGreaterThan(0);
+          // Headroom, deliberately asserted: a fixture built to the last hundred
+          // bytes turns the next code-generator change into a mystery.
+          expect(built.stats.free).toBeGreaterThan(1024);
+        },
+        BUILD_TIMEOUT,
+      );
     }
 
     for (const file of OVER_BUDGET[target.id] ?? []) {
-      it(`${file} does not fit in a ${target.name} cartridge with its music`, () => {
-        const source = readFileSync(join(games, file), "utf8");
-        expect(() => build(target, source, games)).toThrowError(/E_GAME_TOO_LARGE|holds/);
-      }, 60_000);
+      it(
+        `${file} does not fit in a ${target.name} cartridge with its music`,
+        () => {
+          const source = readFileSync(join(games, file), "utf8");
+          expect(() => build(target, source, games)).toThrowError(/E_GAME_TOO_LARGE|holds/);
+        },
+        BUILD_TIMEOUT,
+      );
     }
   }
 
