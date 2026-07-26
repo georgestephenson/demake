@@ -62,6 +62,7 @@ const FRAME_RATE = 59.7;
 const MACHINE: Readonly<Record<string, string>> = {
   gb: "a Game Boy",
   gbc: "a Game Boy Color",
+  megaduck: "a Mega Duck",
   nes: "an NES",
 };
 
@@ -106,7 +107,9 @@ function boot(rom: Uint8Array, consoleId: string): Player {
       readMemory: (address, length) => machine.readMemory(address, length),
     };
   }
-  const machine = new Gameboy(rom);
+  // A Mega Duck cartridge has no header, so nothing in the bytes says which
+  // machine to boot it as — unlike the two Game Boys, whose CGB flag decides.
+  const machine = new Gameboy(rom, consoleId === "megaduck" ? "megaduck" : "gameboy");
   return {
     width: SCREEN_WIDTH,
     height: SCREEN_HEIGHT,

@@ -26,7 +26,15 @@ import { tape, trace } from "../src/trace.js";
 
 import { romReady } from "../src/rom/trace.js";
 
-import { gbTarget, gbcTarget, nesTarget, RomRunner, romTrace } from "./_rom-harness.js";
+import {
+  gbTarget,
+  gbcTarget,
+  megaduckTarget,
+  nesTarget,
+  RomRunner,
+  romTrace,
+  type RomTarget,
+} from "./_rom-harness.js";
 
 const fixtures = join(import.meta.dirname, "..", "fixtures");
 const read = (name: string) => readFileSync(join(fixtures, name), "utf8");
@@ -96,8 +104,11 @@ describe("ROM conformance across the example library", () => {
   // a cell walk that moved an object, a palette upload that clobbered a scratch
   // byte — this is where it would show, and it would name the tick. And the NES,
   // because a second CPU is where an arithmetic or an ordering difference would
-  // surface, and the whole point of the shared spine is that neither can.
-  for (const target of [gbTarget, gbcTarget, nesTarget]) {
+  // surface, and the whole point of the shared spine is that neither can. And the
+  // Mega Duck, where the claim is the opposite one: the console differs from the
+  // Game Boy only in where its registers live, so a divergence here would mean a
+  // *machine description* had leaked into the code the tick runs.
+  for (const target of [gbTarget, gbcTarget, megaduckTarget, nesTarget]) {
     for (const [file, script, levels] of cases) {
       it(`matches the interpreter for ${file} on ${target.console}`, () => {
         const program = build(read(file), levels, target.console);
@@ -107,15 +118,40 @@ describe("ROM conformance across the example library", () => {
     }
   }
 
-  it("plays the same game on both, whatever it looks like", () => {
+  it("plays the same game on every machine in the family, whatever it looks like", () => {
     const frames = tape(PONG_TAPE);
     // Everything but the header line, which names the console it was built for.
-    const body = (consoleId: string): string =>
-      romTrace(build(read("pong.dmt"), undefined, consoleId), frames)
+    // The target has to be passed rather than defaulted: a Mega Duck cartridge
+    // carries no header, so nothing in the bytes says which machine to boot it
+    // as — which is the whole reason `@demake/dmg` takes that as an argument.
+    const body = (target: RomTarget): string =>
+      romTrace(build(read("pong.dmt"), undefined, target.console), frames, {}, target)
         .split("\n")
         .slice(1)
         .join("\n");
-    expect(body("gbc")).toBe(body("gb"));
+    expect(body(gbcTarget)).toBe(body(gbTarget));
+    expect(body(megaduckTarget)).toBe(body(gbTarget));
+  });
+
+  it("builds a Mega Duck cartridge that a Game Boy could not run", () => {
+    // The guard the test above cannot be: identical traces are also what a map
+    // that had quietly become the identity would produce, since the same wrong
+    // map would then be used to build the ROM *and* to route its writes. So
+    // boot the Duck's cartridge on the wrong machine and require it to fail —
+    // its stores land on registers that do nothing there, so it never leaves
+    // the title screen and never reaches the tick the tape asks for.
+    const program = build(read("pong.dmt"), undefined, "megaduck");
+    const frames = tape(PONG_TAPE);
+    const onDuck = romTrace(program, frames, {}, megaduckTarget);
+    const onGameboy = romTrace(program, frames, {}, gbTarget);
+    expect(onGameboy).not.toBe(onDuck);
+    // And the cartridge carries no header for a Game Boy to read: the title
+    // field is this game's own code, not "PONG", and there is no CGB flag.
+    const { bytes } = buildGbRom(program, { title: "PONG" });
+    expect(String.fromCharCode(...bytes.subarray(0x134, 0x138))).not.toBe("PONG");
+    expect(bytes[HEADER_OFFSETS.cgb]).not.toBe(0xc0);
+    // It begins with the jump past the interrupt vectors that $0000 must hold.
+    expect(bytes[0]).toBe(0xc3);
   });
 });
 

@@ -7,12 +7,26 @@
  * per-scanline picture is what a fixed-tick game needs and a pixel-FIFO would
  * buy accuracy no demade game can observe.
  *
- * **Both machines, decided by the cartridge.** A ROM whose header carries the
+ * **Both Game Boys, decided by the cartridge.** A ROM whose header carries the
  * CGB flag runs as a Game Boy Color: two VRAM banks, eight background and eight
  * object palettes of RGB555, per-cell attributes, and eight WRAM banks. A ROM
  * without it runs as a DMG and is shown on the green LCD ramp the hardware
  * really had. Which one a cartridge gets is never a setting here — it is the
  * header byte, so the machine a player sees is the machine the build targeted.
+ *
+ * **And the Mega Duck, which the caller names.** That console is a Game Boy
+ * clone with its I/O pins rewired — the same processor, tiles, maps, OAM,
+ * joypad, timer and interrupt vectors, reached through a different register
+ * page. That table is `@demake/core`'s (`asm/megaduck.ts`), because three things
+ * need it — this routes a write with it, the audio driver emits stores from it,
+ * the game backend takes its video half — and a hardware fact written down three
+ * times is one that disagrees in one entry.
+ *
+ * It is modelled as the rewiring it is: the translation happens once at the bus,
+ * so the PPU, the timer, the DMA, the APU and the write tap the audio proof
+ * reads all keep working in Game Boy terms and stay shared code. And it is a
+ * constructor argument rather than a header decision because a Mega Duck
+ * cartridge has no header — there is nothing in it to decide from.
  *
  * The APU is not implemented here: it is `@demake/chip`'s `GbApu`, the same
  * model the audio pipeline renders previews with (doc 16 §Packages). That is
@@ -33,6 +47,7 @@
  */
 
 import { GbApu, type SampleSink } from "@demake/chip";
+import { MEGADUCK_TO_GB, MEGADUCK_UNMAPPED, lcdcFromDuck, lcdcToDuck } from "@demake/core";
 
 import { type Bus, Cpu, INT } from "./cpu.js";
 
@@ -65,6 +80,33 @@ export const DMG_SHADES: readonly (readonly [number, number, number])[] = [
   [48, 98, 48],
   [15, 56, 15],
 ];
+
+/**
+ * The Mega Duck's four shades, lightest first — a neutral grey, not the DMG's
+ * green.
+ *
+ * Same standing as {@link DMG_SHADES}: it is the `megaduck` console spec's
+ * `mono-ramp` DAC model, pinned against it by `test/ppu.test.ts`, so the player
+ * and the console spec cannot disagree about what the screen looked like.
+ */
+export const MEGADUCK_SHADES: readonly (readonly [number, number, number])[] = [
+  [232, 232, 232],
+  [160, 160, 160],
+  [84, 84, 84],
+  [16, 16, 16],
+];
+
+/**
+ * Which machine a cartridge is for.
+ *
+ * Note what is *not* here: `dmg` and `cgb`. Which of those two a Game Boy
+ * cartridge runs as is the header's decision and never a setting, because the
+ * header carries the flag. A Mega Duck cartridge has no header at all — no
+ * logo, no checksum, no type byte, and no boot ROM to check one — so there is
+ * nothing to decide it from, and the caller says which console it is booting
+ * exactly as it chooses between this package and `@demake/nes`.
+ */
+export type Machine = "gameboy" | "megaduck";
 
 /** Sound registers, as offsets from `$FF00`: NR10–NR52, then wave RAM. */
 const APU_FIRST = 0x10;
@@ -101,6 +143,8 @@ export class Gameboy implements Bus {
   readonly rom: Uint8Array;
   /** Whether this cartridge asked for Game Boy Color hardware. */
   readonly cgb: boolean;
+  /** Whether this is a Mega Duck, whose I/O page is wired differently. */
+  readonly duck: boolean;
   /** Both VRAM banks, back to back; a DMG only ever addresses the first. */
   readonly vram = new Uint8Array(VRAM_BANK * 2);
   /** Eight work-RAM banks; a DMG only ever addresses the first two. */
@@ -160,9 +204,23 @@ export class Gameboy implements Bus {
    */
   audioSink: SampleSink | undefined = undefined;
 
-  constructor(rom: Uint8Array) {
+  constructor(rom: Uint8Array, machine: Machine = "gameboy") {
     this.rom = rom;
-    this.cgb = ((rom[HEADER_CGB] ?? 0) & 0x80) !== 0;
+    this.duck = machine === "megaduck";
+    this.cgb = !this.duck && ((rom[HEADER_CGB] ?? 0) & 0x80) !== 0;
+    if (this.duck) {
+      // There is no boot ROM on this console and no header for one to check, so
+      // the CPU starts at $0000 with the LCD off and the program turns it on.
+      // Giving it the Game Boy's post-boot state instead would let a cartridge
+      // depend on registers the real machine leaves clear.
+      this.cpu.pc = 0x0000;
+      this.io[0x00] = 0xcf;
+      this.io[0x46] = 0xff;
+      this.io[0x48] = 0xff;
+      this.io[0x49] = 0xff;
+      this.framebuffer.fill(0xff);
+      return;
+    }
     // Post-boot-ROM register state, so a cartridge that assumes the boot ROM ran
     // sees what it expects without us shipping Nintendo's copyrighted code.
     this.io[0x00] = 0xcf;
@@ -244,7 +302,38 @@ export class Gameboy implements Bus {
     return this.wramBank * WRAM_BANK + (address - 0xd000);
   }
 
+  /**
+   * Translate one I/O access on a Mega Duck, then hand it to the Game Boy's.
+   *
+   * Everything below this point — the PPU, the timer, the DMA, the APU and the
+   * `apuTap` the audio proof reads — sees Game Boy register numbers whichever
+   * console is running, which is what keeps them one implementation.
+   */
   private readIo(register: number): number {
+    if (!this.duck) return this.readGbIo(register);
+    const gb = MEGADUCK_TO_GB[register] as number;
+    // An offset with no register behind it is plain storage, not a fall-through
+    // onto whatever the Game Boy keeps at the same address.
+    if (gb === MEGADUCK_UNMAPPED) return this.io[register] as number;
+    // `LCDC` is the one register whose *bits* moved as well as its address, so
+    // it is un-permuted on the way out: a program reads back what it wrote.
+    return gb === 0x40 ? lcdcToDuck(this.readGbIo(gb)) : this.readGbIo(gb);
+  }
+
+  private writeIo(register: number, value: number): void {
+    if (!this.duck) {
+      this.writeGbIo(register, value);
+      return;
+    }
+    const gb = MEGADUCK_TO_GB[register] as number;
+    if (gb === MEGADUCK_UNMAPPED) {
+      this.io[register] = value;
+      return;
+    }
+    this.writeGbIo(gb, gb === 0x40 ? lcdcFromDuck(value) : value);
+  }
+
+  private readGbIo(register: number): number {
     if (register >= APU_FIRST && register <= APU_LAST) return this.apu.read(register);
     switch (register) {
       case 0x00:
@@ -264,7 +353,7 @@ export class Gameboy implements Bus {
     }
   }
 
-  private writeIo(register: number, value: number): void {
+  private writeGbIo(register: number, value: number): void {
     if (register >= APU_FIRST && register <= APU_LAST) {
       this.apu.write(register, value);
       this.apuTap?.(register, value);
@@ -598,8 +687,11 @@ export class Gameboy implements Bus {
       }
       return;
     }
+    // A Game Boy screen is green and a Mega Duck's is grey; both are the
+    // console spec's own `mono-ramp`, so the player shows what the DAC model says.
+    const ramp = this.duck ? MEGADUCK_SHADES : DMG_SHADES;
     for (let pixel = 0; pixel < this.indices.length; pixel += 1) {
-      const shade = DMG_SHADES[this.indices[pixel] as number] as readonly [number, number, number];
+      const shade = ramp[this.indices[pixel] as number] as readonly [number, number, number];
       const at = pixel * 4;
       this.framebuffer[at] = shade[0];
       this.framebuffer[at + 1] = shade[1];

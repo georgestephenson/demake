@@ -22,7 +22,13 @@
  */
 
 import { buildGameAudio } from "@demake/audio";
-import { AsmError, GB_HEADER_OFFSETS, GB_ROM_SIZE, stampGbHeader } from "@demake/core";
+import {
+  AsmError,
+  GB_HEADER_OFFSETS,
+  GB_ROM_SIZE,
+  megaduckRegister,
+  stampGbHeader,
+} from "@demake/core";
 
 import { getProfile } from "../profiles.js";
 import type { Program } from "../program.js";
@@ -45,7 +51,7 @@ import {
 } from "./backend.js";
 import { Ctx } from "./ctx.js";
 import { emitProgram, type EmitOptions, type SpriteArt } from "./emit.js";
-import { GB_MEMORY, GBC_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
+import { GB_MEMORY, GBC_MEMORY, MEGADUCK_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
 
 /**
  * The cartridge wrapper, re-exported from `core`.
@@ -97,11 +103,14 @@ interface GbAudio extends BoundAudioShape {
 /** The Game Boy's implementation of the build. */
 export const gbBackend: Backend<EmitOptions, GbAudio> = {
   family: "gb",
-  consoles: ["gb", "gbc"],
+  consoles: ["gb", "gbc", "megaduck"],
   cartridge: "a mapper-less cartridge",
 
   extension(program: Program): string {
-    return program.profile.id === "gbc" ? "gbc" : "gb";
+    if (program.profile.id === "gbc") return "gbc";
+    // The Mega Duck's own extension in every emulator that knows the console.
+    if (program.profile.id === "megaduck") return "duck";
+    return "gb";
   },
 
   /**
@@ -121,7 +130,9 @@ export const gbBackend: Backend<EmitOptions, GbAudio> = {
   },
 
   memory(program: Program): MemoryPlan {
-    return program.profile.id === "gbc" ? GBC_MEMORY : GB_MEMORY;
+    if (program.profile.id === "gbc") return GBC_MEMORY;
+    if (program.profile.id === "megaduck") return MEGADUCK_MEMORY;
+    return GB_MEMORY;
   },
 
   bindArt(program: Program, assets: AssetBytes): BoundAssets<EmitOptions> {
@@ -148,7 +159,16 @@ export const gbBackend: Backend<EmitOptions, GbAudio> = {
 
   bindAudio(program: Program, assets: AssetBytes): BoundAssets<GbAudio> {
     const bound = bindAudio(program, assets, {
-      build: (tracks, effects) => buildGameAudio({ tracks, effects, hram: HRAM_AUDIO }),
+      build: (tracks, effects) =>
+        buildGameAudio({
+          tracks,
+          effects,
+          hram: HRAM_AUDIO,
+          // The chip is the Game Boy's; only its address on the bus differs, so
+          // the schedules, the channel map and the proof are untouched and the
+          // driver stores to a different byte.
+          ...(program.profile.id === "megaduck" ? { regMap: megaduckRegister } : {}),
+        }),
     });
     const names = program.tracks.length > 0 || program.sounds.length > 0;
     const driver = bound.driver;
@@ -214,11 +234,17 @@ export const gbBackend: Backend<EmitOptions, GbAudio> = {
 
     const rom = new Uint8Array(ROM_SIZE);
     rom.set(code.subarray(0, Math.min(code.length, ROM_SIZE)), 0);
-    // A colour build declares itself CGB-only, because it programs palette RAM
-    // and a second VRAM bank from its first instruction: a DMG asked to run it
-    // would show the game in whatever BGP happened to hold, and a cartridge that
-    // refuses is a better answer than one that runs wrong.
-    stampGbHeader(rom, title ?? "DEMOTIC", { cgb: program.profile.id === "gbc" });
+    // A Mega Duck cartridge has no header at all — no logo, no title, no type
+    // byte, no checksums — because the console has no boot ROM to check one.
+    // Stamping the Game Boy's would overwrite this cartridge's own code, which
+    // begins at $0000 and runs straight through where a header would sit.
+    if (program.profile.id !== "megaduck") {
+      // A colour build declares itself CGB-only, because it programs palette RAM
+      // and a second VRAM bank from its first instruction: a DMG asked to run it
+      // would show the game in whatever BGP happened to hold, and a cartridge that
+      // refuses is a better answer than one that runs wrong.
+      stampGbHeader(rom, title ?? "DEMOTIC", { cgb: program.profile.id === "gbc" });
+    }
     return {
       bytes: rom,
       code: code.length,

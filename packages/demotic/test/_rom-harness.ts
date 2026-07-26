@@ -21,7 +21,7 @@
  * two ticks — the trace would silently gain a duplicate line.
  */
 
-import { Gameboy, type Button as GbButton } from "@demake/dmg";
+import { Gameboy, type Button as GbButton, type Machine as GbMachine } from "@demake/dmg";
 import { Nes, type Button as NesButton } from "@demake/nes";
 
 import { buildGbRom } from "../src/codegen/gb.js";
@@ -57,21 +57,32 @@ export interface RomTarget {
  */
 const BUTTONS = ["left", "right", "up", "down", "a", "b", "start"] as const;
 
-export const gbTarget: RomTarget = {
-  console: "gb",
-  build: (program, options) => buildGbRom(program, options),
-  boot: (bytes) => {
-    const machine = new Gameboy(bytes);
-    return {
-      readMemory: (address, length) => machine.readMemory(address, length),
-      stepInstruction: () => machine.stepInstruction(),
-      runFrame: () => machine.runFrame(),
-      setButtons: (down) => machine.setButtons(down as GbButton[]),
-    };
-  },
-};
+function gameboyTarget(consoleId: string, machineKind: GbMachine): RomTarget {
+  return {
+    console: consoleId,
+    build: (program, options) => buildGbRom(program, options),
+    boot: (bytes) => {
+      const machine = new Gameboy(bytes, machineKind);
+      return {
+        readMemory: (address, length) => machine.readMemory(address, length),
+        stepInstruction: () => machine.stepInstruction(),
+        runFrame: () => machine.runFrame(),
+        setButtons: (down) => machine.setButtons(down as GbButton[]),
+      };
+    },
+  };
+}
 
-export const gbcTarget: RomTarget = { ...gbTarget, console: "gbc" };
+export const gbTarget: RomTarget = gameboyTarget("gb", "gameboy");
+export const gbcTarget: RomTarget = gameboyTarget("gbc", "gameboy");
+
+/**
+ * The Mega Duck: the same backend and the same core, told which machine it is.
+ *
+ * Both Game Boys take their machine from the cartridge header; this console has
+ * no header, so the harness names it — exactly as it names `Nes` below.
+ */
+export const megaduckTarget: RomTarget = gameboyTarget("megaduck", "megaduck");
 
 export const nesTarget: RomTarget = {
   console: "nes",

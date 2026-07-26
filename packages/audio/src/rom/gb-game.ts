@@ -58,6 +58,17 @@ export interface GameAudioInput {
   effects: readonly GameEffect[];
   /** First high-RAM byte the driver may use. */
   hram: number;
+  /**
+   * Where the chip's registers live on this console, when they have moved.
+   *
+   * The Game Boy's APU appears at `$FF20`–`$FF46` on a Mega Duck rather than
+   * `$FF10`–`$FF26`, with `NR11`/`NR12`, `NR33`/`NR34`, `NR42`/`NR43` and
+   * `NR51`/`NR52` each swapped and wave RAM left where it was. That is the whole
+   * of the difference, so it is the whole of what this carries: one function
+   * applied wherever a register number becomes an address, and nothing above it
+   * — not the schedules, not the channel map, not the proof — has to know.
+   */
+  regMap?: (reg: number) => number;
 }
 
 /** Sizes and reductions, reported rather than assumed. */
@@ -165,7 +176,12 @@ export function buildGameAudio(input: GameAudioInput): GameAudio {
   const shared = input.tracks.length > 0 && input.effects.length > 0;
   // The boot writes are taken off the *schedules*, not by the packer, so
   // `performed` is exactly what the conformance harness should expect to see.
-  const packOptions = shared ? { channelOf: gbChannelOf, mergeRegs: new Set([NR51]) } : {};
+  // The map goes on both packing paths, shared or not: it is the console's
+  // wiring, not a consequence of two streams sharing the chip.
+  const at = input.regMap ?? ((reg: number) => reg);
+  const packOptions = shared
+    ? { channelOf: gbChannelOf, mergeRegs: new Set([NR51]), regMap: at }
+    : { regMap: at };
 
   let restricted = 0;
   const tracks = input.tracks.map((script) => stripBoot(script, boot));
@@ -190,7 +206,7 @@ export function buildGameAudio(input: GameAudioInput): GameAudio {
 
   const emitCode = (asm: Asm): void => {
     const start = asm.pc;
-    emitInit(asm, state, boot, clock);
+    emitInit(asm, state, boot, clock, at);
     emitTick(asm, state, input);
     if (input.tracks.length > 0) {
       emitMusicStart(asm, state, input);
@@ -205,7 +221,7 @@ export function buildGameAudio(input: GameAudioInput): GameAudio {
     }
     if (input.effects.length > 0) {
       emitSfxStart(asm, state, input);
-      emitRelease(asm, state, stealable, shared);
+      emitRelease(asm, state, stealable, shared, at);
       helpers.push(
         ...emitStream(asm, {
           prefix: "AudioSfx",
@@ -216,9 +232,9 @@ export function buildGameAudio(input: GameAudioInput): GameAudio {
         }).map((name) => `sfx-${name}`),
       );
     }
-    if (input.tracks.length > 0) emitSilence(asm, "AudioSilence");
+    if (input.tracks.length > 0) emitSilence(asm, "AudioSilence", at);
     if (shared) {
-      emitPan(asm, state);
+      emitPan(asm, state, at);
       helpers.push("panning-merge");
     }
     code = asm.pc - start;
@@ -414,6 +430,7 @@ function emitInit(
   state: Layout,
   boot: readonly { reg: number; value: number }[],
   clock: ReturnType<typeof resolveClock>,
+  at: (reg: number) => number,
 ): void {
   asm.label("AudioInit");
   let held: number | undefined;
@@ -422,7 +439,7 @@ function emitInit(
       asm.ldn("a", write.value);
       held = write.value;
     }
-    asm.stha(write.reg);
+    asm.stha(at(write.reg));
   }
 
   asm.alu("xor", "a");
@@ -585,7 +602,13 @@ function emitSfxStart(asm: Asm, state: Layout, input: GameAudioInput): void {
  * music *would* have been playing would mean keeping a shadow of every register
  * on every channel, to hide a gap of at most a few ticks.
  */
-function emitRelease(asm: Asm, state: Layout, stealable: number, shared: boolean): void {
+function emitRelease(
+  asm: Asm,
+  state: Layout,
+  stealable: number,
+  shared: boolean,
+  at: (reg: number) => number,
+): void {
   asm.label("AudioSfxRelease");
   asm.ldha(state.steal);
   asm.alu("or", "a");
@@ -597,7 +620,7 @@ function emitRelease(asm: Asm, state: Layout, stealable: number, shared: boolean
     const skip = `AudioRelease${channel}`;
     asm.bit(channel, "b");
     asm.jr(skip, "z");
-    asm.stha(CHANNEL_OFF[channel] as number);
+    asm.stha(at(CHANNEL_OFF[channel] as number));
     asm.label(skip);
   }
   asm.stha(state.steal);
@@ -611,10 +634,10 @@ function emitRelease(asm: Asm, state: Layout, stealable: number, shared: boolean
 }
 
 /** Turn every channel off — what stopping the music means. */
-function emitSilence(asm: Asm, name: string): void {
+function emitSilence(asm: Asm, name: string, at: (reg: number) => number): void {
   asm.label(name);
   asm.alu("xor", "a");
-  for (const reg of CHANNEL_OFF) asm.stha(reg);
+  for (const reg of CHANNEL_OFF) asm.stha(at(reg));
   asm.ret();
 }
 
@@ -628,7 +651,7 @@ function emitSilence(asm: Asm, name: string): void {
  * Clobbers `a`, `c` and `e` only — `b`, `d` and `hl` are live in the run walk
  * that calls it.
  */
-function emitPan(asm: Asm, state: Layout): void {
+function emitPan(asm: Asm, state: Layout, at: (reg: number) => number): void {
   asm.label("AudioMusPan");
   asm.stha(state.panMusic);
   asm.jr("AudioPan");
@@ -651,7 +674,7 @@ function emitPan(asm: Asm, state: Layout): void {
   asm.ldha(state.panMusic);
   asm.alu("and", "c");
   asm.alu("or", "e");
-  asm.stha(NR51);
+  asm.stha(at(NR51));
   asm.ret();
 }
 

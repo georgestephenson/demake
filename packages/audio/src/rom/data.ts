@@ -106,6 +106,26 @@ export interface PackOptions {
    * the music with it.
    */
   end?: "silence" | "stop";
+  /**
+   * Where a register lives on the machine this data is *for*.
+   *
+   * Everything above works in the chip's own register numbers — `channelOf`,
+   * `mergeRegs`, the boot comparison, the `ChipScript` the proof diffs against —
+   * because those are facts about the chip. Which address the CPU stores to is a
+   * fact about the *console*, and the two came apart when the Mega Duck arrived:
+   * it has the Game Boy's APU wired to `$FF20`–`$FF46` with four pairs swapped.
+   *
+   * So the translation happens once, here, at the last moment before a register
+   * becomes a byte. A schedule packed with a map performs the same writes to the
+   * same chip; only the addresses differ, which is exactly what the console
+   * changed. Defaults to identity.
+   */
+  regMap?: (reg: number) => number;
+}
+
+/** The register a write lands on, after the console's own wiring. */
+function mapped(options: PackOptions, reg: number): number {
+  return (options.regMap?.(reg) ?? reg) & 0xff;
 }
 
 /** Raised when a schedule cannot be packed for a console. */
@@ -296,7 +316,7 @@ function encodeBlock(
     }
     if (options.channelOf === undefined) {
       out.push(writes.length);
-      for (const write of writes) out.push(write.reg & 0xff, write.value & 0xff);
+      for (const write of writes) out.push(mapped(options, write.reg), write.value & 0xff);
     } else if (encodeRuns(out, writes, options)) {
       merges = true;
     }
@@ -349,7 +369,7 @@ function encodeRuns(
     if (tag.merge) merged = true;
     out.push(to - from, flags);
     for (let index = from; index < to; index += 1) {
-      out.push(writes[index]!.reg & 0xff, writes[index]!.value & 0xff);
+      out.push(mapped(options, writes[index]!.reg), writes[index]!.value & 0xff);
     }
   }
   return merged;
@@ -366,7 +386,7 @@ function silenceBlock(script: ChipScript, options: PackOptions): Uint8Array {
   const off = silenceWrites(script.console);
   const out: number[] = [];
   if (options.channelOf === undefined) {
-    out.push(off.length, ...off.flatMap((w) => [w.reg, w.value]));
+    out.push(off.length, ...off.flatMap((w) => [mapped(options, w.reg), w.value]));
   } else {
     encodeRuns(out, off, options);
   }

@@ -24,6 +24,7 @@
     "changeset": "changeset",
     "cli": "node packages/cli/dist/index.js",
     "gen:man": "pnpm --filter demake gen:man",
+    "gen:console-docs": "pnpm --filter demake gen:console-docs",
     "eval:prep": "node tools/prep-eval/run.mjs",
     "play": "node packages/demotic/demo/play.mjs",
     "test:dmt": "node packages/demotic/demo/test.mjs",

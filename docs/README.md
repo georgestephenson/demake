@@ -16,6 +16,7 @@ that an engineer (human or agent) can pick up a section and implement it.
 | 01 | [Vision & Goals](01-vision-and-goals.md) | What we are building, for whom, guiding principles, non-goals |
 | 02 | [Architecture](02-architecture.md) | Monorepo layout, the isomorphic core, how CLI / web / desktop / package share one engine |
 | 03 | [Console Matrix](03-console-matrix.md) | Every target console, its hardware constraints, support tiers |
+| — | [Console Support](console-support.md) | **Generated.** What works today, per console, across art / data / ROM / games / audio |
 | 04 | [Conversion Pipeline](04-conversion-pipeline.md) | The "prep" engine: parallel candidate-algorithm tournament + multi-metric judge; color science, scaling, quantization, palette fitting, dithering |
 | 05 | [CLI Specification](05-cli-spec.md) | UNIX-compliant CLI: subcommands, flags, exit codes, man pages, agent-friendliness |
 | 06 | [Code Generation](06-codegen-spec.md) | The "gen" path: per-console data formats, source output, full-ROM output |

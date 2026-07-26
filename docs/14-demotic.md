@@ -55,8 +55,10 @@ the game *looks or builds*, it is the Demakefile.
 
 ## Scope
 
-Seven consoles: `gb`, `gbc`, `nes`, `sms`, `gg`, `md`, `snes` — all tiled sprite
-machines with multi-colour hardware sprites and a comparable button set.
+Eight consoles: `gb`, `gbc`, `megaduck`, `nes`, `sms`, `gg`, `md`, `snes` — all
+tiled sprite machines with multi-colour hardware sprites and a comparable button
+set. Which of them *build today* is [`console-support.md`](console-support.md),
+which is generated; doc 13 §Console rollout costs the rest.
 
 Deliberately excluded, each for its own reason:
 
@@ -835,9 +837,19 @@ controls and rules, console-specific only in that constants are folded — and a
 backend then compiles that `Program` into code written for this game and no
 other (§2).
 
-Two backends exist, in `packages/demotic/src/codegen/`: `gb` (SM83, both Game
-Boys) and `nes` (6502, NROM). Nothing about either is a table format, so there is
-no format contract to keep in step with an assembly file.
+Two backends exist, in `packages/demotic/src/codegen/`: `gb` (SM83) and `nes`
+(6502, NROM). Nothing about either is a table format, so there is no format
+contract to keep in step with an assembly file.
+
+**Two backends, four consoles** — because a console is not always a machine. The
+`gb` backend builds for three: a Game Boy, a Game Boy Color (the same machine
+code with a second half bolted to the renderer, §Colour) and a Mega Duck (the
+same machine code through that console's own I/O page). A variant costs a
+*machine description* — a register table, a permuted `LCDC`, an entry point, a
+cartridge shape — and not one instruction, which is why the whole example library
+traces identically on all four. Before writing a backend, check whether the
+console is a variant of one you have: if you find yourself copying an emitter,
+it is.
 
 **A backend is an implementation of an interface, not a file that resembles
 another one.** `codegen/backend.ts` is the contract: a console answers six

@@ -40,6 +40,7 @@ import {
   type GameEffect,
 } from "@demake/audio";
 import { GB_CLOCK_HZ, NES_CLOCK_HZ, StreamSink, type SampleSink } from "@demake/chip";
+import { megaduckRegister } from "@demake/core";
 import { Gameboy } from "@demake/dmg";
 import { Nes } from "@demake/nes";
 
@@ -138,6 +139,39 @@ const TARGETS: readonly Target[] = [
     boot(rom) {
       const machine = new Gameboy(rom);
       return wrap(machine);
+    },
+  },
+  {
+    // The Mega Duck's APU *is* the Game Boy's, at a different address — so
+    // everything this battery compares is stated in Game Boy register numbers
+    // and only the cartridge's stores differ. `channelOf` and `mergeReg` are
+    // therefore the Game Boy's unchanged, and the fact that this passes is the
+    // proof that the map is applied where a register becomes an address and
+    // nowhere else: a map that leaked into the schedules would fail here, and a
+    // map that never reached the ROM would fail on the console.
+    id: "megaduck",
+    name: "Mega Duck",
+    clockHz: GB_CLOCK_HZ,
+    mergeReg: 0x25,
+    mergeHelper: "panning-merge",
+    channelOf: gbChannelOf,
+    build(source, dir) {
+      const program = compile(source, { profile: getProfile("megaduck"), levels: levelsIn(dir) });
+      const assets = assetsIn(dir);
+      const built = buildGbRom(program, { assets });
+      const bound = bindAudio(program, assets, {
+        build: (tracks, effects) =>
+          buildGameAudio({
+            tracks,
+            effects: effects as GameEffect[],
+            hram: 0xff8b,
+            regMap: megaduckRegister,
+          }),
+      });
+      return { built, bound };
+    },
+    boot(rom) {
+      return wrap(new Gameboy(rom, "megaduck"));
     },
   },
   {
