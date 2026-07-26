@@ -116,7 +116,18 @@ describe("gb ROM conformance across the example library", () => {
   });
 });
 
-describe("the colour cartridge", () => {
+/**
+ * Headroom for a colour conversion.
+ *
+ * Demaking a picture for colour hardware is the whole `prep` tournament, which
+ * is seconds where the mono path is milliseconds — the cost `demake prep -c gbc`
+ * has always had. `bindArt` memoises it so only the first test here pays, but
+ * the default timeout is written for tests that run one pipeline and a loaded
+ * CI runner is several times slower than a developer's machine.
+ */
+const COLOUR_TIMEOUT = 120_000;
+
+describe("the colour cartridge", { timeout: COLOUR_TIMEOUT }, () => {
   const assets = () =>
     new Map(
       ["ball.svg", "paddle.svg", "pong.title.svg", "pong.play.svg"].map((name) => [

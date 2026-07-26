@@ -373,18 +373,19 @@ describe("the example library", () => {
   // *measured* fact about the hardware, and asserting it is what makes the next
   // code-generator change visible rather than a mystery.
   //
-  // Three fixtures rather than seven, and the three biggest: demaking a picture
-  // in colour is the whole `prep` tournament — seconds, where the mono path is
-  // a fraction of one — and a kilobyte can only decide the cartridges that are
-  // already near the edge. The shooter is the tightest in the library, the
-  // caves are a level with tile art, and the runner composes its levels.
-  for (const file of ["shooter.dmt", "caves.dmt", "runner.dmt"]) {
-    it(`${file} still fits when it is demade in colour`, () => {
-      const source = readFileSync(join(games, file), "utf8");
-      const program = compile(source, { profile: getProfile("gbc"), levels: levelsIn(games) });
-      const built = buildGbRom(program, { assets: assetsIn(games) });
-      expect(built.stats.missingAudio).toEqual([]);
-      expect(built.stats.free).toBeGreaterThan(512);
-    });
-  }
+  // One fixture rather than seven, and the shooter because it is the tightest
+  // in the library — two demade backdrops, nine aliens, a theme and four
+  // effects. A kilobyte can only decide a cartridge that is already near the
+  // edge, and demaking a picture in colour is the whole `prep` tournament:
+  // seconds where the mono path is a fraction of one, and the reason this test
+  // states its own timeout rather than inheriting one written for a single
+  // pipeline. The others have four kilobytes and more to spare, and
+  // `rom.test.ts` builds every fixture for `gbc` regardless.
+  it("the shooter, the tightest cartridge in the library, still fits in colour", () => {
+    const source = readFileSync(join(games, "shooter.dmt"), "utf8");
+    const program = compile(source, { profile: getProfile("gbc"), levels: levelsIn(games) });
+    const built = buildGbRom(program, { assets: assetsIn(games) });
+    expect(built.stats.missingAudio).toEqual([]);
+    expect(built.stats.free).toBeGreaterThan(512);
+  }, 120_000);
 });

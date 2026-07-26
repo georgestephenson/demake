@@ -152,7 +152,21 @@ describe("the art on screen", () => {
   });
 });
 
-describe("art demade for colour hardware", () => {
+/**
+ * How long a colour conversion is allowed to take.
+ *
+ * Demaking a picture for colour hardware is the whole `prep` tournament —
+ * several candidates, each a constrained fit with restarts — where the mono
+ * path is a luminance ramp. That is seconds rather than milliseconds, and it is
+ * the same cost `demake prep -c gbc` has always had; `bindArt` memoises it, so
+ * only the *first* test in a file pays. The default timeout is written for
+ * tests that run one pipeline, and a loaded CI runner is several times slower
+ * than a developer's machine, so the colour tests say what they need out loud
+ * rather than being flaky about it.
+ */
+const COLOUR_TIMEOUT = 120_000;
+
+describe("art demade for colour hardware", { timeout: COLOUR_TIMEOUT }, () => {
   const pongColor = () => compile(text("pong.dmt"), { profile: getProfile("gbc") });
 
   it("fits the art into sub-palettes and leaves one for the font", () => {
