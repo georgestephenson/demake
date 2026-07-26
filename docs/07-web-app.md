@@ -331,7 +331,15 @@ bundled track or effect on arrival instead, so every section demos itself.
 
 ## Quality bar
 
-- Works fully offline after first load (PWA manifest + service worker, cache-first).
+- Works fully offline after first load (PWA manifest + service worker). Hashed
+  assets are cache-first, because a content-hashed name can only ever mean one
+  file. **The shell is network-first**, because `index.html` is the one URL that
+  does not change and it is what names the hashed chunks: served from the cache,
+  it asks for the chunks it already has, and a deploy reaches new visitors only.
+  That shipped once — a console added to the app did not appear in anyone's
+  browser after the deploy that contained it — and
+  `packages/web/test/sw.test.ts` is what now says which requests may be answered
+  from the cache. Offline still works: the shell falls back to the cached copy.
 - Accessible: keyboard operable, labeled controls, honors reduced-motion.
   Contrast is always set with an explicit colour, **never with opacity** — a
   translucent foreground composites against whatever is behind it, which is both

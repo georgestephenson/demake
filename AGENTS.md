@@ -963,6 +963,17 @@ Two files plus fixtures (doc 02 §Extensibility):
   of anything the CLI does (a manifest shape, a symbol-name rule, a console
   summary table) is how parity dies; if the web needs it, it moves into core
   first, as `buildManifest`/`encodeManifest` did.
+- **The service worker may cache anything but the shell.** Every asset is
+  content-hashed, so cache-first is right for all of them — and wrong for
+  `index.html`, the one URL that never changes and the file that names those
+  hashed chunks. Cached, it asks for the chunks it already has, so a returning
+  visitor stays on the build they first loaded and a deploy reaches new visitors
+  only. Navigations therefore go to the network first and fall back to the cache
+  (offline still works). No browser test can catch this — a Playwright context
+  always starts with empty storage, so the suite only ever sees a first visit —
+  which is why `packages/web/test/sw.test.ts` runs the worker in a fake global
+  instead. Changing `CACHE`'s name is what rescues visitors holding a poisoned
+  shell, and it costs them one further reload.
 - **A one-run Lighthouse audit is a coin toss on a shared runner.** The job asks
   for `numberOfRuns: 3` and asserts against the best of them, which is lhci's
   default `optimistic` aggregation for a `minScore`. Noise only ever makes a page
