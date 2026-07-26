@@ -129,9 +129,24 @@ export interface BoundAudioShape {
   present: boolean;
   tracks: number;
   effects: number;
-  code: number;
-  data: number;
-  helpers: readonly string[];
+  /**
+   * Driver code and packed schedule bytes — **read after {@link buildRom} has
+   * assembled, and therefore not knowable when the binding is made.**
+   *
+   * A driver is emitted lazily: `@demake/audio` hands back `emitCode`/`emitData`
+   * closures and only learns their sizes when the assembler has run them, which
+   * happens inside `assemble` — a step *after* `bindAudio`. So a backend must
+   * expose these as live queries rather than copy them out of the driver at bind
+   * time, or it reports the zero they held before anything was emitted.
+   *
+   * `helpers` is the same: the emitter pushes into it as routines are pulled in.
+   * It happens to survive being copied, because copying an array copies the
+   * reference — but that is luck rather than design, so it is a query here too.
+   * Everything above these three is known when the audio is demade.
+   */
+  readonly code: number;
+  readonly data: number;
+  readonly helpers: readonly string[];
   rateHz: number;
   writesRestricted: number;
 }

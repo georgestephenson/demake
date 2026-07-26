@@ -163,9 +163,19 @@ export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
       options,
       tracks: driver?.stats.tracks ?? 0,
       effects: driver?.stats.effects ?? 0,
-      code: driver?.stats.code ?? 0,
-      data: driver?.stats.data ?? 0,
-      helpers: driver?.stats.helpers ?? [],
+      // Live queries, not copies: the driver is emitted during `assemble`, which
+      // has not run yet, so its sizes are still zero here (`backend.ts`
+      // §BoundAudioShape). Reading them at bind time is how `demake build` came
+      // to report "0 bytes of driver" for a cartridge that was playing music.
+      get code(): number {
+        return driver?.stats.code ?? 0;
+      },
+      get data(): number {
+        return driver?.stats.data ?? 0;
+      },
+      get helpers(): readonly string[] {
+        return driver?.stats.helpers ?? [];
+      },
       rateHz: driver ? driver.stats.rate.num / driver.stats.rate.den : 0,
       writesRestricted: driver?.stats.writesRestricted ?? 0,
       ...(names
