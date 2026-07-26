@@ -523,25 +523,16 @@ describe("the example library", () => {
   ] as const;
 
   /**
-   * Bytes a build has to have left over, by console.
+   * Bytes a build has to have left over — a kilobyte, on every console.
    *
-   * A kilobyte everywhere except the NES, and the exception is measured rather
-   * than granted. The shooter is the tightest game in the library on every
-   * console — two demade backdrops, nine aliens, a theme and its effects — and on
-   * an NROM cartridge two facts eat the difference: its 6502 code is around
-   * 3.8 KiB larger than its SM83 code, and a backdrop is a 960-cell nametable
-   * against a Game Boy's 360. There is no mapper to spend it from.
-   *
-   * It did not fit at all until the nametables were packed as literals and runs,
-   * which is worth about 940 bytes to this game; it now finishes with a bit over
-   * 500. That is the same floor the Game Boy Color build carries, for the same
-   * reason — a real hardware cost, asserted so the next code-generator change is
-   * visible rather than a mystery. The next lever, if this gets tight again, is
-   * the unrolled per-object rule code: nine aliens produce a dozen near-identical
-   * 190-byte blocks, which a loop over a class's instances would fold.
+   * The shooter is the tightest game in the library and it did not fit on the NES
+   * at all when the audio driver landed: nine aliens against three shots is
+   * twenty-seven collision pairs, and each pair was a copy of the same code with
+   * a different address in it. Packing the backdrop nametables bought about 940
+   * bytes and looping the pairs bought six thousand, so the exception this test
+   * briefly carried is gone and the floor is the same one everywhere.
    */
-  const HEADROOM: Readonly<Record<string, number>> = { nes: 512 };
-  const DEFAULT_HEADROOM = 1024;
+  const HEADROOM = 1024;
 
   /**
    * What one of these builds is allowed to take.
@@ -563,7 +554,7 @@ describe("the example library", () => {
           expect(built.stats.audio?.effects ?? 0).toBeGreaterThan(0);
           // Headroom, deliberately asserted: a fixture built to the last hundred
           // bytes turns the next code-generator change into a mystery.
-          expect(built.stats.free).toBeGreaterThan(HEADROOM[target.id] ?? DEFAULT_HEADROOM);
+          expect(built.stats.free).toBeGreaterThan(HEADROOM);
         },
         BUILD_TIMEOUT,
       );

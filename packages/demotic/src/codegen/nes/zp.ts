@@ -35,10 +35,21 @@ export const ZP = {
   count: 0x0c,
   /** Two spare bytes, deliberately: the next routine that needs one has it. */
   spare: 0x0e,
+  /**
+   * The collision pair loop's own state: the other object, and where it is up to.
+   *
+   * Separate from the scratch above because it is the one thing that has to
+   * survive everything a *rule body* does — a rule may multiply, divide, fire a
+   * sound and write four properties, and all of that runs between one pair and
+   * the next. A helper's scratch is valid for the length of one helper; this is
+   * valid for the length of a loop.
+   */
+  pair: 0x10,
+  pairIndex: 0x12,
 } as const;
 
 /** First byte the allocator may hand out of page zero. */
-export const ZP_FREE = 0x10;
+export const ZP_FREE = 0x13;
 
 /**
  * Address a byte, choosing the short form when the address is in page zero.

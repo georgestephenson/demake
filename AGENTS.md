@@ -640,6 +640,16 @@ packages/demotic/test/rom.test.ts` builds all seven fixture games and diffs raw
   one block copy into fixed staging and the overlap test and separation are
   shared code. Inlined, a bullet against nine aliens cost 1.5 KiB _per pair_ and
   a three-shot magazine would not fit in a cartridge.
+- **And the pairs themselves are a loop, not a copy per pair** (the NES's
+  `emitPairLoop`/`emitEdgeLoop`). The other object goes in a page-zero pointer and
+  the rule body is emitted once against `EntityAddr`'s `ptr` case, with a
+  four-byte table entry per pair for its address and contact bit. Three shots
+  against nine aliens went from 12.2 KiB of collision code to 2.5. A loop is only
+  taken where the objects agree about what an unrolled copy would have baked in —
+  the near margins, whether `visible` can change, their size — and never below
+  three, where the tables cost more than the copies. When you add an emitter that
+  reads or writes a bound entity, take an `EntityAddr` rather than an address, or
+  it will be the one thing that cannot be looped.
 - **The tile walk is clipped to the grid once, not per cell.** Cells outside a
   level contribute nothing either way, so bounding the walk up front is
   equivalent to asking `TileAt` about every cell — and it is the difference
