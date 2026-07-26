@@ -855,11 +855,13 @@ main.docs-layout {
   min-width: 0;
 }
 
+/* The shape is the console's, so the element carries it: a Game Boy screen and
+   an NES one are not the same rectangle, and a ratio pinned here would letterbox
+   whichever machine it was not written for. */
 .rom-canvas {
   display: block;
   width: 100%;
   max-width: 480px;
-  aspect-ratio: 160 / 144;
   margin: 0 auto;
   background: #e8e8e8;
   border-radius: 6px;

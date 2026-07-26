@@ -15,11 +15,12 @@
  * no transcendentals or randomness, so "the same input" is itself provable
  * rather than assumed.
  *
- * The same contract is then checked for a *game*: the page compiles a `.dmt`
- * to SM83 machine code and demakes its SVG art with no toolchain and no host
- * rasteriser, so the cartridge it hands you must be byte-identical to the one
- * `demake build` writes. That is the harder half — a cartridge is 32 KiB of
- * code, tile bytes and checksums, and every one of those has to agree.
+ * The same contract is then checked for a *game*, on both consoles the page can
+ * build: it compiles a `.dmt` to SM83 or to 6502 and demakes its SVG art with no
+ * toolchain and no host rasteriser, so the cartridge it hands you must be
+ * byte-identical to the one `demake build` writes. That is the harder half — a
+ * cartridge is tens of kilobytes of code, tile bytes and checksums, and every one
+ * of those has to agree.
  *
  * And for *audio*, where doc 07 states it outright: the audio exported in the
  * page must be byte-identical to the audio exported in Node. That is what makes
@@ -45,7 +46,7 @@ import {
   sfxManifest,
 } from "@demake/audio";
 import { encodeRgbaPng, prep } from "@demake/core";
-import { buildGbRom, compile, getProfile } from "@demake/demotic";
+import { buildGame, compile, getProfile } from "@demake/demotic";
 import { expect, test, type Page } from "@playwright/test";
 
 import {
@@ -118,48 +119,62 @@ for (const { name, options } of CASES) {
  * A game the page builds itself must match the CLI's cartridge exactly.
  *
  * `caves` is the case worth pinning: a hand-drawn level, a scrolling camera,
- * object art *and* legend art. Everything the compiler and the image pipeline
- * do is in those 32 KiB, so a single divergent byte anywhere shows up here.
+ * object art *and* legend art. Everything the compiler and the image pipeline do
+ * is in those kilobytes, so a single divergent byte anywhere shows up here.
+ *
+ * Once per console with a backend, because the two share a compiler and share
+ * nothing below it: the code is a different instruction set, the art goes through
+ * a different fitter — mono shades against a picture demade in colour — and the
+ * cartridge is wrapped differently. A page that agreed with the CLI about the
+ * Game Boy would say nothing about whether it agreed about the NES.
  *
  * The fixtures are read off disk rather than imported from the page's bundle:
  * the page gets them through Vite's `?raw`, which only exists inside a build,
  * and the point of the test is that both sides start from the same file.
  */
-test("the ROM the page builds is byte-identical to the CLI's", async ({ page }) => {
-  const fixtures = dirname(
-    createRequire(import.meta.url).resolve("@demake/demotic/fixtures/pong.dmt"),
-  );
-  const games = join(fixtures, "games");
-  const program = compile(await readFile(join(games, "caves.dmt"), "utf8"), {
-    profile: getProfile("gb"),
-    levels: { "cavern.dmtl": await readFile(join(games, "cavern.dmtl"), "utf8") },
+for (const consoleId of ["gb", "nes"] as const) {
+  test(`the ${consoleId} ROM the page builds is byte-identical to the CLI's`, async ({ page }) => {
+    const fixtures = dirname(
+      createRequire(import.meta.url).resolve("@demake/demotic/fixtures/pong.dmt"),
+    );
+    const games = join(fixtures, "games");
+    const program = compile(await readFile(join(games, "caves.dmt"), "utf8"), {
+      profile: getProfile(consoleId),
+      levels: { "cavern.dmtl": await readFile(join(games, "cavern.dmtl"), "utf8") },
+    });
+    // Every asset the program names, rather than a list: the page loads what the
+    // game asks for, so a list here would only ever be a way to compare a ROM
+    // built with art against one built without it. Music and effects are in that
+    // set too — the cartridge the page hands you has its soundtrack demade into
+    // it, and a Node build without one would differ by five kilobytes.
+    const assets = new Map<string, Uint8Array>();
+    for (const name of [...program.assets, ...program.tracks, ...program.sounds]) {
+      assets.set(name, new Uint8Array(await readFile(join(games, name))));
+    }
+    const expected = buildGame(program, { title: "caves", assets }).bytes;
+
+    await page.goto("/#section=game");
+    await page.getByTestId("example-select").selectOption("caves");
+    if (consoleId !== "gb") await page.getByTestId("console-select").selectOption(consoleId);
+    // Waiting on the *cartridge's* console, not the picker's: demaking two
+    // full-screen pictures in colour is the whole `prep` tournament, and until it
+    // finishes the pane has nothing to download.
+    await expect(page.getByTestId("rom-canvas")).toHaveAttribute("data-console", consoleId, {
+      timeout: 60_000,
+    });
+
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      page.getByTestId("rom-download").click(),
+    ]);
+    const path = await download.path();
+    expect(path).toBeTruthy();
+    const actual = new Uint8Array(await readFile(path as string));
+
+    expect(actual.length).toBe(expected.length);
+    expect(sha256(actual)).toBe(sha256(expected));
   });
-  // Every asset the program names, rather than a list: the page loads what the
-  // game asks for, so a list here would only ever be a way to compare a ROM
-  // built with art against one built without it. Music and effects are in that
-  // set too — the cartridge the page hands you has its soundtrack demade into
-  // it, and a Node build without one would differ by five kilobytes.
-  const assets = new Map<string, Uint8Array>();
-  for (const name of [...program.assets, ...program.tracks, ...program.sounds]) {
-    assets.set(name, new Uint8Array(await readFile(join(games, name))));
-  }
-  const expected = buildGbRom(program, { title: "caves", assets }).bytes;
-
-  await page.goto("/#section=game");
-  await page.getByTestId("example-select").selectOption("caves");
-  await expect(page.getByTestId("rom-canvas")).toBeVisible();
-
-  const [download] = await Promise.all([
-    page.waitForEvent("download"),
-    page.getByTestId("rom-download").click(),
-  ]);
-  const path = await download.path();
-  expect(path).toBeTruthy();
-  const actual = new Uint8Array(await readFile(path as string));
-
-  expect(actual.length).toBe(expected.length);
-  expect(sha256(actual)).toBe(sha256(expected));
-});
+}
 
 /** The bytes behind one of the page's download buttons. */
 async function save(page: Page, testId: string): Promise<Uint8Array> {

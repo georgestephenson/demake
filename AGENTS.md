@@ -97,6 +97,12 @@ implements, and what a program _means_ is shared (`codegen/shape.ts`), so the
 only thing a backend owns is its instruction set. Sound on the NES is named as
 unsupported rather than dropped silently; a 2A03 driver is doc 13 §A5.
 
+**And the page plays it.** The console selector in the web app's game section
+changes the _cartridge_: pick NES and the browser compiles 6502, demakes the art
+for that machine and boots the result in `@demake/nes` — byte-identical to
+`demake build -c nes`, pinned by `determinism.spec.ts` on both consoles (doc 07
+§Playing the real ROM in the page).
+
 Still to come: the remaining Tier 2/3 consoles (each = a codegen backend, a ROM
 harness + toolchain, and a libretro core + DAC calibration), the remaining
 framebuffer/scanline layout paths (Lynx, GBA/NDS bitmap modes, 2600/7800), and
@@ -823,7 +829,8 @@ Two files plus fixtures (doc 02 §Extensibility):
   serves the _built_ bundle, and runs every spec in Chromium + Firefox + WebKit.
   `packages/web/test/e2e/determinism.spec.ts` is the doc-07 parity contract, and
   it now covers all four domains: it converts the bundled demo image, builds
-  `caves`, arranges a track and demakes an effect — in Node through the engine
+  `caves` **once per console with a backend**, arranges a track and demakes an
+  effect — in Node through the engine
   packages and in the page through its workers — and compares the exported PNG,
   the cartridge, and the audio's `.vgm` + sidecar + WAV + cartridge
   byte-for-byte. Narrow the browsers with `DEMAKE_BROWSERS=chromium`, and point

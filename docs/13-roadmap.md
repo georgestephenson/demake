@@ -239,16 +239,21 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     work, and a game that names music still builds, plays silently, and records
     what a rule asked for — so a silent build traces identically to a sounding
     one, which is what keeps the conformance suite honest.
-  - **D5 — Play ROM in the page** *(done for `gb` and `gbc`; `nes` is the CLI
-    only)*: the browser compiles the
+  - **D5 — Play ROM in the page** *(done for `gb`, `gbc` and `nes`)*: the browser
+    compiles the
     game itself, because the assembler is ours and written in TypeScript, and
     demakes its art with our own rasteriser rather than the browser's. It boots
-    the result in `@demake/dmg` — ours, because doc 07 forbids a CDN core and a
-    WASM core we cannot read is the same bargain in a different wrapper. The
-    bytes are identical to `demake build`'s, pinned by a Playwright spec, and
-    the pane offers them as a download. Picking Game Boy Color in the console
-    selector builds a `.gbc` and the same core plays it in colour, because the
-    machine it comes up as is the cartridge header's decision.
+    the result in `@demake/dmg` or `@demake/nes` — ours, because doc 07 forbids a
+    CDN core and a WASM core we cannot read is the same bargain in a different
+    wrapper. The bytes are identical to `demake build`'s, pinned by a Playwright
+    spec on *both* consoles, and the pane offers them as a download. Picking a
+    console in the selector changes the **cartridge**, not a setting on one:
+    Game Boy Color builds a `.gbc` that the same core plays in colour because the
+    machine it comes up as is the cartridge header's decision, and NES builds a
+    `.nes` that a second core plays on a screen of its own shape. The pane clears
+    while a new console demakes, because a Game Boy running under an NES heading
+    would be the one thing it must not show. Sound stays the Game Boy's until
+    §A5, and the button is disabled rather than silent.
   - **D6 — language growth**, driven by fixtures beyond Pong. Levels, tiles, a
     scrolling camera, `stream`-composed courses and a seeded `random` have
     landed (doc 14 §Levels, §Composed levels, §Randomness). What is left:

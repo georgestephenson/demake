@@ -132,6 +132,9 @@ importers:
       '@demake/dmg':
         specifier: workspace:*
         version: link:../dmg
+      '@demake/nes':
+        specifier: workspace:*
+        version: link:../nes
       preact:
         specifier: ^10.29.7
         version: 10.29.7

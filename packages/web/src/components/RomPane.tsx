@@ -1,34 +1,50 @@
 /**
- * The cartridge: the same game, running as a real Game Boy ROM in the page.
+ * The cartridge: the same game, running as a real ROM in the page.
  *
  * Doc 13 §D5 says the browser must never need a toolchain, and it does not: the
- * assembler is ours and written in TypeScript, so the page *compiles* the game
- * to SM83 machine code the same way the CLI does and gets the same bytes. What
- * the Download button hands you is byte-identical to what `demake build` writes
- * on the command line, which is the doc-07 parity contract restated for games.
+ * assemblers are ours and written in TypeScript, so the page *compiles* the game
+ * — to SM83 for a Game Boy, to 6502 for an NES — the same way the CLI does and
+ * gets the same bytes. What the Download button hands you is byte-identical to
+ * what `demake build` writes on the command line, which is the doc-07 parity
+ * contract restated for games.
  *
- * The emulator is `@demake/dmg`, ours, for the reason doc 07 gives: a core
- * fetched from a CDN is forbidden, and a WASM core we cannot read would be the
- * same bargain in a different wrapper. Which machine it runs as is the
- * cartridge's own decision — a `gbc` build carries the CGB flag in its header
- * and comes up in colour, a `gb` build on the green LCD — so the console
- * selector above this pane changes the *cartridge*, never the player.
+ * The emulators are `@demake/dmg` and `@demake/nes`, ours, for the reason doc 07
+ * gives: a core fetched from a CDN is forbidden, and a WASM core we cannot read
+ * would be the same bargain in a different wrapper. Which one runs is decided by
+ * the console the game was compiled for, and *within* the Game Boy family by the
+ * cartridge itself — a `gbc` build carries the CGB flag in its header and comes
+ * up in colour — so the console selector above this pane changes the
+ * **cartridge**, and the player follows it rather than being a setting of its own.
  *
  * **The frame counter under the screen is not decoration.** It is the measured
- * cost of one game tick on a 4 MHz 8-bit CPU, and reporting it is how the pane
- * stays honest about hardware speed rather than hiding behind a multiplier.
+ * cost of one game tick on an 8-bit CPU, and reporting it is how the pane stays
+ * honest about hardware speed rather than hiding behind a multiplier.
  */
 
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 
-import { buildGbRom, romReady, unsupportedFeatures, type Program } from "@demake/demotic";
+import {
+  buildGame,
+  familyFor,
+  romExtension,
+  romReady,
+  unsupportedFor,
+  type BuiltRom,
+  type Program,
+} from "@demake/demotic";
 import { Gameboy, SCREEN_HEIGHT, SCREEN_WIDTH, type Button } from "@demake/dmg";
+import { Nes, SCREEN_HEIGHT as NES_HEIGHT, SCREEN_WIDTH as NES_WIDTH } from "@demake/nes";
 
 import { demoAssetBytes, demoAudioBytes } from "../lib/demo-game.js";
 import { download } from "../lib/download.js";
 import { audioSupported, RomAudio } from "../lib/rom-audio.js";
 
-/** The portable button set maps one for one onto the Game Boy's. */
+/**
+ * The portable button set maps one for one onto both machines' pads.
+ *
+ * Which is what doc 14 §Buttons chose it for: the Game Boy has exactly these
+ * seven, and the NES has them and a Select besides.
+ */
 const BUTTONS: Readonly<Record<string, Button>> = {
   left: "left",
   right: "right",
@@ -39,8 +55,68 @@ const BUTTONS: Readonly<Record<string, Button>> = {
   start: "start",
 };
 
-/** Game Boy frames per second, to the accuracy anyone cares about. */
+/** Frames per second, to the accuracy anyone cares about. Both are ~60. */
 const FRAME_RATE = 59.7;
+
+/** What to call the machine in the page's own voice, article and all. */
+const MACHINE: Readonly<Record<string, string>> = {
+  gb: "a Game Boy",
+  gbc: "a Game Boy Color",
+  nes: "an NES",
+};
+
+/**
+ * The CPU the frames-per-tick figure is measured on, per family.
+ *
+ * Named rather than elided because the number means nothing without it: three
+ * frames a tick is a different verdict on a 4 MHz SM83 than on a 1.8 MHz 6502.
+ */
+const CPU: Readonly<Record<string, string>> = { gb: "an SM83", nes: "a 6502" };
+
+/**
+ * A booted cartridge, whichever console it is for.
+ *
+ * The pane needs five things of a machine and no more, so this is those five —
+ * and the two cores satisfy it without either learning about the page or about
+ * each other. `apu` is present only where there is one the audio player knows
+ * how to attach to, which is how the sound button ends up disabled on a console
+ * whose driver has not been written yet rather than lying about it.
+ */
+interface Player {
+  readonly width: number;
+  readonly height: number;
+  readonly framebuffer: Uint8ClampedArray;
+  readonly gameboy: Gameboy | null;
+  setButtons(down: Button[]): void;
+  runFrame(): void;
+  readMemory(address: number, length: number): Uint8Array;
+}
+
+/** Boot a cartridge in the core its console needs. */
+function boot(rom: Uint8Array, consoleId: string): Player {
+  if (familyFor(consoleId) === "nes") {
+    const machine = new Nes(rom);
+    return {
+      width: NES_WIDTH,
+      height: NES_HEIGHT,
+      framebuffer: machine.framebuffer,
+      gameboy: null,
+      setButtons: (down) => machine.setButtons(down),
+      runFrame: () => void machine.runFrame(),
+      readMemory: (address, length) => machine.readMemory(address, length),
+    };
+  }
+  const machine = new Gameboy(rom);
+  return {
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT,
+    framebuffer: machine.framebuffer,
+    gameboy: machine,
+    setButtons: (down) => machine.setButtons(down),
+    runFrame: () => void machine.runFrame(),
+    readMemory: (address, length) => machine.readMemory(address, length),
+  };
+}
 
 export function RomPane({
   program,
@@ -63,7 +139,7 @@ export function RomPane({
   restarts: number;
 }) {
   const canvas = useRef<HTMLCanvasElement | null>(null);
-  const machine = useRef<Gameboy | null>(null);
+  const machine = useRef<Player | null>(null);
   const [cost, setCost] = useState<number | null>(null);
   // The player, and whether the user has asked for it. It lives in a ref so the
   // frame loop can read it without being rebuilt every time it is toggled, and
@@ -100,8 +176,10 @@ export function RomPane({
   // "demaking" first and does the work after. Repeat builds — every keystroke in
   // the editor — hit the conversion cache and are instant.
   const [built, setBuilt] = useState<{
+    /** The console this cartridge is for, so a stale one is never shown as it. */
+    consoleId?: string;
     rom?: Uint8Array;
-    layout?: ReturnType<typeof buildGbRom>["layout"];
+    layout?: BuiltRom["layout"];
     error?: string;
   }>({});
   const [demaking, setDemaking] = useState(false);
@@ -111,9 +189,16 @@ export function RomPane({
       setBuilt({});
       return;
     }
-    const missing = unsupportedFeatures(program);
+    const target = program.profile.id;
+    // An edit keeps the cartridge on screen while the next one builds — the
+    // rebuild is a cache hit and the flicker would be for nothing. A *console*
+    // change does not: what is on screen is a Game Boy running while the pane
+    // says NES, which is the one thing this pane must never show.
+    setBuilt((previous) => (previous.consoleId === target ? previous : {}));
+    const missing = unsupportedFor(program);
     if (missing.length > 0) {
       setBuilt({
+        consoleId: target,
         error:
           `This game needs ${missing.join(" and ")}. The preview above plays it correctly; ` +
           `a ROM would play something else, so the build refuses rather than pretend.`,
@@ -129,10 +214,10 @@ export function RomPane({
         // inside the build, so the page and the CLI cannot diverge on it.
         const assets = demoAssetBytes();
         for (const [file, bytes] of audio) assets.set(file, bytes);
-        const result = buildGbRom(program, { title: name, assets });
-        setBuilt({ rom: result.bytes, layout: result.layout });
+        const result = buildGame(program, { title: name, assets });
+        setBuilt({ consoleId: target, rom: result.bytes, layout: result.layout });
       } catch (error) {
-        setBuilt({ error: String((error as Error).message ?? error) });
+        setBuilt({ consoleId: target, error: String((error as Error).message ?? error) });
       }
       setDemaking(false);
     }, 0);
@@ -143,18 +228,31 @@ export function RomPane({
   }, [program, name, audio]);
 
   const { rom, layout } = built;
-  // A colour build is a different cartridge, not a setting on this one: the
-  // extension follows the console the game was compiled for, exactly as
-  // `demake build` names its output.
-  const extension = program?.profile.id === "gbc" ? "gbc" : "gb";
+  // The cartridge's console, not the picker's: they differ for as long as a build
+  // takes, and everything below describes what is on screen. A colour build is a
+  // different cartridge rather than a setting on this one, and so is an NES one.
+  const consoleId = built.consoleId ?? program?.profile.id ?? "gb";
+  const family = familyFor(consoleId) ?? "gb";
+  const extension = program ? romExtension(program) : "gb";
+  // Sound is the Game Boy's for now: the NES driver is doc 13 §A5, and a button
+  // that turned on nothing would be worse than one that is plainly unavailable.
+  const canSound = audioSupported() && family === "gb";
+  // The canvas is sized by the console, not by CSS: these are two genuinely
+  // different screens (160×144 against 256×240, and not the same aspect), and a
+  // buffer put into a canvas of the wrong size is silently cropped.
+  const screen =
+    family === "nes"
+      ? { width: NES_WIDTH, height: NES_HEIGHT }
+      : { width: SCREEN_WIDTH, height: SCREEN_HEIGHT };
 
   useEffect(() => {
     if (!rom || !layout) {
       machine.current = null;
       return;
     }
-    machine.current = new Gameboy(rom);
-    player.current?.attach(machine.current);
+    const booted = boot(rom, consoleId);
+    machine.current = booted;
+    if (booted.gameboy) player.current?.attach(booted.gameboy);
     const element = canvas.current;
     const context = element?.getContext("2d");
     if (!context) return;
@@ -164,17 +262,17 @@ export function RomPane({
     let accumulator = 0;
     let sinceTick = 0;
     let lastTick = 0;
-    const image = context.createImageData(SCREEN_WIDTH, SCREEN_HEIGHT);
+    const image = context.createImageData(booted.width, booted.height);
 
-    /** One Game Boy frame, with the pad and the tick bookkeeping around it. */
-    const runFrame = (gameboy: Gameboy) => {
+    /** One console frame, with the pad and the tick bookkeeping around it. */
+    const runFrame = (target: Player) => {
       const down: Button[] = [];
       for (const action of held.current) if (BUTTONS[action]) down.push(BUTTONS[action]);
       for (const action of latched.current) if (BUTTONS[action]) down.push(BUTTONS[action]);
-      gameboy.setButtons(down);
-      gameboy.runFrame();
+      target.setButtons(down);
+      target.runFrame();
       sinceTick += 1;
-      const tick = romReady(layout, (address, length) => gameboy.readMemory(address, length));
+      const tick = romReady(layout, (address, length) => target.readMemory(address, length));
       if (tick !== lastTick) {
         lastTick = tick;
         latched.current.clear();
@@ -188,9 +286,10 @@ export function RomPane({
       // Read the machine each frame rather than closing over it, so Reset
       // actually resets and a stream stays attached to the machine that is
       // running.
-      const gameboy = machine.current;
-      if (!gameboy) return;
-      const audio = player.current?.active === true ? player.current : null;
+      const current = machine.current;
+      if (!current) return;
+      const audio =
+        current.gameboy !== null && player.current?.active === true ? player.current : null;
 
       if (audio) {
         // Audio has no tolerance for a late buffer, so with sound on the device
@@ -198,7 +297,7 @@ export function RomPane({
         // needs. The wall clock is reset alongside it, or turning sound off
         // would leave a backlog to sprint through.
         let budget = 8;
-        while (budget-- > 0 && audio.demand() > 0) runFrame(gameboy);
+        while (budget-- > 0 && audio.demand() > 0) runFrame(current);
         audio.flush();
         last = now;
         accumulator = 0;
@@ -210,24 +309,24 @@ export function RomPane({
         const step = 1000 / FRAME_RATE;
         let budget = 4;
         while (accumulator >= step && budget-- > 0) {
-          runFrame(gameboy);
+          runFrame(current);
           accumulator -= step;
         }
       }
 
-      image.data.set(gameboy.framebuffer);
+      image.data.set(current.framebuffer);
       context.putImageData(image, 0, 0);
     };
 
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [rom, layout, held, latched, restarts]);
+  }, [rom, layout, consoleId, held, latched, restarts]);
 
   // The context outlives every ROM built in the section, and is closed once.
   useEffect(() => () => player.current?.close(), []);
 
   const toggleSound = useCallback(() => {
-    if (!audioSupported()) return;
+    if (!canSound) return;
     let audio = player.current;
     if (!audio) {
       audio = new RomAudio();
@@ -237,7 +336,7 @@ export function RomPane({
     }
     if (sound) {
       setSound(false);
-      void audio.suspend(machine.current).then(() => setPlaying(audio.active));
+      void audio.suspend(machine.current?.gameboy ?? null).then(() => setPlaying(audio.active));
       return;
     }
     // The click *is* the gesture a browser wants before it will start a
@@ -246,11 +345,11 @@ export function RomPane({
     void audio
       .resume()
       .then(() => {
-        if (machine.current) audio.attach(machine.current);
+        if (machine.current?.gameboy) audio.attach(machine.current.gameboy);
         setPlaying(audio.active);
       })
       .catch(() => setPlaying(false));
-  }, [sound]);
+  }, [sound, canSound]);
 
   const save = useCallback(() => {
     if (rom) download(`${name}.${extension}`, rom);
@@ -279,14 +378,15 @@ export function RomPane({
         ref={canvas}
         class="rom-canvas"
         data-testid="rom-canvas"
-        width={SCREEN_WIDTH}
-        height={SCREEN_HEIGHT}
+        // Which machine is running, for anything that needs to wait for a
+        // particular one: the picker changes the moment it is clicked, and the
+        // cartridge arrives a demake later.
+        data-console={consoleId}
+        width={screen.width}
+        height={screen.height}
         role="img"
-        aria-label={
-          extension === "gbc"
-            ? "The game, running as a Game Boy Color ROM"
-            : "The game, running as a Game Boy ROM"
-        }
+        aria-label={`The game, running as ${MACHINE[consoleId] ?? "a console"} ROM`}
+        style={{ aspectRatio: `${screen.width} / ${screen.height}` }}
       />
       <div class="rom-toolbar">
         <button
@@ -294,7 +394,7 @@ export function RomPane({
           data-testid="rom-sound"
           aria-pressed={sound}
           onClick={toggleSound}
-          disabled={!audioSupported()}
+          disabled={!canSound}
         >
           {sound ? "Sound on" : "Sound off"}
         </button>
@@ -309,13 +409,16 @@ export function RomPane({
         </span>
       </div>
       <p class="hint">
-        A real 32 KiB cartridge, compiled in the page and byte-identical to{" "}
-        <code>demake build</code>
+        A real cartridge, compiled in the page and byte-identical to <code>demake build</code>
         &rsquo;s. Your game is machine code here, not a table an interpreter walks: it runs at
-        hardware speed, and the frames-per-tick figure is the measured cost on an SM83.
+        hardware speed, and the frames-per-tick figure is the measured cost on{" "}
+        {CPU[family] ?? "this console’s CPU"}.
         {sound
           ? " The sound is the cartridge's own APU, rendered by the same chip model the CLI writes WAVs with — the page synthesizes nothing."
           : ""}
+        {family === "gb"
+          ? ""
+          : " There is no sound on this console yet: its driver is still to be written, and a button that turned on nothing would be worse than one that is plainly unavailable."}
       </p>
       {sound && !playing ? (
         <p class="hint" data-testid="rom-sound-blocked">

@@ -75,37 +75,54 @@ page keeps running the last version that compiled.
 ### Playing the real ROM in the page
 
 The preview runs the reference interpreter, which is the specification — but the
-product claim is a *ROM*, so the page builds one and plays it. **Live for `gb`.**
+product claim is a *ROM*, so the page builds one and plays it. **Live for `gb`,
+`gbc` and `nes`.**
 
-**Assembling needs no assembler installed** (doc 06), because the assembler is
-ours: `packages/demotic/src/codegen/asm.ts` is TypeScript, so the page compiles
-the game to SM83 machine code exactly as the CLI does. The art travels the same
-way — the page hands the build raw SVG text and `@demake/core`'s own rasteriser
-turns it into tiles, rather than the browser's SVG renderer, which would
-antialias differently from Node's and put a different byte in the cartridge. The
-bytes are identical to `demake build`'s — the parity contract this document
-already asks of images, restated for games, and pinned by a Playwright spec that
-builds `caves` on both sides and compares hashes — and the pane offers them as a
-download.
+**Assembling needs no assembler installed** (doc 06), because the assemblers are
+ours: `packages/core/src/asm/` is TypeScript and holds one for the SM83 and one
+for the 6502, so the page compiles the game to whichever the chosen console runs,
+exactly as the CLI does. The art travels the same way — the page hands the build
+raw SVG text and `@demake/core`'s own rasteriser turns it into tiles, rather than
+the browser's SVG renderer, which would antialias differently from Node's and put
+a different byte in the cartridge. The bytes are identical to `demake build`'s —
+the parity contract this document already asks of images, restated for games, and
+pinned by a Playwright spec that builds `caves` on both sides, once per console
+with a backend, and compares hashes — and the pane offers them as a download.
 
-**Playing it needs an emulator**, and it is ours: `@demake/dmg`, about 1200
-lines of dependency-free TypeScript. Self-hosting a WASM core would have
-satisfied the never-from-a-CDN rule, but not the reason behind it — a core we
-cannot read is a dependency we cannot trust with the claim "this is what the
-hardware does". Writing it was also the cheaper option, because the Demotic
-conformance suite (doc 10) needed a headless Game Boy anyway, and one core now
-serves both. It costs about 9 KB gzipped inside the already code-split game
-chunk.
+Once per console is the point: the two share a compiler and share nothing below
+it. Different instruction set, a different fitter for the art, a different
+cartridge wrapper. A page that agreed with the CLI about the Game Boy would say
+nothing about whether it agreed about the NES.
 
-**The pane reports frames per tick**, and that is deliberate. The runtime does
-not yet fit a game tick inside one Game Boy frame, so a game runs slower than
-its nominal rate on real hardware; running the emulator fast enough to hide that
-would be a lie to the person writing the game. The ROM plays at hardware speed
-and the number says what that speed is.
+**Playing it needs an emulator**, and they are ours: `@demake/dmg` and
+`@demake/nes`, each around a thousand lines of dependency-free TypeScript.
+Self-hosting a WASM core would have satisfied the never-from-a-CDN rule, but not
+the reason behind it — a core we cannot read is a dependency we cannot trust with
+the claim "this is what the hardware does". Writing them was also the cheaper
+option, because the Demotic conformance suite (doc 10) needed a headless machine
+for each console anyway, and one core now serves both jobs. Together they cost
+about 13 KB gzipped inside the already code-split game chunk.
 
-A game the runtime cannot run — one with a level or a camera, today — gets a
-message naming the feature instead of a cartridge that would play something
-else.
+**Which cartridge is on screen is never in doubt.** The console selector changes
+the *cartridge*, and a cartridge takes a demake to arrive — seconds, when the art
+is being fitted in colour. So the pane clears when the console changes and says
+what it is doing, rather than leaving a Game Boy running under an NES heading;
+an ordinary edit does not clear it, because that rebuild is a cache hit and the
+flicker would buy nothing. The canvas is sized by the machine it is showing,
+because 160×144 and 256×240 are not the same rectangle.
+
+**The pane reports frames per tick**, and that is deliberate. It is the measured
+cost of one game tick on that console's CPU — currently right on one frame for
+every example, on both machines — and it is reported rather than hidden behind a
+speed multiplier, because running the emulator fast enough to paper over a slow
+tick would be a lie to the person writing the game. The number names the CPU it
+was measured on, since three frames a tick means different things on a 4 MHz SM83
+and a 1.8 MHz 6502.
+
+A game the chosen console's backend cannot compile gets a message naming the
+feature instead of a cartridge that would play something else — the same refusal
+`demake build` makes, for the same reason (doc 14 §A backend gap is a build
+error).
 
 **The cartridge is what the pane opens on**, and the preview is a view you can
 choose: a `View` dropdown offers *Cartridge* (the default), *Preview*, or *Side
@@ -132,6 +149,10 @@ point of the language is that a `.dmt` names none of them. The cartridge has an
 APU. So the sound button lives in the cartridge view, the preview is silent, and
 in *Preview* there is no sound control at all — which is the honest way to say
 that a simulator has nothing to play.
+
+On a console whose driver is not written yet — the NES, until doc 13 §A5 — the
+button is *disabled* rather than silent, and the pane says why. A switch that
+turns on nothing is worse than one that is plainly unavailable.
 
 The ROM pane plays the cartridge's own sound, and every sample of it comes out of
 `@demake/chip`'s Game Boy APU — the same model the audio pipeline renders WAVs
@@ -267,7 +288,15 @@ bundled track or effect on arrival instead, so every section demos itself.
   Contrast is always set with an explicit colour, **never with opacity** — a
   translucent foreground composites against whatever is behind it, which is both
   a measured contrast failure and genuinely harder to read.
-- Budget: < 300 KB JS gzipped before WASM codecs (lazy-loaded per input format);
-  Lighthouse ≥ 95 across the board, checked in CI.
+- Budget: < 320 KB JS gzipped before WASM codecs (lazy-loaded per input format);
+  Lighthouse ≥ 95 across the board, checked in CI. The figure is a **sum over the
+  whole site** — entry chunk, all five lazy sections, both workers — which is why
+  it is larger than what a visit costs: opening the heaviest section downloads
+  about 210 KB. It was 300 KB until the NES arrived, and the twenty is what a
+  second instruction set, a second emulator and a second set of hardware tables
+  come to (4.6 KB of it the NES itself, the rest the headroom the Game Boy Color
+  work had already spent). A sum is the honest shape for this check: it cannot be
+  satisfied by moving code from one chunk to another, only by there being less of
+  it.
 - Browser matrix: last 2 versions of Chrome/Firefox/Safari/Edge, tested via
   Playwright in CI (functional + determinism suites).
