@@ -44,6 +44,13 @@ export interface ArrangeOptions {
   effort?: "fast" | "default" | "max";
   /** Fail rather than degrade: any dropped part becomes an error. */
   strict?: boolean;
+  /**
+   * Pin the driver rate, in Hz.
+   *
+   * A game hands its own figure here, because music and sound effects share one
+   * interrupt and therefore one rate (doc 16 §Two streams, one clock).
+   */
+  driverHz?: number;
   /** Metadata for the artifact's tags. */
   title?: string;
 }
@@ -168,6 +175,7 @@ export function arrangeScore(input: Score, options: ArrangeOptions): ArrangeResu
       durationScoreTicks: analysed.durationTicks,
       rowsPerBeat: candidate.rowsPerBeat,
       ...(options.tempo ? { tempo: options.tempo } : {}),
+      ...(options.driverHz === undefined ? {} : { driverHz: options.driverHz }),
     });
     const script = compileScript(analysed, spec, binding, plan, timing, candidate.compile);
 

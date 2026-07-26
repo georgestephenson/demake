@@ -33,6 +33,13 @@ scene play
 
 level cavern from cavern.dmtl
 
+-- The cavern's theme is the one piece in the library with no drums, which is
+-- what leaves the arranger a channel to spend on harmony instead.
+music hollow.mid in play
+sound jump.wav on a pressed in play if footing.value > 0
+sound coin.wav on player hits coin
+sound hurt.wav on player hits spikes
+
 camera follows player
 
 -- Eleven cells a second, absolute — the same reasoning as the runner's bird, and

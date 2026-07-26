@@ -34,6 +34,13 @@ scene play
 -- nothing from it and collides with none of it — what it costs is tiles.
 backdrop shooter.play.svg
 
+-- Two effects on the two things the player does: firing, and hitting something.
+-- The shot is short and thin, the explosion long and noisy — different gesture
+-- families, chosen by the demaker rather than named here.
+music squadron.mid in play
+sound shot.wav on a pressed in play if fired.value = 0
+sound boom.wav on shot hits alien
+
 
 create object ship (width 1 cell, height 1 cell, speed 60vw, sprite fighter.svg)
 create object shot (width 1 cell, height 1 cell, speed 70vh, sprite shot.svg)

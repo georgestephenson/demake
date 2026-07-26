@@ -39,6 +39,11 @@ scene play
 -- nothing from it and collides with none of it — what it costs is tiles.
 backdrop dodger.play.svg
 
+-- One effect, and it is the one that matters: being hit. It is the loudest
+-- thing the sound demaker measured, so it outranks anything it collides with.
+music descent.mid in play
+sound hurt.wav on player hits rock
+
 
 create object ship (width 1 cell, height 1 cell, speed 65vw, sprite ship.svg)
 create object rock (width 1 cell, height 1 cell, sprite rock.svg)

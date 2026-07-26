@@ -195,6 +195,15 @@ at all. The contract:
   it — including retriggering the interrupted note if it should still be
   sounding. The alternative (leaving the music's channel silent until its next
   note) is what makes retro audio sound broken, and it is entirely avoidable.
+
+  *Built so far:* the Game Boy driver takes the channel, suppresses the music's
+  writes to it, and hands it back silent — the music picks it up at its next
+  note. Restoring the interrupted note needs a shadow of every register on every
+  channel, kept every tick, to close a gap of a few ticks; it is worth doing and
+  it is not done yet. What *is* done is the part that cannot be added later
+  without breaking the proof: the music's own channels are untouched, `NR51` is
+  merged rather than stored, and with nothing preempting, the register stream is
+  exactly the schedule's (doc 16 §Two streams, one clock).
 - **What to steal is an arrangement decision, not a runtime accident.** Stealing
   the percussion channel for 200 ms is inaudible; stealing the melody is the most
   audible thing the driver can do. So the music demaker's channel plan (doc 17
@@ -216,6 +225,14 @@ wants a **bank**: many effects sharing one driver, one envelope-table space, and
 one index, emitted through `gen` as `bin` / `asm` / `c` / `rom` — where the `rom`
 harness is a small program that fires each effect in turn, which is exactly what
 the proof loop needs anyway.
+
+*Built:* a Demotic game is that bank. `demake build` demakes every `sound` the
+`.dmt` names, packs them behind one index, and emits one driver that plays any of
+them under the music (doc 16 §Two streams, one clock); `packages/demotic/test/
+audio.test.ts` fires one from a button press and diffs what the chip received
+against the effect's own schedule. An effect fitted for a game is fitted to the
+game's driver rate rather than to the standalone 240 Hz — `SfxOptions.rateHz` —
+because one timer produces one rate.
 
 `--variations N` produces a set of related effects from one source by perturbing
 pitch and decay within bounded ranges (the four coin sounds, the three footsteps)

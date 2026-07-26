@@ -302,11 +302,14 @@ Named so the shape stays honest, and roughly in the order they would arrive.
   a real game does, any design would be speculative.
 - **Art that overhangs its collision box**, with the anchoring rules that implies.
 - **Multiple `.dmt` sources**, and `include` in Demotic itself.
-- **Audio.** The demakers are designed (docs [16](16-audio-engine.md)–[18](18-sound-demaker.md)),
-  and the split they land on is the one this document already draws for art: a
-  `music <name>` block would say which file, which console options and which
-  budget — never which notes. What it waits on is the Demotic side (doc 17
-  §Demotic), because a build file that named a track no game could play would be
-  configuration for nothing.
+- **Audio settings.** The Demotic side is built — a `.dmt` names its music and
+  its effects, and `demake build` demakes both into the cartridge (doc 14
+  §Sound). What has no build-file surface yet is the *how*: an `[audio]` block
+  saying which arranger strategy, which channels to reserve, which effort level
+  and which cartridge budget — never which notes, exactly as an `[art]` block
+  never says which pixels. Today those are the demakers' defaults, chosen by the
+  game's console rather than by anything a build file said, which keeps the
+  operational rule intact (a Demakefile may not change how a game plays) with no
+  work at all.
 - **Custom target inheritance** (`target md-pal extends md`). Two nearly-identical
   targets is not yet enough duplication to justify the concept.

@@ -112,9 +112,11 @@ test("the ROM the page builds is byte-identical to the CLI's", async ({ page }) 
   });
   // Every asset the program names, rather than a list: the page loads what the
   // game asks for, so a list here would only ever be a way to compare a ROM
-  // built with art against one built without it.
+  // built with art against one built without it. Music and effects are in that
+  // set too — the cartridge the page hands you has its soundtrack demade into
+  // it, and a Node build without one would differ by five kilobytes.
   const assets = new Map<string, Uint8Array>();
-  for (const name of program.assets) {
+  for (const name of [...program.assets, ...program.tracks, ...program.sounds]) {
     assets.set(name, new Uint8Array(await readFile(join(games, name))));
   }
   const expected = buildGbRom(program, { title: "caves", assets }).bytes;

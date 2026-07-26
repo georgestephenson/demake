@@ -22,6 +22,7 @@ import type { Program } from "../program.js";
 
 import { analyze, type Analysis } from "./analyze.js";
 import { bindArt } from "./art.js";
+import { bindAudio, effectIndices, trackForScene, type BoundAudio } from "./audio.js";
 import { Ctx } from "./ctx.js";
 import { emitProgram, type EmitOptions, type SpriteArt } from "./emit.js";
 import { BUILTIN_TILES } from "../rom/graphics.js";
@@ -44,6 +45,15 @@ export const HEADER_OFFSETS = GB_HEADER_OFFSETS;
  * it is the budget a scene's backdrop competes with the game's own art for.
  */
 export const TILE_SLOTS = 256;
+
+/**
+ * The first high-RAM byte the audio driver may use.
+ *
+ * After the OAM DMA kernel at `$FF80` and the VBlank flag the main loop waits
+ * on. High RAM because the driver runs on an interrupt and `ldh` is a byte
+ * shorter and a cycle faster than a full load.
+ */
+const HRAM_AUDIO = 0xff8b;
 
 /** What to stamp in the cartridge header, and what art to bind. */
 export interface RomOptions extends EmitOptions {
@@ -78,6 +88,25 @@ export interface RomStats {
   artTiles: number;
   /** Art the program names that no bytes were supplied for. */
   missingArt: readonly string[];
+  /** Tracks and effects the game plays, and what they cost. */
+  audio?: {
+    tracks: number;
+    effects: number;
+    /** Driver code bytes. */
+    code: number;
+    /** Packed schedule bytes. */
+    data: number;
+    /** Driver routines this game pulled in. */
+    helpers: readonly string[];
+    /** The tick rate the ROM's audio really runs at, in Hz. */
+    rateHz: number;
+    /** Writes an effect could not keep, because it borrows one channel. */
+    writesRestricted: number;
+    /** What the demakers reported: dropped parts, gestures, channels. */
+    notes: readonly string[];
+  };
+  /** Music and sound files the program names that no bytes were supplied for. */
+  missingAudio: readonly string[];
 }
 
 /** A built ROM, with the map a harness needs to read its state. */
@@ -154,9 +183,41 @@ export function buildGbRom(program: Program, options: RomOptions = {}): BuiltRom
         : "fewer objects, or smaller ones; every distinct 8x8 cell of art is a tile",
     );
   }
-  const emitOptions: EmitOptions = { ...art, ...stripUndefined(options) };
+  // Audio is demade here for the same reason art is: the browser and the CLI
+  // hand over the same source bytes, and every decision from arrangement to
+  // register encoding then happens in one place (doc 16 §Working on audio).
+  let bound: BoundAudio;
+  try {
+    bound = bindAudio(program, options.assets ?? new Map(), HRAM_AUDIO);
+  } catch (error) {
+    throw new BuildError(
+      "E_AUDIO",
+      `this game's audio could not be demade: ${(error as Error).message}`,
+      "the track or the effect is what to look at; `demake arrange` and `demake sfx` report the same failure on their own",
+    );
+  }
+  const audioOptions: EmitOptions = bound.driver
+    ? {
+        audio: bound.driver,
+        effectIndices: effectIndices(program, bound),
+        sceneTracks: trackForScene(program, bound),
+      }
+    : {};
+  const emitOptions: EmitOptions = { ...art, ...audioOptions, ...stripUndefined(options) };
 
   const ctx = new Ctx(program, analysis, layout, getProfile(program.profile.id), 0);
+  // Set whenever the program *names* audio, driver or no driver: a rule still
+  // records the sound it asked for, so a build with the files left out traces
+  // identically to one with them in.
+  if (program.tracks.length > 0 || program.sounds.length > 0) {
+    ctx.audio = {
+      driver: bound.driver !== undefined,
+      music: bound.driver?.request.music ?? 0,
+      request: bound.driver?.request.sfx ?? 0,
+      trace: layout.sound,
+      effects: emitOptions.effectIndices ?? program.sounds.map(() => -1),
+    };
+  }
   let code: Uint8Array;
   try {
     emitProgram(ctx, emitOptions);
@@ -198,6 +259,21 @@ export function buildGbRom(program: Program, options: RomOptions = {}): BuiltRom
       helpers: ctx.helperNames(),
       artTiles: art.tiles8,
       missingArt: art.missing,
+      ...(bound.driver === undefined
+        ? {}
+        : {
+            audio: {
+              tracks: bound.driver.stats.tracks,
+              effects: bound.driver.stats.effects,
+              code: bound.driver.stats.code,
+              data: bound.driver.stats.data,
+              helpers: bound.driver.stats.helpers,
+              rateHz: bound.driver.stats.rate.num / bound.driver.stats.rate.den,
+              writesRestricted: bound.driver.stats.writesRestricted,
+              notes: bound.notes,
+            },
+          }),
+      missingAudio: bound.missing,
     },
   };
 }

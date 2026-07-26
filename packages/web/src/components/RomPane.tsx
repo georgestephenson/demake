@@ -21,8 +21,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import { buildGbRom, romReady, unsupportedFeatures, type Program } from "@demake/demotic";
 import { Gameboy, SCREEN_HEIGHT, SCREEN_WIDTH, type Button } from "@demake/dmg";
 
-import { demoAssetBytes } from "../lib/demo-game.js";
+import { demoAssetBytes, demoAudioBytes } from "../lib/demo-game.js";
 import { download } from "../lib/download.js";
+import { audioSupported, RomAudio } from "../lib/rom-audio.js";
 
 /** The portable button set maps one for one onto the Game Boy's. */
 const BUTTONS: Readonly<Record<string, Button>> = {
@@ -43,18 +44,54 @@ export function RomPane({
   name,
   held,
   latched,
+  restarts,
 }: {
   program: Program | undefined;
   name: string;
   held: { current: Set<string> };
   latched: { current: Set<string> };
+  /**
+   * Bumped by the section's Restart button.
+   *
+   * The pane has no Restart of its own: with the cartridge as the default view,
+   * two buttons a few centimetres apart doing the same thing to two different
+   * machines is a worse answer than one that restarts what you are looking at.
+   */
+  restarts: number;
 }) {
   const canvas = useRef<HTMLCanvasElement | null>(null);
   const machine = useRef<Gameboy | null>(null);
   const [cost, setCost] = useState<number | null>(null);
+  // The player, and whether the user has asked for it. It lives in a ref so the
+  // frame loop can read it without being rebuilt every time it is toggled, and
+  // it is created on the first click because a browser will not start an
+  // `AudioContext` without a user gesture.
+  const player = useRef<RomAudio | null>(null);
+  // Two states, because they are two different facts. `sound` is what the
+  // *listener* asked for and flips the moment they ask; `playing` is whether the
+  // device is really running, which is the browser's decision and can arrive
+  // later or never — Firefox resolves `resume()` before the state flips, and a
+  // machine with no audio device never flips it at all. Reporting the first as
+  // if it were the second is how a button comes to lie in one browser.
+  const [sound, setSound] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  // The music and the effects are binary and are fetched rather than bundled,
+  // so the build waits for them. It waits rather than building without them
+  // because a cartridge missing its audio would not be the one `demake build`
+  // writes, and that is the one thing this pane promises.
+  const [audio, setAudio] = useState<Map<string, Uint8Array> | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    void demoAudioBytes().then((bytes) => {
+      if (live) setAudio(bytes);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const built = useMemo(() => {
-    if (!program) return { rom: undefined, layout: undefined, error: undefined };
+    if (!program || !audio) return { rom: undefined, layout: undefined, error: undefined };
     const missing = unsupportedFeatures(program);
     if (missing.length > 0) {
       return {
@@ -68,7 +105,9 @@ export function RomPane({
     try {
       // The bundled art goes in as *source bytes*: the conversion happens
       // inside the build, so the page and the CLI cannot diverge on it.
-      const result = buildGbRom(program, { title: name, assets: demoAssetBytes() });
+      const assets = demoAssetBytes();
+      for (const [file, bytes] of audio) assets.set(file, bytes);
+      const result = buildGbRom(program, { title: name, assets });
       return { rom: result.bytes, layout: result.layout, error: undefined };
     } catch (error) {
       return {
@@ -77,7 +116,7 @@ export function RomPane({
         error: String((error as Error).message ?? error),
       };
     }
-  }, [program, name]);
+  }, [program, name, audio]);
 
   const { rom, layout } = built;
 
@@ -86,8 +125,8 @@ export function RomPane({
       machine.current = null;
       return;
     }
-    const gameboy = new Gameboy(rom);
-    machine.current = gameboy;
+    machine.current = new Gameboy(rom);
+    player.current?.attach(machine.current);
     const element = canvas.current;
     const context = element?.getContext("2d");
     if (!context) return;
@@ -99,29 +138,52 @@ export function RomPane({
     let lastTick = 0;
     const image = context.createImageData(SCREEN_WIDTH, SCREEN_HEIGHT);
 
+    /** One Game Boy frame, with the pad and the tick bookkeeping around it. */
+    const runFrame = (gameboy: Gameboy) => {
+      const down: Button[] = [];
+      for (const action of held.current) if (BUTTONS[action]) down.push(BUTTONS[action]);
+      for (const action of latched.current) if (BUTTONS[action]) down.push(BUTTONS[action]);
+      gameboy.setButtons(down);
+      gameboy.runFrame();
+      sinceTick += 1;
+      const tick = romReady(layout, (address, length) => gameboy.readMemory(address, length));
+      if (tick !== lastTick) {
+        lastTick = tick;
+        latched.current.clear();
+        setCost(sinceTick);
+        sinceTick = 0;
+      }
+    };
+
     const frame = (now: number) => {
       raf = requestAnimationFrame(frame);
-      // Real hardware time, not wall-clock catch-up: a game that needs three
-      // frames per tick should *look* like it needs three frames per tick.
-      accumulator += Math.min(now - last, 250);
-      last = now;
-      const step = 1000 / FRAME_RATE;
+      // Read the machine each frame rather than closing over it, so Reset
+      // actually resets and a stream stays attached to the machine that is
+      // running.
+      const gameboy = machine.current;
+      if (!gameboy) return;
+      const audio = player.current?.active === true ? player.current : null;
 
-      let budget = 4;
-      while (accumulator >= step && budget-- > 0) {
-        const down: Button[] = [];
-        for (const action of held.current) if (BUTTONS[action]) down.push(BUTTONS[action]);
-        for (const action of latched.current) if (BUTTONS[action]) down.push(BUTTONS[action]);
-        gameboy.setButtons(down);
-        gameboy.runFrame();
-        accumulator -= step;
-        sinceTick += 1;
-        const tick = romReady(layout, (address, length) => gameboy.readMemory(address, length));
-        if (tick !== lastTick) {
-          lastTick = tick;
-          latched.current.clear();
-          setCost(sinceTick);
-          sinceTick = 0;
+      if (audio) {
+        // Audio has no tolerance for a late buffer, so with sound on the device
+        // is the clock: run until the chip has produced what the player still
+        // needs. The wall clock is reset alongside it, or turning sound off
+        // would leave a backlog to sprint through.
+        let budget = 8;
+        while (budget-- > 0 && audio.demand() > 0) runFrame(gameboy);
+        audio.flush();
+        last = now;
+        accumulator = 0;
+      } else {
+        // Real hardware time, not wall-clock catch-up: a game that needs three
+        // frames per tick should *look* like it needs three frames per tick.
+        accumulator += Math.min(now - last, 250);
+        last = now;
+        const step = 1000 / FRAME_RATE;
+        let budget = 4;
+        while (accumulator >= step && budget-- > 0) {
+          runFrame(gameboy);
+          accumulator -= step;
         }
       }
 
@@ -131,22 +193,50 @@ export function RomPane({
 
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [rom, layout, held, latched]);
+  }, [rom, layout, held, latched, restarts]);
+
+  // The context outlives every ROM built in the section, and is closed once.
+  useEffect(() => () => player.current?.close(), []);
+
+  const toggleSound = useCallback(() => {
+    if (!audioSupported()) return;
+    let audio = player.current;
+    if (!audio) {
+      audio = new RomAudio();
+      player.current = audio;
+      const created = audio;
+      created.watch(() => setPlaying(created.active));
+    }
+    if (sound) {
+      setSound(false);
+      void audio.suspend(machine.current).then(() => setPlaying(audio.active));
+      return;
+    }
+    // The click *is* the gesture a browser wants before it will start a
+    // context, which is the whole reason this is a button and not a default.
+    setSound(true);
+    void audio
+      .resume()
+      .then(() => {
+        if (machine.current) audio.attach(machine.current);
+        setPlaying(audio.active);
+      })
+      .catch(() => setPlaying(false));
+  }, [sound]);
 
   const save = useCallback(() => {
     if (rom) download(`${name}.gb`, rom);
   }, [rom, name]);
-
-  const reset = useCallback(() => {
-    if (rom) machine.current = new Gameboy(rom);
-  }, [rom]);
 
   if (!rom) {
     return (
       <div class="rom-pane">
         <h3>The cartridge</h3>
         <p class="hint" data-testid="rom-unavailable">
-          {built.error ?? "Fix the errors above and a ROM will build."}
+          {built.error ??
+            (program && !audio
+              ? "Demaking this game\u2019s music and effects\u2026"
+              : "Fix the errors above and a ROM will build.")}
         </p>
       </div>
     );
@@ -165,8 +255,14 @@ export function RomPane({
         aria-label="The game, running as a Game Boy ROM"
       />
       <div class="rom-toolbar">
-        <button type="button" onClick={reset}>
-          Reset
+        <button
+          type="button"
+          data-testid="rom-sound"
+          aria-pressed={sound}
+          onClick={toggleSound}
+          disabled={!audioSupported()}
+        >
+          {sound ? "Sound on" : "Sound off"}
         </button>
         <button type="button" data-testid="rom-download" onClick={save}>
           Download {name}.gb
@@ -183,7 +279,16 @@ export function RomPane({
         <code>demake build</code>
         &rsquo;s. Your game is machine code here, not a table an interpreter walks: it runs at
         hardware speed, and the frames-per-tick figure is the measured cost on an SM83.
+        {sound
+          ? " The sound is the cartridge's own APU, rendered by the same chip model the CLI writes WAVs with — the page synthesizes nothing."
+          : ""}
       </p>
+      {sound && !playing ? (
+        <p class="hint" data-testid="rom-sound-blocked">
+          Your browser has not started audio yet. Click the screen, or check that this tab is
+          allowed to play sound.
+        </p>
+      ) : null}
     </div>
   );
 }

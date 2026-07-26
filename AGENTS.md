@@ -19,6 +19,11 @@ real emulator, compared pixel for pixel):
 | music (`arrange`)     | 16, 17 | MIDI → chip music, six consoles — and a Game Boy ROM that plays it |
 | sound (`sfx`)         | 16, 18 | WAV → chip effects, six consoles — same ROM, same proof            |
 
+The four are not four tools that share a repo any more: a `.dmt` says
+`music theme.mid` and `sound bounce.wav on ball hits paddle`, and `demake build`
+demakes the art, the track and the effects into one 32 KiB cartridge (doc 14
+§Sound, doc 16 §Two streams, one clock).
+
 Every domain has the same shape, which is why they share a repo: **constrain →
 fit → emit → prove it on emulated hardware**. Each reuses the layer below — a
 game's sprites are demade by the image pipeline, its ROM assembled by the same
@@ -94,6 +99,11 @@ tick, with no tolerance (`packages/audio/test/rom.test.ts`). That is the audio
 counterpart of the pixel-perfect emulator E2E, and it is sharper, because the
 artifact _is_ the schedule.
 
+`demake build` then puts that driver _inside a game_: a track per scene, an
+effect per event, one timer serving both, and the same proof one level up —
+`packages/demotic/test/audio.test.ts` boots a cartridge that is playing a game
+and diffs every register write against the schedules the demakers produced.
+
 Still to come for audio: `bin`/`asm`/`c` emit, driver backends for the other
 consoles (each needs a CPU encoder or a checked-in driver source, plus a core to
 prove it in), Level B sample comparison against third-party cores, the remaining
@@ -130,7 +140,8 @@ tools/toolchains/    provisioners (cached): RGBDS, cc65, WLA-DX, SameBoy source 
                      mednafen_pce_fast, mednafen_wswan)
 packages/dmg/        @demake/dmg — a self-hosted Game Boy core: the Demotic and audio
                      conformance harnesses in Vitest, and the web app's in-page
-                     player (doc 07: no CDN). Its APU is @demake/chip's, not a second one
+                     player (doc 07: no CDN). Its APU is @demake/chip's, not a
+                     second one, and `audioSink` is where its output goes
 packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs 14, 15)
   src/lang/          lex → parse → flat statement AST (one statement per line, no nesting)
   src/compile.ts     AST + console profile → resolved Program tables (constants folded)
@@ -142,13 +153,16 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
   src/rom/           the console hand-off: table format, expression bytecode, the
                      built-in tile bank and the trace readers
   src/codegen/       the console backend: SM83 assembler, analysis, RAM layout,
-                     expression/rule/level emitters, and the `gb` ROM builder
+                     expression/rule/level emitters, the `gb` ROM builder, and
+                     audio.ts — the hand-off to @demake/audio, art.ts's twin
   demo/              terminal runner (play.mjs) and test runner (test.mjs)
 packages/chip/       @demake/chip — every sound chip as a register-driven model (doc 16)
   src/gb-apu.ts      Game Boy APU: 2 pulse + wave + noise, envelopes, panning
   src/sn76489.ts     the SMS/GG/SG-1000 PSG: no envelopes, ~109 Hz pitch floor
   src/nes-apu.ts     the 2A03: volume-less triangle, non-linear mixing
   src/mix.ts         exact box-integration render, DC block, the one renderer
+  src/stream.ts      the same renderer for a chip that is still running: the
+                     ring buffer the web app's ROM pane plays from
 packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 18)
   src/score/         Score: the hardware-free representation, and the MIDI parser
   src/analysis.ts    roles, salience, sections, loop choice
@@ -157,7 +171,8 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
   src/timing.ts      absolute row placement: the tempo guarantee lives here
   src/sfx/           gesture families, class gate, hardware-in-the-loop fitting
   src/rom/           the console hand-off: schedule packing + the generated SM83
-                     driver, assembled into a bootable cartridge (doc 16)
+                     driver (doc 16). One stream player, two callers: the
+                     cartridge (gb.ts) and the driver a game embeds (gb-game.ts)
   src/dsp.ts         deterministic FFT/resampler/pitch, all on core's kernels
   src/render.ts      ChipScript → PCM; the only way anything makes sound
 tools/eslint-rules/  custom ESLint rules: platform-purity + determinism
@@ -241,6 +256,10 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   `buildGbRom({ assets })` hands the bytes to `@demake/core`; everything about
   pixels is decided in `packages/core/src/pipeline/sprite.ts`. A second converter
   in `@demake/demotic` is how the browser and the CLI stop agreeing.
+- **And music and effects are demade by the audio engine, the same way.** The
+  same `assets` map carries `.mid` and `.wav` bytes, `codegen/audio.ts` hands
+  them to `@demake/audio`, and the driver that plays them is `@demake/audio`'s
+  too. `@demake/demotic` owns no notes, no registers and no second arranger.
 - **A backend gap is a build error, never a silent difference.** If the backend
   cannot do what a `.dmt` asks for, `unsupportedFeatures` names it and the build
   stops. A cartridge that plays a different game from the preview would make the
@@ -315,6 +334,18 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   it cannot fold into an initial value, and a `.test.dmt` assertion may not call
   it. The seed is a `.dmt` statement and never a Demakefile setting — a different
   seed is a different game.
+- **A `sound` fires on a rule's trigger, and `touches` is the wrong one.** A
+  level trigger fires every tick of the contact, so a one-shot hung on it
+  restarts every tick and stutters; bounces and pickups want `hits`. And a
+  `sound` whose trigger exactly matches an existing rule is _merged into it_ by
+  the compiler — same tick either way, and the difference between thirty bytes
+  and four and a half kilobytes when the trigger is a collision over nine aliens.
+- **Audio costs cartridge the way a backdrop costs tiles.** A track is a few
+  kilobytes of register schedule on a machine with 32 KiB and no mapper, which is
+  why the shooter's theme is two bars and the platformer's is eight. Every
+  fixture is held above a kilobyte of headroom by `audio.test.ts`, because a
+  fixture built to the last hundred bytes turns the next codegen change into a
+  mystery.
 - **New language features come from the example library, not from theory**
   (`packages/demotic/fixtures/games/`). Each example is there for something the
   others do not exercise; `touches`, the `reaches` crossing rule and `visible`'s
@@ -329,6 +360,27 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
 - **Every suite opens with `press a`,** because every game opens on its title
   screen. It is one line of ceremony in exchange for the title screen being part
   of what the suite checks rather than something it routes around.
+
+## Writing music and sounds for the example library
+
+Same bargain as the art: hand the demakers what a modern game would have and let
+them do the work. Generators live in the session scratchpad; the `.mid` and
+`.wav` files are the artefact.
+
+- **Do not write chip music.** The MIDIs are four-part arrangements — bass,
+  chords, melody, drum kit — because the arranger's whole job is choosing what to
+  do when there are more parts than channels. A two-voice MIDI proves nothing and
+  hides every interesting decision.
+- **Do not synthesize square waves for effects either.** The sounds are built
+  from harmonics, filtered noise and decay envelopes, so the class gate has
+  something to classify and the gesture tournament has something to choose
+  between. A source that is already a chip blip makes the sound demaker look
+  perfect and tests nothing.
+- **Length is the cost.** Bars are cartridge: eight bars of four parts is around
+  five kilobytes of schedule, and a game with 4 KB free gets two bars. Check the
+  headroom before making a tune longer.
+- **The generator must be deterministic** — no `Math.random` for the noise bed —
+  or regenerating the fixtures changes the goldens for no reason.
 
 ## Drawing art for the example library
 
@@ -460,6 +512,23 @@ that keep them from being undone. All of them come from doc 16.
   `OscillatorNode`, no filters, no worklet DSP. Construct the `AudioContext` with
   an explicit `{ sampleRate: 48000 }` or the browser resamples the buffer on its
   own terms, differently per engine.
+- **A live stream is the same renderer, not a second one.** `StreamSink`
+  (`@demake/chip`) box-integrates a _running_ chip into a ring buffer with the
+  same boundary arithmetic and the same DC blocker the offline render uses, and
+  `packages/chip/test/stream.test.ts` pins them as bit-identical in any chunk
+  size. Two details are load-bearing and easy to undo: the DC blocker's state
+  carries across calls (restarting it per chunk is sixty clicks a second), and
+  the integrated value is rounded to single precision _before_ it reaches the
+  filter, because that is what filtering a `Float32Array` in place does.
+- **With sound on, the audio device clocks the emulator.** The ROM pane runs
+  frames until the chip has produced the samples the player still needs, not on
+  the frame clock: a tab whose display and audio clocks differ by a few ppm
+  drifts into a click every few minutes otherwise.
+- **Sound is the cartridge's, never the preview's.** The interpreter says _when_
+  a sound is asked for (the trace's `audio` field) and knows nothing about chips,
+  channels or registers — a `.dmt` names none of them. So the page's sound
+  control lives in the cartridge view and the preview has none, which is the
+  honest way to say a simulator has nothing to play.
 - **Lossless carries the guarantee; lossy does not.** WAV and FLAC are
   sample-exact and byte-golden. M4A/Opus/MP3 are convenience exports and must be
   labelled as approximations everywhere they appear — the project does not make
@@ -489,6 +558,21 @@ that keep them from being undone. All of them come from doc 16.
   on tick N the driver performs exactly the writes `ChipScript.ticks[N]` lists,
   in order. Blocks, dedup, the order list and the opcodes can all change freely;
   what may not change is the register stream, and `rom.test.ts` is what says so.
+- **A game has one interrupt, so it has one rate.** Music and effects both step
+  on the timer, so the game states the rate (`arrange`'s `driverHz`, `sfx`'s
+  `rateHz`) and every piece is fitted to it through the binding's own `fitRate`.
+  Never let a game's two streams pick rates independently and reconcile them
+  afterwards: `buildGameAudio` refuses schedules that disagree, and that refusal
+  is the design, not a limitation.
+- **The chip is initialised once, at boot, not at the head of every stream.** An
+  effect that re-ran the power-up writes would silence the music each time it
+  fired. That is why `performed` exists on a game's driver: the schedules the ROM
+  really plays are the ones with the boot prefix taken off and an effect narrowed
+  to its own channel, and it is what the conformance harness must diff against.
+- **`NR51` is merged, never stored, whenever two streams share the chip.** One
+  byte carries every channel's panning. Each stream keeps a shadow and the driver
+  folds them under the steal mask, which is what makes the register stream exactly
+  the schedule's when nothing is preempting — the whole proof rests on that.
 - **Anything that stores a driver rate must store the register that makes it.**
   A `ChipScript` carries the reload (`divisor`) as well as the exact rate,
   because a ROM programs a register and re-deriving one from a rational would be
@@ -528,6 +612,12 @@ Two files plus fixtures (doc 02 §Extensibility):
   and diffs the register writes the APU receives against the `ChipScript`, tick
   for tick. Ticks are attributed by watching the driver's `Tick` symbol, so
   nothing is added to the ROM to make it observable. Also toolchain-free.
+- The game-audio conformance suite (`packages/demotic/test/audio.test.ts`) is
+  doc 16's Level A for a cartridge that is also playing a game: it boots a built
+  `.gb` in `@demake/dmg`, watches `AudioTick` by program counter, and diffs the
+  writes the APU receives against the schedules the demakers produced — the
+  music's when nothing preempts, the effect's own channel while one does. Also
+  toolchain-free, and it is the file to run when touching either driver.
 - The pixel-perfect emulator E2E (`packages/cli/test/emu.e2e.test.ts`, doc 10)
   boots the ROM in SameBoy and asserts the framebuffer matches the DAC reference
   byte-for-byte; it self-skips without the capturer, so run `pnpm emulator`

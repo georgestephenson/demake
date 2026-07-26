@@ -62,8 +62,9 @@ describe("determinism", () => {
   it("runs the same source on every console without recompilation of the source text", () => {
     for (const id of ["gb", "gbc", "nes", "sms", "gg", "md", "snes"]) {
       const output = traceFor(id, "1:a,60:");
-      // Two header lines plus one line per tick.
-      expect(output.split("\n")).toHaveLength(2 + 61);
+      // Three header lines — the third names the audio field, which pong has
+      // since it has music — plus one line per tick.
+      expect(output.split("\n")).toHaveLength(3 + 61);
       expect(output).toContain(`console=${id}`);
     }
   });

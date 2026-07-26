@@ -840,15 +840,34 @@ main.docs-layout {
    neighbour scaled: this pane's whole job is to be the hardware, not a
    prettier version of it. */
 
-.rom-pane {
-  margin-top: 1.25rem;
-  border-top: 1px solid var(--line);
-  padding-top: 1rem;
+/* The two machines share a row when the view asks for both, and each takes the
+   whole pane otherwise. The cartridge is the default view, so it is the one
+   that has to look right on its own. */
+.game-views {
+  display: grid;
+  gap: 1.25rem;
 }
 
+.game-views[data-view="both"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .game-views[data-view="both"] {
+    grid-template-columns: 1fr;
+  }
+}
+
+.game-view h3,
 .rom-pane h3 {
   margin: 0 0 0.5rem;
   font-size: 0.95rem;
+}
+
+.game-view,
+.rom-pane {
+  min-width: 0;
 }
 
 .rom-canvas {

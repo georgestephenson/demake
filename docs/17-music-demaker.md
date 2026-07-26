@@ -491,35 +491,44 @@ Sources for the corpus are public-domain or purpose-made, checked in; anything
 local and unlicensed goes in a gitignored directory the way
 `tools/prep-eval/local/` already works.
 
-## Demotic integration — a proposal, not a decision
+## Demotic integration — decided, and built
 
-A game will eventually want music, and the natural shape is that a `.dmt` names a
-track and the Demakefile says how it is demade — precisely the split doc 14
-already draws for art (*Demotic describes the game; the Demakefile describes the
-build*).
+The shape is **Option B**: a `.dmt` names a track and an effect, and the demakers
+decide everything about what the hardware does with them — precisely the split
+doc 14 already draws for art (*Demotic describes the game; the Demakefile
+describes the build*).
 
-**Adding a statement to Demotic is a language change, and AGENTS.md makes that
-the maintainer's call, not an agent's.** So this section states the options and
-their trade-offs and stops.
+```
+music rally.mid in play
+sound bounce.wav on ball hits paddle
+```
 
-- **Option A — scene music only.** A `music <file>` statement scoped to a scene.
-  Smallest possible surface; no new expression semantics; covers the common case.
-  Cannot express "the music changes when the boss appears".
-- **Option B — music plus effect triggers.** Add `sound <file> on <trigger>`,
-  reusing the existing rule triggers verbatim (`hits`, `touches`, `reaches`). One
-  new statement, no new trigger machinery. This is the shape most games actually
-  need.
-- **Option C — audio as an action inside rules.** Rejected on inspection: Demotic
-  rules assign properties (`when … (prop) as expr`), and "play a sound" is not a
-  property assignment. Fitting it in would either distort the rule form or
-  introduce a second kind of rule.
+`music` is scoped to a scene: entering it starts the track, leaving it stops it.
+`sound` takes `when`'s own triggers, verbatim — collisions, button edges,
+`reaches`, plain conditions, narrowed by `in` and guarded by `if` — so there is
+one trigger vocabulary in the language and no second one to keep in step. What a
+`sound` has no room for is `then`, which is the reason it is a statement of its
+own: Demotic rules assign properties, and "play a sound" is not a property
+assignment. Fitting it into the rule form would have meant `then` meaning two
+things (the option this section used to call C, rejected then and still).
 
-Whatever the shape, one consequence is not optional and should be decided with
-the surface: **audio events must join the conformance trace.** If the ROM and the
-reference interpreter can disagree about *when* a sound fires, they are two
-implementations of the game again, and the trace oracle would not catch it. The
-trace would carry event names per tick — not audio — which keeps it diffable and
-keeps `.test.dmt` able to assert on it.
+Doc 14 §Sound is the language reference for both. Three consequences of the
+decision live elsewhere and are worth naming here:
+
+- **Audio events are in the conformance trace.** A trace line carries
+  `audio=<track>,<effect>` — the track the scene asks for, and the effect a rule
+  asked for on this tick. It records the *request*, not what the chip did: which
+  channel an effect actually got is hardware arbitration, the way sprite priority
+  is, but *when* a sound fires is the game, and an interpreter and a ROM that
+  could disagree about it would be two games again.
+- **A sound with a trigger a rule already has rides that rule**, merged in the
+  compiler so both implementations agree about the order requests are made in.
+  Unmerged, a `sound … on shot hits alien` next to the rule that scores the hit
+  costs a second pass over every shot-and-alien pair.
+- **Music and effects share one interrupt**, so a game states the driver rate and
+  every piece is fitted to it. `ArrangeOptions.driverHz` and `SfxOptions.rateHz`
+  exist for that and for nothing else; doc 16 §Two streams, one clock has the
+  rest of the mechanism.
 
 ## Performance
 

@@ -246,6 +246,10 @@ function parseStatement(cursor: Cursor): Stmt {
       return parseCamera(cursor);
     case "backdrop":
       return parseBackdrop(cursor);
+    case "music":
+      return parseMusic(cursor);
+    case "sound":
+      return parseSound(cursor);
     case "create":
       return parseCreate(cursor);
     case "control":
@@ -256,7 +260,7 @@ function parseStatement(cursor: Cursor): Stmt {
       throw cursor.fail(
         "E_UNKNOWN_STATEMENT",
         `unknown statement '${token.raw}'`,
-        "statements start with start, seed, scene, level, stream, backdrop, camera, create, control, or when",
+        "statements start with start, seed, scene, level, stream, backdrop, music, sound, camera, create, control, or when",
       );
   }
 }
@@ -371,6 +375,52 @@ function parseBackdrop(cursor: Cursor): Stmt {
   let scene: string | undefined;
   if (cursor.eatKeyword("in")) scene = cursor.expectIdent("a scene name").value;
   return { kind: "backdrop", file: file.raw, ...(scene ? { scene } : {}), line };
+}
+
+/** `music <file> [in <scene>]` */
+function parseMusic(cursor: Cursor): Stmt {
+  const line = cursor.peek().line;
+  cursor.next();
+  const file = cursor.expectIdent("a music filename");
+  let scene: string | undefined;
+  if (cursor.eatKeyword("in")) scene = cursor.expectIdent("a scene name").value;
+  return { kind: "music", file: file.raw, ...(scene ? { scene } : {}), line };
+}
+
+/**
+ * `sound <file> on <trigger> [in <scene>] [if <expr>]`
+ *
+ * The trigger is parsed by `when`'s own parser, so the two can never drift into
+ * accepting different things — which is the point of reusing them rather than
+ * inventing a smaller set for sounds.
+ */
+function parseSound(cursor: Cursor): Stmt {
+  const line = cursor.peek().line;
+  cursor.next();
+  const file = cursor.expectIdent("a sound filename");
+  if (!cursor.eatKeyword("on")) {
+    throw cursor.fail(
+      "E_SYNTAX",
+      "a sound needs something to fire it",
+      "e.g. `sound bounce.wav on ball hits paddle`",
+    );
+  }
+  const event = parseEvent(cursor);
+
+  let scene: string | undefined;
+  if (cursor.eatKeyword("in")) scene = cursor.expectIdent("a scene name").value;
+
+  let guard: Expr | undefined;
+  if (cursor.eatKeyword("if")) guard = parseExpr(cursor, 0);
+
+  return {
+    kind: "sound",
+    file: file.raw,
+    event,
+    ...(scene ? { scene } : {}),
+    ...(guard === undefined ? {} : { guard }),
+    line,
+  };
 }
 
 function parseCreate(cursor: Cursor): Stmt {

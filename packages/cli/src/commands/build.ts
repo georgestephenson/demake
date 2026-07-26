@@ -18,7 +18,6 @@
 import { dirname, join } from "node:path";
 
 import {
-  artRequests,
   buildGbRom,
   BuildError,
   compile,
@@ -78,21 +77,30 @@ function loadLevels(env: CliEnv, source: string, path: string): Record<string, s
 }
 
 /**
- * Load the art a program names, next to the source that named it.
+ * Load the assets a program names, next to the source that named it.
  *
- * Missing art is not an error here: the build reports it and falls back to the
- * built-in block, which is a far better outcome than refusing to produce a
- * playable cartridge because one sprite was renamed. What must never happen is
- * a *different* fallback in the browser, which is why both edges hand the same
- * bytes to the same converter and neither converts anything itself.
+ * Art, music and sound effects all arrive the same way, because the build
+ * converts all three itself: the edge's only job is to find bytes for a name.
+ *
+ * Missing assets are not an error here: the build reports them and falls back —
+ * to the built-in block for art, to silence for audio — which is a far better
+ * outcome than refusing to produce a playable cartridge because one sprite was
+ * renamed. What must never happen is a *different* fallback in the browser,
+ * which is why both edges hand the same bytes to the same converters and
+ * neither converts anything itself.
  */
 function loadAssets(env: CliEnv, program: Program, path: string): Map<string, Uint8Array> {
   const assets = new Map<string, Uint8Array>();
   if (path === "<stdin>") return assets;
   const root = dirname(path);
-  for (const request of artRequests(program)) {
+  // `program.assets` rather than the art *requests*, because a request is per
+  // box and backdrops make none — loading only what `artRequests` names is how
+  // the CLI came to build cartridges with no title screen while the page built
+  // them with one, which is exactly the divergence this file exists to prevent.
+  const names = [...program.assets, ...program.tracks, ...program.sounds];
+  for (const name of names) {
     try {
-      assets.set(request.name, env.readFile(join(root, request.name)));
+      assets.set(name, env.readFile(join(root, name)));
     } catch {
       // Reported by the build, with every missing name at once.
     }
@@ -237,6 +245,19 @@ export async function runBuild(
     if (stats.missingArt.length > 0) {
       env.errOut(
         `note: no art found for ${stats.missingArt.join(", ")}; those objects draw as blocks\n`,
+      );
+    }
+    if (stats.audio) {
+      const { audio } = stats;
+      env.errOut(
+        `audio: ${audio.tracks} track(s), ${audio.effects} effect(s) at ` +
+          `${audio.rateHz.toFixed(2)} Hz — ${audio.code} bytes of driver, ${audio.data} of schedule\n`,
+      );
+      for (const note of audio.notes) env.errOut(`  ${note}\n`);
+    }
+    if (stats.missingAudio.length > 0) {
+      env.errOut(
+        `note: no audio found for ${stats.missingAudio.join(", ")}; the game plays without it\n`,
       );
     }
     if (program.warnings.length > 0) {

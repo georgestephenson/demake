@@ -107,6 +107,56 @@ A game the runtime cannot run — one with a level or a camera, today — gets a
 message naming the feature instead of a cartridge that would play something
 else.
 
+**The cartridge is what the pane opens on**, and the preview is a view you can
+choose: a `View` dropdown offers *Cartridge* (the default), *Preview*, or *Side
+by side*. The ordering is the argument. The ROM is the artifact — it is what
+`demake build` writes, what a player would load, and the thing the whole tool
+exists to produce; the interpreter is what *proves* it right, and a proof is
+something you ask to see. Side by side is the mode that earns its place: two
+machines, one input path, and any disagreement between them visible at a glance
+rather than inferred from a trace.
+
+Only the view on screen runs. A hidden preview is work nobody sees — the
+cartridge is machine code and never consults the interpreter — so the simulator's
+loop stops with it, and the input latch is cleared so a tap taken while it was
+hidden cannot fire a minute later when it comes back.
+
+### Sound in the cartridge pane *(built)*
+
+**Sound belongs to the cartridge, not to the preview**, and that is a fact about
+the two machines rather than a decision about the page. The interpreter is the
+language's specification: it says *when* a sound is asked for — that is the
+`audio=<track>,<effect>` field in a trace (doc 14 §Sound) — and it has no notion
+of a chip, a channel or a register, because those are the console's and the whole
+point of the language is that a `.dmt` names none of them. The cartridge has an
+APU. So the sound button lives in the cartridge view, the preview is silent, and
+in *Preview* there is no sound control at all — which is the honest way to say
+that a simulator has nothing to play.
+
+The ROM pane plays the cartridge's own sound, and every sample of it comes out of
+`@demake/chip`'s Game Boy APU — the same model the audio pipeline renders WAVs
+with, the same one the conformance suite diffs register writes against. The page
+computes nothing: `StreamSink` box-integrates and DC-blocks the chip's output
+exactly as the offline renderer does (`packages/chip/test/stream.test.ts` pins
+the two as bit-identical, in any chunk size), and what reaches Web Audio is a
+buffer.
+
+Three things about it are decisions rather than details:
+
+- **Nothing but an `AudioBufferSourceNode` is ever constructed**, and a
+  Playwright spec asserts it by recording the constructors before the app loads.
+  Not even a `GainNode`: muting is the context suspended and the stream detached,
+  because a graph with one node in it cannot grow a second implementation of the
+  hardware by accident.
+- **The audio device is the clock while sound is on.** The emulator runs until
+  the chip has produced the samples the player still needs, rather than on the
+  frame clock — a browser tab whose display and audio clocks differ by a few ppm
+  drifts into a click every few minutes otherwise. With sound off the frame
+  clock takes over again, unchanged.
+- **It is a button, off by default.** A browser will not start an `AudioContext`
+  without a user gesture, so a page that tried to start sound on its own would be
+  quiet and would have no way to say why; the click is the gesture.
+
 ### The audio sections
 
 Drop a track (or a sound) in, pick a console, press play, and hear exactly what

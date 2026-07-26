@@ -290,10 +290,14 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     remain.
   - **A3 — `sfx`** *(built for WAV; the Game Boy boots)*: eight gesture families, the class gate,
     deterministic coordinate descent with every candidate rendered through the
-    chip model, and the placement contract each effect declares. Outstanding:
-    banks, `--variations`, the driver-side stealing and restore, and the
-    bank-in-a-ROM E2E that proves them. A single effect already builds into a
-    cartridge and is proven by A2.5's Level A suite.
+    chip model, and the placement contract each effect declares. A single effect
+    builds into a cartridge and is proven by A2.5's Level A suite, and a Demotic
+    game is now the bank: every `sound` it names is demade, packed behind one
+    index and played under the music by one generated driver, with the same
+    proof one level up (`packages/demotic/test/audio.test.ts`). Outstanding:
+    `--variations`, standalone banks outside a game, and restoring the music's
+    interrupted note rather than handing the channel back silent (doc 18
+    §Stage 4).
   - **A4 — audio input**: the transcription front end (beat, percussion, bass,
     lead, harmony) with confidences, plus the decoders. *Done means*: an MP3
     becomes a playable cartridge, and the parts it found are reported honestly
@@ -306,9 +310,15 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     and a toolchain-free proof) or pair generated data with a checked-in driver
     source for a stock assembler (as the image harnesses do). Level A also needs
     a core we own or one that exposes scripted register access.
-  - **A6 — the surfaces**: the two web sections (doc 07), the desktop wiring, and
-    the Demotic integration *if and when the maintainer settles the language
-    surface* (doc 17 §Demotic — a proposal, not a decision).
+  - **A6 — the surfaces** *(Demotic done)*: the Demotic integration is settled
+    and built — `music` and `sound` are in the language, every example game has
+    a theme and effects, and the cartridge the page hands you is byte-identical
+    to the CLI's with the audio demade into it (doc 17 §Demotic integration).
+    The page also *plays* a cartridge now: the ROM pane pipes `@demake/dmg`'s
+    APU — which is `@demake/chip`'s — through a bare `AudioBufferSourceNode`,
+    with the audio device clocking the emulator (doc 07 §Sound in the cartridge
+    pane). Still to come: the two web sections of doc 07 — a music demaker and a
+    sound demaker of their own — and the desktop wiring.
 - **3D asset demake (new domain, exploratory)**: apply the same treatment to the
   32/64-bit 3D era — take a common modern 3D asset and emit PS1/N64/Saturn-
   compatible ones: polygon budgets and retopology, texture quantization through
@@ -329,5 +339,7 @@ Bun compile (Phase 1 spike) · final name confirmation (Phase 0) · MD 32X/Sega 
 "extended spec" inclusion (post-1.0) · Oklab L-weight and judge metric-weight
 calibration values (Phase 2, frozen thereafter) · initial candidate-portfolio
 composition per console class (Phase 2, revisited per tier rollout) · the four
-audio decisions in doc 16 §Open decisions (verb names, expansion sound chips,
-the Demotic audio surface, and the `.dmm` fallback format).
+audio decisions in doc 16 §Open decisions (verb names, expansion sound chips and
+the `.dmm` fallback format; ~~the Demotic audio surface~~ — **decided: `music`
+scoped to a scene and `sound` on a rule's trigger**, doc 17 §Demotic
+integration).

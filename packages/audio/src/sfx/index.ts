@@ -35,6 +35,15 @@ export interface SfxOptions {
   /** Channels the effect may use; one unless a caller insists. */
   channels?: number;
   title?: string;
+  /**
+   * Driver rate to fit the effect to, in Hz.
+   *
+   * An effect on its own gets {@link SFX_RATE_HZ}, which is chosen for how sharp
+   * an attack it can draw. An effect that has to play *alongside music* gets the
+   * game's rate instead, because one timer produces one rate and both streams
+   * step on it (doc 16 §Two streams, one clock).
+   */
+  rateHz?: number;
 }
 
 /** One family's best fit, with its score. */
@@ -76,7 +85,7 @@ export class SfxError extends Error {
 }
 
 /** The driver rate effects run at: fine enough for a sharp attack. */
-const SFX_RATE_HZ = 240;
+export const SFX_RATE_HZ = 240;
 const DEFAULT_MAX_LENGTH = 5;
 
 /** The cheap analysis the fitting loop scores against (doc 18 §Stage 3). */
@@ -104,7 +113,7 @@ export function demakeSfx(bytes: Uint8Array, options: SfxOptions): SfxResult {
     });
   }
 
-  const fit = binding.fitRate(SFX_RATE_HZ);
+  const fit = binding.fitRate(options.rateHz ?? SFX_RATE_HZ);
   const rate = fit.rate;
   const tickHz = rate.num / rate.den;
   const ticks = Math.max(1, Math.round(features.durationSeconds * tickHz));

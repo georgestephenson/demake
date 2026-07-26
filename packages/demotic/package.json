@@ -24,6 +24,7 @@
     "build": "tsc --build"
   },
   "devDependencies": {
+    "@demake/chip": "workspace:*",
     "@demake/dmg": "workspace:*"
   },
   "publishConfig": {
@@ -31,6 +32,7 @@
     "provenance": true
   },
   "dependencies": {
-    "@demake/core": "workspace:*"
+    "@demake/core": "workspace:*",
+    "@demake/audio": "workspace:*"
   }
 }

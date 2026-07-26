@@ -20,6 +20,7 @@ import type { Program } from "../src/program.js";
 import { buildGbRom, type RomOptions } from "../src/codegen/gb.js";
 import type { Layout } from "../src/codegen/layout.js";
 import { romReady, romTraceLine } from "../src/rom/trace.js";
+import { traceHeader } from "../src/trace.js";
 
 /** Abstract buttons map straight onto the Game Boy's, which is the floor the
  * portable set was chosen against (doc 14 §Buttons). */
@@ -99,10 +100,7 @@ export class RomRunner {
  */
 export function romTrace(program: Program, tape: InputTape, options: RomOptions = {}): string {
   const runner = new RomRunner(program, options);
-  const lines: string[] = [
-    `# demake-game trace v1 console=${program.profile.id}`,
-    `# props=x,y,xdirection,ydirection,speed,value units=16.16`,
-  ];
+  const lines: string[] = traceHeader(program);
   for (const frame of tape) {
     runner.step(frame);
     lines.push(runner.line());

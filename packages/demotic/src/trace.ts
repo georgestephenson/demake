@@ -26,7 +26,27 @@ import { ACTIONS } from "./program.js";
 /** Properties recorded per entity, in this order. Stable across versions. */
 const TRACED_PROPS = ["x", "y", "xdirection", "ydirection", "speed", "value"] as const;
 
-/** One tick of a trace. */
+/**
+ * Whether a program's traces carry an audio field.
+ *
+ * A game with no music and no effects traces exactly as it did before audio
+ * existed, which keeps every golden trace of one meaningful rather than
+ * re-baselined for a column of nothing.
+ */
+export function tracesAudio(program: Program): boolean {
+  return program.tracks.length > 0 || program.sounds.length > 0;
+}
+
+/**
+ * One tick of a trace.
+ *
+ * The audio field is `audio=<track>,<effect>`: the track the running scene asks
+ * for, and the effect a rule asked for on this tick (`-1` for neither). It is
+ * what the *game* requested, not what the chip did — doc 17 §Demotic requires
+ * audio events in the trace so the ROM and the interpreter cannot disagree about
+ * when a sound fires, and channel arbitration is no more the language's business
+ * than sprite priority is.
+ */
 export function traceLine(sim: Sim): string {
   const entities = sim
     .entities()
@@ -35,13 +55,29 @@ export function traceLine(sim: Sim): string {
       return `${entity.name}=${values.join(",")}`;
     })
     .join(" ");
-  return `${sim.tick} ${sim.scene} ${entities}`;
+  const audio = tracesAudio(sim.program) ? ` audio=${sim.music},${sim.sound}` : "";
+  return `${sim.tick} ${sim.scene} ${entities}${audio}`;
+}
+
+/**
+ * The header lines a trace opens with.
+ *
+ * Shared with the ROM-side reader, because a header written twice is a header
+ * that disagrees in one line and turns a passing conformance run into a
+ * mysterious one-line diff.
+ */
+export function traceHeader(program: Program): string[] {
+  const lines = [
+    `# demake-game trace v1 console=${program.profile.id}`,
+    `# props=${TRACED_PROPS.join(",")} units=16.16`,
+  ];
+  if (tracesAudio(program)) lines.push("# audio=track,effect");
+  return lines;
 }
 
 /** Run a tape and return the full trace, one line per tick, plus a header. */
 export function trace(sim: Sim, tape: InputTape): string {
-  const lines: string[] = [`# demake-game trace v1 console=${sim.program.profile.id}`];
-  lines.push(`# props=${TRACED_PROPS.join(",")} units=16.16`);
+  const lines: string[] = traceHeader(sim.program);
   for (const frame of tape) {
     sim.step(frame);
     lines.push(traceLine(sim));
