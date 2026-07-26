@@ -18,16 +18,19 @@
 import { dirname, join } from "node:path";
 
 import {
-  buildGbRom,
+  buildGame,
   BuildError,
   compile,
   describeProgram,
+  familyFor,
   findProfile,
   formatDiagnostics,
   GameLangError,
   levelFiles,
   profiles,
-  unsupportedFeatures,
+  romExtension,
+  runtimeConsoles,
+  unsupportedFor,
   type Program,
 } from "@demake/demotic";
 import type { ParsedValue } from "@demake/cli-spec";
@@ -42,11 +45,15 @@ function str(values: Record<string, ParsedValue>, key: string): string | undefin
 
 /**
  * Consoles with a code-generation backend today. Everything else is an honest
- * error. `gbc` is a real Game Boy Color cartridge — demade in colour, with
- * per-cell palettes and two VRAM banks — and it is the same machine code with a
- * second half bolted to the renderer, so a game traces identically on both.
+ * error.
+ *
+ * Read from the backend registry rather than listed here, so that a console
+ * builds exactly when a backend claims it — `gbc` is a real Game Boy Color
+ * cartridge demade in colour, and `nes` a real NROM one demade for a fixed master
+ * palette and 16×16 attribute cells. Each is the same compiler over a different
+ * instruction set, so a game traces identically on all three.
  */
-const RUNTIME_CONSOLES = ["gb", "gbc"] as const;
+const RUNTIME_CONSOLES = runtimeConsoles;
 
 /** Derive a default output name and cartridge title from the source path. */
 function stemFromSource(source: string): string {
@@ -157,7 +164,7 @@ export async function runBuild(
     throw error;
   }
 
-  const missing = unsupportedFeatures(program);
+  const missing = unsupportedFor(program);
   if (missing.length > 0) {
     throw new CliError(
       EXIT.UNAVAILABLE,
@@ -176,7 +183,7 @@ export async function runBuild(
   let stats;
   let symbols: ReadonlyMap<string, number>;
   try {
-    const built = buildGbRom(program, { title, assets: loadAssets(env, program, sourcePath) });
+    const built = buildGame(program, { title, assets: loadAssets(env, program, sourcePath) });
     stats = built.stats;
     symbols = built.symbols;
     product = format === "sym" ? new TextEncoder().encode(formatSymbols(symbols)) : built.bytes;
@@ -187,7 +194,7 @@ export async function runBuild(
     throw error;
   }
 
-  const extension = format === "sym" ? "sym" : profile.id === "gbc" ? "gbc" : "gb";
+  const extension = format === "sym" ? "sym" : romExtension(program);
   const output = str(values, "output");
   const target = output ?? (env.stdoutIsTTY() ? `${stem}.${extension}` : undefined);
 
@@ -201,6 +208,14 @@ export async function runBuild(
   // browser produces for the same source — the doc-07 parity contract, restated
   // for games. The logo is Nintendo's, so we never ship it ourselves.
   const wantsLogo = values["boot-logo"] === true;
+  if (wantsLogo && familyFor(profile.id) !== "gb") {
+    throw new CliError(
+      EXIT.USAGE,
+      "E_BAD_OPTION",
+      `--boot-logo is a Game Boy cartridge's, and this is ${profile.name}`,
+      "no other console in scope checks a logo at boot, so there is nothing to stamp.",
+    );
+  }
   if (wantsLogo && (target === undefined || format !== "rom")) {
     throw new CliError(
       EXIT.USAGE,
@@ -264,7 +279,7 @@ export async function runBuild(
     if (program.warnings.length > 0) {
       env.errOut(`${formatDiagnostics(program.warnings)}\n`);
     }
-    if (!wantsLogo && format === "rom") {
+    if (!wantsLogo && format === "rom" && familyFor(profile.id) === "gb") {
       env.errOut(
         "note: the boot-logo area is blank, so this runs in emulators that direct boot but " +
           "not on original hardware. Pass --boot-logo (needs RGBDS) for a hardware cartridge.\n",

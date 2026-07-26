@@ -26,7 +26,7 @@ import { tape, trace } from "../src/trace.js";
 
 import { romReady } from "../src/rom/trace.js";
 
-import { RomRunner, romTrace } from "./_rom-harness.js";
+import { gbTarget, gbcTarget, nesTarget, RomRunner, romTrace } from "./_rom-harness.js";
 
 const fixtures = join(import.meta.dirname, "..", "fixtures");
 const read = (name: string) => readFileSync(join(fixtures, name), "utf8");
@@ -62,7 +62,7 @@ describe("gb ROM", () => {
   });
 });
 
-describe("gb ROM conformance across the example library", () => {
+describe("ROM conformance across the example library", () => {
   const cases: readonly (readonly [string, string, Record<string, string>?])[] = [
     ["pong.dmt", "1:a,90:,90:left,120:right"],
     [join("games", "breakout.dmt"), "30:,20:a,50:,60:left,60:right,80:"],
@@ -89,17 +89,20 @@ describe("gb ROM conformance across the example library", () => {
     ],
   ];
 
-  // Both Game Boys, because the colour backend is the same machine code with a
-  // second half bolted to the renderer: attributes, palettes and a VRAM bank.
-  // If that half ever leaked into the *simulation* — a cell walk that moved an
-  // object, a palette upload that clobbered a scratch byte — this is where it
-  // would show, and it would name the tick.
-  for (const consoleId of ["gb", "gbc"] as const) {
+  // Every console with a backend, over the same battery — which is what makes
+  // `Backend` a contract rather than a resemblance (doc 14 §Runtime model). Both
+  // Game Boys, because the colour build is the same machine code with a second
+  // half bolted to the renderer: if that half ever leaked into the *simulation* —
+  // a cell walk that moved an object, a palette upload that clobbered a scratch
+  // byte — this is where it would show, and it would name the tick. And the NES,
+  // because a second CPU is where an arithmetic or an ordering difference would
+  // surface, and the whole point of the shared spine is that neither can.
+  for (const target of [gbTarget, gbcTarget, nesTarget]) {
     for (const [file, script, levels] of cases) {
-      it(`matches the interpreter for ${file} on ${consoleId}`, () => {
-        const program = build(read(file), levels, consoleId);
+      it(`matches the interpreter for ${file} on ${target.console}`, () => {
+        const program = build(read(file), levels, target.console);
         const frames = tape(script);
-        expect(romTrace(program, frames)).toBe(trace(new Sim(program), frames));
+        expect(romTrace(program, frames, {}, target)).toBe(trace(new Sim(program), frames));
       });
     }
   }
@@ -194,9 +197,9 @@ describe("the colour cartridge", { timeout: COLOUR_TIMEOUT }, () => {
 });
 
 describe("what the generated code costs", () => {
-  /** Game Boy frames one game tick takes, measured with input held. */
-  function framesPerTick(program: ReturnType<typeof build>): number {
-    const runner = new RomRunner(program);
+  /** Console frames one game tick takes, measured with input held. */
+  function framesPerTick(program: ReturnType<typeof build>, target = gbTarget): number {
+    const runner = new RomRunner(program, {}, target);
     const { machine, layout } = runner;
     const read = (address: number, length: number) => machine.readMemory(address, length);
     // Past the title screen first, or the figure would be the cost of drawing a

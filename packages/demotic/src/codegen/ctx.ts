@@ -11,6 +11,12 @@
  * if something asked for it while emitting. That is the mechanism behind "a
  * game that never divides has no divider": there is no list of routines to
  * prune, because nothing was ever added.
+ *
+ * Neither of those is a property of an instruction set, so both live in
+ * {@link CtxBase} and every backend gets them. What a backend supplies is its
+ * assembler — and that is the whole of the difference, which is the useful thing
+ * this split says out loud: two consoles share the *reachability* rule and the
+ * constant pool exactly, and share not one opcode.
  */
 
 import { Asm, label, type Ref } from "@demake/core";
@@ -24,8 +30,16 @@ import type { Layout } from "./layout.js";
 /** A routine the code generator can ask for by name. */
 export type HelperName = string;
 
-/** Emits a helper's body. Called once, after the main program. */
-export type HelperBody = (ctx: Ctx) => void;
+/**
+ * What {@link CtxBase} needs of an assembler.
+ *
+ * Only what the constant pool itself emits. Everything else an emitter does goes
+ * through the concrete assembler, whose type the subclass fixes.
+ */
+export interface CodeBuffer {
+  label(name: string): unknown;
+  dd(value: number): unknown;
+}
 
 /**
  * What a rule needs to fire a sound.
@@ -44,9 +58,9 @@ export interface AudioHooks {
    * — which is what lets the conformance suite run without loading a byte of it.
    */
   driver: boolean;
-  /** High-RAM byte the driver reads for a track: the index plus one, or stop. */
+  /** Byte the driver reads for a track: the index plus one, or stop. */
   music: number;
-  /** High-RAM byte the driver reads for an effect: the index plus one. */
+  /** Byte the driver reads for an effect: the index plus one. */
   request: number;
   /** Work-RAM byte the trace reads: the effect index, or `$FF`. */
   trace: number | null;
@@ -54,15 +68,16 @@ export interface AudioHooks {
   effects: readonly number[];
 }
 
-/** Shared state for one compilation. */
-export class Ctx {
-  readonly asm: Asm;
+/** Shared state for one compilation, whatever the target. */
+export abstract class CtxBase<Self, A extends CodeBuffer> {
+  /** The assembler this backend emits through. */
+  abstract readonly asm: A;
   /** Set when the program has audio; absent leaves every rule as it was. */
   audio: AudioHooks | undefined = undefined;
   /** 16.16 value → the label of its pooled ROM copy. */
   private readonly constants = new Map<number, string>();
   /** Helper name → its body, in request order so output stays deterministic. */
-  private readonly helpers = new Map<HelperName, HelperBody>();
+  private readonly helpers = new Map<HelperName, (ctx: Self) => void>();
   private readonly emitted = new Set<HelperName>();
   private counter = 0;
   /** Depth of the expression temp stack currently in use. */
@@ -73,25 +88,7 @@ export class Ctx {
     readonly analysis: Analysis,
     readonly layout: Layout,
     readonly profile: ConsoleProfile,
-    origin = 0,
-  ) {
-    this.asm = new Asm(origin);
-  }
-
-  /**
-   * Whether this build targets colour hardware.
-   *
-   * The one fact that changes what the renderer emits: on a Game Boy Color
-   * every background cell carries an attribute byte in a second VRAM bank and
-   * every object names one of eight palettes, so the cell routines, the write
-   * queue and the OAM builder all have a second half. Nothing else in the
-   * backend branches on the console — the machine code a rule compiles to is
-   * the same on both, which is why a `gb` and a `gbc` build of one game trace
-   * identically.
-   */
-  get color(): boolean {
-    return this.profile.id === "gbc";
-  }
+  ) {}
 
   /** A label nobody else will use. */
   unique(prefix: string): string {
@@ -111,7 +108,7 @@ export class Ctx {
   }
 
   /** Ask for a helper routine, and get the label to call. */
-  need(name: HelperName, body: HelperBody): Ref {
+  need(name: HelperName, body: (ctx: Self) => void): Ref {
     if (!this.helpers.has(name)) this.helpers.set(name, body);
     return label(name);
   }
@@ -167,11 +164,46 @@ export class Ctx {
       for (const name of pending) {
         this.emitted.add(name);
         this.asm.label(name);
-        (this.helpers.get(name) as HelperBody)(this);
+        (this.helpers.get(name) as (ctx: Self) => void)(this as unknown as Self);
       }
     }
     for (const [value, name] of this.constants) {
-      this.asm.label(name).dd(value);
+      this.asm.label(name);
+      this.asm.dd(value);
     }
+  }
+}
+
+/** Emits a helper's body for the Game Boy backend. Called once, after the program. */
+export type HelperBody = (ctx: Ctx) => void;
+
+/** The Game Boy compilation context. */
+export class Ctx extends CtxBase<Ctx, Asm> {
+  readonly asm: Asm;
+
+  constructor(
+    program: Program,
+    analysis: Analysis,
+    layout: Layout,
+    profile: ConsoleProfile,
+    origin = 0,
+  ) {
+    super(program, analysis, layout, profile);
+    this.asm = new Asm(origin);
+  }
+
+  /**
+   * Whether this build targets colour hardware.
+   *
+   * The one fact that changes what the renderer emits: on a Game Boy Color
+   * every background cell carries an attribute byte in a second VRAM bank and
+   * every object names one of eight palettes, so the cell routines, the write
+   * queue and the OAM builder all have a second half. Nothing else in the
+   * backend branches on the console — the machine code a rule compiles to is
+   * the same on both, which is why a `gb` and a `gbc` build of one game trace
+   * identically.
+   */
+  get color(): boolean {
+    return this.profile.id === "gbc";
   }
 }

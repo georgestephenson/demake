@@ -18,7 +18,8 @@
     "@demake/core": "workspace:*",
     "@demake/demotic": "workspace:*",
     "@demake/dmg": "workspace:*",
-    "preact": "^10.29.7"
+    "preact": "^10.29.7",
+    "@demake/nes": "workspace:*"
   },
   "devDependencies": {
     "@lhci/cli": "^0.15.1",

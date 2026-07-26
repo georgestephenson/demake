@@ -990,11 +990,13 @@ main.docs-layout {
   min-width: 0;
 }
 
+/* The shape is the console's, so the element carries it: a Game Boy screen and
+   an NES one are not the same rectangle, and a ratio pinned here would letterbox
+   whichever machine it was not written for. */
 .rom-canvas {
   display: block;
   width: 100%;
   max-width: 480px;
-  aspect-ratio: 160 / 144;
   margin: 0 auto;
   background: #e8e8e8;
   border-radius: 6px;
@@ -1004,7 +1006,7 @@ main.docs-layout {
 /*
  * The rebuild badge sits *over* the screen rather than replacing it: the
  * cartridge on show is a version behind, not gone, and it keeps playing. The
- * screen is a fixed aspect ratio, so the wrapper is sized by the canvas and the
+ * canvas carries its own aspect ratio, so the wrapper is sized by it and the
  * badge is positioned against it.
  */
 .rom-screen {

@@ -138,27 +138,45 @@ const OBJECT_BLOCK: readonly string[] = [
 ];
 
 /**
- * Encode one 8×8 cell of colour indices (`0`–`3`) as a Game Boy 2bpp tile.
+ * Encode one 8×8 cell of colour indices (`0`–`3`) as two bitplanes.
  *
- * Two bitplanes interleaved by row, low plane first, leftmost pixel in bit 7 —
- * the same packing `@demake/core`'s `gb` codegen emits, kept here rather than
- * imported because `@demake/demotic` has no dependency on the image engine and
- * gains nothing by acquiring one for sixteen bytes.
+ * How those planes are *arranged* is the hardware's business and not the art's,
+ * which is the whole reason this is split in two: a Game Boy interleaves them by
+ * row and the NES stores one plane after the other, so the font, the patterns and
+ * the placeholder block are one set of pictures packed two ways rather than two
+ * sets that have to be kept looking alike.
  */
-function encodeTile(rows: readonly string[]): Uint8Array {
-  const bytes = new Uint8Array(TILE_BYTES);
+function planes(rows: readonly string[]): { low: Uint8Array; high: Uint8Array } {
+  const low = new Uint8Array(8);
+  const high = new Uint8Array(8);
   for (let y = 0; y < 8; y += 1) {
     const row = rows[y] ?? "";
-    let low = 0;
-    let high = 0;
     for (let x = 0; x < 8; x += 1) {
       const colour = Number.parseInt(row[x] ?? "0", 10) || 0;
-      if (colour & 1) low |= 0x80 >> x;
-      if (colour & 2) high |= 0x80 >> x;
+      if (colour & 1) low[y] = (low[y] as number) | (0x80 >> x);
+      if (colour & 2) high[y] = (high[y] as number) | (0x80 >> x);
     }
-    bytes[y * 2] = low;
-    bytes[y * 2 + 1] = high;
   }
+  return { low, high };
+}
+
+/** Game Boy 2bpp: the planes interleaved by row, low plane first. */
+function encodeTile(rows: readonly string[]): Uint8Array {
+  const { low, high } = planes(rows);
+  const bytes = new Uint8Array(TILE_BYTES);
+  for (let y = 0; y < 8; y += 1) {
+    bytes[y * 2] = low[y] as number;
+    bytes[y * 2 + 1] = high[y] as number;
+  }
+  return bytes;
+}
+
+/** NES character data: the whole low plane, then the whole high plane. */
+function encodeChrTile(rows: readonly string[]): Uint8Array {
+  const { low, high } = planes(rows);
+  const bytes = new Uint8Array(TILE_BYTES);
+  bytes.set(low, 0);
+  bytes.set(high, 8);
   return bytes;
 }
 
@@ -186,17 +204,32 @@ function glyphRows(character: string): readonly string[] {
  * is fixed here and asserted by the format test rather than being incidental.
  */
 export function builtinTiles(): Uint8Array {
+  return packBuiltin(encodeTile);
+}
+
+/** The same bank, in the plane-grouped layout the NES addresses. */
+export function builtinChr(): Uint8Array {
+  return packBuiltin(encodeChrTile);
+}
+
+/** The cells of the built-in bank, in order, as 8×8 colour-index rows. */
+export function builtinCells(): readonly (readonly string[])[] {
+  const cells: (readonly string[])[] = [];
+  for (let code = FONT_FIRST; code <= FONT_LAST; code += 1) {
+    cells.push(glyphRows(String.fromCharCode(code)));
+  }
+  for (const pattern of PATTERNS) cells.push(pattern);
+  cells.push(OBJECT_BLOCK);
+  return cells;
+}
+
+function packBuiltin(encode: (rows: readonly string[]) => Uint8Array): Uint8Array {
   const bank = new Uint8Array(BUILTIN_TILES * TILE_BYTES);
   let at = 0;
-  for (let code = FONT_FIRST; code <= FONT_LAST; code += 1) {
-    bank.set(encodeTile(glyphRows(String.fromCharCode(code))), at);
+  for (const cell of builtinCells()) {
+    bank.set(encode(cell), at);
     at += TILE_BYTES;
   }
-  for (const pattern of PATTERNS) {
-    bank.set(encodeTile(pattern), at);
-    at += TILE_BYTES;
-  }
-  bank.set(encodeTile(OBJECT_BLOCK), at);
   return bank;
 }
 

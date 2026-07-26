@@ -138,6 +138,16 @@ export interface SpriteOptions {
   maxPalettes?: number;
   /** Seed for the deterministic colour fit. */
   seed?: number;
+  /**
+   * How the two bitplanes of a tile are arranged.
+   *
+   * `interleaved` puts them byte by byte down the rows, which is what the Game Boy
+   * addresses; `grouped` stores the whole low plane then the whole high plane,
+   * which is what the NES does. It is the hardware's business and not the art's —
+   * the same picture, packed two ways — so it is a flag here rather than a second
+   * conversion, and the `nes` image backend packs its character data the same way.
+   */
+  packing?: "interleaved" | "grouped";
 }
 
 /** A downscaled sprite in linear light, with straight alpha kept separate. */
@@ -289,12 +299,13 @@ function stretch(light: number, lo: number, span: number, steps: number): number
   return Math.round((1 - clamped) * (steps - 1));
 }
 
-/** Pack one 8×8 block of colour indices into planar 2bpp, low plane first. */
+/** Pack one 8×8 block of colour indices into 2bpp, in the console's layout. */
 function packTile(
   indices: Uint8Array,
   width: number,
   originX: number,
   originY: number,
+  packing: "interleaved" | "grouped",
 ): Uint8Array {
   const bytes = new Uint8Array(TILE_BYTES);
   for (let row = 0; row < 8; row += 1) {
@@ -305,8 +316,13 @@ function packTile(
       if (value & 1) low |= 0x80 >> column;
       if (value & 2) high |= 0x80 >> column;
     }
-    bytes[row * 2] = low;
-    bytes[row * 2 + 1] = high;
+    if (packing === "grouped") {
+      bytes[row] = low;
+      bytes[row + 8] = high;
+    } else {
+      bytes[row * 2] = low;
+      bytes[row * 2 + 1] = high;
+    }
   }
   return bytes;
 }
@@ -530,6 +546,7 @@ export function buildSpriteBank(
     ? colorIndices(decoded, spec, tiles, usable, opaque, options)
     : monoIndices(decoded, total, usable, opaque);
 
+  const packing = options.packing ?? "interleaved";
   const bank: Uint8Array[] = [];
   const seen = new Map<string, number>();
   const art = new Map<string, SpriteArt>();
@@ -543,7 +560,7 @@ export function buildSpriteBank(
     const placements: number[] = [];
     for (let row = 0; row < source.cellsHigh; row += 1) {
       for (let column = 0; column < source.cellsWide; column += 1) {
-        const packed = packTile(indices, width, column * 8, row * 8);
+        const packed = packTile(indices, width, column * 8, row * 8, packing);
         // A hex key rather than an object identity: two identical tiles from
         // different assets must collapse, which is the whole point of step 4.
         let key = "";

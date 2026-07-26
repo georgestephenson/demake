@@ -276,7 +276,7 @@ const BUILD_FLAGS: readonly FlagSpec[] = [
     type: "string",
     default: "gb",
     metavar: "<id>",
-    help: "Target console (a backend must exist; today: gb, gbc).",
+    help: "Target console (a backend must exist; today: gb, gbc, nes).",
   },
   {
     name: "format",

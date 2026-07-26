@@ -48,7 +48,7 @@ import type { InstanceDef, Program } from "../program.js";
 import { BUILTIN_TILES, builtinTiles, TILE_BYTES } from "../rom/graphics.js";
 
 import { artKey, ART_PALETTES, PALETTE_BYTES, SYSTEM_PALETTE, type EmitOptions } from "./emit.js";
-import { VIEW_H, VIEW_W } from "./layout.js";
+import { GB_MEMORY } from "./layout.js";
 
 /** Asset bytes by the name a `.dmt` or a `.dmtl` legend wrote. */
 export type AssetBytes = ReadonlyMap<string, Uint8Array>;
@@ -247,7 +247,7 @@ function demakeBackdrop(bytes: Uint8Array, consoleId: string): Backdrop {
   // the map it produces and the loop that draws it are the same rectangle.
   const fitted = prepSync(bytes, {
     console: consoleId,
-    size: { w: VIEW_W * 8, h: VIEW_H * 8 },
+    size: { w: GB_MEMORY.viewW * 8, h: GB_MEMORY.viewH * 8 },
     fit: "cover",
     // One palette is the font's, so a picture gets the rest. Reserving it here
     // rather than taking it back afterwards is what keeps the fit honest: the
@@ -299,8 +299,11 @@ function demakeBackdrop(bytes: Uint8Array, consoleId: string): Backdrop {
  * that lands in the built-in font or in another game object's art. On a colour
  * build it is *more* effective, not less: two cells with the same shape under
  * different palettes are one tile and two attribute bytes.
+ *
+ * Exported because the NES needs it more, not less: a full-screen picture there is
+ * 960 cells against a Game Boy's 360, and the bank it goes into is the same size.
  */
-class TilePool {
+export class TilePool {
   private readonly byBytes = new Map<string, number>();
   private readonly added: Uint8Array[] = [];
 

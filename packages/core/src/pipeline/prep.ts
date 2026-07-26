@@ -65,7 +65,7 @@ function runCandidate(
       candidate.kind === "mono"
         ? fitMono(work, spec, candidate.dither.alg, candidate.dither.strength)
         : fitTms(work, spec, candidate.dither.alg, candidate.dither.strength);
-    const budget = enforceBudget(image, spec, strict);
+    const budget = enforceBudget(image, spec, strict, opts.maxTiles);
     return {
       image: budget.image,
       uniqueTiles: budget.uniqueTiles,
@@ -97,7 +97,7 @@ function runCandidate(
     candidate.dither.strength,
     params.lWeight,
   );
-  const budget = enforceBudget(image, spec, strict);
+  const budget = enforceBudget(image, spec, strict, opts.maxTiles);
   return {
     image: budget.image,
     uniqueTiles: budget.uniqueTiles,

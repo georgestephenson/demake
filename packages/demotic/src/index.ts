@@ -120,12 +120,16 @@ export { Asm, AsmError, label, type Ref } from "@demake/core";
 export { analyze, isMutable, type Analysis } from "./codegen/analyze.js";
 export {
   ENTITY_SIZE,
+  GB_MEMORY,
+  GBC_MEMORY,
+  NES_MEMORY,
   PROPS,
   PROP_SIZE,
   PROP_SLOT,
   planLayout,
   LayoutError,
   type Layout,
+  type MemoryPlan,
 } from "./codegen/layout.js";
 export {
   artRequests,
@@ -134,6 +138,15 @@ export {
   type AssetRequest,
   type BoundArt,
 } from "./codegen/art.js";
+export {
+  buildGame,
+  familyFor,
+  hasRuntime,
+  romExtension,
+  runtimeConsoles,
+  unsupportedFor,
+} from "./codegen/registry.js";
+export { buildNesRom, nesBackend, unsupportedNesFeatures } from "./codegen/nes.js";
 export {
   buildGbRom,
   BuildError,

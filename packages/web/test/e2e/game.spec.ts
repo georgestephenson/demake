@@ -374,6 +374,37 @@ test("builds and plays a real Game Boy ROM in the page", async ({ page }) => {
   await expect(page.getByTestId("rom-stat")).toContainText("per tick");
 });
 
+test("builds and plays a real NES ROM in the page", async ({ page }) => {
+  await page.goto("/#section=game");
+  const canvas = page.getByTestId("rom-canvas");
+  await expect(canvas).toBeVisible();
+
+  await page.getByTestId("console-select").selectOption("nes");
+  // The Game Boy cartridge keeps playing while this one demakes, so what is
+  // waited on is the *cartridge's* console rather than the picker's — otherwise
+  // every assertion below could be answered by the ROM that is on its way out.
+  await expect(canvas).toHaveAttribute("data-console", "nes", { timeout: 60_000 });
+
+  // A different cartridge, not a setting on the last one: 32 KiB of program and
+  // 8 of characters, on a screen that is not the Game Boy's shape.
+  await expect(page.getByTestId("rom-stat")).toContainText("40 KiB");
+  await expect(page.getByTestId("rom-download")).toContainText(".nes");
+  await expect(canvas).toHaveAttribute("width", "256");
+  await expect(canvas).toHaveAttribute("height", "240");
+
+  // It boots to the title screen, and a press starts the game.
+  await expect.poll(async () => romPainted(page), { timeout: 8000 }).toBeGreaterThan(0);
+  const title = await romPainted(page);
+  await page.locator(".rom-canvas").click();
+  await page.keyboard.press("KeyZ");
+  await expect.poll(async () => romPainted(page), { timeout: 8000 }).not.toBe(title);
+  await expect(page.getByTestId("rom-stat")).toContainText("per tick");
+
+  // And the 2A03 driver is doc 13 §A5, so the button is unavailable rather than
+  // being a switch that turns on nothing.
+  await expect(page.getByTestId("rom-sound")).toBeDisabled();
+});
+
 test("opens on the cartridge, and shows the interpreter when asked", async ({ page }) => {
   await page.goto("/#section=game");
   await expect(page.getByRole("heading", { name: "Play" })).toBeVisible();

@@ -1,0 +1,271 @@
+/**
+ * What the NES build is, beyond playing the same game.
+ *
+ * Trace conformance is in `rom.test.ts`, over the same battery both Game Boys
+ * run — that is where "the NES plays the game the interpreter defines" is
+ * settled. Here are the things only this console has, and each is here because
+ * getting it wrong produces a cartridge that traces perfectly and looks wrong:
+ *
+ *   - **The cartridge's own shape.** There is no fixed entry point on a 6502: it
+ *     takes the address from `$FFFC`, so six bytes at the top of the program are
+ *     what makes a ROM boot at all. And mirroring is a wiring decision in the
+ *     header, before a line of code runs — a game that scrolls sideways with the
+ *     wrong one scrolls into a copy of itself.
+ *   - **The nametable against the level grid.** A framebuffer comparison needs a
+ *     libretro core (doc 10); what is available here is better for finding this
+ *     class of bug anyway, because it names the cell. Every visible cell is
+ *     checked against what the level says should be there, before and after the
+ *     camera has moved — which is what catches an edge painter that walks the
+ *     wrong column, or a wrap computed at the wrong modulus.
+ *   - **A legible font.** Colour zero of every background palette is the one
+ *     universal backdrop on this hardware, so the font's palette gets three
+ *     colours and has to live with the fourth. The ink is chosen against that
+ *     backdrop, and the test is that a caption is not the colour it is written on.
+ */
+
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+
+import { NES_CHR_OFFSET, NES_PRG_OFFSET, NES_PRG_SIZE } from "@demake/core";
+import { Nes } from "@demake/nes";
+
+import { buildNesRom } from "../src/codegen/nes.js";
+import { compile } from "../src/compile.js";
+import { getProfile } from "../src/profiles.js";
+import { builtinChr, BUILTIN_TILES, TILE_BYTES } from "../src/rom/graphics.js";
+
+const fixtures = join(import.meta.dirname, "..", "fixtures");
+const read = (name: string) => readFileSync(join(fixtures, name), "utf8");
+const asset = (name: string) => new Uint8Array(readFileSync(join(fixtures, name)));
+
+function build(file: string, levels?: Record<string, string>) {
+  return compile(read(file), { profile: getProfile("nes"), levels });
+}
+
+describe("the NES cartridge", () => {
+  const built = buildNesRom(build("pong.dmt"));
+
+  it("is an iNES file describing NROM with vertical mirroring", () => {
+    expect([...built.bytes.subarray(0, 4)]).toEqual([0x4e, 0x45, 0x53, 0x1a]);
+    expect(built.bytes[4]).toBe(2); // two 16 KiB program banks
+    expect(built.bytes[5]).toBe(1); // one 8 KiB character bank
+    // Mapper 0, and bit 0 set: the two nametables side by side, which is what the
+    // renderer's 64-column wrap is written for.
+    expect(built.bytes[6]).toBe(0x01);
+    expect(built.bytes[7]).toBe(0x00);
+    expect(built.bytes.length).toBe(16 + 0x8000 + 0x2000);
+  });
+
+  it("points its three vectors at the routines they name", () => {
+    const vector = (offset: number): number =>
+      (built.bytes[NES_PRG_OFFSET + offset] as number) |
+      ((built.bytes[NES_PRG_OFFSET + offset + 1] as number) << 8);
+    expect(vector(NES_PRG_SIZE - 6)).toBe(built.symbols.get("Nmi"));
+    expect(vector(NES_PRG_SIZE - 4)).toBe(built.symbols.get("Reset"));
+    expect(vector(NES_PRG_SIZE - 2)).toBe(built.symbols.get("Irq"));
+  });
+
+  it("puts the built-in patterns in both tables, because the bank is fixed anyway", () => {
+    const builtin = builtinChr();
+    const background = built.bytes.subarray(NES_CHR_OFFSET, NES_CHR_OFFSET + builtin.length);
+    const objects = built.bytes.subarray(
+      NES_CHR_OFFSET + 0x1000,
+      NES_CHR_OFFSET + 0x1000 + builtin.length,
+    );
+    expect([...background]).toEqual([...builtin]);
+    expect([...objects]).toEqual([...builtin]);
+    expect(builtin.length).toBe(BUILTIN_TILES * TILE_BYTES);
+  });
+});
+
+/**
+ * Headroom for two full-screen conversions.
+ *
+ * Demaking a picture for this console is the whole `prep` tournament, at 960 cells
+ * rather than a Game Boy's 360 — the cost `demake prep -c nes` has always had. The
+ * default timeout is written for tests that run one pipeline, and a loaded CI
+ * runner is several times slower than a developer's machine.
+ */
+const ART_TIMEOUT = 120_000;
+
+describe("the NES art budget", { timeout: ART_TIMEOUT }, () => {
+  it("fits two full-screen pictures in one pattern table", () => {
+    // 206 patterns and 70, against 195 free — so this only passes because the fit
+    // is told its budget up front and the two are pooled against each other and
+    // against the built-in bank.
+    const program = build("pong.dmt");
+    const assets = new Map([
+      ["pong.title.svg", asset("pong.title.svg")],
+      ["pong.play.svg", asset("pong.play.svg")],
+      ["ball.svg", asset("ball.svg")],
+      ["paddle.svg", asset("paddle.svg")],
+    ]);
+    const built = buildNesRom(program, { assets });
+    expect(built.stats.missingArt).toEqual([]);
+    // Both tables, and neither over its share.
+    expect(built.stats.artTiles).toBeGreaterThan(0);
+    expect(built.bytes.length).toBe(16 + 0x8000 + 0x2000);
+  });
+});
+
+describe("what the NES actually draws", () => {
+  /**
+   * Every visible cell against the level grid the ROM carries.
+   *
+   * The tables are read out of the cartridge rather than recomputed here, so this
+   * checks the *renderer* — where a cell was put — and not the level format, which
+   * `shape.ts` emits for both consoles and `level.test.ts` already covers.
+   */
+  function mismatches(
+    machine: Nes,
+    rom: Uint8Array,
+    tables: { grid: number; tiles: number },
+    size: { width: number; height: number },
+    camera: { column: number; row: number },
+  ): number {
+    const prg = (address: number): number => rom[16 + (address - 0x8000)] as number;
+    const expected = (column: number, row: number): number => {
+      if (column < 0 || row < 0 || column >= size.width || row >= size.height) return 0;
+      const legend = prg(tables.grid + row * size.width + column);
+      return legend === 0xff ? 0 : prg(tables.tiles + legend);
+    };
+    let bad = 0;
+    for (let screenRow = 0; screenRow < 28; screenRow += 1) {
+      for (let screenColumn = 0; screenColumn < 32; screenColumn += 1) {
+        const column = camera.column + screenColumn;
+        const row = camera.row + screenRow;
+        const mapColumn = column % 64;
+        const table = mapColumn >= 32 ? 1 : 0;
+        const got = machine.ppu.nametables[table * 0x400 + (row % 30) * 32 + (mapColumn % 32)];
+        if (got !== expected(column, row)) bad += 1;
+      }
+    }
+    return bad;
+  }
+
+  /** Where the camera is, in whole cells, read out of the runtime's own state. */
+  function cameraCells(machine: Nes, address: number): { column: number; row: number } {
+    const bytes = machine.readMemory(address, 8);
+    const axis = (at: number): number =>
+      Math.floor(
+        ((bytes[at] as number) |
+          ((bytes[at + 1] as number) << 8) |
+          ((bytes[at + 2] as number) << 16) |
+          ((bytes[at + 3] as number) << 24) |
+          0) /
+          65536,
+      );
+    return { column: axis(0), row: axis(4) };
+  }
+
+  it("paints a level that fits the nametable pair once, and scrolls it with registers", () => {
+    const program = build(join("games", "caves.dmt"), {
+      "cavern.dmtl": read(join("games", "cavern.dmtl")),
+    });
+    const built = buildNesRom(program);
+    const machine = new Nes(built.bytes);
+    for (let frame = 0; frame < 30; frame += 1) machine.runFrame();
+    machine.setButtons(["a"]);
+    for (let frame = 0; frame < 6; frame += 1) machine.runFrame();
+    machine.setButtons([]);
+    for (let frame = 0; frame < 60; frame += 1) machine.runFrame();
+
+    const level = program.scenes.find((scene) => scene.level)?.level;
+    expect(level).toBeDefined();
+    const tables = {
+      grid: built.symbols.get("LevelGrid_0") as number,
+      tiles: built.symbols.get("LevelTiles_0") as number,
+    };
+    const size = { width: level?.width ?? 0, height: level?.height ?? 0 };
+    const camera = built.layout.camera as number;
+    expect(mismatches(machine, built.bytes, tables, size, cameraCells(machine, camera))).toBe(0);
+
+    // And again after the camera has travelled, which is where a wrap computed at
+    // the wrong modulus would show.
+    machine.setButtons(["right"]);
+    for (let frame = 0; frame < 120; frame += 1) machine.runFrame();
+    machine.setButtons([]);
+    for (let frame = 0; frame < 4; frame += 1) machine.runFrame();
+    const moved = cameraCells(machine, camera);
+    expect(moved.column).toBeGreaterThan(0);
+    expect(mismatches(machine, built.bytes, tables, size, moved)).toBe(0);
+  });
+
+  it("keeps a level wider than the pair correct as the edge painter walks it", () => {
+    // Written here rather than taken from the example library, because none of
+    // those levels is wider than the nametable pair — the caves fit it, and the
+    // runner's course is wide but its bird never flies far enough for the camera
+    // to leave the clamp. So the edge painter, which is the whole of NES
+    // scrolling, would otherwise be the one path nothing exercised.
+    const columns = 80;
+    const rows = 30;
+    const grid = Array.from({ length: rows }, (_, row) =>
+      Array.from({ length: columns }, (_, column) =>
+        // A pattern with a long period on both axes, so a column painted one cell
+        // out of place is a mismatch rather than a coincidence.
+        (column + row * 3) % 7 === 0 ? "#" : column % 5 === 0 ? "." : " ",
+      ).join(""),
+    ).join("\n");
+    const level = ["tile # wall solid", "tile . dot", "map", grid, ""].join("\n");
+    const source = [
+      "start play",
+      "",
+      "scene play",
+      "level wide from wide.dmtl",
+      "camera follows walker",
+      "",
+      "create object mover (width 1 cell, height 1 cell, speed 30)",
+      "create mover walker in play (x 2, y 15, xdirection 1)",
+      "",
+    ].join("\n");
+
+    const program = compile(source, {
+      profile: getProfile("nes"),
+      levels: { "wide.dmtl": level },
+    });
+    const built = buildNesRom(program);
+    expect(program.scenes[0]?.level?.width).toBeGreaterThan(64);
+
+    const machine = new Nes(built.bytes);
+    for (let frame = 0; frame < 40; frame += 1) machine.runFrame();
+    const tables = {
+      grid: built.symbols.get("LevelGrid_0") as number,
+      tiles: built.symbols.get("LevelTiles_0") as number,
+    };
+    const size = { width: columns, height: rows };
+    const camera = built.layout.camera as number;
+    let travelled = 0;
+    for (let step = 0; step < 32; step += 1) {
+      for (let frame = 0; frame < 8; frame += 1) machine.runFrame();
+      const where = cameraCells(machine, camera);
+      travelled = Math.max(travelled, where.column);
+      expect(
+        mismatches(machine, built.bytes, tables, size, where),
+        `camera at column ${where.column}`,
+      ).toBe(0);
+    }
+    // The camera really did cross into the second nametable and out the far side,
+    // which is what makes the wrap part of what was checked.
+    expect(travelled).toBeGreaterThan(32);
+  });
+
+  it("writes a caption in an ink the backdrop it sits on is not", () => {
+    const program = build(join("games", "caves.dmt"), {
+      "cavern.dmtl": read(join("games", "cavern.dmtl")),
+    });
+    const assets = new Map(
+      ["hero", "coin", "rock", "rockwall", "spikes", "exit", "ledge", "stone", "air"].map(
+        (name) => [`${name}.svg`, asset(join("games", `${name}.svg`))],
+      ),
+    );
+    const built = buildNesRom(program, { assets });
+    const machine = new Nes(built.bytes);
+    for (let frame = 0; frame < 40; frame += 1) machine.runFrame();
+    // The font's palette is the last of the four; its ink is colour three, and the
+    // backdrop every palette shares is colour zero of the first.
+    const backdrop = machine.ppu.palette[0] as number;
+    const ink = machine.ppu.palette[3 * 4 + 3] as number;
+    expect(ink).not.toBe(backdrop);
+  });
+});

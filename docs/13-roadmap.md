@@ -206,18 +206,55 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     palettes were chosen for the title screen. Colour costs cartridge — around a
     kilobyte for a game with two demade backdrops — which is a fact the build
     reports rather than hides.
-  - **D4 — breadth**: `nes`, `sms`/`gg`, `md`, `snes` backends, each trace-green
-    then framebuffer-green. A backend is per-family; the `Program` it compiles
-    is not.
-  - **D5 — Play ROM in the page** *(done for `gb` and `gbc`)*: the browser compiles the
+  - **D4 — breadth** *(`nes` trace-green)*: `nes`, `sms`/`gg`, `md`, `snes`
+    backends, each trace-green then framebuffer-green. A backend is per-family;
+    the `Program` it compiles is not.
+
+    The NES half is built: `demake build -c nes` produces a real NROM cartridge
+    — 6502 machine code written for the game, art demade by the image pipeline
+    on the way — and every game in the example library reproduces the reference
+    interpreter tick for tick, in the same battery both Game Boys run
+    (`packages/demotic/test/rom.test.ts`). Speed is the published figure on this
+    console too: every fixture is inside one frame per tick.
+
+    What the second console changed is the shape of the first. Compiling a
+    Demotic program is now an *interface* — `codegen/backend.ts` — that a console
+    implements: it answers where state goes, what it cannot compile, how its art
+    and audio are demade, how many tiles it has, and how a plan becomes a
+    cartridge, and everything between those answers happens once in code neither
+    console owns, including doc 14's seven tick steps in doc 14's order. What a
+    program *means* moved to `codegen/shape.ts` for the same reason. The dividing
+    line is that anything which would emit an instruction stays in the backend,
+    because a shared instruction layer between a machine with seven registers and
+    one with three would be a fake common denominator.
+
+    Framebuffer-green is what remains: the NES image E2E already runs the shared
+    battery through fceumm (Phase 2), and pointing it at a *game* cartridge needs
+    doc 10's scripted input tape, which is the same addition every console's
+    game-level E2E needs. Until then the rendering oracle is
+    `nes-rom.test.ts`, which checks the nametable against the level grid the
+    cartridge carries, cell by cell, before and after the camera has travelled.
+
+    Sound is named as unsupported rather than ignored: a 2A03 driver is §A5's
+    work, and a game that names music still builds, plays silently, and records
+    what a rule asked for — so a silent build traces identically to a sounding
+    one, which is what keeps the conformance suite honest.
+  - **D5 — Play ROM in the page** *(done for `gb`, `gbc` and `nes`)*: the browser
+    compiles the
     game itself, because the assembler is ours and written in TypeScript, and
     demakes its art with our own rasteriser rather than the browser's. It boots
-    the result in `@demake/dmg` — ours, because doc 07 forbids a CDN core and a
-    WASM core we cannot read is the same bargain in a different wrapper. The
-    bytes are identical to `demake build`'s, pinned by a Playwright spec, and
-    the pane offers them as a download. Picking Game Boy Color in the console
-    selector builds a `.gbc` and the same core plays it in colour, because the
-    machine it comes up as is the cartridge header's decision.
+    the result in `@demake/dmg` or `@demake/nes` — ours, because doc 07 forbids a
+    CDN core and a WASM core we cannot read is the same bargain in a different
+    wrapper. The bytes are identical to `demake build`'s, pinned by a Playwright
+    spec on *both* consoles, and the pane offers them as a download. Picking a
+    console in the selector changes the **cartridge**, not a setting on one:
+    Game Boy Color builds a `.gbc` that the same core plays in colour because the
+    machine it comes up as is the cartridge header's decision, and NES builds a
+    `.nes` that a second core plays on a screen of its own shape. While the next
+    cartridge demakes the pane keeps playing the one it has, so everything on
+    screen — the machine's name, the canvas shape, the download's extension —
+    describes the ROM that is running rather than the picker. Sound stays the
+    Game Boy's until §A5, and the button is disabled rather than silent.
   - **D6 — language growth**, driven by fixtures beyond Pong. Levels, tiles, a
     scrolling camera, `stream`-composed courses and a seeded `random` have
     landed (doc 14 §Levels, §Composed levels, §Randomness). What is left:

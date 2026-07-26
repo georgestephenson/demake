@@ -113,6 +113,19 @@ export interface PrepOptions {
    * whose palettes were chosen for the title screen.
    */
   maxSubPalettes?: number;
+  /**
+   * Fit into at most this many tiles, rather than the console's whole budget.
+   *
+   * The same reservation `maxSubPalettes` makes, for the other scarce resource.
+   * A caller that is putting the picture somewhere it does not own outright says
+   * how much of the tile bank is actually free: `demake build` on the NES has 256
+   * background patterns, of which the font, the level patterns and the placeholder
+   * block have already taken sixty-one, and a full-screen picture is 960 cells.
+   * Reserving here rather than merging afterwards is what keeps the fit honest —
+   * the budget stage merges the *closest* tiles, where a caller trimming a finished
+   * conversion could only drop the last ones it happened to see.
+   */
+  maxTiles?: number;
   /** Force raw lattice-expansion colors in the output (the default for panel-filter consoles). */
   rawColors?: boolean;
   /** Force DAC-simulated display colors in the output (`--dac-colors`). */

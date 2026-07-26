@@ -1,5 +1,5 @@
 /**
- * Expressions become straight-line code.
+ * Expressions become straight-line SM83.
  *
  * The interpreter walked a postfix bytecode with an explicit stack; a rule that
  * read one property paid a dispatch, a push and a pop for it. Here an
@@ -23,11 +23,20 @@
 
 import type { Ref } from "@demake/core";
 
-import { applyBinary, applyBuiltin } from "../compile.js";
-import type { CBinaryOp, CExpr, EntityRef, PureBuiltinFn } from "../program.js";
+import type { CBinaryOp, CExpr } from "../program.js";
 
 import type { Ctx } from "./ctx.js";
-import { PROP_SLOT, PROP_SIZE } from "./layout.js";
+import {
+  DERIVED_PARTS,
+  fold,
+  propOffset,
+  resolveEntity,
+  UNBOUND,
+  type Binding,
+  type EntityAddr,
+  type Slot,
+  type TestVerdict,
+} from "./shape.js";
 import {
   add32,
   addConst32,
@@ -44,83 +53,6 @@ import {
   set32,
   sub32,
 } from "./val.js";
-
-/** Where an entity's record is, as far as the emitted code is concerned. */
-export type EntityAddr =
-  /** A known instance: every property is an absolute address. */
-  | { kind: "const"; id: number; base: number }
-  /** A loop variable: the record's address is in this RAM word. */
-  | { kind: "ptr"; ptr: number }
-  /** Unbound — reads yield zero and writes are dropped, as in the interpreter. */
-  | { kind: "none" };
-
-/** What `subject` and `other` mean in the code being emitted. */
-export interface Binding {
-  subject: EntityAddr;
-  other: EntityAddr;
-}
-
-/** No bindings at all — the context a control or an unbound rule runs in. */
-export const UNBOUND: Binding = { subject: { kind: "none" }, other: { kind: "none" } };
-
-/** A four-byte value, and whether the caller may clobber it. */
-export interface Slot {
-  addr: Ref;
-  /** True when this is a temporary the caller owns. */
-  temp: boolean;
-}
-
-/** Fold an expression to a constant, or `undefined` if it depends on state. */
-export function fold(expr: CExpr): number | undefined {
-  switch (expr.kind) {
-    case "const":
-      return expr.value;
-    case "flip":
-    case "scene":
-      return 0;
-    case "neg": {
-      const operand = fold(expr.operand);
-      return operand === undefined ? undefined : -operand;
-    }
-    case "binary": {
-      const left = fold(expr.left);
-      const right = fold(expr.right);
-      if (left === undefined || right === undefined) return undefined;
-      return applyBinary(expr.op, left, right);
-    }
-    case "call": {
-      if (expr.fn === "random") return undefined;
-      const args: number[] = [];
-      for (const arg of expr.args) {
-        const value = fold(arg);
-        if (value === undefined) return undefined;
-        args.push(value);
-      }
-      return applyBuiltin(expr.fn as PureBuiltinFn, args);
-    }
-    default:
-      return undefined;
-  }
-}
-
-/** Resolve a compiled entity reference against the current binding. */
-export function resolveEntity(ctx: Ctx, ref: EntityRef, bind: Binding): EntityAddr {
-  switch (ref.kind) {
-    case "instance":
-      return { kind: "const", id: ref.id, base: ctx.layout.entities[ref.id] as number };
-    case "subject":
-      return bind.subject;
-    case "other":
-      return bind.other;
-  }
-}
-
-/** Byte offset of a stored property within an entity record. */
-export function propOffset(prop: string): number {
-  const slot = PROP_SLOT[prop];
-  if (slot === undefined) throw new Error(`'${prop}' is not a stored property`);
-  return slot * PROP_SIZE;
-}
 
 /** Copy four bytes from `[ptr] + offset` to an absolute address. */
 export function copyFromPtr(ctx: Ctx, ptr: number, offset: number, dst: Ref): void {
@@ -164,6 +96,18 @@ export function copyToPtr(ctx: Ctx, ptr: number, offset: number, src: Ref): void
   }
 }
 
+export {
+  DERIVED_PARTS,
+  fold,
+  propOffset,
+  resolveEntity,
+  UNBOUND,
+  type Binding,
+  type EntityAddr,
+  type Slot,
+  type TestVerdict,
+};
+
 /** Read a stored property into a slot, without copying where possible. */
 function readStored(ctx: Ctx, entity: EntityAddr, prop: string): Slot {
   switch (entity.kind) {
@@ -178,16 +122,6 @@ function readStored(ctx: Ctx, entity: EntityAddr, prop: string): Slot {
     }
   }
 }
-
-/** The base and offset a derived property is computed from. */
-const DERIVED_PARTS: Readonly<Record<string, { base: string; add?: string; halve?: boolean }>> = {
-  centerx: { base: "x", add: "width", halve: true },
-  centery: { base: "y", add: "height", halve: true },
-  left: { base: "x" },
-  right: { base: "x", add: "width" },
-  top: { base: "y" },
-  bottom: { base: "y", add: "height" },
-};
 
 /** Read any property, stored or derived. */
 export function readProp(ctx: Ctx, entity: EntityAddr, prop: string): Slot {
@@ -450,9 +384,6 @@ export function emitCompare(
     }
   });
 }
-
-/** What a test decided at compile time, when it could. */
-export type TestVerdict = "always" | "never" | "runtime";
 
 /**
  * Emit a truth test that jumps to `falseTarget` when the expression is zero.
