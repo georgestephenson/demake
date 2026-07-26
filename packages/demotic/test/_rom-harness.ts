@@ -3,40 +3,93 @@
  *
  * Doc 14 §Conformance puts state-trace equality first because it finds bugs
  * fastest: a divergence names the tick and the property, where a framebuffer
- * diff names a pixel. Running it in `@demake/dmg` rather than SameBoy is what
- * makes it available with no toolchain and no emulator install — the SameBoy
- * E2E still exists, one layer up, to test what this cannot: that the *picture*
- * is right.
+ * diff names a pixel. Running it in our own cores rather than in SameBoy or a
+ * libretro build is what makes it available with no toolchain and no emulator
+ * install — the pixel-perfect E2Es still exist, one layer up, to test what this
+ * cannot: that the *picture* is right.
+ *
+ * The runner is console-generic, and that is the point rather than a
+ * convenience. `Backend` says compiling a Demotic program is one shape with a
+ * per-console implementation (doc 14 §Runtime model); a harness that took the
+ * Game Boy's word for what a trace looks like would let the NES's drift. Here
+ * both consoles are booted by the same loop, watched through the same handshake
+ * byte, and read by the same `rom/trace.ts` — so "the NES plays the same game" is
+ * checked by running the same code, not by two files that resemble each other.
  *
  * The handshake is the runtime's tick counter, not the frame counter. They are
  * usually the same, but a tick that overruns its frame must not be mistaken for
  * two ticks — the trace would silently gain a duplicate line.
  */
 
-import { Gameboy, type Button } from "@demake/dmg";
+import { Gameboy, type Button as GbButton } from "@demake/dmg";
+import { Nes, type Button as NesButton } from "@demake/nes";
 
-import type { InputState, InputTape } from "../src/sim.js";
-import type { Program } from "../src/program.js";
-import { buildGbRom, type RomOptions } from "../src/codegen/gb.js";
+import { buildGbRom } from "../src/codegen/gb.js";
 import type { Layout } from "../src/codegen/layout.js";
+import { buildNesRom } from "../src/codegen/nes.js";
+import type { BuildOptions, BuiltRom } from "../src/codegen/backend.js";
+import type { Program } from "../src/program.js";
 import { romReady, romTraceLine } from "../src/rom/trace.js";
+import type { InputState, InputTape } from "../src/sim.js";
 import { traceHeader } from "../src/trace.js";
 
-/** Abstract buttons map straight onto the Game Boy's, which is the floor the
- * portable set was chosen against (doc 14 §Buttons). */
-const BUTTONS: Readonly<Record<string, Button>> = {
-  left: "left",
-  right: "right",
-  up: "up",
-  down: "down",
-  a: "a",
-  b: "b",
-  start: "start",
+/** What the runner needs of a booted machine, whichever console it is. */
+export interface RomMachine {
+  readMemory(address: number, length: number): Uint8Array;
+  stepInstruction(): number;
+  /** Run to the start of the next vertical blank; the speed measurement's clock. */
+  runFrame(): number;
+  setButtons(down: readonly string[]): void;
+}
+
+/** One console, as the harness sees it: build a cartridge, boot it, press keys. */
+export interface RomTarget {
+  /** The console id a program is compiled for. */
+  readonly console: string;
+  build(program: Program, options: BuildOptions): BuiltRom;
+  boot(bytes: Uint8Array): RomMachine;
+}
+
+/**
+ * Abstract buttons map straight onto the Game Boy's, which is the floor the
+ * portable set was chosen against (doc 14 §Buttons) — and onto the NES's, which
+ * has the same seven and a Select besides.
+ */
+const BUTTONS = ["left", "right", "up", "down", "a", "b", "start"] as const;
+
+export const gbTarget: RomTarget = {
+  console: "gb",
+  build: (program, options) => buildGbRom(program, options),
+  boot: (bytes) => {
+    const machine = new Gameboy(bytes);
+    return {
+      readMemory: (address, length) => machine.readMemory(address, length),
+      stepInstruction: () => machine.stepInstruction(),
+      runFrame: () => machine.runFrame(),
+      setButtons: (down) => machine.setButtons(down as GbButton[]),
+    };
+  },
+};
+
+export const gbcTarget: RomTarget = { ...gbTarget, console: "gbc" };
+
+export const nesTarget: RomTarget = {
+  console: "nes",
+  build: (program, options) => buildNesRom(program, options),
+  boot: (bytes) => {
+    const machine = new Nes(bytes);
+    return {
+      readMemory: (address, length) => machine.readMemory(address, length),
+      stepInstruction: () => machine.stepInstruction(),
+      runFrame: () => machine.runFrame(),
+      setButtons: (down) => machine.setButtons(down as NesButton[]),
+    };
+  },
 };
 
 /** A booted ROM, ready to be stepped a tick at a time. */
 export class RomRunner {
-  readonly machine: Gameboy;
+  readonly machine: RomMachine;
   readonly layout: Layout;
   readonly rom: Uint8Array;
   private readonly read = (address: number, length: number) =>
@@ -44,12 +97,13 @@ export class RomRunner {
 
   constructor(
     readonly program: Program,
-    options: RomOptions = {},
+    options: BuildOptions = {},
+    readonly target: RomTarget = gbTarget,
   ) {
-    const built = buildGbRom(program, options);
+    const built = target.build(program, options);
     this.layout = built.layout;
     this.rom = built.bytes;
-    this.machine = new Gameboy(built.bytes);
+    this.machine = target.boot(built.bytes);
     // Let the runtime finish initialising before the first input is offered.
     this.settle();
   }
@@ -62,7 +116,7 @@ export class RomRunner {
    * tape frame produces tick 1 in both.
    */
   private settle(): void {
-    for (let guard = 0; guard < 500_000; guard += 1) {
+    for (let guard = 0; guard < 2_000_000; guard += 1) {
       if (this.machine.readMemory(this.layout.booted, 1)[0] !== 0) return;
       this.machine.stepInstruction();
     }
@@ -71,11 +125,8 @@ export class RomRunner {
 
   /** Feed one tick of input and run until the runtime has consumed it. */
   step(input: InputState): void {
-    const down: Button[] = [];
-    for (const [action, held] of Object.entries(input)) {
-      const button = BUTTONS[action];
-      if (held && button) down.push(button);
-    }
+    const down: string[] = [];
+    for (const action of BUTTONS) if (input[action]) down.push(action);
     this.machine.setButtons(down);
     const before = romReady(this.layout, this.read);
     for (let guard = 0; guard < 8_000_000; guard += 1) {
@@ -98,8 +149,13 @@ export class RomRunner {
  * offered, exactly as `new Sim(program)` starts on tick zero with the entry
  * scene reset. Both sides therefore report tick 1 after one tape frame.
  */
-export function romTrace(program: Program, tape: InputTape, options: RomOptions = {}): string {
-  const runner = new RomRunner(program, options);
+export function romTrace(
+  program: Program,
+  tape: InputTape,
+  options: BuildOptions = {},
+  target: RomTarget = gbTarget,
+): string {
+  const runner = new RomRunner(program, options, target);
   const lines: string[] = traceHeader(program);
   for (const frame of tape) {
     runner.step(frame);

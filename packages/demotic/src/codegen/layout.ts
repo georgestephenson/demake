@@ -176,7 +176,11 @@ export const NES_MEMORY: MemoryPlan = {
   viewW: 32,
   viewH: 30,
   queueMax: 48,
-  plotMax: 32,
+  // Sixteen rather than the Game Boy's ninety-six, and it is not a quarter of the
+  // budget: the list holds the cells a *dynamic* HUD occupies — a counter's digits —
+  // and not its captions, which are painted once with the background they sit on.
+  // Two counters of five digits is ten.
+  plotMax: 16,
   cellAttributes: false,
 };
 
