@@ -54,7 +54,8 @@ against every console at once and reports the tally.
 
 The simulator runs on the main thread, not in the engine worker: a tick is a few
 hundred integer operations on a handful of entities, so the round trip would cost
-more than the work. Art conversion still goes to the worker.
+more than the work. Art conversion goes to the worker, and so does building the
+cartridge — that one *is* the art conversion, plus a compiler.
 
 **The section is code-split.** It carries the whole game language — compiler,
 interpreter, test runner — and someone who came to convert an image should not
@@ -111,22 +112,24 @@ the version from 300 ms ago.
 built — after a typing pause, and after a game or console change alike. The ROM
 pane keeps playing the cartridge it has and shows a *demaking…* badge over the
 screen: a screen that blanked as you typed would be worse than one that is a
-version behind. The badge has to reach the screen *before* the work starts,
-because the build is synchronous and nothing repaints while it runs — so the
-build is scheduled from inside a `requestAnimationFrame` callback rather than a
-bare `setTimeout`, which is the difference between a badge and a tab that freezes
-for several seconds having shown nothing.
+version behind. The build itself runs in the engine worker, so the badge is
+simply what the pane shows while it waits — the UI thread keeps painting, and the
+cartridge that is already loaded keeps playing at full speed throughout. It used
+to run here, deferred from inside a `requestAnimationFrame` callback so the badge
+would at least reach the screen before the tab stopped for several seconds; the
+worker is the version of that which does not stop the tab at all.
 
 ### Playing the real ROM in the page
 
 The preview runs the reference interpreter, which is the specification — but the
 product claim is a *ROM*, so the page builds one and plays it. **Live for `gb`,
-`gbc` and `nes`.**
+`gbc`, `nes`, `sms` and `gg`.**
 
 **Assembling needs no assembler installed** (doc 06), because the assemblers are
-ours: `packages/core/src/asm/` is TypeScript and holds one for the SM83 and one
-for the 6502, so the page compiles the game to whichever the chosen console runs,
-exactly as the CLI does. The art travels the same way — the page hands the build
+ours: `packages/core/src/asm/` is TypeScript and holds one for the SM83, one for
+the 6502 and one for the Z80, so the page compiles the game to whichever the
+chosen console runs, exactly as the CLI does. The art travels the same way — the
+page hands the build
 raw SVG text and `@demake/core`'s own rasteriser turns it into tiles, rather than
 the browser's SVG renderer, which would antialias differently from Node's and put
 a different byte in the cartridge. The bytes are identical to `demake build`'s —
@@ -134,19 +137,21 @@ the parity contract this document already asks of images, restated for games, an
 pinned by a Playwright spec that builds `caves` on both sides, once per console
 with a backend, and compares hashes — and the pane offers them as a download.
 
-Once per console is the point: the two share a compiler and share nothing below
-it. Different instruction set, a different fitter for the art, a different
-cartridge wrapper. A page that agreed with the CLI about the Game Boy would say
-nothing about whether it agreed about the NES.
+Once per console is the point: they share a compiler and share nothing below it.
+Different instruction set, a different fitter for the art, a different cartridge
+wrapper. A page that agreed with the CLI about the Game Boy would say nothing
+about whether it agreed about the NES or the Master System.
 
-**Playing it needs an emulator**, and they are ours: `@demake/dmg` and
-`@demake/nes`, each around a thousand lines of dependency-free TypeScript.
-Self-hosting a WASM core would have satisfied the never-from-a-CDN rule, but not
-the reason behind it — a core we cannot read is a dependency we cannot trust with
-the claim "this is what the hardware does". Writing them was also the cheaper
-option, because the Demotic conformance suite (doc 10) needed a headless machine
-for each console anyway, and one core now serves both jobs. Together they cost
-about 13 KB gzipped inside the already code-split game chunk.
+**Playing it needs an emulator**, and they are ours: `@demake/dmg`,
+`@demake/nes` and `@demake/sms`, each around a thousand lines of dependency-free
+TypeScript. Self-hosting a WASM core would have satisfied the never-from-a-CDN
+rule, but not the reason behind it — a core we cannot read is a dependency we
+cannot trust with the claim "this is what the hardware does". Writing them was
+also the cheaper option, because the Demotic conformance suite (doc 10) needed a
+headless machine for each console anyway, and one core now serves both jobs.
+Together they cost about 21 KB gzipped, and they are in the entry-adjacent game
+chunk rather than the worker because playing a cartridge is what the *page* does
+with one.
 
 **Everything on screen describes the cartridge, not the picker.** The selector
 changes the *cartridge*, and a cartridge takes a demake to arrive — seconds, when
@@ -156,16 +161,19 @@ the machine name, the canvas size, the download's extension and the CPU the
 frames-per-tick figure names all follow the ROM that is actually running. Get
 that backwards and the Download button offers you `.nes` and hands you a Game
 Boy. The canvas is sized by the machine it is showing rather than by the
-stylesheet, because 160×144 and 256×240 are not the same rectangle and a ratio
-pinned in CSS could only ever be right for one of them.
+stylesheet, because 160×144, 256×240 and 256×192 are not the same rectangle and a
+ratio pinned in CSS could only ever be right for one of them. Which family plays
+a cartridge is the worker's answer too — it comes back with the ROM, from
+`codegen/registry.ts`, so the page never keeps a second list of which consoles
+build.
 
 **The pane reports frames per tick**, and that is deliberate. It is the measured
 cost of one game tick on that console's CPU — currently right on one frame for
-every example, on both machines — and it is reported rather than hidden behind a
+every example, on every machine — and it is reported rather than hidden behind a
 speed multiplier, because running the emulator fast enough to paper over a slow
 tick would be a lie to the person writing the game. The number names the CPU it
-was measured on, since three frames a tick means different things on a 4 MHz SM83
-and a 1.8 MHz 6502.
+was measured on, since three frames a tick means different things on a 4 MHz
+SM83, a 1.8 MHz 6502 and a 3.6 MHz Z80.
 
 A game the chosen console's backend cannot compile gets a message naming the
 feature instead of a cartridge that would play something else — the same refusal
@@ -198,10 +206,10 @@ APU. So the sound button lives in the cartridge view, the preview is silent, and
 in *Preview* there is no sound control at all — which is the honest way to say
 that a simulator has nothing to play.
 
-Both consoles the page builds for have a driver, so the button is available on
-both. A console whose driver has not been written would have it *disabled* rather
-than silent, and the pane would say why: a switch that turns on nothing is worse
-than one that is plainly unavailable.
+Both Nintendo families have a driver, so the button is available there. The Sega
+cartridges do not yet — the SN76489 driver is doc 13's work — so on those the
+button is *disabled* rather than silent, and the pane says why: a switch that
+turns on nothing is worse than one that is plainly unavailable.
 
 The ROM pane plays the cartridge's own sound, and every sample of it comes out of
 `@demake/chip`'s model of that console's chip — the Game Boy's APU or the NES's
@@ -353,11 +361,23 @@ bundled track or effect on arrival instead, so every section demos itself.
 - Budget: < 300 KB JS gzipped before WASM codecs (lazy-loaded per input format);
   Lighthouse ≥ 95 across the board, checked in CI. The figure is a **sum over the
   whole site** — entry chunk, all five lazy sections, both workers — which is more
-  than any one visit costs: opening the heaviest section downloads about 200 KB.
+  than any one visit costs: opening the heaviest section downloads about 150 KB.
   A sum is the honest shape for this check, because it cannot be satisfied by
   moving code from one chunk to another, only by there being less of it. It is
   close: a second console — a second instruction set, a second emulator, a second
   set of hardware tables — came to 4.6 KB of it. The next thing that does not fit
   should be made smaller rather than given more room.
+
+  **The third console is what made that rule bite, and what it bought was one
+  copy of the engine.** A Sega vertical is 21 KB gzipped and none of it is fat —
+  a Z80 assembler, a Z80 core, a VDP, a code generator — so the room had to come
+  from somewhere else, and it did: the game section was building its cartridge on
+  the UI thread, which meant `@demake/core` was bundled twice, once in the image
+  worker and once in the game chunk. Building through the worker instead deletes
+  a whole second copy of the image engine and the audio demakers, which is
+  genuinely less JavaScript rather than the same JavaScript somewhere else. It
+  also stops the tab freezing while a colour backdrop is fitted, and it restores
+  the rule the rest of the app already followed: the workers are the only place
+  the page touches an engine.
 - Browser matrix: last 2 versions of Chrome/Firefox/Safari/Edge, tested via
   Playwright in CI (functional + determinism suites).

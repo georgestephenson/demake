@@ -269,8 +269,10 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
   src/render.ts      ChipScript → PCM; the only way anything makes sound
 packages/web/        the site (doc 07): one shell over five sections, all but the
                      art demaker code-split
-  src/worker/        core.worker.ts (images) and audio.worker.ts (music + sound):
-                     the only places the page touches an engine
+  src/worker/        core.worker.ts (images *and* game cartridges) and
+                     audio.worker.ts (music + sound): the only places the page
+                     touches an engine, and the only places @demake/core is
+                     bundled — a second copy is what the JS budget notices
   src/sections/      the lazy sections; art's panes live in src/components/
   src/lib/           option records ⇄ engine options ⇄ equivalent command line,
                      the bundled demo library, and audio-player.ts (playback only)
@@ -1125,6 +1127,14 @@ Two files plus fixtures (doc 02 §Extensibility):
   of anything the CLI does (a manifest shape, a symbol-name rule, a console
   summary table) is how parity dies; if the web needs it, it moves into core
   first, as `buildManifest`/`encodeManifest` did.
+- **An engine imported on the UI thread is a second copy of it in the bundle.**
+  A worker is a separate bundle, so `@demake/core` reached from a component is
+  shipped twice — and the doc-07 JS budget is a sum precisely so that shows up.
+  The game section built its cartridge inline until the Sega backend needed the
+  room; it goes through `core.worker.ts` now, which is where every path that
+  touches `@demake/core` belongs anyway. What may stay on the main thread is what
+  has no engine under it: the language front end, the interpreter, and the
+  emulator cores, because playing a cartridge is what the page does with one.
 - **The service worker may cache anything but the shell.** Every asset is
   content-hashed, so cache-first is right for all of them — and wrong for
   `index.html`, the one URL that never changes and the file that names those

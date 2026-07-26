@@ -5,6 +5,13 @@
  * calls exactly the API the CLI calls — same `prep`, same `gen`, same manifest
  * builder — so browser output is byte-identical to `demake` on the command line
  * (doc 10 §Determinism). Nothing here reads the DOM, the network, or storage.
+ *
+ * Building a game's cartridge is here for the same reason and one more. The
+ * same reason: `buildGame` demakes the art the game names through this very
+ * engine, so it is seconds of arithmetic that would otherwise freeze the tab.
+ * The one more: it is the *only* place the image engine is bundled, so the
+ * whole site ships one copy of it rather than one per thread that wanted it —
+ * which is what the doc 07 §Quality bar budget is a sum in order to notice.
  */
 
 import {
@@ -22,10 +29,12 @@ import {
   type ConsoleSpec,
   type PrepOptions,
 } from "@demake/core";
+import { buildGame, familyFor, romExtension, unsupportedFor } from "@demake/demotic";
 
 import { buildDemoImage } from "../lib/demo-image.js";
 import { toPrepOptions } from "../lib/options.js";
 import type {
+  BuiltRomPayload,
   ConsoleInfo,
   GenArtifactPayload,
   PaletteSwatches,
@@ -165,6 +174,32 @@ function demoPng(): ArrayBuffer {
   return copy.buffer;
 }
 
+/**
+ * Compile a game to a cartridge, exactly as `demake build` does.
+ *
+ * The refusal case is a *result*, not an error: a console whose backend cannot
+ * do what the `.dmt` asks for has a working game and no cartridge, and the
+ * caller needs the console and the extension in order to say so.
+ */
+function runBuildGame(
+  program: Parameters<typeof buildGame>[0],
+  title: string,
+  assets: Map<string, Uint8Array>,
+): BuiltRomPayload {
+  const consoleId = program.profile.id;
+  const base = {
+    console: consoleId,
+    family: familyFor(consoleId) ?? "gb",
+    extension: romExtension(program),
+    unsupported: [...unsupportedFor(program)],
+  };
+  if (base.unsupported.length > 0) return base;
+  const built = buildGame(program, { title, assets });
+  // `slice()` because the ROM is transferred: a cartridge built out of a bank
+  // the assembler still holds a view on would be handed away underneath it.
+  return { ...base, rom: built.bytes.slice().buffer, layout: built.layout };
+}
+
 function post(message: WorkerResponse, transfer: Transferable[] = []): void {
   (self as unknown as Worker).postMessage(message, transfer);
 }
@@ -227,6 +262,14 @@ self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
           post(
             { id: req.id, ok: true, kind: "gen", artifacts },
             artifacts.map((a) => a.bytes),
+          );
+          return;
+        }
+        case "build-game": {
+          const result = runBuildGame(req.program, req.title, req.assets);
+          post(
+            { id: req.id, ok: true, kind: "build-game", result },
+            result.rom ? [result.rom] : [],
           );
           return;
         }

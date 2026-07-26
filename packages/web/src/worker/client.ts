@@ -8,6 +8,7 @@
  */
 
 import type {
+  BuiltRomPayload,
   ConsoleInfo,
   GenArtifactPayload,
   PrepOptionsUi,
@@ -16,6 +17,7 @@ import type {
   WorkerResponse,
 } from "./protocol.js";
 import type { StrategyInfo } from "@demake/core";
+import type { Program } from "@demake/demotic";
 
 /** Error carrying the engine's own code + hint, so the UI can show both. */
 export class EngineError extends Error {
@@ -114,6 +116,20 @@ export class EngineClient {
     const buffer = source.slice().buffer;
     const res = await this.#send({ kind: "gen", source: buffer, options, format, stem }, [buffer]);
     return res.artifacts;
+  }
+
+  /**
+   * Compile a game to a real cartridge.
+   *
+   * Nothing is transferred: the program and the asset bytes both stay owned by
+   * the page, which rebuilds from them on the next keystroke.
+   */
+  async buildGame(
+    program: Program,
+    title: string,
+    assets: Map<string, Uint8Array>,
+  ): Promise<BuiltRomPayload> {
+    return (await this.#send({ kind: "build-game", program, title, assets })).result;
   }
 }
 

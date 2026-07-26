@@ -206,9 +206,9 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     palettes were chosen for the title screen. Colour costs cartridge — around a
     kilobyte for a game with two demade backdrops — which is a fact the build
     reports rather than hides.
-  - **D4 — breadth** *(`nes` trace-green)*: `nes`, `sms`/`gg`, `md`, `snes`
-    backends, each trace-green then framebuffer-green. A backend is per-family;
-    the `Program` it compiles is not.
+  - **D4 — breadth** *(`nes` and `sms`/`gg` trace-green)*: `nes`, `sms`/`gg`,
+    `md`, `snes` backends, each trace-green then framebuffer-green. A backend is
+    per-family; the `Program` it compiles is not.
 
     The NES half is built: `demake build -c nes` produces a real NROM cartridge
     — 6502 machine code written for the game, art demade by the image pipeline
@@ -254,14 +254,50 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     is the backdrop nametable, which is stored raw; the play screen's would pack
     to a third of its size and the title screen's to about the same, so a
     literal-and-run encoding is worth roughly six hundred bytes a game.
-  - **D5 — Play ROM in the page** *(done for `gb`, `gbc` and `nes`)*: the browser
+
+    **The Sega 8-bits are the third console, and they cost the interface
+    nothing.** `demake build -c sms` (and `-c gg`) produces a real 32 KiB Sega
+    cartridge — Z80 machine code written for the game, `TMR SEGA` header and
+    checksum, art demade into 16-colour tiles — and the whole example library
+    traces identically there, in the same battery, at the same one frame a tick.
+    Nothing moved out of `backend.ts` or `shape.ts` to make room for it, which is
+    the strongest evidence so far that the interface is one: the only thing the
+    Sega backend owns is an instruction set.
+
+    What the Z80 made cheap and what it made dear are both worth recording. The
+    16-bit register file makes 32-bit arithmetic short — `add hl,de` with `adc
+    hl,de` is a 32-bit add in four instructions and no pointer — and `ldir` makes
+    a block copy one instruction, which is what a collision box and a VRAM upload
+    both are. What it lacks is a cheap *region*: there is no page zero and no high
+    RAM, every address is three bytes, so the layout has no `fast` pool at all and
+    the cheapness lives in the registers instead. And the name table is exactly as
+    wide as the screen — thirty-two cells against thirty-two — so a scrolling
+    scene has no spare column to paint into and writes the new one into the cell
+    straddling the masked left edge, which is what `R0` bit 5 is turned on for.
+
+    Framebuffer-green is what remains here too, and behind the same scripted
+    input tape. Until then `sms-rom.test.ts` is the rendering oracle and
+    `sms-arith.test.ts` the arithmetic one — every 16.16 operation assembled on
+    its own, run in `@demake/sms` and compared with `fixed.ts`, because a multiply
+    that floors the wrong way makes a game that plays almost right and diverges a
+    thousand ticks later.
+
+    Sound is the gap: there is no SN76489 driver yet (§A5), so a Sega build plays
+    silently and says so rather than dropping the request. The blocking design
+    question is in the packer — the SN76489 puts the channel in the *data* byte
+    and latches it across writes, so `channelOf(reg)` has to become
+    `channelOf(reg, value)` over a per-tick latch, and refuse rather than guess if
+    a schedule ever emits a data byte without its latch.
+  - **D5 — Play ROM in the page** *(done for `gb`, `gbc`, `nes`, `sms` and
+    `gg`)*: the browser
     compiles the
     game itself, because the assembler is ours and written in TypeScript, and
     demakes its art with our own rasteriser rather than the browser's. It boots
-    the result in `@demake/dmg` or `@demake/nes` — ours, because doc 07 forbids a
-    CDN core and a WASM core we cannot read is the same bargain in a different
-    wrapper. The bytes are identical to `demake build`'s, pinned by a Playwright
-    spec on *both* consoles, and the pane offers them as a download. Picking a
+    the result in `@demake/dmg`, `@demake/nes` or `@demake/sms` — ours, because
+    doc 07 forbids a CDN core and a WASM core we cannot read is the same bargain
+    in a different wrapper. The bytes are identical to `demake build`'s, pinned by
+    a Playwright spec on *every* console with a backend, and the pane offers them
+    as a download. Picking a
     console in the selector changes the **cartridge**, not a setting on one:
     Game Boy Color builds a `.gbc` that the same core plays in colour because the
     machine it comes up as is the cartridge header's decision, and NES builds a
