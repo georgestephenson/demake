@@ -1,3 +1,41 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
-  <rect x="10" y="16" width="44" height="30" rx="8" fill="#b98cff"/><rect x="10" y="16" width="44" height="30" rx="8" fill="none" stroke="#4a2a80" stroke-width="4"/><rect x="16" y="46" width="8" height="10" fill="#4a2a80"/><rect x="40" y="46" width="8" height="10" fill="#4a2a80"/><circle cx="24" cy="30" r="4" fill="#241145"/><circle cx="40" cy="30" r="4" fill="#241145"/>
+  <!-- alien — the front rank of the SHOOTER cover, rim-lit for black -->
+  <rect x="0" y="0" width="8" height="8" fill="#f6f0ff"/>
+  <rect x="24" y="0" width="16" height="8" fill="#f6f0ff"/>
+  <rect x="56" y="0" width="8" height="8" fill="#f6f0ff"/>
+  <rect x="8" y="8" width="8" height="8" fill="#f6f0ff"/>
+  <rect x="16" y="8" width="32" height="8" fill="#cbaaff"/>
+  <rect x="48" y="8" width="8" height="8" fill="#f6f0ff"/>
+  <rect x="0" y="16" width="8" height="8" fill="#f6f0ff"/>
+  <rect x="8" y="16" width="8" height="8" fill="#cbaaff"/>
+  <rect x="16" y="16" width="32" height="8" fill="#9873d2"/>
+  <rect x="48" y="16" width="8" height="8" fill="#cbaaff"/>
+  <rect x="56" y="16" width="8" height="8" fill="#f6f0ff"/>
+  <rect x="0" y="24" width="8" height="8" fill="#f6f0ff"/>
+  <rect x="8" y="24" width="8" height="8" fill="#cbaaff"/>
+  <rect x="16" y="24" width="8" height="8" fill="#1b1425"/>
+  <rect x="24" y="24" width="16" height="8" fill="#9873d2"/>
+  <rect x="40" y="24" width="8" height="8" fill="#1b1425"/>
+  <rect x="48" y="24" width="8" height="8" fill="#cbaaff"/>
+  <rect x="56" y="24" width="8" height="8" fill="#f6f0ff"/>
+  <rect x="0" y="32" width="8" height="8" fill="#f6f0ff"/>
+  <rect x="8" y="32" width="8" height="8" fill="#cbaaff"/>
+  <rect x="16" y="32" width="32" height="8" fill="#9873d2"/>
+  <rect x="48" y="32" width="8" height="8" fill="#cbaaff"/>
+  <rect x="56" y="32" width="8" height="8" fill="#f6f0ff"/>
+  <rect x="0" y="40" width="8" height="8" fill="#f6f0ff"/>
+  <rect x="8" y="40" width="8" height="8" fill="#cbaaff"/>
+  <rect x="16" y="40" width="8" height="8" fill="#9873d2"/>
+  <rect x="24" y="40" width="16" height="8" fill="#1b1425"/>
+  <rect x="40" y="40" width="8" height="8" fill="#9873d2"/>
+  <rect x="48" y="40" width="8" height="8" fill="#cbaaff"/>
+  <rect x="56" y="40" width="8" height="8" fill="#f6f0ff"/>
+  <rect x="8" y="48" width="8" height="8" fill="#f6f0ff"/>
+  <rect x="16" y="48" width="8" height="8" fill="#cbaaff"/>
+  <rect x="24" y="48" width="16" height="8" fill="#9873d2"/>
+  <rect x="40" y="48" width="8" height="8" fill="#cbaaff"/>
+  <rect x="48" y="48" width="8" height="8" fill="#f6f0ff"/>
+  <rect x="8" y="56" width="8" height="8" fill="#f6f0ff"/>
+  <rect x="24" y="56" width="16" height="8" fill="#f6f0ff"/>
+  <rect x="48" y="56" width="8" height="8" fill="#f6f0ff"/>
 </svg>

@@ -77,9 +77,10 @@ describe("demake build", () => {
     expect(report.rom.rules).toBeGreaterThan(0);
     expect(report.rom.free).toBeGreaterThan(0);
     expect(report.rom.ram).toBeGreaterThan(0);
-    // Pong divides and multiplies; it does not draw random numbers.
+    // Pong divides, multiplies, and draws (the opponent's wandering aim).
     expect(report.rom.helpers).toContain("Div32");
-    expect(report.rom.helpers).not.toContain("RngPick");
+    expect(report.rom.helpers).toContain("Mul32");
+    expect(report.rom.helpers).toContain("RngPick");
   });
 
   it("emits the symbol map of the code it generated when asked", async () => {

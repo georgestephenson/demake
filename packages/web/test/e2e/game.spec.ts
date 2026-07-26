@@ -76,6 +76,10 @@ test("scrolls a level bigger than the screen, and draws its tiles", async ({ pag
   await page.getByTestId("example-select").selectOption("caves");
   await expect(page.locator(".diag-error")).toHaveCount(0);
 
+  // Past the title screen — every game opens on one, and a title screen has no
+  // level to scroll.
+  await page.keyboard.press("KeyZ");
+
   // The canvas is not blank before anything moves: a scene with a level draws
   // its tiles, which is the whole of the background layer.
   await expect.poll(() => painted(page), { timeout: 5000 }).toBeGreaterThan(0.05);

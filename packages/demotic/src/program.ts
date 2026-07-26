@@ -162,6 +162,14 @@ export interface SceneDef {
   bounds: { width: number; height: number };
   /** Instance the camera keeps centred, if any. */
   cameraTarget?: number;
+  /**
+   * Image filling this scene's background, if it has one.
+   *
+   * Scenery and nothing more: it has no cells anything can collide with and no
+   * names any rule can reach. It is the file name the `.dmt` wrote, resolved to
+   * pixels by the image pipeline at build time.
+   */
+  backdrop?: string;
 }
 
 /** Static budget findings, reported without running the game. */

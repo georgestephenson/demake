@@ -312,8 +312,10 @@ describe("cross-console balance", () => {
       return profile.screenHeight / toNumber(ball?.numbers["speed"] ?? 1);
     });
     // Tolerance is fixed-point rounding, not slack: the spread across consoles
-    // is under a microsecond of simulated time.
-    for (const time of times) expect(time).toBeCloseTo(2.5, 4);
+    // is under a microsecond of simulated time. 55vmin is 55% of the shorter
+    // side per second, and on every console here the shorter side *is* the
+    // height, so a full crossing is 100/55 seconds by construction.
+    for (const time of times) expect(time).toBeCloseTo(100 / 55, 4);
   });
 
   it("gives the paddle the same traverse time on every console", () => {
@@ -344,7 +346,12 @@ describe("pong", () => {
     for (const id of ["gb", "gbc", "nes", "sms", "gg", "md", "snes"]) {
       const program = compile(PONG, { profile: getProfile(id) });
       expect(program.entryScene).toBe("title");
-      expect(program.assets).toEqual(["ball.svg", "paddle.svg"]);
+      expect([...program.assets].sort()).toEqual([
+        "ball.svg",
+        "paddle.svg",
+        "pong.play.svg",
+        "pong.title.svg",
+      ]);
     }
   });
 

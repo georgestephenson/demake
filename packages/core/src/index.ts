@@ -56,7 +56,7 @@ export * as math from "./math/kernels.js";
 export { makePrng, type Prng } from "./math/prng.js";
 
 // --- prep --------------------------------------------------------------------
-export { prep } from "./pipeline/prep.js";
+export { prep, prepSync } from "./pipeline/prep.js";
 export {
   buildSpriteBank,
   paletteRegister,

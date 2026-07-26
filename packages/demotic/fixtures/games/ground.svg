@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- ground — the packed earth along the bottom of the RUNNER cover -->
+  <rect x="0" y="0" width="64" height="8" fill="#c0ae8d"/>
+  <rect x="0" y="8" width="64" height="8" fill="#a18856"/>
+  <rect x="0" y="16" width="64" height="8" fill="#755a25"/>
+  <rect x="0" y="24" width="16" height="8" fill="#755a25"/>
+  <rect x="16" y="24" width="16" height="8" fill="#1d1609"/>
+  <rect x="32" y="24" width="32" height="8" fill="#755a25"/>
+  <rect x="0" y="32" width="48" height="8" fill="#755a25"/>
+  <rect x="48" y="32" width="16" height="8" fill="#1d1609"/>
+  <rect x="0" y="40" width="16" height="8" fill="#1d1609"/>
+  <rect x="16" y="40" width="32" height="8" fill="#755a25"/>
+  <rect x="48" y="40" width="16" height="8" fill="#493817"/>
+  <rect x="0" y="48" width="32" height="8" fill="#755a25"/>
+  <rect x="32" y="48" width="16" height="8" fill="#1d1609"/>
+  <rect x="48" y="48" width="16" height="8" fill="#755a25"/>
+  <rect x="0" y="56" width="64" height="8" fill="#493817"/>
+</svg>

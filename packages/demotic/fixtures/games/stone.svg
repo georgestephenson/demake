@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- stone — the lit ledges of the CAVES cover -->
+  <rect x="0" y="0" width="64" height="8" fill="#f1f2f4"/>
+  <rect x="0" y="8" width="64" height="8" fill="#c0c7ce"/>
+  <rect x="0" y="16" width="64" height="8" fill="#626c78"/>
+  <rect x="0" y="24" width="64" height="8" fill="#626c78"/>
+  <rect x="0" y="32" width="64" height="8" fill="#484f58"/>
+  <rect x="0" y="40" width="64" height="8" fill="#484f58"/>
+  <rect x="0" y="48" width="64" height="8" fill="#15171a"/>
+  <rect x="0" y="56" width="16" height="8" fill="#15171a"/>
+  <rect x="16" y="56" width="16" height="8" fill="#2e3339"/>
+  <rect x="32" y="56" width="8" height="8" fill="#15171a"/>
+  <rect x="40" y="56" width="16" height="8" fill="#2e3339"/>
+  <rect x="56" y="56" width="8" height="8" fill="#15171a"/>
+</svg>

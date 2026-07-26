@@ -24,6 +24,7 @@ import { analyze, type Analysis } from "./analyze.js";
 import { bindArt } from "./art.js";
 import { Ctx } from "./ctx.js";
 import { emitProgram, type EmitOptions, type SpriteArt } from "./emit.js";
+import { BUILTIN_TILES } from "../rom/graphics.js";
 import { LayoutError, planLayout, type Layout } from "./layout.js";
 
 /**
@@ -35,6 +36,14 @@ import { LayoutError, planLayout, type Layout } from "./layout.js";
  */
 export const ROM_SIZE = GB_ROM_SIZE;
 export const HEADER_OFFSETS = GB_HEADER_OFFSETS;
+
+/**
+ * Tiles the video hardware addresses at once, shared by background and objects.
+ *
+ * Not a cartridge fact and so not `core`'s: it is what the PPU can reach, and
+ * it is the budget a scene's backdrop competes with the game's own art for.
+ */
+export const TILE_SLOTS = 256;
 
 /** What to stamp in the cartridge header, and what art to bind. */
 export interface RomOptions extends EmitOptions {
@@ -131,6 +140,20 @@ export function buildGbRom(program: Program, options: RomOptions = {}): BuiltRom
   // Explicit options win over converted art, so a caller can hand over a bank
   // it built itself; anything it left out comes from the conversion.
   const art = bindArt(program, options.assets ?? new Map());
+  // The bank is one 256-entry table shared by the background and the objects,
+  // so a title screen's tiles are what is left after the game's own art. Art
+  // that does not fit is named here rather than drawn with holes in it.
+  const tiles = BUILTIN_TILES + art.tiles8;
+  if (tiles > TILE_SLOTS) {
+    const backdrops = program.scenes.filter((scene) => scene.backdrop !== undefined).length;
+    throw new BuildError(
+      "E_BACKDROP_TILES",
+      `this game needs ${tiles} tiles and the Game Boy has ${TILE_SLOTS}`,
+      backdrops > 0
+        ? "a backdrop costs one tile per distinct 8x8 cell — flatter areas and repeated motifs cost fewer"
+        : "fewer objects, or smaller ones; every distinct 8x8 cell of art is a tile",
+    );
+  }
   const emitOptions: EmitOptions = { ...art, ...stripUndefined(options) };
 
   const ctx = new Ctx(program, analysis, layout, getProfile(program.profile.id), 0);

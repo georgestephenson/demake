@@ -141,7 +141,7 @@ game keeps up with the hardware, and the interpreter never did.
 | platformer | | 1.00 |
 | dodger | | 1.00 |
 | shooter | 11 | 1.00 |
-| caves | *would not build* | 1.01 |
+| caves | *would not build* | 1.03 |
 | runner | *would not build* | 1.00 |
 
 The interpreter's figures spanned 3 to 11 frames across the five games it could
@@ -473,6 +473,57 @@ A rule reading the camera sees where the view was when the tick began, so a HUD
 trails by one tick while the world is moving and lands on the view the moment it
 stops. Invisible in play, and worth knowing before reading a trace.
 
+### Backgrounds that are pictures: `backdrop`
+
+A scene's background layer is either a playfield or a picture. `backdrop` names
+the picture:
+
+```
+scene title
+backdrop pong.title.svg
+```
+
+It is scenery and nothing else — nothing collides with it, no rule reads it, and
+it has no cells to name — so it is the one statement in the language whose entire
+effect is on the screen. A scene may have a level or a backdrop and not both,
+because both are the same hardware layer, and the compiler says which one to drop
+rather than picking.
+
+What makes it worth having is *where the pixels come from*. The file goes through
+the **image pipeline** — `prep`, at the console's own screen size, with the same
+fitter a photograph gets — and comes back as deduplicated tiles plus a tilemap.
+That is not a second art path bolted onto the game backend; it is the demaker
+this whole tool is about, pointed at a title screen. A game's first screen is
+therefore full-bleed artwork demade by the same code as everything else, and the
+proof is that it costs a game nothing at run time: the background layer draws a
+tilemap for free.
+
+What it costs is **tiles**, and a console has a fixed number of them shared
+between backgrounds and objects. A picture is as expensive as it is *varied*:
+flat areas and repeated motifs collapse to one tile each, and detail that does
+not land on the cell grid does not. Backdrops are pooled against the whole bank,
+so a cell already drawn by the font, by a sprite, or by another scene's picture
+is pointed at rather than stored twice. When the total still does not fit, the
+build stops and names the number — a title screen with holes in it is not a
+smaller title screen, it is a bug.
+
+Two things follow for anyone drawing one, and both are properties of the
+hardware rather than of taste:
+
+- **Author well above the smallest screen.** A backdrop is fitted to the console
+  being built for, and those screens differ by four times in area — 160×144 on a
+  Game Boy against 320×224 on a Mega Drive. Art whose smallest feature is one
+  Game Boy pixel gives the bigger machine nothing to resolve. The example
+  library's screens are drawn on a 640×576 canvas with detail down to a quarter
+  of a Game Boy pixel for exactly this reason.
+- **Keep the playfield at the ends of the ramp.** An object's colour 0 is
+  transparency, so the object palette is the three *darkest* shades (doc 15
+  §The conversion path). A background in the middle of the ramp is a background
+  objects vanish into; sky should be the lightest shade and space the darkest.
+  For the same reason a scene that draws its HUD on the background layer needs a
+  lit band where the counters go — the font's ink is the darkest shade, and a
+  status bar is what that constraint looks like when you take it seriously.
+
 ### Composed levels: `stream`
 
 An endless scroller is not an endless level. It is a short vocabulary of
@@ -481,10 +532,10 @@ with a gap in it, 1942 a handful of formations. `stream` says exactly that:
 
 ```
 seed 20260725
-stream course from open.dmtl, lowpipe.dmtl, highpipe.dmtl 24 wide
+stream course from open.dmtl, lowpipe.dmtl, highpipe.dmtl, pipemid.dmtl 24 wide
 ```
 
-Twenty-four chunks are drawn at random from the three and laid side by side, and
+Twenty-four chunks are drawn at random from the four and laid side by side, and
 the result is an ordinary level. Three things follow from composing at **compile
 time**, and all three are why it is done that way:
 
@@ -721,9 +772,18 @@ today — levels, tile collision, the camera and scrolling all compile.
 **Speed is a published number, not a claim.** The web app shows measured Game
 Boy frames per game tick rather than running the emulator fast enough to
 disguise the cost, because a person writing a game needs to know what their
-rules cost. Every example in the library is at 1.00–1.01 frames per tick, so a
+rules cost. Every example in the library is at 1.00–1.03 frames per tick, so a
 game keeps up with the hardware; a rule set expensive enough to overrun a frame
 will say so in that figure.
+
+It is also what tells you *what to fix*. A dozen collectible objects in a level
+four screens wide first arrived at 1.4 frames a tick, and the profile named the
+reason twice: the game was doing per-object work for objects nobody could see,
+and it was walking the grid under the hero once per tile rule to reach the same
+answer each time. Culling what the view does not cover, and walking those cells
+once, put it back at 1.03 — with the coins kept as objects, so that a collected
+one is gone. The measurement decided which of the two to give up, and the answer
+turned out to be neither.
 
 Families map onto the existing codegen families (doc 06): `gb`, `nes`, `sms`
 (SMS + GG), `md`, `snes`. Each is a backend module beside the `gb` one, and each

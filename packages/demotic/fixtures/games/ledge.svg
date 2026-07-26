@@ -1,3 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 64" width="256" height="64">
-  <rect x="0" y="14" width="256" height="36" rx="8" fill="#7d8a99"/><rect x="0" y="14" width="256" height="12" rx="6" fill="#aab6c4"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- ledge — grass over dirt, in bands so it fits any width -->
+  <rect x="0" y="0" width="64" height="8" fill="#def9e9"/>
+  <rect x="0" y="8" width="64" height="8" fill="#80e8a8"/>
+  <rect x="0" y="16" width="64" height="8" fill="#296d48"/>
+  <rect x="0" y="24" width="64" height="8" fill="#a18856"/>
+  <rect x="0" y="32" width="64" height="8" fill="#a18856"/>
+  <rect x="0" y="40" width="64" height="8" fill="#6c5322"/>
+  <rect x="0" y="48" width="64" height="8" fill="#a18856"/>
+  <rect x="0" y="56" width="64" height="8" fill="#1d1609"/>
 </svg>

@@ -1,3 +1,39 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
-  <rect x="12" y="10" width="40" height="48" rx="4" fill="#2f3a52"/><rect x="12" y="10" width="40" height="48" rx="4" fill="none" stroke="#8fd8b0" stroke-width="4"/><path d="M20 34 L38 34 M32 26 L40 34 L32 42" fill="none" stroke="#8fd8b0" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- exit — the strapped crate at the top of the CAVES cover -->
+  <rect x="0" y="0" width="64" height="8" fill="#1f160c"/>
+  <rect x="0" y="8" width="8" height="8" fill="#1f160c"/>
+  <rect x="8" y="8" width="48" height="8" fill="#7e562e"/>
+  <rect x="56" y="8" width="8" height="8" fill="#1f160c"/>
+  <rect x="0" y="16" width="8" height="8" fill="#1f160c"/>
+  <rect x="8" y="16" width="8" height="8" fill="#7e562e"/>
+  <rect x="16" y="16" width="16" height="8" fill="#f9f1ea"/>
+  <rect x="32" y="16" width="16" height="8" fill="#dfb993"/>
+  <rect x="48" y="16" width="8" height="8" fill="#7e562e"/>
+  <rect x="56" y="16" width="8" height="8" fill="#1f160c"/>
+  <rect x="0" y="24" width="8" height="8" fill="#1f160c"/>
+  <rect x="8" y="24" width="8" height="8" fill="#7e562e"/>
+  <rect x="16" y="24" width="8" height="8" fill="#f9f1ea"/>
+  <rect x="24" y="24" width="16" height="8" fill="#1f160c"/>
+  <rect x="40" y="24" width="8" height="8" fill="#dfb993"/>
+  <rect x="48" y="24" width="8" height="8" fill="#7e562e"/>
+  <rect x="56" y="24" width="8" height="8" fill="#1f160c"/>
+  <rect x="0" y="32" width="8" height="8" fill="#1f160c"/>
+  <rect x="8" y="32" width="8" height="8" fill="#7e562e"/>
+  <rect x="16" y="32" width="8" height="8" fill="#f9f1ea"/>
+  <rect x="24" y="32" width="16" height="8" fill="#1f160c"/>
+  <rect x="40" y="32" width="8" height="8" fill="#dfb993"/>
+  <rect x="48" y="32" width="8" height="8" fill="#7e562e"/>
+  <rect x="56" y="32" width="8" height="8" fill="#1f160c"/>
+  <rect x="0" y="40" width="8" height="8" fill="#1f160c"/>
+  <rect x="8" y="40" width="8" height="8" fill="#7e562e"/>
+  <rect x="16" y="40" width="16" height="8" fill="#f9f1ea"/>
+  <rect x="32" y="40" width="16" height="8" fill="#dfb993"/>
+  <rect x="48" y="40" width="8" height="8" fill="#7e562e"/>
+  <rect x="56" y="40" width="8" height="8" fill="#1f160c"/>
+  <rect x="0" y="48" width="8" height="8" fill="#1f160c"/>
+  <rect x="8" y="48" width="8" height="8" fill="#7e562e"/>
+  <rect x="16" y="48" width="32" height="8" fill="#cc9154"/>
+  <rect x="48" y="48" width="8" height="8" fill="#7e562e"/>
+  <rect x="56" y="48" width="8" height="8" fill="#1f160c"/>
+  <rect x="0" y="56" width="64" height="8" fill="#1f160c"/>
 </svg>

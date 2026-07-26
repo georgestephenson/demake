@@ -1,27 +1,76 @@
+-- Shooter — assertions about a magazine, a line of aliens, and a sprite budget.
+--
+-- Every case opens with `press a`, because every game opens on its title
+-- screen. That is one line of ceremony in exchange for the title screen
+-- being part of what the suite checks rather than something it routes
+-- around: a game that never reached `play` would fail every case below.
+
 test the alien line advances
+press a
 play 30 ticks
 expect a1.x > 4vw - 1
 
 test the alien line turns at the wall instead of leaving it
+press a
 play 900 ticks
 expect a9.right <= screenwidth
 expect a1.x >= 0
 
-test the shot starts parked and inert
+test the magazine starts parked and inert
+press a
 expect s1.visible = 0
+expect s2.visible = 0
+expect s3.visible = 0
 
-test firing launches the shot upward
+test one press launches one shot, upward
+press a
 press a
 play 10 ticks
 expect s1.visible = 1
 expect s1.y < screenheight - 3
+expect s2.visible = 0
+expect s3.visible = 0
 
-test the shot parks itself again at the top
+-- The point of the magazine: three in the air at once, each launched by its own
+-- press, each at the height its press put it.
+test three presses put three shots in the air
+press a
+press a
+play 8 ticks
+press a
+play 8 ticks
+press a
+play 4 ticks
+expect s1.visible = 1
+expect s2.visible = 1
+expect s3.visible = 1
+expect s1.y < s2.y
+expect s2.y < s3.y
+
+-- A fourth press with nothing in the rack must do nothing at all. The failure it
+-- guards against is not "no shot appears" but "an airborne shot is teleported
+-- back to the ship", which looks like firing and plays like cheating.
+test a fourth press waits for a shot to come back
+press a
+press a
+play 8 ticks
+press a
+play 8 ticks
+press a
+play 8 ticks
+press a
+play 4 ticks
+expect s1.y < s2.y
+expect s2.y < s3.y
+
+test a shot parks itself again at the top
+press a
 press a
 play 300 ticks
 expect s1.visible = 0
 
 test the ship runs to each edge and stops
+press a
 hold left for 300 ticks
 expect player.x = 0
 expect player.xdirection = 0

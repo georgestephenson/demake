@@ -1,23 +1,34 @@
+
+--
+-- Every case opens with `press a`, because every game opens on its title
+-- screen. That is one line of ceremony in exchange for the title screen
+-- being part of what the suite checks rather than something it routes
+-- around: a game that never reached `play` would fail every case below.
 test the wall starts whole
+press a
 expect left.value = 8
 expect score.value = 0
 
 test the ball breaks a brick and the brick stops being solid
+press a
 play 240 ticks
 expect score.value >= 1
 expect left.value <= 7
 
 test the bat runs to the left wall and stops
+press a
 hold left for 300 ticks
 expect bat.x = 0
 expect bat.xdirection = 0
 
 test the bat runs to the right wall and stops
+press a
 hold right for 300 ticks
 expect bat.right = screenwidth
 expect bat.xdirection = 0
 
 test losing the ball re-serves rather than ending the game
+press a
 play 600 ticks
 expect scene play
 expect ball1.y > 0

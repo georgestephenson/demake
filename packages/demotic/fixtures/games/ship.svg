@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- ship — the green hull under the rocks on the DODGER cover, thrusters lit -->
+  <rect x="24" y="0" width="16" height="8" fill="#def9e9"/>
+  <rect x="16" y="8" width="8" height="8" fill="#def9e9"/>
+  <rect x="24" y="8" width="16" height="8" fill="#71cf96"/>
+  <rect x="40" y="8" width="8" height="8" fill="#def9e9"/>
+  <rect x="16" y="16" width="8" height="8" fill="#def9e9"/>
+  <rect x="24" y="16" width="16" height="8" fill="#71cf96"/>
+  <rect x="40" y="16" width="8" height="8" fill="#def9e9"/>
+  <rect x="8" y="24" width="8" height="8" fill="#def9e9"/>
+  <rect x="16" y="24" width="8" height="8" fill="#71cf96"/>
+  <rect x="24" y="24" width="16" height="8" fill="#379160"/>
+  <rect x="40" y="24" width="8" height="8" fill="#71cf96"/>
+  <rect x="48" y="24" width="8" height="8" fill="#def9e9"/>
+  <rect x="8" y="32" width="8" height="8" fill="#def9e9"/>
+  <rect x="16" y="32" width="8" height="8" fill="#71cf96"/>
+  <rect x="24" y="32" width="16" height="8" fill="#379160"/>
+  <rect x="40" y="32" width="8" height="8" fill="#71cf96"/>
+  <rect x="48" y="32" width="8" height="8" fill="#def9e9"/>
+  <rect x="0" y="40" width="16" height="8" fill="#def9e9"/>
+  <rect x="16" y="40" width="8" height="8" fill="#71cf96"/>
+  <rect x="24" y="40" width="16" height="8" fill="#379160"/>
+  <rect x="40" y="40" width="8" height="8" fill="#71cf96"/>
+  <rect x="48" y="40" width="16" height="8" fill="#def9e9"/>
+  <rect x="0" y="48" width="8" height="8" fill="#def9e9"/>
+  <rect x="8" y="48" width="8" height="8" fill="#71cf96"/>
+  <rect x="16" y="48" width="8" height="8" fill="#379160"/>
+  <rect x="24" y="48" width="16" height="8" fill="#0a1b12"/>
+  <rect x="40" y="48" width="8" height="8" fill="#379160"/>
+  <rect x="48" y="48" width="8" height="8" fill="#71cf96"/>
+  <rect x="56" y="48" width="8" height="8" fill="#def9e9"/>
+  <rect x="0" y="56" width="8" height="8" fill="#def9e9"/>
+  <rect x="16" y="56" width="8" height="8" fill="#ffbc7b"/>
+  <rect x="40" y="56" width="8" height="8" fill="#ffbc7b"/>
+  <rect x="56" y="56" width="8" height="8" fill="#def9e9"/>
+</svg>

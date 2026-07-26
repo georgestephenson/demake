@@ -45,6 +45,15 @@ export const PROP_SIZE = 4;
 /** Bytes per entity record. */
 export const ENTITY_SIZE = PROPS.length * PROP_SIZE;
 
+/**
+ * Bytes of an entity record that make up its collision box.
+ *
+ * `x`, `y`, `width`, `height` are the first four slots by construction, so a box
+ * is a contiguous run and staging one is a single block copy. The order in
+ * {@link PROPS} is therefore load-bearing, not alphabetical.
+ */
+export const BOX_SIZE = 4 * PROP_SIZE;
+
 /** Derived properties, computed on read. */
 export const DERIVED = ["centerx", "centery", "left", "right", "top", "bottom"] as const;
 
@@ -156,6 +165,43 @@ export interface Layout {
   tileContactSlots: ReadonlyMap<string, number>;
   /** Where this tick's tile contacts are built before replacing the stored list. */
   tileScratch: number;
+  /** The tile walker's cursor into the grid, kept out of the register file
+   * because the rule bodies it runs use every register there is. */
+  tilePtr: number;
+  /**
+   * The cells one object overlaps, walked once and read by every tile rule.
+   *
+   * A count byte then `column`, `row`, `legend` per cell. An object standing
+   * still overlaps the same handful of cells every tick, and a game with four
+   * tile rules and a separation pass used to walk the grid for all five —
+   * multiply, bounds-check and all — to reach the same answer each time. The
+   * list is only used where no tile rule can move its subject, so that "the same
+   * answer" is a compile-time fact rather than a hope.
+   */
+  tileCells: number;
+  tileCellStride: number;
+  tileCellSlots: ReadonlyMap<number, number>;
+  /**
+   * Staging for the two boxes of an object-versus-object contact, and the
+   * workspace the shared overlap and separation routines use.
+   *
+   * `x`, `y`, `width` and `height` are the first four slots of an entity record,
+   * so a box is one sixteen-byte copy. That is what lets the arithmetic be a
+   * *routine* rather than a copy of itself per pair — and with a bullet against
+   * nine aliens costing twenty-seven pairs, the difference is the whole
+   * cartridge. Absent unless some rule can put two objects in contact.
+   */
+  pairA: number | null;
+  pairB: number | null;
+  pairWork: number | null;
+  /**
+   * Two bytes the cheap "is it anywhere near" tests keep an entity pointer in.
+   *
+   * Both of them — the OAM cull and the collision pre-test — need the base
+   * address across arithmetic that wants every register, and both run often
+   * enough that a stack round trip is worth avoiding.
+   */
+  cull: number;
 
   // --- rendering ------------------------------------------------------------
   /** Pending VRAM writes: address low, address high, tile. */
@@ -316,6 +362,31 @@ export function planLayout(program: Program, analysis: Analysis): Layout {
   // This tick's list is built here and copied over the stored one at the end
   // of the pair, so the comparison is never against a half-overwritten list.
   const tileScratch = analysis.usesTiles ? heap.take(tileContactStride) : 0;
+  const tilePtr = analysis.usesLevels ? heap.take(2) : 0;
+
+  // One cell list per object any tile rule names as a subject.
+  const tileCellSlots = new Map<number, number>();
+  if (analysis.usesTiles) {
+    for (const rule of program.rules) {
+      if (rule.event.kind !== "hits" || rule.event.tiles.length === 0) continue;
+      for (const subject of rule.event.subjects) {
+        if (!tileCellSlots.has(subject)) tileCellSlots.set(subject, tileCellSlots.size);
+      }
+    }
+  }
+  const tileCellStride = 1 + TILE_CONTACT_MAX * 5;
+  const tileCells = analysis.usesTiles
+    ? heap.take(Math.max(1, tileCellSlots.size) * tileCellStride)
+    : 0;
+
+  // Only games where two objects can meet pay for the pair staging.
+  const usesPairs = program.rules.some(
+    (rule) => rule.event.kind === "hits" && rule.event.others.length > 0,
+  );
+  const pairA = usesPairs ? heap.take(BOX_SIZE) : null;
+  const pairB = usesPairs ? heap.take(BOX_SIZE) : null;
+  const pairWork = usesPairs ? heap.take(4 * PROP_SIZE) : null;
+  const cull = heap.take(2);
 
   const queue = heap.take(QUEUE_MAX * 3);
   const queueCount = heap.take(1);
@@ -363,6 +434,14 @@ export function planLayout(program: Program, analysis: Analysis): Layout {
     tileContactStride,
     tileContactSlots,
     tileScratch,
+    tilePtr,
+    tileCells,
+    tileCellStride,
+    tileCellSlots,
+    pairA,
+    pairB,
+    pairWork,
+    cull,
     queue,
     queueCount,
     plot,

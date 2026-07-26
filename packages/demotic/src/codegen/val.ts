@@ -215,31 +215,66 @@ export function equal32(ctx: Ctx, lhs: Ref, rhs: Ref): void {
  */
 export function clamp32(ctx: Ctx, dst: Ref): void {
   const { asm } = ctx;
+  asm.ld16("hl", dst);
+  asm.call(ctx.need("Clamp32", emitClamp32));
+}
+
+/**
+ * `[hl] = clamp([hl], -1024, 1024)` on a 16.16 value.
+ *
+ * A routine rather than the forty bytes it used to be inline: every write to a
+ * position clamps, so a game with a few dozen of them was spending a fifth of
+ * its cartridge on the same eight branches over and over. The shooter's
+ * twenty-seven collision pairs alone were seven kilobytes of it.
+ */
+function emitClamp32(ctx: Ctx): void {
+  const { asm } = ctx;
   const done = ctx.unique("clampDone");
   const high = ctx.unique("clampHigh");
+  const low = ctx.unique("clampLow");
   const negative = ctx.unique("clampNeg");
+  const store = ctx.unique("clampStore");
 
-  asm.lda(plus(dst, 3));
+  // de keeps the base while hl walks the bytes.
+  asm.ld("d", "h");
+  asm.ld("e", "l");
+  asm.inc16("hl");
+  asm.inc16("hl");
+  asm.inc16("hl");
+  asm.ld("a", "hlp");
   asm.bit(7, "a");
   asm.jr(negative, "nz");
   asm.aluN("cp", 0x04);
   asm.jr(done, "c");
   asm.jr(high, "nz");
   // Exactly $04xxxxxx is in range only when the low three bytes are zero.
-  asm.lda(plus(dst, 0));
-  asm.ld16("hl", plus(dst, 1));
+  asm.ld("h", "d");
+  asm.ld("l", "e");
+  asm.ldaHLI();
   asm.alu("or", "hlp");
   asm.inc16("hl");
   asm.alu("or", "hlp");
   asm.jr(done, "z");
   asm.label(high);
-  set32(ctx, dst, FIXED_MAX);
-  asm.jr(done);
+  asm.ldn("c", (FIXED_MAX >>> 24) & 0xff);
+  asm.jr(store);
   asm.label(negative);
   asm.aluN("cp", 0xfc);
   asm.jr(done, "nc");
-  set32(ctx, dst, -FIXED_MAX);
+  asm.label(low);
+  asm.ldn("c", (-FIXED_MAX >>> 24) & 0xff);
+  asm.label(store);
+  // Both limits are three zero bytes and a sign, so they share the write.
+  asm.ld("h", "d");
+  asm.ld("l", "e");
+  asm.alu("xor", "a");
+  asm.staHLI();
+  asm.staHLI();
+  asm.staHLI();
+  asm.ld("a", "c");
+  asm.ld("hlp", "a");
   asm.label(done);
+  asm.ret();
 }
 
 /**

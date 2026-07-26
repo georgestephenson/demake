@@ -1,41 +1,43 @@
 -- A pipe from the ground up, leaving a gap above it.
 --
--- The gap is drawn, not computed: rows 11 to 17 are clear here and in
--- highpipe.dmtl too, so however the stream orders the chunks there is always
--- a way through. A vocabulary with a property like that is worth more than
--- one with more pieces in it.
+-- The gap is drawn, not computed. Rows 13 to 16 are clear in every chunk of the
+-- vocabulary, so however the stream orders them there is a way through — and
+-- four rows is the whole difficulty budget of the game, because the bird bobs
+-- about one row per flap and has to be flown to stay inside them.
 
-tile #  pipe   solid  brick.svg
-tile _  ground solid  ledge.svg
+tile #  pipe   solid  pipe.svg
+tile _  ground solid  ground.svg
+tile o  cloud         cloud.svg
+tile .  sky           sky.svg
 
 map
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  ##
-  ##
-  ##
-  ##
-  ##
-  ##
-  ##
-  ##
-  ##
-  ##
+......
+......
+......
+......
+......
+......
+......
+......
+o.....
+......
+......
+......
+......
+......
+......
+......
+......
+..##..
+..##..
+..##..
+..##..
+..##..
+..##..
+..##..
+..##..
+..##..
+..##..
+..##..
 ______
 ______

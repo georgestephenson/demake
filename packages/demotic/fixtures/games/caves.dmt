@@ -11,7 +11,23 @@
 -- changes is how much of it a machine can show at once, and therefore how much
 -- it scrolls — a Game Boy sees 20x18 of it, a Mega Drive 40x28.
 
-start play
+start title
+
+-- ---------------------------------------------------------------- title -----
+--
+-- The artwork is demade by the image engine at the screen's own size, into a
+-- tilemap the background layer draws for nothing — the same fitter a photograph
+-- goes through. What it costs is tiles, and the compiler says so when a picture
+-- wants more than the game's own art has left.
+
+scene title
+
+backdrop caves.title.svg
+
+create text prompt in title (x centerx - 7, y screenheight - 2, text "press a to play")
+
+when a pressed in title then scene as play
+
 
 scene play
 
@@ -19,44 +35,99 @@ level cavern from cavern.dmtl
 
 camera follows player
 
-create object hero (width 1 cell, height 2 cells, speed 55vw, sprite hero.svg)
+-- Eleven cells a second, absolute — the same reasoning as the runner's bird, and
+-- the opposite of the platformer's hero. A platformer laid out in `vw` is a
+-- screenful whatever the machine, so its speeds are relative; this cavern is
+-- sixty by thirty cells everywhere, so crossing it should take the same time
+-- everywhere, and the jump should clear the same two-cell step.
+create object hero (width 1 cell, height 2 cells, speed 11, sprite hero.svg)
+create object coin (width 1 cell, height 1 cell, sprite coin.svg)
 
 create hero player in play (x 2, y levelheight - 5)
 
-create number score in play (value 0, x 1, y 1)
+-- A coin above each ledge of the climb, in level coordinates — absolute, because
+-- the cavern is the same sixty by thirty cells on every console and a coin sits
+-- on the ledge it sits on.
+--
+-- Objects, not tiles, and that is the whole point of them: a tile has no
+-- `visible`, so a collected coin stayed drawn and scored again the next time the
+-- hero entered its cell from outside. Twelve of them in a level four screens
+-- wide is only affordable because the backend culls what the view does not
+-- cover — see the note on `hits coin` below.
+create coin c1 in play (x 5, y 23)
+create coin c2 in play (x 13, y 20)
+create coin c3 in play (x 23, y 22)
+create coin c4 in play (x 41, y 21)
+create coin c5 in play (x 32, y 18)
+create coin c6 in play (x 19, y 14)
+create coin c7 in play (x 49, y 16)
+create coin c8 in play (x 34, y 11)
+create coin c9 in play (x 10, y 9)
+create coin c10 in play (x 46, y 8)
+create coin c11 in play (x 25, y 5)
+create coin c12 in play (x 41, y 2)
+
+
+-- Whether the hero has ground under its feet this tick — cleared with the level
+-- rules, set by the tile phase, read by the jump after both. Same idiom as the
+-- platformer, and for the same reason: a jump that cannot ask is a jump you can
+-- press forever.
+create number footing in play (value 0, visible 0)
+
+create text scoretag in play (x 1, y 1, text "coins:")
+create number score in play (value 0, x 8, y 1)
 
 -- Gravity, as in the platformer: a constant nudge with a terminal speed, so a
 -- long fall cannot tunnel through a one-cell ledge between ticks.
 when always in play then player.ydirection as min(player.ydirection + 0.04, 0.9)
+when always in play then footing.value as 0
 
 control player left (xdirection -1) on hold
 control player right (xdirection 1) on hold
-control player a (ydirection -0.85) on press
 
 -- `screenleft` and friends are the *level's* edges once a scene has a level, so
 -- this stops the hero at the end of the cavern, not a screen-width in.
 when player hits screenleft, screenright then xdirection as 0
 
--- Landing. `touches`, not `hits`, for the same reason as in the platformer:
--- resting on a ledge is a state, and gravity has to be cancelled every tick of
--- it or it accumulates behind the separation.
-when player touches ledge, wall then ydirection as 0
+-- Landing, and bonking your head. `touches`, not `hits`, for the same reason as
+-- in the platformer: resting on a ledge is a state, and gravity has to be
+-- cancelled every tick of it or it accumulates behind the separation. The guard
+-- separates arriving from below (a bonk, which only stops the climb) from
+-- arriving from above (a landing, which also gives you something to jump from).
+when player touches ledge if player.ydirection >= 0 then (ydirection, footing.value) as (0, 1) else ydirection as 0
+
+-- A wall stops a climb *once*, on contact. With `touches` here instead, standing
+-- against the side of the shaft would cancel gravity every tick and the hero
+-- would hang on the wall — and, because a wall is not something you stand on,
+-- it grants no footing to jump from either.
+when player hits wall then ydirection as 0
+
+when a pressed if footing.value > 0 then player.ydirection as -1.5
 
 -- Tile names, straight from the legend. Spikes are not `solid`, so the hero
 -- falls into them rather than standing on them.
 when player touches spikes then scene as gameover
 when player hits exit then scene as won
 
--- A coin scores on contact. Tiles have no `visible`, so a collected coin stays
--- drawn and scores again the next time the hero enters that cell from outside
--- it — a real limit of tiles-as-scenery, and the reason a game that wants a
--- coin to *vanish* uses an object for it, as the platformer does.
-when player hits coin then score.value as score.value + 1
+-- A collected coin is gone for good, which is what `visible 0` is for: not
+-- drawn, not collided with, not moved.
+--
+-- Twelve collectibles in a scrolling level is more than the tick used to hold.
+-- What made it fit is that the cavern is four screens wide, so eleven of the
+-- twelve are off the view at any moment — and the backend now says so cheaply,
+-- in whole cells, before it stages a box or builds a sprite. Work you can prove
+-- is invisible is work you do not have to do.
+when player hits coin then (coin.visible, score.value) as (0, score.value + 1)
 
--- The HUD is an ordinary object at level coordinates, so without this it would
--- be left behind the moment the view moved. Pinning it to the camera is one
--- line, and it is the only thing in the game that knows the view exists.
-when always in play then (score.x, score.y) as (camera.x + 1, camera.y + 1)
+-- The HUD is two ordinary objects at level coordinates, so without this they
+-- would be left behind the moment the view moved. Pinning them to the camera is
+-- one line, and it is the only thing in the game that knows the view exists.
+--
+-- The backend then has to make that pin *look* pinned: a scene that scrolls
+-- draws its counters with sprites rather than background cells, because the
+-- background moves as one piece and a cell of it cannot be held still while the
+-- rest of it slides.
+when always in play then (scoretag.x, scoretag.y, score.x, score.y) as (camera.x + 1, camera.y + 1, camera.x + 8, camera.y + 1)
 
 -- --------------------------------------------------------------- endings ----
 

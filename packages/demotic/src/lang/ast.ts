@@ -95,6 +95,7 @@ export type Stmt =
     }
   | { kind: "seed"; value: number; line: number }
   | { kind: "camera"; target: string; scene?: string; line: number }
+  | { kind: "backdrop"; file: string; scene?: string; line: number }
   | { kind: "class"; name: string; props: readonly Prop[]; line: number }
   | {
       kind: "instance";

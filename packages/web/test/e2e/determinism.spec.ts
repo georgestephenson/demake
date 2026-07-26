@@ -110,8 +110,11 @@ test("the ROM the page builds is byte-identical to the CLI's", async ({ page }) 
     profile: getProfile("gb"),
     levels: { "cavern.dmtl": await readFile(join(games, "cavern.dmtl"), "utf8") },
   });
+  // Every asset the program names, rather than a list: the page loads what the
+  // game asks for, so a list here would only ever be a way to compare a ROM
+  // built with art against one built without it.
   const assets = new Map<string, Uint8Array>();
-  for (const name of ["hero.svg", "coin.svg", "brick.svg", "ledge.svg", "spikes.svg", "exit.svg"]) {
+  for (const name of program.assets) {
     assets.set(name, new Uint8Array(await readFile(join(games, name))));
   }
   const expected = buildGbRom(program, { title: "caves", assets }).bytes;

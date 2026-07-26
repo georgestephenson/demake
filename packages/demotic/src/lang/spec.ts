@@ -294,6 +294,13 @@ export const STATEMENTS: readonly StatementSpec[] = [
     note: "An endless scroller is not an endless level — it is a short vocabulary of hand-made pieces played in an order nobody wrote down. Composition happens at compile time from the program's `seed`, so the result is an ordinary level: the simulator, the camera and a console runtime all see a tilemap and need no notion of streaming. Chunks share one legend, and must agree on the dimension they are not laid along.",
   },
   {
+    keyword: "backdrop",
+    syntax: "backdrop <file> [in <scene>]",
+    summary: "Fills a scene's background with a demade picture.",
+    example: "backdrop title.svg",
+    note: "The picture goes through the *image* pipeline — the same fitter `prep` uses — so a title screen is demade exactly the way a photograph is, into tiles and a tilemap the background layer draws for free. It is scenery and nothing else: nothing collides with it, nothing reads it, and a scene that scrolls has a level instead. What it costs is tiles, and a console has a fixed number of them; art that needs more than are left over is a build error naming the number, because the alternative is a title screen with holes in it.",
+  },
+  {
     keyword: "camera",
     syntax: "camera follows <object> [in <scene>]",
     summary: "Keeps the viewport centred on an object, clamped inside the level.",
@@ -416,6 +423,26 @@ export const DIAGNOSTICS: readonly DiagnosticSpec[] = [
     code: "E_DUPLICATE_TILE",
     severity: "error",
     summary: "A legend reusing a character or a name.",
+  },
+  {
+    code: "E_UNKNOWN_BACKDROP",
+    severity: "error",
+    summary: "A backdrop image that was never supplied, or could not be found.",
+  },
+  {
+    code: "E_DUPLICATE_BACKDROP",
+    severity: "error",
+    summary: "More than one backdrop in a scene; a scene has one background.",
+  },
+  {
+    code: "E_BACKDROP_WITH_LEVEL",
+    severity: "error",
+    summary: "A scene with both a level and a backdrop; the level is the background.",
+  },
+  {
+    code: "E_BACKDROP_TILES",
+    severity: "error",
+    summary: "A backdrop needs more tiles than the console has left after the game's own art.",
   },
   {
     code: "E_DUPLICATE_LEVEL",

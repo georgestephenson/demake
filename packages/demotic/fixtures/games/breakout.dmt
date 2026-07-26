@@ -6,9 +6,31 @@
 --   * a win condition counted rather than reached
 --   * real sprite-budget pressure (a brick wall is a lot of hardware sprites)
 
-start play
+start title
+
+-- ---------------------------------------------------------------- title -----
+--
+-- The artwork is demade by the image engine at the screen's own size, into a
+-- tilemap the background layer draws for nothing — the same fitter a photograph
+-- goes through. What it costs is tiles, and the compiler says so when a picture
+-- wants more than the game's own art has left.
+
+scene title
+
+backdrop breakout.title.svg
+
+create text prompt in title (x centerx - 7, y screenheight - 2, text "press a to play")
+
+when a pressed in title then scene as play
+
 
 scene play
+
+-- The playfield is demade too, at the screen's own size, by the same fitter the
+-- title screen went through. It is scenery and nothing else: the game reads
+-- nothing from it and collides with none of it — what it costs is tiles.
+backdrop breakout.play.svg
+
 
 create object ball (width 1 cell, height 1 cell, speed 45vmin, sprite ball.svg)
 create object paddle (width 18vw, height 1 cell, speed 70vw, sprite paddle.svg)
@@ -17,8 +39,12 @@ create object brick (width 12vw, height 1 cell, sprite brick.svg)
 create ball ball1 in play (x centerx, y centery + 2, direction northeast)
 create paddle bat in play (x centerx, y screenheight - 2)
 
-create number score in play (value 0, x 1, y 1)
-create number left in play (value 8, x screenwidth - 2, y 1)
+-- A counter with no caption is a number nobody can read. The label is an
+-- ordinary `text` object beside it — same font, same layer, no new concept.
+create text scoretag in play (x 1, y 1, text "score:")
+create number score in play (value 0, x 8, y 1)
+create text lefttag in play (x screenwidth - 9, y 1, text "left:")
+create number left in play (value 8, x screenwidth - 3, y 1)
 
 -- Two rows of four. Positions are relative, so the wall spans the same share of
 -- every playfield even though a Game Boy brick is 2 cells and a Mega Drive one

@@ -6,14 +6,24 @@
 -- how much of one they can show. A test that passes on one and fails on another
 -- would mean the composition had picked up a per-console dependency, which is
 -- exactly the bug this file is here to catch.
+--
+-- Every case opens with `press a`, because every game opens on its title
+-- screen. That is one line of ceremony in exchange for the title screen
+-- being part of what the suite checks rather than something it routes
+-- around: a game that never reached `play` would fail every case below.
 
 test the bird drifts down and to the right on its own
+press a
 play 20 ticks
 expect bird1.ydirection > 0
 expect bird1.x > 1
 
+-- Ten ticks, not thirty: the corridor is four rows and the bird falls out of the
+-- bottom of it in about half a second, which is the difference between this and
+-- the drifting version it replaced.
 test flapping lifts it
-play 30 ticks
+press a
+play 10 ticks
 press a
 play 4 ticks
 expect bird1.ydirection < 0
@@ -23,6 +33,7 @@ expect bird1.ydirection < 0
 -- decide the course and the console decides nothing. If composition ever picked
 -- up a per-console dependency, this is the line that would fail.
 test the composed course is the same size on every console
+press a
 play 2 ticks
 expect levelwidth = 144
 expect levelheight = 30
@@ -30,10 +41,12 @@ expect levelwidth > screenwidth
 expect levelheight > screenheight
 
 test an unflown bird ends up in the scenery
+press a
 play 600 ticks
 expect scene gameover
 
 test the coin is always somewhere in the level
+press a
 play 40 ticks
 expect prize1.x >= 0
 expect prize1.right <= levelwidth

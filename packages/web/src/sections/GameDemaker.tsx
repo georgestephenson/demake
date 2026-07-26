@@ -390,6 +390,34 @@ function loadAsset(cache: Map<string, Loaded>, name: string): void {
 }
 
 /**
+ * The background layer when a scene has a picture rather than a playfield.
+ *
+ * The page draws it with the browser's own renderer, at the screen's size,
+ * because a preview only has to *look* right; the cartridge gets the same file
+ * through `@demake/core`'s fitter and comes out demade. That split is the same
+ * one the sprites already make (doc 07 §parity) — what must never differ is the
+ * bytes, and the bytes come from core on both sides.
+ */
+function drawBackdrop(
+  target: CanvasRenderingContext2D,
+  sim: Sim,
+  width: number,
+  height: number,
+  assets: Map<string, Loaded>,
+): void {
+  const file = sim.program.scenes.find((scene) => scene.name === sim.scene)?.backdrop;
+  if (!file) return;
+  const art = assets.get(file);
+  if (!art?.ready) return;
+  // `cover`, as the fitter uses: a picture is a screenful or it is cropped to
+  // one, never letterboxed into a border the ROM would not have.
+  const scale = Math.max(width / art.image.width, height / art.image.height);
+  const w = art.image.width * scale;
+  const h = art.image.height * scale;
+  target.drawImage(art.image, (width - w) / 2, (height - h) / 2, w, h);
+}
+
+/**
  * The background layer: the scene's level, one cell at a time.
  *
  * Only the cells the view covers are considered, so the cost is a screenful
@@ -477,6 +505,7 @@ function draw(
   const viewX = toNumber(sim.camera.x);
   const viewY = toNumber(sim.camera.y);
 
+  drawBackdrop(target, sim, width, height, assets);
   drawTiles(target, sim, unit, viewX, viewY, constrain, assets);
 
   const perLine = new Int32Array(Math.max(1, Math.round(height)));

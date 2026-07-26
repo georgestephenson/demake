@@ -280,7 +280,20 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   fine until the next jump. `reaches` is a _crossing_ detector so it works on
   counters that fall as well as rise.
 - **`visible 0` is inert**: not drawn, not collided with, not moved. That is why
-  there is no `destroy`.
+  there is no `destroy` — and why separation re-checks it: a rule that collects a
+  coin by hiding it has said so _before_ the push-apart runs, so the player must
+  not be shoved off a thing that no longer exists.
+- **A `number` with `visible 0` is how a game holds a plain value.** It is not
+  drawn, not collided with and not moved, so it is a variable in everything but
+  name — the platformer's `footing`, the shooter's `fired`, pong's `aim`. When
+  one of those reads correctly it is because of _tick order_: cleared by a level
+  rule (step 3), set by the collision or tile phase (steps 5–6), read by an edge
+  rule (step 7). Writing the three rules in the wrong phase is the way to get a
+  flag that is always false.
+- **A jump needs a `when a pressed if` rule, not a `control`.** Controls run at
+  the top of the tick, before anything has been collided with, so a control
+  cannot ask whether there is ground underfoot — and a jump that cannot ask is a
+  jump you can press forever.
 - **A scene's playfield is its level's size, or the screen's** (doc 14 §Levels).
   So `screenright` means the end of the _level_, object positions are level
   coordinates, and the camera is the only thing that knows where the view is —
@@ -313,11 +326,47 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
 - **`.test.dmt` suites run on every console.** That is what makes a _balance_
   regression visible; a mechanical one would show up anywhere. Write assertions
   in the relative vocabulary or they will only be true on one machine.
+- **Every suite opens with `press a`,** because every game opens on its title
+  screen. It is one line of ceremony in exchange for the title screen being part
+  of what the suite checks rather than something it routes around.
+
+## Drawing art for the example library
+
+The fixtures are the tool's own shop window, so they are held to what the tool is
+_for_: hand them the artwork a modern game would have and let the demaker do the
+work. Generators live in the session scratchpad, not in the repo — the SVGs are
+the artefact. What is not obvious the first time:
+
+- **Never author at the smallest target's resolution.** A backdrop is fitted to
+  the screen of whichever console is being built, and those differ fourfold in
+  area (160×144 against 320×224). Art whose finest feature is one Game Boy pixel
+  hands a Mega Drive nothing to resolve. The screens here are drawn on a 640×576
+  canvas with detail down to a quarter of a Game Boy pixel.
+- **Sprites are eight pixels to a cell on _every_ one of these machines**, so
+  what a bigger console has more of is colour, not room. Put the silhouette and
+  anything that must stay legible on well-separated luminance tiers, and put the
+  modelling _between_ them: the mono fit quantises it away and loses nothing it
+  could have shown, while a Mega Drive sprite has fifteen colours and keeps it.
+  Art with four tones in it is art drawn for the smallest screen in the set.
+- **The mono fit is adaptive, so absolute colours mean less than spacing.** Two
+  colours a designer calls "light blue" and "slightly lighter blue" arrive as one
+  shade. Pick tiers, not tints.
+- **An outline decides which part of a sprite disappears.** The sprite path
+  auto-contrasts, so an asset's darkest colour lands on the darkest shade
+  whatever its absolute lightness. Against a white sky a dark outline _is_ the
+  silhouette; against black it is the silhouette going missing, and the rim has
+  to be the light one with the shading turned inward.
+- **A backdrop's cost is its variety, not its size.** Flat areas and repeated
+  motifs collapse to one tile; anything off the cell grid does not. Aligning four
+  clouds to the same phase is the difference between four tiles and forty, and
+  `E_BACKDROP_TILES` is how you find out you were wrong.
+- **Round shapes are the one thing not to draw.** Rectangles survive a demake;
+  a circle eight pixels across is four pixels and a guess about the other twelve.
 
 ## Working on the console backend
 
 - **Speed is a published number, and it is currently 1.** Every example runs at
-  1.00–1.01 Game Boy frames per game tick, so a game keeps up with the hardware.
+  1.00–1.03 Game Boy frames per game tick, so a game keeps up with the hardware.
   The web app shows the measured figure rather than hiding it behind a speed
   multiplier; if a change pushes a fixture over 1.2, that is a regression worth
   chasing before anything else.
@@ -334,6 +383,49 @@ packages/demotic/test/rom.test.ts` builds all seven fixture games and diffs raw
 - **Emitters must leave the temp stack as they found it.** `ctx.scoped()` exists
   for that; a `pushTemp` without its `popTemp` corrupts a sibling expression
   rather than failing, and the symptom appears somewhere else entirely.
+- **Art is sized by the _instance_, not the class.** One asset used at two
+  different `width`s is converted twice, at both boxes, and keyed by
+  `name@WxH` — because the box is the collision box, and drawing the larger
+  conversion for both paints ledge where nothing can be stood on. Tile dedup
+  across the build makes the second box nearly free.
+- **A scene that scrolls draws its HUD with sprites.** The background layer moves
+  as one piece, so a cell of it cannot be held still while the rest slides; a
+  counter pinned to `camera.x + 1` on the background jitters by up to seven
+  pixels and snaps back. Sprites are positioned in screen pixels, so the pin
+  lands on the pixel. They use OBP1, which stays the plain ramp — the art's own
+  palette may map the font's ink onto the lightest shade.
+- **A static caption is painted once, with the background.** `hudIsStatic` asks
+  whether anything about a `number` or `text` can change; if nothing can, it goes
+  in during the full redraw and never touches the per-frame erase-and-repaint
+  path. Labels are six cells against a counter's one, so this is most of the HUD
+  cost in a small game.
+- **Per-pair collision work is a routine, not a copy per pair.** `x`, `y`,
+  `width` and `height` are the first four slots of an entity record, so a box is
+  one block copy into fixed staging and the overlap test and separation are
+  shared code. Inlined, a bullet against nine aliens cost 1.5 KiB _per pair_ and
+  a three-shot magazine would not fit in a cartridge.
+- **The tile walk is clipped to the grid once, not per cell.** Cells outside a
+  level contribute nothing either way, so bounding the walk up front is
+  equivalent to asking `TileAt` about every cell — and it is the difference
+  between a load-and-increment inner loop and four bounds comparisons plus a
+  multiply.
+- **And it happens once per object, not once per rule.** The cells an object
+  overlaps are walked into a list (`emitFillCells`) and every tile rule _and_ the
+  separation pass reads that list. It is only valid where no tile rule can move
+  its subject, which `tileCellsCacheable` decides at compile time — the
+  interpreter recomputes the list per rule, so caching it is equivalent exactly
+  when the answer cannot have changed. In the caves this was 37% of the tick.
+- **Work you can prove is invisible is work you do not do.** `Onscreen` culls
+  objects the view does not cover before the OAM build touches them, and
+  `NearBox` rejects a collision pair before staging a box. Both compare _whole
+  cells_ — the high half of a 16.16 coordinate — and both round their margins
+  outward, so they may answer "maybe" when the truth is no and never the reverse.
+  A cavern's worth of coins is eleven objects off screen and one on it.
+- **A divisor that is a whole number of cells takes the byte divider.** The
+  general path is a 48-bit shift-and-subtract loop, and a rule that divides every
+  tick pays for it every tick. Pong's opponent uses a `5vw` gain — one whole cell
+  on a Game Boy court — for exactly that reason, and it is worth a third of the
+  game's tick.
 - **Watch which registers a helper needs live.** `ld de, addr` and `ld bc, addr`
   destroy a byte the caller may be carrying — that is exactly how every object
   came to draw tile `$C0` (see §Gotchas). Prefer building an address from a

@@ -3,24 +3,49 @@
 --   * a row of enemies at the same y, which is the per-scanline sprite limit's
 --     worst case: eight on a NES or a Master System, ten on a Game Boy, and
 --     anything past that simply does not draw
---   * a fast bullet against thin targets, close to the tunnelling threshold
---   * a magazine of bullets recycled rather than spawned
+--   * fast bullets against thin targets, close to the tunnelling threshold
+--   * a magazine of bullets recycled rather than spawned, with more than one of
+--     them in the air at a time
 --   * two independent level rules driving the same object (the enemy line
 --     advances and sways)
 
-start play
+start title
+
+-- ---------------------------------------------------------------- title -----
+--
+-- The artwork is demade by the image engine at the screen's own size, into a
+-- tilemap the background layer draws for nothing — the same fitter a photograph
+-- goes through. What it costs is tiles, and the compiler says so when a picture
+-- wants more than the game's own art has left.
+
+scene title
+
+backdrop shooter.title.svg
+
+create text prompt in title (x centerx - 7, y screenheight - 2, text "press a to play")
+
+when a pressed in title then scene as play
+
 
 scene play
 
-create object ship (width 1 cell, height 1 cell, speed 60vw, sprite hero.svg)
+-- The playfield is demade too, at the screen's own size, by the same fitter the
+-- title screen went through. It is scenery and nothing else: the game reads
+-- nothing from it and collides with none of it — what it costs is tiles.
+backdrop shooter.play.svg
+
+
+create object ship (width 1 cell, height 1 cell, speed 60vw, sprite fighter.svg)
 create object shot (width 1 cell, height 1 cell, speed 70vh, sprite shot.svg)
 create object alien (width 1 cell, height 1 cell, speed 8vw, sprite alien.svg)
 
 create ship player in play (x centerx, y screenheight - 2)
 
 -- Nine aliens on one row. On a Game Boy that is nine of the ten sprites the
--- hardware will draw on that scanline; add the player's shot passing through and
--- the eleventh vanishes. The simulator reports the peak as it runs.
+-- hardware will draw on that scanline; send a shot through the line and the
+-- eleventh vanishes. Three shots make that a certainty rather than a risk, which
+-- is the point of keeping this fixture: the simulator reports the peak as it
+-- runs, and a budget nobody can exceed is a budget nobody reads.
 create alien a1 in play (x 4vw, y 3, direction east)
 create alien a2 in play (x 14vw, y 3, direction east)
 create alien a3 in play (x 24vw, y 3, direction east)
@@ -31,24 +56,44 @@ create alien a7 in play (x 64vw, y 3, direction east)
 create alien a8 in play (x 74vw, y 3, direction east)
 create alien a9 in play (x 84vw, y 3, direction east)
 
--- One shot, reused, and now it cannot be re-fired mid-flight: the `if` guard on
--- the firing rule reads the shot's own state.
+-- The magazine: three shots, parked and inert until one is loaded. `visible 0`
+-- is what "in the rack" means — not drawn, not collided with, not moved — so a
+-- spent shot needs no lifecycle concept to go back in it.
 create shot s1 in play (x centerx, y screenheight - 3, visible 0, direction north)
+create shot s2 in play (x centerx, y screenheight - 3, visible 0, direction north)
+create shot s3 in play (x centerx, y screenheight - 3, visible 0, direction north)
 
-create number score in play (value 0, x 1, y 1)
+-- One press, one shot — whichever is free. Without this the three firing rules
+-- below would each see a free shot on the same button edge and empty the whole
+-- magazine at once. It is cleared with the level rules and read by the edge
+-- rules, which is the same tick-order trick the platformer's `footing` uses.
+create number fired in play (value 0, visible 0)
+
+create text scoretag in play (x 1, y 1, text "hits:")
+create number score in play (value 0, x 7, y 1)
 
 control player left (xdirection -1) on hold
 control player right (xdirection 1) on hold
 
+when always in play then fired.value as 0
+
 when player hits screenleft, screenright then xdirection as 0
 
--- Firing puts the shot at the ship and makes it solid. The `if` guard is what
--- makes this a *reload* rather than a restart: press while the shot is in flight
--- and nothing happens, because the guard reads its state at the instant the
--- button edge arrives.
-when a pressed if s1.visible = 0 then (s1.visible, s1.x, s1.y) as (1, player.x, player.y - 1)
+-- Firing. Three rules of the same shape, and the first one whose shot is free
+-- takes the press: a comparison is 1 or 0, so multiplying two of them is "both",
+-- which is all a guard needs when the language has no `and`.
+--
+-- The `if` is what makes this a *reload* rather than a restart: a shot already
+-- in flight is not in the rack, so pressing again launches the next one instead
+-- of teleporting the first back to the ship.
+when a pressed if (s1.visible = 0) * (fired.value = 0) > 0 then (s1.visible, s1.x, s1.y, fired.value) as (1, player.x, player.y - 1, 1)
+when a pressed if (s2.visible = 0) * (fired.value = 0) > 0 then (s2.visible, s2.x, s2.y, fired.value) as (1, player.x, player.y - 1, 1)
+when a pressed if (s3.visible = 0) * (fired.value = 0) > 0 then (s3.visible, s3.x, s3.y, fired.value) as (1, player.x, player.y - 1, 1)
 
-when s1 hits screentop then s1.visible as 0
+-- A shot that reaches the top goes back in the rack. Naming the class rather
+-- than each shot means one rule for the whole magazine, with the shot that
+-- arrived bound as its subject.
+when shot hits screentop then visible as 0
 
 when shot hits alien then (alien.visible, shot.visible, score.value) as (0, 0, score.value + 1)
 
@@ -58,3 +103,11 @@ when shot hits alien then (alien.visible, shot.visible, score.value) as (0, 0, s
 -- driving a whole class from a condition is not expressible today. Another
 -- finding this file is here to produce.
 when alien hits screenleft, screenright then xdirection as flip
+
+when score.value reaches 9 in play then scene as cleared
+
+scene cleared
+
+create text swept in cleared (x centerx - 6, y centery, text "line cleared")
+
+when a pressed in cleared then scene as play
