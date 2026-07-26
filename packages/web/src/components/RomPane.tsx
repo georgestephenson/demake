@@ -3,17 +3,18 @@
  *
  * Doc 13 §D5 says the browser must never need a toolchain, and it does not: the
  * assemblers are ours and written in TypeScript, so the page *compiles* the game
- * — to SM83 for a Game Boy, to 6502 for an NES — the same way the CLI does and
- * gets the same bytes. What the Download button hands you is byte-identical to
+ * — to SM83 for a Game Boy, to 6502 for an NES, to Z80 for a Master System — the
+ * same way the CLI does and gets the same bytes. What the Download button hands you is byte-identical to
  * what `demake build` writes on the command line, which is the doc-07 parity
  * contract restated for games.
  *
- * The emulators are `@demake/dmg` and `@demake/nes`, ours, for the reason doc 07
- * gives: a core fetched from a CDN is forbidden, and a WASM core we cannot read
- * would be the same bargain in a different wrapper. Which one runs is decided by
- * the console the game was compiled for, and *within* the Game Boy family by the
- * cartridge itself — a `gbc` build carries the CGB flag in its header and comes
- * up in colour — so the console selector above this pane changes the
+ * The emulators are `@demake/dmg`, `@demake/nes` and `@demake/sms`, ours, for the
+ * reason doc 07 gives: a core fetched from a CDN is forbidden, and a WASM core we
+ * cannot read would be the same bargain in a different wrapper. Which one runs is
+ * decided by the console the game was compiled for, and *within* two of the three
+ * families by the cartridge itself — a `gbc` build carries the CGB flag in its
+ * header and comes up in colour, a `gg` build carries a Game Gear region nibble
+ * and comes up as a handheld — so the console selector above this pane changes the
  * **cartridge**, and the player follows it rather than being a setting of its own.
  *
  * **The frame counter under the screen is not decoration.** It is the measured
@@ -34,16 +35,26 @@ import {
 } from "@demake/demotic";
 import { Gameboy, SCREEN_HEIGHT, SCREEN_WIDTH, type Button } from "@demake/dmg";
 import { Nes, SCREEN_HEIGHT as NES_HEIGHT, SCREEN_WIDTH as NES_WIDTH } from "@demake/nes";
+import {
+  FRAME_HEIGHT as SMS_HEIGHT,
+  FRAME_WIDTH as SMS_WIDTH,
+  GG_HEIGHT,
+  GG_WIDTH,
+  Sms,
+  type Button as SmsButton,
+} from "@demake/sms";
 
 import { demoAssetBytes, demoAudioBytes } from "../lib/demo-game.js";
 import { download } from "../lib/download.js";
 import { audioSupported, RomAudio } from "../lib/rom-audio.js";
 
 /**
- * The portable button set maps one for one onto both machines' pads.
+ * The portable button set maps one for one onto every machine's pad.
  *
  * Which is what doc 14 §Buttons chose it for: the Game Boy has exactly these
- * seven, and the NES has them and a Select besides.
+ * seven, the NES has them and a Select besides, and a Master System has six and
+ * a Pause key — which is what `start` means there, and the cartridge already
+ * knows it.
  */
 const BUTTONS: Readonly<Record<string, Button>> = {
   left: "left",
@@ -63,6 +74,8 @@ const MACHINE: Readonly<Record<string, string>> = {
   gb: "a Game Boy",
   gbc: "a Game Boy Color",
   nes: "an NES",
+  sms: "a Master System",
+  gg: "a Game Gear",
 };
 
 /**
@@ -71,7 +84,7 @@ const MACHINE: Readonly<Record<string, string>> = {
  * Named rather than elided because the number means nothing without it: three
  * frames a tick is a different verdict on a 4 MHz SM83 than on a 1.8 MHz 6502.
  */
-const CPU: Readonly<Record<string, string>> = { gb: "an SM83", nes: "a 6502" };
+const CPU: Readonly<Record<string, string>> = { gb: "an SM83", nes: "a 6502", sms: "a Z80" };
 
 /**
  * A booted cartridge, whichever console it is for.
@@ -94,6 +107,27 @@ interface Player {
 
 /** Boot a cartridge in the core its console needs. */
 function boot(rom: Uint8Array, consoleId: string): Player {
+  if (familyFor(consoleId) === "sms") {
+    // Which of the two machines it is comes out of the cartridge's own region
+    // nibble, not from `consoleId` — the same rule the Game Boy family runs
+    // under, and the reason the selector changes the build rather than a setting.
+    const machine = new Sms(rom);
+    const view = machine.vdp.view();
+    return {
+      width: view.width,
+      height: view.height,
+      framebuffer: view.pixels,
+      gameboy: null,
+      // A Sega pad has no Select, so the one button the portable set does not
+      // include is dropped rather than mapped onto something else.
+      setButtons: (down) => machine.setButtons(down as readonly SmsButton[]),
+      runFrame: () => {
+        machine.runFrame();
+        machine.vdp.view();
+      },
+      readMemory: (address, length) => machine.readMemory(address, length),
+    };
+  }
   if (familyFor(consoleId) === "nes") {
     const machine = new Nes(rom);
     return {
@@ -272,8 +306,9 @@ export function RomPane({
   const consoleId = built.consoleId ?? program?.profile.id ?? "gb";
   const family = familyFor(consoleId) ?? "gb";
   const extension = built.extension ?? "gb";
-  // Sound is the Game Boy's for now: the NES driver is doc 13 §A5, and a button
-  // that turned on nothing would be worse than one that is plainly unavailable.
+  // Sound is the Game Boy's for now: the 2A03 and SN76489 drivers are doc 13's
+  // work, and a button that turned on nothing would be worse than one that is
+  // plainly unavailable.
   const canSound = audioSupported() && family === "gb";
   // The canvas is sized by the console, not by CSS: these are two genuinely
   // different screens (160×144 against 256×240, and not the same aspect), and a
@@ -281,7 +316,11 @@ export function RomPane({
   const screen =
     family === "nes"
       ? { width: NES_WIDTH, height: NES_HEIGHT }
-      : { width: SCREEN_WIDTH, height: SCREEN_HEIGHT };
+      : family === "sms"
+        ? consoleId === "gg"
+          ? { width: GG_WIDTH, height: GG_HEIGHT }
+          : { width: SMS_WIDTH, height: SMS_HEIGHT }
+        : { width: SCREEN_WIDTH, height: SCREEN_HEIGHT };
 
   useEffect(() => {
     if (!rom || !layout) {

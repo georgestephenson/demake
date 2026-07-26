@@ -145,6 +145,9 @@ importers:
       '@demake/nes':
         specifier: workspace:*
         version: link:../nes
+      '@demake/sms':
+        specifier: workspace:*
+        version: link:../sms
       preact:
         specifier: ^10.29.7
         version: 10.29.7

@@ -103,9 +103,21 @@ export class Vdp {
   private spriteOverflow = false;
   private spriteCollision = false;
 
+  /**
+   * The window a Game Gear's LCD shows, kept between calls.
+   *
+   * One buffer rather than a fresh one per frame, because a caller that holds
+   * the reference — the web app's player does, so its frame loop is a `putImage`
+   * and nothing else — would otherwise be drawing whatever the first call
+   * happened to return for ever.
+   */
+  private readonly window: Uint8ClampedArray;
+
   constructor(readonly variant: VdpVariant = "sms") {
     this.cram = new Uint8Array(variant === "gg" ? 64 : 32);
     this.framebuffer.fill(0xff);
+    this.window =
+      variant === "gg" ? new Uint8ClampedArray(GG_WIDTH * GG_HEIGHT * 4) : this.framebuffer;
   }
 
   // --- register decoding -----------------------------------------------------
@@ -444,11 +456,10 @@ export class Vdp {
     if (this.variant !== "gg") {
       return { width: FRAME_WIDTH, height: FRAME_HEIGHT, pixels: this.framebuffer };
     }
-    const pixels = new Uint8ClampedArray(GG_WIDTH * GG_HEIGHT * 4);
     for (let y = 0; y < GG_HEIGHT; y += 1) {
       const from = ((y + GG_TOP) * FRAME_WIDTH + GG_LEFT) * 4;
-      pixels.set(this.framebuffer.subarray(from, from + GG_WIDTH * 4), y * GG_WIDTH * 4);
+      this.window.set(this.framebuffer.subarray(from, from + GG_WIDTH * 4), y * GG_WIDTH * 4);
     }
-    return { width: GG_WIDTH, height: GG_HEIGHT, pixels };
+    return { width: GG_WIDTH, height: GG_HEIGHT, pixels: this.window };
   }
 }

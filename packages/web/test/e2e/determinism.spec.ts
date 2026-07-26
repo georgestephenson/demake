@@ -122,17 +122,18 @@ for (const { name, options } of CASES) {
  * object art *and* legend art. Everything the compiler and the image pipeline do
  * is in those kilobytes, so a single divergent byte anywhere shows up here.
  *
- * Once per console with a backend, because the two share a compiler and share
- * nothing below it: the code is a different instruction set, the art goes through
- * a different fitter — mono shades against a picture demade in colour — and the
- * cartridge is wrapped differently. A page that agreed with the CLI about the
- * Game Boy would say nothing about whether it agreed about the NES.
+ * Once per console with a backend, because they share a compiler and share
+ * nothing below it: the code is a different instruction set each time, the art
+ * goes through a different fitter — mono shades, a fixed master palette, a
+ * sixteen-colour bank — and the cartridge is wrapped differently. A page that
+ * agreed with the CLI about the Game Boy would say nothing about whether it
+ * agreed about the NES or the Master System.
  *
  * The fixtures are read off disk rather than imported from the page's bundle:
  * the page gets them through Vite's `?raw`, which only exists inside a build,
  * and the point of the test is that both sides start from the same file.
  */
-for (const consoleId of ["gb", "nes"] as const) {
+for (const consoleId of ["gb", "nes", "sms"] as const) {
   test(`the ${consoleId} ROM the page builds is byte-identical to the CLI's`, async ({ page }) => {
     const fixtures = dirname(
       createRequire(import.meta.url).resolve("@demake/demotic/fixtures/pong.dmt"),

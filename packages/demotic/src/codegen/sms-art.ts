@@ -42,6 +42,43 @@ import { artRequests, TilePool, type AssetBytes } from "./art.js";
 import { GG_MEMORY, SMS_MEMORY } from "./layout.js";
 import { BANK_TILES, SPRITE_COLORS, SYSTEM_INK, type SmsEmitOptions } from "./sms/emit.js";
 
+/**
+ * Demaking is expensive, deterministic, and asked for over and over.
+ *
+ * A full-screen backdrop here is a sixteen-colour fit over 256×192 pixels and
+ * takes about twenty seconds — half again what the NES costs and three times the
+ * Game Boy Color — while the web app rebuilds the game on every keystroke. The
+ * conversion is a pure function of (bytes, box, console), so remembering its
+ * answer cannot change one: the same inputs produce the same cartridge whether
+ * it is the first build or the tenth, which is the parity contract restated.
+ * A speed optimisation over a pure function, never one that changes bytes.
+ */
+const CACHE_LIMIT = 16;
+const backdropCache = new Map<string, Backdrop>();
+const bankCache = new Map<string, SpriteBank>();
+
+function remember<T>(cache: Map<string, T>, key: string, make: () => T): T {
+  const hit = cache.get(key);
+  if (hit !== undefined) return hit;
+  const value = make();
+  cache.set(key, value);
+  if (cache.size > CACHE_LIMIT) {
+    const oldest = cache.keys().next();
+    if (!oldest.done) cache.delete(oldest.value);
+  }
+  return value;
+}
+
+/** FNV-1a over a byte string — a cache key, never a checksum anyone relies on. */
+function digest(bytes: Uint8Array): string {
+  let hash = 0x811c9dc5;
+  for (const byte of bytes) {
+    hash ^= byte;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `${hash.toString(16)}:${bytes.length}`;
+}
+
 /** Tiles left for art once the built-in bank has its share. */
 export const ART_TILES = BANK_TILES - BUILTIN_TILES;
 
@@ -234,14 +271,17 @@ export function bindSmsArt(program: Program, assets: AssetBytes, consoleId: stri
   const demakeBank = (kind: "sprite" | "tile"): SpriteBank | null => {
     const list = sources[kind];
     if (list.length === 0) return null;
-    return buildSpriteBank(list, {
-      console: consoleId,
-      packing: "planar",
-      maxPalettes: 1,
-      // The font's three entries come off the top of the sprite bank, so the fit
-      // is told what it really has rather than being trimmed afterwards.
-      ...(kind === "sprite" ? { maxColors: SPRITE_COLORS } : { opaque: true }),
-    });
+    const key = `${consoleId}:${kind}:${list.map((source) => `${source.name}:${digest(source.bytes)}`).join("|")}`;
+    return remember(bankCache, key, () =>
+      buildSpriteBank(list, {
+        console: consoleId,
+        packing: "planar",
+        maxPalettes: 1,
+        // The font's three entries come off the top of the sprite bank, so the
+        // fit is told what it really has rather than being trimmed afterwards.
+        ...(kind === "sprite" ? { maxColors: SPRITE_COLORS } : { opaque: true }),
+      }),
+    );
   };
   const objects = demakeBank("sprite");
   const backgrounds = demakeBank("tile");
@@ -293,10 +333,12 @@ export function bindSmsArt(program: Program, assets: AssetBytes, consoleId: stri
   for (const [index, scene] of backdropScenes.entries()) {
     const left = BANK_TILES - next;
     const share = Math.max(1, Math.floor(left / (backdropScenes.length - index)));
-    const art = demakeBackdrop(
-      assets.get(scene.backdrop as string) as Uint8Array,
-      consoleId,
-      share,
+    const source = assets.get(scene.backdrop as string) as Uint8Array;
+    // The share is part of the key: the same picture fitted into a different
+    // number of tiles is a different conversion, and two scenes sharing a bank
+    // get different shares.
+    const art = remember(backdropCache, `${consoleId}:${share}:${digest(source)}`, () =>
+      demakeBackdrop(source, consoleId, share),
     );
     // The engine's map is two bytes a cell and as wide as the picture; the name
     // table is thirty-two cells wide on both machines, so each row is padded.
