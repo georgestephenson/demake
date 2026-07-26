@@ -44,6 +44,12 @@ Every one of these is a mistake the cell-and-tick model makes easy to write and 
 | `E_ARITY` | Wrong number of arguments or values. |
 | `E_SYNTAX` | The statement could not be parsed. |
 | `E_UNKNOWN_STATEMENT` | Not a statement keyword. |
+| `E_GLUED_COMMENT` | `--` run onto the token before it, which discards the rest of the line. |
+| `E_UNTERMINATED_STRING` | A string with no closing quote, which swallows the rest of the line. |
+| `E_UNKNOWN_UNIT` | A word attached to a number that is not one of the units. |
+| `E_DUPLICATE_PROP` | One list setting the same property twice, where the first value does nothing. |
+| `E_DUPLICATE_CONTROL` | Two bindings setting one property from one button, whose `on hold` restores fight. |
+| `E_DUPLICATE_CAMERA` | More than one camera in a scene; a scene has one viewport. |
 | `E_SPRITE_BUDGET` | A scene needs more hardware sprites than the console has. |
 | `E_OBJECT_TOO_WIDE` | An object is wider than the playfield. |
 | `E_OBJECT_TOO_TALL` | An object is taller than the playfield. |

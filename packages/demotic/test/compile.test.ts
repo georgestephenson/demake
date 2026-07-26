@@ -283,6 +283,52 @@ describe("compile", () => {
     expect(toNumber(instance?.numbers["y"] ?? 0)).toBe(3);
   });
 
+  it("rejects a second camera in a scene rather than letting it win silently", () => {
+    const source = [
+      MINIMAL,
+      "create dot d1 in play ()",
+      "create dot d2 in play (x 4)",
+      "camera follows d1",
+      "camera follows d2",
+    ].join("\n");
+    expect(codes(source)).toContain("E_DUPLICATE_CAMERA");
+  });
+
+  it("allows one camera per scene", () => {
+    const source = [
+      MINIMAL,
+      "scene bonus",
+      "create dot d1 in play ()",
+      "create dot d2 in bonus ()",
+      "camera follows d1 in play",
+      "camera follows d2 in bonus",
+    ].join("\n");
+    expect(codes(source)).not.toContain("E_DUPLICATE_CAMERA");
+  });
+
+  it("rejects two bindings writing one property from one button", () => {
+    // Each `on hold` binding restores what it overwrote, so two of them on one
+    // property unwind into whichever value the other snapshotted.
+    const source = [
+      MINIMAL,
+      "create dot d1 in play ()",
+      "control d1 left (xdirection -1)",
+      "control d1 left (xdirection 1)",
+    ].join("\n");
+    expect(codes(source)).toContain("E_DUPLICATE_CONTROL");
+  });
+
+  it("allows one button to set different properties, or the same one on another edge", () => {
+    const source = [
+      MINIMAL,
+      "create dot d1 in play ()",
+      "control d1 a (ydirection -1)",
+      "control d1 a (speed 4)",
+      "control d1 a (ydirection 1) on release",
+    ].join("\n");
+    expect(codes(source)).not.toContain("E_DUPLICATE_CONTROL");
+  });
+
   it("reports the text of an error through GameLangError", () => {
     try {
       compile("start nowhere", { profile: gb });
