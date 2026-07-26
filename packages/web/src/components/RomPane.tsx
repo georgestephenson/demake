@@ -48,11 +48,18 @@ export function RomPane({
   held,
   latched,
   restarts,
+  pending = false,
 }: {
   program: Program | undefined;
   name: string;
   held: { current: Set<string> };
   latched: { current: Set<string> };
+  /**
+   * True while the editor is still being typed in and this cartridge is a
+   * version behind. The pane keeps playing the ROM it has — a screen that
+   * blanked on every keystroke would be worse than a stale one — and says so.
+   */
+  pending?: boolean;
   /**
    * Bumped by the section's Restart button.
    *
@@ -275,19 +282,26 @@ export function RomPane({
   return (
     <div class="rom-pane">
       <h3>The cartridge</h3>
-      <canvas
-        ref={canvas}
-        class="rom-canvas"
-        data-testid="rom-canvas"
-        width={SCREEN_WIDTH}
-        height={SCREEN_HEIGHT}
-        role="img"
-        aria-label={
-          extension === "gbc"
-            ? "The game, running as a Game Boy Color ROM"
-            : "The game, running as a Game Boy ROM"
-        }
-      />
+      <div class="rom-screen">
+        <canvas
+          ref={canvas}
+          class="rom-canvas"
+          data-testid="rom-canvas"
+          width={SCREEN_WIDTH}
+          height={SCREEN_HEIGHT}
+          role="img"
+          aria-label={
+            extension === "gbc"
+              ? "The game, running as a Game Boy Color ROM"
+              : "The game, running as a Game Boy ROM"
+          }
+        />
+        {pending || demaking ? (
+          <p class="rom-building" data-testid="rom-building" role="status">
+            Demaking&hellip;
+          </p>
+        ) : null}
+      </div>
       <div class="rom-toolbar">
         <button
           type="button"

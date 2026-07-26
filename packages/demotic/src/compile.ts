@@ -33,6 +33,7 @@ import type { Assignment, Expr, Prop, Stmt, Unit } from "./lang/ast.js";
 import {
   CELL_QUANTISED,
   DERIVED_PROPS,
+  DIRECTION_VECTORS,
   knownPropertyNames,
   NUMBER_DEFAULTS,
   STRING_PROPS,
@@ -67,8 +68,8 @@ const FIXED_DEFAULTS: Readonly<Record<string, Fixed>> = Object.fromEntries(
 );
 
 /**
- * Compass names, as (xdirection, ydirection) pairs. Screen coordinates grow
- * downward, so `north` is negative y.
+ * Compass names, as (xdirection, ydirection) pairs, from the registry. Screen
+ * coordinates grow downward, so `north` is negative y.
  *
  * Diagonals are deliberately *not* normalised: `speed` applies per axis, so a
  * northwest heading travels at `speed` on both axes rather than `speed/√2`.
@@ -77,16 +78,7 @@ const FIXED_DEFAULTS: Readonly<Record<string, Fixed>> = Object.fromEntries(
  * cost of diagonal movement being faster than axial. It is a real trade, and
  * the language states it rather than hiding it.
  */
-const DIRECTIONS: Readonly<Record<string, readonly [number, number]>> = {
-  north: [0, -1],
-  south: [0, 1],
-  east: [1, 0],
-  west: [-1, 0],
-  northeast: [1, -1],
-  northwest: [-1, -1],
-  southeast: [1, 1],
-  southwest: [-1, 1],
-};
+const DIRECTIONS = DIRECTION_VECTORS;
 
 /** Builtin classes rendered as glyphs from the background layer, not sprites. */
 const TEXT_CLASSES = new Set(["number", "text"]);

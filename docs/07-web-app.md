@@ -72,6 +72,38 @@ the d-pad must not leave a paddle running forever.
 A syntax error never blanks the preview — the parser recovers per line, and the
 page keeps running the last version that compiled.
 
+**The source is syntax-coloured, and the grammar is the engine's.**
+`@demake/demotic` exports `highlight()`, which scopes source with **TextMate
+scope names** (`keyword.control`, `string.quoted`, `constant.numeric`) — the
+convention every editor and every theme already speaks, so a theme matches on
+scope prefixes and a future `.tmLanguage` file is a translation of one table
+rather than a second grammar. Every word it knows comes from the language
+registry and every token boundary comes from the lexer, so a keyword added to the
+registry is coloured the day it is added, and the one thing a regular-expression
+highlighter always gets wrong here — `y--1` is a comment, `y - -1` is not — has
+exactly one answer. **Grammar in the engine, theme in the stylesheet**: the page
+picks the colours (the conventional ones — comments green, keywords blue, control
+flow magenta, strings red-brown, numbers pale green) and the engine never names
+one. A highlighter written in the page would be a second description of the
+language, which is the same mistake §The web app must never grow conversion logic
+exists to prevent.
+
+It is still an ordinary `<textarea>`, with a `<pre>` of colours stacked exactly
+underneath it — the conventional technique, and the one that keeps native
+editing, selection, mobile keyboards and the accessibility tree. Two things hold
+the layers together: they share one CSS grid cell so the wrapper is what scrolls
+(a scrollbar inside the textarea alone would narrow its lines and move every wrap
+point out from under the colours), and no scope may set a `font-weight` or
+`font-style`, because a bold run is a wider run in most monospace families.
+
+**The cartridge is rebuilt when typing stops, not per keystroke.** Compiling is
+microseconds and stays live — the diagnostics and the preview answer as you type
+— but a cartridge is the art demade, the audio demade and a whole assembly, which
+is seconds the first time a picture is seen. The ROM pane keeps playing the
+cartridge it has and shows a *demaking…* badge over the screen while a newer one
+is coming: a screen that blanked as you typed would be worse than one that is a
+version behind.
+
 ### Playing the real ROM in the page
 
 The preview runs the reference interpreter, which is the specification — but the

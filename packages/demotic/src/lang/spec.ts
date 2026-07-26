@@ -223,6 +223,79 @@ export const BUTTONS: readonly ButtonSpec[] = [
   },
 ];
 
+/** A word the grammar reserves inside a statement. */
+export interface KeywordSpec {
+  name: string;
+  summary: string;
+}
+
+/**
+ * Clause keywords — the words that join a statement's parts.
+ *
+ * These were literals in the parser until a highlighter needed to know which
+ * words are grammar and which are the author's own names. They are surface, so
+ * they belong here with everything else; `spec.test.ts` checks each one against
+ * the syntax lines of the statements and triggers that use it, so a keyword
+ * cannot be added to the grammar without appearing in this table.
+ */
+export const KEYWORDS: readonly KeywordSpec[] = [
+  { name: "object", summary: "Declares a class rather than an instance, in `create object`." },
+  { name: "in", summary: "Narrows a declaration or a rule to one scene." },
+  { name: "from", summary: "Names the file a level or a stream is built from." },
+  { name: "follows", summary: "The camera's one verb." },
+  { name: "wide", summary: "Lays a stream's chunks left to right." },
+  { name: "tall", summary: "Lays a stream's chunks top to bottom." },
+  { name: "on", summary: "Introduces a control's timing, or a sound's trigger." },
+  { name: "hold", summary: "A control that restores the previous value on release." },
+  { name: "press", summary: "A control that fires on the press and stays." },
+  { name: "release", summary: "A control that fires on the release." },
+  { name: "if", summary: "Guards a trigger with a condition." },
+  { name: "then", summary: "Separates a rule's condition from its consequence." },
+  { name: "else", summary: "Runs when an evaluated rule did not fire." },
+  { name: "as", summary: "Assigns a value to a property." },
+  { name: "hits", summary: "Contact, once — an edge trigger." },
+  { name: "touches", summary: "Overlap, every tick — a level trigger." },
+  { name: "pressed", summary: "A button's press edge." },
+  { name: "released", summary: "A button's release edge." },
+  { name: "reaches", summary: "A value landing on a target, or crossing it." },
+];
+
+/** A compass heading, and the pair of directions it stands for. */
+export interface DirectionSpec {
+  name: string;
+  x: -1 | 0 | 1;
+  y: -1 | 0 | 1;
+}
+
+/**
+ * Compass headings. `direction` is write-only sugar, so this table *is* the
+ * feature: `direction northwest` is exactly `xdirection -1, ydirection -1`.
+ *
+ * Nothing is normalised — a diagonal travels at `speed` on both axes rather
+ * than `speed/√2`, because normalising needs a square root and the simulation
+ * stays in exact integers (doc 14 §Simulate constrained).
+ */
+export const DIRECTIONS: readonly DirectionSpec[] = [
+  { name: "north", x: 0, y: -1 },
+  { name: "south", x: 0, y: 1 },
+  { name: "east", x: 1, y: 0 },
+  { name: "west", x: -1, y: 0 },
+  { name: "northeast", x: 1, y: -1 },
+  { name: "northwest", x: -1, y: -1 },
+  { name: "southeast", x: 1, y: 1 },
+  { name: "southwest", x: -1, y: 1 },
+];
+
+/** Values written as a word rather than a number. */
+export const VALUE_WORDS: readonly KeywordSpec[] = [
+  { name: "flip", summary: "Negates the property being assigned. `xdirection as flip` bounces." },
+];
+
+/** Assignment targets that belong to the game rather than to an object. */
+export const TARGET_WORDS: readonly KeywordSpec[] = [
+  { name: "scene", summary: "`scene as play` switches the running scene." },
+];
+
 /** A screen edge usable as a collision target. */
 export interface EdgeSpec {
   name: string;
@@ -682,6 +755,30 @@ export const BUTTON_NAMES = BUTTONS.map((b) => b.name) as readonly string[];
 
 /** Screen-edge names. */
 export const EDGE_NAMES = EDGES_SPEC.map((e) => e.name) as readonly string[];
+
+/** Clause keywords, as a set. */
+export const KEYWORD_NAMES: ReadonlySet<string> = new Set(KEYWORDS.map((k) => k.name));
+
+/** Compass name → the `[xdirection, ydirection]` pair it stands for. */
+export const DIRECTION_VECTORS: Readonly<Record<string, readonly [number, number]>> =
+  Object.fromEntries(DIRECTIONS.map((d) => [d.name, [d.x, d.y] as const]));
+
+/** Value words, as a set. */
+export const VALUE_WORD_NAMES: ReadonlySet<string> = new Set(VALUE_WORDS.map((v) => v.name));
+
+/** Non-object assignment targets, as a set. */
+export const TARGET_WORD_NAMES: ReadonlySet<string> = new Set(TARGET_WORDS.map((t) => t.name));
+
+/**
+ * The first word of every statement — `create object` contributes `create`.
+ *
+ * A statement keyword is only a keyword in the first position of a line: `start`
+ * is also a button and `scene` is also an assignment target, and both readings
+ * are live in the same program.
+ */
+export const STATEMENT_KEYWORDS: ReadonlySet<string> = new Set(
+  STATEMENTS.map((s) => s.keyword.split(" ")[0] as string),
+);
 
 /** Every property name the reference documents, for the "known properties" hint. */
 export function knownPropertyNames(): readonly string[] {

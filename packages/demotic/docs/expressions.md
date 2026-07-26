@@ -46,3 +46,24 @@ Resolved against the target console at compile time.
 | `levelheight` | Playfield height in cells. |
 | `always` | One. `when always` is how a rule says *every tick*. |
 | `never` | Zero. |
+
+## Compass directions
+
+Write-only sugar for the `direction` property. Diagonals are deliberately not normalised — `speed` applies per axis, so a diagonal travels at `speed` on both rather than `speed/√2`, which keeps the simulation in exact integers.
+
+| Direction | `xdirection` | `ydirection` |
+|---|---|---|
+| `north` | `0` | `-1` |
+| `south` | `0` | `1` |
+| `east` | `1` | `0` |
+| `west` | `-1` | `0` |
+| `northeast` | `1` | `-1` |
+| `northwest` | `-1` | `-1` |
+| `southeast` | `1` | `1` |
+| `southwest` | `-1` | `1` |
+
+## Value words
+
+| Word | Meaning |
+|---|---|
+| `flip` | Negates the property being assigned. `xdirection as flip` bounces. |

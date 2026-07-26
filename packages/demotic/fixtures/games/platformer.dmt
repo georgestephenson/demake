@@ -1,21 +1,9 @@
--- Platformer — gravity, a jump, and standing on things.
---
--- What this exercises that the ball games do not:
---   * acceleration. `speed` is constant, but a level rule that nudges
---     `ydirection` every tick *is* gravity, and `min` caps the terminal fall.
---   * an `if` guard reading state the collision phase wrote earlier in the same
---     tick, which is what makes a jump need ground under it
---   * an object resting on another rather than bouncing off it
---   * a collectible that disappears and scores
+-- Platformer. Gravity, an impulse jump, and resting
+-- contact.
 
 start title
 
--- ---------------------------------------------------------------- title -----
---
--- The artwork is demade by the image engine at the screen's own size, into a
--- tilemap the background layer draws for nothing — the same fitter a photograph
--- goes through. What it costs is tiles, and the compiler says so when a picture
--- wants more than the game's own art has left.
+-- title ---------------------------------------
 
 scene title
 
@@ -25,21 +13,15 @@ create text prompt in title (x centerx - 7, y screenheight - 2, text "press a to
 
 when a pressed in title then scene as play
 
+-- play ----------------------------------------
 
 scene play
 
--- The playfield is demade too, at the screen's own size, by the same fitter the
--- title screen went through. It is scenery and nothing else: the game reads
--- nothing from it and collides with none of it — what it costs is tiles.
 backdrop platformer.play.svg
 
--- A jump fires on the same rule that performs it, so the sound and the impulse
--- cannot come apart: `sound ... on a pressed if footing.value > 0` is the jump
--- rule's own trigger, guard included.
 music meadow.mid in play
 sound jump.wav on a pressed in play if footing.value > 0
 sound coin.wav on player hits coin
-
 
 create object hero (width 1 cell, height 2 cells, speed 55vw, sprite hero.svg)
 create object ledge (width 25vw, height 1 cell, sprite ledge.svg)
@@ -47,39 +29,22 @@ create object coin (width 1 cell, height 1 cell, sprite coin.svg)
 
 create hero player in play (x 15vw, y 2)
 
--- A full-width floor would be a wall of hardware sprites (20 of a Game Boy's 40
--- for the floor alone), and the compiler says so. Static scenery really wants a
--- background layer, which the language does not have yet — so for now the floor
--- is a ledge you can fall off, and `screenbottom` catches you.
 create ledge floor in play (x 10vw, y screenheight - 1, width 55vw)
 create ledge shelf1 in play (x 35vw, y screenheight - 5)
 create ledge shelf2 in play (x 55vw, y screenheight - 9)
 
--- The shelves step to the right, each overlapping the one below by a cell or
--- two, because a ledge is solid from underneath as well as on top — the
--- separation says so. A shelf directly overhead is a ceiling, not a platform:
--- the way up is to jump *beside* the next one and step across. Nothing overhangs
--- where the hero starts, either, or it would begin the game on a shelf.
 create coin coin1 in play (x 25vw, y screenheight - 2)
 create coin coin2 in play (x 45vw, y screenheight - 6)
 create coin coin3 in play (x 65vw, y screenheight - 10)
 
--- Whether the hero has something under its feet *right now*. A `number` with
--- `visible 0` is not drawn, not collided with and not moved, which makes it the
--- one place a game can keep a plain value.
---
--- The three rules that touch it read in tick order, and that is the whole trick:
--- it is cleared with the level rules, set by the collision phase when something
--- was landed on, and read by the edge-triggered jump after both. So it is true
--- for exactly the ticks the hero is standing on something.
+-- Whether the hero has ground under it right now:
+-- cleared below, set by the contact, read by the jump.
 create number footing in play (value 0, visible 0)
 
 create text label in play (x 1, y 1, text "coins:")
 create number score in play (value 0, x 8, y 1)
 
--- Gravity: a constant downward nudge, clamped so the fall has a terminal speed.
--- Without the clamp a long drop tunnels through the floor in one tick, which the
--- compiler would tell you about.
+-- Gravity, capped so a long fall cannot tunnel.
 when always in play then player.ydirection as min(player.ydirection + 0.04, 0.9)
 when always in play then footing.value as 0
 
@@ -90,30 +55,12 @@ when player hits screenleft, screenright then xdirection as 0
 when player hits screentop then ydirection as 0
 when player touches screenbottom then (ydirection, footing.value) as (0, 1)
 
--- Landing, and bonking your head, in one rule.
---
--- This is `touches`, not `hits`, and the difference is the whole reason
--- `touches` exists: `hits` fires once, on contact, so gravity would go on adding
--- to `ydirection` every tick the hero stood still. The separation would keep it
--- looking correct while the state ran away underneath — and the first jump after
--- a long stand would be fought by a full tick of accumulated fall.
---
--- The guard splits the two ways a hero meets a ledge. Coming down onto it
--- (`>= 0`) is a landing: the fall stops and there is footing. Coming up into it
--- is a bonk: the climb stops and nothing is stood on, so a jump cannot be
--- renewed by clipping the underside of a shelf.
+-- Landing and bonking, in one rule. `touches`, not
+-- `hits`: resting contact is not an event.
 when player touches ledge if player.ydirection >= 0 then (ydirection, footing.value) as (0, 1) else ydirection as 0
 
--- The jump. It is an edge-triggered rule rather than a `control` for one reason:
--- a `control` runs at the top of the tick, before anything has been collided
--- with, so it cannot ask whether there is ground underfoot — and a jump that
--- cannot ask is a jump you can press forever, climbing the sky a press at a
--- time.
---
--- -1.5 against 0.04 of gravity is a jump about five cells high and a second and
--- a quarter long, which clears the four-cell step between shelves with a little
--- to spare. Both numbers are multiples of the hero's own `speed`, so the arc
--- scales with the playfield exactly as its running does.
+-- A jump needs a rule, not a `control`: controls run
+-- before collisions, so they cannot ask for footing.
 when a pressed if footing.value > 0 then player.ydirection as -1.5
 
 when player hits coin then (coin.visible, score.value) as (0, score.value + 1)

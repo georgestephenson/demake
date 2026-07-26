@@ -12,12 +12,15 @@ import {
   BUTTONS,
   CONSTANTS,
   DIAGNOSTICS,
+  DIRECTIONS,
   EDGES_SPEC,
   FUNCTIONS,
+  KEYWORDS,
   PROPERTIES,
   STATEMENTS,
   TRIGGERS,
   UNITS,
+  VALUE_WORDS,
 } from "../lang/spec.js";
 
 /** One generated file. */
@@ -62,7 +65,16 @@ function statementsPage(): ReferencePage {
         `\`\`\`\n${statement.example}\n\`\`\`\n` +
         (statement.note ? `\n${statement.note}\n` : ""),
     ).join("\n");
-  return page("statements.md", "Statements", body);
+  const keywords = KEYWORDS.map(
+    (keyword) => `| \`${keyword.name}\` | ${cell(keyword.summary)} |`,
+  ).join("\n");
+  return page(
+    "statements.md",
+    "Statements",
+    `${body}\n## Clause keywords\n\nThe words that join a statement's parts. Each is a keyword only ` +
+      "where the grammar expects it — `start` is also a button and `scene` is also an assignment " +
+      `target.\n\n| Keyword | Meaning |\n|---|---|\n${keywords}\n`,
+  );
 }
 
 function triggersPage(): ReferencePage {
@@ -115,6 +127,12 @@ function expressionsPage(): ReferencePage {
   const constants = CONSTANTS.map(
     (constant) => `| \`${constant.name}\` | ${cell(constant.summary)} |`,
   ).join("\n");
+  const directions = DIRECTIONS.map(
+    (direction) => `| \`${direction.name}\` | \`${direction.x}\` | \`${direction.y}\` |`,
+  ).join("\n");
+  const values = VALUE_WORDS.map(
+    (value) => `| \`${value.name}\` | ${cell(value.summary)} |`,
+  ).join("\n");
   return page(
     "expressions.md",
     "Expressions",
@@ -122,7 +140,12 @@ function expressionsPage(): ReferencePage {
       `(\`15 vw\`).\n\n| Unit | Resolves against |\n|---|---|\n${units}\n\n` +
       `## Functions\n\n| Signature | Meaning |\n|---|---|\n${functions}\n\n` +
       "## Constants\n\nResolved against the target console at compile time.\n\n" +
-      `| Constant | Value |\n|---|---|\n${constants}\n`,
+      `| Constant | Value |\n|---|---|\n${constants}\n\n` +
+      "## Compass directions\n\nWrite-only sugar for the `direction` property. Diagonals are " +
+      "deliberately not normalised — `speed` applies per axis, so a diagonal travels at `speed` " +
+      "on both rather than `speed/√2`, which keeps the simulation in exact integers.\n\n" +
+      `| Direction | \`xdirection\` | \`ydirection\` |\n|---|---|---|\n${directions}\n\n` +
+      `## Value words\n\n| Word | Meaning |\n|---|---|\n${values}\n`,
   );
 }
 

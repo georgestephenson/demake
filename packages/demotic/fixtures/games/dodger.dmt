@@ -1,23 +1,10 @@
--- Dodger — a lot of objects, moving fast, recycled rather than destroyed.
---
--- What this exercises:
---   * many instances of one class in motion at once (sprite budget pressure)
---   * recycling: an object that leaves the screen is put back at the top rather
---     than removed, which is what a real console does because allocation is not
---     a thing you do at 60 Hz
---   * `random` in a level rule, so the same six rocks make a different run every
---     time round — the one thing that turns "stand still and wait" into a game
---   * objects at staggered speeds, so the per-scanline count keeps changing
---   * a score, a target to reach, and a life count to lose it with
+-- Dodger. Many objects at staggered speeds, recycled
+-- rather than destroyed.
 
 start title
+seed 20260726
 
--- ---------------------------------------------------------------- title -----
---
--- The artwork is demade by the image engine at the screen's own size, into a
--- tilemap the background layer draws for nothing — the same fitter a photograph
--- goes through. What it costs is tiles, and the compiler says so when a picture
--- wants more than the game's own art has left.
+-- title ---------------------------------------
 
 scene title
 
@@ -27,23 +14,14 @@ create text prompt in title (x centerx - 7, y screenheight - 2, text "press a to
 
 when a pressed in title then scene as play
 
-
--- One number decides every column every rock ever falls down. Change it and the
--- run is different; leave it and a replay is a replay, on every console.
-seed 20260726
+-- play ----------------------------------------
 
 scene play
 
--- The playfield is demade too, at the screen's own size, by the same fitter the
--- title screen went through. It is scenery and nothing else: the game reads
--- nothing from it and collides with none of it — what it costs is tiles.
 backdrop dodger.play.svg
 
--- One effect, and it is the one that matters: being hit. It is the loudest
--- thing the sound demaker measured, so it outranks anything it collides with.
 music descent.mid in play
 sound hurt.wav on player hits rock
-
 
 create object ship (width 1 cell, height 1 cell, speed 65vw, sprite ship.svg)
 create object rock (width 1 cell, height 1 cell, sprite rock.svg)
@@ -57,9 +35,6 @@ create rock r4 in play (x 56vw, y 2, speed 31vh, direction south)
 create rock r5 in play (x 72vw, y 6, speed 26vh, direction south)
 create rock r6 in play (x 88vw, y 10, speed 29vh, direction south)
 
--- A counter on its own is a number with no noun. The label is an ordinary `text`
--- object beside it, which costs nothing a number does not: both are drawn from
--- the same font, on the same layer, at cells the game chose.
 create text dodgedtag in play (x 1, y 1, text "dodged:")
 create number score in play (value 0, x 9, y 1)
 create text livestag in play (x 1, y 2, text "lives:")
@@ -70,30 +45,10 @@ control player right (xdirection 1) on hold
 
 when player hits screenleft, screenright then xdirection as 0
 
--- Recycling, in one line for all six rocks. A level rule that names a class runs
--- once per instance with that instance bound as its subject, so `y` here means
--- "this rock's y". Written per-object this was six near-identical rules, and six
--- places to forget one.
---
--- The new column is drawn as it falls off the bottom, which is also the moment
--- it is scored. Six rocks on six fixed columns is a pattern you learn once and
--- then stand still in; six rocks on columns nobody wrote down is a game.
---
--- The draw is *around the ship*, not across the whole wall: `random` takes
--- expressions, so where the player is standing is an argument to it. A rock aimed
--- within five cells either way has to be stepped away from, which is the
--- difference between a hazard and weather. `clamp` keeps the column on the
--- playfield when the ship is against a wall.
---
--- Five *cells*, not five percent, and that is the whole reason this one is
--- absolute: the ship is one cell wide on every console, so a dodge window
--- measured in cells is the same window everywhere. Written as a share of the
--- width it would be nine columns on a Game Boy and seventeen on a Mega Drive —
--- the same game on paper and half as dangerous in the hand.
---
--- And because the draw happens at a *stated* moment — this rock, leaving the
--- screen — the sequence is the same in the preview, in the ROM and in every
--- replay.
+-- Recycling, one line for all six rocks: a level rule
+-- naming a class runs once per instance, as its subject.
+-- Each new column is drawn within five cells of the
+-- ship, so it has to be stepped away from.
 when rock.y >= screenheight then (y, x, score.value) as (0, clamp(random(player.centerx - 5, player.centerx + 5), 0, screenwidth - 1), score.value + 1)
 
 when player hits rock then (lives.value, rock.y, rock.x) as (lives.value - 1, 0, clamp(random(player.centerx - 5, player.centerx + 5), 0, screenwidth - 1))
@@ -101,11 +56,15 @@ when player hits rock then (lives.value, rock.y, rock.x) as (lives.value - 1, 0,
 when lives.value reaches 0 in play then scene as gameover
 when score.value reaches 30 in play then scene as cleared
 
+-- game over -----------------------------------
+
 scene gameover
 
 create text over in gameover (x centerx - 4, y centery, text "game over")
 
 when a pressed in gameover then scene as play
+
+-- cleared -------------------------------------
 
 scene cleared
 

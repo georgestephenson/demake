@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 
 import { RomPane } from "../components/RomPane.js";
+import { SourceEditor } from "../components/SourceEditor.js";
 import {
   DEFAULT_EXAMPLE,
   DEMO_ASSETS,
@@ -121,6 +122,14 @@ export function GameDemaker() {
       };
     }
   }, [source, consoleId]);
+
+  // The cartridge is built from the program the editor has *settled* on, not
+  // from every keystroke. Compiling is microseconds and stays live — the
+  // diagnostics and the preview must answer as you type — but a cartridge is the
+  // art demade, the audio demade and a whole assembly, which is seconds the first
+  // time a picture is seen. Building that per character would make the editor
+  // feel like it was fighting back.
+  const romProgram = useSettled(program, 400);
 
   // --- input ----------------------------------------------------------------
 
@@ -350,11 +359,12 @@ export function GameDemaker() {
           ) : null}
           {showRom ? (
             <RomPane
-              program={program}
+              program={romProgram}
               name={example.id}
               held={held}
               latched={romLatched}
               restarts={restarts}
+              pending={romProgram !== program}
             />
           ) : null}
         </div>
@@ -373,13 +383,7 @@ export function GameDemaker() {
 
       <section class="pane">
         <h2>Game</h2>
-        <textarea
-          class="game-source"
-          aria-label="Demotic game source"
-          spellcheck={false}
-          value={source}
-          onInput={(e) => setSource((e.target as HTMLTextAreaElement).value)}
-        />
+        <SourceEditor value={source} onInput={setSource} label="Demotic game source" />
         <div class="game-diagnostics">
           {diagnostics.length === 0 ? (
             <p class="hint">No problems.</p>
@@ -463,6 +467,22 @@ function TouchPad({
       </div>
     </div>
   );
+}
+
+/**
+ * A value, once it has stopped changing for `delay` milliseconds.
+ *
+ * The first value is returned immediately — the effect's first run sets the
+ * state it already holds, which is not a change — so opening the section builds
+ * its cartridge at once and only *edits* wait.
+ */
+function useSettled<T>(value: T, delay: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(() => value), delay);
+    return () => clearTimeout(timer);
+  }, [value, delay]);
+  return settled;
 }
 
 /** Don't steal arrow keys from the editor. */

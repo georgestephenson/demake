@@ -155,6 +155,89 @@ test("reports a source error without blanking the preview", async ({ page }) => 
   await expect(page.locator(".game-canvas")).toBeVisible();
 });
 
+test("colours the source, and keeps the colours under the caret", async ({ page }) => {
+  await page.goto("/#section=game");
+  const editor = page.locator(".source-editor");
+  await expect(editor).toBeVisible();
+
+  // The grammar is `@demake/demotic`'s, so the scopes are the ones its tests
+  // pin. What this test owns is that they reach the DOM and get a colour.
+  for (const scope of ["comment.line.double-dash", "storage.type", "string.quoted"]) {
+    await expect(page.locator(`.source-highlight [data-scope="${scope}"]`).first()).toBeVisible();
+  }
+  const colours = await page
+    .locator(".source-highlight [data-scope]")
+    .evaluateAll((nodes) => new Set(nodes.map((n) => getComputedStyle(n).color)).size);
+  expect(colours).toBeGreaterThan(3);
+
+  // The two layers are stacked, so a difference in metrics shows up as text that
+  // has slid out from under its colours. Same box, same font, same wrap points:
+  // if they wrapped differently the textarea's content would be taller.
+  const aligned = await editor.evaluate((element) => {
+    const pre = element.querySelector(".source-highlight") as HTMLElement;
+    const area = element.querySelector("textarea") as HTMLTextAreaElement;
+    const a = getComputedStyle(pre);
+    const b = getComputedStyle(area);
+    return {
+      text: pre.textContent === `${area.value}\n`,
+      font: a.fontFamily === b.fontFamily && a.fontSize === b.fontSize,
+      leading: a.lineHeight === b.lineHeight && a.letterSpacing === b.letterSpacing,
+      wrapping: a.whiteSpace === b.whiteSpace && a.overflowWrap === b.overflowWrap,
+      width: pre.clientWidth === area.clientWidth,
+      height: area.scrollHeight <= pre.scrollHeight,
+      // Nothing may be bolded or italicised: in most monospace families that is
+      // a different advance width, and the layers would drift along the line.
+      plain: [...element.querySelectorAll("[data-scope]")].every((node) => {
+        const style = getComputedStyle(node);
+        return style.fontStyle === "normal" && style.fontWeight === a.fontWeight;
+      }),
+    };
+  });
+  expect(aligned).toEqual({
+    text: true,
+    font: true,
+    leading: true,
+    wrapping: true,
+    width: true,
+    height: true,
+    plain: true,
+  });
+
+  // Editing still works, and the colours follow what was typed.
+  await page.getByLabel("Demotic game source").fill("start play\nscene play\n-- a note");
+  await expect(
+    page.locator('.source-highlight [data-scope="comment.line.double-dash"]'),
+  ).toHaveText("-- a note");
+});
+
+test("waits for typing to stop before rebuilding the cartridge", async ({ page }) => {
+  await page.goto("/#section=game");
+  await expect(page.getByTestId("rom-canvas")).toBeVisible();
+  await expect.poll(async () => romPainted(page), { timeout: 8000 }).toBeGreaterThan(0);
+  await expect(page.getByTestId("rom-building")).toHaveCount(0);
+
+  // A cartridge is the art demade, the audio demade and a whole assembly, so it
+  // is not rebuilt per keystroke. The pane keeps playing the one it has and says
+  // that a newer one is coming — a screen that blanked as you typed would be
+  // worse than a screen that is a version behind.
+  // Appended at the very end, and a comment: the point is to watch a *valid*
+  // program being retyped. A half-finished statement would fail to compile, and
+  // then there would be no cartridge to be a version behind.
+  const editor = page.getByLabel("Demotic game source");
+  await editor.evaluate((element) => {
+    const area = element as HTMLTextAreaElement;
+    area.focus();
+    area.setSelectionRange(area.value.length, area.value.length);
+  });
+  await page.keyboard.type("\n-- typing", { delay: 60 });
+  await expect(page.getByTestId("rom-building")).toBeVisible();
+  await expect(page.getByTestId("rom-canvas")).toBeVisible();
+
+  // And once typing stops, the build lands and the badge goes.
+  await expect(page.getByTestId("rom-building")).toHaveCount(0, { timeout: 30_000 });
+  await expect.poll(async () => romPainted(page), { timeout: 8000 }).toBeGreaterThan(0);
+});
+
 test("drives the game from the on-screen pad on a touch device", async ({ browser }) => {
   // A phone has no keyboard, so the pad is the only way in. It appears behind a
   // `(pointer: coarse)` media query, which is what `isMobile` sets here.
