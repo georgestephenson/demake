@@ -14,7 +14,7 @@ real emulator, compared pixel for pixel):
 
 | Demaker               | Docs   | State                                                           |
 | --------------------- | ------ | --------------------------------------------------------------- |
-| art (images)          | 03–06  | working, eight Tier 1 consoles proven                           |
+| art (images)          | 03–06  | working, ten consoles proven on hardware                        |
 | game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and a playable `gb` ROM |
 | music (`arrange`)     | 16, 17 | MIDI → chip music + exact audio, six consoles                   |
 | sound (`sfx`)         | 16, 18 | WAV → chip effects, six consoles                                |
@@ -38,19 +38,29 @@ full proof loop for **all eight Tier 1 consoles**:
   Graphics II per-row two-color path (`pipeline/fit-tms.ts`). NES added
   `fixed-master` color, 16×16 attribute cells, and the shared-backdrop constraint.
 - **Codegen** (`bin`/`asm`/`c`) for the `gb`, `nes`, `snes`, `sms`, `md`,
-  `sg1000`, `gba`, and `nds` families, reached via an exact-path detector, a
-  manifest sidecar, or implicit `prep`.
+  `sg1000`, `gba`, `nds`, `pce`, and `wsc` families, reached via an exact-path
+  detector, a manifest sidecar, or implicit `prep`.
 - **`--format rom`** builds bootable ROMs for GB (RGBDS), NES (cc65 NROM), SMS +
-  GG + SG-1000 (WLA-DX / Z80), SNES (WLA-DX / 65816, LoROM), MD/Genesis (GNU m68k
-  binutils), and GBA + NDS (GNU ARM binutils). The z80/6502/65816 assemblers are
-  pinned source builds; the m68k and ARM binutils are stock distro packages (apt,
-  main archive) since well-tested ones ship there — all via `pnpm toolchains`, no
-  Docker, and no devkitARM/ndstool (demake packs the GBA and NDS cartridge
-  headers itself).
-- **Pixel-perfect emulator E2E** for every Tier 1 console — GB/GBC (SameBoy) and
-  NES + SMS + GG + MD + SG-1000 + SNES + GBA + NDS (libretro cores via one
-  generic `emu-harness/libretro/` runner) — all marching through the same shared
-  extensive image battery (`packages/cli/test/_emu-battery.ts`).
+  GG + SG-1000 (WLA-DX / Z80), SNES (WLA-DX / 65816, LoROM), PC Engine (WLA-DX /
+  HuC6280, 64 KiB HuCard), MD/Genesis (GNU m68k binutils), GBA + NDS (GNU ARM
+  binutils), and WonderSwan Color (NASM — the V30MZ is an 8086-compatible core).
+  The z80/6502/65816/huc6280 assemblers are pinned source builds; the m68k and
+  ARM binutils and NASM are stock distro packages (apt, main archive) since
+  well-tested ones ship there — all via `pnpm toolchains`, no Docker, and no
+  devkitARM/ndstool (demake packs the GBA, NDS and WonderSwan cartridge headers
+  itself).
+- **Pixel-perfect emulator E2E** for every Tier 1 console plus the PC Engine and
+  WonderSwan Color — GB/GBC (SameBoy) and NES + SMS + GG + MD + SG-1000 + SNES +
+  GBA + NDS + PCE + WSC (libretro cores via one generic `emu-harness/libretro/`
+  runner) — all marching through the same shared extensive image battery
+  (`packages/cli/test/_emu-battery.ts`).
+
+Phase 5 then opened Tier 2 with the **PC Engine** and the **WonderSwan Color**,
+both riding that same loop end to end (`wla-huc6280` on the existing WLA-DX
+build and beetle-pce-fast; NASM and beetle-wswan). Doc 13 §Phase 5 records what
+blocks each remaining Tier 2 console — including that the mono WonderSwan is
+blocked on a _tiled-mono fitter_, not on a toolchain, and that its current spec
+is optimistic about what that hardware can display.
 
 Phase 7+ then opened the **Demotic backend**: `demake build` _compiles_ a `.dmt`
 into a real 32 KiB Game Boy cartridge — SM83 machine code written for that game,
@@ -89,20 +99,21 @@ packages/core/       @demake/core — the engine (zero platform deps; ESM; ships
   src/image/         PNG codec (inflate/deflate/decode/encode), DAC models, decode dispatch
   src/consoles/      ConsoleSpec schema + one declarative spec per console (21 of them)
   src/pipeline/      stages 0–7, the tiled fitter, mono + TMS row-pair paths, tournament
-  src/codegen/       gen: per-family backends (gb, nes, snes, sms, md, sg1000, gba, nds), detector
+  src/codegen/       gen: per-family backends (gb, nes, snes, sms, md, sg1000, gba, nds, pce, wsc), detector
   src/image/svg/     our SVG rasteriser: XML, shapes, paint, scanline fill (doc 15 step 2)
   src/pipeline/sprite.ts  object + tile art for games: transparency, shades, dedup
   src/inspect/       compliance oracle (inspect) + fidelity judge
 packages/cli-spec/   @demake/cli-spec — single source of truth: spec → parser, help, man
 packages/cli/        demake — thin CLI over core; re-exports core for scripting
-  src/rom/           edge: assemble `--format rom` per family (RGBDS / cc65 / WLA-DX / m68k / ARM)
+  src/rom/           edge: assemble `--format rom` per family (RGBDS / cc65 / WLA-DX / m68k / ARM / NASM)
   man/               generated roff man pages (never hand-edited)
-rom-harness/{gb,nes,snes,sms,md,sg1000,gba,nds}/  the display programs `gen --format rom` assembles
+rom-harness/{gb,nes,snes,sms,md,sg1000,gba,nds,pce,wsc}/  the display programs `gen --format rom` assembles
 emu-harness/gb/      SameBoy headless capturer for the GB pixel-perfect E2E (doc 10)
 emu-harness/libretro/  generic retrorun frontend — one capturer for every libretro core
 tools/toolchains/    provisioners (cached): RGBDS, cc65, WLA-DX, SameBoy source builds;
-                     GNU m68k + arm-none-eabi binutils (apt); libretro cores
-                     (fceumm, genesis-plus-gx, snes9x, mgba, desmume)
+                     GNU m68k + arm-none-eabi binutils and NASM (apt); libretro
+                     cores (fceumm, genesis-plus-gx, snes9x, mgba, desmume,
+                     mednafen_pce_fast, mednafen_wswan)
 packages/dmg/        @demake/dmg — a self-hosted Game Boy core: the Demotic conformance
                      harness in Vitest, and the web app's in-page player (doc 07: no CDN)
 packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs 14, 15)
@@ -432,6 +443,34 @@ Two files plus fixtures (doc 02 §Extensibility):
   crop margin so the Game Gear's 160×144 window lands on the art; the MD harness
   addresses its data with absolute (not PC-relative) loads because the tile blob
   can exceed the 68000's ±32 KiB PC-relative range.
+- **The WonderSwan's screen orientation is a setting, not a fact.** The core
+  defaults to landscape but takes `wswan_rotate_display` as an option, and a
+  rotated capture fails in a way that reads like a fitter bug — so the E2E asks
+  for landscape explicitly. Its cartridge is packed by demake
+  (`cli/src/rom/wsc.ts`): NASM assembles only the _last_ 64 KiB bank, which is
+  the one the V30MZ answers segment $F with after reset, and the builder
+  prepends the rest of the 4 Mbit cartridge and patches the footer checksum
+  (the sum of every byte but the two it lives in — computable only once the
+  whole cartridge exists).
+- **The mono WonderSwan (`ws`) spec is knowingly optimistic** and is _not_ the
+  `wsc` family: it declares one eight-entry palette at 4bpp, but the hardware
+  has 2bpp tiles and four-entry palettes drawing from an eight-shade pool. Doing
+  it properly needs a tiled-mono fitter (doc 13 §Phase 5) — do not "fix" it by
+  pointing `ws` at the colour backend, which would emit tiles the mono display
+  controller cannot decode.
+- **The PC Engine's BAT is fixed at VRAM word $0000**, so characters cannot start
+  there: the harness gives the BAT 32×32 entries (words $0000–$03FF) and puts the
+  first character at word $0400 — character 64 — which `cli/src/rom/pce.ts` adds
+  to every BAT entry, along with a blank character for the cells the image does
+  not cover (otherwise the area outside the image renders the BAT _as pixels_).
+  The harness also programs VDS + VSW = 14, because beetle-pce-fast captures from
+  scanline 14 onward: that puts the first active line on the frame's first line,
+  the same trick as the SNES's `BG1VOFS = -1`.
+- The PC Engine needs **no new DAC model**, and that is a fact worth keeping:
+  beetle-pce-fast expands each 3-bit VCE code as `36 × code` while demake's
+  `expandChannel` replicates bits, and the two agree on all eight codes once
+  reduced to RGB565 — which is the core's own framebuffer depth. Compare in 565
+  (`to565`) and it is exact; do not "fix" the disagreement in 8-bit space.
 - **The SNES scrolls by one line**: the PPU renders screen scanline N from BG
   line `BGnVOFS + N + 1`, so the harness sets `BG1VOFS = -1` ($3FF). With zero
   there the whole image is one pixel low and every E2E case fails by exactly a

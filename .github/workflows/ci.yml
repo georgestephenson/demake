@@ -139,7 +139,7 @@ jobs:
       # to never break a developer's session or a SessionStart hook, but in CI a
       # toolchain that fails to build must fail *at this step*, with its build
       # log, instead of surfacing later as a mystery.
-      - name: Provision assemblers (RGBDS, cc65, WLA-DX, m68k, ARM)
+      - name: Provision assemblers (RGBDS, cc65, WLA-DX, m68k, ARM, NASM)
         run: pnpm toolchains
         env:
           RGBDS_STRICT: "1"
@@ -147,6 +147,7 @@ jobs:
           WLADX_STRICT: "1"
           M68K_STRICT: "1"
           ARM_STRICT: "1"
+          NASM_STRICT: "1"
       - name: Provision emulators (SameBoy + libretro cores)
         run: pnpm emulator
         env:

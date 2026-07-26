@@ -12,6 +12,7 @@ import {
   packPlanar,
   packSnes4,
 } from "../src/codegen/tiles.js";
+import { packPceChar } from "../src/codegen/pce.js";
 import { decodeImage } from "../src/image/decode.js";
 import { getConsole } from "../src/consoles/registry.js";
 import type { TileLayout } from "../src/consoles/types.js";
@@ -183,6 +184,81 @@ describe("gen — md family (Mega Drive)", () => {
     }
     // CRAM color 0 of every sub-palette is the shared backdrop.
     for (let p = 1; p < 4; p += 1) {
+      expect(pal[p * 16 * 2]).toBe(pal[0]);
+      expect(pal[p * 16 * 2 + 1]).toBe(pal[1]);
+    }
+  });
+});
+
+describe("gen — wsc family (WonderSwan Color)", () => {
+  it("emits packed 4bpp tiles, flip/bank-tagged map words, and RGB444 palettes", async () => {
+    const png = encodeRgbaPng(64, 64, makeSource(64, 64));
+    const result = await gen(png, { console: "wsc", format: "bin", symbol: "demake" });
+    const tiles = result.artifacts.find((a) => a.suffix === ".tiles.bin")!.bytes;
+    const map = result.artifacts.find((a) => a.suffix === ".map.bin")!.bytes;
+    const pal = result.artifacts.find((a) => a.suffix === ".pal.bin")!.bytes;
+
+    expect(tiles.length % 32).toBe(0);
+    expect(map.length).toBe((64 / 8) * (64 / 8) * 2);
+    expect(pal.length).toBe(16 * 16 * 2); // 16 palettes × 16 colors
+    for (let i = 0; i < map.length; i += 2) {
+      const word = map[i]! | (map[i + 1]! << 8);
+      expect(word & 0x1ff).toBeLessThan(tiles.length / 32); // 9-bit tile number
+      expect((word >> 9) & 0xf).toBeLessThan(16); // 4-bit palette select
+      expect((word >> 13) & 1).toBe(0); // one bank is enough for 64 tiles
+    }
+    // Every palette word is 12 bits wide, and color 0 of every palette is the
+    // shared backdrop (the display controller renders index 0 transparent).
+    for (let i = 0; i < pal.length; i += 2) {
+      expect(pal[i]! | (pal[i + 1]! << 8)).toBeLessThan(0x1000);
+    }
+    for (let p = 1; p < 16; p += 1) {
+      expect(pal[p * 16 * 2]).toBe(pal[0]);
+      expect(pal[p * 16 * 2 + 1]).toBe(pal[1]);
+    }
+  });
+});
+
+describe("gen — pce family (PC Engine / HuC6270)", () => {
+  it("packs a character as word-planar bitplane pairs", () => {
+    // Row 0: pixel 0 = index 15 (every plane's bit 7 set), rest 0.
+    const grid = new Uint8Array(64);
+    grid[0] = 15;
+    // Row 1: pixel 1 = index 5 (planes 0 and 2), bit 6.
+    grid[9] = 5;
+    const bytes = packPceChar(grid, 8, 8);
+    expect(bytes.length).toBe(32);
+    expect(bytes[0]).toBe(0x80); // word 0 low  = plane 0, row 0
+    expect(bytes[1]).toBe(0x80); // word 0 high = plane 1, row 0
+    expect(bytes[16]).toBe(0x80); // word 8 low  = plane 2, row 0
+    expect(bytes[17]).toBe(0x80); // word 8 high = plane 3, row 0
+    expect(bytes[2]).toBe(0x40); // word 1 low  = plane 0, row 1
+    expect(bytes[3]).toBe(0x00); // word 1 high = plane 1, row 1
+    expect(bytes[18]).toBe(0x40); // word 9 low  = plane 2, row 1
+    expect(bytes[19]).toBe(0x00); // word 9 high = plane 3, row 1
+  });
+
+  it("emits 32-byte characters, palette-tagged BAT words, and 9-bit VCE palettes", async () => {
+    const png = encodeRgbaPng(64, 64, makeSource(64, 64));
+    const result = await gen(png, { console: "pce", format: "bin", symbol: "demake" });
+    const tiles = result.artifacts.find((a) => a.suffix === ".tiles.bin")!.bytes;
+    const map = result.artifacts.find((a) => a.suffix === ".map.bin")!.bytes;
+    const pal = result.artifacts.find((a) => a.suffix === ".pal.bin")!.bytes;
+
+    expect(tiles.length % 32).toBe(0);
+    expect(map.length).toBe((64 / 8) * (64 / 8) * 2);
+    expect(pal.length).toBe(16 * 16 * 2); // 16 sub-palettes × 16 colors
+    for (let i = 0; i < map.length; i += 2) {
+      const word = map[i]! | (map[i + 1]! << 8);
+      expect(word & 0xfff).toBeLessThan(tiles.length / 32); // 12-bit character number
+      expect((word >> 12) & 0xf).toBeLessThan(16); // 4-bit palette select
+    }
+    // Every VCE word is 9 bits wide, and color 0 of every background
+    // sub-palette is the shared backdrop (VCE entry 0).
+    for (let i = 0; i < pal.length; i += 2) {
+      expect(pal[i]! | (pal[i + 1]! << 8)).toBeLessThan(512);
+    }
+    for (let p = 1; p < 16; p += 1) {
       expect(pal[p * 16 * 2]).toBe(pal[0]);
       expect(pal[p * 16 * 2 + 1]).toBe(pal[1]);
     }

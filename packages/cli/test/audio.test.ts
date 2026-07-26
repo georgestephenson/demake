@@ -55,15 +55,15 @@ function makeEnv(files: Record<string, Uint8Array>): CliEnv & {
   return env as CliEnv & { stdout: string; stderr: string; written: Record<string, Uint8Array> };
 }
 
-/** A four-bar MIDI: bass, chords, melody and drums. */
-function bandMidi(bpm = 140): Uint8Array {
+/** A MIDI band — bass, chords, melody and drums — `bars` bars long. */
+function bandMidi(bpm = 140, bars = 4): Uint8Array {
   const ppq = 480;
   const events: { tick: number; bytes: number[] }[] = [];
   const note = (channel: number, pitch: number, tick: number, length: number, velocity = 100) => {
     events.push({ tick, bytes: [0x90 | channel, pitch, velocity] });
     events.push({ tick: tick + length, bytes: [0x80 | channel, pitch, 0] });
   };
-  for (let bar = 0; bar < 4; bar += 1) {
+  for (let bar = 0; bar < bars; bar += 1) {
     const base = bar * ppq * 4;
     for (let beat = 0; beat < 4; beat += 1) note(1, 36, base + beat * ppq, ppq - 20, 110);
     for (const pitch of [60, 64, 67]) note(2, pitch, base, ppq * 4 - 20, 70);
@@ -262,7 +262,10 @@ describe("demake sfx", () => {
 
 describe("demake render", () => {
   it("renders the schedule a previous run wrote", async () => {
-    const env = makeEnv({ "band.mid": bandMidi() });
+    // One bar: this is the heaviest test in the file — a tournament plus two
+    // full renders — and the assertion is about byte identity, which four bars
+    // demonstrate no better than one.
+    const env = makeEnv({ "band.mid": bandMidi(140, 1) });
     await run(
       [
         "arrange",

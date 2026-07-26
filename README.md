@@ -15,8 +15,11 @@ asserted:
 | **music** | a MIDI track                                        | chip music, plus audio that sounds exactly like the hardware will        | six consoles; ROM emit to come                |
 | **sound** | a WAV effect                                        | a chip sound effect, placed and prioritised                              | six consoles; ROM emit to come                |
 
-The two working demakers share one engine, one determinism guarantee, and one
-proof: a real ROM, booted in a real emulator, compared pixel for pixel in CI.
+Every demaker shares one engine and one determinism guarantee. Art and games
+also share the proof: a real ROM, booted in a real emulator, compared pixel for
+pixel in CI. Audio's counterpart — the ROM, and the register schedule an
+emulator's chip actually receives — is the next step, so a track is exact audio
+today but not yet a cartridge.
 
 ## Why
 
@@ -77,8 +80,8 @@ Nintendo DS. Beyond that, support deepens in two steps:
 | Capability                                        | Consoles                                                                                                                                                               |
 | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `prep` + `inspect` (compliant PNG)                | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, GBA, NDS, SG-1000, PC Engine, Neo Geo, WonderSwan/Color, NGP/NGPC, Virtual Boy, Pokémon Mini, Supervision, Game.com, Mega Duck |
-| `gen` (bin/asm/C data + display code)             | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, SG-1000, GBA, NDS                                                                                                              |
-| `--format rom` + **pixel-perfect emulator proof** | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, SG-1000, GBA, NDS                                                                                                              |
+| `gen` (bin/asm/C data + display code)             | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, SG-1000, GBA, NDS, PC Engine, WonderSwan Color                                                                                 |
+| `--format rom` + **pixel-perfect emulator proof** | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, SG-1000, GBA, NDS, PC Engine, WonderSwan Color                                                                                 |
 | `build` (a Demotic game as a playable ROM)        | GB                                                                                                                                                                     |
 
 "Pixel-perfect emulator proof" means what it says: CI assembles a real ROM,
@@ -93,6 +96,8 @@ byte-for-byte across an extensive image battery.
 | [`demake`](packages/cli)              | The CLI wrapper (doc 05). Re-exports core for scripting.                        |
 | [`@demake/demotic`](packages/demotic) | Demotic: the game language, its interpreter, and the ROM builder (docs 14, 15). |
 | [`@demake/dmg`](packages/dmg)         | A Game Boy core: the conformance harness, and the web app's player.             |
+| [`@demake/chip`](packages/chip)       | Every sound chip as a register-driven model (doc 16). Depends on nothing.       |
+| [`@demake/audio`](packages/audio)     | The music and sound demakers (docs 16, 17, 18).                                 |
 | [`@demake/web`](packages/web)         | The browser app (doc 07): the same core in a worker, no server.                 |
 
 ## Develop
@@ -120,8 +125,9 @@ The ROM and emulator suites need their toolchains; both provisioners are cached
 and need no Docker:
 
 ```sh
-pnpm toolchains  # RGBDS, cc65, WLA-DX, m68k + ARM binutils
-pnpm emulator    # SameBoy capturer + libretro cores (fceumm, genesis-plus-gx, snes9x, mGBA, DeSmuME)
+pnpm toolchains  # RGBDS, cc65, WLA-DX, m68k + ARM binutils, NASM
+pnpm emulator    # SameBoy capturer + libretro cores (fceumm, genesis-plus-gx, snes9x, mGBA,
+                 # DeSmuME, beetle-pce-fast, beetle-wswan)
 pnpm test        # now includes every ROM + pixel-perfect emulator E2E
 ```
 
