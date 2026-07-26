@@ -100,12 +100,13 @@ export function RomPane({
     };
   }, []);
 
-  // The build is deferred by a frame rather than run inline, and that is not
-  // cosmetic: demaking a *colour* backdrop is the whole `prep` tournament, which
-  // is seconds of arithmetic the first time the page sees a picture. A tab that
-  // simply stopped for those seconds would look broken, so the pane paints
-  // "demaking" first and does the work after. Repeat builds — every keystroke in
-  // the editor — hit the conversion cache and are instant.
+  // The build is deferred until after a paint rather than run inline, and that
+  // is not cosmetic: demaking a *colour* backdrop is the whole `prep`
+  // tournament, which is seconds of arithmetic the first time the page sees a
+  // picture, and it is synchronous — nothing repaints while it runs. A tab that
+  // simply stopped for those seconds would look broken, so the pane gets its
+  // "demaking" badge *on screen* first and does the work after. Repeat builds
+  // hit the conversion cache and are instant.
   const [built, setBuilt] = useState<{
     rom?: Uint8Array;
     layout?: ReturnType<typeof buildGbRom>["layout"];
@@ -114,8 +115,13 @@ export function RomPane({
   const [demaking, setDemaking] = useState(false);
 
   useEffect(() => {
+    // Both early exits clear the flag as well as the cartridge: a build that is
+    // never going to start must not leave the pane saying it is demaking, which
+    // is how "fix the errors above" came to be unreachable once the badge could
+    // outlive its effect.
     if (!program || !audio) {
       setBuilt({});
+      setDemaking(false);
       return;
     }
     const missing = unsupportedFeatures(program);
@@ -125,26 +131,37 @@ export function RomPane({
           `This game needs ${missing.join(" and ")}. The preview above plays it correctly; ` +
           `a ROM would play something else, so the build refuses rather than pretend.`,
       });
+      setDemaking(false);
       return;
     }
     let live = true;
+    let timer = 0;
     setDemaking(true);
-    const timer = setTimeout(() => {
-      if (!live) return;
-      try {
-        // The bundled art goes in as *source bytes*: the conversion happens
-        // inside the build, so the page and the CLI cannot diverge on it.
-        const assets = demoAssetBytes();
-        for (const [file, bytes] of audio) assets.set(file, bytes);
-        const result = buildGbRom(program, { title: name, assets });
-        setBuilt({ rom: result.bytes, layout: result.layout });
-      } catch (error) {
-        setBuilt({ error: String((error as Error).message ?? error) });
-      }
-      setDemaking(false);
-    }, 0);
+    // `requestAnimationFrame` then `setTimeout`, and the order is the point: a
+    // rAF callback runs *before* the frame is painted, so scheduling the work
+    // inside it is scheduling it after the badge is actually on screen. A bare
+    // `setTimeout(0)` is a macrotask that can beat the paint, which on a slow
+    // colour build means the tab freezes for several seconds having shown
+    // nothing — the exact failure the deferral exists to avoid.
+    const frame = requestAnimationFrame(() => {
+      timer = setTimeout(() => {
+        if (!live) return;
+        try {
+          // The bundled art goes in as *source bytes*: the conversion happens
+          // inside the build, so the page and the CLI cannot diverge on it.
+          const assets = demoAssetBytes();
+          for (const [file, bytes] of audio) assets.set(file, bytes);
+          const result = buildGbRom(program, { title: name, assets });
+          setBuilt({ rom: result.bytes, layout: result.layout });
+        } catch (error) {
+          setBuilt({ error: String((error as Error).message ?? error) });
+        }
+        setDemaking(false);
+      }, 0) as unknown as number;
+    });
     return () => {
       live = false;
+      cancelAnimationFrame(frame);
       clearTimeout(timer);
     };
   }, [program, name, audio]);

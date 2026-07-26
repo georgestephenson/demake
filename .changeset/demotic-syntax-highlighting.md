@@ -38,12 +38,22 @@ the engine never names a colour. It is still an ordinary `<textarea>` with a
 `<pre>` of colours stacked underneath, so native editing, selection, mobile
 keyboards and the accessibility tree all survive.
 
-**The cartridge is now rebuilt when typing stops, not per keystroke.** Compiling
-stays live, because the diagnostics and the preview have to answer as you type,
-but a cartridge is the art demade, the audio demade and a whole assembly. The ROM
-pane keeps playing the one it has and shows a _demaking…_ badge while a newer one
-is coming: a screen that blanked as you typed would be worse than one that is a
-version behind.
+**Nothing downstream of the editor now runs per keystroke.** The section holds a
+_draft_, which the editor shows, and a _source_, which is what the engine has
+been given and only catches up once typing pauses — so the compile, the
+diagnostics, the interpreter and the cartridge all wait together, a keystroke
+costs a lex for the colours, and the interpreter is no longer restarted from
+scratch on every character. Only typing waits: picking a game or a console takes
+effect at once, and _Run tests_ settles the draft on the way so it can never
+report on the version from 300 ms ago.
+
+**And the pane says when it is demaking** — after a typing pause, and after a
+game or console change alike. It keeps playing the cartridge it has and shows a
+_demaking…_ badge over the screen, because a screen that blanked as you typed
+would be worse than one that is a version behind. The badge is scheduled from
+inside a `requestAnimationFrame` callback rather than a bare `setTimeout`: the
+build is synchronous and nothing repaints while it runs, so a macrotask that beat
+the paint meant a tab freezing for several seconds having shown nothing.
 
 **And the example games lost their essays.** The page shows a game's source
 beside the cartridge it built, and the claim being made there is that a whole game
