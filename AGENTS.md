@@ -524,6 +524,11 @@ that keep them from being undone. All of them come from doc 16.
   frames until the chip has produced the samples the player still needs, not on
   the frame clock: a tab whose display and audio clocks differ by a few ppm
   drifts into a click every few minutes otherwise.
+- **Sound is the cartridge's, never the preview's.** The interpreter says _when_
+  a sound is asked for (the trace's `audio` field) and knows nothing about chips,
+  channels or registers — a `.dmt` names none of them. So the page's sound
+  control lives in the cartridge view and the preview has none, which is the
+  honest way to say a simulator has nothing to play.
 - **Lossless carries the guarantee; lossy does not.** WAV and FLAC are
   sample-exact and byte-golden. M4A/Opus/MP3 are convenience exports and must be
   labelled as approximations everywhere they appear — the project does not make

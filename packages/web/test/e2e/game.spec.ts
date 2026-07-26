@@ -9,6 +9,20 @@
 
 import { expect, test } from "@playwright/test";
 
+/**
+ * Show the interpreter.
+ *
+ * The pane opens on the *cartridge* — it is the artifact, and the preview is
+ * what proves it right rather than the other way round — so a test about the
+ * simulator has to ask for it.
+ */
+async function showPreview(
+  page: import("@playwright/test").Page,
+  mode: "preview" | "both" = "preview",
+): Promise<void> {
+  await page.getByTestId("view-select").selectOption(mode);
+}
+
 test("loads the game demaker on demand and plays", async ({ page }) => {
   const chunks: string[] = [];
   page.on("response", (r) => {
@@ -25,6 +39,7 @@ test("loads the game demaker on demand and plays", async ({ page }) => {
   expect(chunks.some((url) => url.includes("GameDemaker"))).toBe(true);
 
   // Enter play, then let the simulation run: the tick counter must advance.
+  await showPreview(page);
   await page.keyboard.press("KeyZ");
   await expect(page.locator(".game-status")).toContainText("scene play", { timeout: 5000 });
   const first = await readTick(page);
@@ -44,6 +59,7 @@ test("runs the .test.dmt suite against every console", async ({ page }) => {
 
 test("retargets the game at another console", async ({ page }) => {
   await page.goto("/#section=game");
+  await showPreview(page);
   await expect(page.locator(".game-status")).toContainText("20x18 cells");
   await page.getByTestId("console-select").selectOption("md");
   await expect(page.locator(".game-status")).toContainText("40x28 cells");
@@ -73,6 +89,7 @@ test("every bundled example loads, compiles and passes its suite", async ({ page
 test("scrolls a level bigger than the screen, and draws its tiles", async ({ page }) => {
   await page.goto("/#section=game");
   await expect(page.getByRole("heading", { name: "Play" })).toBeVisible();
+  await showPreview(page);
   await page.getByTestId("example-select").selectOption("caves");
   await expect(page.locator(".diag-error")).toHaveCount(0);
 
@@ -111,6 +128,7 @@ async function painted(page: import("@playwright/test").Page): Promise<number> {
 
 test("reports a source error without blanking the preview", async ({ page }) => {
   await page.goto("/#section=game");
+  await showPreview(page);
   await page
     .getByLabel("Demotic game source")
     .fill("start play\nscene play\ncreate object d (wibble 1)");
@@ -130,6 +148,7 @@ test("drives the game from the on-screen pad on a touch device", async ({ browse
   await page.goto("/#section=game");
   await expect(page.getByRole("heading", { name: "Play" })).toBeVisible();
 
+  await showPreview(page);
   const pad = page.getByLabel("On-screen controls");
   await expect(pad).toBeVisible();
   await expect(page.locator(".keyboard-hint")).toBeHidden();
@@ -206,6 +225,38 @@ test("builds and plays a real Game Boy ROM in the page", async ({ page }) => {
 
   // Once a tick has completed the pane reports what the runtime actually cost.
   await expect(page.getByTestId("rom-stat")).toContainText("per tick");
+});
+
+test("opens on the cartridge, and shows the interpreter when asked", async ({ page }) => {
+  await page.goto("/#section=game");
+  await expect(page.getByRole("heading", { name: "Play" })).toBeVisible();
+
+  // The cartridge is the artifact, so it is what the pane opens on — in the
+  // place the preview used to hold, not underneath it.
+  await expect(page.getByTestId("rom-canvas")).toBeVisible();
+  await expect(page.locator(".game-canvas")).toHaveCount(0);
+
+  await page.getByTestId("view-select").selectOption("preview");
+  await expect(page.locator(".game-canvas")).toBeVisible();
+  await expect(page.getByTestId("rom-canvas")).toHaveCount(0);
+  // No cartridge, no sound button: the chip is the cartridge's.
+  await expect(page.getByTestId("rom-sound")).toHaveCount(0);
+
+  await page.getByTestId("view-select").selectOption("both");
+  await expect(page.locator(".game-canvas")).toBeVisible();
+  await expect(page.getByTestId("rom-canvas")).toBeVisible();
+
+  // Side by side means side by side: two columns on a desktop viewport.
+  const preview = await page.locator(".game-canvas").boundingBox();
+  const cartridge = await page.getByTestId("rom-canvas").boundingBox();
+  expect(preview).not.toBeNull();
+  expect(cartridge).not.toBeNull();
+  expect((cartridge as { x: number }).x).toBeGreaterThan((preview as { x: number }).x);
+
+  // And both are running the same input: one press starts both machines.
+  await page.keyboard.press("KeyZ");
+  await expect(page.locator(".game-status")).toContainText("scene play", { timeout: 5000 });
+  await expect(page.getByTestId("rom-stat")).toContainText("per tick", { timeout: 8000 });
 });
 
 test("plays the cartridge's own APU through Web Audio", async ({ page }) => {

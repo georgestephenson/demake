@@ -59,11 +59,42 @@ interface Loaded {
   ready: boolean;
 }
 
+/**
+ * Take a dropdown's new value, and give the keyboard back to the game.
+ *
+ * A focused `<select>` keeps the keys: press Z to jump into play right after
+ * picking a game and the letter goes to the dropdown's type-ahead instead of the
+ * player's A button. Blurring on change is what makes "choose, then play" work
+ * the way it reads.
+ */
+function choose(event: Event, apply: (value: string) => void): void {
+  const select = event.target as HTMLSelectElement;
+  apply(select.value);
+  select.blur();
+}
+
+/** Which of the two machines the pane is showing. */
+type View = "cartridge" | "preview" | "both";
+
+/** The dropdown's options, in the order they read. */
+const VIEWS: readonly { id: View; label: string }[] = [
+  { id: "cartridge", label: "Cartridge" },
+  { id: "preview", label: "Preview" },
+  { id: "both", label: "Side by side" },
+];
+
 export function GameDemaker() {
   const [example, setExample] = useState<Example>(DEFAULT_EXAMPLE);
   const [source, setSource] = useState(DEFAULT_EXAMPLE.source);
   const [consoleId, setConsoleId] = useState("gb");
   const [constrain, setConstrain] = useState(false);
+  // What the pane shows. The cartridge by default: it is the artifact, and the
+  // preview is what proves it right rather than the other way round. Both is a
+  // side-by-side, which is the only way to *see* that they agree.
+  const [view, setView] = useState<View>("cartridge");
+  const [restarts, setRestarts] = useState(0);
+  const showPreview = view !== "cartridge";
+  const showRom = view !== "preview";
   const [status, setStatus] = useState("");
   const [testReport, setTestReport] = useState<string | null>(null);
 
@@ -127,10 +158,18 @@ export function GameDemaker() {
       element.width = program.profile.screenWidth * 32;
       element.height = program.profile.screenHeight * 32;
     }
-  }, [program]);
+    // `view` is a dependency because the canvas does not exist while the
+    // preview is hidden, and it is here that it is given the console's size.
+  }, [program, view]);
 
   useEffect(() => {
-    if (!program) return;
+    // The interpreter runs only while it is being watched. It is the language's
+    // specification, not a service the cartridge needs: the ROM is machine code
+    // and does not consult it, so a hidden preview is work nobody sees.
+    if (!program || !showPreview) return;
+    // A tap taken while the preview was hidden would otherwise fire the moment
+    // it came back, a minute later and out of nowhere.
+    latched.current.clear();
     let raf = 0;
     let last = performance.now();
     let accumulator = 0;
@@ -159,7 +198,7 @@ export function GameDemaker() {
 
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [program, constrain]);
+  }, [program, constrain, showPreview]);
 
   // Touch and keyboard feed the same two sets, so a rule cannot tell them apart
   // — which is the point: the pad is an input device, not a second code path.
@@ -172,8 +211,11 @@ export function GameDemaker() {
     held.current.delete(action);
   }, []);
 
+  // Restart means both machines: whichever the view is showing, that is what a
+  // person pressing it is looking at.
   const restart = useCallback(() => {
     if (program) sim.current = new Sim(program);
+    setRestarts((count) => count + 1);
   }, [program]);
 
   const loadExample = useCallback((id: string) => {
@@ -214,7 +256,7 @@ export function GameDemaker() {
             <select
               data-testid="example-select"
               value={example.id}
-              onChange={(e) => loadExample((e.target as HTMLSelectElement).value)}
+              onChange={(e) => choose(e, loadExample)}
             >
               {EXAMPLES.map((candidate) => (
                 <option key={candidate.id} value={candidate.id}>
@@ -228,7 +270,7 @@ export function GameDemaker() {
             <select
               data-testid="console-select"
               value={consoleId}
-              onChange={(e) => setConsoleId((e.target as HTMLSelectElement).value)}
+              onChange={(e) => choose(e, setConsoleId)}
             >
               {profiles.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -237,14 +279,32 @@ export function GameDemaker() {
               ))}
             </select>
           </label>
-          <label class="check inline">
-            <input
-              type="checkbox"
-              checked={constrain}
-              onChange={(e) => setConstrain((e.target as HTMLInputElement).checked)}
-            />
-            <span>Console pixels</span>
+          <label class="field inline">
+            <span>View</span>
+            <select
+              data-testid="view-select"
+              value={view}
+              onChange={(e) => choose(e, (value) => setView(value as View))}
+            >
+              {VIEWS.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </label>
+          {showPreview ? (
+            // A cartridge is pixel-exact by construction; this is the preview's
+            // control and it says nothing when the preview is not on screen.
+            <label class="check inline">
+              <input
+                type="checkbox"
+                checked={constrain}
+                onChange={(e) => setConstrain((e.target as HTMLInputElement).checked)}
+              />
+              <span>Console pixels</span>
+            </label>
+          ) : null}
           <button type="button" onClick={restart}>
             Restart
           </button>
@@ -253,14 +313,37 @@ export function GameDemaker() {
           </button>
         </div>
 
-        <canvas
-          ref={canvas}
-          class="game-canvas"
-          width={640}
-          height={576}
-          role="img"
-          aria-label="The game, playing"
-        />
+        <div class="game-views" data-view={view}>
+          {showPreview ? (
+            <div class="game-view">
+              <h3>The preview</h3>
+              <canvas
+                ref={canvas}
+                class="game-canvas"
+                width={640}
+                height={576}
+                role="img"
+                aria-label="The game, playing"
+              />
+              <p class="hint">
+                The reference interpreter — the definition of what this game does, at whatever
+                resolution your screen has. It is silent by design: sound is a chip&rsquo;s, and the
+                chip is in the cartridge.
+              </p>
+              <pre class="game-status">{status}</pre>
+            </div>
+          ) : null}
+          {showRom ? (
+            <RomPane
+              program={program}
+              name={example.id}
+              held={held}
+              latched={romLatched}
+              restarts={restarts}
+            />
+          ) : null}
+        </div>
+
         <p class="hint">
           <strong>{example.name}</strong> — {example.covers}
         </p>
@@ -271,9 +354,6 @@ export function GameDemaker() {
           Move with <kbd>←</kbd> <kbd>→</kbd>, <kbd>Z</kbd> is A, <kbd>X</kbd> is B,{" "}
           <kbd>Enter</kbd> is Start.
         </p>
-        <pre class="game-status">{status}</pre>
-
-        <RomPane program={program} name={example.id} held={held} latched={romLatched} />
       </section>
 
       <section class="pane">

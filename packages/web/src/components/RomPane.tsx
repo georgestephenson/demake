@@ -44,11 +44,20 @@ export function RomPane({
   name,
   held,
   latched,
+  restarts,
 }: {
   program: Program | undefined;
   name: string;
   held: { current: Set<string> };
   latched: { current: Set<string> };
+  /**
+   * Bumped by the section's Restart button.
+   *
+   * The pane has no Restart of its own: with the cartridge as the default view,
+   * two buttons a few centimetres apart doing the same thing to two different
+   * machines is a worse answer than one that restarts what you are looking at.
+   */
+  restarts: number;
 }) {
   const canvas = useRef<HTMLCanvasElement | null>(null);
   const machine = useRef<Gameboy | null>(null);
@@ -177,7 +186,7 @@ export function RomPane({
 
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [rom, layout, held, latched]);
+  }, [rom, layout, held, latched, restarts]);
 
   // The context outlives every ROM built in the section, and is closed once.
   useEffect(() => () => player.current?.close(), []);
@@ -201,10 +210,6 @@ export function RomPane({
   const save = useCallback(() => {
     if (rom) download(`${name}.gb`, rom);
   }, [rom, name]);
-
-  const reset = useCallback(() => {
-    if (rom) machine.current = new Gameboy(rom);
-  }, [rom]);
 
   if (!rom) {
     return (
@@ -233,9 +238,6 @@ export function RomPane({
         aria-label="The game, running as a Game Boy ROM"
       />
       <div class="rom-toolbar">
-        <button type="button" onClick={reset}>
-          Reset
-        </button>
         <button
           type="button"
           data-testid="rom-sound"
