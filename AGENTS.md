@@ -345,6 +345,14 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   attribute cell means level art gets one palette — and it says so by passing
   `maxTiles`/`maxPalettes` into the engine rather than trimming a finished
   conversion.
+- **A build's only lever on a picture is the budget, so spend the hardware on
+  it.** The cartridge's backdrop is `prep`'s backdrop at the budget it was given,
+  and `nes-rom.test.ts` proves it cell by cell — so quality is decided entirely by
+  how many patterns the build can hand over. On the NES that meant giving each
+  picture a pattern table of its own (`PPUCTRL` bit 4 chooses which one the
+  background reads), taking a title screen from 96 patterns to ~190 and its merged
+  cells from 216 to 57. Look for the same kind of headroom before touching a
+  fitter: an under-fed fit looks like a bad fit.
 - **And music and effects are demade by the audio engine, the same way.** The
   same `assets` map carries `.mid` and `.wav` bytes, `codegen/audio.ts` hands
   them to `@demake/audio`, and the driver that plays them is `@demake/audio`'s

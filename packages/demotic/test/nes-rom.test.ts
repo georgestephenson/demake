@@ -27,10 +27,19 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { NES_CHR_OFFSET, NES_PRG_OFFSET, NES_PRG_SIZE } from "@demake/core";
+import {
+  backendFor,
+  getConsole,
+  NES_CHR_OFFSET,
+  NES_PRG_OFFSET,
+  NES_PRG_SIZE,
+  prepSync,
+} from "@demake/core";
 import { Nes } from "@demake/nes";
 
 import { buildNesRom } from "../src/codegen/nes.js";
+import { bindNesArt } from "../src/codegen/nes-art.js";
+import { ART_PALETTES } from "../src/codegen/nes/emit.js";
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
 import { builtinChr, BUILTIN_TILES, TILE_BYTES } from "../src/rom/graphics.js";
@@ -90,22 +99,94 @@ describe("the NES cartridge", () => {
 const ART_TIMEOUT = 120_000;
 
 describe("the NES art budget", { timeout: ART_TIMEOUT }, () => {
-  it("fits two full-screen pictures in one pattern table", () => {
-    // 206 patterns and 70, against 195 free — so this only passes because the fit
-    // is told its budget up front and the two are pooled against each other and
-    // against the built-in bank.
-    const program = build("pong.dmt");
-    const assets = new Map([
+  const pongAssets = () =>
+    new Map([
       ["pong.title.svg", asset("pong.title.svg")],
       ["pong.play.svg", asset("pong.play.svg")],
       ["ball.svg", asset("ball.svg")],
       ["paddle.svg", asset("paddle.svg")],
     ]);
-    const built = buildNesRom(program, { assets });
+
+  it("gives each picture a pattern table of its own", () => {
+    // The console has two, and `PPUCTRL` bit 4 chooses which one the background
+    // reads — so two pictures do not have to share one. Sharing halved what each
+    // got, and the fitter spent the difference merging cells.
+    const bound = bindNesArt(build("pong.dmt"), pongAssets());
+    const fits = [...bound.backdropFits.values()];
+    expect(fits.length).toBe(2);
+    expect(new Set(fits.map((fit) => fit.table)).size).toBe(2);
+    for (const fit of fits) expect(fit.budget).toBeGreaterThan(150);
+  });
+
+  it("still fits both, with the built-in bank in each table", () => {
+    const built = buildNesRom(build("pong.dmt"), { assets: pongAssets() });
     expect(built.stats.missingArt).toEqual([]);
-    // Both tables, and neither over its share.
     expect(built.stats.artTiles).toBeGreaterThan(0);
     expect(built.bytes.length).toBe(16 + 0x8000 + 0x2000);
+  });
+
+  /**
+   * The cartridge's picture is the art demaker's picture, cell for cell.
+   *
+   * Not "looks like": the same bytes. A game's backdrop goes through `prepSync`
+   * and the `nes` image backend — the code `demake prep -c nes` is — so the only
+   * thing a build may decide is the *budget*, and it decides it from what the
+   * pattern table has left. This runs the picture through that path again at the
+   * budget the build reports and compares the pattern behind every one of the 960
+   * cells, which is what makes "no second art converter" checkable rather than a
+   * claim about who calls what.
+   */
+  it("draws exactly what `demake prep -c nes` would, at the budget it was given", () => {
+    const program = build("pong.dmt");
+    const bound = bindNesArt(program, pongAssets());
+    const spec = getConsole("nes");
+    const backend = backendFor("nes");
+    expect(backend).toBeDefined();
+
+    for (const scene of program.scenes) {
+      const file = scene.backdrop;
+      if (file === undefined) continue;
+      const fit = bound.backdropFits.get(scene.name);
+      const drawn = bound.options.backdrops?.get(scene.name);
+      expect(fit, scene.name).toBeDefined();
+      expect(drawn, scene.name).toBeDefined();
+
+      const image = prepSync(asset(file), {
+        console: "nes",
+        size: { w: 32 * 8, h: 30 * 8 },
+        fit: "cover",
+        maxSubPalettes: ART_PALETTES,
+        maxTiles: (fit as { budget: number }).budget,
+      }).image;
+      const artifacts = backend?.emitBin(image, spec, {
+        symbol: "backdrop",
+        header: [],
+        mapBase: 0,
+        tileBase: 0,
+      });
+      const find = (suffix: string): Uint8Array =>
+        artifacts?.find((artifact) => artifact.suffix === suffix)?.bytes ?? new Uint8Array(0);
+      const wantChr = find(".chr.bin");
+      const wantMap = find(".nam.bin");
+      const table = (drawn as { table: 0 | 1 }).table * 0x1000;
+      const gotMap = (drawn as { map: Uint8Array }).map;
+
+      expect(gotMap.length, scene.name).toBe(wantMap.length);
+      let differing = 0;
+      for (let cell = 0; cell < wantMap.length; cell += 1) {
+        const want = (wantMap[cell] as number) * TILE_BYTES;
+        const got = table + (gotMap[cell] as number) * TILE_BYTES;
+        for (let byte = 0; byte < TILE_BYTES; byte += 1) {
+          if (bound.chr[got + byte] !== wantChr[want + byte]) {
+            differing += 1;
+            break;
+          }
+        }
+      }
+      expect(differing, `${scene.name} cells differing from prep's`).toBe(0);
+      // And its attributes and palette, which decide the colour of every one.
+      expect([...(drawn as { attr: Uint8Array }).attr]).toEqual([...find(".attr.bin")]);
+    }
   });
 });
 

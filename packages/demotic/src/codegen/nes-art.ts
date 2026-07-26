@@ -59,6 +59,15 @@ export interface BoundNesArt {
   /** Patterns it added to each table, which is what the hardware budget is. */
   backgroundPatterns: number;
   objectPatterns: number;
+  /**
+   * What each scene's picture was demade against, by scene name.
+   *
+   * Reported because it is the difference between a title screen and a smudge,
+   * and because it is what makes the claim checkable: the cartridge's picture is
+   * `prep`'s picture at *this* budget, and `nes-rom.test.ts` compares them cell
+   * by cell rather than taking it on trust.
+   */
+  backdropFits: ReadonlyMap<string, { table: 0 | 1; budget: number }>;
   /** Files the program names that no bytes were supplied for. */
   missing: readonly string[];
 }
@@ -135,6 +144,27 @@ function buildChr(background: Uint8Array, objects: Uint8Array): Uint8Array {
   chr.set(background.subarray(0, 0x1000 - builtin.length), builtin.length);
   chr.set(objects.subarray(0, 0x1000 - builtin.length), 0x1000 + builtin.length);
   return chr;
+}
+
+/**
+ * A pool over one pattern table: what is already in it, and what is left.
+ *
+ * `TilePool` interns against tiles it has been shown, so a picture's cell that
+ * matches a glyph, a level tile or a sprite costs nothing. `free()` is what the
+ * fit is told it may spend, and it is the honest number: the table's 256 minus
+ * the built-in bank minus whatever else this table carries minus what earlier
+ * pictures in it have already added.
+ */
+function newPool(builtin: Uint8Array, art: Uint8Array | undefined, next: number) {
+  const known = new Uint8Array(builtin.length + (art?.length ?? 0));
+  known.set(builtin, 0);
+  if (art) known.set(art, builtin.length);
+  const pool = new TilePool(known, next);
+  return {
+    intern: (tile: Uint8Array) => pool.intern(tile),
+    tail: () => pool.tail(),
+    free: () => PATTERNS_PER_TABLE - next - pool.tail().length / TILE_BYTES,
+  };
 }
 
 /** One demade backdrop: a nametable, its attribute table, and its palette. */
@@ -280,47 +310,58 @@ export function bindNesArt(program: Program, assets: AssetBytes): BoundNesArt {
     options.objectPalette = packPalette(objects.palettes, levelBackdrop);
   }
 
-  // Backdrops go after the level art in the background table, and through a pool:
-  // a cell already drawn by the built-in font, by a level tile or by an earlier
-  // picture is pointed at rather than stored again. Two title screens that share a
-  // night sky then cost one pattern between them.
+  // Backdrops go through a pool — a cell already drawn by the built-in font, by a
+  // level tile, by a sprite or by an earlier picture is pointed at rather than
+  // stored again — and each picture is given a *whole pattern table*.
   //
-  // The budget is divided evenly among the pictures rather than given to the first
-  // one, because "whichever screen the author wrote first gets to look better" is
-  // not a decision a build should be making. Pooling can only return room, never
-  // take it, so a later picture that shares with an earlier one gets its share back.
-  const backdrops = new Map<string, { map: Uint8Array; attr: Uint8Array; palette: Uint8Array }>();
+  // That is the console's own answer to "a screenful is 960 cells and a table is
+  // 256 patterns": there are two tables, and `PPUCTRL` bit 4 chooses which one the
+  // background reads. Sharing one between every picture in the game halved what
+  // each got and the fitter spent the difference merging cells — 216 of the
+  // shooter's 960 at a 97-pattern share, against 57 at a full one. So a picture is
+  // assigned to whichever table has the most room left when its turn comes, and
+  // the two-backdrop games in the library end up with one each.
+  //
+  // Room is what the *other* contents leave: level art shares table 0 and object
+  // art shares table 1, because those are the tables the background and the
+  // objects are read from.
+  const backdrops = new Map<
+    string,
+    { map: Uint8Array; attr: Uint8Array; palette: Uint8Array; table: 0 | 1 }
+  >();
   const builtin = builtinChr();
-  const known = new Uint8Array(builtin.length + (backgrounds?.tiles.length ?? 0));
-  known.set(builtin, 0);
-  if (backgrounds) known.set(backgrounds.tiles, builtin.length);
-  const pool = new TilePool(known, backgroundNext);
-  for (const [index, scene] of backdropScenes.entries()) {
-    const left = ART_PATTERNS + BUILTIN_TILES - backgroundNext;
-    const share = Math.max(1, Math.floor(left / (backdropScenes.length - index)));
-    const art = demakeBackdrop(assets.get(scene.backdrop as string) as Uint8Array, share);
+  const objectArt = objects?.tiles ?? new Uint8Array(0);
+  const pools = [
+    newPool(builtin, backgrounds?.tiles, backgroundNext),
+    newPool(builtin, objectArt, BUILTIN_TILES + objectArt.length / TILE_BYTES),
+  ] as const;
+  const backdropFits = new Map<string, { table: 0 | 1; budget: number }>();
+  for (const scene of backdropScenes) {
+    // The table with the most room, and the room it has. A picture is never given
+    // less than one pattern, because a build that produced no picture at all would
+    // be a worse answer than a coarse one.
+    const table = pools[0].free() >= pools[1].free() ? 0 : 1;
+    const pool = pools[table];
+    const budget = Math.max(1, pool.free());
+    backdropFits.set(scene.name, { table, budget });
+    const art = demakeBackdrop(assets.get(scene.backdrop as string) as Uint8Array, budget);
     const map = new Uint8Array(art.map.length);
     for (let cell = 0; cell < art.map.length; cell += 1) {
       const local = (art.map[cell] as number) * TILE_BYTES;
       map[cell] = pool.intern(art.chr.subarray(local, local + TILE_BYTES)) & 0xff;
     }
-    backgroundNext =
-      BUILTIN_TILES + (backgrounds?.uniqueTiles ?? 0) + pool.tail().length / TILE_BYTES;
-    backdrops.set(scene.name, { map, attr: art.attr, palette: art.palette });
+    backdrops.set(scene.name, { map, attr: art.attr, palette: art.palette, table });
   }
-  const pooled = pool.tail();
+  const pooled = pools[0].tail();
   if (pooled.length > 0) backgroundArt.push(pooled);
   if (backdrops.size > 0) options.backdrops = backdrops;
   if (options.levelPalette === undefined) options.levelPalette = systemOnlyPalette();
   if (options.objectPalette === undefined) options.objectPalette = systemOnlyPalette();
 
-  const background = new Uint8Array(backgroundArt.reduce((total, part) => total + part.length, 0));
-  let at = 0;
-  for (const part of backgroundArt) {
-    background.set(part, at);
-    at += part.length;
-  }
-  const objectTiles = objects?.tiles ?? new Uint8Array(0);
+  const background = concat(backgroundArt);
+  // Table 1 is the objects' own, and it carries the pictures assigned to it —
+  // which the background layer reads by pointing `PPUCTRL` at it for that scene.
+  const objectTiles = concat([objectArt, pools[1].tail()]);
 
   return {
     options,
@@ -328,6 +369,18 @@ export function bindNesArt(program: Program, assets: AssetBytes): BoundNesArt {
     tiles: background.length / TILE_BYTES + objectTiles.length / TILE_BYTES,
     backgroundPatterns: background.length / TILE_BYTES,
     objectPatterns: objectTiles.length / TILE_BYTES,
+    backdropFits,
     missing,
   };
+}
+
+/** Join blobs of tile bytes, in order. */
+function concat(parts: readonly Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.length;
+  }
+  return out;
 }

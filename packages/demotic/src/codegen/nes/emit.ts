@@ -150,7 +150,16 @@ export interface NesEmitOptions {
    * Demade backdrops by scene name: the nametable the picture fills, its packed
    * attribute table, and the sixteen master-palette indices it chose.
    */
-  backdrops?: ReadonlyMap<string, { map: Uint8Array; attr: Uint8Array; palette: Uint8Array }>;
+  backdrops?: ReadonlyMap<
+    string,
+    {
+      map: Uint8Array;
+      attr: Uint8Array;
+      palette: Uint8Array;
+      /** Which pattern table this picture's tiles went into (doc 15 §Budgets). */
+      table: 0 | 1;
+    }
+  >;
   /** The palette a level's tile art and the built-in patterns are drawn with. */
   levelPalette?: Uint8Array;
   /** The object palettes: three the art chose, then the font's ramp. */
@@ -392,11 +401,11 @@ function emitReset(ctx: NesCtx, options: NesEmitOptions): void {
     if (program.tracks.length > 0) asm.jsr("SceneMusic");
   }
 
-  // Rendering on, and the NMI with it: background and objects, patterns at
-  // $0000 for the background and $1000 for the objects.
+  // Rendering on, and the NMI with it. Which pattern table the background reads
+  // is the scene's, and `SceneRender` has already said so.
   asm.lda(imm(0x1e));
   asm.sta(abs(R.PPUMASK));
-  asm.lda(imm(0x88));
+  asm.lda(mem(layout.scratch + PPU_CTRL));
   asm.sta(abs(R.PPUCTRL));
   asm.lda(imm(1));
   asm.sta(mem(layout.booted));
@@ -495,6 +504,23 @@ function emitClearState(ctx: NesCtx): void {
  */
 const VBLANKED = 7;
 const FRAME_READY = 6;
+
+/**
+ * The scene's `PPUCTRL`, kept in RAM because three places have to agree about it.
+ *
+ * It carries the NMI enable, the object pattern table (always the second) and —
+ * the part that changes per scene — the *background* pattern table. A picture is
+ * given a whole table of its own where there is one to give, so the byte that
+ * says which one is the scene's, not the build's, and the queue flush and the
+ * scroll write have to OR their own bits into it rather than name a constant.
+ */
+const PPU_CTRL = 5;
+
+/** `PPUCTRL` bits the runtime always wants: NMI on, objects from `$1000`. */
+const CTRL_BASE = 0x88;
+
+/** The bit that points the background at the second pattern table. */
+const CTRL_BG_TABLE = 0x10;
 
 /**
  * The VBlank handler, which is where the picture is uploaded.
@@ -1120,6 +1146,13 @@ function emitSceneRender(
   const { asm, layout } = ctx;
   asm.label(`SceneRender_${scene.index}`);
 
+  // Which pattern table this scene's background reads, restated every frame
+  // rather than at the scene change: it is two instructions, and a byte that can
+  // only be wrong if it is set somewhere else is a byte that cannot drift.
+  const table = options.backdrops?.get(scene.def.name)?.table ?? 0;
+  asm.lda(imm(CTRL_BASE | (table === 1 ? CTRL_BG_TABLE : 0)));
+  asm.sta(mem(layout.scratch + PPU_CTRL));
+
   // Camera in pixels: a 16.16 cell coordinate shifted right thirteen places.
   if (layout.camera !== null) {
     emitPixelsFromFixed(ctx, layout.camera, layout.words + W.camX * 2);
@@ -1213,9 +1246,13 @@ function emitFullRedraw(
 ): void {
   const { asm, layout } = ctx;
   // Rendering off: the PPU's address register is the scroll position, so writing
-  // a screenful with it on would tear and take three frames.
+  // a screenful with it on would tear and take three frames. The control register
+  // goes with it, because the screenful about to be written steps one cell at a
+  // time and has to name the table this scene draws from.
   asm.lda(imm(0));
   asm.sta(abs(R.PPUMASK));
+  asm.lda(mem(layout.scratch + PPU_CTRL));
+  asm.sta(abs(R.PPUCTRL));
 
   const backdrop = options.backdrops?.get(scene.def.name);
   if (backdrop) {
@@ -2180,11 +2217,12 @@ export function emitRenderHelpers(ctx: NesCtx): void {
   asm.and(imm(0x80));
   const acrossRun = ctx.unique("runAcross");
   asm.beq(acrossRun);
-  asm.lda(imm(0x8c));
+  asm.lda(mem(layout.scratch + PPU_CTRL));
+  asm.ora(imm(0x04));
   const setStep = ctx.unique("runStep");
   asm.bne(setStep);
   asm.label(acrossRun);
-  asm.lda(imm(0x88));
+  asm.lda(mem(layout.scratch + PPU_CTRL));
   asm.label(setStep);
   asm.sta(abs(R.PPUCTRL));
   asm.ldy(imm(1));
@@ -2234,7 +2272,7 @@ export function emitRenderHelpers(ctx: NesCtx): void {
   // position. PPUCTRL first, since the horizontal nametable is one of its bits.
   asm.lda(mem(layout.words + W.scrollX * 2 + 1));
   asm.and(imm(1));
-  asm.ora(imm(0x88));
+  asm.ora(mem(layout.scratch + PPU_CTRL));
   asm.sta(abs(R.PPUCTRL));
   asm.lda(mem(layout.words + W.scrollX * 2));
   asm.sta(abs(R.PPUSCROLL));

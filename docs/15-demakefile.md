@@ -252,6 +252,23 @@ Each sprite goes through the existing image pipeline — no second implementatio
    family's tile bank.
 5. Emit alongside the compiled game (doc 14 §Runtime model).
 
+**A backdrop is the same picture `demake prep` makes, at the budget the cartridge
+can give it.** The build's only input to the conversion is that budget, and it is
+the console's own arithmetic: what a pattern table holds, minus the built-in
+bank, minus the art already in that table. Nothing about the fit is decided
+twice — `packages/demotic/test/nes-rom.test.ts` runs each picture through
+`prepSync` and the image backend again at the reported budget and compares the
+pattern behind all 960 cells, so "no second art converter" is checked rather than
+asserted from the call graph.
+
+Which makes the budget the whole of the quality, and it is worth spending the
+hardware on. The NES has **two** pattern tables and `PPUCTRL` bit 4 chooses which
+one the background layer reads, so a game's pictures are given one each rather
+than halving a single table between them: 96 patterns became 162–192 across the
+example library, and the shooter's title screen went from merging 216 of its 960
+cells to merging 57. A console with one table shares it, and the reported budget
+says so.
+
 Steps 3–4 live in `packages/core/src/pipeline/sprite.ts`, beside the rest of the
 pipeline. The Demakefile only decides what is fed in and with which options; with
 no Demakefile, `demake build` loads the art next to the source and converts it
