@@ -970,6 +970,15 @@ Two files plus fixtures (doc 02 §Extensibility):
   the panel sim is opt-in via `--dac-colors`. Consoles whose DAC model is the
   hardware's own output (NES NTSC, MD VDP, mono ramps) author in display
   colors. `inspect`/`gen` accept a compliant PNG in either encoding (doc 04).
+- **A coarse colour lattice is what makes a fit slow, not a big picture.** A
+  k-means centroid is snapped to the hardware lattice every iteration, so on a
+  Master System's sixty-four colours two centroids collide constantly and clusters
+  empty; on a Game Gear's four thousand ninety-six they almost never do. That is
+  why the same 256×192 source took forty-five seconds for one console and eight
+  for the other. Before reaching for `--effort fast` on a slow console — which
+  drops the tournament to one candidate and _is_ a quality change — profile it:
+  the last time this came up the answer was a redundant scan, and removing it was
+  byte-identical.
 - **Prep quality changes need eyes, not just numbers**: run `pnpm eval:prep`
   and look at the side-by-side sheets in `tools/prep-eval/out/`; the behavioral
   floors live in `packages/core/test/quality.test.ts`. Drop extra real-world

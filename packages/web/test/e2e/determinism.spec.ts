@@ -135,6 +135,12 @@ for (const { name, options } of CASES) {
  */
 for (const consoleId of ["gb", "nes", "sms"] as const) {
   test(`the ${consoleId} ROM the page builds is byte-identical to the CLI's`, async ({ page }) => {
+    // Demaking a full-screen picture is seconds of real work and the runner is
+    // shared, so the budget is the *slowest* thing this can legitimately take
+    // rather than the fastest it has been seen to. What is being asserted is
+    // byte-identity; how long the page took to get there is not the claim, and a
+    // tight limit here only ever fails on someone else's busy machine.
+    test.slow();
     const fixtures = dirname(
       createRequire(import.meta.url).resolve("@demake/demotic/fixtures/pong.dmt"),
     );
@@ -157,11 +163,11 @@ for (const consoleId of ["gb", "nes", "sms"] as const) {
     await page.goto("/#section=game");
     await page.getByTestId("example-select").selectOption("caves");
     if (consoleId !== "gb") await page.getByTestId("console-select").selectOption(consoleId);
-    // Waiting on the *cartridge's* console, not the picker's: demaking two
-    // full-screen pictures in colour is the whole `prep` tournament, and until it
+    // Waiting on the *cartridge's* console, not the picker's: demaking a
+    // full-screen picture in colour is the whole `prep` tournament, and until it
     // finishes the pane is still playing — and still offering — the last one.
     await expect(page.getByTestId("rom-canvas")).toHaveAttribute("data-console", consoleId, {
-      timeout: 60_000,
+      timeout: 150_000,
     });
 
     const [download] = await Promise.all([
