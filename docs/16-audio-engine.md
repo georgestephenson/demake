@@ -13,12 +13,17 @@ same shape:
 
 > **constrain → fit → emit → prove it on emulated hardware.**
 
-**Status: the spine is built.** `@demake/chip` models the Game Boy APU, the
-SN76489 and the NES 2A03; `@demake/audio` implements both demakers over them;
-`arrange`, `sfx` and `render` are live in the CLI for `dmg`, `gbc`, `nes`, `sms`,
-`gg` and `sg1000`. What is not built: the remaining chips (YM2612, S-DSP, the
-handhelds), the driver and ROM emit (§The driver contract), the emulator proof
-loop (§The proof), the lossy encoders, and the web sections.
+**Status: the spine is built, and the Game Boy boots.** `@demake/chip` models
+the Game Boy APU, the SN76489 and the NES 2A03; `@demake/audio` implements both
+demakers over them; `arrange`, `sfx` and `render` are live in the CLI for `dmg`,
+`gbc`, `nes`, `sms`, `gg` and `sg1000`. `demake gen <schedule> --format rom`
+builds a bootable Game Boy cartridge that plays a track or an effect, from a
+driver generated for it (§The driver contract), and **Level A of §The proof runs
+in `pnpm test`** — the ROM boots in `@demake/dmg`, whose APU is now
+`@demake/chip`'s, and every register write it makes is diffed against the
+`ChipScript` tick for tick. What is not built: the remaining chips (YM2612,
+S-DSP, the handhelds), driver backends for the other consoles, `bin`/`asm`/`c`
+emit, Level B sample comparison, the lossy encoders, and the web sections.
 
 ## The load-bearing idea, restated for sound
 
@@ -463,6 +468,22 @@ code does. The rules that follow from it:
 | `c` | the data as arrays plus a header, for GBDK/SGDK/devkit users |
 | `rom` | a bootable ROM that plays the track — the audio counterpart of the display harness, and the foundation of the proof loop |
 
+**Built today: `rom`, for the Game Boy family.** `bin`/`asm`/`c` are named
+errors rather than approximations, because the order list holds *absolute
+addresses* the driver resolves at assembly time: a relocatable blob would be a
+second data format, and two formats is how the ROM and the blob quietly stop
+agreeing. They land with an emitter that shares one format with the ROM.
+
+Unlike the image path, this driver is not assembled by a third-party toolchain.
+The image `rom` builders pair generated *data* with a checked-in display program
+per CPU family, so buying eight assemblers off the shelf was far cheaper than
+writing eight encoders — but it costs the browser, which has none of them. A
+driver is generated code and there is no harness to check in, so the Game Boy
+backend does what the Demotic backend already does: emits SM83 through `core`'s
+own assembler (`packages/core/src/asm/sm83.ts`, shared by both). That is what
+makes Level A a test with no toolchain and the page a place a cartridge can be
+built.
+
 The driver is generated, not fixed, and for exactly the reason doc 14 §2 gives
 for games: *a fixed engine ships every feature because it cannot know which ones
 this song uses.* A track with no vibrato ships no vibrato code; a track that never
@@ -487,13 +508,22 @@ stored once with an offset. Over budget, the emitter reports what it dropped and
 Doc 10 gains an audio section; the summary of it belongs here because it is the
 justification for the whole ChipScript design.
 
-**Level A — schedule equality (exact, runs in `pnpm test`).** Boot the generated
-ROM in a core we own, log every write to the chip with its tick, and diff against
-the ChipScript. For the Game Boy this needs `@demake/dmg` to grow an APU — which
-it needs anyway for the web app to have sound — and then the audio conformance
-suite is a plain unit test with no toolchain and no emulator install, exactly as
+**Level A — schedule equality (exact, runs in `pnpm test`).** *Built for the Game
+Boy: `packages/audio/test/rom.test.ts`.* Boot the generated ROM in a core we own,
+log every write to the chip with its tick, and diff against the ChipScript.
+`@demake/dmg` grew its APU by consuming `@demake/chip` — which it needed anyway
+for the web app to have sound — and the audio conformance suite is a plain unit
+test with no toolchain and no emulator install, exactly as
 `packages/demotic/test/rom.test.ts` is. This is the strongest oracle in the audio
 domain and it is where the sound guarantee actually comes from.
+
+Two details of the built version are load-bearing. Ticks are attributed **by
+program counter**, not by a marker the ROM writes: the driver's `Tick` label
+comes back in the build's symbol table, so nothing is added to the cartridge to
+make it observable and the ROM under test is the ROM that ships. And the tap
+(`Gameboy.apuTap`) *observes* rather than intercepts — the write still reaches
+the chip — because an oracle that changed what the hardware saw would be testing
+itself.
 
 **Level B — sample comparison against third-party cores (CI).** The existing
 libretro harness already receives an audio callback and currently discards it;
@@ -535,7 +565,14 @@ Two new packages, and one small addition to an existing one:
 |---|---|---|
 | **`@demake/chip`** | Every sound chip as a cycle-clocked, integer, register-driven model; the deterministic mixer and resampler; the output-stage models | **nothing** |
 | **`@demake/audio`** | The two demakers: ingest, analysis, arrangement, timbre fitting, the judge, the drivers and emitters | `core`, `chip` |
-| `@demake/dmg` | *gains* an APU, implemented by consuming `@demake/chip` | `chip` |
+| `@demake/dmg` | *gained* an APU, implemented by consuming `@demake/chip` | `chip` |
+
+`core` also holds the **SM83 assembler and the Game Boy cartridge header**
+(`src/asm/`). They moved there out of `@demake/demotic` when the audio driver
+became the second thing that emits Game Boy machine code; a header implemented
+twice would not disagree loudly, it would disagree in one byte, in one of the
+two, and the symptom would be a ROM that boots in an emulator and not on
+hardware.
 
 `@demake/chip` depending on nothing is the same rule `@demake/dmg` already
 follows, and for the same reason: it is a hardware model, not conversion logic,

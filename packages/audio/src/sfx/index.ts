@@ -13,7 +13,7 @@
 import { getConsole, math, type AudioSpec } from "@demake/core";
 
 import { bindingFor } from "../binding/registry.js";
-import { silentFrames, type ChipBinding } from "../binding/types.js";
+import { silentFrames, type ChipBinding, type DriverRateFit } from "../binding/types.js";
 import type { ChannelFrame, ChipScript, TickWrites } from "../chipscript.js";
 import { countWrites, peakWritesPerTick } from "../chipscript.js";
 import { correlation, resample, resize } from "../dsp.js";
@@ -160,12 +160,12 @@ export function demakeSfx(bytes: Uint8Array, options: SfxOptions): SfxResult {
       spec,
       binding,
       channelIndex,
-      rate,
+      fit,
       scoringTarget,
       features,
       options,
     );
-    const script = buildScript(gesture, refined.params, spec, binding, channelIndex, rate);
+    const script = buildScript(gesture, refined.params, spec, binding, channelIndex, fit);
     const inspection = inspectScript(script);
     if (!inspection.compliant) {
       scored.push({
@@ -233,7 +233,7 @@ function refine(
   spec: AudioSpec,
   binding: ChipBinding,
   channelIndex: number,
-  rate: { num: number; den: number },
+  clock: DriverRateFit,
   target: SoundFeatures,
   pitchTarget: SoundFeatures,
   options: SfxOptions,
@@ -246,7 +246,7 @@ function refine(
     spec,
     binding,
     channelIndex,
-    rate,
+    clock,
     target,
     pitchTarget,
   );
@@ -279,7 +279,7 @@ function refine(
           spec,
           binding,
           channelIndex,
-          rate,
+          clock,
           target,
           pitchTarget,
         );
@@ -318,12 +318,12 @@ function evaluate(
   spec: AudioSpec,
   binding: ChipBinding,
   channelIndex: number,
-  rate: { num: number; den: number },
+  clock: DriverRateFit,
   target: SoundFeatures,
   pitchTarget: SoundFeatures,
 ): { score: number; metrics: { id: string; score: number }[] } {
   const lane = gesture.frames(params);
-  const script = buildScript(gesture, params, spec, binding, channelIndex, rate);
+  const script = buildScript(gesture, params, spec, binding, channelIndex, clock);
   // Scoring renders at a lower rate with a coarser hop. The shapes being
   // compared — envelope, noisiness, brightness — survive that intact, and the
   // loop runs hundreds of times per effect; the winning candidate is then
@@ -473,7 +473,7 @@ function buildScript(
   spec: AudioSpec,
   binding: ChipBinding,
   channelIndex: number,
-  rate: { num: number; den: number },
+  clock: DriverRateFit,
 ): ChipScript {
   const lane = gesture.frames(params);
   const ticks: TickWrites[] = [];
@@ -498,7 +498,14 @@ function buildScript(
   const script: ChipScript = {
     console: binding.console,
     chips: binding.chips,
-    driver: { rate, source: "timer" },
+    driver: {
+      rate: clock.rate,
+      source: clock.source,
+      // The reload is carried, not just the rate it produces: a ROM has to
+      // program a register, and re-deriving one from a rational would be a
+      // second timing fit that could disagree with the first.
+      ...(clock.divisor === undefined ? {} : { divisor: clock.divisor }),
+    },
     ticks,
     // An effect is a one-shot: -1 says so, and every player honours it.
     loopTick: -1,
@@ -512,12 +519,13 @@ function buildScript(
       },
     ],
     timing: {
-      source: "timer",
+      source: clock.source,
+      ...(clock.divisor === undefined ? {} : { divisor: clock.divisor }),
       requestedBpm: 0,
       achievedBpm: 0,
       ppmError: 0,
       rowsPerBeat: 0,
-      maxOnsetDeviationMs: (rate.den / rate.num) * 500,
+      maxOnsetDeviationMs: (clock.rate.den / clock.rate.num) * 500,
       accumulates: false,
     },
     budgets: { writes: 0, peakWritesPerTick: 0, writeBudget: spec.driver.writesPerTick },

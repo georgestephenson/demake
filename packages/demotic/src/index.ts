@@ -115,7 +115,7 @@ export {
 export { DEFAULT_SEED, advance, pick } from "./rng.js";
 
 // --- compiling to a console (doc 14 §Runtime model, doc 06 §The Demotic runtime)
-export { Asm, AsmError, label, type Ref } from "./codegen/asm.js";
+export { Asm, AsmError, label, type Ref } from "@demake/core";
 export { analyze, isMutable, type Analysis } from "./codegen/analyze.js";
 export {
   ENTITY_SIZE,

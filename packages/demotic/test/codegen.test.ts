@@ -3,16 +3,16 @@
  *
  * Behaviour is `rom.test.ts`'s job — it diffs a running cartridge against the
  * reference interpreter. What is checked here is the machinery that makes the
- * backend worth having: that the assembler encodes what it claims, that a
- * feature nothing uses leaves no trace in the ROM, and that a game gets exactly
- * the RAM its own objects need.
+ * backend worth having: that a feature nothing uses leaves no trace in the ROM,
+ * and that a game gets exactly the RAM its own objects need. The assembler
+ * underneath it is `core`'s, and so is its suite
+ * (`packages/core/test/sm83.test.ts`).
  */
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { Asm, AsmError, label } from "../src/codegen/asm.js";
 import { analyze } from "../src/codegen/analyze.js";
 import { planLayout, ENTITY_SIZE } from "../src/codegen/layout.js";
 import { buildGbRom } from "../src/codegen/gb.js";
@@ -22,46 +22,6 @@ import { getProfile } from "../src/profiles.js";
 const fixtures = join(import.meta.dirname, "..", "fixtures");
 const read = (name: string) => readFileSync(join(fixtures, name), "utf8");
 const build = (source: string) => compile(source, { profile: getProfile("gb") });
-
-describe("the SM83 assembler", () => {
-  it("encodes the addressing forms the backend relies on", () => {
-    const asm = new Asm(0);
-    asm.ld("b", "a"); // 0x47
-    asm.ldn("a", 0x12); // 0x3E 0x12
-    asm.lda(0xc123); // 0xFA 0x23 0xC1
-    asm.sta(0xc123); // 0xEA 0x23 0xC1
-    asm.alu("adc", "hlp"); // 0x8E
-    asm.aluN("cp", 4); // 0xFE 0x04
-    asm.shift("sra", "hlp"); // 0xCB 0x2E
-    asm.bit(7, "a"); // 0xCB 0x7F
-    expect([...asm.assemble()]).toEqual([
-      0x47, 0x3e, 0x12, 0xfa, 0x23, 0xc1, 0xea, 0x23, 0xc1, 0x8e, 0xfe, 0x04, 0xcb, 0x2e, 0xcb,
-      0x7f,
-    ]);
-  });
-
-  it("resolves forward references, relative and absolute", () => {
-    const asm = new Asm(0x100);
-    asm.jr("ahead");
-    asm.nop();
-    asm.label("ahead");
-    asm.jp("ahead");
-    asm.dw(label("ahead", 3));
-    const bytes = asm.assemble();
-    // jr skips the nop: the operand is relative to the instruction after it.
-    expect(bytes[1]).toBe(1);
-    expect([bytes[4], bytes[5]]).toEqual([0x03, 0x01]);
-    expect([bytes[6], bytes[7]]).toEqual([0x06, 0x01]);
-  });
-
-  it("refuses a relative branch it cannot encode", () => {
-    const asm = new Asm(0);
-    asm.jr("far");
-    asm.ds(200);
-    asm.label("far");
-    expect(() => asm.assemble()).toThrow(AsmError);
-  });
-});
 
 describe("what a program needs", () => {
   it("leaves out the helpers a game never reaches", () => {

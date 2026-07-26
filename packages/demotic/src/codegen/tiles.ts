@@ -14,11 +14,12 @@
  * model, and here, one pair of tables.
  */
 
+import { label, type Ref } from "@demake/core";
+
 import { fromInt } from "../fixed.js";
 import { type LevelFile, tileAt } from "../level/parse.js";
 import type { InstanceDef, RuleDef } from "../program.js";
 
-import { label, type Ref } from "./asm.js";
 import type { Ctx } from "./ctx.js";
 import { propOffset, readProp, UNBOUND, type Binding } from "./expr.js";
 import { W } from "./layout.js";

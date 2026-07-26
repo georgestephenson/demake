@@ -21,10 +21,11 @@
  *     directly. Copies happen only when something must be modified.
  */
 
+import type { Ref } from "@demake/core";
+
 import { applyBinary, applyBuiltin } from "../compile.js";
 import type { CBinaryOp, CExpr, EntityRef, PureBuiltinFn } from "../program.js";
 
-import type { Ref } from "./asm.js";
 import type { Ctx } from "./ctx.js";
 import { PROP_SLOT, PROP_SIZE } from "./layout.js";
 import {

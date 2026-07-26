@@ -11,11 +11,14 @@ contract that lets you hear the result exactly — is [doc 16](16-audio-engine.m
 The sound-effect demaker is [doc 18](18-sound-demaker.md), and it shares
 everything in doc 16.
 
-**Status: built for MIDI input.** Ingest, analysis, the arrangement tournament,
-timbre and timing fitting, the judge and the artifact all exist and run on six
-consoles. Tracker modules and the audio-input transcription front end (§Stage 0)
-are not built, nor is the reference synthesizer the timbral metrics need — so
-the judge is symbolic today and says so.
+**Status: built for MIDI input, and playable on a Game Boy.** Ingest, analysis,
+the arrangement tournament, timbre and timing fitting, the judge and the artifact
+all exist and run on six consoles, and `demake gen song.json --format rom` turns
+the schedule into a cartridge that plays it — proven register-for-register
+against the schedule in `pnpm test` (doc 16 §The proof). Tracker modules and the
+audio-input transcription front end (§Stage 0) are not built, nor is the
+reference synthesizer the timbral metrics need — so the judge is symbolic today
+and says so.
 
 ## The objective: it still has to be the tune
 
@@ -392,6 +395,12 @@ Doc 16 §The driver contract: a `ChipScript` out of the tournament, then the
 artifact (`.vgm` / `.spc` / `.dmm`) plus the manifest, and `gen` from there to
 `bin` / `asm` / `c` / `rom`. `--preview song.flac` renders the exact audio
 through our chip models (doc 16 §The render contract).
+
+`rom` is live for the Game Boy family: `--emit-manifest` writes the schedule,
+and `demake gen <that file> -c dmg --format rom` builds a 32 KiB cartridge whose
+driver was generated for this track. Stage 6's reductions are what it reports —
+packed bytes, blocks before and after dedup, and the driver routines the track
+actually pulled in, so a track that never rests ships no rest handling.
 
 ## Diagnostics — hardware traps as errors, not surprises
 

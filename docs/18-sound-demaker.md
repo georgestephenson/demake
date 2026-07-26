@@ -10,10 +10,19 @@ lets you hear the result exactly ([doc 16](16-audio-engine.md)). What differs is
 the objective, the search, and the fact that an effect has to *coexist* with
 music rather than own the chip.
 
-**Status: built for WAV input.** Analysis, the class gate, eight gesture
-families, hardware-in-the-loop fitting and the placement contract all run. The
-lossy decoders, banks, `--variations` and the driver-side stealing logic are not
-built yet.
+**Status: built for WAV input, and playable on a Game Boy.** Analysis, the class
+gate, eight gesture families, hardware-in-the-loop fitting and the placement
+contract all run, and an effect's schedule builds into a cartridge that plays it
+once and then falls silent — proven register-for-register in `pnpm test` (doc 16
+§The proof). The lossy decoders, banks, `--variations` and the driver-side
+stealing logic are not built yet.
+
+The one-shot is where the effect path exercises something the music path does
+not: the driver's order list ends in a block that powers every DAC down and then
+rests forever, rather than looping. There is no "stopped" state in the driver,
+for the same reason there is no `destroy` in Demotic (doc 14) — an inert thing it
+already knows how to represent beats a second mode it would have to be right
+about.
 
 ## The objective: identity, not fidelity
 

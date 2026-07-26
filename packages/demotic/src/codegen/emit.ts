@@ -11,11 +11,12 @@
  * implementation that reorders it diverges within seconds.
  */
 
+import { label } from "@demake/core";
+
 import { fromInt } from "../fixed.js";
 import type { InstanceDef, Program, RuleDef, SceneDef } from "../program.js";
 import { boundsOf } from "../level/scene.js";
 
-import { label } from "./asm.js";
 import type { Ctx } from "./ctx.js";
 import { emitTest, propOffset, type Binding } from "./expr.js";
 import { isMutable } from "./analyze.js";

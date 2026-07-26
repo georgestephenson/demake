@@ -1,10 +1,10 @@
-.TH DEMAKE\-GEN 1 "" "" "Convert an image into console data/code (bin/asm/c)"
+.TH DEMAKE\-GEN 1 "" "" "Convert an image or a chip schedule into console data/code"
 .SH NAME
-demake-gen \- Convert an image into console data/code (bin/asm/c)
+demake-gen \- Convert an image or a chip schedule into console data/code
 .SH SYNOPSIS
 \fBdemake gen\fR [\fIoptions\fR] [\fIinput\fR]
 .SH DESCRIPTION
-Convert an image into console data/code (bin/asm/c).
+Convert an image or a chip schedule into console data/code.
 .SH OPTIONS
 .TP
 \fB\-c\fR, \fB\-\-console\fR \fI<id>\fR
@@ -55,5 +55,9 @@ implicit prep, then C arrays
 demake gen tiles.png \-c dmg \-\-format bin \-o tiles
 .br
 raw blobs for incbin
+.PP
+demake gen song.json \-c dmg \-\-format rom \-o song.gb
+.br
+a cartridge that plays the track
 .SH SEE ALSO
 \fBdemake\fR(1)

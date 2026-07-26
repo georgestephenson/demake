@@ -8,18 +8,21 @@
 could display and play, verified on emulated hardware rather than merely
 asserted:
 
-| Demaker   | Input                                               | Output                                                                   | Status                                        |
-| --------- | --------------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------- |
-| **art**   | any image                                           | hardware-compliant art, palettes, tile maps, asm/C/binary, bootable ROMs | working                                       |
-| **game**  | a [Demotic](docs/14-demotic.md) `.dmt` script + art | one game, every console                                                  | language, preview and a playable Game Boy ROM |
-| **music** | a MIDI track                                        | chip music, plus audio that sounds exactly like the hardware will        | six consoles; ROM emit to come                |
-| **sound** | a WAV effect                                        | a chip sound effect, placed and prioritised                              | six consoles; ROM emit to come                |
+| Demaker   | Input                                               | Output                                                                   | Status                                           |
+| --------- | --------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------ |
+| **art**   | any image                                           | hardware-compliant art, palettes, tile maps, asm/C/binary, bootable ROMs | working                                          |
+| **game**  | a [Demotic](docs/14-demotic.md) `.dmt` script + art | one game, every console                                                  | language, preview and a playable Game Boy ROM    |
+| **music** | a MIDI track                                        | chip music, audio that sounds exactly like the hardware will, and a ROM  | six consoles; a Game Boy cartridge that plays it |
+| **sound** | a WAV effect                                        | a chip sound effect, placed and prioritised, and a ROM                   | six consoles; a Game Boy cartridge that plays it |
 
-Every demaker shares one engine and one determinism guarantee. Art and games
-also share the proof: a real ROM, booted in a real emulator, compared pixel for
-pixel in CI. Audio's counterpart — the ROM, and the register schedule an
-emulator's chip actually receives — is the next step, so a track is exact audio
-today but not yet a cartridge.
+Every demaker shares one engine, one determinism guarantee, and one proof: a
+real ROM, booted in a real emulator, compared against what the hardware was
+asked for. For art that comparison is pixel for pixel; for games it is the
+game's own state, tick for tick; for audio it is the stream of register writes
+the emulated sound chip actually receives, diffed against the schedule that
+produced the audio file — which is exact rather than approximate, because the
+compliant artifact _is_ that schedule. The audio ROM is a Game Boy today; the
+other consoles' drivers follow.
 
 ## Why
 
