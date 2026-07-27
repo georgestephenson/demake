@@ -136,6 +136,24 @@ export interface MemoryPlan {
    * is a plan field and not a colour flag.
    */
   cellAttributes: boolean;
+
+  /**
+   * Bytes this console's interrupt handlers own outright.
+   *
+   * An interrupt writes a byte in the middle of whatever the game was doing, so
+   * that byte cannot be borrowed from anything a routine is using — and the
+   * backend scratch blocks are all explicitly one-routine scratch. Zero on the
+   * consoles whose handlers write somewhere the allocator does not hand out (the
+   * Game Boy's flag is in high RAM) or a block the backend owns alone (the NES's
+   * is one of its own named scratch bytes, saved and restored around the upload
+   * the handler performs).
+   *
+   * The Sega handlers need two: the frame flag the main loop waits on, and the
+   * Pause key's latch. They were in the shared scratch, and a frame interrupt
+   * landing inside the modulo loop of `random()` overwrote its divisor — a draw
+   * that came out wrong every few seconds, at no tick anyone could name.
+   */
+  interruptBytes: number;
 }
 
 /**
@@ -156,6 +174,7 @@ export const GB_MEMORY: MemoryPlan = {
   plotMax: 96,
   audioBytes: 0,
   cellAttributes: false,
+  interruptBytes: 0,
 };
 
 /** The same, for a Game Boy Color: an attribute byte per queued cell. */
@@ -200,6 +219,7 @@ export const NES_MEMORY: MemoryPlan = {
   plotMax: 16,
   audioBytes: NES_AUDIO_BYTES,
   cellAttributes: false,
+  interruptBytes: 0,
 };
 
 /**
@@ -245,6 +265,8 @@ export const SMS_MEMORY: MemoryPlan = {
   // lives, so there is nothing to be economical about. Both other consoles pay
   // this reservation somewhere the allocator never sees.
   audioBytes: SMS_AUDIO_BYTES,
+  // The frame flag and the Pause latch; see {@link MemoryPlan.interruptBytes}.
+  interruptBytes: 2,
   // A name-table entry carries its palette-select and flip bits in a second
   // byte, so a queued cell is a tile *and* an attribute — the same shape as the
   // Game Boy Color's, reached by different hardware.
@@ -322,6 +344,13 @@ export interface Layout {
    * trace comparable with a sounding one's byte for byte.
    */
   audio: number | null;
+  /**
+   * Bytes the interrupt handlers own, or `null` where they need none.
+   *
+   * The Sega handlers' frame flag and Pause latch; see
+   * {@link MemoryPlan.interruptBytes} for why they cannot be scratch.
+   */
+  interrupt: number | null;
   /** Scratch the emitters use for pointers and counters. */
   scratch: number;
   /** The multiply/divide helpers' operands and workspace. */
@@ -652,17 +681,21 @@ export function planLayout(program: Program, analysis: Analysis, memory: MemoryP
   const oamPrev = fast(1);
   const words = fast(16 * 2);
   // Last, deliberately: the order of these calls is the order of the addresses,
-  // so anything added anywhere else would move every entity record.
+  // so anything added anywhere else would move every entity record. Which is
+  // also why the interrupt bytes go after the driver's rather than beside the
+  // scratch they were taken out of — a console that needs none is unchanged.
   const audio =
     memory.audioBytes > 0 && program.tracks.length + program.sounds.length > 0
       ? fast(memory.audioBytes)
       : null;
+  const interrupt = memory.interruptBytes > 0 ? fast(memory.interruptBytes) : null;
 
   return {
     memory,
     entities,
     used: heap.used,
     fastUsed: quick?.used ?? 0,
+    interrupt,
     tick,
     scene,
     pending,

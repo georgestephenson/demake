@@ -2042,18 +2042,21 @@ function needHudGlyph(ctx: NesCtx): Ref {
   return ctx.need("HudGlyph", (inner) => {
     const { asm, layout } = inner;
     asm.sta(mem(ZP.t2));
-    // Same bounds rule as an object's cell: the pen is sixteen bits and a sprite's
-    // position is a byte, so a glyph the screen does not hold is skipped rather
-    // than wrapped. The pen still advances, so the rest of a caption lands where
-    // it would have.
+    // Same bounds rule as an object's cell, and the same exception: the pen is
+    // sixteen bits and a sprite's position is a byte, so a glyph the screen does
+    // not hold is skipped rather than wrapped — but the top line is a position
+    // the hardware cannot express rather than one it cannot show, so a caption
+    // there is drawn a line low. The pen still advances either way, so the rest
+    // of a caption lands where it would have.
     const offscreen = inner.unique("hudOff");
-    asm.sec();
-    asm.lda(mem(layout.words + W.count * 2));
-    asm.sbc(imm(1));
-    asm.sta(mem(ZP.t0));
+    const onLineZero = inner.unique("hudTop");
     asm.lda(mem(layout.words + W.count * 2 + 1));
-    asm.sbc(imm(0));
     asm.bne(offscreen);
+    asm.lda(mem(layout.words + W.count * 2));
+    asm.sta(mem(ZP.t0));
+    asm.beq(onLineZero);
+    asm.dec(mem(ZP.t0));
+    asm.label(onLineZero);
     asm.lda(mem(layout.words + W.temp * 2 + 1));
     asm.bne(offscreen);
     asm.lda(mem(layout.words + W.temp * 2));
@@ -2095,8 +2098,16 @@ function needHudNumber(ctx: NesCtx): Ref {
  * this is a real difference between the machines rather than a copy of one.
  *
  * The vertical arithmetic carries the PPU's own convention: an object is drawn on
- * the line *after* its Y, so the shadow holds the position minus one, and a cell
- * whose top row is the screen's first line is one this hardware cannot show.
+ * the line *after* its Y, so the shadow holds the position minus one — and a cell
+ * whose top row is the screen's first line is the one position this hardware
+ * cannot express, because the shadow would have to hold minus one.
+ *
+ * It is drawn a line low rather than not drawn. The bounds test is therefore on
+ * the position itself and the subtraction happens after it, which is three
+ * instructions a cell and buys back a whole object: pong's opponent sits at
+ * `y 0` for the entire game, and dropping the cell dropped the paddle — a game
+ * whose second player is invisible, on the console where the trace said it was
+ * playing perfectly.
  */
 function emitSpriteCell(
   ctx: NesCtx,
@@ -2109,8 +2120,9 @@ function emitSpriteCell(
   const penX = layout.words + W.temp * 2;
   const penY = layout.words + W.count * 2;
   const offscreen = ctx.unique("spriteOff");
+  const onLineZero = ctx.unique("spriteTop");
   const dx = column * 8;
-  const dy = (row * 8 - 1) & 0xffff;
+  const dy = row * 8;
 
   asm.clc();
   asm.lda(mem(penX));
@@ -2126,6 +2138,12 @@ function emitSpriteCell(
   asm.lda(mem(penY, 1));
   asm.adc(imm((dy >> 8) & 0xff));
   asm.bne(offscreen);
+  // Y minus one, except at zero, where the shadow keeps zero and the cell is
+  // drawn on the line below the one it asked for.
+  asm.lda(mem(ZP.t0));
+  asm.beq(onLineZero);
+  asm.dec(mem(ZP.t0));
+  asm.label(onLineZero);
   asm.lda(imm(tile & 0xff));
   asm.sta(mem(ZP.t2));
   asm.lda(imm(palette & 0x03));
