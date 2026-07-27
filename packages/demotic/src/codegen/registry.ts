@@ -54,7 +54,7 @@ export function unsupportedFor(program: Program): string[] {
 }
 
 /** Build a cartridge for whichever console the program was compiled for. */
-export function buildGame(program: Program, options: BuildOptions = {}): BuiltRom {
+export function buildGame(program: Program, options: BuildOptions = {}): Promise<BuiltRom> {
   const backend = BACKENDS.find((entry) => entry.consoles.includes(program.profile.id));
   if (!backend) {
     throw new Error(

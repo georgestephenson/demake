@@ -88,7 +88,7 @@ describe("gb audio cartridge", () => {
   });
 });
 
-describe("Level A — the ROM writes exactly the schedule", () => {
+describe("Level A — the ROM writes exactly the schedule", async () => {
   it.each(audioRomConsoles())("plays an arranged track tick for tick on %s", (consoleId) => {
     const script = trackFor(consoleId);
     const wanted = Math.min(TICKS, script.ticks.length);
@@ -104,8 +104,8 @@ describe("Level A — the ROM writes exactly the schedule", () => {
     ).toBeNull();
   });
 
-  it("plays a demade sound effect tick for tick", () => {
-    const script = demakeSfx(blipWav(), { console: "dmg" }).script;
+  it("plays a demade sound effect tick for tick", async () => {
+    const script = (await demakeSfx(blipWav(), { console: "dmg" })).script;
     expect(script.loopTick).toBe(-1);
     const actual = captureRomWrites(script, script.ticks.length);
     expect(firstDivergence(script.ticks, actual)).toBeNull();
@@ -122,8 +122,8 @@ describe("Level A — the ROM writes exactly the schedule", () => {
     expect(firstDivergence(expected, after)).toBeNull();
   });
 
-  it("a one-shot ends in silence and stays there", () => {
-    const script = demakeSfx(blipWav(), { console: "dmg" }).script;
+  it("a one-shot ends in silence and stays there", async () => {
+    const script = (await demakeSfx(blipWav(), { console: "dmg" })).script;
     const total = script.ticks.length;
     const captured = captureRomWrites(script, total + 40);
     // The stop block powers every DAC down once, then rests forever. Whatever

@@ -13,7 +13,15 @@
  * bundled once for the whole site rather than once per thread that wanted it.
  */
 
-import type { AutoDecisions, CandidateScore, FitStats, StrategyInfo, Warning } from "@demake/core";
+import type {
+  AutoDecisions,
+  CandidateScore,
+  FitStats,
+  Job,
+  JobOutcome,
+  StrategyInfo,
+  Warning,
+} from "@demake/core";
 import type { Layout, Program } from "@demake/demotic";
 
 /** The option set the UI edits — one field per `demake prep` flag (doc 05). */
@@ -115,6 +123,32 @@ export interface BuiltRomPayload {
 
 export type WorkerRequest =
   | { id: number; kind: "consoles" }
+  /**
+   * One unit of a tournament, run here rather than on the worker that wanted it
+   * (doc 04 §Running the tournament).
+   *
+   * Every instance of this worker holds both engines — it builds cartridges, and
+   * a cartridge's art and audio are demade through them — so an extra instance is
+   * a pool lane at no download cost, and needs no message but this one.
+   */
+  | { id: number; kind: "job"; job: Job }
+  /**
+   * The lanes, handed over once before the first build.
+   *
+   * Ports rather than workers, because the far end of each belongs to a lane the
+   * *page* started: candidates then travel straight between this worker and the
+   * lane, with neither the main thread relaying them nor a worker spawning
+   * workers of its own.
+   */
+  | { id: number; kind: "lanes"; ports: MessagePort[] }
+  /**
+   * The other side of that channel: a port to *answer* jobs on.
+   *
+   * A worker is told one or the other and never both, which is what makes the
+   * fan-out one level deep — a lane has no lanes, so a job it runs cannot fan
+   * out again.
+   */
+  | { id: number; kind: "serve"; port: MessagePort }
   | { id: number; kind: "strategies"; console: string }
   | { id: number; kind: "demo" }
   | { id: number; kind: "prep"; source: ArrayBuffer; options: PrepOptionsUi }
@@ -145,6 +179,9 @@ export type WorkerRequest =
 
 export type WorkerResponse =
   | { id: number; ok: true; kind: "consoles"; consoles: ConsoleInfo[] }
+  | { id: number; ok: true; kind: "job"; outcome: JobOutcome }
+  | { id: number; ok: true; kind: "lanes" }
+  | { id: number; ok: true; kind: "serve" }
   | { id: number; ok: true; kind: "strategies"; strategies: StrategyInfo[] }
   | { id: number; ok: true; kind: "demo"; png: ArrayBuffer }
   | { id: number; ok: true; kind: "prep"; result: PrepPayload }

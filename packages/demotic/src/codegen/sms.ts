@@ -34,6 +34,7 @@ import {
   SMS_HEADER_OFFSET,
   SMS_ORIGIN,
   SMS_ROM_SIZE,
+  type Executor,
 } from "@demake/core";
 
 import { getProfile } from "../profiles.js";
@@ -110,8 +111,12 @@ export const smsBackend: Backend<SmsEmitOptions, SmsAudio> = {
     return program.profile.id === "gg" ? GG_MEMORY : SMS_MEMORY;
   },
 
-  bindArt(program: Program, assets: AssetBytes): BoundAssets<SmsEmitOptions> {
-    const art = bindSmsArt(program, assets, program.profile.id);
+  async bindArt(
+    program: Program,
+    assets: AssetBytes,
+    executor?: Executor,
+  ): Promise<BoundAssets<SmsEmitOptions>> {
+    const art = await bindSmsArt(program, assets, program.profile.id, executor);
     return { emit: art.options, tiles: art.tiles, missing: art.missing };
   },
 
@@ -128,7 +133,12 @@ export const smsBackend: Backend<SmsEmitOptions, SmsAudio> = {
     );
   },
 
-  bindAudio(program: Program, assets: AssetBytes, layout: Layout): BoundAssets<SmsAudio> {
+  async bindAudio(
+    program: Program,
+    assets: AssetBytes,
+    layout: Layout,
+    executor?: Executor,
+  ): Promise<BoundAssets<SmsAudio>> {
     // The driver's state is work RAM the allocator set aside for it, which it only
     // does for a program that names audio — so a game with none reaches here with
     // nowhere to put a driver and does not need one.
@@ -136,9 +146,12 @@ export const smsBackend: Backend<SmsEmitOptions, SmsAudio> = {
     const bound =
       state === null
         ? { driver: undefined, missing: [] as readonly string[], notes: [] as readonly string[] }
-        : bindAudio(program, assets, {
-            build: (tracks, effects) => buildSmsGameAudio({ tracks, effects, state }),
-          });
+        : await bindAudio(
+            program,
+            assets,
+            { build: (tracks, effects) => buildSmsGameAudio({ tracks, effects, state }) },
+            executor,
+          );
     const names = program.tracks.length > 0 || program.sounds.length > 0;
     const driver = bound.driver;
     const options: SmsEmitOptions = driver
@@ -225,7 +238,7 @@ export function unsupportedSmsFeatures(program: Program): string[] {
 }
 
 /** Compile a program into a bootable `.sms` or `.gg`. */
-export function buildSmsRom(program: Program, options: SmsRomOptions = {}): BuiltRom {
+export function buildSmsRom(program: Program, options: SmsRomOptions = {}): Promise<BuiltRom> {
   return buildRom(program, smsBackend, options);
 }
 

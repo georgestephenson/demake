@@ -48,7 +48,7 @@ export interface RomMachine {
 export interface RomTarget {
   /** The console id a program is compiled for. */
   readonly console: string;
-  build(program: Program, options: BuildOptions): BuiltRom;
+  build(program: Program, options: BuildOptions): Promise<BuiltRom>;
   boot(bytes: Uint8Array): RomMachine;
 }
 
@@ -114,17 +114,31 @@ export class RomRunner {
   private readonly read = (address: number, length: number) =>
     this.machine.readMemory(address, length);
 
-  constructor(
+  private constructor(
     readonly program: Program,
-    options: BuildOptions = {},
-    readonly target: RomTarget = gbTarget,
+    built: BuiltRom,
+    readonly target: RomTarget,
   ) {
-    const built = target.build(program, options);
     this.layout = built.layout;
     this.rom = built.bytes;
     this.machine = target.boot(built.bytes);
     // Let the runtime finish initialising before the first input is offered.
     this.settle();
+  }
+
+  /**
+   * Build the cartridge and boot it.
+   *
+   * A factory rather than a constructor because building is asynchronous now:
+   * the art and audio tournaments may be spread across threads (doc 04 §Running
+   * the tournament), and a constructor cannot wait for one.
+   */
+  static async create(
+    program: Program,
+    options: BuildOptions = {},
+    target: RomTarget = gbTarget,
+  ): Promise<RomRunner> {
+    return new RomRunner(program, await target.build(program, options), target);
   }
 
   /**
@@ -168,13 +182,13 @@ export class RomRunner {
  * offered, exactly as `new Sim(program)` starts on tick zero with the entry
  * scene reset. Both sides therefore report tick 1 after one tape frame.
  */
-export function romTrace(
+export async function romTrace(
   program: Program,
   tape: InputTape,
   options: BuildOptions = {},
   target: RomTarget = gbTarget,
-): string {
-  const runner = new RomRunner(program, options, target);
+): Promise<string> {
+  const runner = await RomRunner.create(program, options, target);
   const lines: string[] = traceHeader(program);
   for (const frame of tape) {
     runner.step(frame);

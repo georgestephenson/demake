@@ -36,6 +36,7 @@ import {
 import type { ParsedValue } from "@demake/cli-spec";
 
 import type { CliEnv } from "../env.js";
+import { parseJobs, withPool } from "../parallel/pool.js";
 import { EXIT, type ExitCode } from "../exit-codes.js";
 import { CliError, resolveInput } from "../io.js";
 
@@ -183,7 +184,13 @@ export async function runBuild(
   let stats;
   let symbols: ReadonlyMap<string, number>;
   try {
-    const built = buildGame(program, { title, assets: loadAssets(env, program, sourcePath) });
+    const assets = loadAssets(env, program, sourcePath);
+    // Most of a build is the art and audio tournaments, and their candidates
+    // cannot see each other — so they get the machine's cores. The cartridge is
+    // the same bytes whatever `--jobs` says (doc 04 §Running the tournament).
+    const built = await withPool(parseJobs(str(values, "jobs")), (executor) =>
+      buildGame(program, { title, assets, ...(executor === undefined ? {} : { executor }) }),
+    );
     stats = built.stats;
     symbols = built.symbols;
     product = format === "sym" ? new TextEncoder().encode(formatSymbols(symbols)) : built.bytes;

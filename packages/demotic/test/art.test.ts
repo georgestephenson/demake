@@ -63,9 +63,9 @@ describe("what art a program needs", () => {
   });
 });
 
-describe("binding art to a build", () => {
-  it("places converted tiles after the built-in bank", () => {
-    const bound = bindArt(pong(), pongAssets());
+describe("binding art to a build", async () => {
+  it("places converted tiles after the built-in bank", async () => {
+    const bound = await bindArt(pong(), pongAssets());
     expect(bound.missing).toEqual([]);
     expect(bound.tiles8).toBeGreaterThan(0);
     expect(bound.extraTiles?.length).toBe(bound.tiles8 * TILE_BYTES);
@@ -75,8 +75,8 @@ describe("binding art to a build", () => {
     }
   });
 
-  it("names art it was not given rather than drawing something else silently", () => {
-    const bound = bindArt(pong(), new Map());
+  it("names art it was not given rather than drawing something else silently", async () => {
+    const bound = await bindArt(pong(), new Map());
     expect(bound.missing.sort()).toEqual([
       "ball.svg",
       "paddle.svg",
@@ -86,8 +86,8 @@ describe("binding art to a build", () => {
     expect(bound.sprites).toBeUndefined();
   });
 
-  it("puts the converted tiles in the ROM, not just in the plan", () => {
-    const built = buildGbRom(pong(), { assets: pongAssets() });
+  it("puts the converted tiles in the ROM, not just in the plan", async () => {
+    const built = await buildGbRom(pong(), { assets: pongAssets() });
     expect(built.stats.artTiles).toBeGreaterThan(0);
     expect(built.stats.missingArt).toEqual([]);
     const bank = built.symbols.get("TileBank") as number;
@@ -98,17 +98,19 @@ describe("binding art to a build", () => {
     expect(converted.some((byte) => byte !== 0)).toBe(true);
   });
 
-  it("produces the same cartridge every time it converts the same art", () => {
-    const first = buildGbRom(pong(), { assets: pongAssets() });
-    const second = buildGbRom(pong(), { assets: pongAssets() });
+  it("produces the same cartridge every time it converts the same art", async () => {
+    const first = await buildGbRom(pong(), { assets: pongAssets() });
+    const second = await buildGbRom(pong(), { assets: pongAssets() });
     expect([...first.bytes]).toEqual([...second.bytes]);
   });
 });
 
-describe("the art on screen", () => {
+describe("the art on screen", async () => {
   /** Run to the play scene and read OAM back out of a real machine. */
-  function play(assets?: Map<string, Uint8Array>): { machine: Gameboy; oam: Uint8Array } {
-    const built = buildGbRom(pong(), assets ? { assets } : {});
+  async function play(
+    assets?: Map<string, Uint8Array>,
+  ): Promise<{ machine: Gameboy; oam: Uint8Array }> {
+    const built = await buildGbRom(pong(), assets ? { assets } : {});
     const machine = new Gameboy(built.bytes);
     for (let frame = 0; frame < 200; frame += 1) {
       machine.setButtons(frame > 5 && frame < 12 ? ["a"] : []);
@@ -117,10 +119,10 @@ describe("the art on screen", () => {
     return { machine, oam: machine.readMemory(0xfe00, 0xa0) };
   }
 
-  it("gives each object the tiles its own art was converted into", () => {
-    const built = buildGbRom(pong(), { assets: pongAssets() });
+  it("gives each object the tiles its own art was converted into", async () => {
+    const built = await buildGbRom(pong(), { assets: pongAssets() });
     const ball = built.stats; // keeps the build in scope for the message below
-    const { oam } = play(pongAssets());
+    const { oam } = await play(pongAssets());
     const used = new Set<number>();
     for (let entry = 0; entry < 40; entry += 1) {
       // A parked entry sits at y = 0, which is off the top of the screen.
@@ -134,8 +136,8 @@ describe("the art on screen", () => {
     }
   });
 
-  it("draws more than one shade, so the art is art and not a block", () => {
-    const { machine } = play(pongAssets());
+  it("draws more than one shade, so the art is art and not a block", async () => {
+    const { machine } = await play(pongAssets());
     const shades = new Set<string>();
     const frame = machine.framebuffer;
     for (let at = 0; at < frame.length; at += 4) {
@@ -144,8 +146,8 @@ describe("the art on screen", () => {
     expect(shades.size).toBeGreaterThan(2);
   });
 
-  it("still plays with no art at all, drawing the built-in block", () => {
-    const { oam } = play();
+  it("still plays with no art at all, drawing the built-in block", async () => {
+    const { oam } = await play();
     const drawn = [...Array(40).keys()].filter((entry) => oam[entry * 4] !== 0);
     expect(drawn.length).toBeGreaterThan(0);
     for (const entry of drawn) expect(oam[entry * 4 + 2]).toBeLessThan(BUILTIN_TILES);
@@ -166,11 +168,11 @@ describe("the art on screen", () => {
  */
 const COLOUR_TIMEOUT = 120_000;
 
-describe("art demade for colour hardware", { timeout: COLOUR_TIMEOUT }, () => {
+describe("art demade for colour hardware", { timeout: COLOUR_TIMEOUT }, async () => {
   const pongColor = () => compile(text("pong.dmt"), { profile: getProfile("gbc") });
 
-  it("fits the art into sub-palettes and leaves one for the font", () => {
-    const bound = bindArt(pongColor(), pongAssets());
+  it("fits the art into sub-palettes and leaves one for the font", async () => {
+    const bound = await bindArt(pongColor(), pongAssets());
     // Objects name a palette; the reserved one is never one of them.
     for (const art of bound.sprites?.values() ?? []) {
       expect(art.palette).toBeGreaterThanOrEqual(0);
@@ -182,11 +184,11 @@ describe("art demade for colour hardware", { timeout: COLOUR_TIMEOUT }, () => {
     const font = bound.objectPalettes?.subarray(SYSTEM_PALETTE * PALETTE_BYTES);
     expect(font?.some((byte) => byte !== 0)).toBe(true);
     // …and a mono build has none of it, because that hardware has no palettes.
-    expect(bindArt(pong(), pongAssets()).objectPalettes).toBeUndefined();
+    expect(await bindArt(pong(), pongAssets()).objectPalettes).toBeUndefined();
   });
 
-  it("attributes every backdrop cell, and never to the font's palette", () => {
-    const bound = bindArt(pongColor(), pongAssets());
+  it("attributes every backdrop cell, and never to the font's palette", async () => {
+    const bound = await bindArt(pongColor(), pongAssets());
     const backdrops = [...(bound.backdrops?.values() ?? [])];
     expect(backdrops.length).toBeGreaterThan(0);
     for (const backdrop of backdrops) {
@@ -200,8 +202,8 @@ describe("art demade for colour hardware", { timeout: COLOUR_TIMEOUT }, () => {
     }
   });
 
-  it("puts a cell's tile and its attribute in the same bank pair", () => {
-    const bound = bindArt(pongColor(), pongAssets());
+  it("puts a cell's tile and its attribute in the same bank pair", async () => {
+    const bound = await bindArt(pongColor(), pongAssets());
     const tiles = BUILTIN_TILES + bound.tiles8;
     for (const backdrop of bound.backdrops?.values() ?? []) {
       for (let cell = 0; cell < backdrop.map.length; cell += 1) {
@@ -212,17 +214,20 @@ describe("art demade for colour hardware", { timeout: COLOUR_TIMEOUT }, () => {
     }
   });
 
-  it("produces the same colour cartridge every time it converts the same art", () => {
-    const first = buildGbRom(pongColor(), { assets: pongAssets() });
-    const second = buildGbRom(pongColor(), { assets: pongAssets() });
+  it("produces the same colour cartridge every time it converts the same art", async () => {
+    const first = await buildGbRom(pongColor(), { assets: pongAssets() });
+    const second = await buildGbRom(pongColor(), { assets: pongAssets() });
     expect([...first.bytes]).toEqual([...second.bytes]);
   });
 
-  it("draws the game in colours the monochrome build cannot show", () => {
-    const shades = (consoleId: string): Set<string> => {
-      const built = buildGbRom(compile(text("pong.dmt"), { profile: getProfile(consoleId) }), {
-        assets: pongAssets(),
-      });
+  it("draws the game in colours the monochrome build cannot show", async () => {
+    const shades = async (consoleId: string): Promise<Set<string>> => {
+      const built = await buildGbRom(
+        compile(text("pong.dmt"), { profile: getProfile(consoleId) }),
+        {
+          assets: pongAssets(),
+        },
+      );
       const machine = new Gameboy(built.bytes);
       for (let frame = 0; frame < 200; frame += 1) {
         machine.setButtons(frame > 5 && frame < 12 ? ["a"] : []);
@@ -237,7 +242,7 @@ describe("art demade for colour hardware", { timeout: COLOUR_TIMEOUT }, () => {
     };
     // A Game Boy has exactly four, and they are the green ramp; the colour
     // build has more than that on one screen.
-    expect(shades("gb").size).toBeLessThanOrEqual(4);
-    expect(shades("gbc").size).toBeGreaterThan(8);
+    expect((await shades("gb")).size).toBeLessThanOrEqual(4);
+    expect((await shades("gbc")).size).toBeGreaterThan(8);
   });
 });

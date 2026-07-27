@@ -357,7 +357,7 @@ bundled track or effect on arrival instead, so every section demos itself.
   Contrast is always set with an explicit colour, **never with opacity** — a
   translucent foreground composites against whatever is behind it, which is both
   a measured contrast failure and genuinely harder to read.
-- Budget: < 300 KB JS gzipped before WASM codecs (lazy-loaded per input format);
+- Budget: < 310 KB JS gzipped before WASM codecs (lazy-loaded per input format);
   Lighthouse ≥ 95 across the board, checked in CI. The figure is a **sum over the
   whole site** — entry chunk, all five lazy sections, both workers — which is more
   than any one visit costs: opening the heaviest section downloads about 150 KB.
@@ -378,5 +378,18 @@ bundled track or effect on arrival instead, so every section demos itself.
   also stops the tab freezing while a colour backdrop is fitted, and it restores
   the rule the rest of the app already followed: the workers are the only place
   the page touches an engine.
+
+  **It moved once, from 300, and the arithmetic is worth keeping.** By the time
+  the Sega vertical and its Z80 audio driver had landed the site sat 36 bytes
+  under 300 KB — a coincidence rather than headroom. Running the tournaments in
+  parallel (doc 04 §Running the tournament) then cost 3.3 KB, nearly all of it the
+  engine's executor seam and the content-keyed prologue cache that stops a fan-out
+  decoding its source once per candidate. Both live in `@demake/core`, so the CLI
+  half of that work pays for them too. The page's own share is nil, and that was
+  the design rather than luck: a lane is *another instance of `core.worker.ts`*,
+  which already holds both engines because it compiles cartridges, so the browser
+  has the chunk cached and starting six of them downloads nothing. The alternative
+  was built and measured first — a purpose-built lane worker gets its own module
+  graph and re-ships a whole engine, 41 KB.
 - Browser matrix: last 2 versions of Chrome/Firefox/Safari/Edge, tested via
   Playwright in CI (functional + determinism suites).

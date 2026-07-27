@@ -195,10 +195,17 @@ packages/core/       @demake/core — the engine (zero platform deps; ESM; ships
                      cartridge wrappers — shared by the Demotic game backends and
                      the audio driver, so no backend owns the encoder for its own CPU
   src/math/          deterministic kernels (exp/log/pow/cbrt/sin) + PCG32 PRNG
+  src/parallel/      the executor seam: work described as jobs, run wherever the
+                     edge says. `jobs.ts` is the contract and the inline runner
+                     (the reference answer); `pool.ts` is the scheduling every
+                     edge shares — core supplies no threads and never will
   src/color/         sRGB/linear/Oklab, hardware-lattice snapping, color parsing
   src/image/         PNG codec (inflate/deflate/decode/encode), DAC models, decode dispatch
   src/consoles/      ConsoleSpec schema + one declarative spec per console (21 of them)
   src/pipeline/      stages 0–7, the tiled fitter, mono + TMS row-pair paths, tournament
+  src/pipeline/candidate.ts  one candidate, start to finish — the unit of parallel
+                     work, and the content-keyed prologue memo that stops a
+                     fan-out decoding its source once per candidate
   src/codegen/       gen: per-family backends (gb, nes, snes, sms, md, sg1000, gba, nds, pce, wsc), detector
   src/image/svg/     our SVG rasteriser: XML, shapes, paint, scanline fill (doc 15 step 2)
   src/pipeline/sprite.ts  object + tile art for games: transparency, shades or
@@ -207,6 +214,8 @@ packages/core/       @demake/core — the engine (zero platform deps; ESM; ships
 packages/cli-spec/   @demake/cli-spec — single source of truth: spec → parser, help, man
 packages/cli/        demake — thin CLI over core; re-exports core for scripting
   src/rom/           edge: assemble `--format rom` per family (RGBDS / cc65 / WLA-DX / m68k / ARM / NASM)
+  src/parallel/      edge: the `worker_threads` pool `--jobs` spends. A lane owns a
+                     thread; the scheduling is core's, shared with the web app's
   man/               generated roff man pages (never hand-edited)
 rom-harness/{gb,nes,snes,sms,md,sg1000,gba,nds,pce,wsc}/  the display programs `gen --format rom` assembles
 emu-harness/gb/      SameBoy headless capturer for the GB pixel-perfect E2E (doc 10)
@@ -288,7 +297,9 @@ packages/web/        the site (doc 07): one shell over five sections, all but th
   src/worker/        core.worker.ts (images *and* game cartridges) and
                      audio.worker.ts (music + sound): the only places the page
                      touches an engine, and the only places @demake/core is
-                     bundled — a second copy is what the JS budget notices
+                     bundled — a second copy is what the JS budget notices. Extra
+                     instances of core.worker are the pool lanes, which is why
+                     they cost nothing to download
   src/sections/      the lazy sections; art's panes live in src/components/
   src/lib/           option records ⇄ engine options ⇄ equivalent command line,
                      the bundled demo library, and audio-player.ts (playback only)
@@ -337,6 +348,15 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
 - **Output-byte changes** require re-baselined goldens **+ a `minor` changeset +
   a release-note line, all in the same PR** (doc 09 §Stability). Patch releases
   never change output bytes.
+- **How many cores ran a tournament is never an input** (doc 04 §Running the
+  tournament). Candidates are spread over an `Executor` the edge supplies, and
+  the winner is reduced in _portfolio_ order — so `--jobs 1` and `--jobs 16` write
+  the same file, and lane count appears in no manifest and no `--json`. Two things
+  follow and are easy to undo by accident: an executor must resolve one outcome
+  per job **in the order the jobs were given**, and a reduce must walk the
+  candidate list rather than arrival. The k-means restart loop inside a single fit
+  shares one PRNG stream and is deliberately _not_ parallel — spreading it would
+  change the draw order, which is an output-byte change rather than a speed-up.
 - **`packages/cli-spec` is the only place flags are defined** (doc 05); the
   parser, `--help`, and man pages are generated from it. Man pages are never
   hand-edited — run `pnpm gen:man` and a test enforces they match the spec.
@@ -654,8 +674,19 @@ packages/demotic/test/rom.test.ts` builds all seven fixture games and diffs raw
   conversion by content hash, which is what keeps the web app's per-keystroke
   rebuild instant and the test suite under its budget; the cache is a speed
   optimisation over a pure function and must never become one that changes
-  bytes. The web app's ROM pane defers its build by a frame and says
-  "demaking…", because a tab that silently stopped for five seconds looks broken.
+  bytes. The web app's ROM pane says "demaking…" and stays live while it happens,
+  because a tab that silently stopped for five seconds looks broken.
+- **A build is a fan-out, and the order things are _interned_ is not the order
+  they are demade in.** `buildRom` demakes art and audio at the same time
+  (`allSettled`, so art's error still wins), and the Game Boy converts a scene's
+  backdrops concurrently — but interns them in scene order, because a tile's
+  number is where it landed. The NES converts its backdrops one at a time instead:
+  what a picture may spend is what the ones before it left. Both are correct and
+  they are correct for different reasons, so neither may be made to look like the
+  other. `packages/demotic/test/parallel.test.ts` builds the library under an
+  executor that runs jobs backwards and compares cartridges byte for byte — and
+  runs the spread build _first_, because the conversion memo would otherwise let a
+  second build pass without a candidate ever reaching the executor.
 - **Art is sized by the _instance_, not the class.** One asset used at two
   different `width`s is converted twice, at both boxes, and keyed by
   `name@WxH` — because the box is the collision box, and drawing the larger
@@ -1019,6 +1050,16 @@ Two files plus fixtures (doc 02 §Extensibility):
   the whole `prep` tournament. That is the price of the size assertions — they
   are the only thing that would catch a cartridge overflowing — so before
   trimming it, check that what you are removing is not the coverage.
+- **The parallel contract is tested at four levels, and they are not redundant.**
+  `packages/core/test/parallel.test.ts` pins the ordering rules with executors
+  that run jobs backwards and interleave two tournaments (fast, no threads);
+  `packages/cli/test/pool.test.ts` does it over real `worker_threads` and is
+  therefore run against the _built_ pool, self-skipping without `dist` the way
+  `binary.test.ts` does; `packages/demotic/test/parallel.test.ts` compares whole
+  cartridges across the example library; and
+  `packages/web/test/e2e/determinism.spec.ts` compares the page's — built over
+  real Web Workers — against the CLI's. A change to the seam should keep all four
+  passing or explain which one it invalidated.
 - The ROM-build E2E (`packages/cli/test/rom.e2e.test.ts`) assembles a real
   `.gb`/`.gbc` through RGBDS; it self-skips when the toolchain is absent, so run
   `pnpm toolchains` first to exercise it. RGBDS is provisioned by a source build

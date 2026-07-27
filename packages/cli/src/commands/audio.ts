@@ -29,6 +29,7 @@ import type { ParsedValue } from "@demake/cli-spec";
 import { getConsole } from "@demake/core";
 
 import type { CliEnv } from "../env.js";
+import { parseJobs, withPool } from "../parallel/pool.js";
 import { EXIT, type ExitCode } from "../exit-codes.js";
 import { CliError, emitProduct, resolveInput } from "../io.js";
 
@@ -267,7 +268,9 @@ export async function runSfx(
   const title = str(values, "title");
   if (title) options.title = title;
 
-  const result = demakeSfx(bytes, options);
+  const result = await withPool(parseJobs(str(values, "jobs")), (executor) =>
+    demakeSfx(bytes, executor === undefined ? options : { ...options, executor }),
+  );
   const emit = emitProduct(
     env,
     result.artifact,

@@ -239,6 +239,7 @@ demake prep photo.jpg -c nes --strategy photo-lanczos-fs -o out.png
 | `--scale <kernel>` | majority/lanczos3/mitchell/box/nearest (default auto) |
 | `--profile art\|photo\|auto` | Force source-analysis profile |
 | `--effort fast\|default\|max` | Optimizer budget (restarts/annealing) |
+| `--jobs <n>\|auto` | Candidates to fit at once (default `auto` = one lane per core, minus one). A speed control only: the winner is decided in portfolio order, so every value writes the same file (doc 04 §Running the tournament) |
 | `--palette-colors N`, `--palettes N` | Override spec-derived palette shape (clamped to hardware) |
 | `--background <color>`, `--keep-transparency` | Alpha policy |
 | `--metric oklab\|wrgb`, `--seed N`, `--par auto\|square` | Reproducibility & tuning |
