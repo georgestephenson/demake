@@ -277,12 +277,30 @@ interface Backdrop {
 }
 
 /**
+ * Rows of the name table the game's own screen covers.
+ *
+ * Twenty-eight, not the raster's thirty: the profile's screen is the
+ * overscan-safe rect, so `screenbottom` is row 28 and a paddle at
+ * `screenheight - 1` is row 27 (`profiles.ts` §the cell grid). A picture fitted
+ * to thirty is therefore a picture whose edges are not the game's — pong's
+ * scoreboard band landed a row and a half below the HUD written on it, and the
+ * court's bottom rail sat below the floor the ball bounces off.
+ *
+ * The two rows past it are what a television would have cropped. They are drawn
+ * rather than left blank, and drawn with a repeat of the last row: a level scene
+ * paints those rows from its own grid for exactly the same reason (`emit.ts`
+ * §the full redraw), and sixteen lines of black under the picture is the one
+ * thing worse than sixteen lines of overscan.
+ */
+const GAME_ROWS = 28;
+
+/**
  * Demake one scene's backdrop through the image pipeline.
  *
- * Exactly the window the PPU displays, in pixels — 32×30 cells. Letting `prep`
- * choose would fit the *source's* size, and a title screen has to be a screenful:
- * the nametable it produces and the block copy that paints it are the same
- * rectangle.
+ * Exactly the window the *game* plays in, in pixels — 32×28 cells, extended to
+ * the name table's thirty by {@link extendToRaster}. Letting `prep` choose would
+ * fit the *source's* size, and a title screen has to be a screenful: the
+ * nametable it produces and the block copy that paints it are the same rectangle.
  */
 async function demakeBackdrop(
   bytes: Uint8Array,
@@ -292,7 +310,7 @@ async function demakeBackdrop(
   const spec = getConsole("nes");
   const fitted = await prep(bytes, {
     console: "nes",
-    size: { w: NES_MEMORY.viewW * 8, h: NES_MEMORY.viewH * 8 },
+    size: { w: NES_MEMORY.viewW * 8, h: GAME_ROWS * 8 },
     fit: "cover",
     // All four. A picture is not asked to give one up for the font any more: a
     // caption takes a colour slot the fit left empty, and only compromises where
@@ -319,13 +337,43 @@ async function demakeBackdrop(
     fitted.image.palettes.map((palette) => palette.colors),
     backdrop,
   );
+  const raster = extendToRaster(find(".nam.bin"), find(".attr.bin"));
   return {
     chr: find(".chr.bin"),
-    map: find(".nam.bin"),
-    attr: find(".attr.bin"),
+    map: raster.map,
+    attr: raster.attr,
     palette: packed.bytes,
     fontPalette: packed.fontPalette,
   };
+}
+
+/**
+ * A 32×28 picture as the 32×30 name table the PPU reads.
+ *
+ * The two rows below the game's screen repeat the last one — and so must their
+ * attributes, or the overscan strip shows the right tiles in whatever palette
+ * block row seven happened to hold. A 16×16 attribute cell is two rows, so row 27
+ * is the *bottom* half of block row six, and it becomes both halves of block row
+ * seven: the second half covers rows 30 and 31, which do not exist, and giving
+ * them the same answer is cheaper than caring.
+ */
+function extendToRaster(map: Uint8Array, attr: Uint8Array): { map: Uint8Array; attr: Uint8Array } {
+  const width = NES_MEMORY.viewW;
+  const full = new Uint8Array(width * NES_MEMORY.viewH);
+  full.set(map.subarray(0, width * GAME_ROWS), 0);
+  const last = map.subarray(width * (GAME_ROWS - 1), width * GAME_ROWS);
+  for (let row = GAME_ROWS; row < NES_MEMORY.viewH; row += 1) full.set(last, row * width);
+
+  const table = new Uint8Array(64);
+  table.set(attr.subarray(0, 64), 0);
+  const above = (GAME_ROWS >> 2) - 1; // the block row row 27 sits in
+  for (let column = 0; column < 8; column += 1) {
+    const byte = table[above * 8 + column] as number;
+    const left = (byte >> 4) & 3;
+    const right = (byte >> 6) & 3;
+    table[(above + 1) * 8 + column] = left | (right << 2) | (left << 4) | (right << 6);
+  }
+  return { map: full, attr: table };
 }
 
 /**

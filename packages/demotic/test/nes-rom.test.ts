@@ -223,7 +223,10 @@ describe("the NES art budget", { timeout: ART_TIMEOUT }, async () => {
       const image = (
         await prep(asset(file), {
           console: "nes",
-          size: { w: 32 * 8, h: 30 * 8 },
+          // The game's screen, which is the overscan-safe twenty-eight rows and
+          // not the raster's thirty — the picture's edges have to be the ones the
+          // ball bounces off (`nes-art.ts` §`GAME_ROWS`).
+          size: { w: 32 * 8, h: 28 * 8 },
           fit: "cover",
           maxSubPalettes: BACKDROP_PALETTES,
           maxTiles: (fit as { budget: number }).budget,
@@ -242,7 +245,15 @@ describe("the NES art budget", { timeout: ART_TIMEOUT }, async () => {
       const table = (drawn as { table: 0 | 1 }).table * 0x1000;
       const gotMap = (drawn as { map: Uint8Array }).map;
 
-      expect(gotMap.length, scene.name).toBe(wantMap.length);
+      // The name table is the picture plus the two overscan rows, which repeat
+      // its last one rather than showing black.
+      expect(gotMap.length, scene.name).toBe(32 * 30);
+      expect(wantMap.length, scene.name).toBe(32 * 28);
+      for (let row = 28; row < 30; row += 1) {
+        expect([...gotMap.subarray(row * 32, row * 32 + 32)], `${scene.name} overscan row`).toEqual(
+          [...gotMap.subarray(27 * 32, 28 * 32)],
+        );
+      }
       let differing = 0;
       for (let cell = 0; cell < wantMap.length; cell += 1) {
         const want = (wantMap[cell] as number) * TILE_BYTES;
@@ -255,8 +266,16 @@ describe("the NES art budget", { timeout: ART_TIMEOUT }, async () => {
         }
       }
       expect(differing, `${scene.name} cells differing from prep's`).toBe(0);
-      // And its attributes and palette, which decide the colour of every one.
-      expect([...(drawn as { attr: Uint8Array }).attr]).toEqual([...find(".attr.bin")]);
+      // And its attributes, which decide the colour of every one — the picture's
+      // own for the seven block rows it covers, and the eighth synthesised from
+      // row 27's so the repeated rows keep their palettes.
+      const gotAttr = (drawn as { attr: Uint8Array }).attr;
+      expect([...gotAttr.subarray(0, 56)]).toEqual([...find(".attr.bin").subarray(0, 56)]);
+      for (let column = 0; column < 8; column += 1) {
+        const above = gotAttr[48 + column] as number;
+        const want = ((above >> 4) & 3) | (((above >> 6) & 3) << 2);
+        expect(gotAttr[56 + column]! & 0x0f, `${scene.name} overscan attributes`).toBe(want);
+      }
     }
   });
 });

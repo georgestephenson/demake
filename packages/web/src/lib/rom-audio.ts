@@ -70,6 +70,19 @@ export class RomAudio {
   private readonly scratchRight: Float32Array;
   /** Where the next buffer starts, on the context's clock. */
   private cursor = 0;
+  /**
+   * Buffers handed to the device that have not finished playing.
+   *
+   * Scheduling runs a tenth of a second ahead, so at any moment there is audio
+   * queued that the listener has not heard yet. When the stream is re-pointed —
+   * a rebuilt cartridge, a different console, a Restart — that queue is the *old*
+   * machine's, and nothing else can stop it: the sink is replaced and the cursor
+   * reset, but a started `AudioBufferSourceNode` plays regardless of what
+   * produced it. The result is the last cartridge's music over the new one's for
+   * a fraction of a second, at whatever moment the page happened to rebuild —
+   * which is what a stray tone at an unaccountable time sounds like.
+   */
+  private queued = new Set<AudioBufferSourceNode>();
 
   sink: StreamSink;
 
@@ -116,9 +129,22 @@ export class RomAudio {
    * fed an NES's clocks would play the game at forty-three percent speed.
    */
   attach(machine: Listenable): void {
+    this.silence();
     this.sink = this.newSink(machine.apu.clockHz);
     machine.audioSink = this.sink;
     this.cursor = 0;
+  }
+
+  /**
+   * Drop whatever is still queued for the device.
+   *
+   * `stop()` on a source that has already finished is legal and does nothing, so
+   * the set is simply emptied — the nodes remove themselves from it as they end,
+   * and this is the path for the ones that have not.
+   */
+  private silence(): void {
+    for (const source of this.queued) source.stop();
+    this.queued.clear();
   }
 
   /**
@@ -136,6 +162,7 @@ export class RomAudio {
   /** Start (or restart) playback; a browser needs a user gesture for the first. */
   async resume(): Promise<void> {
     await this.context.resume();
+    this.silence();
     this.sink.clear();
     this.cursor = 0;
   }
@@ -183,6 +210,8 @@ export class RomAudio {
     const source = this.context.createBufferSource();
     source.buffer = buffer;
     source.connect(this.context.destination);
+    source.onended = () => this.queued.delete(source);
+    this.queued.add(source);
     source.start(this.cursor);
     this.cursor += count / this.context.sampleRate;
   }
@@ -190,6 +219,7 @@ export class RomAudio {
   /** Stop playing and let the machine run silently again. */
   async suspend(machine: Listenable | null): Promise<void> {
     if (machine) machine.audioSink = undefined;
+    this.silence();
     this.sink.clear();
     this.cursor = 0;
     if (this.context.state === "running") await this.context.suspend();

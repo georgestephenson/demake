@@ -223,6 +223,10 @@ Two further consequences of authoring in cells, unchanged:
   `ConsoleSpec`'s `overscanSafe` rect. The raw NES frame is 30 cells tall but only
   28 are reliably visible, so something at raw `screenheight - 1` sits in
   overscan. `rawscreenwidth`/`rawscreenheight` remain for callers who know.
+  A backdrop is demade at that same safe area rather than at the raw frame, so a
+  picture's edges are the edges the game's rules talk about; the rows past it are
+  drawn with a repeat of the last one, because a television would have cropped
+  them and black would not be an improvement.
 - Speeds are per *second*, divided by the frame rate at compile time, so a 50 Hz
   build plays at the same speed as a 60 Hz one rather than 5/6 as fast.
 

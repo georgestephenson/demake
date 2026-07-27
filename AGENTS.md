@@ -805,6 +805,19 @@ packages/demotic/test/rom.test.ts` builds all seven fixture games and diffs raw
   compiled, so the blocks it covers are switched to the font's palette in the
   table the scene uploads — not at run time, and not per cell. An object whose
   _position_ a rule can change is skipped, because its blocks are not knowable.
+- **The picture is fitted to the game's screen, not to the raster.** The profile's
+  screen is the overscan-safe 28 rows and the name table is 30, and for a while
+  backdrops were demade at 30 — so a picture's edges were not the edges the rules
+  talk about: pong's scoreboard band sat below the HUD written on it and the
+  court's bottom rail below the floor the ball bounces off. `GAME_ROWS` is the
+  fit's height and `extendToRaster` repeats the last row into the two overscan
+  ones, attributes included, because a palette covers a 16×16 block and the
+  eighth block row would otherwise hold whatever zero means.
+- **A sprite whose top row is line 0 is drawn a line low, not dropped.** An
+  object is drawn on the line _after_ its Y, so that one position would need a
+  shadow of minus one — and rejecting it costs the whole object, which is how the
+  opponent went missing in a game whose trace was perfect. The bounds test is on
+  the position and the subtraction happens after it.
 - **Colour zero of every background palette is the same universal backdrop.** So
   the font's palette gets three colours and its ink is chosen against the
   backdrop it will be read on — dark ink over a light one, light over a dark. A
@@ -851,6 +864,29 @@ is the game.
   in the emitter. Anything that made a _rule_ compile differently per console
   would break the property that makes the second machine trustworthy — the same
   one the Game Boy Color build rests on.
+- **And a sprite's position is a _frame_ position, so it carries that window's
+  origin itself.** The background is moved into the window by the scroll
+  registers; nothing moves the sprite table, so `PushSprite` adds `windowOrigin`
+  and every caller is a screen coordinate. Bias one layer and not the other and
+  they disagree about where the world starts — an object at `y 0` lands 24 lines
+  above the LCD and is simply not there. It goes on _before_ the entry count is
+  loaded, because the count stays in `a` from the room check into the address
+  arithmetic; after it, every object shares slot zero and nothing is drawn.
+- **An interrupt's flag is not scratch.** `layout.scratch` is four numbered words
+  that are valid for the length of one routine, and a handler writes its byte in
+  the middle of whatever the game was doing — so the frame flag and the Pause
+  latch have their own bytes (`MemoryPlan.interruptBytes`, allocated last so no
+  other console's map moves). They were `S.w3`, which `Mod16` uses for its
+  divisor, so a frame boundary inside `random()`'s sixteen-iteration loop
+  returned a draw outside its own bounds. It presents as a game that is
+  occasionally, unaccountably wrong, and no tick can be named — which is also why
+  a change that only makes the frame _shorter_ can be the thing that reveals it.
+- **The sprite table is uploaded as far as the list, not as far as the table.**
+  `$D0` ends it, `ClearRestOfOam` parks one there, so `UploadFrame` sends
+  `count + 1` Y bytes and `count` pairs — and `otir` sends each run in one
+  instruction. All 192 bytes every frame was thirteen per cent of pong's tick for
+  eleven sprites. `otir` is safe here because this runs inside the blanking
+  interval by construction; do not reach for it on a path that might not.
 - **A name-table entry is two bytes**, so `cellAttributes` is true here: the
   second byte carries the palette-select, flip and priority bits. Same shape as
   the Game Boy Color's attribute byte, reached by different hardware.
