@@ -82,6 +82,7 @@ export {
   type AudioRomOptions,
   type AudioRomStats,
   type BuiltAudioRom,
+  type ChannelTag,
   type DriverData,
 } from "./rom/index.js";
 export {
@@ -102,6 +103,15 @@ export {
   type NesGameAudioInput,
   type NesGameAudioStats,
 } from "./rom/nes-game.js";
+export {
+  buildSmsGameAudio,
+  resolveSmsClock,
+  smsChannelTag,
+  SMS_AUDIO_BYTES,
+  type SmsGameAudio,
+  type SmsGameAudioInput,
+  type SmsGameAudioStats,
+} from "./rom/sms-game.js";
 
 // --- hearing it --------------------------------------------------------------
 export { render, type RenderAudioOptions } from "./render.js";

@@ -91,6 +91,12 @@ importers:
       '@demake/dmg':
         specifier: workspace:*
         version: link:../dmg
+      '@demake/nes':
+        specifier: workspace:*
+        version: link:../nes
+      '@demake/sms':
+        specifier: workspace:*
+        version: link:../sms
 
   packages/dmg:
     dependencies:

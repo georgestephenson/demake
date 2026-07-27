@@ -25,7 +25,9 @@
   },
   "devDependencies": {
     "@demake/chip": "workspace:*",
-    "@demake/dmg": "workspace:*"
+    "@demake/dmg": "workspace:*",
+    "@demake/nes": "workspace:*",
+    "@demake/sms": "workspace:*"
   },
   "publishConfig": {
     "access": "public",

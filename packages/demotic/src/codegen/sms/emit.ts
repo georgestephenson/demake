@@ -36,6 +36,7 @@
  * decides what the game does.
  */
 
+import { AUDIO_STOP, type SmsGameAudio } from "@demake/audio";
 import { label, type Ref } from "@demake/core";
 
 import type { InstanceDef, RuleDef } from "../../program.js";
@@ -172,6 +173,19 @@ export interface SmsEmitOptions {
   palette?: Uint8Array;
   /** Per-scene colour RAM, where a backdrop chose its own. */
   scenePalettes?: ReadonlyMap<string, Uint8Array>;
+  /**
+   * The game's audio driver, already built from its demade tracks and effects.
+   *
+   * Absent for a game with no audio, and then the ROM is exactly what it was
+   * before sound existed — no counter in the interrupt, no service call in the
+   * main loop, no driver. Pulled in by a game that asks for it, like everything
+   * else.
+   */
+  audio?: SmsGameAudio;
+  /** Driver index of each of the program's sounds, or `-1` when unsupplied. */
+  effectIndices?: readonly number[];
+  /** Which track each scene plays, as an index into the driver's table. */
+  sceneTracks?: readonly number[];
 }
 
 /** Dispatch on the running scene to one of a set of labels. */
@@ -203,9 +217,9 @@ export function emitProgram(ctx: SmsCtx, options: SmsEmitOptions = {}): void {
     if (found) levelFor.set(scene.index, found);
   }
 
-  emitVectors(ctx);
+  emitVectors(ctx, options);
   emitReset(ctx, options);
-  emitMainLoop(ctx);
+  emitMainLoop(ctx, options.audio !== undefined);
   emitInput(ctx);
   emitTickDispatch(ctx, scenes);
   emitSceneChange(ctx, scenes);
@@ -219,6 +233,7 @@ export function emitProgram(ctx: SmsCtx, options: SmsEmitOptions = {}): void {
 
   emitRenderHelpers(ctx);
   emitTileContactHelper(ctx);
+  if (options.audio) options.audio.emitCode(asm);
   ctx.finish();
 
   // --- data ------------------------------------------------------------------
@@ -253,6 +268,20 @@ export function emitProgram(ctx: SmsCtx, options: SmsEmitOptions = {}): void {
       asm.bytes(palette);
     }
   }
+  if (options.audio) {
+    if (program.tracks.length > 0) {
+      asm.label("SceneTracks");
+      // One byte per scene: the request value that starts its track, or the one
+      // that stops the music. A table rather than a dispatch because a scene
+      // change already costs a redraw, and this is the cheapest thing in it.
+      for (const scene of scenes) {
+        const track = options.sceneTracks?.[scene.index] ?? -1;
+        asm.db(track < 0 ? AUDIO_STOP : track + 1);
+      }
+    }
+    options.audio.emitData(asm);
+  }
+
   asm.label("TileBank");
   asm.bytes(options.bank ?? new Uint8Array(0));
   asm.label("Palette");
@@ -288,7 +317,7 @@ function defaultPalette(): Uint8Array {
  * over the vectors rather than a header the console reads — unlike both other
  * machines, where the entry point is data.
  */
-function emitVectors(ctx: SmsCtx): void {
+function emitVectors(ctx: SmsCtx, options: SmsEmitOptions): void {
   const { asm, layout } = ctx;
   asm.label("Boot");
   asm.di();
@@ -304,6 +333,13 @@ function emitVectors(ctx: SmsCtx): void {
   asm.inN(PORT.CONTROL); // reading the status byte is how the VDP is acknowledged
   asm.ldn("a", 1);
   asm.sta(layout.scratch + S.w3);
+  // The driver's tick is *counted* here and performed in the main loop, exactly
+  // as on the NES and for the same reason: the blanking interval is the
+  // picture's, and a driver tick taken here is a tick the tilemap upload waits
+  // behind. A frame the game overran is then owed rather than lost, which is what
+  // keeps the tempo the frame's rather than the loop's. `AudioFrame` touches `a`
+  // and the flags and nothing else, which is why `af` alone is saved.
+  if (options.audio) asm.call(options.audio.routines.frame);
   asm.pop("af");
   asm.ei();
   asm.reti();
@@ -387,6 +423,11 @@ function emitReset(ctx: SmsCtx, options: SmsEmitOptions): void {
   }
   asm.call("BuildFrame");
   asm.call("UploadFrame");
+
+  if (options.audio) {
+    asm.call("AudioInit");
+    if (program.tracks.length > 0) asm.call("SceneMusic");
+  }
 
   // Display on, frame interrupt on. Everything above ran with it off, which is
   // what makes a screenful of name table safe to write without tearing.
@@ -584,7 +625,7 @@ function emitClearState(ctx: SmsCtx): void {
   }
 }
 
-function emitMainLoop(ctx: SmsCtx): void {
+function emitMainLoop(ctx: SmsCtx, audio: boolean): void {
   const { asm, layout } = ctx;
   const wait = ctx.unique("waitFrame");
   // The flag is cleared *after* it is seen, not before the wait: a tick that
@@ -599,6 +640,9 @@ function emitMainLoop(ctx: SmsCtx): void {
   asm.call("UploadFrame");
   asm.call("ReadInput");
   asm.call("Tick");
+  // After the tick, so an effect a rule asked for is heard this frame rather than
+  // next; after the upload, so the frame it delays is nobody's.
+  if (audio) asm.call("AudioService");
   asm.call("BuildFrame");
   asm.jp("Main");
 }
@@ -704,7 +748,7 @@ function emitTickDispatch(ctx: SmsCtx, scenes: readonly SceneCtx[]): void {
 }
 
 function emitSceneChange(ctx: SmsCtx, scenes: readonly SceneCtx[]): void {
-  const { asm, layout } = ctx;
+  const { asm, layout, program } = ctx;
   asm.label("SceneChange");
   asm.lda(layout.pending);
   asm.aluN("cp", 0xff);
@@ -715,6 +759,7 @@ function emitSceneChange(ctx: SmsCtx, scenes: readonly SceneCtx[]): void {
   asm.sta(layout.scene);
   asm.ldn("a", 0xff);
   asm.sta(layout.pending);
+  if (ctx.audio?.driver === true && program.tracks.length > 0) asm.call("SceneMusic");
   asm.call("ResetScene");
   emitSeedRng(ctx);
   emitClearState(ctx);
@@ -722,6 +767,21 @@ function emitSceneChange(ctx: SmsCtx, scenes: readonly SceneCtx[]): void {
   asm.ldn("a", 1);
   asm.sta(layout.redraw);
   asm.ret();
+
+  // Music follows the scene, so it starts where the scene does. Asking for it
+  // rather than starting it here is what keeps the request one byte: the driver
+  // is serviced from the loop, and a scene change is not where it happens.
+  if (ctx.audio?.driver === true && program.tracks.length > 0) {
+    asm.label("SceneMusic");
+    asm.lda(layout.scene);
+    asm.ld("l", "a");
+    asm.ldn("h", 0);
+    asm.ld16("de", label("SceneTracks"));
+    asm.addHL("de");
+    asm.ld("a", "hlp");
+    asm.sta(ctx.audio.music);
+    asm.ret();
+  }
 
   asm.label("ResetScene");
   emitSceneDispatch(
