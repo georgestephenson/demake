@@ -33,7 +33,7 @@ import {
   type ChipScript,
   type GameEffect,
 } from "@demake/audio";
-import { getConsole } from "@demake/core";
+import { getConsole, type Executor } from "@demake/core";
 
 import type { Program } from "../program.js";
 
@@ -76,11 +76,12 @@ export interface AudioTarget<Driver> {
 }
 
 /** Demake every track and effect the program names, and build its driver. */
-export function bindAudio<Driver>(
+export async function bindAudio<Driver>(
   program: Program,
   assets: AssetBytes,
   target: AudioTarget<Driver>,
-): BoundAudio<Driver> {
+  executor?: Executor,
+): Promise<BoundAudio<Driver>> {
   const missing: string[] = [];
   const notes: string[] = [];
   if (program.tracks.length === 0 && program.sounds.length === 0) {
@@ -114,14 +115,30 @@ export function bindAudio<Driver>(
     tracks.push(result.script);
   }
 
+  // Effects have nothing in common — no shared pool, no shared budget — so they
+  // are demade at once and reported in the order the program names them. What is
+  // ordered is the reporting and the effect list, because an effect's index is
+  // what a rule fires, and "whichever gesture tournament finished first" is not
+  // an index.
+  const present = program.sounds.filter((file) => {
+    if (assets.has(file)) return true;
+    missing.push(file);
+    return false;
+  });
+  const demade = await Promise.all(
+    present.map((file) =>
+      demakeSfx(assets.get(file) as Uint8Array, {
+        console: consoleId,
+        rateHz,
+        title: file,
+        ...(executor === undefined ? {} : { executor }),
+      }),
+    ),
+  );
   const effects: GameEffect[] = [];
-  for (const file of program.sounds) {
-    const bytes = assets.get(file);
-    if (bytes === undefined) {
-      missing.push(file);
-      continue;
-    }
-    const result = demakeSfx(bytes, { console: consoleId, rateHz, title: file });
+  for (let index = 0; index < present.length; index += 1) {
+    const file = present[index]!;
+    const result = demade[index]!;
     const channel = spec.channels.findIndex((one) => one.id === result.placement.channelId);
     notes.push(`${file}: ${result.tournament.winner} on ${result.placement.channelId}`);
     effects.push({ script: result.script, channel, priority: result.placement.priority });

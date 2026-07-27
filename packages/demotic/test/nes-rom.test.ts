@@ -33,7 +33,7 @@ import {
   NES_CHR_OFFSET,
   NES_PRG_OFFSET,
   NES_PRG_SIZE,
-  prepSync,
+  prep,
 } from "@demake/core";
 import { Nes } from "@demake/nes";
 
@@ -52,8 +52,8 @@ function build(file: string, levels?: Record<string, string>) {
   return compile(read(file), { profile: getProfile("nes"), levels });
 }
 
-describe("the NES cartridge", () => {
-  const built = buildNesRom(build("pong.dmt"));
+describe("the NES cartridge", async () => {
+  const built = await buildNesRom(build("pong.dmt"));
 
   it("is an iNES file describing NROM with vertical mirroring", () => {
     expect([...built.bytes.subarray(0, 4)]).toEqual([0x4e, 0x45, 0x53, 0x1a]);
@@ -75,8 +75,8 @@ describe("the NES cartridge", () => {
     expect(vector(NES_PRG_SIZE - 2)).toBe(built.symbols.get("Irq"));
   });
 
-  it("puts the built-in patterns in both tables, because the bank is fixed anyway", () => {
-    const bank = bindNesArt(build("pong.dmt"), new Map()).options.bank as SelectedBank;
+  it("puts the built-in patterns in both tables, because the bank is fixed anyway", async () => {
+    const bank = (await bindNesArt(build("pong.dmt"), new Map())).options.bank as SelectedBank;
     const background = built.bytes.subarray(NES_CHR_OFFSET, NES_CHR_OFFSET + bank.chr.length);
     const objects = built.bytes.subarray(
       NES_CHR_OFFSET + 0x1000,
@@ -87,11 +87,11 @@ describe("the NES cartridge", () => {
     expect(bank.chr.length).toBe(bank.count * TILE_BYTES);
   });
 
-  it("pulls the bank, so a game pays for the characters it draws", () => {
+  it("pulls the bank, so a game pays for the characters it draws", async () => {
     // The whole font is 59 glyphs and pong writes about a dozen. On a Game Boy
     // that costs nothing — 384 tiles is more than these games fill — and here it
     // comes out of the 256 a *picture* is fitted into.
-    const bank = bindNesArt(build("pong.dmt"), new Map()).options.bank as SelectedBank;
+    const bank = (await bindNesArt(build("pong.dmt"), new Map())).options.bank as SelectedBank;
     expect(bank.count).toBeLessThan(BUILTIN_TILES);
     // The blank stays at zero whatever else is in the bank: it is what an empty
     // cell draws, and the runtime writes that number rather than looking it up.
@@ -122,7 +122,7 @@ describe("the NES cartridge", () => {
  */
 const ART_TIMEOUT = 120_000;
 
-describe("the NES art budget", { timeout: ART_TIMEOUT }, () => {
+describe("the NES art budget", { timeout: ART_TIMEOUT }, async () => {
   const pongAssets = () =>
     new Map([
       ["pong.title.svg", asset("pong.title.svg")],
@@ -131,19 +131,19 @@ describe("the NES art budget", { timeout: ART_TIMEOUT }, () => {
       ["paddle.svg", asset("paddle.svg")],
     ]);
 
-  it("gives each picture a pattern table of its own", () => {
+  it("gives each picture a pattern table of its own", async () => {
     // The console has two, and `PPUCTRL` bit 4 chooses which one the background
     // reads — so two pictures do not have to share one. Sharing halved what each
     // got, and the fitter spent the difference merging cells.
-    const bound = bindNesArt(build("pong.dmt"), pongAssets());
+    const bound = await bindNesArt(build("pong.dmt"), pongAssets());
     const fits = [...bound.backdropFits.values()];
     expect(fits.length).toBe(2);
     expect(new Set(fits.map((fit) => fit.table)).size).toBe(2);
     for (const fit of fits) expect(fit.budget).toBeGreaterThan(150);
   });
 
-  it("still fits both, with the built-in bank in each table", () => {
-    const built = buildNesRom(build("pong.dmt"), { assets: pongAssets() });
+  it("still fits both, with the built-in bank in each table", async () => {
+    const built = await buildNesRom(build("pong.dmt"), { assets: pongAssets() });
     expect(built.stats.missingArt).toEqual([]);
     expect(built.stats.artTiles).toBeGreaterThan(0);
     expect(built.bytes.length).toBe(16 + 0x8000 + 0x2000);
@@ -152,7 +152,7 @@ describe("the NES art budget", { timeout: ART_TIMEOUT }, () => {
   /**
    * The cartridge's picture is the art demaker's picture, cell for cell.
    *
-   * Not "looks like": the same bytes. A game's backdrop goes through `prepSync`
+   * Not "looks like": the same bytes. A game's backdrop goes through `prep`
    * and the `nes` image backend — the code `demake prep -c nes` is — so the only
    * thing a build may decide is the *budget*, and it decides it from what the
    * pattern table has left. This runs the picture through that path again at the
@@ -175,11 +175,11 @@ describe("the NES art budget", { timeout: ART_TIMEOUT }, () => {
    * them and what is asserted below them is that only a caption's worth of cells
    * moved.
    */
-  it("unpacks a backdrop into exactly the cells the build produced", () => {
+  it("unpacks a backdrop into exactly the cells the build produced", async () => {
     const program = build("pong.dmt");
     const assets = pongAssets();
-    const built = buildNesRom(program, { assets });
-    const bound = bindNesArt(program, assets);
+    const built = await buildNesRom(program, { assets });
+    const bound = await bindNesArt(program, assets);
     const machine = new Nes(built.bytes);
     for (let frame = 0; frame < 8; frame += 1) machine.runFrame();
 
@@ -205,9 +205,9 @@ describe("the NES art budget", { timeout: ART_TIMEOUT }, () => {
     expect(packCells(map).length).toBeLessThan(map.length * 0.8);
   });
 
-  it("draws exactly what `demake prep -c nes` would, at the budget it was given", () => {
+  it("draws exactly what `demake prep -c nes` would, at the budget it was given", async () => {
     const program = build("pong.dmt");
-    const bound = bindNesArt(program, pongAssets());
+    const bound = await bindNesArt(program, pongAssets());
     const spec = getConsole("nes");
     const backend = backendFor("nes");
     expect(backend).toBeDefined();
@@ -220,13 +220,15 @@ describe("the NES art budget", { timeout: ART_TIMEOUT }, () => {
       expect(fit, scene.name).toBeDefined();
       expect(drawn, scene.name).toBeDefined();
 
-      const image = prepSync(asset(file), {
-        console: "nes",
-        size: { w: 32 * 8, h: 30 * 8 },
-        fit: "cover",
-        maxSubPalettes: BACKDROP_PALETTES,
-        maxTiles: (fit as { budget: number }).budget,
-      }).image;
+      const image = (
+        await prep(asset(file), {
+          console: "nes",
+          size: { w: 32 * 8, h: 30 * 8 },
+          fit: "cover",
+          maxSubPalettes: BACKDROP_PALETTES,
+          maxTiles: (fit as { budget: number }).budget,
+        })
+      ).image;
       const artifacts = backend?.emitBin(image, spec, {
         symbol: "backdrop",
         header: [],
@@ -259,7 +261,7 @@ describe("the NES art budget", { timeout: ART_TIMEOUT }, () => {
   });
 });
 
-describe("what the NES actually draws", () => {
+describe("what the NES actually draws", async () => {
   /**
    * Every visible cell against the level grid the ROM carries.
    *
@@ -324,11 +326,11 @@ describe("what the NES actually draws", () => {
     return { column: axis(0), row: axis(4) };
   }
 
-  it("paints a level that fits the nametable pair once, and scrolls it with registers", () => {
+  it("paints a level that fits the nametable pair once, and scrolls it with registers", async () => {
     const program = build(join("games", "caves.dmt"), {
       "cavern.dmtl": read(join("games", "cavern.dmtl")),
     });
-    const built = buildNesRom(program);
+    const built = await buildNesRom(program);
     const machine = new Nes(built.bytes);
     for (let frame = 0; frame < 30; frame += 1) machine.runFrame();
     machine.setButtons(["a"]);
@@ -363,7 +365,7 @@ describe("what the NES actually draws", () => {
     expect(scrollRow(machine)).toBe(0);
   });
 
-  it("keeps a level wider than the pair correct as the edge painter walks it", () => {
+  it("keeps a level wider than the pair correct as the edge painter walks it", async () => {
     // Written here rather than taken from the example library, because none of
     // those levels is wider than the nametable pair — the caves fit it, and the
     // runner's course is wide but its bird never flies far enough for the camera
@@ -395,7 +397,7 @@ describe("what the NES actually draws", () => {
       profile: getProfile("nes"),
       levels: { "wide.dmtl": level },
     });
-    const built = buildNesRom(program);
+    const built = await buildNesRom(program);
     expect(program.scenes[0]?.level?.width).toBeGreaterThan(64);
 
     const machine = new Nes(built.bytes);
@@ -421,7 +423,7 @@ describe("what the NES actually draws", () => {
     expect(travelled).toBeGreaterThan(32);
   });
 
-  it("writes a caption in an ink the backdrop it sits on is not", () => {
+  it("writes a caption in an ink the backdrop it sits on is not", async () => {
     const program = build(join("games", "caves.dmt"), {
       "cavern.dmtl": read(join("games", "cavern.dmtl")),
     });
@@ -430,7 +432,7 @@ describe("what the NES actually draws", () => {
         (name) => [`${name}.svg`, asset(join("games", `${name}.svg`))],
       ),
     );
-    const built = buildNesRom(program, { assets });
+    const built = await buildNesRom(program, { assets });
     const machine = new Nes(built.bytes);
     for (let frame = 0; frame < 40; frame += 1) machine.runFrame();
     // No palette is reserved for the font any more — the caption goes in whichever
@@ -440,7 +442,7 @@ describe("what the NES actually draws", () => {
     // This build supplies object art but no title picture, so there is no palette
     // pressure and the font keeps the reserved one; a scene *with* a picture is
     // told which palette the fit left room in.
-    const bound = bindNesArt(program, assets);
+    const bound = await bindNesArt(program, assets);
     const font = bound.options.backdrops?.get("title")?.fontPalette ?? SYSTEM_PALETTE;
     const backdrop = machine.ppu.palette[0] as number;
     const ink = machine.ppu.palette[font * 4 + 3] as number;

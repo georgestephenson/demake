@@ -46,9 +46,9 @@ function build(source: string, levels?: Record<string, string>, consoleId = "gb"
   return compile(source, { profile: getProfile(consoleId), levels });
 }
 
-describe("gb ROM", () => {
-  it("is a valid 32 KiB cartridge with correct checksums", () => {
-    const { bytes } = buildGbRom(build(read("pong.dmt")), { title: "PONG" });
+describe("gb ROM", async () => {
+  it("is a valid 32 KiB cartridge with correct checksums", async () => {
+    const { bytes } = await buildGbRom(build(read("pong.dmt")), { title: "PONG" });
     expect(bytes.length).toBe(ROM_SIZE);
     let header = 0;
     for (let at = 0x0134; at <= 0x014c; at += 1)
@@ -58,19 +58,19 @@ describe("gb ROM", () => {
     expect(String.fromCharCode(...bytes.subarray(0x134, 0x138))).toBe("PONG");
   });
 
-  it("reproduces the checked-in golden trace tick for tick", () => {
+  it("reproduces the checked-in golden trace tick for tick", async () => {
     const program = build(read("pong.dmt"));
-    expect(romTrace(program, tape(PONG_TAPE))).toBe(read("pong.gb.trace").trimEnd());
+    expect(await romTrace(program, tape(PONG_TAPE))).toBe(read("pong.gb.trace").trimEnd());
   });
 
-  it("refuses a console it has no backend for, rather than shipping a different game", () => {
+  it("refuses a console it has no backend for, rather than shipping a different game", async () => {
     const program = compile(read("pong.dmt"), { profile: getProfile("nes") });
     expect(unsupportedFeatures(program).length).toBeGreaterThan(0);
-    expect(() => buildGbRom(program)).toThrow(/cannot build/);
+    await expect(buildGbRom(program)).rejects.toThrow(/cannot build/);
   });
 });
 
-describe("ROM conformance across the example library", () => {
+describe("ROM conformance across the example library", async () => {
   const cases: readonly (readonly [string, string, Record<string, string>?])[] = [
     ["pong.dmt", "1:a,90:,90:left,120:right"],
     [join("games", "breakout.dmt"), "30:,20:a,50:,60:left,60:right,80:"],
@@ -107,23 +107,23 @@ describe("ROM conformance across the example library", () => {
   // surface, and the whole point of the shared spine is that neither can.
   for (const target of [gbTarget, gbcTarget, nesTarget, smsTarget, ggTarget]) {
     for (const [file, script, levels] of cases) {
-      it(`matches the interpreter for ${file} on ${target.console}`, () => {
+      it(`matches the interpreter for ${file} on ${target.console}`, async () => {
         const program = build(read(file), levels, target.console);
         const frames = tape(script);
-        expect(romTrace(program, frames, {}, target)).toBe(trace(new Sim(program), frames));
+        expect(await romTrace(program, frames, {}, target)).toBe(trace(new Sim(program), frames));
       });
     }
   }
 
-  it("plays the same game on both, whatever it looks like", () => {
+  it("plays the same game on both, whatever it looks like", async () => {
     const frames = tape(PONG_TAPE);
     // Everything but the header line, which names the console it was built for.
-    const body = (consoleId: string): string =>
-      romTrace(build(read("pong.dmt"), undefined, consoleId), frames)
+    const body = async (consoleId: string): Promise<string> =>
+      (await romTrace(build(read("pong.dmt"), undefined, consoleId), frames))
         .split("\n")
         .slice(1)
         .join("\n");
-    expect(body("gbc")).toBe(body("gb"));
+    expect(await body("gbc")).toBe(await body("gb"));
   });
 });
 
@@ -138,7 +138,7 @@ describe("ROM conformance across the example library", () => {
  */
 const COLOUR_TIMEOUT = 120_000;
 
-describe("the colour cartridge", { timeout: COLOUR_TIMEOUT }, () => {
+describe("the colour cartridge", { timeout: COLOUR_TIMEOUT }, async () => {
   const assets = () =>
     new Map(
       ["ball.svg", "paddle.svg", "pong.title.svg", "pong.play.svg"].map((name) => [
@@ -147,9 +147,9 @@ describe("the colour cartridge", { timeout: COLOUR_TIMEOUT }, () => {
       ]),
     );
 
-  it("declares itself a Game Boy Color cartridge, and a gb build does not", () => {
-    const color = buildGbRom(build(read("pong.dmt"), undefined, "gbc"), { title: "PONG" });
-    const mono = buildGbRom(build(read("pong.dmt")), { title: "PONG" });
+  it("declares itself a Game Boy Color cartridge, and a gb build does not", async () => {
+    const color = await buildGbRom(build(read("pong.dmt"), undefined, "gbc"), { title: "PONG" });
+    const mono = await buildGbRom(build(read("pong.dmt")), { title: "PONG" });
     // `$C0` is CGB-only: this build programs palette RAM from its first
     // instruction, so a DMG running it would show the wrong thing.
     expect(color.bytes[HEADER_OFFSETS.cgb]).toBe(0xc0);
@@ -163,8 +163,8 @@ describe("the colour cartridge", { timeout: COLOUR_TIMEOUT }, () => {
     expect(color.bytes[HEADER_OFFSETS.headerChecksum]).toBe(header);
   });
 
-  it("boots the machine in colour mode and fills its palette RAM", () => {
-    const built = buildGbRom(build(read("pong.dmt"), undefined, "gbc"), { assets: assets() });
+  it("boots the machine in colour mode and fills its palette RAM", async () => {
+    const built = await buildGbRom(build(read("pong.dmt"), undefined, "gbc"), { assets: assets() });
     const machine = new Gameboy(built.bytes);
     expect(machine.cgb).toBe(true);
     for (let frame = 0; frame < 30; frame += 1) machine.runFrame();
@@ -178,8 +178,8 @@ describe("the colour cartridge", { timeout: COLOUR_TIMEOUT }, () => {
     expect(art.some((byte) => byte !== 0)).toBe(true);
   });
 
-  it("draws the game in more colours than a Game Boy can show", () => {
-    const built = buildGbRom(build(read("pong.dmt"), undefined, "gbc"), { assets: assets() });
+  it("draws the game in more colours than a Game Boy can show", async () => {
+    const built = await buildGbRom(build(read("pong.dmt"), undefined, "gbc"), { assets: assets() });
     const machine = new Gameboy(built.bytes);
     for (let frame = 0; frame < 30; frame += 1) machine.runFrame();
     const seen = new Set<string>();
@@ -190,8 +190,8 @@ describe("the colour cartridge", { timeout: COLOUR_TIMEOUT }, () => {
     expect(seen.size).toBeGreaterThan(4);
   });
 
-  it("gives every background cell a palette, including the ones it never painted", () => {
-    const built = buildGbRom(build(read("pong.dmt"), undefined, "gbc"), { assets: assets() });
+  it("gives every background cell a palette, including the ones it never painted", async () => {
+    const built = await buildGbRom(build(read("pong.dmt"), undefined, "gbc"), { assets: assets() });
     const machine = new Gameboy(built.bytes);
     for (let frame = 0; frame < 30; frame += 1) machine.runFrame();
     // Bank 1 at the map's addresses is the attribute map; a cell the game has
@@ -204,10 +204,13 @@ describe("the colour cartridge", { timeout: COLOUR_TIMEOUT }, () => {
   });
 });
 
-describe("what the generated code costs", () => {
+describe("what the generated code costs", async () => {
   /** Console frames one game tick takes, measured with input held. */
-  function framesPerTick(program: ReturnType<typeof build>, target = gbTarget): number {
-    const runner = new RomRunner(program, {}, target);
+  async function framesPerTick(
+    program: ReturnType<typeof build>,
+    target = gbTarget,
+  ): Promise<number> {
+    const runner = await RomRunner.create(program, {}, target);
     const { machine, layout } = runner;
     const read = (address: number, length: number) => machine.readMemory(address, length);
     // Past the title screen first, or the figure would be the cost of drawing a
@@ -244,8 +247,8 @@ describe("what the generated code costs", () => {
     [join("games", "shooter.dmt"), undefined],
     [join("games", "caves.dmt"), { "cavern.dmtl": read(join("games", "cavern.dmtl")) }],
   ] as const) {
-    it(`fits a tick inside a frame for ${file}`, () => {
-      expect(framesPerTick(build(read(file), levels))).toBeLessThan(1.2);
+    it(`fits a tick inside a frame for ${file}`, async () => {
+      expect(await framesPerTick(build(read(file), levels))).toBeLessThan(1.2);
     });
   }
 });

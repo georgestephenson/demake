@@ -121,12 +121,19 @@ export { encodeVgm, type VgmOptions } from "./encode/vgm.js";
 // --- the sound demaker -------------------------------------------------------
 export {
   demakeSfx,
+  gestureJob,
+  runGesture,
   SFX_RATE_HZ,
   SfxError,
+  type GestureJob,
+  type GestureOutcome,
   type SfxOptions,
   type SfxResult,
   type SfxCandidateScore,
 } from "./sfx/index.js";
+
+// --- parallelism -------------------------------------------------------------
+export { audioJobKinds } from "./jobs.js";
 export {
   analyzeSound,
   limitLength,

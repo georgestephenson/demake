@@ -30,6 +30,8 @@
  * denominator between a machine with seven registers and one with three.
  */
 
+import type { Executor } from "@demake/core";
+
 import type { Program } from "../program.js";
 
 import { analyze, type Analysis } from "./analyze.js";
@@ -176,8 +178,16 @@ export interface Backend<Art, Audio extends BoundAudioShape> {
   /** Where this machine's state goes. */
   memory(program: Program): MemoryPlan;
 
-  /** Demake the art the program names, through the image engine. */
-  bindArt(program: Program, assets: AssetBytes): BoundAssets<Art>;
+  /**
+   * Demake the art the program names, through the image engine.
+   *
+   * `async` because the image engine's tournament may be spread over cores, and
+   * the `executor` is where the edge said to spread it (doc 04 §Running the
+   * tournament). A backend passes it through and never inspects it: which
+   * threads ran a fit cannot change what the fit produced, and a backend that
+   * behaved differently with one would have broken that guarantee.
+   */
+  bindArt(program: Program, assets: AssetBytes, executor?: Executor): Promise<BoundAssets<Art>>;
 
   /**
    * Demake the music and effects, through the audio engine.
@@ -186,8 +196,16 @@ export interface Backend<Art, Audio extends BoundAudioShape> {
    * lives, and that is a plan the build has already made: the Game Boy's is at a
    * fixed high-RAM address the allocator never hands out, the NES's is page-zero
    * bytes the allocator chose.
+   *
+   * `async` for the same reason `bindArt` is: an effect's gesture families are a
+   * tournament, and `executor` is where the edge said to run one.
    */
-  bindAudio(program: Program, assets: AssetBytes, layout: Layout): BoundAssets<Audio>;
+  bindAudio(
+    program: Program,
+    assets: AssetBytes,
+    layout: Layout,
+    executor?: Executor,
+  ): Promise<BoundAssets<Audio>>;
 
   /**
    * Refuse a game whose art does not fit the tile hardware.
@@ -223,7 +241,7 @@ export interface AnyBackend {
   readonly consoles: readonly string[];
   extension(program: Program): string;
   unsupported(program: Program): string[];
-  build(program: Program, options: BuildOptions): BuiltRom;
+  build(program: Program, options: BuildOptions): Promise<BuiltRom>;
 }
 
 /** Erase a backend's binding types, keeping the contract. */
@@ -251,6 +269,16 @@ export interface BuildOptions {
    * and every decision from rasterising to tile dedup happens in one place.
    */
   assets?: AssetBytes;
+  /**
+   * Where the art and audio tournaments run (doc 04 §Running the tournament).
+   *
+   * A build is mostly tournaments — a colour backdrop is around seventy per cent
+   * of one — and their candidates cannot see each other, so an edge with threads
+   * to spare hands one in: the CLI's runs on `worker_threads`, the page's on Web
+   * Workers. Omitted, everything runs on this thread, and the cartridge is the
+   * same bytes either way.
+   */
+  executor?: Executor;
 }
 
 /**
@@ -260,11 +288,11 @@ export interface BuildOptions {
  * codes — because they describe the same failures. What changes is the number in
  * the message and the machine's name.
  */
-export function buildRom<Art, Audio extends BoundAudioShape>(
+export async function buildRom<Art, Audio extends BoundAudioShape>(
   program: Program,
   backend: Backend<Art, Audio>,
   options: BuildOptions = {},
-): BuiltRom {
+): Promise<BuiltRom> {
   const missing = backend.unsupported(program);
   if (missing.length > 0) {
     throw new BuildError(
@@ -284,19 +312,32 @@ export function buildRom<Art, Audio extends BoundAudioShape>(
   }
 
   const assets = options.assets ?? new Map<string, Uint8Array>();
-  const art = backend.bindArt(program, assets);
+
+  // Art and audio have nothing to say to each other, so they are demade at the
+  // same time: on a game with a colour backdrop the art is most of the build and
+  // the effects are most of the rest, and running them in sequence left whichever
+  // lanes the shorter one was not using idle.
+  //
+  // Settled rather than raced, because *which* failure a build reports must not
+  // depend on which demaker happened to fail first in wall-clock terms. Art is
+  // checked first, exactly as it was when the two ran in order.
+  const [artResult, audioResult] = await Promise.allSettled([
+    backend.bindArt(program, assets, options.executor),
+    backend.bindAudio(program, assets, layout, options.executor),
+  ]);
+
+  if (artResult.status === "rejected") throw artResult.reason;
+  const art = artResult.value;
   backend.checkTiles(program, art);
 
-  let audio: BoundAssets<Audio>;
-  try {
-    audio = backend.bindAudio(program, assets, layout);
-  } catch (error) {
+  if (audioResult.status === "rejected") {
     throw new BuildError(
       "E_AUDIO",
-      `this game's audio could not be demade: ${(error as Error).message}`,
+      `this game's audio could not be demade: ${(audioResult.reason as Error).message}`,
       "the track or the effect is what to look at; `demake arrange` and `demake sfx` report the same failure on their own",
     );
   }
+  const audio = audioResult.value;
 
   const built = backend.assemble({
     program,

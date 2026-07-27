@@ -277,10 +277,10 @@ function runArrange(request: AudioWorkerRequest & { kind: "arrange" }): ArrangeP
   };
 }
 
-function runSfx(request: AudioWorkerRequest & { kind: "sfx" }): SfxPayload {
+async function runSfx(request: AudioWorkerRequest & { kind: "sfx" }): Promise<SfxPayload> {
   const started = performance.now();
   const bytes = new Uint8Array(request.source);
-  const result: SfxResult = demakeSfx(bytes, toSfxOptions(request.options));
+  const result: SfxResult = await demakeSfx(bytes, toSfxOptions(request.options));
   const pcm = render(result.script, {
     ...toRenderOptions(request.options),
     sampleRate: request.previewRate,
@@ -398,7 +398,7 @@ function errorResponse(id: number, err: unknown): AudioWorkerResponse {
   return { id, ok: false, code: "E_INTERNAL", message: String((err as Error)?.message ?? err) };
 }
 
-self.addEventListener("message", (event: MessageEvent<AudioWorkerRequest>) => {
+self.addEventListener("message", async (event: MessageEvent<AudioWorkerRequest>) => {
   const request = event.data;
   try {
     switch (request.kind) {
@@ -415,7 +415,7 @@ self.addEventListener("message", (event: MessageEvent<AudioWorkerRequest>) => {
         return;
       }
       case "sfx": {
-        const result = runSfx(request);
+        const result = await runSfx(request);
         post({ id: request.id, ok: true, kind: "sfx", result }, [
           result.vgm,
           ...result.pcm.channels,

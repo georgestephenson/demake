@@ -98,9 +98,9 @@ describe("decoding", () => {
   });
 });
 
-describe("demaking an effect", () => {
-  it("produces a compliant one-shot on a single channel", () => {
-    const result = demakeSfx(wavOf(sweep(300, 1400, 0.3)), { console: "dmg" });
+describe("demaking an effect", async () => {
+  it("produces a compliant one-shot on a single channel", async () => {
+    const result = await demakeSfx(wavOf(sweep(300, 1400, 0.3)), { console: "dmg" });
     expect(inspectScript(result.script).violations).toEqual([]);
     // A one-shot, not a loop: every player honours -1, and a looping effect
     // would never stop.
@@ -108,35 +108,35 @@ describe("demaking an effect", () => {
     expect(result.script.channels).toHaveLength(1);
   });
 
-  it("fits a rising sweep with a rising sweep, and a falling one with a fall", () => {
+  it("fits a rising sweep with a rising sweep, and a falling one with a fall", async () => {
     // Direction is the whole difference between these two families, so getting
     // it right is the minimum bar. It needs scoring pitch against what the
     // hardware will *play* rather than against a pitch tracker's reading of our
     // own square wave, which makes octave errors on a narrow duty cycle.
-    const up = demakeSfx(wavOf(sweep(300, 1400, 0.3)), { console: "dmg" });
+    const up = await demakeSfx(wavOf(sweep(300, 1400, 0.3)), { console: "dmg" });
     expect(up.soundClass).toBe("swept");
     expect(up.tournament.winner).toBe("sweep-up");
 
-    const down = demakeSfx(wavOf(sweep(1700, 500, 0.3)), { console: "dmg" });
+    const down = await demakeSfx(wavOf(sweep(1700, 500, 0.3)), { console: "dmg" });
     expect(down.tournament.winner).toBe("sweep-down");
   });
 
-  it("never answers a noise burst with a pure tone", () => {
+  it("never answers a noise burst with a pure tone", async () => {
     // The anti-gaming fixture: a beep is the closest single sine to almost
     // anything, so a scoring function without a class gate picks one here.
-    const result = demakeSfx(wavOf(noiseBurst(0.25)), { console: "dmg" });
+    const result = await demakeSfx(wavOf(noiseBurst(0.25)), { console: "dmg" });
     expect(result.placement.channelId).toBe("noise");
     expect(result.tournament.winner).not.toBe("blip");
     expect(result.tournament.winner).not.toBe("bell");
   });
 
-  it("keeps a chime on a pitched channel", () => {
-    const result = demakeSfx(wavOf(chime(880, 0.5)), { console: "dmg" });
+  it("keeps a chime on a pitched channel", async () => {
+    const result = await demakeSfx(wavOf(chime(880, 0.5)), { console: "dmg" });
     expect(result.placement.channelId).not.toBe("noise");
   });
 
-  it("honours the length budget and says what it cut", () => {
-    const result = demakeSfx(wavOf(sweep(400, 800, 2.0, 0.2)), {
+  it("honours the length budget and says what it cut", async () => {
+    const result = await demakeSfx(wavOf(sweep(400, 800, 2.0, 0.2)), {
       console: "dmg",
       maxLength: 0.5,
     });
@@ -146,31 +146,31 @@ describe("demaking an effect", () => {
     expect(result.diagnostics.some((entry) => entry.code === "trimmed")).toBe(true);
   });
 
-  it("declares where it wants to sit, so a driver can place it", () => {
-    const result = demakeSfx(wavOf(noiseBurst(0.2)), { console: "dmg" });
+  it("declares where it wants to sit, so a driver can place it", async () => {
+    const result = await demakeSfx(wavOf(noiseBurst(0.2)), { console: "dmg" });
     expect(result.placement.prefers).toContain(result.placement.channelId);
     expect(result.placement.priority).toBeGreaterThan(0);
   });
 
-  it("makes audible sound", () => {
-    const result = demakeSfx(wavOf(sweep(300, 1400, 0.3)), { console: "dmg" });
+  it("makes audible sound", async () => {
+    const result = await demakeSfx(wavOf(sweep(300, 1400, 0.3)), { console: "dmg" });
     const pcm = render(result.script);
     let peak = 0;
     for (const sample of pcm.channels[0]!) peak = Math.max(peak, Math.abs(sample));
     expect(peak).toBeGreaterThan(0.05);
   });
 
-  it("is deterministic", () => {
+  it("is deterministic", async () => {
     const wav = wavOf(sweep(300, 1400, 0.3));
-    const a = demakeSfx(wav, { console: "dmg" });
-    const b = demakeSfx(wav, { console: "dmg" });
+    const a = await demakeSfx(wav, { console: "dmg" });
+    const b = await demakeSfx(wav, { console: "dmg" });
     expect(a.artifact).toEqual(b.artifact);
     expect(a.tournament.winner).toBe(b.tournament.winner);
   });
 
-  it("works on every console with an audio spec", () => {
+  it("works on every console with an audio spec", async () => {
     for (const consoleId of ["dmg", "nes", "sms", "gg", "sg1000"]) {
-      const result = demakeSfx(wavOf(noiseBurst(0.2)), { console: consoleId });
+      const result = await demakeSfx(wavOf(noiseBurst(0.2)), { console: consoleId });
       expect(inspectScript(result.script).compliant).toBe(true);
     }
   });

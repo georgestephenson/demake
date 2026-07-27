@@ -22,7 +22,13 @@
  */
 
 import { buildGameAudio } from "@demake/audio";
-import { AsmError, GB_HEADER_OFFSETS, GB_ROM_SIZE, stampGbHeader } from "@demake/core";
+import {
+  AsmError,
+  GB_HEADER_OFFSETS,
+  GB_ROM_SIZE,
+  stampGbHeader,
+  type Executor,
+} from "@demake/core";
 
 import { getProfile } from "../profiles.js";
 import type { Program } from "../program.js";
@@ -124,8 +130,12 @@ export const gbBackend: Backend<EmitOptions, GbAudio> = {
     return program.profile.id === "gbc" ? GBC_MEMORY : GB_MEMORY;
   },
 
-  bindArt(program: Program, assets: AssetBytes): BoundAssets<EmitOptions> {
-    const art = bindArt(program, assets);
+  async bindArt(
+    program: Program,
+    assets: AssetBytes,
+    executor?: Executor,
+  ): Promise<BoundAssets<EmitOptions>> {
+    const art = await bindArt(program, assets, executor);
     return { emit: art, tiles: art.tiles8, missing: art.missing };
   },
 
@@ -146,10 +156,18 @@ export const gbBackend: Backend<EmitOptions, GbAudio> = {
     );
   },
 
-  bindAudio(program: Program, assets: AssetBytes): BoundAssets<GbAudio> {
-    const bound = bindAudio(program, assets, {
-      build: (tracks, effects) => buildGameAudio({ tracks, effects, hram: HRAM_AUDIO }),
-    });
+  async bindAudio(
+    program: Program,
+    assets: AssetBytes,
+    _layout: Layout,
+    executor?: Executor,
+  ): Promise<BoundAssets<GbAudio>> {
+    const bound = await bindAudio(
+      program,
+      assets,
+      { build: (tracks, effects) => buildGameAudio({ tracks, effects, hram: HRAM_AUDIO }) },
+      executor,
+    );
     const names = program.tracks.length > 0 || program.sounds.length > 0;
     const driver = bound.driver;
     const options: EmitOptions = driver
@@ -250,7 +268,7 @@ export function unsupportedFeatures(program: Program): string[] {
 }
 
 /** Compile a program into a bootable `.gb`. */
-export function buildGbRom(program: Program, options: RomOptions = {}): BuiltRom {
+export function buildGbRom(program: Program, options: RomOptions = {}): Promise<BuiltRom> {
   return buildRom(program, gbBackend, options);
 }
 

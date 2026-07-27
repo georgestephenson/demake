@@ -30,7 +30,8 @@ import {
   backendFor,
   buildSpriteBank,
   getConsole,
-  prepSync,
+  prep,
+  type Executor,
   type SpriteBank,
   type SpriteSource,
 } from "@demake/core";
@@ -38,7 +39,7 @@ import {
 import type { Program } from "../program.js";
 import { builtinSega, BUILTIN_TILES, SEGA_TILE_BYTES } from "../rom/graphics.js";
 
-import { artRequests, TilePool, type AssetBytes } from "./art.js";
+import { artRequests, digest, remember, rememberAsync, TilePool, type AssetBytes } from "./art.js";
 import { GG_MEMORY, SMS_MEMORY } from "./layout.js";
 import { BANK_TILES, SPRITE_COLORS, SYSTEM_INK, type SmsEmitOptions } from "./sms/emit.js";
 
@@ -52,32 +53,14 @@ import { BANK_TILES, SPRITE_COLORS, SYSTEM_INK, type SmsEmitOptions } from "./sm
  * answer cannot change one: the same inputs produce the same cartridge whether
  * it is the first build or the tenth, which is the parity contract restated.
  * A speed optimisation over a pure function, never one that changes bytes.
+ *
+ * The helpers are `art.ts`'s — one memo, not a third copy of one — but the limit
+ * is this console's own: an entry here is a sixteen-colour screenful, so fewer of
+ * them fit in the same memory than the Game Boy's four-colour ones.
  */
 const CACHE_LIMIT = 16;
-const backdropCache = new Map<string, Backdrop>();
+const backdropCache = new Map<string, Promise<Backdrop>>();
 const bankCache = new Map<string, SpriteBank>();
-
-function remember<T>(cache: Map<string, T>, key: string, make: () => T): T {
-  const hit = cache.get(key);
-  if (hit !== undefined) return hit;
-  const value = make();
-  cache.set(key, value);
-  if (cache.size > CACHE_LIMIT) {
-    const oldest = cache.keys().next();
-    if (!oldest.done) cache.delete(oldest.value);
-  }
-  return value;
-}
-
-/** FNV-1a over a byte string — a cache key, never a checksum anyone relies on. */
-function digest(bytes: Uint8Array): string {
-  let hash = 0x811c9dc5;
-  for (const byte of bytes) {
-    hash ^= byte;
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return `${hash.toString(16)}:${bytes.length}`;
-}
 
 /** Tiles left for art once the built-in bank has its share. */
 export const ART_TILES = BANK_TILES - BUILTIN_TILES;
@@ -200,10 +183,15 @@ interface Backdrop {
  * name table it produces and the block copy that paints it are the same
  * rectangle.
  */
-function demakeBackdrop(bytes: Uint8Array, consoleId: string, maxTiles: number): Backdrop {
+async function demakeBackdrop(
+  bytes: Uint8Array,
+  consoleId: string,
+  maxTiles: number,
+  executor: Executor | undefined,
+): Promise<Backdrop> {
   const memory = plan(consoleId);
   const spec = getConsole(consoleId);
-  const fitted = prepSync(bytes, {
+  const fitted = await prep(bytes, {
     console: consoleId,
     size: { w: memory.viewW * 8, h: memory.viewH * 8 },
     fit: "cover",
@@ -211,6 +199,7 @@ function demakeBackdrop(bytes: Uint8Array, consoleId: string, maxTiles: number):
     // shared with every object in the game, so a picture that was not told what
     // it could afford would always overrun.
     maxTiles,
+    ...(executor === undefined ? {} : { executor }),
   });
   const backend = backendFor("sms");
   if (!backend) throw new Error("the sms image backend is missing");
@@ -237,7 +226,12 @@ function demakeBackdrop(bytes: Uint8Array, consoleId: string, maxTiles: number):
  * colour and a choice of *which*, while a background tile has all sixteen and no
  * choice at all.
  */
-export function bindSmsArt(program: Program, assets: AssetBytes, consoleId: string): BoundSmsArt {
+export async function bindSmsArt(
+  program: Program,
+  assets: AssetBytes,
+  consoleId: string,
+  executor?: Executor,
+): Promise<BoundSmsArt> {
   const gameGear = consoleId === "gg";
   const memory = plan(consoleId);
   const requests = artRequests(program);
@@ -272,15 +266,19 @@ export function bindSmsArt(program: Program, assets: AssetBytes, consoleId: stri
     const list = sources[kind];
     if (list.length === 0) return null;
     const key = `${consoleId}:${kind}:${list.map((source) => `${source.name}:${digest(source.bytes)}`).join("|")}`;
-    return remember(bankCache, key, () =>
-      buildSpriteBank(list, {
-        console: consoleId,
-        packing: "planar",
-        maxPalettes: 1,
-        // The font's three entries come off the top of the sprite bank, so the
-        // fit is told what it really has rather than being trimmed afterwards.
-        ...(kind === "sprite" ? { maxColors: SPRITE_COLORS } : { opaque: true }),
-      }),
+    return remember(
+      bankCache,
+      key,
+      () =>
+        buildSpriteBank(list, {
+          console: consoleId,
+          packing: "planar",
+          maxPalettes: 1,
+          // The font's three entries come off the top of the sprite bank, so the
+          // fit is told what it really has rather than being trimmed afterwards.
+          ...(kind === "sprite" ? { maxColors: SPRITE_COLORS } : { opaque: true }),
+        }),
+      CACHE_LIMIT,
     );
   };
   const objects = demakeBank("sprite");
@@ -337,8 +335,15 @@ export function bindSmsArt(program: Program, assets: AssetBytes, consoleId: stri
     // The share is part of the key: the same picture fitted into a different
     // number of tiles is a different conversion, and two scenes sharing a bank
     // get different shares.
-    const art = remember(backdropCache, `${consoleId}:${share}:${digest(source)}`, () =>
-      demakeBackdrop(source, consoleId, share),
+    // One picture at a time, like the NES's: what a picture may spend is what the
+    // ones before it left, so a later conversion cannot start until an earlier one
+    // has been interned. The tournament inside each conversion still spreads over
+    // the executor's lanes, which is where a backdrop's time actually goes.
+    const art = await rememberAsync(
+      backdropCache,
+      `${consoleId}:${share}:${digest(source)}`,
+      () => demakeBackdrop(source, consoleId, share, executor),
+      CACHE_LIMIT,
     );
     // The engine's map is two bytes a cell and as wide as the picture; the name
     // table is thirty-two cells wide on both machines, so each row is padded.

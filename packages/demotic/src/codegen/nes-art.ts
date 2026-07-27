@@ -31,7 +31,8 @@ import {
   backendFor,
   buildSpriteBank,
   getConsole,
-  prepSync,
+  prep,
+  type Executor,
   type SpriteBank,
   type SpriteSource,
 } from "@demake/core";
@@ -283,9 +284,13 @@ interface Backdrop {
  * the nametable it produces and the block copy that paints it are the same
  * rectangle.
  */
-function demakeBackdrop(bytes: Uint8Array, maxTiles: number): Backdrop {
+async function demakeBackdrop(
+  bytes: Uint8Array,
+  maxTiles: number,
+  executor: Executor | undefined,
+): Promise<Backdrop> {
   const spec = getConsole("nes");
-  const fitted = prepSync(bytes, {
+  const fitted = await prep(bytes, {
     console: "nes",
     size: { w: NES_MEMORY.viewW * 8, h: NES_MEMORY.viewH * 8 },
     fit: "cover",
@@ -297,6 +302,7 @@ function demakeBackdrop(bytes: Uint8Array, maxTiles: number): Backdrop {
     // Boy's 360, and the pattern table is the same 256 either way, so a picture
     // that was not told what it could afford would always overrun.
     maxTiles,
+    ...(executor === undefined ? {} : { executor }),
   });
   const backend = backendFor("nes");
   if (!backend) throw new Error("the nes image backend is missing");
@@ -330,7 +336,11 @@ function demakeBackdrop(bytes: Uint8Array, maxTiles: number): Backdrop {
  * and a choice of *which* three, while a background tile has four and no choice at
  * all. On this console they do not even share a pattern table.
  */
-export function bindNesArt(program: Program, assets: AssetBytes): BoundNesArt {
+export async function bindNesArt(
+  program: Program,
+  assets: AssetBytes,
+  executor?: Executor,
+): Promise<BoundNesArt> {
   const requests = artRequests(program);
   const missing: string[] = [];
   const sources: Record<"sprite" | "tile", SpriteSource[]> = { sprite: [], tile: [] };
@@ -460,7 +470,16 @@ export function bindNesArt(program: Program, assets: AssetBytes): BoundNesArt {
     const pool = pools[table];
     const budget = Math.max(1, pool.free());
     backdropFits.set(scene.name, { table, budget });
-    const art = demakeBackdrop(assets.get(scene.backdrop as string) as Uint8Array, budget);
+    // One picture at a time, unlike the Game Boy's: which table a picture goes in
+    // and what it may spend are both decided by what the ones before it left, so a
+    // later conversion cannot start until an earlier one has been interned. The
+    // tournament inside each conversion still spreads across the executor's lanes,
+    // which is where a backdrop's time actually goes.
+    const art = await demakeBackdrop(
+      assets.get(scene.backdrop as string) as Uint8Array,
+      budget,
+      executor,
+    );
     const map = new Uint8Array(art.map.length);
     for (let cell = 0; cell < art.map.length; cell += 1) {
       const local = (art.map[cell] as number) * TILE_BYTES;

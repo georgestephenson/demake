@@ -23,6 +23,7 @@ import {
 import type { ParsedValue } from "@demake/cli-spec";
 
 import type { CliEnv } from "../env.js";
+import { parseJobs, withPool } from "../parallel/pool.js";
 import { EXIT, type ExitCode } from "../exit-codes.js";
 import { CliError, emitProduct, resolveInput } from "../io.js";
 
@@ -130,7 +131,9 @@ export async function runPrep(
     env.errOut("demake: warning: --metric wrgb is not implemented yet; using oklab.\n");
   }
 
-  const result = await prep(bytes, options);
+  const result = await withPool(parseJobs(str(values, "jobs")), (executor) =>
+    prep(bytes, executor === undefined ? options : { ...options, executor }),
+  );
   const output = str(values, "output");
   const emit = emitProduct(env, result.png, output, values.force === true, json);
 

@@ -53,9 +53,60 @@ annealing refinement of the top finishers.
 judge scores → bottom half pruned → survivors run full refinement (restarts,
 annealing) → final judging. Candidates share work via stage-DAG memoization (same
 decode/analysis always; same geometry or quantize results reused when choices
-coincide). Candidates run on a worker pool (Node `worker_threads` / Web Workers);
-scheduling order cannot affect results (pure functions + deterministic final
-ranking).
+coincide). Candidates run on a worker pool — see §Running the tournament.
+
+## Running the tournament
+
+Candidates cannot see each other. Each one is a complete conversion of the same
+source under different stage choices, seeded from the same number, scored against
+the same reference — so the tournament is the one place in the engine where work
+spreads across cores for free. It is also where a build's time goes: demaking one
+colour backdrop is around **70%** of `demake build`, against 1.5% for the sprite
+bank and 0.2% for emitting the code.
+
+**Core describes the work; an edge runs it.** `@demake/core` has no threads and
+must never learn about any (doc 02 §Platform purity), so it emits *jobs* —
+`{ kind, payload }`, both halves structured-cloneable — and takes an `Executor`
+from whoever is calling. The CLI's runs on `worker_threads`, the web app's on Web
+Workers, and with none supplied they run inline, in order. That inline path is not
+a fallback so much as the specification: it is the answer every other executor has
+to reproduce byte for byte.
+
+**What makes it safe** is that the winner is decided by the *portfolio's* order
+and never by arrival:
+
+- Outcomes are written to the slot their job came from, never appended, and the
+  reduce walks candidates in portfolio order keeping the first strict improvement.
+  Ties therefore break the same way on four cores and on sixteen.
+- Every candidate re-seeds its own PRNG, so nothing carries between them. The
+  restart loop *inside* a fit does share one stream and is deliberately **not**
+  parallelised: doing so would change the draw order, which is an output-byte
+  change (doc 09 §Stability), not a speed-up.
+- A failure crosses the boundary as data and is rebuilt with its code and hint
+  intact, so `--strict` fails identically however many lanes ran.
+
+**The prologue is memoised by content.** Candidates each resize from the
+full-resolution linear source with their own kernel, so it cannot be pre-shrunk,
+and shipping it per job would cost more than the fit. Instead a worker handed nine
+candidates for one picture decodes it once — and a cache hit re-compares the source
+*bytes* rather than trusting the digest, because a collision would hand a picture
+somebody else's pixels and "unlikely" is not the standard an output-byte guarantee
+is held to.
+
+**Measured**, on four cores: `demake prep` on a 384×336 source, 5.96 s on one lane
+to 2.95 s on three — near the ideal, since the three `clean: true` candidates cost
+about 2.5× the others and bound the makespan. `--jobs 4` and `--jobs 6` are both
+*slower* than `--jobs 3` on a four-core machine, which is why `auto` is one lane
+per core minus one. A `caves` colour build goes 8.3 s → 4.7 s and `platformer` on
+the NES 14.7 s → 7.9 s, art and audio demade concurrently over the same lanes.
+
+**`--jobs` cannot reach the output**, which is why it is a flag rather than a
+decision and why `--json` does not report it. `packages/core/test/parallel.test.ts`
+pins that with executors that run jobs backwards and interleave two tournaments;
+`packages/cli/test/pool.test.ts` does it over real threads;
+`packages/demotic/test/parallel.test.ts` compares whole cartridges across the
+example library; and `packages/web/test/e2e/determinism.spec.ts` compares the
+page's against the CLI's.
 
 **User control** (doc 05 has the flag table):
 

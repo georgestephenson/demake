@@ -164,11 +164,11 @@ const TARGETS: readonly Target[] = [
     mergeHelper: "panning-merge",
     ratio: 1,
     tag: () => gbChannelOf,
-    build(source, dir) {
+    async build(source, dir) {
       const program = compile(source, { profile: getProfile("gb"), levels: levelsIn(dir) });
       const assets = assetsIn(dir);
-      const built = buildGbRom(program, { assets });
-      const bound = bindAudio(program, assets, {
+      const built = await buildGbRom(program, { assets });
+      const bound = await bindAudio(program, assets, {
         build: (tracks, effects) =>
           buildGameAudio({ tracks, effects: effects as GameEffect[], hram: 0xff8b }),
       });
@@ -187,14 +187,14 @@ const TARGETS: readonly Target[] = [
     mergeHelper: "enable-merge",
     ratio: 0.5,
     tag: () => nesChannelOf,
-    build(source, dir) {
+    async build(source, dir) {
       const program = compile(source, { profile: getProfile("nes"), levels: levelsIn(dir) });
       const assets = assetsIn(dir);
-      const built = buildNesRom(program, { assets });
+      const built = await buildNesRom(program, { assets });
       // Page zero the allocator set aside, which is the address the cartridge
       // itself was built against — asking the layout is how the two stay one.
       const state = built.layout.audio as number;
-      const bound = bindAudio(program, assets, {
+      const bound = await bindAudio(program, assets, {
         build: (tracks, effects) =>
           buildNesGameAudio({ tracks, effects: effects as GameEffect[], state }),
       });
@@ -217,14 +217,14 @@ const TARGETS: readonly Target[] = [
     mergeHelper: "stereo-merge",
     ratio: 0.5,
     tag: smsChannelTag,
-    build(source, dir) {
+    async build(source, dir) {
       const program = compile(source, { profile: getProfile("sms"), levels: levelsIn(dir) });
       const assets = assetsIn(dir);
-      const built = buildSmsRom(program, { assets });
+      const built = await buildSmsRom(program, { assets });
       // Work RAM the allocator set aside, which is the address the cartridge
       // itself was built against — asking the layout is how the two stay one.
       const state = built.layout.audio as number;
-      const bound = bindAudio(program, assets, {
+      const bound = await bindAudio(program, assets, {
         build: (tracks, effects) =>
           buildSmsGameAudio({ tracks, effects: effects as GameEffect[], state }),
       });
@@ -350,9 +350,9 @@ sound bounce.wav on a pressed
 `;
 
 for (const target of TARGETS) {
-  describe(`a game's music, on ${target.name} hardware`, () => {
-    it("performs the schedule tick for tick, with nothing preempting it", () => {
-      const { built, bound } = build(target, MUSIC_ONLY);
+  describe(`a game's music, on ${target.name} hardware`, async () => {
+    it("performs the schedule tick for tick, with nothing preempting it", async () => {
+      const { built, bound } = await build(target, MUSIC_ONLY);
       const script = bound.driver?.performed.tracks[0];
       expect(script).toBeDefined();
       const address = built.symbols.get("AudioTick");
@@ -364,11 +364,11 @@ for (const target of TARGETS) {
       expect(firstDivergence(expected, actual)).toBeNull();
     });
 
-    it("performs it identically in a ROM that also has effects in it", () => {
+    it("performs it identically in a ROM that also has effects in it", async () => {
       // The run-packed stream and the flat one are two encodings of one schedule,
       // and the whole point of the run format is that it changes nothing the chip
       // can see.
-      const { built, bound } = build(target, WITH_EFFECT);
+      const { built, bound } = await build(target, WITH_EFFECT);
       const script = bound.driver?.performed.tracks[0] as ChipScript;
       const address = built.symbols.get("AudioTick") as number;
       const ticks = 600;
@@ -376,8 +376,8 @@ for (const target of TARGETS) {
       expect(firstDivergence(expected, capture(target, built.bytes, address, ticks))).toBeNull();
     });
 
-    it("starts at the top of the schedule, with no silencing in front of it", () => {
-      const { built, bound } = build(target, MUSIC_ONLY);
+    it("starts at the top of the schedule, with no silencing in front of it", async () => {
+      const { built, bound } = await build(target, MUSIC_ONLY);
       const address = built.symbols.get("AudioTick") as number;
       const first = capture(target, built.bytes, address, 1)[0] as Write[];
       const want = bound.driver?.performed.tracks[0] as ChipScript;
@@ -385,9 +385,9 @@ for (const target of TARGETS) {
     });
   });
 
-  describe(`an effect borrowing a ${target.name} channel`, () => {
-    it("plays its own schedule and hands the channel back", () => {
-      const { built, bound } = build(target, WITH_EFFECT);
+  describe(`an effect borrowing a ${target.name} channel`, async () => {
+    it("plays its own schedule and hands the channel back", async () => {
+      const { built, bound } = await build(target, WITH_EFFECT);
       const driver = bound.driver as Driver;
       const effect = driver.performed.effects[0] as ChipScript;
       const address = built.symbols.get("AudioTick") as number;
@@ -444,13 +444,13 @@ for (const target of TARGETS) {
 
     it.skipIf(target.mergeReg === null)(
       "leaves the music's own bits alone in the register they share",
-      () => {
+      async () => {
         // `NR51` on one machine and `$4015` on the other, and the same rule: one
         // byte carries every channel, so it is merged and never stored. Every value
         // the chip sees after the effect starts must keep at least one channel that
         // is not the effect's, or the music has been muted by a stream that had no
         // business writing it.
-        const { built, bound } = build(target, WITH_EFFECT);
+        const { built, bound } = await build(target, WITH_EFFECT);
         const driver = bound.driver as Driver;
         const effect = driver.performed.effects[0] as ChipScript;
         const owned = channelOfEffect(target, effect);
@@ -471,14 +471,14 @@ for (const target of TARGETS) {
     );
   });
 
-  describe(`listening to a running ${target.name} cartridge`, () => {
-    it("emits audible samples at the delivery rate the page asks for", () => {
+  describe(`listening to a running ${target.name} cartridge`, async () => {
+    it("emits audible samples at the delivery rate the page asks for", async () => {
       // The last link in doc 07's chain: the page plays what the chip emitted, so
       // what the chip emits from a *running game* has to be real audio. The
       // stream is `@demake/chip`'s, bit-identical to the offline renderer
       // (`packages/chip/test/stream.test.ts`), which is what makes the page a
       // playback device rather than a second implementation of the hardware.
-      const { built } = build(target, MUSIC_ONLY);
+      const { built } = await build(target, MUSIC_ONLY);
       const machine = target.boot(built.bytes);
       const sink = new StreamSink(target.clockHz, { sampleRate: 48000, capacitySeconds: 3 });
       machine.listen(sink);
@@ -503,9 +503,9 @@ for (const target of TARGETS) {
       expect(peak, "the cartridge played silence").toBeGreaterThan(0.05);
     });
 
-    it("stays silent when nothing is listening", () => {
+    it("stays silent when nothing is listening", async () => {
       // The conformance suites run without a sink, and must pay nothing for it.
-      const { built } = build(target, MUSIC_ONLY);
+      const { built } = await build(target, MUSIC_ONLY);
       const machine = target.boot(built.bytes);
       expect(machine.listening).toBe(false);
       for (let frame = 0; frame < 10; frame += 1) machine.runFrame();
@@ -513,25 +513,25 @@ for (const target of TARGETS) {
     });
   });
 
-  describe(`what a ${target.name} game pulls in`, () => {
-    it("emits no preemption machinery when nothing can preempt", () => {
-      const { built } = build(target, MUSIC_ONLY);
+  describe(`what a ${target.name} game pulls in`, async () => {
+    it("emits no preemption machinery when nothing can preempt", async () => {
+      const { built } = await build(target, MUSIC_ONLY);
       const helpers = built.stats.audio?.helpers ?? [];
       expect(helpers).toContain("music-order-walk");
       expect(helpers.some((name) => name.includes("preemptible"))).toBe(false);
       expect(helpers).not.toContain(target.mergeHelper);
     });
 
-    it("emits no music player in a game that only has effects", () => {
-      const { built } = build(target, EFFECT_ONLY);
+    it("emits no music player in a game that only has effects", async () => {
+      const { built } = await build(target, EFFECT_ONLY);
       const helpers = built.stats.audio?.helpers ?? [];
       expect(helpers.some((name) => name.startsWith("sfx-"))).toBe(true);
       expect(helpers.some((name) => name.startsWith("music-"))).toBe(false);
       expect(built.stats.audio?.tracks).toBe(0);
     });
 
-    it("pulls the one-shot stop path for an effect and not for a track", () => {
-      const { built } = build(target, WITH_EFFECT);
+    it("pulls the one-shot stop path for an effect and not for a track", async () => {
+      const { built } = await build(target, WITH_EFFECT);
       const helpers = built.stats.audio?.helpers ?? [];
       expect(helpers).toContain("sfx-one-shot-stop");
       expect(helpers).not.toContain("music-one-shot-stop");
@@ -549,16 +549,16 @@ for (const target of TARGETS) {
  * merges instead. That path exists on no other Sega machine, and nothing else in
  * this file would run it.
  */
-describe("a Game Gear's stereo latch, which two streams share", () => {
+describe("a Game Gear's stereo latch, which two streams share", async () => {
   /** The stereo latch, as `@demake/chip` and a `ChipScript` number it. */
   const STEREO = 0x06;
 
-  function buildGg(source: string) {
+  async function buildGg(source: string) {
     const program = compile(source, { profile: getProfile("gg") });
     const assets = assetsIn(fixtures);
-    const built = buildSmsRom(program, { assets });
+    const built = await buildSmsRom(program, { assets });
     const state = built.layout.audio as number;
-    const bound = bindAudio(program, assets, {
+    const bound = await bindAudio(program, assets, {
       build: (tracks, effects) =>
         buildSmsGameAudio({ tracks, effects: effects as GameEffect[], state }),
     });
@@ -573,8 +573,8 @@ describe("a Game Gear's stereo latch, which two streams share", () => {
     build: (source) => buildGg(source),
   };
 
-  it("performs the music tick for tick, merge writes and all", () => {
-    const { built, bound } = buildGg(MUSIC_ONLY);
+  it("performs the music tick for tick, merge writes and all", async () => {
+    const { built, bound } = await buildGg(MUSIC_ONLY);
     const script = bound.driver?.performed.tracks[0] as ChipScript;
     const address = built.symbols.get("AudioTick") as number;
     const ticks = 300;
@@ -582,8 +582,8 @@ describe("a Game Gear's stereo latch, which two streams share", () => {
     expect(firstDivergence(expected, capture(gg, built.bytes, address, ticks))).toBeNull();
   });
 
-  it("leaves the music's own bits alone in the latch they share", () => {
-    const { built, bound } = buildGg(WITH_EFFECT);
+  it("leaves the music's own bits alone in the latch they share", async () => {
+    const { built, bound } = await buildGg(WITH_EFFECT);
     const effect = (bound.driver as Driver).performed.effects[0] as ChipScript;
     const owned = channelOfEffect(gg, effect);
     const address = built.symbols.get("AudioTick") as number;
@@ -601,12 +601,12 @@ describe("a Game Gear's stereo latch, which two streams share", () => {
     expect(shared.some((write) => (write.value & musical) !== 0)).toBe(true);
   });
 
-  it("emits the merge on the handheld and not on the Master System", () => {
-    expect(buildGg(WITH_EFFECT).built.stats.audio?.helpers ?? []).toContain("stereo-merge");
+  it("emits the merge on the handheld and not on the Master System", async () => {
+    expect((await buildGg(WITH_EFFECT)).built.stats.audio?.helpers ?? []).toContain("stereo-merge");
     // A Master System has no register two streams both write, so there is
     // nothing to fold and no routine to fold it with.
     const sms = TARGETS.find((one) => one.id === "sms") as Target;
-    const helpers = build(sms, WITH_EFFECT).built.stats.audio?.helpers ?? [];
+    const helpers = (await build(sms, WITH_EFFECT)).built.stats.audio?.helpers ?? [];
     expect(helpers.some((name) => name.includes("merge"))).toBe(false);
     // The preemption machinery is still there: sharing the chip is what needs it,
     // and a shared *register* is a separate question the two machines answer
@@ -638,16 +638,16 @@ function channelOfEffect(target: Target, effect: ChipScript): number {
   return found;
 }
 
-describe("audio in the trace", () => {
-  it("records what the game asked for, with or without the files", () => {
+describe("audio in the trace", async () => {
+  it("records what the game asked for, with or without the files", async () => {
     // A build with no audio bytes still records the request, so the conformance
     // suite can run without loading a megabyte of fixtures and still be
     // comparing the same game.
     const source = readFileSync(join(fixtures, "pong.dmt"), "utf8");
     const program = compile(source, { profile: getProfile("gb") });
     const frames = tape("1:a,90:,90:left,120:right");
-    const silent = romTrace(program, frames);
-    const sounding = romTrace(program, frames, { assets: assetsIn(fixtures) });
+    const silent = await romTrace(program, frames);
+    const sounding = await romTrace(program, frames, { assets: assetsIn(fixtures) });
     expect(sounding).toBe(silent);
     expect(silent).toBe(trace(new Sim(program), frames));
   });
@@ -662,7 +662,7 @@ describe("audio in the trace", () => {
   });
 });
 
-describe("the example library", () => {
+describe("the example library", async () => {
   const cases = [
     ["pong.dmt", fixtures],
     ...["breakout", "platformer", "dodger", "shooter", "caves", "runner"].map(
@@ -712,8 +712,8 @@ describe("the example library", () => {
       if (OVER_BUDGET[target.id]?.includes(file)) continue;
       it(
         `${file} fits in a ${target.name} cartridge with its music and effects`,
-        () => {
-          const { built } = build(target, readFileSync(join(dir, file), "utf8"), dir);
+        async () => {
+          const { built } = await build(target, readFileSync(join(dir, file), "utf8"), dir);
           expect(built.stats.missingAudio).toEqual([]);
           expect(built.stats.audio?.effects ?? 0).toBeGreaterThan(0);
           // Headroom, deliberately asserted: a fixture built to the last hundred
@@ -727,9 +727,9 @@ describe("the example library", () => {
     for (const file of OVER_BUDGET[target.id] ?? []) {
       it(
         `${file} does not fit in a ${target.name} cartridge with its music`,
-        () => {
+        async () => {
           const source = readFileSync(join(games, file), "utf8");
-          expect(() => build(target, source, games)).toThrowError(/E_GAME_TOO_LARGE|holds/);
+          await expect(build(target, source, games)).rejects.toThrowError(/E_GAME_TOO_LARGE|holds/);
         },
         BUILD_TIMEOUT,
       );
@@ -753,10 +753,10 @@ describe("the example library", () => {
   // states its own timeout rather than inheriting one written for a single
   // pipeline. The others have four kilobytes and more to spare, and
   // `rom.test.ts` builds every fixture for `gbc` regardless.
-  it("the shooter, the tightest cartridge in the library, still fits in colour", () => {
+  it("the shooter, the tightest cartridge in the library, still fits in colour", async () => {
     const source = readFileSync(join(games, "shooter.dmt"), "utf8");
     const program = compile(source, { profile: getProfile("gbc"), levels: levelsIn(games) });
-    const built = buildGbRom(program, { assets: assetsIn(games) });
+    const built = await buildGbRom(program, { assets: assetsIn(games) });
     expect(built.stats.missingAudio).toEqual([]);
     expect(built.stats.free).toBeGreaterThan(512);
   }, 120_000);
