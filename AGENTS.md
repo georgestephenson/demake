@@ -382,6 +382,25 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   attribute cell means level art gets one palette — and it says so by passing
   `maxTiles`/`maxPalettes` into the engine rather than trimming a finished
   conversion.
+- **A build's only lever on a picture is the budget, so spend the hardware on
+  it.** The cartridge's backdrop is `prep`'s backdrop at the budget it was given,
+  and `nes-rom.test.ts` proves it cell by cell — so quality is decided entirely by
+  how many patterns and palettes the build can hand over. On the NES that meant a
+  pattern table per picture (`PPUCTRL` bit 4 chooses which one the background
+  reads), a built-in bank pulled down to the characters a program actually writes
+  (64 patterns to ~27), and no reserved sub-palette — a caption takes a colour slot
+  the fit left empty, since a glyph cell shows only the universal backdrop and its
+  ink. Together: 96 patterns to 201–231, three sub-palettes to four, and the
+  shooter's title screen from 216 merged cells to none. Look for the same kind of
+  headroom before touching a fitter: an under-fed fit looks like a bad fit.
+- **A picture costs program space as well as patterns, so it is packed.** An NES
+  nametable is 960 cells against a 32 KiB cartridge with no mapper, and two raw
+  ones were six per cent of the program — which is what nearly stopped the shooter
+  fitting once it had music. Cells and attributes go in as literals and runs
+  (`packCells`) and come out through one walk with rendering off, at 279–682 bytes
+  a picture. The encoding is never the contract: what is guaranteed is the bytes
+  that reach the PPU, so `nes-rom.test.ts` boots the cartridge and reads the PPU's
+  own memory rather than checking the format.
 - **And music and effects are demade by the audio engine, the same way.** The
   same `assets` map carries `.mid` and `.wav` bytes, `codegen/audio.ts` hands
   them to `@demake/audio`, and the driver that plays them is `@demake/audio`'s
@@ -658,6 +677,23 @@ packages/demotic/test/rom.test.ts` builds all seven fixture games and diffs raw
   one block copy into fixed staging and the overlap test and separation are
   shared code. Inlined, a bullet against nine aliens cost 1.5 KiB _per pair_ and
   a three-shot magazine would not fit in a cartridge.
+- **And the pairs themselves are a loop, not a copy per pair** (the NES's
+  `emitPairLoop`/`emitEdgeLoop`). The other object goes in a page-zero pointer and
+  the rule body is emitted once against `EntityAddr`'s `ptr` case, with a
+  four-byte table entry per pair for its address and contact bit. Three shots
+  against nine aliens went from 12.2 KiB of collision code to 2.5. A loop is only
+  taken where the objects agree about what an unrolled copy would have baked in —
+  the near margins, whether `visible` can change, their size — and never below
+  three, where the tables cost more than the copies. When you add an emitter that
+  reads or writes a bound entity, take an `EntityAddr` rather than an address, or
+  it will be the one thing that cannot be looped.
+- **The integrator groups by what it would have compiled to.** `moveShape` is
+  every compile-time question `emitAxis` asks — can speed change, can each
+  direction, and what are they where they cannot — so objects in one group would
+  have produced identical instructions and sharing a body is a proof rather than a
+  hope. A property the emitter reads _and_ writes goes through `openProp`: the
+  property's own address for a named instance, a staged temporary for a looped
+  one, so an unrolled object's code is byte-for-byte what it always was.
 - **The tile walk is clipped to the grid once, not per cell.** Cells outside a
   level contribute nothing either way, so bounding the walk up front is
   equivalent to asking `TileAt` about every cell — and it is the difference

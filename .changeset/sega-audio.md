@@ -68,20 +68,22 @@ build's reported driver and schedule sizes were read before the driver had been
 emitted, so `demake build` said "0 bytes of driver" on every console; they are
 getters over the driver's own stats now.
 
-One example does not fit. The shooter's Master System cartridge is about a
-kilobyte over with its music and effects in it, and the build says so rather than
-dropping anything. The audio is not what makes it tight — its PSG schedule is the
+One example does not fit, and it is the same debt the NES paid off one commit
+ago. The shooter's Master System cartridge is about a kilobyte over with its music
+and effects in it. The audio is not what makes it tight — its PSG schedule is the
 smallest of the three consoles', because the chip has fewer registers to state and
-the driver ticks at the frame — the game around it is: the tile bank is thirty-two
-bytes of ROM per tile _and_ thirty-two of video RAM, because it is uploaded rather
-than addressed in place, and a name-table cell is two bytes rather than one. That
-comes to roughly six kilobytes more of game than the same fixture spends on an
-NROM cartridge, with no mapper to spend the difference from. The conformance suite
-asserts the overflow instead of skipping the fixture, so a codegen change that
-wins the bytes back will fail that test and move it back into the sweep. The
-caves — the next tightest — keeps 986 bytes free, so the Sega sweep asserts 512
-bytes of headroom where the other consoles assert a kilobyte, on the same measured
-grounds the colour Game Boy build already lowers it for.
+the driver ticks at the frame. What makes it tight is that this backend still
+emits a copy of a rule's code per object: measured on that fixture, collisions are
+9,283 bytes, the integrator 2,840 and the edge rules 2,894, out of 33,754. Nine
+aliens against three shots is twenty-seven collision pairs and each one is the
+same program with a different address in it — exactly what `perf(nes): loop a rule
+over its objects` folded from 12,217 bytes to 2,472 on the other machine.
+
+So the overflow is asserted rather than skipped, and the Sega sweep asserts 512
+bytes of headroom where the other consoles assert a kilobyte (the caves lands at
+986). Both are marked in `audio.test.ts` as a debt against the looping work rather
+than as a fact about the hardware — the day that lands here, the assertion flips
+and the fixture rejoins the sweep at the same kilobyte as everywhere else.
 
 The web bundle absorbs it: 297.2 KB gzipped of the 300 KB budget (doc 07 §Quality
 bar), which is where it was before. The driver is generated code inside

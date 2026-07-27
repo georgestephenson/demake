@@ -252,6 +252,50 @@ Each sprite goes through the existing image pipeline — no second implementatio
    family's tile bank.
 5. Emit alongside the compiled game (doc 14 §Runtime model).
 
+**A backdrop is the same picture `demake prep` makes, at the budget the cartridge
+can give it.** The build's only input to the conversion is that budget, and it is
+the console's own arithmetic: what a pattern table holds, minus the built-in
+bank, minus the art already in that table. Nothing about the fit is decided
+twice — `packages/demotic/test/nes-rom.test.ts` runs each picture through
+`prepSync` and the image backend again at the reported budget and compares the
+pattern behind all 960 cells, so "no second art converter" is checked rather than
+asserted from the call graph.
+
+Which makes the budget the whole of the quality, and it is worth spending the
+hardware on. Three things came out of doing that on the NES, and the first two are
+the console's own facilities rather than cleverness:
+
+- **Two pattern tables.** `PPUCTRL` bit 4 chooses which one the background layer
+  reads, so a game's pictures are given one each rather than halving a single
+  table between them.
+- **A pulled built-in bank.** The font, the level patterns and the placeholder
+  block are 64 patterns and a game draws about 25 of them — nobody's score needs
+  a `?`. On a Game Boy that costs nothing; here it comes out of the same 256 a
+  picture is fitted into, so only what a program actually writes is emitted. The
+  blank stays at index zero, because that is what an empty cell draws.
+- **No reserved palette.** A caption's cells are *replaced* by glyph tiles, so
+  only two colours matter there: the universal backdrop every palette shares, and
+  whatever sits at the ink's index. The fitter rarely fills all sixteen slots, so
+  the font takes one the picture left empty and the picture keeps all four
+  sub-palettes. Where the fit really did use every slot, the caption goes in the
+  palette with the most contrast at that index — a worse caption and a whole
+  picture, rather than the reverse.
+
+Together those took a title screen from **96 patterns to 201–231** and from three
+sub-palettes to four; the shooter's merged 216 of its 960 cells and now merges
+none. A console with one table shares it, and the reported budget says so.
+
+**And the nametable is packed, because a picture costs program space too.** A
+screenful is 960 cells and an NROM cartridge is 32 KiB, so two pictures stored raw
+were six per cent of the whole program — which is what put the shooter, whose nine
+aliens generate a lot of collision code, within a few hundred bytes of not
+fitting. A demade screen is mostly runs, so the cells and the attribute table go
+in as literals and runs and come out through one walk: 960 bytes becomes 279–682,
+and a fixture gains 280–560 per picture. What is guaranteed is the bytes that
+reach the PPU, never the encoding — the same rule the audio driver's packing runs
+under (doc 16 §The driver format is not part of the contract) — and the test boots
+the cartridge and reads the PPU's own memory rather than checking the format.
+
 Steps 3–4 live in `packages/core/src/pipeline/sprite.ts`, beside the rest of the
 pipeline. The Demakefile only decides what is fed in and with which options; with
 no Demakefile, `demake build` loads the art next to the source and converts it

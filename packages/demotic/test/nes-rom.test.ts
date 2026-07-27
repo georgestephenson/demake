@@ -27,13 +27,22 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { NES_CHR_OFFSET, NES_PRG_OFFSET, NES_PRG_SIZE } from "@demake/core";
+import {
+  backendFor,
+  getConsole,
+  NES_CHR_OFFSET,
+  NES_PRG_OFFSET,
+  NES_PRG_SIZE,
+  prepSync,
+} from "@demake/core";
 import { Nes } from "@demake/nes";
 
 import { buildNesRom } from "../src/codegen/nes.js";
+import { bindNesArt, BACKDROP_PALETTES } from "../src/codegen/nes-art.js";
+import { packCells, SYSTEM_PALETTE } from "../src/codegen/nes/emit.js";
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
-import { builtinChr, BUILTIN_TILES, TILE_BYTES } from "../src/rom/graphics.js";
+import { BUILTIN_TILES, TILE_BYTES, type SelectedBank } from "../src/rom/graphics.js";
 
 const fixtures = join(import.meta.dirname, "..", "fixtures");
 const read = (name: string) => readFileSync(join(fixtures, name), "utf8");
@@ -67,15 +76,39 @@ describe("the NES cartridge", () => {
   });
 
   it("puts the built-in patterns in both tables, because the bank is fixed anyway", () => {
-    const builtin = builtinChr();
-    const background = built.bytes.subarray(NES_CHR_OFFSET, NES_CHR_OFFSET + builtin.length);
+    const bank = bindNesArt(build("pong.dmt"), new Map()).options.bank as SelectedBank;
+    const background = built.bytes.subarray(NES_CHR_OFFSET, NES_CHR_OFFSET + bank.chr.length);
     const objects = built.bytes.subarray(
       NES_CHR_OFFSET + 0x1000,
-      NES_CHR_OFFSET + 0x1000 + builtin.length,
+      NES_CHR_OFFSET + 0x1000 + bank.chr.length,
     );
-    expect([...background]).toEqual([...builtin]);
-    expect([...objects]).toEqual([...builtin]);
-    expect(builtin.length).toBe(BUILTIN_TILES * TILE_BYTES);
+    expect([...background]).toEqual([...bank.chr]);
+    expect([...objects]).toEqual([...bank.chr]);
+    expect(bank.chr.length).toBe(bank.count * TILE_BYTES);
+  });
+
+  it("pulls the bank, so a game pays for the characters it draws", () => {
+    // The whole font is 59 glyphs and pong writes about a dozen. On a Game Boy
+    // that costs nothing — 384 tiles is more than these games fill — and here it
+    // comes out of the 256 a *picture* is fitted into.
+    const bank = bindNesArt(build("pong.dmt"), new Map()).options.bank as SelectedBank;
+    expect(bank.count).toBeLessThan(BUILTIN_TILES);
+    // The blank stays at zero whatever else is in the bank: it is what an empty
+    // cell draws, and the runtime writes that number rather than looking it up.
+    expect(bank.glyph(" ")).toBe(0);
+    expect(bank.glyph("?")).toBe(0); // not drawn by this game, so it is the blank
+    // And what the game does draw is in it, at distinct indices — every character
+    // of every caption it writes, taken from the program rather than guessed at.
+    const program = build("pong.dmt");
+    const captions = program.instances
+      .filter((instance) => instance.className === "text")
+      .flatMap((instance) => [...(instance.strings["text"] ?? "")])
+      .map((character) => character.toUpperCase())
+      .filter((character) => character !== " ");
+    expect(captions.length).toBeGreaterThan(0);
+    const tiles = [...new Set(captions)].map((character) => bank.glyph(character));
+    expect(tiles.every((tile) => tile > 0)).toBe(true);
+    expect(new Set(tiles).size).toBe(tiles.length);
   });
 });
 
@@ -90,22 +123,139 @@ describe("the NES cartridge", () => {
 const ART_TIMEOUT = 120_000;
 
 describe("the NES art budget", { timeout: ART_TIMEOUT }, () => {
-  it("fits two full-screen pictures in one pattern table", () => {
-    // 206 patterns and 70, against 195 free — so this only passes because the fit
-    // is told its budget up front and the two are pooled against each other and
-    // against the built-in bank.
-    const program = build("pong.dmt");
-    const assets = new Map([
+  const pongAssets = () =>
+    new Map([
       ["pong.title.svg", asset("pong.title.svg")],
       ["pong.play.svg", asset("pong.play.svg")],
       ["ball.svg", asset("ball.svg")],
       ["paddle.svg", asset("paddle.svg")],
     ]);
-    const built = buildNesRom(program, { assets });
+
+  it("gives each picture a pattern table of its own", () => {
+    // The console has two, and `PPUCTRL` bit 4 chooses which one the background
+    // reads — so two pictures do not have to share one. Sharing halved what each
+    // got, and the fitter spent the difference merging cells.
+    const bound = bindNesArt(build("pong.dmt"), pongAssets());
+    const fits = [...bound.backdropFits.values()];
+    expect(fits.length).toBe(2);
+    expect(new Set(fits.map((fit) => fit.table)).size).toBe(2);
+    for (const fit of fits) expect(fit.budget).toBeGreaterThan(150);
+  });
+
+  it("still fits both, with the built-in bank in each table", () => {
+    const built = buildNesRom(build("pong.dmt"), { assets: pongAssets() });
     expect(built.stats.missingArt).toEqual([]);
-    // Both tables, and neither over its share.
     expect(built.stats.artTiles).toBeGreaterThan(0);
     expect(built.bytes.length).toBe(16 + 0x8000 + 0x2000);
+  });
+
+  /**
+   * The cartridge's picture is the art demaker's picture, cell for cell.
+   *
+   * Not "looks like": the same bytes. A game's backdrop goes through `prepSync`
+   * and the `nes` image backend — the code `demake prep -c nes` is — so the only
+   * thing a build may decide is the *budget*, and it decides it from what the
+   * pattern table has left. This runs the picture through that path again at the
+   * budget the build reports and compares the pattern behind every one of the 960
+   * cells, which is what makes "no second art converter" checkable rather than a
+   * claim about who calls what.
+   */
+  /**
+   * The packed nametable reaches the PPU as the picture, byte for byte.
+   *
+   * A backdrop is stored as literals and runs, because 960 raw bytes a picture is
+   * three per cent of an NROM cartridge and the shooter has nine aliens' worth of
+   * collision code to fit beside two of them. What is guaranteed is not the
+   * encoding but what comes out of it, so this boots the cartridge and reads the
+   * PPU's own memory: the picture's own cells, and the attribute table that
+   * colours them.
+   *
+   * The caption is painted over the picture afterwards, so the last rows are the
+   * game's rather than the fit's — which is why the exact comparison stops above
+   * them and what is asserted below them is that only a caption's worth of cells
+   * moved.
+   */
+  it("unpacks a backdrop into exactly the cells the build produced", () => {
+    const program = build("pong.dmt");
+    const assets = pongAssets();
+    const built = buildNesRom(program, { assets });
+    const bound = bindNesArt(program, assets);
+    const machine = new Nes(built.bytes);
+    for (let frame = 0; frame < 8; frame += 1) machine.runFrame();
+
+    const title = bound.options.backdrops?.get("title");
+    expect(title).toBeDefined();
+    const { map, attr } = title as { map: Uint8Array; attr: Uint8Array };
+    expect(map.length).toBe(32 * 30);
+    const painted = machine.ppu.nametables;
+    const clear = 24 * 32; // above anything the HUD writes
+    expect([...painted.subarray(0, clear)]).toEqual([...map.subarray(0, clear)]);
+    let differing = 0;
+    for (let cell = clear; cell < map.length; cell += 1) {
+      if (painted[cell] !== map[cell]) differing += 1;
+    }
+    expect(differing).toBeLessThan(64);
+    // The attribute table is packed and unpacked the same way, and above the
+    // caption it is the picture's own. The blocks the caption covers are switched
+    // to its palette when the table is *built*, so those are the build's answer
+    // rather than the fit's and are not compared here.
+    expect([...painted.subarray(0x3c0, 0x3c0 + 48)]).toEqual([...attr.subarray(0, 48)]);
+    // And the encoding is worth having: a picture that packed to its full size
+    // would mean the walk was costing bytes rather than saving them.
+    expect(packCells(map).length).toBeLessThan(map.length * 0.8);
+  });
+
+  it("draws exactly what `demake prep -c nes` would, at the budget it was given", () => {
+    const program = build("pong.dmt");
+    const bound = bindNesArt(program, pongAssets());
+    const spec = getConsole("nes");
+    const backend = backendFor("nes");
+    expect(backend).toBeDefined();
+
+    for (const scene of program.scenes) {
+      const file = scene.backdrop;
+      if (file === undefined) continue;
+      const fit = bound.backdropFits.get(scene.name);
+      const drawn = bound.options.backdrops?.get(scene.name);
+      expect(fit, scene.name).toBeDefined();
+      expect(drawn, scene.name).toBeDefined();
+
+      const image = prepSync(asset(file), {
+        console: "nes",
+        size: { w: 32 * 8, h: 30 * 8 },
+        fit: "cover",
+        maxSubPalettes: BACKDROP_PALETTES,
+        maxTiles: (fit as { budget: number }).budget,
+      }).image;
+      const artifacts = backend?.emitBin(image, spec, {
+        symbol: "backdrop",
+        header: [],
+        mapBase: 0,
+        tileBase: 0,
+      });
+      const find = (suffix: string): Uint8Array =>
+        artifacts?.find((artifact) => artifact.suffix === suffix)?.bytes ?? new Uint8Array(0);
+      const wantChr = find(".chr.bin");
+      const wantMap = find(".nam.bin");
+      const table = (drawn as { table: 0 | 1 }).table * 0x1000;
+      const gotMap = (drawn as { map: Uint8Array }).map;
+
+      expect(gotMap.length, scene.name).toBe(wantMap.length);
+      let differing = 0;
+      for (let cell = 0; cell < wantMap.length; cell += 1) {
+        const want = (wantMap[cell] as number) * TILE_BYTES;
+        const got = table + (gotMap[cell] as number) * TILE_BYTES;
+        for (let byte = 0; byte < TILE_BYTES; byte += 1) {
+          if (bound.chr[got + byte] !== wantChr[want + byte]) {
+            differing += 1;
+            break;
+          }
+        }
+      }
+      expect(differing, `${scene.name} cells differing from prep's`).toBe(0);
+      // And its attributes and palette, which decide the colour of every one.
+      expect([...(drawn as { attr: Uint8Array }).attr]).toEqual([...find(".attr.bin")]);
+    }
   });
 });
 
@@ -116,6 +266,13 @@ describe("what the NES actually draws", () => {
    * The tables are read out of the cartridge rather than recomputed here, so this
    * checks the *renderer* — where a cell was put — and not the level format, which
    * `shape.ts` emits for both consoles and `level.test.ts` already covers.
+   *
+   * All thirty rows, not the game's twenty-eight: the last two are the overscan a
+   * television would crop, and they are exactly where this console goes wrong. A
+   * level the nametable holds whole cannot scroll vertically — thirty rows of map
+   * against thirty of raster leave nothing to scroll into but the level's own top
+   * — so the renderer pins the vertical scroll, and the rows the game camera has
+   * "scrolled past" have to still show the level's own bottom.
    */
   function mismatches(
     machine: Nes,
@@ -130,11 +287,14 @@ describe("what the NES actually draws", () => {
       const legend = prg(tables.grid + row * size.width + column);
       return legend === 0xff ? 0 : prg(tables.tiles + legend);
     };
+    // The renderer's origin, which is the camera's only where the level is tall
+    // enough to scroll a row into.
+    const originRow = size.height > 30 ? camera.row : 0;
     let bad = 0;
-    for (let screenRow = 0; screenRow < 28; screenRow += 1) {
+    for (let screenRow = 0; screenRow < 30; screenRow += 1) {
       for (let screenColumn = 0; screenColumn < 32; screenColumn += 1) {
         const column = camera.column + screenColumn;
-        const row = camera.row + screenRow;
+        const row = originRow + screenRow;
         const mapColumn = column % 64;
         const table = mapColumn >= 32 ? 1 : 0;
         const got = machine.ppu.nametables[table * 0x400 + (row % 30) * 32 + (mapColumn % 32)];
@@ -142,6 +302,11 @@ describe("what the NES actually draws", () => {
       }
     }
     return bad;
+  }
+
+  /** The vertical scroll the PPU is actually being given. */
+  function scrollRow(machine: Nes): number {
+    return Math.floor(machine.ppu.scrollY / 8);
   }
 
   /** Where the camera is, in whole cells, read out of the runtime's own state. */
@@ -190,6 +355,12 @@ describe("what the NES actually draws", () => {
     const moved = cameraCells(machine, camera);
     expect(moved.column).toBeGreaterThan(0);
     expect(mismatches(machine, built.bytes, tables, size, moved)).toBe(0);
+
+    // The game camera really has travelled down this level — it is thirty rows
+    // against a twenty-eight-row screen — and the PPU has not, which is the whole
+    // of why the bottom of the screen is the cavern's floor and not its ceiling.
+    expect(moved.row).toBeGreaterThan(0);
+    expect(scrollRow(machine)).toBe(0);
   });
 
   it("keeps a level wider than the pair correct as the edge painter walks it", () => {
@@ -262,10 +433,29 @@ describe("what the NES actually draws", () => {
     const built = buildNesRom(program, { assets });
     const machine = new Nes(built.bytes);
     for (let frame = 0; frame < 40; frame += 1) machine.runFrame();
-    // The font's palette is the last of the four; its ink is colour three, and the
-    // backdrop every palette shares is colour zero of the first.
+    // No palette is reserved for the font any more — the caption goes in whichever
+    // one the picture left a colour slot in — so the test asks the build which it
+    // chose rather than assuming the last. The ink is colour three of it, and the
+    // backdrop every palette shares is colour zero.
+    // This build supplies object art but no title picture, so there is no palette
+    // pressure and the font keeps the reserved one; a scene *with* a picture is
+    // told which palette the fit left room in.
+    const bound = bindNesArt(program, assets);
+    const font = bound.options.backdrops?.get("title")?.fontPalette ?? SYSTEM_PALETTE;
     const backdrop = machine.ppu.palette[0] as number;
-    const ink = machine.ppu.palette[3 * 4 + 3] as number;
+    const ink = machine.ppu.palette[font * 4 + 3] as number;
     expect(ink).not.toBe(backdrop);
+    // And it is a real difference, not a neighbouring shade of the same colour.
+    expect(contrast(ink, backdrop)).toBeGreaterThan(60);
   });
 });
+
+/** How far apart two master-palette entries look, as Rec. 601 luma. */
+function contrast(a: number, b: number): number {
+  const master = getConsole("nes").color.masterPalette ?? [];
+  const luma = (code: number): number => {
+    const colour = master[code & 0x3f];
+    return colour ? 0.299 * colour.r + 0.587 * colour.g + 0.114 * colour.b : 0;
+  };
+  return Math.abs(luma(a) - luma(b));
+}

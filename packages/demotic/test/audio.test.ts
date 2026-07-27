@@ -671,39 +671,29 @@ describe("the example library", () => {
   ] as const;
 
   /**
-   * The fixtures whose cartridge cannot hold their audio, and by how much.
+   * The fixture whose cartridge cannot hold its audio, and by how much.
    *
-   * Not a skip: the overflow is *asserted*, so the day a codegen change makes one
+   * Not a skip: the overflow is *asserted*, so the day a codegen change makes it
    * fit, this test fails and someone moves it into the sweep above. The shooter is
-   * the tightest game in the library on every console — two demade backdrops, nine
-   * aliens, a theme and its effects — and on two of them it runs out.
-   *
-   * On the NES, two measured facts add up to it: the game's 6502 code is around
-   * 3.8 KiB larger than its SM83 code, and an NES backdrop is a 960-cell nametable
-   * against a Game Boy's 360. On the Sega 8-bits it is *not* the audio — the
-   * shooter's PSG schedule is the smallest of the three, because the chip has
-   * fewer registers to state and the driver ticks at the frame — but the tile
-   * bank, which is thirty-two bytes of ROM per tile *and* thirty-two of video RAM
-   * because it is uploaded rather than addressed in place, and a name-table cell
-   * that is two bytes rather than one. Neither cartridge has a mapper to spend the
-   * difference from.
+   * the tightest game in the library — two demade backdrops, nine aliens, a theme
+   * and its effects — and on the Sega 8-bits it runs out. That is the position the
+   * NES was in one commit ago and for the same reason: nine aliens against three
+   * shots is twenty-seven collision pairs, and this backend still emits a copy of
+   * the same code for each of them.
    */
-  const OVER_BUDGET: Readonly<Record<string, readonly string[]>> = {
-    nes: ["shooter.dmt"],
-    sms: ["shooter.dmt"],
-  };
+  const OVER_BUDGET: Readonly<Record<string, readonly string[]>> = { sms: ["shooter.dmt"] };
 
   /**
-   * Headroom a build has to leave, and why one console gets less.
+   * Bytes a build has to have left over: a kilobyte, and 512 on the Sega 8-bits.
    *
-   * A kilobyte everywhere except the Sega 8-bits, where the same measurement says
-   * 512: the tile bank and the two-byte name table above cost that machine
-   * roughly six kilobytes more of *game* than the NES spends on the same fixture,
-   * and the caves — the second-tightest in the library — lands under a kilobyte
-   * with 1.8 KiB of that being its music and effects. Lowering the floor rather
-   * than dropping the fixture is the same trade the colour Game Boy build makes,
-   * and for the same reason: the number is measured, so asserting it is what makes
-   * the next code-generator change visible instead of a mystery.
+   * The kilobyte is the real floor and the exception is a debt, not a fact about
+   * the hardware. The NES carried the same exception until its rule code stopped
+   * being copied per object — packing the backdrop nametables bought about 940
+   * bytes and looping the pairs bought six thousand — and the Sega backend has not
+   * had that work yet: its collision emitter is 9.3 KiB for the shooter and its
+   * integrator 2.8 KiB, both of which are the same body repeated with a different
+   * address in it. Until then the caves, the next tightest fixture, lands at 986
+   * bytes free.
    */
   const HEADROOM: Readonly<Record<string, number>> = { sms: 512 };
 
