@@ -209,3 +209,24 @@ const SMS_FRAME_RATE = { num: 3579545, den: 59736 };
 export const smsAudio: AudioSpec = psgAudio({ stereo: false, frameRate: SMS_FRAME_RATE });
 export const ggAudio: AudioSpec = psgAudio({ stereo: true, frameRate: SMS_FRAME_RATE });
 export const sg1000Audio: AudioSpec = psgAudio({ stereo: false, frameRate: SMS_FRAME_RATE });
+
+/**
+ * The Mega Drive's PSG — the Master System's chip, at the Master System's clock.
+ *
+ * Not a family resemblance: the same SN76489 sits at `$C00011`, fed by the same
+ * master clock divided by fifteen, and an NTSC frame is 262 lines of 3420 master
+ * cycles — which is 228 *PSG* cycles a line, so the numbers reduce to exactly
+ * {@link SMS_FRAME_RATE}. A schedule fitted for one machine is a schedule the
+ * other performs identically, and the only reason this is a separate export is
+ * that the day the FM half arrives it stops being true.
+ *
+ * **The YM2612 is deliberately not named here**, and doc 16 §The chips records
+ * what naming it would mean. An `AudioSpec` is the contract the demakers arrange
+ * *against* — every channel in it must be one the binding encodes and the chip
+ * model plays, and `bindingFor` resolves a console through `chips[0]` — so a chip
+ * with no model and no binding in that list would be a promise the arranger
+ * cannot keep, on the same terms as doc 14's "a backend gap is a build error,
+ * never a silent difference". Six FM voices are what this console's spec gains
+ * the day `@demake/chip` can play them.
+ */
+export const mdAudio: AudioSpec = psgAudio({ stereo: false, frameRate: SMS_FRAME_RATE });

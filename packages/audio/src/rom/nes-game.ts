@@ -39,7 +39,7 @@ import { abs, Asm6502, absX, acc, imm, label, zp } from "@demake/core";
 import type { ChipScript, Rational } from "../chipscript.js";
 import { bindingFor } from "../binding/registry.js";
 
-import { packScript, PackError, type DriverData } from "./data.js";
+import type { DriverData } from "./data.js";
 import { AudioRomError } from "./gb.js";
 import type { GameEffect } from "./gb-game.js";
 import {
@@ -49,6 +49,7 @@ import {
   type NesScratch,
   type NesStreamState,
 } from "./nes-driver.js";
+import { clampByte, MAX_PENDING, pack, rateHz, restrict, shapeOf, stripBoot } from "./shared.js";
 
 /** The value that stops the music, rather than starting a track. */
 export const STOP = 0xff;
@@ -211,7 +212,7 @@ export function buildNesGameAudio(input: NesGameAudioInput): NesGameAudio {
   const tracks = input.tracks.map((script) => stripBoot(script, boot));
   const effects = input.effects.map((effect) => {
     const owned = 1 << effect.channel;
-    const result = restrict(stripBoot(effect.script, boot), owned);
+    const result = restrict(stripBoot(effect.script, boot), owned, nesChannelOf);
     restricted += result.dropped;
     return result.script;
   });
@@ -349,83 +350,6 @@ export function resolveNesClock(script: ChipScript): NesGameAudio["clock"] {
 }
 
 // --- the schedules, as the ROM will perform them -----------------------------
-
-/**
- * A schedule with the chip's initialisation taken off its first tick.
- *
- * The ROM performs those writes once, at boot. Leaving them at the head of every
- * stream would mean an effect powered the chip up — and silenced every channel —
- * each time it fired.
- */
-function stripBoot(
-  script: ChipScript,
-  boot: readonly { reg: number; value: number }[],
-): ChipScript {
-  const ticks = script.ticks.map((tick) => ({ ...tick, writes: [...tick.writes] }));
-  const head = ticks[0];
-  if (head === undefined) return script;
-  const matches = boot.every((write, index) => {
-    const got = head.writes[index];
-    return got !== undefined && got.reg === write.reg && got.value === write.value;
-  });
-  if (!matches) {
-    throw new AudioRomError(
-      "E_BOOT_PREFIX",
-      "an audio schedule does not open with the chip initialisation the ROM performs at boot",
-      "this is a bug in the ROM builder, not in the track.",
-    );
-  }
-  ticks[0] = { ...head, writes: head.writes.slice(boot.length) };
-  return { ...script, ticks };
-}
-
-/**
- * A schedule cut down to the channels it is allowed to touch.
- *
- * An effect borrows one channel from the music; every write it makes to another
- * one would be the music's note being turned off. `$4015` stays, because it is
- * merged rather than stored and nothing else survives the boot strip.
- */
-function restrict(script: ChipScript, owned: number): { script: ChipScript; dropped: number } {
-  let dropped = 0;
-  const ticks = script.ticks.map((tick) => {
-    const writes = tick.writes.filter((write) => {
-      const channels = nesChannelOf(write.reg);
-      const keep = channels === 0 || (channels & owned) !== 0;
-      if (!keep) dropped += 1;
-      return keep;
-    });
-    return { ...tick, writes };
-  });
-  return { script: { ...script, ticks }, dropped };
-}
-
-/**
- * The shape one player has to cope with, across every stream it plays.
- *
- * A player is emitted once and walks any of its streams, so what it needs is the
- * *union* of what they ask for: one track with a rest in it means the rest path
- * is emitted, and every track can then use one.
- */
-function shapeOf(streams: readonly DriverData[]): DriverData {
-  const base = streams[0] as DriverData;
-  return {
-    ...base,
-    hasRests: streams.some((one) => one.hasRests),
-    hasMerges: streams.some((one) => one.hasMerges),
-    hasOrder: streams.some((one) => one.hasOrder),
-    oneShot: streams.some((one) => one.oneShot),
-  };
-}
-
-function pack(script: ChipScript, options: Parameters<typeof packScript>[1]): DriverData {
-  try {
-    return packScript(script, options);
-  } catch (error) {
-    if (error instanceof PackError) throw new AudioRomError(error.code, error.message, error.hint);
-    throw error;
-  }
-}
 
 // --- state -------------------------------------------------------------------
 
@@ -582,9 +506,6 @@ function emitClock(asm: Asm6502, state: Layout, ticksPerFrame: number): void {
   for (let tick = 0; tick < ticksPerFrame; tick += 1) asm.jsr("AudioTick");
   asm.jmp("AudioService");
 }
-
-/** Frames the driver may fall behind before it stops counting them. */
-const MAX_PENDING = 4;
 
 /**
  * One driver tick: take what the game asked for, then step each stream.
@@ -792,12 +713,4 @@ function emitMerge(asm: Asm6502, state: Layout): void {
   asm.ora(zp(state.merged));
   asm.sta(abs(SND_CHN));
   asm.rts();
-}
-
-function rateHz(rate: Rational): string {
-  return (rate.num / rate.den).toFixed(3);
-}
-
-function clampByte(value: number): number {
-  return Math.max(0, Math.min(255, Math.round(value)));
 }

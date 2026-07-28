@@ -12,8 +12,8 @@ asserted:
 | --------- | --------------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------- |
 | **art**   | any image                                           | hardware-compliant art, palettes, tile maps, asm/C/binary, bootable ROMs | working                                             |
 | **game**  | a [Demotic](docs/14-demotic.md) `.dmt` script + art | one game, every console                                                  | language, preview and playable ROMs on six consoles |
-| **music** | a MIDI track                                        | chip music, audio that sounds exactly like the hardware will, and a ROM  | six consoles; a Game Boy cartridge that plays it    |
-| **sound** | a WAV effect                                        | a chip sound effect, placed and prioritised, and a ROM                   | six consoles; a Game Boy cartridge that plays it    |
+| **music** | a MIDI track                                        | chip music, audio that sounds exactly like the hardware will, and a ROM  | seven consoles; a Game Boy cartridge that plays it  |
+| **sound** | a WAV effect                                        | a chip sound effect, placed and prioritised, and a ROM                   | seven consoles; a Game Boy cartridge that plays it  |
 
 Every demaker shares one engine, one determinism guarantee, and one proof: a
 real ROM, booted in a real emulator, compared against what the hardware was
@@ -102,7 +102,7 @@ byte-for-byte across an extensive image battery.
 | [`@demake/dmg`](packages/dmg)         | A Game Boy core: the conformance harness, and the web app's player.             |
 | [`@demake/nes`](packages/nes)         | An NES core, for the same two jobs.                                             |
 | [`@demake/sms`](packages/sms)         | A Sega 8-bit core: Master System and Game Gear.                                 |
-| [`@demake/md`](packages/md)           | A Mega Drive core: a 68000 and a VDP.                                           |
+| [`@demake/md`](packages/md)           | A Mega Drive core: a 68000, a VDP and the PSG.                                  |
 | [`@demake/chip`](packages/chip)       | Every sound chip as a register-driven model (doc 16). Depends on nothing.       |
 | [`@demake/audio`](packages/audio)     | The music and sound demakers (docs 16, 17, 18).                                 |
 | [`@demake/web`](packages/web)         | The browser app (doc 07): the same core in a worker, no server.                 |

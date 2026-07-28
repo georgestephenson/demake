@@ -338,9 +338,11 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     it was in the packer, and it resolved the way it was expected to — the
     SN76489 puts the channel in the *data* byte and latches it across writes, so
     `channelOf(reg)` became a *factory* for a `channelOf(reg, value)` carrying a
-    per-schedule latch, and `buildSmsGameAudio` refuses (`E_PSG_LATCH`) rather
+    per-schedule latch, and the driver refuses (`E_PSG_LATCH`) rather
     than guessing if a schedule ever opens a tick with a data byte and no latch in
-    front of it. That refusal is what makes preemption safe: every run of a PSG
+    front of it. Both of those are `rom/psg.ts`'s now, because they are the
+    *chip's* rather than the Z80's — which is what let the Mega Drive's 68000
+    driver reuse them unchanged. That refusal is what makes preemption safe: every run of a PSG
     stream begins with a latch byte, so a run the music skips takes its own
     channel selection with it.
 
@@ -402,14 +404,26 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     the level grid, cell by cell, after the camera has travelled — and
     `md-arith.test.ts` the arithmetic one.
 
-    **Sound is the gap on this console, and it is a real one.** The Mega Drive's
-    audio is a second processor with a YM2612 beside it, and `demake build`
-    emits neither (§A5, doc 16 §Still to come). A game that names music and
-    effects still builds and still records what a rule asked for, so a silent
-    build traces identically to a sounding one — and the page withholds the sound
-    control rather than offering one that does nothing. The way in is the PSG: an
-    SN76489 sits at `$C00011`, `@demake/chip` already models it, and what is
-    missing is a 68000 driver and a `psgBinding` entry rather than a new chip.
+    **Sound is half built, and it is the half that exists.** An SN76489 sits at
+    `$C00011` — and not merely *like* a Master System's: the same chip, at the
+    same master-clock ÷15, in a frame of 262 lines of 228 chip cycles, so
+    `mdAudio` and `smsAudio` reduce to the same rational and `psgBinding` needed
+    no change at all. What the console needed was a **generated 68000 driver**
+    (`packages/audio/src/rom/md-driver.ts`, `md-game.ts`), and the news about the
+    fourth of those is how little of it was new: everything the *chip* decides
+    moved into `rom/psg.ts` and is shared with the Z80's driver verbatim, and
+    everything every driver does to a schedule before a CPU sees it moved into
+    `rom/shared.ts`. `packages/demotic/test/audio.test.ts` boots a cartridge that
+    is playing a game and diffs every register write the PSG receives against the
+    schedule, tick for tick, with no tolerance — the same battery the other three
+    consoles run.
+
+    The YM2612 is still not emitted, and the console spec deliberately does not
+    name it (§A5, doc 16 §Still to come): an `AudioSpec` is the contract the
+    demakers arrange *against*, so a chip with no model and no binding in `chips`
+    would be a promise the arranger cannot keep. Six FM voices are what this
+    console's spec gains the day `@demake/chip` can play them; until then a Mega
+    Drive game has four, which is four more than none.
 
     The cartridge budget has no story here at all, which is itself the news:
     512 KiB against 32, and 64 KiB of work RAM against an NROM cartridge's 2. The
@@ -537,9 +551,10 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     lead, harmony) with confidences, plus the decoders. *Done means*: an MP3
     becomes a playable cartridge, and the parts it found are reported honestly
     enough that a wrong one can be corrected in one flag.
-  - **A5 — breadth** *(`nes`, `sms` and `gg` done, inside a game)*: the 2A03 and
-    the SN76489 each have a chip model, a binding and a generated driver — 6502
-    and Z80 — and `demake build -c nes`/`-c sms`/`-c gg` puts music and effects in
+  - **A5 — breadth** *(`nes`, `sms`, `gg` and the `md`'s PSG done, inside a
+    game)*: the 2A03 and the SN76489 each have a chip model, a binding and a
+    generated driver — 6502, Z80 and 68000 — and
+    `demake build -c nes`/`-c sms`/`-c gg`/`-c md` puts music and effects in
     the cartridge with doc 16's Level A proof over all of them. What none of them
     has yet is a *standalone* audio cartridge — `demake gen … --format rom` is
     still the Game Boy's alone — because a cartridge whose only job is one track is
@@ -547,7 +562,11 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     one that stretched the shared packing layer: its channel is in the data byte
     and latched, so `channelOf` became a factory over a per-schedule latch and a
     schedule that opens a tick with a bare data byte is refused rather than
-    guessed at. Remaining: `md` (FM patch fitting), `snes` (BRR,
+    guessed at. It is also the chip that made the layering pay: the Mega Drive
+    runs the *same* SN76489 at the same clock, so its binding needed no change and
+    its driver needed only the parts a 68000 does differently — everything the
+    chip decides moved into `rom/psg.ts` and is shared with the Z80's driver
+    verbatim. Remaining: the `md`'s FM half (patch fitting), `snes` (BRR,
     the SPC700 driver, sample budgeting), `gba`, `nds` — each is a chip model, a
     driver backend and a Level A/B harness, on the per-console definition of done
     Phase 2 used for images. Each faces the choice doc 16 §The driver contract

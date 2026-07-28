@@ -37,9 +37,10 @@ import { Asm, label } from "@demake/core";
 import type { ChipScript, Rational } from "../chipscript.js";
 import { bindingFor } from "../binding/registry.js";
 
-import { packScript, PackError, type DriverData } from "./data.js";
+import type { DriverData } from "./data.js";
 import { emitStream, emitStreamData, type StreamState } from "./gb-driver.js";
 import { AudioRomError, resolveClock } from "./gb.js";
+import { clampByte, pack, rateHz, restrict, shapeOf, stripBoot } from "./shared.js";
 
 /** One effect the game can fire, and what it needs while it plays. */
 export interface GameEffect {
@@ -174,7 +175,7 @@ export function buildGameAudio(input: GameAudioInput): GameAudio {
   const tracks = input.tracks.map((script) => stripBoot(script, boot));
   const effects = input.effects.map((effect) => {
     const owned = 1 << effect.channel;
-    const result = restrict(stripBoot(effect.script, boot), owned);
+    const result = restrict(stripBoot(effect.script, boot), owned, gbChannelOf);
     restricted += result.dropped;
     return result.script;
   });
@@ -278,85 +279,6 @@ export function buildGameAudio(input: GameAudioInput): GameAudio {
 }
 
 // --- the schedules, as the ROM will perform them -----------------------------
-
-/**
- * A schedule with the chip's initialisation taken off its first tick.
- *
- * The ROM performs those writes once, at boot. Leaving them at the head of every
- * stream would mean an effect powered the chip up — and silenced every channel —
- * each time it fired.
- */
-function stripBoot(
-  script: ChipScript,
-  boot: readonly { reg: number; value: number }[],
-): ChipScript {
-  const ticks = script.ticks.map((tick) => ({ ...tick, writes: [...tick.writes] }));
-  const head = ticks[0];
-  if (head === undefined) return script;
-  const matches = boot.every((write, index) => {
-    const got = head.writes[index];
-    return got !== undefined && got.reg === write.reg && got.value === write.value;
-  });
-  if (!matches) {
-    throw new AudioRomError(
-      "E_BOOT_PREFIX",
-      "an audio schedule does not open with the chip initialisation the ROM performs at boot",
-      "this is a bug in the ROM builder, not in the track.",
-    );
-  }
-  ticks[0] = { ...head, writes: head.writes.slice(boot.length) };
-  return { ...script, ticks };
-}
-
-/**
- * A schedule cut down to the channels it is allowed to touch.
- *
- * An effect borrows one channel from the music; every write it makes to another
- * one would be the music's note being turned off. Global registers stay, because
- * `NR51` is merged rather than stored and nothing else survives the boot strip.
- */
-function restrict(script: ChipScript, owned: number): { script: ChipScript; dropped: number } {
-  let dropped = 0;
-  const ticks = script.ticks.map((tick) => {
-    const writes = tick.writes.filter((write) => {
-      const channels = gbChannelOf(write.reg);
-      const keep = channels === 0 || (channels & owned) !== 0;
-      if (!keep) dropped += 1;
-      return keep;
-    });
-    return { ...tick, writes };
-  });
-  return { script: { ...script, ticks }, dropped };
-}
-
-/**
- * The shape one player has to cope with, across every stream it plays.
- *
- * A player is emitted once and walks any of its streams, so what it needs is the
- * *union* of what they ask for: one track with a rest in it means the rest path
- * is emitted, and every track can then use one. Taking the first stream's flags
- * instead would produce a player that read the second stream's data wrong — the
- * kind of bug that presents as music turning to noise halfway through a game.
- */
-function shapeOf(streams: readonly DriverData[]): DriverData {
-  const base = streams[0] as DriverData;
-  return {
-    ...base,
-    hasRests: streams.some((one) => one.hasRests),
-    hasMerges: streams.some((one) => one.hasMerges),
-    hasOrder: streams.some((one) => one.hasOrder),
-    oneShot: streams.some((one) => one.oneShot),
-  };
-}
-
-function pack(script: ChipScript, options: Parameters<typeof packScript>[1]): DriverData {
-  try {
-    return packScript(script, options);
-  } catch (error) {
-    if (error instanceof PackError) throw new AudioRomError(error.code, error.message, error.hint);
-    throw error;
-  }
-}
 
 // --- state -------------------------------------------------------------------
 
@@ -663,12 +585,4 @@ function emitPan(asm: Asm, state: Layout): void {
   asm.alu("or", "e");
   asm.stha(NR51);
   asm.ret();
-}
-
-function rateHz(rate: Rational): string {
-  return (rate.num / rate.den).toFixed(3);
-}
-
-function clampByte(value: number): number {
-  return Math.max(0, Math.min(255, Math.round(value)));
 }

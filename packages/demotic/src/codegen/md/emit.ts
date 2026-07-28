@@ -34,6 +34,7 @@
  * decides what the game does.
  */
 
+import { AUDIO_STOP, type MdGameAudio } from "@demake/audio";
 import {
   eaAbs,
   eaD,
@@ -200,6 +201,19 @@ export interface MdEmitOptions {
   palette?: Uint8Array;
   /** Per-scene colour RAM, where a backdrop chose its own. */
   scenePalettes?: ReadonlyMap<string, Uint8Array>;
+  /**
+   * The game's audio driver, already built from its demade tracks and effects.
+   *
+   * Absent for a game with no audio, and then the ROM is exactly what it was
+   * before sound existed — no counter in the interrupt, no service call in the
+   * main loop, no driver. Pulled in by a game that asks for it, like everything
+   * else.
+   */
+  audio?: MdGameAudio;
+  /** Driver index of each of the program's sounds, or `-1` when unsupplied. */
+  effectIndices?: readonly number[];
+  /** Which track each scene plays, as an index into the driver's table. */
+  sceneTracks?: readonly number[];
 }
 
 /**
@@ -244,8 +258,8 @@ export function emitProgram(ctx: MdCtx, options: MdEmitOptions = {}): void {
   }
 
   emitReset(ctx, options);
-  emitVint(ctx);
-  emitMainLoop(ctx);
+  emitVint(ctx, options);
+  emitMainLoop(ctx, options.audio !== undefined);
   emitInput(ctx);
   emitTickDispatch(ctx, scenes);
   emitSceneChange(ctx, scenes);
@@ -259,6 +273,7 @@ export function emitProgram(ctx: MdCtx, options: MdEmitOptions = {}): void {
 
   emitRenderHelpers(ctx);
   emitTileContactHelper(ctx);
+  if (options.audio) options.audio.emitCode(asm);
   ctx.finish();
 
   // --- data ------------------------------------------------------------------
@@ -307,6 +322,21 @@ export function emitProgram(ctx: MdCtx, options: MdEmitOptions = {}): void {
       asm.label(scenePaletteLabel(scene));
       asm.bytes(palette);
     }
+  }
+
+  if (options.audio) {
+    if (program.tracks.length > 0) {
+      asm.align();
+      asm.label("SceneTracks");
+      // One byte per scene: the request value that starts its track, or the one
+      // that stops the music. A table rather than a dispatch because a scene
+      // change already costs a redraw, and this is the cheapest thing in it.
+      for (const scene of scenes) {
+        const track = options.sceneTracks?.[scene.index] ?? -1;
+        asm.db(track < 0 ? AUDIO_STOP : track + 1);
+      }
+    }
+    options.audio.emitData(asm);
   }
 
   asm.align();
@@ -424,6 +454,11 @@ function emitReset(ctx: MdCtx, options: MdEmitOptions): void {
   asm.jsr("BuildFrame");
   asm.jsr("UploadFrame");
 
+  if (options.audio) {
+    asm.jsr("AudioInit");
+    if (program.tracks.length > 0) asm.jsr("SceneMusic");
+  }
+
   // Display on, frame interrupt on. Everything above ran with both off, which is
   // what makes a screenful of name table safe to write without tearing.
   emitVdpRegister(ctx, 1, 0x64);
@@ -446,12 +481,26 @@ export const STACK_TOP = 0xfffffe;
  * address, which is why the one routine long enough to be interrupted runs
  * masked.
  */
-function emitVint(ctx: MdCtx): void {
+function emitVint(ctx: MdCtx, options: MdEmitOptions): void {
   const { asm } = ctx;
   asm.label("Vint");
   asm.move("l", eaD(0), eaPre(7));
   asm.move("w", eaAbs(VDP.CONTROL), eaD(0));
   asm.move("b", eaImm(1), at(frameFlag(ctx)));
+  // The driver's tick is *counted* here and performed in the main loop, exactly
+  // as on the NES and the Sega 8-bits and for the same reason: the blanking
+  // interval is the picture's, and a driver tick taken here is a tick the sprite
+  // upload waits behind. A frame the game overran is then owed rather than lost,
+  // which is what keeps the tempo the frame's rather than the loop's.
+  // `AudioFrame` touches `d0` and the flags and nothing else, which is why one
+  // register is saved.
+  //
+  // `jsr` rather than `bsr`, here and at every other call the game makes into
+  // the driver: a `bsr` reaches sixteen signed bits and the driver is emitted
+  // after every rule body in the program, which on this console is tens of
+  // kilobytes away. Inside the driver the same call is a `bsr`, because there
+  // the distance is a few hundred bytes and visible in one file.
+  if (options.audio) asm.jsr(options.audio.routines.frame);
   asm.move("l", eaPost(7), eaD(0));
   asm.rte();
 }
@@ -591,7 +640,7 @@ function emitClearState(ctx: MdCtx): void {
   }
 }
 
-function emitMainLoop(ctx: MdCtx): void {
+function emitMainLoop(ctx: MdCtx, audio: boolean): void {
   const { asm } = ctx;
   const wait = ctx.unique("waitFrame");
   // The flag is cleared *after* it is seen, not before the wait: a tick that
@@ -604,6 +653,9 @@ function emitMainLoop(ctx: MdCtx): void {
   asm.jsr("UploadFrame");
   asm.jsr("ReadInput");
   asm.jsr("Tick");
+  // After the tick, so an effect a rule asked for is heard this frame rather than
+  // next; after the upload, so the frame it delays is nobody's.
+  if (audio) asm.jsr("AudioService");
   asm.jsr("BuildFrame");
   asm.jmp("Main");
 }
@@ -699,12 +751,26 @@ function emitSceneChange(ctx: MdCtx, scenes: readonly SceneCtx[]): void {
   asm.label(go);
   asm.move("b", at(layout.pending), at(layout.scene));
   asm.move("b", eaImm(0xff), at(layout.pending));
+  if (ctx.audio?.driver === true && ctx.program.tracks.length > 0) asm.jsr("SceneMusic");
   asm.jsr("ResetScene");
   emitSeedRng(ctx);
   emitClearState(ctx);
   asm.jsr("UpdateCamera");
   asm.move("b", eaImm(1), at(layout.redraw));
   asm.rts();
+
+  // Music follows the scene, so it starts where the scene does. Asking for it
+  // rather than starting it here is what keeps the request one byte: the driver
+  // is serviced from the loop, and a scene change is not where it happens.
+  if (ctx.audio?.driver === true && ctx.program.tracks.length > 0) {
+    asm.label("SceneMusic");
+    asm.moveq(0, 0);
+    asm.move("b", at(layout.scene), eaD(0));
+    asm.lea(eaAbs(label("SceneTracks")), 0);
+    asm.move("b", eaIdx(0, 0, 0), eaD(1));
+    asm.move("b", eaD(1), at(ctx.audio.music));
+    asm.rts();
+  }
 
   asm.label("ResetScene");
   emitSceneDispatch(

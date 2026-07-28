@@ -21,7 +21,7 @@ import { planTiming, verifyNonAccumulating } from "../src/timing.js";
 import { render } from "../src/render.js";
 import { bandFixture, deepBassFixture, longBandFixture, scaleFixture } from "./_fixtures.js";
 
-const CONSOLES = ["dmg", "gbc", "nes", "sms", "gg", "sg1000"];
+const CONSOLES = ["dmg", "gbc", "nes", "sms", "gg", "sg1000", "md"];
 
 describe("ingest", () => {
   it("reads a Standard MIDI File into a score", () => {

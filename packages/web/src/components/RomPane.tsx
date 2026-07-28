@@ -95,14 +95,13 @@ const CPU: Readonly<Record<string, string>> = {
  * A booted cartridge, whichever console it is for.
  *
  * The pane needs five things of a machine and no more, so this is those five —
- * and the three cores satisfy it without any of them learning about the page or
+ * and the four cores satisfy it without any of them learning about the page or
  * about each other. `chip` is the sound hardware the audio player attaches to,
- * and three of the four consoles have one: the Game Boy's APU, the NES's 2A03,
- * the Master System's SN76489, each `@demake/chip`'s own model rather than a
- * second copy living in a core. The Mega Drive has none — its audio is a second
- * processor with an FM chip beside it and `demake build` emits neither yet (doc
- * 16 §Still to come) — so it is `null` there and the sound control is withheld
- * rather than offered and silent.
+ * and every console with a backend has one: the Game Boy's APU, the NES's 2A03,
+ * and the SN76489 on both Sega machines — each `@demake/chip`'s own model rather
+ * than a second copy living in a core. It is nullable because a console whose
+ * cartridge had nothing to play would say so here rather than by offering a
+ * control that does nothing.
  */
 interface Player {
   readonly width: number;
@@ -128,10 +127,19 @@ function boot(rom: Uint8Array, family: string): Player {
       width: MD_WIDTH,
       height: MD_HEIGHT,
       framebuffer: machine.framebuffer,
-      // No chip: this console's sound is a second processor and an FM part, and
-      // the build emits neither. Saying so with a `null` is what keeps the
-      // toolbar honest.
-      chip: null,
+      // Half this console's sound, and the half the cartridge plays: the PSG at
+      // `$C00011`, which is a Master System's chip — so it is adapted exactly as
+      // the Sega 8-bits' is. The FM half is a second processor the build does not
+      // emit for (doc 16 §Still to come), and nothing here pretends to it.
+      chip: {
+        get audioSink() {
+          return machine.audioSink;
+        },
+        set audioSink(sink) {
+          machine.audioSink = sink;
+        },
+        apu: machine.psg,
+      },
       setButtons: (down) => machine.setButtons(down as readonly MdButton[]),
       runFrame: () => void machine.runFrame(),
       readMemory: (address, length) => machine.readMemory(address, length),
@@ -338,10 +346,10 @@ export function RomPane({
   const consoleId = built.consoleId ?? program?.profile.id ?? "gb";
   const family = built.family ?? "gb";
   const extension = built.extension ?? "gb";
-  // Two questions, not one: whether the browser will give us an `AudioContext`,
-  // and whether this cartridge has a chip to listen to at all. The Mega Drive
-  // does not yet, and a control that did nothing would be worse than none.
-  const canSound = audioSupported() && family !== "md";
+  // Whether the browser will give us an `AudioContext`. Every console with a
+  // backend now has a chip the cartridge's own driver plays, so this is the only
+  // question left — a control that did nothing would be worse than none.
+  const canSound = audioSupported();
   // The canvas is sized by the console, not by CSS: these are two genuinely
   // different screens (160×144 against 256×240, and not the same aspect), and a
   // buffer put into a canvas of the wrong size is silently cropped.

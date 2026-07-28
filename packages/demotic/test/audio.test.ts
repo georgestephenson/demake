@@ -8,17 +8,20 @@
  * borrows a channel from the music and gives it back, and none of that is
  * allowed to change a single register write.
  *
- * **And it runs on three consoles**, which is what makes it a proof of the
- * *contract* rather than of one driver. They share nothing below the packed
- * format: an SM83 player on a programmable timer at 120 Hz, a 6502 player on the
- * picture's own interrupt at 60, and a Z80 player on the Sega VDP's frame
- * interrupt writing an I/O port rather than an address. `NR51` merged, `$4015`
- * merged, and — on a Master System — no shared register to merge at all. Four
+ * **And it runs on every console with a driver**, which is what makes it a proof
+ * of the *contract* rather than of one emitter. They share nothing below the
+ * packed format: an SM83 player on a programmable timer at 120 Hz, a 6502 player
+ * on the picture's own interrupt at 60, a Z80 player on the Sega VDP's frame
+ * interrupt writing an I/O port, and a 68000 player storing a byte to an address.
+ * `NR51` merged, `$4015` merged, and — on a Master System and a Mega Drive — no
+ * shared register to merge at all. Four
  * writes to silence a Game Boy channel, one bit to silence an NES's, one
- * attenuation latch to silence a PSG's. And on the third machine the *channel* is
- * not in the register number but in the data byte, latched across writes, so
- * "which voice does this write belong to" is a question with a running answer.
- * What all three share is the only thing doc 16 promises — on tick N the driver
+ * attenuation latch to silence a PSG's. And on the two machines that share a
+ * chip the *channel* is not in the register number but in the data byte, latched
+ * across writes, so "which voice does this write belong to" is a question with a
+ * running answer — the same question, answered by the same code, from two
+ * instruction sets.
+ * What all four share is the only thing doc 16 promises — on tick N the driver
  * performs exactly the writes `ChipScript.ticks[N]` lists, in order — so the
  * battery below is written once and pointed at each machine in turn.
  *
@@ -28,8 +31,8 @@
  * has to be the cartridge that ships.
  *
  * It runs with no toolchain and no emulator install — the assemblers are ours
- * and so are `@demake/dmg` and `@demake/nes` — which is what makes an exact
- * audio proof something `pnpm test` can do on every change.
+ * and so are the four cores — which is what makes an exact audio proof something
+ * `pnpm test` can do on every change.
  */
 
 import { readdirSync, readFileSync } from "node:fs";
@@ -38,11 +41,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildGameAudio,
+  buildMdGameAudio,
   buildNesGameAudio,
   buildSmsGameAudio,
   gbChannelOf,
   nesChannelOf,
-  smsChannelTag,
+  psgChannelTag,
   type ChannelTag,
   type ChipScript,
   type GameEffect,
@@ -55,6 +59,7 @@ import {
   type SampleSink,
 } from "@demake/chip";
 import { Gameboy } from "@demake/dmg";
+import { Md } from "@demake/md";
 import { Nes } from "@demake/nes";
 import { Sms } from "@demake/sms";
 
@@ -63,6 +68,7 @@ import { getProfile } from "../src/profiles.js";
 import { bindAudio, type BoundAudio } from "../src/codegen/audio.js";
 import type { BuiltRom } from "../src/codegen/backend.js";
 import { buildGbRom } from "../src/codegen/gb.js";
+import { buildMdRom } from "../src/codegen/md.js";
 import { buildNesRom } from "../src/codegen/nes.js";
 import { buildSmsRom } from "../src/codegen/sms.js";
 import { Sim } from "../src/sim.js";
@@ -148,7 +154,7 @@ function levelsIn(dir: string): Record<string, string> {
 }
 
 /**
- * The three consoles, and the whole of what differs between them.
+ * The four consoles, and the whole of what differs between them.
  *
  * Rebuilding the driver beside the cartridge rather than reading it out of the
  * build is deliberate: the schedules a test compares against have to come from
@@ -216,7 +222,7 @@ const TARGETS: readonly Target[] = [
     mergeReg: null,
     mergeHelper: "stereo-merge",
     ratio: 0.5,
-    tag: smsChannelTag,
+    tag: psgChannelTag,
     async build(source, dir) {
       const program = compile(source, { profile: getProfile("sms"), levels: levelsIn(dir) });
       const assets = assetsIn(dir);
@@ -235,19 +241,50 @@ const TARGETS: readonly Target[] = [
       return wrap(machine);
     },
   },
+  {
+    id: "md",
+    name: "Mega Drive",
+    clockHz: SN76489_CLOCK_HZ,
+    // The Master System's chip, and the Master System's answer: four independent
+    // attenuation latches and no byte carrying more than one of them. The Game
+    // Gear's stereo latch is the one place this chip grows a shared register, and
+    // it is not on this console — the panning here lives in the FM half, which
+    // `demake build` does not emit.
+    mergeReg: null,
+    mergeHelper: "stereo-merge",
+    ratio: 0.5,
+    tag: psgChannelTag,
+    async build(source, dir) {
+      const program = compile(source, { profile: getProfile("md"), levels: levelsIn(dir) });
+      const assets = assetsIn(dir);
+      const built = await buildMdRom(program, { assets });
+      // Work RAM the allocator set aside, which is the address the cartridge
+      // itself was built against — asking the layout is how the two stay one.
+      const state = built.layout.audio as number;
+      const bound = await bindAudio(program, assets, {
+        build: (tracks, effects) =>
+          buildMdGameAudio({ tracks, effects: effects as GameEffect[], state }),
+      });
+      return { built, bound };
+    },
+    boot(rom) {
+      const machine = new Md(rom);
+      return wrap(machine);
+    },
+  },
 ];
 
-/** All three cores answer the same five questions; this is the adapter, once. */
-function wrap(machine: Gameboy | Nes | Sms): Machine {
+/** All four cores answer the same five questions; this is the adapter, once. */
+function wrap(machine: Gameboy | Nes | Sms | Md): Machine {
   return {
     step: () => {
       machine.stepInstruction();
       return machine.cpu.pc;
     },
     tap: (listener) => {
-      // The Sega core calls it a PSG rather than an APU; the shape is the same,
-      // and so is the promise — it observes, it does not intercept.
-      if (machine instanceof Sms) machine.psgTap = listener;
+      // The two Sega cores call it a PSG rather than an APU; the shape is the
+      // same, and so is the promise — it observes, it does not intercept.
+      if (machine instanceof Sms || machine instanceof Md) machine.psgTap = listener;
       else machine.apuTap = listener;
     },
     setButtons: (down) => machine.setButtons(down as never),
@@ -712,9 +749,29 @@ describe("the example library", async () => {
    */
   const BUILD_TIMEOUT = 120_000;
 
+  /**
+   * How much of the library each console sweeps.
+   *
+   * All of it, except on the console with nothing to overflow. This sweep exists
+   * to catch a cartridge that no longer fits — that is what the headroom
+   * assertion is — and a Mega Drive game is twenty-odd kilobytes of a
+   * half-megabyte image. Seven whole art-and-audio builds to assert that 487 KiB
+   * is more than one is eight minutes of `pnpm test` buying nothing, so it builds
+   * the shooter alone: the tightest fixture everywhere else, with two demade
+   * backdrops, nine aliens, a theme and four effects. What the other six would
+   * have covered is covered elsewhere — the register-level battery above builds a
+   * real game for this console, `md-rom.test.ts` demakes real art for it, and
+   * `rom.test.ts` traces all seven.
+   *
+   * The day this console grows a mapper story, or an FM driver with a schedule
+   * ten times the size of a PSG one, this is the entry to delete.
+   */
+  const SWEEP: Readonly<Record<string, readonly string[]>> = { md: ["shooter.dmt"] };
+
   for (const target of TARGETS) {
     for (const [file, dir] of cases) {
       if (OVER_BUDGET[target.id]?.includes(file)) continue;
+      if (SWEEP[target.id] !== undefined && !SWEEP[target.id]?.includes(file)) continue;
       it(
         `${file} fits in a ${target.name} cartridge with its music and effects`,
         async () => {

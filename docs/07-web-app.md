@@ -212,7 +212,9 @@ the only thing that can take it away is a browser that will not give the page an
 
 The ROM pane plays the cartridge's own sound, and every sample of it comes out of
 `@demake/chip`'s model of that console's chip — the Game Boy's APU, the NES's
-2A03 or the Sega's SN76489, whichever cartridge is running, and in every case the
+2A03, or the SN76489 on either Sega machine (a Mega Drive's PSG is a Master
+System's chip, and the FM half is a second processor `demake build` does not emit
+for) — and in every case the
 same model the audio pipeline renders WAVs with and the same one the conformance
 suite diffs register writes against. Which model is playing follows the cartridge
 for the same reason the core does, and the stream is rebuilt against *that chip's*

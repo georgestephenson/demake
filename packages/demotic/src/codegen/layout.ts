@@ -28,7 +28,7 @@
  * able to read either machine's entity table with one function.
  */
 
-import { NES_AUDIO_BYTES, SMS_AUDIO_BYTES } from "@demake/audio";
+import { MD_AUDIO_BYTES, NES_AUDIO_BYTES, SMS_AUDIO_BYTES } from "@demake/audio";
 
 import type { Program } from "../program.js";
 
@@ -377,11 +377,11 @@ export const MD_MEMORY: MemoryPlan = {
   // column of twenty-nine and a row of forty-one — rather than what fits.
   queueMax: 96,
   plotMax: 48,
-  // No driver on this console yet: its audio is a second processor with an
-  // FM chip beside it, and `demake build` emits neither (doc 16 §Still to come).
-  // A game that names music and effects still records the request, so its trace
-  // is the trace a sounding build would produce.
-  audioBytes: 0,
+  // The PSG half of this console's sound, which is a Master System's chip at
+  // `$C00011` and is what `demake build` drives. Larger than the Sega 8-bits'
+  // block by ten bytes, because five of the driver's fields are longword
+  // pointers into a half-megabyte cartridge rather than sixteen-bit ones.
+  audioBytes: MD_AUDIO_BYTES,
   cellAttributes: true,
   // The frame flag the main loop waits on. Its own byte for the reason the Sega
   // handlers' is: an interrupt lands in the middle of whatever the game was

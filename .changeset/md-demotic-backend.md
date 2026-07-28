@@ -34,8 +34,5 @@ output bytes: the RAM allocator aligns anything wider than a byte where a
 ROM trace reader reads a machine's own byte order (this is the first big-endian
 console), and `MemoryPlan` carries both facts.
 
-Sound is not included and the build says so: this console's audio is a second
-processor with a YM2612 beside it, and `demake build` emits neither. A game that
-names music and effects builds, plays silently, and still records what a rule
-asked for — so a silent build traces identically to a sounding one — and the
-page withholds the sound control rather than offering one that does nothing.
+Sound is in a changeset of its own (`md-audio`): the PSG half of this console's
+sound hardware is driven, the FM half is not.

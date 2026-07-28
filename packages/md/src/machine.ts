@@ -7,14 +7,15 @@
  * emulator install, and play one in the page without fetching a core from
  * anywhere.
  *
- * Scope is what the backend emits, and three of the omissions are deliberate
- * rather than pending:
+ * The sound is **half** of this console's, and the half a `demake build`
+ * cartridge actually uses: the SN76489 at `$C00011`, which is `@demake/chip`'s
+ * `Sn76489` rather than a second implementation of it. The other half is a Z80
+ * with a YM2612 beside it, and `demake build` emits neither (doc 16 §Still to
+ * come), so the Z80's address space answers as ordinary RAM and its bus-request
+ * registers answer "granted" — what a 68000-only program needs and nothing more.
  *
- *   - **No Z80 and no FM.** The sound half of this console is a second CPU with
- *     its own 8 KiB and a YM2612 beside it, and `demake build` emits neither
- *     (doc 16 §Still to come). The Z80's address space answers as ordinary RAM
- *     and its bus-request registers answer "granted", which is what a 68000-only
- *     program needs and nothing more.
+ * Two other omissions are deliberate rather than pending:
+ *
  *   - **No DMA.** A game uploads its tile bank a word at a time at boot and its
  *     sprite table a word at a time in the blanking interval, because both fit
  *     and because a DMA from work RAM has a refresh hazard that would have to be
@@ -24,8 +25,10 @@
  *     absolute form the memory plan is built around.
  *
  * Sources: Sega — Genesis Software Manual (§2 memory map, §5 controllers) and
- * Plutiedev's I/O notes (https://plutiedev.com/io-ports).
+ * Plutiedev's I/O notes (https://plutiedev.com/io-ports, https://plutiedev.com/psg-chip).
  */
+
+import { Sn76489, type SampleSink } from "@demake/chip";
 
 import { type Bus, M68k, VECTOR } from "./cpu.js";
 import { CYCLES_PER_LINE, FRAME_HEIGHT, FRAME_WIDTH, LINES_PER_FRAME, Vdp } from "./vdp.js";
@@ -52,6 +55,8 @@ export type Button = (typeof BUTTONS)[number];
 export class Md implements Bus {
   readonly cpu = new M68k(this);
   readonly vdp = new Vdp();
+  /** The half of the sound hardware a demade game uses — `@demake/chip`'s model. */
+  readonly psg = new Sn76489();
   /** The whole cartridge image. */
   readonly rom: Uint8Array;
   /** The console's 64 KiB, which is the whole of a game's state. */
@@ -62,11 +67,42 @@ export class Md implements Bus {
   /** Frames completed since power-on — the harness's clock. */
   frames = 0;
 
+  /**
+   * Called for every write the CPU makes to the sound chip.
+   *
+   * The audio conformance oracle's whole interface to the machine (doc 16 §The
+   * proof, Level A), and `@demake/sms`'s `psgTap` exactly: it observes rather
+   * than intercepts, because an oracle that changed what the hardware saw would
+   * be testing itself. The register it reports is `@demake/chip`'s numbering,
+   * which is a `ChipScript`'s — `0` for this chip's one write port, and there is
+   * no second device on this console to report.
+   */
+  psgTap: ((reg: number, value: number) => void) | undefined = undefined;
+
+  /**
+   * Where the PSG's samples go, when anything is listening.
+   *
+   * Unset, the chip still receives every write and keeps its state; it is only
+   * *rendered* when a sink is attached, so the conformance suites pay nothing for
+   * hardware they never listen to.
+   */
+  audioSink: SampleSink | undefined = undefined;
+
   private held = 0;
   /** The controller's TH line, which selects which half of the pad is reported. */
   private th = 0x40;
   private cycles = 0;
   private line = 0;
+  /**
+   * Chip clocks owed the PSG, in units of one seven-thousandth of nothing.
+   *
+   * The two clocks are the master clock divided by seven (the 68000) and by
+   * fifteen (the PSG), so one CPU cycle is exactly 7/15 of a chip clock and the
+   * ratio has a remainder. Carrying the numerator across calls is what keeps it
+   * exact: rounding per call would drift by a few hundred clocks a second, which
+   * is inaudible and would still make two runs of the same ROM disagree.
+   */
+  private psgOwed = 0;
 
   constructor(rom: Uint8Array) {
     if (rom.length < 0x200) throw new Error("md: a cartridge is at least 512 bytes");
@@ -177,9 +213,16 @@ export class Md implements Bus {
       this.vdp.writeControl(value);
       return;
     }
-    // `$C00011` is the PSG, which this core does not model: a game built for this
-    // console has no driver yet (doc 16 §Still to come), and silently dropping
-    // the write is honest where inventing a chip would not be.
+    // `$C00011` is the PSG — an eight-bit device inside the VDP's address range,
+    // reached on the *odd* byte, which is why `write8` duplicates a byte into
+    // both halves of the word before it arrives here. Taking the low half is
+    // therefore right for a byte write to either address and for the word write
+    // nothing this project emits ever makes.
+    if (port >= 0x10 && port < 0x18) {
+      const byte = value & 0xff;
+      this.psg.write(0, byte);
+      this.psgTap?.(0, byte);
+    }
   }
 
   // --- controllers -----------------------------------------------------------
@@ -242,6 +285,15 @@ export class Md implements Bus {
     }
     const cycles = this.cpu.step();
     this.advance(cycles);
+    // Unlike the Sega 8-bits, where the chip and the CPU share one clock, these
+    // two are the master clock over fifteen and over seven — so a CPU cycle is
+    // 7/15 of a chip clock and the remainder is carried rather than rounded.
+    if (this.audioSink) {
+      this.psgOwed += cycles * 7;
+      const clocks = Math.floor(this.psgOwed / 15);
+      this.psgOwed -= clocks * 15;
+      if (clocks > 0) this.psg.run(clocks, this.audioSink);
+    }
     return cycles;
   }
 

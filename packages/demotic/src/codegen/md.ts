@@ -21,13 +21,16 @@
  *     size assertion the other backends carry is about a game that nearly did
  *     not fit; this one has no such story, which is why the interesting numbers
  *     here are the tile bank's and the palette's.
- *   - **There is no audio driver yet, and the build says so honestly.** This
- *     console's sound is a second processor with an FM chip beside it (doc 16
- *     §Still to come). A game that names music and effects still *records* what
- *     it asked for, so its trace is the trace a sounding build would produce and
- *     the conformance suite compares like with like.
+ *   - **Half the sound hardware is driven, and it is the half that exists in
+ *     `@demake/chip`.** An SN76489 sits at `$C00011` — a Master System's chip,
+ *     at a Master System's clock — so the music and effects are demade and played
+ *     by the same engine the Sega 8-bits use, over a 68000 driver
+ *     (`@demake/audio`'s `md-game.ts`). The other half is a Z80 with a YM2612
+ *     beside it and this build emits neither (doc 16 §Still to come), which is a
+ *     game with four voices rather than a game with none.
  */
 
+import { buildMdGameAudio } from "@demake/audio";
 import { AsmError, MD_ROM_SIZE, packMdRom, type Executor } from "@demake/core";
 
 import { getProfile } from "../profiles.js";
@@ -36,6 +39,7 @@ import { BUILTIN_TILES } from "../rom/graphics.js";
 
 import { type Analysis } from "./analyze.js";
 import type { AssetBytes } from "./art.js";
+import { bindAudio, effectIndices, trackForScene } from "./audio.js";
 import {
   buildRom,
   BuildError,
@@ -66,13 +70,17 @@ export const CODE_SIZE = MD_ROM_SIZE - CODE_ORIGIN;
 /**
  * What this backend's audio binding hands the emitter.
  *
- * The same shape the other three carry, with the driver half permanently absent:
- * `present` is false, so the build report has no audio section, and `hooks`
- * carries only the byte a rule writes for a trace to read. That byte is set
- * whenever the program *names* audio, driver or no driver, because the request is
- * a field of the trace (doc 14 §Conformance).
+ * The other three backends' shape exactly: what the emitter needs to *play* the
+ * audio, and — separately — the bytes a rule writes to ask for it. The second is
+ * set whenever the program *names* audio, driver or no driver, because the
+ * request is a field of the trace (doc 14 §Conformance): a build whose files were
+ * not supplied has to trace identically to one with them in, or the conformance
+ * suite would be comparing two different games.
  */
 interface MdAudio extends BoundAudioShape {
+  /** The emitter options the driver contributes: itself, and its index tables. */
+  options: MdEmitOptions;
+  /** The bytes a rule writes to ask for a sound; absent when none can. */
   hooks?: { driver: boolean; music: number; request: number; effects: readonly number[] };
 }
 
@@ -120,34 +128,62 @@ export const mdBackend: Backend<MdEmitOptions, MdAudio> = {
     );
   },
 
-  // Asynchronous because the contract is: on the consoles with a driver this is
-  // where a gesture tournament runs. There is nothing to run one for here.
-  async bindAudio(program: Program): Promise<BoundAssets<MdAudio>> {
+  async bindAudio(
+    program: Program,
+    assets: AssetBytes,
+    layout: Layout,
+    executor?: Executor,
+  ): Promise<BoundAssets<MdAudio>> {
+    // The driver's state is work RAM the allocator set aside for it, which it only
+    // does for a program that names audio — so a game with none reaches here with
+    // nowhere to put a driver and does not need one.
+    const state = layout.audio;
+    const bound =
+      state === null
+        ? { driver: undefined, missing: [] as readonly string[], notes: [] as readonly string[] }
+        : await bindAudio(
+            program,
+            assets,
+            { build: (tracks, effects) => buildMdGameAudio({ tracks, effects, state }) },
+            executor,
+          );
     const names = program.tracks.length > 0 || program.sounds.length > 0;
+    const driver = bound.driver;
+    const options: MdEmitOptions = driver
+      ? {
+          audio: driver,
+          effectIndices: effectIndices(program, bound),
+          sceneTracks: trackForScene(program, bound),
+        }
+      : {};
     const emit: MdAudio = {
-      present: false,
-      tracks: 0,
-      effects: 0,
-      code: 0,
-      data: 0,
-      helpers: [],
-      rateHz: 0,
-      writesRestricted: 0,
+      present: driver !== undefined,
+      options,
+      tracks: driver?.stats.tracks ?? 0,
+      effects: driver?.stats.effects ?? 0,
+      // Getters: the driver has not been emitted yet, so its sizes are zero until
+      // `assemble` has run (`BoundAudioShape`).
+      get code() {
+        return driver?.stats.code ?? 0;
+      },
+      get data() {
+        return driver?.stats.data ?? 0;
+      },
+      helpers: driver?.stats.helpers ?? [],
+      rateHz: driver ? driver.stats.rate.num / driver.stats.rate.den : 0,
+      writesRestricted: driver?.stats.writesRestricted ?? 0,
       ...(names
         ? {
             hooks: {
-              driver: false,
-              music: 0,
-              request: 0,
-              effects: program.sounds.map(() => -1),
+              driver: driver !== undefined,
+              music: driver?.request.music ?? 0,
+              request: driver?.request.sfx ?? 0,
+              effects: options.effectIndices ?? program.sounds.map(() => -1),
             },
           }
         : {}),
     };
-    // The files are named but nothing was demade from them, so they are not
-    // *missing* in the sense the report means: `demake build -c md` on a game
-    // with music is a silent cartridge, not a broken one.
-    return { emit, tiles: 0, missing: [] };
+    return { emit, tiles: 0, missing: bound.missing, notes: bound.notes };
   },
 
   assemble({ program, analysis, layout, art, audio, title }): Assembled {
@@ -163,7 +199,7 @@ export const mdBackend: Backend<MdEmitOptions, MdAudio> = {
     }
     let code: Uint8Array;
     try {
-      emitProgram(ctx, art);
+      emitProgram(ctx, { ...art, ...audio.options });
       code = ctx.asm.assemble();
     } catch (error) {
       if (error instanceof AsmError) {

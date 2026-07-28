@@ -6,11 +6,12 @@
  * Vitest with no toolchain and no emulator install, and play one in the page
  * without fetching a core from anywhere.
  *
- * What it deliberately does *not* have is a sound chip. This console's audio is
- * a second processor with a YM2612 beside it, and `demake build -c md` emits
- * neither yet (doc 16 §Still to come) — so the PSG port is accepted and dropped
- * rather than half-modelled, and the day a 68000 driver lands is the day this
- * grows a `@demake/chip` dependency, the way `@demake/sms` has one.
+ * It has **half** this console's sound, and it is the half a demade cartridge
+ * plays: the SN76489 at `$C00011`, which is `@demake/chip`'s model rather than a
+ * second implementation of it. The other half is a Z80 with a YM2612 beside it
+ * and `demake build -c md` emits neither (doc 16 §Still to come), so nothing here
+ * pretends to it — an FM register write reaches a Z80 bus that answers as RAM,
+ * which is exactly what a 68000-only program sees on the hardware.
  *
  * Platform-pure on the same terms as `@demake/core`: no `fs`, no DOM, no wall
  * clock. Rendering produces a plain RGBA buffer; where that goes is the caller's

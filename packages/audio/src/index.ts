@@ -106,12 +106,22 @@ export {
 export {
   buildSmsGameAudio,
   resolveSmsClock,
-  smsChannelTag,
   SMS_AUDIO_BYTES,
   type SmsGameAudio,
   type SmsGameAudioInput,
   type SmsGameAudioStats,
 } from "./rom/sms-game.js";
+export {
+  buildMdGameAudio,
+  resolveMdClock,
+  MD_AUDIO_BYTES,
+  type MdGameAudio,
+  type MdGameAudioInput,
+  type MdGameAudioStats,
+} from "./rom/md-game.js";
+// The SN76489's own side of the hand-off, shared by the two processors that
+// drive it: a Z80 on the Sega 8-bits and a 68000 on the Mega Drive.
+export { psgChannelTag, psgAttenuationOff, PSG_STEREO_REG } from "./rom/psg.js";
 
 // --- hearing it --------------------------------------------------------------
 export { render, type RenderAudioOptions } from "./render.js";
