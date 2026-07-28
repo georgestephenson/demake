@@ -671,31 +671,28 @@ describe("the example library", async () => {
   ] as const;
 
   /**
-   * The fixture whose cartridge cannot hold its audio, and by how much.
+   * The fixtures whose cartridges cannot hold their audio.
    *
-   * Not a skip: the overflow is *asserted*, so the day a codegen change makes it
-   * fit, this test fails and someone moves it into the sweep above. The shooter is
-   * the tightest game in the library — two demade backdrops, nine aliens, a theme
-   * and its effects — and on the Sega 8-bits it runs out. That is the position the
-   * NES was in one commit ago and for the same reason: nine aliens against three
-   * shots is twenty-seven collision pairs, and this backend still emits a copy of
-   * the same code for each of them.
+   * Empty, and the emptiness is the record: every console with a backend now
+   * builds every example game with its art and its music in it. The Sega 8-bits
+   * were the last entry here — the shooter overflowed a Master System by 1.9 KiB
+   * — and what closed it was the work the NES had already had: the name tables
+   * packed, the collision pairs looped rather than copied, and the integrator
+   * grouped by what it would have compiled to. Not a skip either way: an overflow
+   * is *asserted*, so the day a change makes a listed fixture fit, this test fails
+   * and someone moves it into the sweep above.
    */
-  const OVER_BUDGET: Readonly<Record<string, readonly string[]>> = { sms: ["shooter.dmt"] };
+  const OVER_BUDGET: Readonly<Record<string, readonly string[]>> = {};
 
   /**
-   * Bytes a build has to have left over: a kilobyte, and 512 on the Sega 8-bits.
+   * Bytes a build has to have left over: a kilobyte, everywhere.
    *
-   * The kilobyte is the real floor and the exception is a debt, not a fact about
-   * the hardware. The NES carried the same exception until its rule code stopped
-   * being copied per object — packing the backdrop nametables bought about 940
-   * bytes and looping the pairs bought six thousand — and the Sega backend has not
-   * had that work yet: its collision emitter is 9.3 KiB for the shooter and its
-   * integrator 2.8 KiB, both of which are the same body repeated with a different
-   * address in it. Until then the caves, the next tightest fixture, lands at 986
-   * bytes free.
+   * The Sega 8-bits carried an exception at 512 while their rule code was still
+   * copied per object, exactly as the NES did before them. Looping the pairs took
+   * nine kilobytes off the shooter's Master System build and the exception went
+   * with it; the tightest fixture is the caves, at 3062 bytes free.
    */
-  const HEADROOM: Readonly<Record<string, number>> = { sms: 512 };
+  const HEADROOM: Readonly<Record<string, number>> = {};
 
   /**
    * What one of these builds is allowed to take.
@@ -704,8 +701,16 @@ describe("the example library", async () => {
    * picture, which is seconds rather than the fraction of one the mono path costs
    * — so the sweep states its own budget instead of inheriting one written for a
    * test that runs a single pipeline.
+   *
+   * The Sega 8-bits are the slow end of it, and knowingly — for the *art* rather
+   * than for the code. A Master System picture is 768 cells against a shared bank
+   * of 256 tiles, so two full-screen pictures routinely want more of it than there
+   * is, and where sharing the bank out changes what a picture may spend, that
+   * picture is demade a second time (`sms-art.ts`). Half again on the worst
+   * fixture, in exchange for a title screen fitted to the tiles it actually needs
+   * rather than to half the bank.
    */
-  const BUILD_TIMEOUT = 60_000;
+  const BUILD_TIMEOUT = 120_000;
 
   for (const target of TARGETS) {
     for (const [file, dir] of cases) {

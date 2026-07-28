@@ -293,7 +293,7 @@ export function emitProgram(ctx: SmsCtx, options: SmsEmitOptions = {}): void {
     const art = options.backdrops?.get(scene.def.name);
     if (art) {
       asm.label(backdropLabel(scene));
-      asm.bytes(art.map);
+      asm.bytes(packCells(art.map));
     }
     const palette = options.scenePalettes?.get(scene.def.name);
     if (palette) {
@@ -318,7 +318,7 @@ export function emitProgram(ctx: SmsCtx, options: SmsEmitOptions = {}): void {
   asm.label("TileBank");
   asm.bytes(options.bank ?? new Uint8Array(0));
   asm.label("Palette");
-  asm.bytes(options.palette ?? defaultPalette());
+  asm.bytes(options.palette ?? defaultPalette(ctx.gameGear));
 }
 
 /**
@@ -326,15 +326,22 @@ export function emitProgram(ctx: SmsCtx, options: SmsEmitOptions = {}): void {
  *
  * Both banks are the font's ramp, so a caption and a placeholder block are
  * legible with nothing else uploaded: black behind, then three rising greys in
- * the reserved entries. Every colour is `--BBGGRR`, which is the Master System's
- * whole 64-colour gamut.
+ * the reserved entries. A Master System colour is one byte of `--BBGGRR` and a
+ * Game Gear's is two of `----BBBBGGGGRRRR`, so this table is as long as the
+ * upload that reads it — thirty-two colours, in this console's bytes.
  */
-function defaultPalette(): Uint8Array {
+function defaultPalette(gameGear: boolean): Uint8Array {
+  const greys = gameGear
+    ? [0x55, 0x05, 0xaa, 0x0a, 0xff, 0x0f]
+    : [0x15, 0x00, 0x2a, 0x00, 0x3f, 0x00];
+  const width = gameGear ? 2 : 1;
   const bank = (): number[] => {
-    const entries = new Array<number>(16).fill(0x00);
-    entries[SYSTEM_INK - 2] = 0x15; // a dark grey
-    entries[SYSTEM_INK - 1] = 0x2a; // a mid grey
-    entries[SYSTEM_INK] = 0x3f; // white
+    const entries = new Array<number>(16 * width).fill(0x00);
+    for (let shade = 0; shade < 3; shade += 1) {
+      for (let byte = 0; byte < width; byte += 1) {
+        entries[(SYSTEM_INK - 2 + shade) * width + byte] = greys[shade * 2 + byte] as number;
+      }
+    }
     return entries;
   };
   return Uint8Array.from([...bank(), ...bank()]);
@@ -552,35 +559,23 @@ function emitTileUpload(ctx: SmsCtx, bytes: number): void {
   ctx.far("nz", loop);
 }
 
-/** Upload thirty-two colours from a compile-time table. */
-function emitPaletteUpload(ctx: SmsCtx, source: string): void {
-  const { asm } = ctx;
-  const loop = ctx.unique("cramLoop");
-  asm.alu("xor", "a");
-  asm.outN(PORT.CONTROL);
-  asm.ldn("a", 0xc0);
-  asm.outN(PORT.CONTROL);
-  asm.ld16("hl", label(source));
-  asm.ldn("b", 32);
-  asm.label(loop);
-  asm.ld("a", "hlp");
-  asm.outN(PORT.DATA);
-  asm.inc16("hl");
-  asm.djnz(loop);
-}
-
 /**
- * Upload thirty-two colours, or sixty-four on a Game Gear.
+ * Upload both colour banks: thirty-two colours, in the bytes this console
+ * spends on them.
  *
  * The one place in the emitter that asks which console this is, and the only
  * place it can: a Master System colour is a byte of `--BBGGRR` and a Game Gear
  * colour is two of `----BBBBGGGGRRRR`, so the *number of bytes* differs even
  * though the number of colours does not. Everything else — every rule, every
  * collision, every cell of the renderer — is the same code on both.
+ *
+ * There is exactly one of these because there was briefly two, and the second
+ * counted colours rather than bytes: boot uploaded thirty-two of each, which on
+ * a Game Gear is sixteen colours and leaves the whole sprite bank unwritten.
  */
-function emitScenePalette(ctx: SmsCtx, source: string): void {
+function emitPaletteUpload(ctx: SmsCtx, source: string): void {
   const { asm } = ctx;
-  const loop = ctx.unique("scramLoop");
+  const loop = ctx.unique("cramLoop");
   asm.alu("xor", "a");
   asm.outN(PORT.CONTROL);
   asm.ldn("a", 0xc0);
@@ -1338,6 +1333,23 @@ function emitFullRedraw(
   options: SmsEmitOptions,
 ): void {
   const { asm, layout } = ctx;
+  // Interrupts off for the whole of it, and this is not about tearing.
+  //
+  // Every address this routine gives the VDP is *two* writes to the control
+  // port, and acknowledging the frame interrupt means reading that port — which
+  // resets the half-written state. A handler that lands between the two bytes
+  // therefore leaves the second one being read as a first, and one cell of the
+  // screen is written somewhere else entirely: a single wrong tile, at no cell
+  // anyone can predict, on a redraw that is otherwise perfect. The rest of the
+  // runtime is safe by construction, because `UploadFrame` runs a few
+  // instructions after the interrupt it waited for; a redraw is the one thing
+  // long enough to be interrupted, and it happens once a scene.
+  //
+  // The frame the game spends here is owed rather than lost: the interrupt is
+  // pending when `ei` runs, so the flag is raised once and the audio driver's
+  // counter takes one tick, which is exactly what it does for any frame the game
+  // overruns.
+  asm.di();
   // Display off: a screenful of name table does not fit in one blanking interval,
   // and writing it with the display on would tear.
   emitVdpRegister(ctx, 1, 0x20);
@@ -1349,15 +1361,22 @@ function emitFullRedraw(
   const wide = level !== undefined && level.file.width > layout.memory.viewW;
   emitVdpRegister(ctx, 0, wide ? 0x24 : 0x04);
 
+  // Every scene uploads a palette, whether it has one of its own or not. A scene
+  // with a backdrop brings that picture's colours; one without brings the build's
+  // — the level tiles' and the objects' fit. Leaving colour RAM alone would mean
+  // a level scene wore whichever title screen the player came from, and a level
+  // has no picture to make that look deliberate.
   const palette = options.scenePalettes?.get(scene.def.name);
-  if (palette) emitScenePalette(ctx, scenePaletteLabel(scene));
+  emitPaletteUpload(ctx, palette ? scenePaletteLabel(scene) : "Palette");
 
   const backdrop = options.backdrops?.get(scene.def.name);
   if (backdrop) {
-    // A backdrop is a run of whole rows, so painting it is a block copy — but it
-    // is only as tall as the *screen*, and the name table is four rows taller.
+    // A backdrop is a run of whole rows, so painting it is one stream into the
+    // data port — but it is only as tall as the *screen*, and the name table is
+    // four rows taller, so the address is set once and the picture stops short.
     emitVramAddress(ctx, VRAM.NAME);
-    emitVramBlock(ctx, backdropLabel(scene), MAP_W * layout.memory.viewH * 2);
+    asm.ld16("hl", label(backdropLabel(scene)));
+    asm.call(needBlitBackdrop(ctx));
   } else {
     // A scene with a level paints from its grid, and one with neither is blank.
     // The window, and the one column and row the first scroll step will need
@@ -1404,22 +1423,107 @@ function emitFullRedraw(
   // its whole HUD with sprites, so it has none to paint here.
   if (!scrolls(ctx, scene)) emitHud(ctx, scene, "static");
   emitVdpRegister(ctx, 1, 0x60);
+  asm.ei();
 }
 
-/** Copy a compile-time block of bytes straight into video RAM. */
-function emitVramBlock(ctx: SmsCtx, source: string, count: number): void {
-  const { asm } = ctx;
-  const loop = ctx.unique("vramBlock");
-  asm.ld16("hl", label(source));
-  asm.ld16("bc", count);
-  asm.label(loop);
-  asm.ld("a", "hlp");
-  asm.outN(PORT.DATA);
-  asm.inc16("hl");
-  asm.dec16("bc");
-  asm.ld("a", "b");
-  asm.alu("or", "c");
-  ctx.far("nz", loop);
+/**
+ * A packed name table: literals and runs of whole *cells*, and the walk that
+ * unpacks it.
+ *
+ * ```text
+ *   $00        the end
+ *   $01..$7F   n cells follow, two bytes each
+ *   $81..$FF   the next two bytes, (n & $7F) times
+ * ```
+ *
+ * The unit is a cell rather than a byte because an entry here is two of them —
+ * the tile and its attribute — so a run of identical cells is `T A T A T A` and
+ * has no byte runs in it at all. That is the one thing this does not share with
+ * the NES's `packCells`, whose entries are single bytes.
+ *
+ * A screenful is 768 cells on a Master System, 1536 bytes against a cartridge of
+ * 32 KiB with no mapper, and two pictures stored raw were a tenth of the whole
+ * program. A demade screen is mostly runs — sky, a floor, a wall, and on a Game
+ * Gear the twelve columns of name table its window does not show — so it packs
+ * to a fraction of that.
+ *
+ * The format is the encoder's and the decoder's business and nothing else's:
+ * what is guaranteed is the bytes that reach the VDP, and `sms-rom.test.ts`
+ * checks those against the level and the picture rather than checking this
+ * encoding. Same rule the NES's nametables and the audio driver's packing run
+ * under (doc 16 §The driver format is not part of the contract).
+ */
+export function packCells(cells: Uint8Array): Uint8Array {
+  const out: number[] = [];
+  const same = (a: number, b: number): boolean =>
+    cells[a * 2] === cells[b * 2] && cells[a * 2 + 1] === cells[b * 2 + 1];
+  const total = cells.length >> 1;
+  let at = 0;
+  while (at < total) {
+    let run = 1;
+    while (run < 127 && at + run < total && same(at + run, at)) run += 1;
+    // Two of a kind is a wash — three bytes either way — so a run has to be worth
+    // the control byte before it is taken, and pairs go through as literals.
+    if (run >= 3) {
+      out.push(0x80 | run, cells[at * 2] as number, cells[at * 2 + 1] as number);
+      at += run;
+      continue;
+    }
+    const start = at;
+    while (at < total && at - start < 127) {
+      let ahead = 1;
+      while (ahead < 3 && at + ahead < total && same(at + ahead, at)) ahead += 1;
+      if (ahead >= 3) break;
+      at += 1;
+    }
+    out.push(at - start, ...cells.subarray(start * 2, at * 2));
+  }
+  out.push(0x00);
+  return Uint8Array.from(out);
+}
+
+/** `hl` = a packed name table; write it to the data port at the current address. */
+function needBlitBackdrop(ctx: SmsCtx): Ref {
+  return ctx.need("BlitBackdrop", (inner) => {
+    const { asm } = inner;
+    const next = inner.unique("blitNext");
+    const run = inner.unique("blitRun");
+    const literal = inner.unique("blitLiteral");
+    const runLoop = inner.unique("blitRunLoop");
+
+    asm.label(next);
+    asm.ld("a", "hlp");
+    asm.inc16("hl");
+    asm.alu("or", "a");
+    asm.ret("z");
+    inner.far("m", run);
+
+    asm.ld("b", "a");
+    asm.label(literal);
+    asm.ld("a", "hlp");
+    asm.outN(PORT.DATA);
+    asm.inc16("hl");
+    asm.ld("a", "hlp");
+    asm.outN(PORT.DATA);
+    asm.inc16("hl");
+    asm.djnz(literal);
+    asm.jp(next);
+
+    asm.label(run);
+    asm.aluN("and", 0x7f);
+    asm.ld("b", "a");
+    asm.ld("c", "hlp");
+    asm.inc16("hl");
+    asm.ld("e", "hlp");
+    asm.inc16("hl");
+    asm.label(runLoop);
+    asm.ld("a", "c");
+    asm.outN(PORT.DATA);
+    asm.ld("a", "e");
+    asm.outN(PORT.DATA);
+    asm.djnz(runLoop);
+    asm.jp(next);
+  });
 }
 
 /** The labels holding one scene's name table and colour RAM. */
@@ -2204,9 +2308,20 @@ export function emitRenderHelpers(ctx: SmsCtx): void {
  * Write the two scroll registers.
  *
  * The horizontal register shifts the picture *right*, so it carries the negated
- * camera; the vertical one shifts it up and carries the camera directly, wrapped
- * at the name table's 224 pixels rather than at 256. Both take the Game Gear's
- * bias, which is what puts name-table cell (0,0) at the small window's top left.
+ * camera; the vertical one shifts it up and carries the camera directly. Both
+ * take the Game Gear's bias, which is what puts name-table cell (0,0) at the
+ * small window's top left.
+ *
+ * **The two axes wrap differently, and only one of them is a byte.** The name
+ * table is thirty-two columns, so a horizontal scroll wraps at 256 — which is
+ * exactly what an eight-bit accumulator does for free, and why a level wider than
+ * a byte needs nothing special. It is twenty-eight *rows*: a vertical scroll
+ * wraps at 224, which a byte does not do. Reducing in `a` therefore throws away
+ * thirty-two pixels every time the sum passes 255 — four rows, and the four rows
+ * a picture slides by are the four nothing has painted, so the top of a scrolling
+ * level wears whatever the last scene left there. It is done in `hl` for the
+ * second reason as well: a level taller than 255 pixels has a camera that does
+ * not fit in one either.
  */
 function emitScrollWrite(ctx: SmsCtx): void {
   const { asm, layout } = ctx;
@@ -2218,15 +2333,20 @@ function emitScrollWrite(ctx: SmsCtx): void {
   emitVdpRegisterA(ctx, 8);
 
   const wrap = ctx.unique("vscrollWrap");
-  const wrapDone = ctx.unique("vscrollDone");
-  asm.lda(layout.words + W.scrollY * 2);
-  if (bias.y !== 0) asm.aluN("add", bias.y);
+  asm.ld16From("hl", layout.words + W.scrollY * 2);
+  if (bias.y !== 0) {
+    asm.ld16("de", bias.y);
+    asm.addHL("de");
+  }
+  asm.ld16("de", MAP_H * 8);
+  // Subtract until it goes negative, then put the last one back: the borrow is
+  // the only sixteen-bit comparison this CPU has, and it is the subtraction.
   asm.label(wrap);
-  asm.aluN("cp", MAP_H * 8);
-  asm.jr(wrapDone, "c");
-  asm.aluN("sub", MAP_H * 8);
-  asm.jr(wrap);
-  asm.label(wrapDone);
+  asm.alu("or", "a");
+  asm.sbcHL("de");
+  asm.jr(wrap, "nc");
+  asm.addHL("de");
+  asm.ld("a", "l");
   emitVdpRegisterA(ctx, 9);
 }
 

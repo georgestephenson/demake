@@ -103,9 +103,10 @@ describe("the Sega VDP", () => {
     });
     expect(indexAt(vdp, 0, 0)).toBe(5);
     expect(indexAt(vdp, 7, 7)).toBe(5);
-    // The cell beside it was never written, so it is character 0 — all zeroes,
-    // which is transparent, which shows the backdrop.
-    expect(indexAt(vdp, 8, 0)).toBe(16);
+    // The cell beside it was never written, so it is character 0 — all zeroes.
+    // A background cell has no transparency on this hardware, so that is colour
+    // zero of the palette it selected, not the backdrop register's colour.
+    expect(indexAt(vdp, 8, 0)).toBe(0);
   });
 
   it("selects the second palette from the name-table entry's own bit", () => {
@@ -136,7 +137,7 @@ describe("the Sega VDP", () => {
       writeVram(chip, 0x3800, [0x01, 0x00]);
       setRegister(chip, 8, 16);
     });
-    expect(indexAt(vdp, 0, 0)).toBe(16); // backdrop where the cell used to be
+    expect(indexAt(vdp, 0, 0)).toBe(0); // the blank cell scrolled into its place
     expect(indexAt(vdp, 16, 0)).toBe(7);
     expect(indexAt(vdp, 23, 0)).toBe(7);
   });
@@ -162,7 +163,7 @@ describe("the Sega VDP", () => {
     });
     expect(indexAt(vdp, 16, 32)).toBe(16 + 4);
     expect(indexAt(vdp, 23, 39)).toBe(16 + 4);
-    expect(indexAt(vdp, 64, 32)).toBe(16); // never drawn
+    expect(indexAt(vdp, 64, 32)).toBe(0); // never drawn, so the blank background shows
   });
 
   it("draws eight sprites on a line and flags the ninth", () => {
@@ -179,7 +180,25 @@ describe("the Sega VDP", () => {
     });
     expect(indexAt(vdp, 0, 32)).toBe(16 + 2);
     expect(indexAt(vdp, 56, 32)).toBe(16 + 2); // the eighth
-    expect(indexAt(vdp, 64, 32)).toBe(16); // the ninth is dropped
+    expect(indexAt(vdp, 64, 32)).toBe(0); // the ninth is dropped, so the background shows
+  });
+
+  it("draws background colour zero from the cell's own palette, not the backdrop", () => {
+    // The background layer is opaque: index zero is an ordinary colour there and
+    // transparency belongs to the sprites. Register 7 fills the border and the
+    // masked left column, never a cell of the picture. A renderer that skipped
+    // colour-zero background pixels would show the border colour through every
+    // flat area a demade picture has — a whole sky, in the flesh.
+    const vdp = display((chip) => {
+      writeVram(chip, 0x0020, splitTile(0, 5)); // left half colour zero
+      writeVram(chip, 0x3800, [0x01, 0x00]); // bank 0
+      writeVram(chip, 0x3802, [0x01, 0x08]); // bank 1
+      setRegister(chip, 7, 0x0c); // a backdrop colour that is neither
+    });
+    expect(indexAt(vdp, 0, 0)).toBe(0);
+    expect(indexAt(vdp, 4, 0)).toBe(5);
+    expect(indexAt(vdp, 8, 0)).toBe(16);
+    expect(indexAt(vdp, 12, 0)).toBe(16 + 5);
   });
 
   it("lets a priority background cell cover a sprite, but only where it is opaque", () => {

@@ -26,7 +26,7 @@
  *     avoided.
  */
 
-import { type Ref } from "@demake/core";
+import { label, type Ref } from "@demake/core";
 
 import { fromInt, ONE as FIXED_ONE } from "../../fixed.js";
 import type { CAssignment, ControlDef, Edge, InstanceDef, RuleDef } from "../../program.js";
@@ -50,6 +50,8 @@ import {
 
 import type { SmsCtx } from "./ctx.js";
 import {
+  copyFromPtr,
+  copyToPtr,
   emitExpr,
   emitTest,
   fold,
@@ -99,6 +101,22 @@ function guardVisible(ctx: SmsCtx, id: number, skip: string): "always" | "never"
   }
   branchZero32(ctx, (ctx.layout.entities[id] as number) + propOffset("visible"), skip);
   return "runtime";
+}
+
+/**
+ * The same, for the record a loop is walking rather than one the compiler named.
+ *
+ * Four bytes out of the record and a test, because there is no address to branch
+ * on. The caller has already decided that every object in the loop answers
+ * `isMutable` the same way, so this is emitted exactly when the unrolled form
+ * would have emitted its run-time guard.
+ */
+function guardVisiblePtr(ctx: SmsCtx, skip: string): void {
+  ctx.scoped(() => {
+    const temp = ctx.pushTemp();
+    copyFromPtr(ctx, ctx.layout.loop as number, propOffset("visible"), temp);
+    branchZero32(ctx, temp, skip);
+  });
 }
 
 // --- assignments -------------------------------------------------------------
@@ -360,36 +378,142 @@ export function emitLevelRules(ctx: SmsCtx, scene: SceneCtx): void {
 
 // --- 4. integration ----------------------------------------------------------
 
+/**
+ * What the integrator compiles a moving object into.
+ *
+ * Every branch of `emitAxis` is chosen from these, so two objects that answer
+ * them identically compile to identical code — which is the whole condition for
+ * running them through one loop rather than a copy each (see
+ * {@link emitMoveLoop}).
+ */
+function moveShape(ctx: SmsCtx, id: number): string {
+  const instance = ctx.program.instances[id] as InstanceDef;
+  const mutable = (prop: string): string => (isMutable(ctx.analysis, id, prop) ? "m" : "f");
+  const fixed = (prop: string): string =>
+    isMutable(ctx.analysis, id, prop) ? "" : String(instance.numbers[prop] ?? 0);
+  return [
+    mutable("speed"),
+    fixed("speed"),
+    mutable("xdirection"),
+    fixed("xdirection"),
+    mutable("ydirection"),
+    fixed("ydirection"),
+    mutable("visible"),
+    fixed("visible"),
+  ].join(":");
+}
+
 export function emitIntegrate(ctx: SmsCtx, scene: SceneCtx): void {
   const { asm } = ctx;
+  // Group first: an object's movement reads and writes only its own record, so
+  // objects that compile the same way can share one body without reordering
+  // anything observable.
+  const groups = new Map<string, number[]>();
   for (const id of scene.def.instanceIds) {
     const instance = ctx.program.instances[id] as InstanceDef;
     const speedFixed = instance.numbers["speed"] ?? 0;
-    const speedMutable = isMutable(ctx.analysis, id, "speed");
     // An object that starts at rest and that nothing can accelerate never moves,
     // so it is not in the integrator at all.
-    if (!speedMutable && speedFixed === 0) continue;
-
-    const skip = ctx.unique("intSkip");
-    const base = ctx.layout.entities[id] as number;
-    if (speedMutable) branchZero32(ctx, base + propOffset("speed"), skip);
-    if (guardVisible(ctx, id, skip) === "never") {
-      asm.label(skip);
+    if (!isMutable(ctx.analysis, id, "speed") && speedFixed === 0) continue;
+    if (!isMutable(ctx.analysis, id, "visible") && (instance.numbers["visible"] ?? 0) === 0) {
       continue;
     }
-    emitAxis(ctx, id, "x", "xdirection");
-    emitAxis(ctx, id, "y", "ydirection");
-    asm.label(skip);
+    const shape = moveShape(ctx, id);
+    const group = groups.get(shape);
+    if (group) group.push(id);
+    else groups.set(shape, [id]);
+  }
+
+  for (const ids of groups.values()) {
+    if (ids.length >= LOOP_PAIRS && emitMoveLoop(ctx, ids)) continue;
+    for (const id of ids) {
+      const skip = ctx.unique("intSkip");
+      const entity = entityOf(ctx, id);
+      const base = ctx.layout.entities[id] as number;
+      if (isMutable(ctx.analysis, id, "speed")) {
+        branchZero32(ctx, base + propOffset("speed"), skip);
+      }
+      guardVisible(ctx, id, skip);
+      emitAxis(ctx, entity, id, "x", "xdirection");
+      emitAxis(ctx, entity, id, "y", "ydirection");
+      asm.label(skip);
+    }
   }
 }
 
-function emitAxis(ctx: SmsCtx, id: number, posProp: string, dirProp: string): void {
-  const { asm, layout, profile } = ctx;
+/**
+ * One movement body for every object that moves the same way.
+ *
+ * Nine aliens with one speed and a direction they flip compiled to nine copies of
+ * the same two hundred bytes. They go through the pair loop's pointer instead,
+ * and by now nothing here knows or cares whether the record it is stepping
+ * belongs to an instance the compiler named.
+ *
+ * The group key is every compile-time question `emitAxis` asks, so a shared body
+ * is a proof rather than a hope: two objects in one group would have produced the
+ * same instructions anyway.
+ */
+function emitMoveLoop(ctx: SmsCtx, ids: readonly number[]): boolean {
+  const { asm } = ctx;
+  if (ctx.layout.loop === null) return false;
+  const first = ids[0] as number;
+  const table = ctx.unique("moveTable");
+  const next = ctx.unique("moveNext");
+  const entity: EntityAddr = { kind: "ptr", ptr: ctx.layout.loop };
+
+  const loop = emitLoopHead(ctx, table);
+  if (isMutable(ctx.analysis, first, "speed")) {
+    ctx.scoped(() => branchZero32(ctx, readProp(ctx, entity, "speed").addr, next));
+  }
+  if (isMutable(ctx.analysis, first, "visible")) guardVisiblePtr(ctx, next);
+  ctx.scoped(() => {
+    emitAxis(ctx, entity, first, "x", "xdirection");
+    emitAxis(ctx, entity, first, "y", "ydirection");
+  });
+  asm.label(next);
+  emitLoopNext(ctx, loop, ids.length);
+
+  emitEntityTable(
+    ctx,
+    table,
+    ids.map((id) => ctx.layout.entities[id] as number),
+  );
+  return true;
+}
+
+/**
+ * A property this emitter reads *and* writes, wherever the record lives.
+ *
+ * For an instance the compiler named it is the property's own address and the
+ * close is nothing, so the unrolled form is byte-for-byte what it always was. For
+ * one behind a pointer it is a temporary, staged in and copied back — the four
+ * bytes each way that make a shared body possible at all.
+ */
+function openProp(ctx: SmsCtx, entity: EntityAddr, prop: string): { addr: Ref; close: () => void } {
+  if (entity.kind === "const") {
+    return { addr: entity.base + propOffset(prop), close: () => undefined };
+  }
+  const temp = ctx.pushTemp();
+  if (entity.kind === "ptr") copyFromPtr(ctx, entity.ptr, propOffset(prop), temp);
+  else set32(ctx, temp, 0);
+  return {
+    addr: temp,
+    close: () => {
+      if (entity.kind === "ptr") copyToPtr(ctx, entity.ptr, propOffset(prop), temp);
+      ctx.popTemp();
+    },
+  };
+}
+
+function emitAxis(
+  ctx: SmsCtx,
+  entity: EntityAddr,
+  id: number,
+  posProp: string,
+  dirProp: string,
+): void {
+  const { asm, profile } = ctx;
   const instance = ctx.program.instances[id] as InstanceDef;
-  const base = layout.entities[id] as number;
-  const posAddr = base + propOffset(posProp);
-  const dirAddr = base + propOffset(dirProp);
-  const speedAddr = base + propOffset("speed");
 
   const dirFixed = instance.numbers[dirProp] ?? 0;
   const speedFixed = instance.numbers["speed"] ?? 0;
@@ -399,12 +523,20 @@ function emitAxis(ctx: SmsCtx, id: number, posProp: string, dirProp: string): vo
   // Nothing on this axis can ever be non-zero.
   if (!dirMutable && dirFixed === 0) return;
 
+  const position = openProp(ctx, entity, posProp);
+  const posAddr = position.addr;
+  // Read-only, so they are the record's own addresses for a named instance and
+  // staged copies for a looped one.
+  const dirAddr = readProp(ctx, entity, dirProp).addr;
+  const speedAddr = readProp(ctx, entity, "speed").addr;
+  const finish = (): void => position.close();
+
   if (!dirMutable && !speedMutable) {
     const step = perTick(dirFixed, speedFixed, profile.fps);
-    if (step === 0) return;
+    if (step === 0) return finish();
     addConst32(ctx, posAddr, step);
     clamp32(ctx, posAddr);
-    return;
+    return finish();
   }
 
   const done = ctx.unique("axisDone");
@@ -449,41 +581,170 @@ function emitAxis(ctx: SmsCtx, id: number, posProp: string, dirProp: string): vo
   });
   asm.label(skipZero);
   asm.label(done);
+  finish();
+}
+
+// --- walking a list of entities ----------------------------------------------
+
+/**
+ * Fewest entries worth a loop rather than a copy each.
+ *
+ * A looped body costs its own setup — the table, the cursor, the two indirect
+ * reads a run-time contact bit needs — against a few hundred bytes for an
+ * unrolled one. Three is where the arithmetic turns, and it is deliberately not
+ * two: a game with a player and two coins reads better unrolled in the symbol
+ * table, and nothing in the library is near its budget.
+ */
+const LOOP_PAIRS = 3;
+
+/**
+ * Open a loop over a table of record addresses, leaving the cursor set.
+ *
+ * `layout.loop` is a two-byte pointer and the byte after it is the index. Both
+ * are memory rather than registers because a rule body fires inside the loop and
+ * may use every register the Z80 has — the same reason the 6502 backend keeps
+ * them in page zero rather than in `X`.
+ *
+ * Returns the label the matching {@link emitLoopNext} branches back to.
+ */
+function emitLoopHead(ctx: SmsCtx, table: string): string {
+  const { asm, layout } = ctx;
+  const ptr = layout.loop as number;
+  const loop = ctx.unique("walkLoop");
+  asm.alu("xor", "a");
+  asm.sta(ptr + 2);
+  asm.label(loop);
+  // hl = table + index × 2, and the entry is the record's address.
+  asm.lda(ptr + 2);
+  asm.ld("l", "a");
+  asm.ldn("h", 0);
+  asm.addHL("hl");
+  asm.ld16("de", label(table));
+  asm.addHL("de");
+  asm.ld("e", "hlp");
+  asm.inc16("hl");
+  asm.ld("d", "hlp");
+  asm.st16To(ptr, "de");
+  return loop;
+}
+
+/** Step the cursor and go round again while entries remain. */
+function emitLoopNext(ctx: SmsCtx, loop: string, count: number): void {
+  const { asm, layout } = ctx;
+  const ptr = layout.loop as number;
+  asm.lda(ptr + 2);
+  asm.inc("a");
+  asm.sta(ptr + 2);
+  asm.aluN("cp", count);
+  ctx.far("c", loop);
+}
+
+/** The addresses a loop walks, emitted after the code with the other tables. */
+function emitEntityTable(ctx: SmsCtx, table: string, bases: readonly number[]): void {
+  ctx.data((data) => {
+    data.label(table);
+    for (const base of bases) data.dw(base);
+  });
+}
+
+/**
+ * `hl` = the contact byte's offset and `c` = its mask, for the current entry.
+ *
+ * A contact bit is a compile-time constant in the unrolled form; a loop knows
+ * only an index, so the byte and the mask are tables rather than arithmetic —
+ * working a bit number out at run time would cost a shift loop per entry.
+ */
+function needContactSlot(ctx: SmsCtx): Ref {
+  return ctx.need("ContactSlot", (inner) => {
+    const { asm, layout } = inner;
+    // hl = byte table, de = mask table, index in memory.
+    asm.lda((layout.loop as number) + 2);
+    asm.ld("c", "a");
+    asm.ldn("b", 0);
+    asm.addHL("bc");
+    asm.ld("a", "hlp");
+    asm.exDEHL();
+    asm.addHL("bc");
+    asm.ld("c", "hlp");
+    asm.ld("l", "a");
+    asm.ldn("h", 0);
+    asm.ret();
+  });
+}
+
+/** Test or set this entry's contact bit, whose number is only known at run time. */
+function emitContactBitPtr(
+  ctx: SmsCtx,
+  table: string,
+  what: "seen" | "set",
+  seen?: string,
+  edge?: number,
+): void {
+  const { asm, layout } = ctx;
+  const suffix = edge === undefined ? "" : String(edge);
+  asm.ld16("hl", label(`${table}Byte${suffix}`));
+  asm.ld16("de", label(`${table}Mask${suffix}`));
+  asm.call(needContactSlot(ctx));
+  asm.ld16("de", what === "seen" ? layout.contactsPrev : layout.contacts);
+  asm.addHL("de");
+  asm.ld("a", "hlp");
+  if (what === "seen") {
+    asm.alu("and", "c");
+    ctx.far("nz", seen as string);
+    return;
+  }
+  asm.alu("or", "c");
+  asm.ld("hlp", "a");
+}
+
+/** The byte-and-mask tables one contact bit per entry needs. */
+function emitContactTables(ctx: SmsCtx, table: string, bits: readonly number[], suffix = ""): void {
+  ctx.data((data) => {
+    data.label(`${table}Byte${suffix}`);
+    data.db(...bits.map((bit) => bit >> 3));
+    data.label(`${table}Mask${suffix}`);
+    data.db(...bits.map((bit) => 1 << (bit & 7)));
+  });
 }
 
 // --- 5. collisions -----------------------------------------------------------
 
 /** Jump to `skip` when the subject is not touching this edge of the playfield. */
-function emitEdgeTest(ctx: SmsCtx, id: number, edge: Edge, scene: SceneCtx, skip: string): void {
-  const layout = ctx.layout;
-  const base = layout.entities[id] as number;
-  const x = base + propOffset("x");
-  const y = base + propOffset("y");
-  const w = base + propOffset("width");
-  const h = base + propOffset("height");
+function emitEdgeTest(
+  ctx: SmsCtx,
+  entity: EntityAddr,
+  edge: Edge,
+  scene: SceneCtx,
+  skip: string,
+): void {
+  // Through `readProp` rather than an address, so one emitter serves an instance
+  // the compiler knows and a subject a loop is walking: for the first it *is* the
+  // address, and for the second it is four bytes copied out of a record the
+  // pointer names.
+  const read = (prop: string): Ref => readProp(ctx, entity, prop).addr;
   const zero = ctx.constant(0);
 
   switch (edge) {
     case "screenleft":
       // x <= 0 is "not (0 < x)".
-      branchLess32(ctx, zero, x, skip);
+      ctx.scoped(() => branchLess32(ctx, zero, read("x"), skip));
       break;
     case "screentop":
-      branchLess32(ctx, zero, y, skip);
+      ctx.scoped(() => branchLess32(ctx, zero, read("y"), skip));
       break;
     case "screenright":
       ctx.scoped(() => {
         const temp = ctx.pushTemp();
-        copy32(ctx, temp, x);
-        add32(ctx, temp, w);
+        copy32(ctx, temp, read("x"));
+        add32(ctx, temp, read("width"));
         branchLess32(ctx, temp, ctx.constant(scene.boundsW), skip);
       });
       break;
     case "screenbottom":
       ctx.scoped(() => {
         const temp = ctx.pushTemp();
-        copy32(ctx, temp, y);
-        add32(ctx, temp, h);
+        copy32(ctx, temp, read("y"));
+        add32(ctx, temp, read("height"));
         branchLess32(ctx, temp, ctx.constant(scene.boundsH), skip);
       });
       break;
@@ -492,24 +753,35 @@ function emitEdgeTest(ctx: SmsCtx, id: number, edge: Edge, scene: SceneCtx, skip
 
 /** Push the subject back inside the playfield. The interpreter does not clamp
  * here, and neither does this. */
-function emitEdgeSeparate(ctx: SmsCtx, id: number, edge: Edge, scene: SceneCtx): void {
-  const base = ctx.layout.entities[id] as number;
-  switch (edge) {
-    case "screenleft":
-      set32(ctx, base + propOffset("x"), 0);
-      break;
-    case "screentop":
-      set32(ctx, base + propOffset("y"), 0);
-      break;
-    case "screenright":
-      set32(ctx, base + propOffset("x"), scene.boundsW);
-      sub32(ctx, base + propOffset("x"), base + propOffset("width"));
-      break;
-    case "screenbottom":
-      set32(ctx, base + propOffset("y"), scene.boundsH);
-      sub32(ctx, base + propOffset("y"), base + propOffset("height"));
-      break;
+function emitEdgeSeparate(ctx: SmsCtx, entity: EntityAddr, edge: Edge, scene: SceneCtx): void {
+  if (entity.kind === "none") return;
+  const axis = edge === "screenleft" || edge === "screenright" ? "x" : "y";
+  const span = axis === "x" ? "width" : "height";
+  const near = edge === "screenleft" || edge === "screentop";
+  const bound = axis === "x" ? scene.boundsW : scene.boundsH;
+  // Not `writeProp`: that clamps, and the interpreter does not clamp here. An
+  // instance the compiler knows is written in place exactly as it always was; a
+  // subject a loop is walking is staged and copied back through its pointer.
+  if (entity.kind === "const") {
+    const addr = entity.base + propOffset(axis);
+    if (near) {
+      set32(ctx, addr, 0);
+      return;
+    }
+    set32(ctx, addr, bound);
+    sub32(ctx, addr, entity.base + propOffset(span));
+    return;
   }
+  ctx.scoped(() => {
+    const temp = ctx.pushTemp();
+    if (near) {
+      set32(ctx, temp, 0);
+    } else {
+      set32(ctx, temp, bound);
+      sub32(ctx, temp, readProp(ctx, entity, span).addr);
+    }
+    copyToPtr(ctx, entity.ptr, propOffset(axis), temp);
+  });
 }
 
 /**
@@ -522,18 +794,27 @@ function emitEdgeSeparate(ctx: SmsCtx, id: number, edge: Edge, scene: SceneCtx):
  * collision pairs.
  */
 function emitStageBox(ctx: SmsCtx, src: number, slot: "a" | "b"): void {
-  const { asm, layout } = ctx;
-  const dst = (slot === "a" ? layout.pairA : layout.pairB) as number;
-  const name = `CopyBox${slot.toUpperCase()}`;
+  const { asm } = ctx;
   asm.ld16("hl", src);
-  asm.call(
-    ctx.need(name, (inner) => {
-      inner.asm.ld16("de", dst);
-      inner.asm.ld16("bc", BOX_SIZE);
-      inner.asm.ldir();
-      inner.asm.ret();
-    }),
-  );
+  asm.call(needCopyBox(ctx, slot));
+}
+
+/** The routine that stages a box; it takes the record's address in `hl`. */
+function needCopyBox(ctx: SmsCtx, slot: "a" | "b"): Ref {
+  const dst = (slot === "a" ? ctx.layout.pairA : ctx.layout.pairB) as number;
+  return ctx.need(`CopyBox${slot.toUpperCase()}`, (inner) => {
+    inner.asm.ld16("de", dst);
+    inner.asm.ld16("bc", BOX_SIZE);
+    inner.asm.ldir();
+    inner.asm.ret();
+  });
+}
+
+/** The same, for the record the loop pointer names. */
+function emitStageBoxPtr(ctx: SmsCtx, slot: "a" | "b"): void {
+  const { asm, layout } = ctx;
+  asm.ld16From("hl", layout.loop as number);
+  asm.call(needCopyBox(ctx, slot));
 }
 
 function emitStagePair(ctx: SmsCtx, a: number, b: number): void {
@@ -725,6 +1006,182 @@ function emitContactSet(ctx: SmsCtx, bit: number): void {
   asm.sta(layout.contacts + (bit >> 3));
 }
 
+/**
+ * One pair of objects, looped over the others rather than copied per pair.
+ *
+ * This is where a game like the shooter lives or dies. Three shots against nine
+ * aliens is twenty-seven pairs, and each pair's *code* — the near test, the
+ * staging, the overlap, the rule body, the separation, the contact bit — came to
+ * about three hundred and fifty bytes here. Twenty-seven of those is nine
+ * kilobytes of a thirty-two kilobyte cartridge, spent on twenty-seven copies of
+ * the same program with a different address baked into each.
+ *
+ * So the other object's record goes in the loop pointer and the body is emitted
+ * once. `EntityAddr` has had a `ptr` case since the interface was written and
+ * `expr.ts` implements it, so a rule body needs no special handling at all:
+ * `alien.visible as 0` becomes four bytes through a pointer instead of four
+ * absolute stores. What the loop adds is the *table* — the other's address, and
+ * the byte and mask of its contact bit — and a call to read a bit whose number is
+ * no longer a constant.
+ *
+ * It is not always available, and the conditions are all "the pairs must agree
+ * about something the unrolled form baked in":
+ *
+ *   - **The near-test margins**, which come from the pair's sizes in whole cells.
+ *     Nine aliens of one class agree; an alien and a boss do not.
+ *   - **Whether `visible` can change**, because a class whose visibility is fixed
+ *     is guarded at compile time and one whose is not is guarded at run time.
+ *
+ * Where they disagree the caller unrolls, which is the same answer as before.
+ */
+function emitPairLoop(
+  ctx: SmsCtx,
+  rule: RuleDef,
+  subject: EntityAddr,
+  subjectId: number,
+  subjectBase: number,
+  pairs: readonly { id: number; base: number; bit: number }[],
+): boolean {
+  const { asm, layout } = ctx;
+  if (pairs.length < LOOP_PAIRS || layout.loop === null) return false;
+  const event = rule.event;
+  if (event.kind !== "hits") return false;
+
+  // Everything the unrolled form decided per pair has to be one answer here.
+  const margins = nearMargins(ctx, subjectId, pairs[0]?.id as number);
+  const guarded = isMutable(ctx.analysis, pairs[0]?.id as number, "visible");
+  for (const pair of pairs) {
+    const theirs = nearMargins(ctx, subjectId, pair.id);
+    if (theirs?.x !== margins?.x || theirs?.y !== margins?.y) return false;
+    if (isMutable(ctx.analysis, pair.id, "visible") !== guarded) return false;
+  }
+
+  const table = ctx.unique("pairTable");
+  const next = ctx.unique("pairNext");
+  const other: EntityAddr = { kind: "ptr", ptr: layout.loop };
+
+  const loop = emitLoopHead(ctx, table);
+  if (guarded) guardVisiblePtr(ctx, next);
+  if (margins) {
+    asm.ld16IdxFrom("ix", layout.loop);
+    asm.ld16("bc", (margins.y << 8) | margins.x);
+    asm.call(needNearBox(ctx));
+    ctx.far("z", next);
+  }
+  emitStageBoxPtr(ctx, "b");
+  asm.call(needOverlapPair(ctx));
+  ctx.far("z", next);
+
+  const afterFire = ctx.unique("pairFired");
+  if (!event.level) emitContactBitPtr(ctx, table, "seen", afterFire);
+  emitFire(ctx, rule, { subject, other });
+  asm.label(afterFire);
+
+  const noSeparate = ctx.unique("pairNoSep");
+  // Re-stage before separating, because the rule that just fired may have moved
+  // either box. This also restores the subject staging for the next entry, which
+  // is why it comes before the visibility guards rather than after them.
+  emitStageBox(ctx, subjectBase, "a");
+  emitStageBoxPtr(ctx, "b");
+  guardVisible(ctx, subjectId, noSeparate);
+  if (guarded) guardVisiblePtr(ctx, noSeparate);
+  asm.call(needOverlapPair(ctx));
+  ctx.far("z", noSeparate);
+  asm.call(needSeparatePair(ctx));
+  emitCommitPair(ctx, subjectBase);
+  emitStageBox(ctx, subjectBase, "a");
+  emitContactBitPtr(ctx, table, "set");
+  asm.label(noSeparate);
+
+  asm.label(next);
+  emitLoopNext(ctx, loop, pairs.length);
+
+  emitEntityTable(
+    ctx,
+    table,
+    pairs.map((pair) => pair.base),
+  );
+  emitContactTables(
+    ctx,
+    table,
+    pairs.map((pair) => pair.bit),
+  );
+  return true;
+}
+
+/**
+ * The other half of the same idea: many subjects against the screen's edges.
+ *
+ * `when alien hits screenleft, screenright then xdirection as flip` is one rule
+ * and nine objects, and unrolled it was nine copies of a test, a rule body, a
+ * re-test and a push-back. The subject goes in the same pointer the pair loop
+ * uses and the body is emitted once — `emitEdgeTest` and `emitEdgeSeparate` read
+ * and write through an `EntityAddr` for exactly this reason, so neither has a
+ * second version for the looped case.
+ *
+ * Only for a rule with edges and no others: a rule with both would need two
+ * pointers and a two-dimensional contact table, and nothing in the library asks
+ * for it. Visibility has to be one answer across the subjects, as it does there.
+ */
+function emitEdgeLoop(
+  ctx: SmsCtx,
+  rule: RuleDef,
+  scene: SceneCtx,
+  subjects: readonly { id: number; base: number; bit: number }[],
+  edges: readonly Edge[],
+  level: boolean,
+): boolean {
+  const { asm, layout } = ctx;
+  if (subjects.length < LOOP_PAIRS || layout.loop === null) return false;
+  const guarded = isMutable(ctx.analysis, subjects[0]?.id as number, "visible");
+  for (const one of subjects) {
+    if (isMutable(ctx.analysis, one.id, "visible") !== guarded) return false;
+  }
+
+  const table = ctx.unique("edgeTable");
+  const next = ctx.unique("edgeNext");
+  const subject: EntityAddr = { kind: "ptr", ptr: layout.loop };
+
+  const loop = emitLoopHead(ctx, table);
+  if (guarded) guardVisiblePtr(ctx, next);
+
+  for (const [edgeIndex, edge] of edges.entries()) {
+    const skip = ctx.unique("edgeLoopSkip");
+    emitEdgeTest(ctx, subject, edge, scene, skip);
+    const afterFire = ctx.unique("edgeLoopFired");
+    if (!level) emitContactBitPtr(ctx, table, "seen", afterFire, edgeIndex);
+    emitFire(ctx, rule, { subject, other: { kind: "none" } });
+    asm.label(afterFire);
+    const noSeparate = ctx.unique("edgeLoopNoSep");
+    if (guarded) guardVisiblePtr(ctx, noSeparate);
+    emitEdgeTest(ctx, subject, edge, scene, noSeparate);
+    emitEdgeSeparate(ctx, subject, edge, scene);
+    emitContactBitPtr(ctx, table, "set", undefined, edgeIndex);
+    asm.label(noSeparate);
+    asm.label(skip);
+  }
+
+  asm.label(next);
+  emitLoopNext(ctx, loop, subjects.length);
+
+  emitEntityTable(
+    ctx,
+    table,
+    subjects.map((one) => one.base),
+  );
+  // One byte-and-mask pair per edge, because a subject's edges are consecutive
+  // bits and the loop's index says which subject rather than which bit.
+  for (const [edgeIndex] of edges.entries()) {
+    emitContactTables(
+      ctx,
+      table,
+      subjects.map((one) => one.bit + edgeIndex),
+      String(edgeIndex),
+    );
+  }
+  return true;
+}
+
 export function emitCollisions(ctx: SmsCtx, scene: SceneCtx): void {
   const { asm, layout } = ctx;
   for (const rule of ctx.program.rules) {
@@ -732,6 +1189,33 @@ export function emitCollisions(ctx: SmsCtx, scene: SceneCtx): void {
     const range = layout.contactRanges.get(rule.id);
     if (!range) continue;
     const event = rule.event;
+
+    // A rule that only meets the screen's edges is looped over its subjects; one
+    // with others is looped over those instead, per subject.
+    if (event.others.length === 0 && event.edges.length > 0) {
+      const subjects: { id: number; base: number; bit: number }[] = [];
+      let uniform = true;
+      for (const [subjectIndex, subjectId] of event.subjects.entries()) {
+        if (!inScene(ctx.program, scene, subjectId)) continue;
+        if (!isMutable(ctx.analysis, subjectId, "visible")) {
+          const instance = ctx.program.instances[subjectId] as InstanceDef;
+          if ((instance.numbers["visible"] ?? 0) === 0) continue;
+        }
+        // The edge test reads the subject's size, so a class whose instances were
+        // created at different sizes is not one loop.
+        const first = ctx.program.instances[subjects[0]?.id ?? subjectId] as InstanceDef;
+        const instance = ctx.program.instances[subjectId] as InstanceDef;
+        for (const prop of ["width", "height"]) {
+          if (instance.numbers[prop] !== first.numbers[prop]) uniform = false;
+        }
+        subjects.push({
+          id: subjectId,
+          base: layout.entities[subjectId] as number,
+          bit: range.base + subjectIndex * range.stride,
+        });
+      }
+      if (uniform && emitEdgeLoop(ctx, rule, scene, subjects, event.edges, event.level)) continue;
+    }
 
     for (const [subjectIndex, subjectId] of event.subjects.entries()) {
       if (!inScene(ctx.program, scene, subjectId)) continue;
@@ -746,7 +1230,7 @@ export function emitCollisions(ctx: SmsCtx, scene: SceneCtx): void {
 
       for (const [edgeIndex, edge] of event.edges.entries()) {
         const skip = ctx.unique("edgeSkip");
-        emitEdgeTest(ctx, subjectId, edge, scene, skip);
+        emitEdgeTest(ctx, subject, edge, scene, skip);
         const bit = bitBase + edgeIndex;
         const afterFire = ctx.unique("edgeFired");
         if (!event.level) emitContactSeen(ctx, bit, afterFire);
@@ -757,8 +1241,8 @@ export function emitCollisions(ctx: SmsCtx, scene: SceneCtx): void {
         // `visible 0` is not collided with either.
         const noSeparate = ctx.unique("edgeNoSep");
         guardVisible(ctx, subjectId, noSeparate);
-        emitEdgeTest(ctx, subjectId, edge, scene, noSeparate);
-        emitEdgeSeparate(ctx, subjectId, edge, scene);
+        emitEdgeTest(ctx, subject, edge, scene, noSeparate);
+        emitEdgeSeparate(ctx, subject, edge, scene);
         emitContactSet(ctx, bit);
         asm.label(noSeparate);
         asm.label(skip);
@@ -769,15 +1253,33 @@ export function emitCollisions(ctx: SmsCtx, scene: SceneCtx): void {
       // one copy rather than two.
       if (event.others.length > 0) emitStageBox(ctx, subjectBase, "a");
 
+      // The others this subject really pairs with, and the contact bit each one
+      // owns. Taken as a list first because a long one is *looped* rather than
+      // unrolled — see {@link emitPairLoop}.
+      const pairs: { id: number; base: number; bit: number }[] = [];
       for (const [otherIndex, otherId] of event.others.entries()) {
         if (otherId === subjectId) continue;
         if (!inScene(ctx.program, scene, otherId)) continue;
-        const skip = ctx.unique("otherSkip");
-        if (guardVisible(ctx, otherId, skip) === "never") {
-          asm.label(skip);
-          continue;
+        if (!isMutable(ctx.analysis, otherId, "visible")) {
+          if (((ctx.program.instances[otherId] as InstanceDef).numbers["visible"] ?? 0) === 0) {
+            continue;
+          }
         }
-        const otherBase = layout.entities[otherId] as number;
+        pairs.push({
+          id: otherId,
+          base: layout.entities[otherId] as number,
+          bit: bitBase + event.edges.length + otherIndex,
+        });
+      }
+
+      if (emitPairLoop(ctx, rule, subject, subjectId, subjectBase, pairs)) {
+        asm.label(subjectSkip);
+        continue;
+      }
+
+      for (const { id: otherId, base: otherBase, bit } of pairs) {
+        const skip = ctx.unique("otherSkip");
+        guardVisible(ctx, otherId, skip);
         // Reject the pair on whole cells first. Most pairs in most games are
         // nowhere near each other — in a scrolling level, most of them are not
         // even on the same screen — and this answers that in a few dozen cycles
@@ -794,7 +1296,6 @@ export function emitCollisions(ctx: SmsCtx, scene: SceneCtx): void {
         emitStageBox(ctx, otherBase, "b");
         asm.call(needOverlapPair(ctx));
         ctx.far("z", skip);
-        const bit = bitBase + event.edges.length + otherIndex;
         const afterFire = ctx.unique("otherFired");
         if (!event.level) emitContactSeen(ctx, bit, afterFire);
         emitFire(ctx, rule, { subject, other: entityOf(ctx, otherId) });
