@@ -152,7 +152,8 @@ describe("data movement", () => {
       },
     );
     expect(cpu.a[0]).toBe(0x3010);
-    for (let index = 0; index < 4; index += 1) expect(bus.read16(0x4002 + index * 4)).toBe(index + 1);
+    for (let index = 0; index < 4; index += 1)
+      expect(bus.read16(0x4002 + index * 4)).toBe(index + 1);
   });
 });
 

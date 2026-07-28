@@ -107,7 +107,9 @@ export class Md implements Bus {
       return ((this.ram[at & 0xffff] as number) << 8) | (this.ram[(at + 1) & 0xffff] as number);
     }
     if (at >= 0xa00000 && at < 0xa04000) {
-      return ((this.z80ram[at & 0x1fff] as number) << 8) | (this.z80ram[(at + 1) & 0x1fff] as number);
+      return (
+        ((this.z80ram[at & 0x1fff] as number) << 8) | (this.z80ram[(at + 1) & 0x1fff] as number)
+      );
     }
     if (at >= 0xa10000 && at <= 0xa1001f) return this.readIo(at | 1);
     if (at >= 0xa11100 && at <= 0xa11201) return 0x0000;
@@ -191,7 +193,8 @@ export class Md implements Bus {
    */
   private readIo(at: number): number {
     if ((at & 0x1f) === 0x03) {
-      const bit = (name: Button): number => (this.held & (1 << BUTTONS.indexOf(name))) !== 0 ? 0 : 1;
+      const bit = (name: Button): number =>
+        (this.held & (1 << BUTTONS.indexOf(name))) !== 0 ? 0 : 1;
       if (this.th !== 0) {
         return (
           0x40 |

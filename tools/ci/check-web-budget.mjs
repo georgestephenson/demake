@@ -33,11 +33,25 @@ const DIST = process.argv[2] ?? "packages/web/dist";
  * fan-out decoding its source once per candidate, both in `@demake/core` and so
  * in every chunk that carries the engine — the CLI pays for them too. The page's
  * own share is nil, because a lane is another instance of `core.worker.ts` rather
- * than a new kind of worker; the alternative was measured at 41 KB. The rule has
- * not changed and the next thing that does not fit should still be made smaller
- * first, but this one already was.
+ * than a new kind of worker; the alternative was measured at 41 KB.
+ *
+ * It moved a second time for the Mega Drive, and the measurement is worth
+ * recording because it is what a console costs end to end: **23.8 KB gzipped**,
+ * of which 18.6 KB is the codegen backend and the 68000 encoder in
+ * `core.worker.ts` and 5.2 KB is a fourth emulator in the game section. Splitting
+ * was considered and does not apply — the sum is a sum precisely so that moving
+ * code between chunks cannot satisfy it — and there is no fat to take out of a
+ * backend whose value layer is already a quarter the size of the Sega's. What a
+ * visitor actually downloads is unchanged in shape: the entry chunk plus the one
+ * section they opened.
+ *
+ * The rule has not changed. The next thing that does not fit should still be made
+ * smaller first, and a *fifth* console is the point at which "one more backend"
+ * stops being an acceptable answer — the way out then is to stop shipping every
+ * console's emitter to every visitor, which means splitting `core.worker.ts` by
+ * family and letting the budget become per-visitor rather than per-site.
  */
-const BUDGET_KB = 310;
+const BUDGET_KB = 335;
 
 function walk(dir) {
   const out = [];

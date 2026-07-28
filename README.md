@@ -8,12 +8,12 @@
 could display and play, verified on emulated hardware rather than merely
 asserted:
 
-| Demaker   | Input                                               | Output                                                                   | Status                                           |
-| --------- | --------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------ |
-| **art**   | any image                                           | hardware-compliant art, palettes, tile maps, asm/C/binary, bootable ROMs | working                                          |
-| **game**  | a [Demotic](docs/14-demotic.md) `.dmt` script + art | one game, every console                                                  | language, preview and a playable Game Boy ROM    |
-| **music** | a MIDI track                                        | chip music, audio that sounds exactly like the hardware will, and a ROM  | six consoles; a Game Boy cartridge that plays it |
-| **sound** | a WAV effect                                        | a chip sound effect, placed and prioritised, and a ROM                   | six consoles; a Game Boy cartridge that plays it |
+| Demaker   | Input                                               | Output                                                                   | Status                                              |
+| --------- | --------------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------- |
+| **art**   | any image                                           | hardware-compliant art, palettes, tile maps, asm/C/binary, bootable ROMs | working                                             |
+| **game**  | a [Demotic](docs/14-demotic.md) `.dmt` script + art | one game, every console                                                  | language, preview and playable ROMs on six consoles |
+| **music** | a MIDI track                                        | chip music, audio that sounds exactly like the hardware will, and a ROM  | six consoles; a Game Boy cartridge that plays it    |
+| **sound** | a WAV effect                                        | a chip sound effect, placed and prioritised, and a ROM                   | six consoles; a Game Boy cartridge that plays it    |
 
 Every demaker shares one engine, one determinism guarantee, and one proof: a
 real ROM, booted in a real emulator, compared against what the hardware was
@@ -43,10 +43,11 @@ correctly on every console at once.
 
 > **Status: Phase 3, plus Demotic D1–D3 and D5.** The engine, the CLI and the web
 > app are live; so are the Demotic language, its reference interpreter, its
-> cross-console test runner, its browser preview — and its first console
-> backend. `demake build pong.dmt -o pong.gb` _compiles_ a game to Game Boy
-> machine code and demakes its art on the way, the web app builds and plays the
-> identical cartridge in the page, and CI proves every example game reproduces
+> cross-console test runner, its browser preview — and its console
+> backends. `demake build pong.dmt -o pong.gb` _compiles_ a game to Game Boy
+> machine code and demakes its art on the way — and `-c nes`, `-c sms`, `-c gg`
+> and `-c md` compile the same game to 6502, Z80 and 68000. The web app builds
+> and plays the identical cartridge in the page, and CI proves every example game reproduces
 > the reference interpreter's fixed-point state tick for tick. All eight Tier 1
 > consoles go image → compliant art → native data → bootable ROM → emulator
 > frame, compared pixel-for-pixel in CI. The full design lives in
@@ -85,7 +86,7 @@ Nintendo DS. Beyond that, support deepens in two steps:
 | `prep` + `inspect` (compliant PNG)                | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, GBA, NDS, SG-1000, PC Engine, Neo Geo, WonderSwan/Color, NGP/NGPC, Virtual Boy, Pokémon Mini, Supervision, Game.com, Mega Duck |
 | `gen` (bin/asm/C data + display code)             | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, SG-1000, GBA, NDS, PC Engine, WonderSwan Color                                                                                 |
 | `--format rom` + **pixel-perfect emulator proof** | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, SG-1000, GBA, NDS, PC Engine, WonderSwan Color                                                                                 |
-| `build` (a Demotic game as a playable ROM)        | GB                                                                                                                                                                     |
+| `build` (a Demotic game as a playable ROM)        | GB, GBC, NES, SMS, GG, MD/Genesis                                                                                                                                      |
 
 "Pixel-perfect emulator proof" means what it says: CI assembles a real ROM,
 boots it in an emulator, and asserts the framebuffer matches demake's own output
@@ -99,6 +100,9 @@ byte-for-byte across an extensive image battery.
 | [`demake`](packages/cli)              | The CLI wrapper (doc 05). Re-exports core for scripting.                        |
 | [`@demake/demotic`](packages/demotic) | Demotic: the game language, its interpreter, and the ROM builder (docs 14, 15). |
 | [`@demake/dmg`](packages/dmg)         | A Game Boy core: the conformance harness, and the web app's player.             |
+| [`@demake/nes`](packages/nes)         | An NES core, for the same two jobs.                                             |
+| [`@demake/sms`](packages/sms)         | A Sega 8-bit core: Master System and Game Gear.                                 |
+| [`@demake/md`](packages/md)           | A Mega Drive core: a 68000 and a VDP.                                           |
 | [`@demake/chip`](packages/chip)       | Every sound chip as a register-driven model (doc 16). Depends on nothing.       |
 | [`@demake/audio`](packages/audio)     | The music and sound demakers (docs 16, 17, 18).                                 |
 | [`@demake/web`](packages/web)         | The browser app (doc 07): the same core in a worker, no server.                 |

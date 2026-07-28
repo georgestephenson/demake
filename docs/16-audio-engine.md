@@ -46,6 +46,14 @@ audio cartridge for anything but the Game Boy, driver backends for the remaining
 consoles, `bin`/`asm`/`c` emit, Level B sample comparison, and the lossy
 encoders.
 
+The **Mega Drive** is the sharpest instance of that gap now that its games build
+(doc 13 §D4): a `demake build -c md` cartridge plays silently, and it still
+records what a rule asked for so that its trace is a sounding build's. Two things
+are missing and they are different sizes. The PSG is small — an SN76489 sits at
+`$C00011`, `@demake/chip` already models it, and what is wanted is a 68000 driver
+beside the three that exist and a `psgBinding` entry. The FM is the large one, and
+it is the entry in the table below that says *timbre is fitted, not chosen*.
+
 ## The load-bearing idea, restated for sound
 
 The image engine's founding idea is that *the constraint model is data and the

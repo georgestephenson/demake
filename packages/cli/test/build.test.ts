@@ -102,11 +102,21 @@ describe("demake build", () => {
   });
 
   it("refuses a console with no backend, naming the ones that have one", async () => {
+    // `snes` is the one profile left without a backend, and the example moves as
+    // backends land: this said `md` until the Mega Drive built.
     const h = harness({ "pong.dmt": read("pong.dmt") });
-    expect(await run(["build", "pong.dmt", "-c", "md", "-o", "pong.bin"], h.env)).toBe(
+    expect(await run(["build", "pong.dmt", "-c", "snes", "-o", "pong.bin"], h.env)).toBe(
       EXIT.UNAVAILABLE,
     );
     expect(h.err()).toContain("no console runtime");
+  });
+
+  it("builds a Mega Drive cartridge, vectors and header and all", async () => {
+    const h = harness({ "pong.dmt": read("pong.dmt") });
+    expect(await run(["build", "pong.dmt", "-c", "md", "-o", "pong.md"], h.env)).toBe(EXIT.OK);
+    const rom = h.written.get("pong.md") as Uint8Array;
+    expect(rom.length).toBe(0x80000);
+    expect(String.fromCharCode(...rom.subarray(0x100, 0x110))).toBe("SEGA MEGA DRIVE ");
   });
 
   it("reports every compile diagnostic instead of the first", async () => {

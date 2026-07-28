@@ -68,10 +68,10 @@ const OUT = 0xfffe08;
 function read32(machine: Md, address: number): number {
   const bytes = machine.readMemory(address, 4);
   return (
-    (((bytes[0] as number) << 24) |
-      ((bytes[1] as number) << 16) |
-      ((bytes[2] as number) << 8) |
-      (bytes[3] as number)) |
+    ((bytes[0] as number) << 24) |
+    ((bytes[1] as number) << 16) |
+    ((bytes[2] as number) << 8) |
+    (bytes[3] as number) |
     0
   );
 }

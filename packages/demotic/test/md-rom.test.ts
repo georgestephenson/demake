@@ -194,7 +194,7 @@ describe("the plane against the level", async () => {
     const camera = built.layout.camera as number;
     const cell = (offset: number): number => {
       const bytes = machine.readMemory(camera + offset, 2);
-      return (((bytes[0] as number) << 8) | (bytes[1] as number)) << 16 >> 16;
+      return ((((bytes[0] as number) << 8) | (bytes[1] as number)) << 16) >> 16;
     };
     const hscroll =
       ((machine.vdp.vram[0xb000] as number) << 8) | (machine.vdp.vram[0xb001] as number);

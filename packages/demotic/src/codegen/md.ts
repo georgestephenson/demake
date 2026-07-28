@@ -49,13 +49,7 @@ import {
 import { MD_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
 import { ART_TILES, bindMdArt } from "./md-art.js";
 import { MdCtx } from "./md/ctx.js";
-import {
-  BANK_TILES,
-  CODE_ORIGIN,
-  emitProgram,
-  STACK_TOP,
-  type MdEmitOptions,
-} from "./md/emit.js";
+import { BANK_TILES, CODE_ORIGIN, emitProgram, STACK_TOP, type MdEmitOptions } from "./md/emit.js";
 
 /** Bytes a Demotic Mega Drive cartridge holds. */
 export const ROM_SIZE = MD_ROM_SIZE;
@@ -126,9 +120,8 @@ export const mdBackend: Backend<MdEmitOptions, MdAudio> = {
     );
   },
 
-  // eslint-disable-next-line @typescript-eslint/require-await -- the contract is
-  // asynchronous because two consoles run a gesture tournament here; this one has
-  // no driver to run it for.
+  // Asynchronous because the contract is: on the consoles with a driver this is
+  // where a gesture tournament runs. There is nothing to run one for here.
   async bindAudio(program: Program): Promise<BoundAssets<MdAudio>> {
     const names = program.tracks.length > 0 || program.sounds.length > 0;
     const emit: MdAudio = {

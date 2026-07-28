@@ -12,12 +12,12 @@ something 8/16-bit-era consoles and handhelds up to the Nintendo DS could
 actually run. Four demakers, sharing one engine and one proof (a real ROM, in a
 real emulator, compared pixel for pixel):
 
-| Demaker               | Docs   | State                                                                      |
-| --------------------- | ------ | -------------------------------------------------------------------------- |
-| art (images)          | 03–06  | working, ten consoles proven on hardware                                   |
-| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on five consoles |
-| music (`arrange`)     | 16, 17 | MIDI → chip music, six consoles — and a Game Boy ROM that plays it         |
-| sound (`sfx`)         | 16, 18 | WAV → chip effects, six consoles — same ROM, same proof                    |
+| Demaker               | Docs   | State                                                                     |
+| --------------------- | ------ | ------------------------------------------------------------------------- |
+| art (images)          | 03–06  | working, ten consoles proven on hardware                                  |
+| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on six consoles |
+| music (`arrange`)     | 16, 17 | MIDI → chip music, six consoles — and a Game Boy ROM that plays it        |
+| sound (`sfx`)         | 16, 18 | WAV → chip effects, six consoles — same ROM, same proof                   |
 
 The four are not four tools that share a repo any more: a `.dmt` says
 `music theme.mid` and `sound bounce.wav on ball hits paddle`, and `demake build`
@@ -109,6 +109,37 @@ exact shape and is merged the same way. And the **clock is the frame**, at 59.92
 Hz, because this VDP reloads its line counter outside the active display — a line
 interrupt is a raster effect, not a tempo.
 
+**And it builds for a Mega Drive.** `demake build -c md` produces a real 512 KiB
+cartridge — 68000 machine code written for the game, the art demade into a
+1408-tile bank across three of the VDP's four sub-palettes — and the whole
+example library traces identically there, in the same battery, at the same one
+frame per tick. This is the first 16-bit console in the set and the first
+big-endian one, and both facts reach further than the emitter.
+
+The value layer is where the machine shows. **A 16.16 value is a register
+here**: `move.l`, `add.l`, `sub.l`, `neg.l`, `asr.l` and `cmp.l` each do in one
+instruction what the Z80 does in four and the 6502 in eight, and `cmp.l` sets a
+signed condition rather than leaving one to be synthesised — so
+`codegen/md/val.ts` is a quarter the size of the Sega's, and the only two
+routines this console pulls in are the two the hardware genuinely lacks. Neither
+is a bit loop: the multiply assembles four `mulu.w` products into a 64-bit one
+and the divide's fast path for a whole-cell divisor is two `divu.w` instructions,
+which is what makes an object whose _speed_ changes affordable here.
+
+The renderer is easier for exactly one reason: **the plane is bigger than the
+screen**. Sixty-four cells by thirty-two against a forty-by-twenty-eight window,
+so a scrolling scene paints its leading edge twenty-four columns off the
+right-hand side and has no seam to hide — the whole masking mechanism the Master
+System needs is absent, and both wraps are powers of two.
+
+**Sound is the gap, and the build says so honestly.** This console's audio is a
+second processor with a YM2612 beside it and `demake build` emits neither, so a
+game that names music and effects builds, plays silently, and still records what
+a rule asked for — which is what keeps its trace identical to a sounding build's.
+The page withholds the sound control there rather than offering one that does
+nothing. The way in is the PSG: an SN76489 sits at `$C00011` and `@demake/chip`
+already models it; what is missing is a 68000 driver and a `psgBinding` entry.
+
 **And it builds for a second machine.** `demake build -c nes` produces a real
 NROM cartridge — 6502 machine code written for the game, its art demade for a
 fixed master palette and 16×16 attribute cells — and every game in the example
@@ -136,8 +167,10 @@ the art for that machine and boots the result in `@demake/nes` — byte-identica
 to `demake build -c nes`, pinned by `determinism.spec.ts` on every console with a
 backend (doc 07 §Playing the real ROM in the page) — and the sound button plays
 whichever chip the running core has, through the same `StreamSink`. The Sega
-consoles included, now that the SN76489 has a driver: the button is no longer
-withheld anywhere.
+8-bits included, now that the SN76489 has a driver. The one place it is withheld
+is the Mega Drive, and honestly: that console's audio is a second processor with
+an FM part beside it, `demake build` emits neither, and a control that did
+nothing would be worse than none.
 
 Still to come: the remaining Tier 2/3 consoles (each = a codegen backend, a ROM
 harness + toolchain, and a libretro core + DAC calibration), the remaining
@@ -191,9 +224,10 @@ to undo by accident (§Working on audio).
 
 ```
 packages/core/       @demake/core — the engine (zero platform deps; ESM; ships types)
-  src/asm/           the SM83, 6502 and Z80 assemblers + the GB, iNES and Sega
-                     cartridge wrappers — shared by the Demotic game backends and
-                     the audio driver, so no backend owns the encoder for its own CPU
+  src/asm/           the SM83, 6502, Z80 and 68000 assemblers + the GB, iNES, Sega
+                     and Mega Drive cartridge wrappers — shared by the Demotic game
+                     backends and the audio driver, so no backend owns the encoder
+                     for its own CPU
   src/math/          deterministic kernels (exp/log/pow/cbrt/sin) + PCG32 PRNG
   src/parallel/      the executor seam: work described as jobs, run wherever the
                      edge says. `jobs.ts` is the contract and the inline runner
@@ -242,6 +276,12 @@ packages/sms/        @demake/sms — a self-hosted Sega 8-bit core, Master Syste
                      @demake/dmg is decided by its header. Mode 4 only: the SG-1000's
                      Graphics II is a different renderer, not a flag on this one. Its
                      PSG is @demake/chip's SN76489
+packages/md/         @demake/md — a self-hosted Mega Drive core: a 68000 and a VDP,
+                     for the two jobs the other three cores exist for. It has no
+                     sound chip, deliberately: this console's audio is a second
+                     processor with an FM part beside it and `demake build` emits
+                     neither, so the PSG port is accepted and dropped rather than
+                     half-modelled
 packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs 14, 15)
   src/lang/          lex → parse → flat statement AST (one statement per line, no nesting)
   src/lang/highlight.ts  TextMate scopes for `.dmt` source — the registry's words,
@@ -266,6 +306,7 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
     gb.ts, emit/rules/expr/val/tiles.ts   the SM83 backend
     nes.ts, nes-art.ts, nes/              the 6502 backend and its image path
     sms.ts, sms-art.ts, sms/              the Z80 backend and its image path
+    md.ts, md-art.ts, md/                 the 68000 backend and its image path
     audio.ts         the hand-off to @demake/audio, art.ts's twin
   demo/              terminal runner (play.mjs) and test runner (test.mjs)
 packages/chip/       @demake/chip — every sound chip as a register-driven model (doc 16)
@@ -1008,6 +1049,62 @@ is the game.
   it back, expanded by one instruction because the Z80 has no `swap`. That is the
   only thing in the driver that differs between the two machines.
 
+### The 68000 half
+
+`demake build -c md` builds a playable Mega Drive cartridge, and the whole
+example library traces identically there. What is new about this machine is that
+most of the value layer stops being a problem and three new ones appear.
+
+- **An odd address is an address error, so the allocator aligns.** A word or long
+  access to an odd address faults on this CPU, and the shared RAM allocator packs
+  bytes — so `MemoryPlan.align` is 2 here and `Bump.take` pads before anything
+  wider than a byte. Only multi-byte requests are aligned, which is why no other
+  console's memory map moved. The two structures the allocator _cannot_ fix are
+  the tile-contact list and the cached cell walk, whose shared strides interleave
+  a count byte with word entries: those are read and written a byte at a time.
+- **And so is a packed backdrop.** A cell in `packCells`'s stream follows a
+  control _byte_, so half of them are odd-addressed. Reading one with `move.w`
+  cost the first cell of every picture, which `md-rom.test.ts` found and a
+  screenshot would not have.
+- **This is the first big-endian console, and `rom/trace.ts` had to learn.** The
+  trace reader pulls a game's 16.16 state straight out of work RAM, and a
+  little-endian read reports every value byte-swapped — which presents as an
+  arithmetic bug three layers from its cause. `MemoryPlan.bigEndian` is how it
+  knows. The same fact is why `CELL_OFFSET` is 0 here where every other backend
+  says `+2`: the whole-cell part of a coordinate is the _high_ word.
+- **`RngAdvance` owns `d0`–`d3`, so a draw's bound lives in `d6`/`d7`.** The
+  generator's multiply is three `mulu.w` products and uses the low registers, so
+  anything held there across the call is gone by the time the draw needs it. It
+  presents as random numbers that are plausible and wrong.
+- **A `Bcc` reaches a rule body, not a program.** Sixteen signed bits, which
+  covers any one routine and nothing further, so `ctx.far` is one instruction and
+  `ctx.farJump` — an inverted branch over an absolute `jmp` — is for the handful
+  of places that cross the whole program. Scene dispatch is a _jump table_ rather
+  than the comparison chain the other three emit, because a scene's tick routine
+  really can be further than a branch reaches.
+- **Four sub-palettes, shared between the planes and the sprites.** Not a bank
+  each, as on the Sega 8-bits: background art gets two, objects get one, and the
+  font gets the fourth. And **colour zero is transparent on both layers**, so a
+  caption's paper is register 7's backdrop — which is why the system palette's
+  ink is chosen against it, the way the NES backend chooses its caption ink. A
+  fixed ramp is invisible over a picture whose colour zero happens to match it.
+- **The plane is bigger than the screen, so there is no seam.** 64×32 against
+  40×28. A scrolling scene paints its leading edge into a column nobody is
+  looking at, both wraps are powers of two, and none of the Master System's
+  masking exists here.
+- **A sprite list is linked, so parking one means fixing a link.** Each entry
+  names the next and a link of zero ends it, which is also why the upload is as
+  long as the list rather than as long as the table.
+- **The control port is a longword, which the processor performs as two words.**
+  Acknowledging the frame interrupt means reading that port, which resets the
+  half-written state — the Master System's hazard, reached by different hardware.
+  The full redraw runs with interrupts masked for exactly that reason; everything
+  else runs a few instructions after the interrupt it waited for.
+- **There is no cartridge-budget story here, and that is the news.** 512 KiB
+  against 32, and 64 KiB of work RAM against an NROM cartridge's 2. The scarce
+  resources are the tile bank and the four sub-palettes, so the art path is where
+  the interesting decisions are — not the emitter.
+
 ## Working on audio
 
 The spine, both demakers and three CPUs' drivers are built; these are the rules
@@ -1177,13 +1274,21 @@ Two files plus fixtures (doc 02 §Extensibility):
   via the `.claude/` SessionStart hook.
 - The Demotic ROM conformance suite (`packages/demotic/test/rom.test.ts`) builds
   a cartridge from each fixture game **for every console with a backend** — both
-  Game Boys and the NES — and runs it in `@demake/dmg` or `@demake/nes`,
+  Game Boys, the NES, both Sega 8-bits and the Mega Drive — and runs it in the
+  matching owned core,
   asserting the trace matches the reference interpreter tick for tick. No
   toolchain, no emulator install, so it runs everywhere `pnpm test` does. Running
   the same battery on all three is what makes `Backend` a contract rather than a
   resemblance: the colour build proves the attribute work never touched
   simulation state, and the NES proves a second CPU's arithmetic and ordering
   agree to the bit.
+- `packages/demotic/test/md-arith.test.ts` and `md-rom.test.ts` are the Mega
+  Drive's two oracles, and they are the pair every new backend gets: the first
+  assembles each 16.16 operation on its own and compares with `fixed.ts`, the
+  second checks the plane against the level grid cell by cell and a demade
+  backdrop word for word. Between them they caught a packed cell read as a word
+  from an odd address and an unwidened column index in the grid lookup, neither
+  of which a trace can see.
 - `packages/demotic/test/nes-arith.test.ts` is one layer below that: it assembles
   each 16.16 operation on its own, runs it in `@demake/nes` and compares with
   `fixed.ts`. A multiply that floors the wrong way for negative operands makes a
@@ -1440,6 +1545,12 @@ Two files plus fixtures (doc 02 §Extensibility):
   address is `ld h, HIGH(shadow)` plus a shifted count — cheaper as well as
   correct. Check the register a helper takes its arguments in before reaching for
   a 16-bit load.
+- **A 68000 `move.w` leaves a register's high half alone, so an index has to be
+  widened.** `move.w col,d0` followed by `add.l d0,d1` adds whatever the last
+  thing to touch `d0` left above the low word — which is a grid lookup that is
+  right until it is not, and it survived two hundred and eighty ticks of a level
+  game before it named itself. `ext.l` is the fix and the reason it is easy to
+  miss is that the low half is always correct.
 - **A Game Boy screen is green, and that is a tested artifact.** `@demake/dmg`'s
   four DMG shades are the `dmg` console spec's `mono-ramp` DAC model, pinned
   against it by `packages/dmg/test/ppu.test.ts`, and the same four the SameBoy

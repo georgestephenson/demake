@@ -746,9 +746,7 @@ export class M68k {
     }
     const value = this.load(slot, width);
     const result =
-      (op & 0x0100) !== 0
-        ? this.doSub(value, amount, width)
-        : this.doAdd(value, amount, width);
+      (op & 0x0100) !== 0 ? this.doSub(value, amount, width) : this.doAdd(value, amount, width);
     this.store(slot, result, width);
     return 8;
   }
@@ -886,18 +884,14 @@ export class M68k {
     if (opmode < 3) {
       const value = this.load(this.resolve(mode, reg, width), width);
       const left = trunc(this.d[dn] as number, width);
-      const result = adding
-        ? this.doAdd(left, value, width)
-        : this.doSub(left, value, width);
+      const result = adding ? this.doAdd(left, value, width) : this.doSub(left, value, width);
       this.store({ kind: "d", n: dn }, result, width);
       return 8;
     }
     const slot = this.resolve(mode, reg, width);
     const target = this.load(slot, width);
     const value = trunc(this.d[dn] as number, width);
-    const result = adding
-      ? this.doAdd(target, value, width)
-      : this.doSub(target, value, width);
+    const result = adding ? this.doAdd(target, value, width) : this.doSub(target, value, width);
     this.store(slot, result, width);
     return 12;
   }
@@ -970,7 +964,7 @@ export class M68k {
   /** One step of a shift or rotate, setting `C` (and `X`, where it applies). */
   private shiftOnce(value: number, width: Width, type: number, left: boolean): number {
     const top = SIGN[width];
-    let result = value;
+    let result: number;
     if (left) {
       const out = (value & top) !== 0;
       result = trunc(value << 1, width);

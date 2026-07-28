@@ -839,9 +839,10 @@ controls and rules, console-specific only in that constants are folded — and a
 backend then compiles that `Program` into code written for this game and no
 other (§2).
 
-Two backends exist, in `packages/demotic/src/codegen/`: `gb` (SM83, both Game
-Boys) and `nes` (6502, NROM). Nothing about either is a table format, so there is
-no format contract to keep in step with an assembly file.
+Four backends exist, in `packages/demotic/src/codegen/`: `gb` (SM83, both Game
+Boys), `nes` (6502, NROM), `sms` (Z80, Master System and Game Gear) and `md`
+(68000, Mega Drive). Nothing about any of them is a table format, so there is no
+format contract to keep in step with an assembly file.
 
 **A backend is an implementation of an interface, not a file that resembles
 another one.** `codegen/backend.ts` is the contract: a console answers six
@@ -864,7 +865,10 @@ common denominator: **anything that would emit an instruction stays in the
 backend.** A machine with seven registers and one with three do not want the same
 code, and pretending otherwise would make both worse. The 6502 backend is a third
 smaller than the SM83 one for its arithmetic and a third larger for its
-addressing, which is exactly what the two instruction sets are like.
+addressing, which is exactly what the two instruction sets are like. The 68000's
+value layer is a quarter the size of the Z80's, because a 16.16 number is a
+register on that machine and an `add.l` is one instruction — the same division of
+labour, at the other end of the range.
 
 **A build is an assembly, and the assembler is ours.** It is written in
 TypeScript with no dependencies, so:
@@ -1001,10 +1005,12 @@ The language's semantics are **output bytes**, and carry the same guarantees as
 
 Named rather than hidden, in rough order of how much they matter.
 
-- ~~**No console runtimes.**~~ The `gb` and `nes` backends exist and their gap
-  lists are empty of *language* features (§Runtime model): levels, tiles, the
-  camera, scrolling, music and effects all compile on both. `sms`/`gg`, `md` and
-  `snes` are doc 13 §D4.
+- ~~**No console runtimes.**~~ The `gb`, `nes`, `sms`/`gg` and `md` backends
+  exist and their gap lists are empty of *language* features (§Runtime model):
+  levels, tiles, the camera, scrolling, music and effects all compile on every
+  one of them. The Mega Drive is the exception on *sound* and says so — its audio
+  is a second processor with an FM part beside it, so a game there plays silently
+  while still recording what a rule asked for. `snes` is doc 13 §D4.
 - ~~**No deterministic art rasterisation.**~~ `@demake/core` has its own SVG
   rasteriser (doc 15 §The conversion path, step 2), so a `.dmt`'s art is demade
   by the image engine and appears in the cartridge. The subset is deliberate —

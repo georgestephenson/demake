@@ -286,8 +286,7 @@ export class Vdp {
       const y = (((this.vram[at] as number) << 8) | (this.vram[at + 1] as number)) & 0x3ff;
       const size = this.vram[at + 2] as number;
       const link = (this.vram[at + 3] as number) & 0x7f;
-      const attribute =
-        ((this.vram[at + 4] as number) << 8) | (this.vram[at + 5] as number);
+      const attribute = ((this.vram[at + 4] as number) << 8) | (this.vram[at + 5] as number);
       const x = (((this.vram[at + 6] as number) << 8) | (this.vram[at + 7] as number)) & 0x1ff;
       const cellsWide = ((size >> 2) & 3) + 1;
       const cellsHigh = (size & 3) + 1;
@@ -300,7 +299,10 @@ export class Vdp {
       for (let cy = 0; cy < cellsHigh; cy += 1) {
         for (let cx = 0; cx < cellsWide; cx += 1) {
           // Tiles inside a multi-cell sprite run down the columns first.
-          const which = tile + (hflip ? cellsWide - 1 - cx : cx) * cellsHigh + (vflip ? cellsHigh - 1 - cy : cy);
+          const which =
+            tile +
+            (hflip ? cellsWide - 1 - cx : cx) * cellsHigh +
+            (vflip ? cellsHigh - 1 - cy : cy);
           for (let py = 0; py < 8; py += 1) {
             const screenY = y - 128 + cy * 8 + py;
             if (screenY < 0 || screenY >= FRAME_HEIGHT) continue;

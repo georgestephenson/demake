@@ -130,8 +130,7 @@ function packPalette(
  * colour showing through shade zero.
  */
 function systemRamp(backdrop: readonly number[]): number[][] {
-  const luminance =
-    ((backdrop[0] ?? 0) * 2 + (backdrop[1] ?? 0) * 5 + (backdrop[2] ?? 0)) / 8;
+  const luminance = ((backdrop[0] ?? 0) * 2 + (backdrop[1] ?? 0) * 5 + (backdrop[2] ?? 0)) / 8;
   const dark = luminance < 3.5;
   return dark
     ? [

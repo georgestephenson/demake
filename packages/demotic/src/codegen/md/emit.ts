@@ -2087,4 +2087,3 @@ function emitDecimalPowers(ctx: MdCtx): void {
   ctx.asm.label("DecimalPowers");
   for (const power of [10000, 1000, 100, 10, 1]) ctx.asm.dw(power);
 }
-
