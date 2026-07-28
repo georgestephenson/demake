@@ -34,6 +34,7 @@ import type { Program } from "../program.js";
 
 import type { Analysis } from "./analyze.js";
 import { ZP_FREE } from "./nes/zp.js";
+import { DP_FREE } from "./snes/ops.js";
 
 /** Stored properties, in record order. Index × 4 is the byte offset. */
 export const PROPS = [
@@ -310,6 +311,61 @@ export const GG_MEMORY: MemoryPlan = {
   machine: "Game Gear",
   viewW: 20,
   viewH: 18,
+};
+
+/**
+ * The Super Nintendo's plan, which is the roomy one for a different reason.
+ *
+ * This console has 128 KiB of work RAM, but only its first eight are mirrored
+ * into bank zero — and that mirror is what makes the whole backend's addressing
+ * work: with the data bank left at zero, every property is a plain sixteen-bit
+ * absolute and the hardware registers are reachable by the same instructions.
+ * Reaching the other 120 KiB would mean long addressing or a data-bank switch on
+ * every access, for room no game in the library is near needing, so the plan
+ * stops at the mirror. Four fixed reservations come out of it:
+ *
+ *   - **The direct page**, `$0000`–`$00FF`, which this CPU addresses in two bytes
+ *     rather than three. `codegen/snes/ops.ts` owns the bottom of it and states
+ *     where the allocator may begin.
+ *   - **The stack**, below the object shadow. Native mode puts it anywhere in
+ *     bank zero, unlike the 6502's fixed page one.
+ *   - **The object shadow**, 544 bytes: 128 entries of four, then the two-bit
+ *     table that carries each object's ninth X bit and its size.
+ *   - The rest, `$0700`–`$1EFF`, is the heap.
+ *
+ * `queueMax` is generous because a queued cell is cheap here: the address
+ * register and the two data ports are consecutive, so a cell is two sixteen-bit
+ * stores rather than the NES's six writes or the Sega VDP's four.
+ */
+export const SNES_MEMORY: MemoryPlan = {
+  machine: "Super Nintendo",
+  heapStart: 0x0700,
+  heapEnd: 0x1f00,
+  fastStart: DP_FREE,
+  fastEnd: 0x0100,
+  oamShadow: 0x0400,
+  oamEntries: 128,
+  viewW: 32,
+  viewH: 28,
+  queueMax: 96,
+  plotMax: 96,
+  // No driver: the S-SMP is a second processor with its own memory and its own
+  // program, and the audio engine has no S-DSP model to build one against yet
+  // (doc 16 §Still to come). A game that names music still reserves the byte its
+  // trace records the request in, which is `sound` and not this.
+  audioBytes: 0,
+  // A tilemap entry is a word — ten bits of tile, three of palette, two of flip
+  // and one of priority — so a queued cell carries its data as two bytes, the
+  // same shape the Game Boy Color's and the Sega VDP's do.
+  cellAttributes: true,
+  // The frame flag the main loop waits on. Its own byte for the reason the Sega
+  // handlers' is: an interrupt writes it in the middle of whatever the game was
+  // doing, and everything in `layout.scratch` is valid for the length of one
+  // routine.
+  interruptBytes: 1,
+  // The loop cursor is in the direct page, which the allocator never sees; see
+  // {@link MemoryPlan.loopBytes}.
+  loopBytes: 0,
 };
 
 /** Raised when a game needs more state than the machine has. */

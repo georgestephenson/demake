@@ -200,3 +200,57 @@ export {
   type SegaHeaderOptions,
   type SegaRegion,
 } from "./asm/sms-cart.js";
+// The 65816's operand constructors overlap the 6502's by name and not by type —
+// `abs` there produces a `Operand`, here an `Operand65816`, and the two address
+// modes are spelled differently ("zp" against "dp") because the CPUs spell them
+// differently. The five that collide are exported under a prefix and aliased back
+// in one place (`codegen/snes/ops.ts` in the Demotic backend), so a call site
+// still reads like assembly and nothing can pass the wrong operand to the wrong
+// assembler.
+export {
+  Asm65816,
+  abs as snesAbs,
+  absInd,
+  absIndLong,
+  absIndX,
+  absX as snesAbsX,
+  absY as snesAbsY,
+  acc65816,
+  at65816,
+  dp,
+  dpInd,
+  dpIndLong,
+  dpIndLongY,
+  dpIndX,
+  dpIndY,
+  dpX,
+  dpY,
+  imm16,
+  imm8,
+  immBank,
+  immHigh as snesImmHigh,
+  immLow as snesImmLow,
+  long,
+  longX,
+  sr,
+  srY,
+  type Imm65816,
+  type Mnemonic65816,
+  type Mode65816,
+  type Operand65816,
+} from "./asm/wdc65816.js";
+export {
+  SNES_BANK_SIZE,
+  SNES_CODE_SIZE,
+  SNES_HEADER_OFFSET,
+  SNES_ORIGIN,
+  SNES_ROM_SIZE,
+  SNES_TILE_BANK,
+  SNES_TILE_BASE,
+  SNES_TILE_CAPACITY,
+  SNES_TILE_OFFSET,
+  SNES_VECTORS,
+  packSnesRom,
+  snesChecksum,
+  type SnesHeaderOptions,
+} from "./asm/snes-cart.js";

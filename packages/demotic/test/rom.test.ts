@@ -34,6 +34,7 @@ import {
   RomRunner,
   romTrace,
   smsTarget,
+  snesTarget,
 } from "./_rom-harness.js";
 
 const fixtures = join(import.meta.dirname, "..", "fixtures");
@@ -104,8 +105,12 @@ describe("ROM conformance across the example library", async () => {
   // a cell walk that moved an object, a palette upload that clobbered a scratch
   // byte — this is where it would show, and it would name the tick. And the NES,
   // because a second CPU is where an arithmetic or an ordering difference would
-  // surface, and the whole point of the shared spine is that neither can.
-  for (const target of [gbTarget, gbcTarget, nesTarget, smsTarget, ggTarget]) {
+  // surface, and the whole point of the shared spine is that neither can. And the
+  // Super Nintendo, because its accumulator is *sixteen* bits: every routine in
+  // its value layer is a different program from the eight-bit one the other three
+  // share, so agreement there is agreement about the arithmetic rather than about
+  // the code.
+  for (const target of [gbTarget, gbcTarget, nesTarget, smsTarget, ggTarget, snesTarget]) {
     for (const [file, script, levels] of cases) {
       it(`matches the interpreter for ${file} on ${target.console}`, async () => {
         const program = build(read(file), levels, target.console);

@@ -24,11 +24,13 @@
 import { Gameboy, type Button as GbButton } from "@demake/dmg";
 import { Nes, type Button as NesButton } from "@demake/nes";
 import { Sms, type Button as SmsButton } from "@demake/sms";
+import { Snes, type Button as SnesButton } from "@demake/snes";
 
 import { buildGbRom } from "../src/codegen/gb.js";
 import type { Layout } from "../src/codegen/layout.js";
 import { buildNesRom } from "../src/codegen/nes.js";
 import { buildSmsRom } from "../src/codegen/sms.js";
+import { buildSnesRom } from "../src/codegen/snes.js";
 import type { BuildOptions, BuiltRom } from "../src/codegen/backend.js";
 import type { Program } from "../src/program.js";
 import { romReady, romTraceLine } from "../src/rom/trace.js";
@@ -105,6 +107,27 @@ export const smsTarget: RomTarget = {
 
 /** The same backend, the same machine code, a smaller window. */
 export const ggTarget: RomTarget = { ...smsTarget, console: "gg" };
+
+/**
+ * The Super Nintendo, whose pad has more buttons than the abstract set and maps
+ * the ones it needs the conventional way: this machine's B and Y sit where the
+ * NES's A and B sat, so that is what they are.
+ */
+export const snesTarget: RomTarget = {
+  console: "snes",
+  build: (program, options) => buildSnesRom(program, options),
+  boot: (bytes) => {
+    const machine = new Snes(bytes);
+    const map: Readonly<Record<string, SnesButton>> = { a: "b", b: "y" };
+    return {
+      readMemory: (address, length) => machine.readMemory(address, length),
+      stepInstruction: () => machine.stepInstruction(),
+      runFrame: () => machine.runFrame(),
+      setButtons: (down) =>
+        machine.setButtons(down.map((name) => map[name] ?? (name as SnesButton))),
+    };
+  },
+};
 
 /** A booted ROM, ready to be stepped a tick at a time. */
 export class RomRunner {

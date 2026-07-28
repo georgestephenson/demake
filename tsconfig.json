@@ -21,6 +21,9 @@
       "path": "./packages/sms"
     },
     {
+      "path": "./packages/snes"
+    },
+    {
       "path": "./packages/chip"
     },
     {

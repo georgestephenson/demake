@@ -97,6 +97,9 @@ importers:
       '@demake/sms':
         specifier: workspace:*
         version: link:../sms
+      '@demake/snes':
+        specifier: workspace:*
+        version: link:../snes
 
   packages/dmg:
     dependencies:
@@ -128,6 +131,12 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/snes:
+    devDependencies:
+      '@demake/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/web:
     dependencies:
       '@demake/audio':
@@ -154,6 +163,9 @@ importers:
       '@demake/sms':
         specifier: workspace:*
         version: link:../sms
+      '@demake/snes':
+        specifier: workspace:*
+        version: link:../snes
       preact:
         specifier: ^10.29.7
         version: 10.29.7

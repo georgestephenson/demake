@@ -14,12 +14,14 @@ import { anyBackend, type AnyBackend, type BuiltRom, type BuildOptions } from ".
 import { gbBackend } from "./gb.js";
 import { nesBackend } from "./nes.js";
 import { smsBackend } from "./sms.js";
+import { snesBackend } from "./snes.js";
 
 /** Every backend, in the order a listing shows them. */
 const BACKENDS: readonly AnyBackend[] = [
   anyBackend(gbBackend),
   anyBackend(nesBackend),
   anyBackend(smsBackend),
+  anyBackend(snesBackend),
 ];
 
 /** Console ids a Demotic program can be built for. */

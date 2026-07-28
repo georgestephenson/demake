@@ -177,8 +177,7 @@ const PROFILES: readonly ConsoleProfile[] = [
     fps: 60,
     sprites: { total: 128, perLine: 32, hFlip: true },
     startButton: "dedicated",
-    // ConsoleSpec exists; codegen backend, ROM harness, and emulator E2E do not.
-    romPath: false,
+    romPath: true,
   },
 ];
 

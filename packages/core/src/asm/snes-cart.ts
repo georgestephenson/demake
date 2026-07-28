@@ -1,0 +1,200 @@
+/**
+ * The Super Nintendo cartridge wrapper: the LoROM header, its vectors, and the
+ * checksum pair.
+ *
+ * Here rather than in a caller for the reason `gb-cart.ts`, `nes-cart.ts` and
+ * `sms-cart.ts` are: a header implemented twice is a header that disagrees in one
+ * byte in one of them, and more than one builder will wrap 65816 code into a
+ * cartridge once the S-DSP has a driver.
+ *
+ * **A 64 KiB LoROM cartridge**, which is two banks, and the split is a hardware
+ * fact rather than a convenience:
+ *
+ *   - **Bank `$00` is the program**, visible at `$00:8000`–`$00:FFFF`. Code, the
+ *     level tables, the packed tilemaps and the constant pool all live here, and
+ *     every address in them is a sixteen-bit absolute reached with the data bank
+ *     at zero — which is also where the console's first 8 KiB of work RAM is
+ *     mirrored, so one bank holds everything the CPU touches directly.
+ *   - **Bank `$01` is the tile bank**, at `$01:8000`–`$01:FFFF`. It is never
+ *     executed and never read by an instruction: it reaches video RAM by DMA,
+ *     which takes its source bank as a *data byte* ({@link SNES_TILE_BANK}). That
+ *     is what lets a game spend sixteen kilobytes on art without spending it out
+ *     of the thirty-two the program has.
+ *
+ * Three things about this header have bitten somebody:
+ *
+ *   - **It lives at `$FFC0`, inside the first bank.** Unlike the iNES header,
+ *     which is a wrapper the console never sees, this is sixty-four bytes of the
+ *     cartridge's own address space — the vectors at `$FFE0`–`$FFFF` included, so
+ *     the last sixty-four bytes of bank zero are not the program's to use.
+ *   - **The reset vector is a *bank-zero* address and the CPU starts in emulation
+ *     mode.** There is no native reset vector: `$FFFC` is read with the CPU
+ *     pretending to be a 6502, so the first thing a cartridge does is `clc; xce`.
+ *   - **The checksum and its complement must sum to `$FFFF`.** The pair is
+ *     computed over the whole image with the two fields held at their neutral
+ *     values, which is why it can only be stamped once the image exists.
+ *
+ * Sources: SNESdev Wiki — ROM header (https://snes.nesdev.org/wiki/ROM_header),
+ * Memory map (https://snes.nesdev.org/wiki/Memory_map) and Interrupt vectors
+ * (https://snes.nesdev.org/wiki/Interrupts).
+ */
+
+/** Bytes of a two-bank LoROM cartridge. */
+export const SNES_ROM_SIZE = 0x10000;
+
+/** Bytes of one LoROM bank, which is what the CPU sees at `$8000`. */
+export const SNES_BANK_SIZE = 0x8000;
+
+/** Where the program is mapped in bank zero, which is where byte zero lands. */
+export const SNES_ORIGIN = 0x8000;
+
+/** Where the header sits inside bank zero. */
+export const SNES_HEADER_OFFSET = 0x7fc0;
+
+/**
+ * Bytes of bank zero a program may use.
+ *
+ * The header and both vector tables occupy `$FFC0`–`$FFFF`, which is sixty-four
+ * bytes *inside* the image. Subtracting them from the budget here is how a
+ * program that outgrew the bank becomes a build error naming the game's size
+ * instead of a cartridge whose last routine is a vector table.
+ */
+export const SNES_CODE_SIZE = SNES_HEADER_OFFSET;
+
+/** The bank the tile art lives in, as the DMA controller wants it. */
+export const SNES_TILE_BANK = 0x01;
+
+/** Where that bank starts in the CPU's address space. */
+export const SNES_TILE_BASE = 0x8000;
+
+/** Bytes of tile art the second bank holds. */
+export const SNES_TILE_CAPACITY = SNES_BANK_SIZE;
+
+/** Where that bank's bytes start in the packed image. */
+export const SNES_TILE_OFFSET = SNES_BANK_SIZE;
+
+/**
+ * The native-mode vectors, as offsets into bank zero.
+ *
+ * Only two of them matter to a game: `nmi`, which the PPU raises at the start of
+ * every vertical blank, and `reset` — which is an *emulation*-mode vector,
+ * because that is the mode the CPU comes up in.
+ */
+export const SNES_VECTORS = {
+  nativeCop: 0x7fe4,
+  nativeBrk: 0x7fe6,
+  nativeAbort: 0x7fe8,
+  nativeNmi: 0x7fea,
+  nativeIrq: 0x7fee,
+  emulationCop: 0x7ff4,
+  emulationAbort: 0x7ff8,
+  emulationNmi: 0x7ffa,
+  emulationReset: 0x7ffc,
+  emulationIrq: 0x7ffe,
+} as const;
+
+/** What a cartridge declares about itself. */
+export interface SnesHeaderOptions {
+  /** Up to twenty-one characters, space padded, as the header stores them. */
+  title?: string;
+  /** The version nibble, 0–15. */
+  version?: number;
+}
+
+/** The map-mode byte: LoROM, 2.68 MHz. */
+const MAP_LOROM = 0x20;
+
+/** The cartridge type: ROM only, no coprocessor, no battery. */
+const TYPE_ROM_ONLY = 0x00;
+
+/** The size code, which is `log2(kilobytes)` rather than a number of them. */
+function sizeCode(bytes: number): number {
+  let code = 0;
+  while (1024 << code < bytes) code += 1;
+  return code;
+}
+
+/**
+ * Sum the image into the sixteen bits the header carries.
+ *
+ * The two fields are held at their neutral values while it is computed — the
+ * complement all ones and the checksum all zeros — which is what makes the value
+ * reproducible by anything that reads the finished cartridge back.
+ */
+export function snesChecksum(rom: Uint8Array): number {
+  let sum = 0;
+  for (let index = 0; index < rom.length; index += 1) {
+    if (index === SNES_HEADER_OFFSET + 0x1c || index === SNES_HEADER_OFFSET + 0x1d) {
+      sum += 0xff;
+      continue;
+    }
+    if (index === SNES_HEADER_OFFSET + 0x1e || index === SNES_HEADER_OFFSET + 0x1f) continue;
+    sum += rom[index] as number;
+  }
+  return sum & 0xffff;
+}
+
+/**
+ * Stamp the header and the vectors into a two-bank image.
+ *
+ * `image` must be exactly {@link SNES_ROM_SIZE}: a LoROM cartridge has no short
+ * banks, and padding here rather than in the caller is how two builders that
+ * produce one stay identical. The sixty-four bytes at
+ * {@link SNES_HEADER_OFFSET} are overwritten, so a program that ran past them
+ * would have its code replaced — which the game backend avoids by refusing the
+ * build up front rather than discovering the overlap in an emulator.
+ *
+ * `vectors` names the labels the two tables point at. Everything unnamed is
+ * pointed at the reset routine, which is the safe answer for an interrupt this
+ * runtime does not serve: a spurious one restarts the game rather than executing
+ * whatever the padding is.
+ */
+export function packSnesRom(
+  image: Uint8Array,
+  vectors: { reset: number; nmi: number; irq?: number },
+  options: SnesHeaderOptions = {},
+): Uint8Array {
+  if (image.length !== SNES_ROM_SIZE) {
+    throw new Error(`a two-bank LoROM cartridge is ${SNES_ROM_SIZE} bytes, not ${image.length}`);
+  }
+  const rom = Uint8Array.from(image);
+  const at = SNES_HEADER_OFFSET;
+
+  // Twenty-one characters of title, space padded and ASCII only: the header has
+  // no encoding, so anything outside it becomes a space rather than a byte a
+  // cartridge browser shows as a control character.
+  const title = (options.title ?? "DEMOTIC").toUpperCase().slice(0, 21).padEnd(21, " ");
+  for (let index = 0; index < 21; index += 1) {
+    const code = title.charCodeAt(index);
+    rom[at + index] = code >= 0x20 && code <= 0x7e ? code : 0x20;
+  }
+  rom[at + 0x15] = MAP_LOROM;
+  rom[at + 0x16] = TYPE_ROM_ONLY;
+  rom[at + 0x17] = sizeCode(image.length);
+  rom[at + 0x18] = 0x00; // no cartridge RAM
+  rom[at + 0x19] = 0x01; // North America / NTSC, which is the 224-line profile
+  rom[at + 0x1a] = 0x00; // no licensee
+  rom[at + 0x1b] = (options.version ?? 0) & 0x0f;
+
+  const write = (offset: number, value: number): void => {
+    rom[offset] = value & 0xff;
+    rom[offset + 1] = (value >> 8) & 0xff;
+  };
+  const irq = vectors.irq ?? vectors.reset;
+  write(SNES_VECTORS.nativeCop, vectors.reset);
+  write(SNES_VECTORS.nativeBrk, vectors.reset);
+  write(SNES_VECTORS.nativeAbort, vectors.reset);
+  write(SNES_VECTORS.nativeNmi, vectors.nmi);
+  write(SNES_VECTORS.nativeIrq, irq);
+  write(SNES_VECTORS.emulationCop, vectors.reset);
+  write(SNES_VECTORS.emulationAbort, vectors.reset);
+  write(SNES_VECTORS.emulationNmi, vectors.nmi);
+  write(SNES_VECTORS.emulationReset, vectors.reset);
+  write(SNES_VECTORS.emulationIrq, irq);
+
+  // Last, because it covers every byte before and after it.
+  const sum = snesChecksum(rom);
+  write(at + 0x1c, sum ^ 0xffff);
+  write(at + 0x1e, sum);
+  return rom;
+}

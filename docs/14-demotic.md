@@ -839,9 +839,10 @@ controls and rules, console-specific only in that constants are folded — and a
 backend then compiles that `Program` into code written for this game and no
 other (§2).
 
-Two backends exist, in `packages/demotic/src/codegen/`: `gb` (SM83, both Game
-Boys) and `nes` (6502, NROM). Nothing about either is a table format, so there is
-no format contract to keep in step with an assembly file.
+Four backends exist, in `packages/demotic/src/codegen/`: `gb` (SM83, both Game
+Boys), `nes` (6502, NROM), `sms` (Z80, both Sega 8-bits) and `snes` (65816,
+LoROM). Nothing about any of them is a table format, so there is no format
+contract to keep in step with an assembly file.
 
 **A backend is an implementation of an interface, not a file that resembles
 another one.** `codegen/backend.ts` is the contract: a console answers six
@@ -864,7 +865,11 @@ common denominator: **anything that would emit an instruction stays in the
 backend.** A machine with seven registers and one with three do not want the same
 code, and pretending otherwise would make both worse. The 6502 backend is a third
 smaller than the SM83 one for its arithmetic and a third larger for its
-addressing, which is exactly what the two instruction sets are like.
+addressing, which is exactly what the two instruction sets are like. The 65816
+backend is smaller than any of them, for one reason: its accumulator is *sixteen*
+bits, so a 16.16 add is two `lda`/`adc`/`sta` triples rather than four, and its
+index registers are sixteen bits too — which means a helper is handed an address
+in `X` rather than through a pointer somebody had to write first.
 
 **A build is an assembly, and the assembler is ours.** It is written in
 TypeScript with no dependencies, so:
@@ -1001,10 +1006,14 @@ The language's semantics are **output bytes**, and carry the same guarantees as
 
 Named rather than hidden, in rough order of how much they matter.
 
-- ~~**No console runtimes.**~~ The `gb` and `nes` backends exist and their gap
-  lists are empty of *language* features (§Runtime model): levels, tiles, the
-  camera, scrolling, music and effects all compile on both. `sms`/`gg`, `md` and
-  `snes` are doc 13 §D4.
+- ~~**No console runtimes.**~~ The `gb`, `nes`, `sms`/`gg` and `snes` backends
+  exist and their gap lists are empty of *language* features (§Runtime model):
+  levels, tiles, the camera, scrolling, music and effects all compile on all of
+  them. What the Super Nintendo does not have is a *chip model* rather than a
+  language feature — its music and effects compile, record what they asked for,
+  and make no noise (doc 16 §Still to come) — which is why `unsupported` stays
+  empty there rather than refusing games it otherwise plays perfectly. `md` is
+  doc 13 §D4.
 - ~~**No deterministic art rasterisation.**~~ `@demake/core` has its own SVG
   rasteriser (doc 15 §The conversion path, step 2), so a `.dmt`'s art is demade
   by the image engine and appears in the cartridge. The subset is deliberate —

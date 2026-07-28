@@ -143,15 +143,20 @@ wrapper. A page that agreed with the CLI about the Game Boy would say nothing
 about whether it agreed about the NES or the Master System.
 
 **Playing it needs an emulator**, and they are ours: `@demake/dmg`,
-`@demake/nes` and `@demake/sms`, each around a thousand lines of dependency-free
-TypeScript. Self-hosting a WASM core would have satisfied the never-from-a-CDN
+`@demake/nes`, `@demake/sms` and `@demake/snes`, each around a thousand lines of
+dependency-free TypeScript. Self-hosting a WASM core would have satisfied the never-from-a-CDN
 rule, but not the reason behind it — a core we cannot read is a dependency we
 cannot trust with the claim "this is what the hardware does". Writing them was
 also the cheaper option, because the Demotic conformance suite (doc 10) needed a
 headless machine for each console anyway, and one core now serves both jobs.
-Together they cost about 21 KB gzipped, and they are in the entry-adjacent game
-chunk rather than the worker because playing a cartridge is what the *page* does
-with one.
+Together they are in the entry-adjacent game chunk rather than the worker,
+because playing a cartridge is what the *page* does with one.
+
+One of the four arrives silent, and the button says so rather than doing nothing:
+the Super Nintendo's sound is a second processor with its own program, and the
+audio engine has no model of its chip to build one against (doc 16 §Still to
+come). "No sound yet" is a different claim from "sound off", and a control that
+made them look alike would be the page lying about the hardware.
 
 **Everything on screen describes the cartridge, not the picker.** The selector
 changes the *cartridge*, and a cartridge takes a demake to arrive — seconds, when

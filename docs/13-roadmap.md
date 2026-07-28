@@ -206,9 +206,9 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     palettes were chosen for the title screen. Colour costs cartridge — around a
     kilobyte for a game with two demade backdrops — which is a fact the build
     reports rather than hides.
-  - **D4 — breadth** *(`nes` and `sms`/`gg` trace-green)*: `nes`, `sms`/`gg`,
-    `md`, `snes` backends, each trace-green then framebuffer-green. A backend is
-    per-family; the `Program` it compiles is not.
+  - **D4 — breadth** *(`nes`, `sms`/`gg` and `snes` trace-green)*: `nes`,
+    `sms`/`gg`, `md`, `snes` backends, each trace-green then framebuffer-green. A
+    backend is per-family; the `Program` it compiles is not.
 
     The NES half is built: `demake build -c nes` produces a real NROM cartridge
     — 6502 machine code written for the game, art demade by the image pipeline
@@ -332,6 +332,72 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     the one the hardware offers rather than another emitter: these machines take
     **bank-switched cartridges**, the slot at `$8000` is entirely unused today,
     and `@demake/sms` already implements the mapper's registers.
+
+    **The Super Nintendo is the fourth console, and it is the first one that is
+    bigger than the language needs.** `demake build -c snes` produces a real
+    64 KiB LoROM cartridge — 65816 machine code written for the game, a Mode 1
+    background demade into 4bpp tiles across seven sixteen-colour sub-palettes,
+    and art in a second cartridge bank that reaches video RAM by transfer — and
+    the whole example library traces identically there, in the same battery, at
+    the same one frame a tick. Nothing moved out of `backend.ts` or `shape.ts` for
+    it either.
+
+    What the 65816 changes is the *size* of the backend rather than its shape,
+    and the reason is one bit of status: with `M` clear the accumulator is
+    sixteen bits, so a 16.16 add is two `lda`/`adc`/`sta` triples where the 6502
+    needs four, a copy is two loads and two stores, and a zero test is a single
+    `ora`. The index registers are sixteen bits with it, which removes the other
+    half of the 6502's cost: `$nnnn,x` reaches all of bank zero, so a shared
+    helper is handed an address in `X` and there is no page-zero pointer to write
+    first. The whole of `codegen/snes/` is about two thirds of `codegen/nes/`.
+
+    The bill for that is a discipline the other three do not have. **The width
+    flags are part of the machine state a label promises**: an immediate is one
+    byte or two depending on `M`, so a `sep #$20` that is not matched by a
+    `rep #$20` does not produce a wrong number, it desynchronises the instruction
+    stream and executes an operand. The backend fixes an invariant — sixteen bits
+    at every label, every call and every return — and `ctx.narrow()` is the only
+    sanctioned way to leave it, for a stretch of straight-line code that cannot be
+    branched out of. Byte fields are *read* as words with the neighbour masked
+    away, which costs nothing, and *written* under that helper.
+
+    Three of the hardware's own facts are load-bearing and each produces a
+    cartridge that traces perfectly and looks wrong. The background is scrolled
+    **one line late** — screen line `N` shows background line `VOFS + N + 1` — so
+    the vertical register is the camera's minus one, which is the same `$3FF` the
+    image E2E's harness has always written. A 64-wide tilemap is **two 32×32
+    screens a kilobyte apart** rather than a rectangle, so column 32 is not one
+    word past column 31. And an object's Y is **direct**, with none of the NES's
+    minus-one convention, so `y 0` is the top of the screen and needs no
+    exception — which is one of the two places this console is simply easier than
+    its predecessors. The other is that the map is larger than the screen in both
+    directions, so both axes scroll by painting a leading edge and neither needs
+    the NES's row pinning or the Master System's seam mask.
+
+    Framebuffer-green is what remains here too, behind the same scripted input
+    tape. Until then `snes-rom.test.ts` is the rendering oracle — the tilemap
+    against the level grid, cell by cell, before and after the camera has crossed
+    into the second screen — and `snes-arith.test.ts` the arithmetic one, which
+    matters more here than on either predecessor because every routine it covers
+    is a *different program* from the eight-bit one those consoles proved.
+
+    **Sound is the one gap, and it is a chip model rather than a language
+    feature.** The S-SMP is a second processor with its own memory and its own
+    program, and until `@demake/chip` has an S-DSP there is nothing for a driver
+    to be faithful to (doc 16 §Still to come). So a game with `music` and `sound`
+    builds, records what each rule asked for — which is a field of the trace, so a
+    silent build traces identically to a sounding one — and makes no noise; the
+    web app's button says "No sound yet" rather than doing nothing. Refusing the
+    build instead would refuse games this console otherwise plays perfectly.
+
+    The budget is not the constraint it was on the two 8-bit machines. Bank zero
+    is 32 KiB of program and bank one is 32 KiB of tile art the program never
+    addresses, so a game with two demade backdrops uses about 12 KiB of the first
+    and 11 of the second. What *is* expensive is the demake itself: a 256×224
+    picture fitted into seven sixteen-colour sub-palettes is around thirty seconds
+    of tournament, three times any other console's screen, which is why the
+    conversion memo matters more here and why the parallel suite runs one fixture
+    on this console rather than three.
 
     Sound is no longer the gap: there is a generated Z80 driver (§A5), and both
     machines carry their music and effects. The design question that was blocking

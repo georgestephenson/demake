@@ -27,7 +27,8 @@
     "@demake/chip": "workspace:*",
     "@demake/dmg": "workspace:*",
     "@demake/nes": "workspace:*",
-    "@demake/sms": "workspace:*"
+    "@demake/sms": "workspace:*",
+    "@demake/snes": "workspace:*"
   },
   "publishConfig": {
     "access": "public",
