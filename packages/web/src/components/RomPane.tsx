@@ -3,13 +3,13 @@
  *
  * Doc 13 §D5 says the browser must never need a toolchain, and it does not: the
  * assemblers are ours and written in TypeScript, so the page *compiles* the game
- * — to SM83 for a Game Boy, to 6502 for an NES, to Z80 for a Master System — the
- * same way the CLI does and gets the same bytes. What the Download button hands you is byte-identical to
+ * — to SM83 for a Game Boy, to 6502 for an NES, to Z80 for a Master System, to
+ * 68000 for a Mega Drive — the same way the CLI does and gets the same bytes. What the Download button hands you is byte-identical to
  * what `demake build` writes on the command line, which is the doc-07 parity
  * contract restated for games.
  *
- * The emulators are `@demake/dmg`, `@demake/nes` and `@demake/sms`, ours, for the
- * reason doc 07 gives: a core fetched from a CDN is forbidden, and a WASM core we
+ * The emulators are `@demake/dmg`, `@demake/nes`, `@demake/sms` and `@demake/md`,
+ * ours, for the reason doc 07 gives: a core fetched from a CDN is forbidden, and a WASM core we
  * cannot read would be the same bargain in a different wrapper. Which one runs is
  * decided by the console the game was compiled for, and *within* two of the three
  * families by the cartridge itself — a `gbc` build carries the CGB flag in its
@@ -26,6 +26,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 
 import { romReady, type Layout, type Program } from "@demake/demotic";
 import { Gameboy, SCREEN_HEIGHT, SCREEN_WIDTH, type Button } from "@demake/dmg";
+import {
+  FRAME_HEIGHT as MD_HEIGHT,
+  FRAME_WIDTH as MD_WIDTH,
+  Md,
+  type Button as MdButton,
+} from "@demake/md";
 import { Nes, SCREEN_HEIGHT as NES_HEIGHT, SCREEN_WIDTH as NES_WIDTH } from "@demake/nes";
 import {
   FRAME_HEIGHT as SMS_HEIGHT,
@@ -69,6 +75,7 @@ const MACHINE: Readonly<Record<string, string>> = {
   nes: "an NES",
   sms: "a Master System",
   gg: "a Game Gear",
+  md: "a Mega Drive",
 };
 
 /**
@@ -77,7 +84,12 @@ const MACHINE: Readonly<Record<string, string>> = {
  * Named rather than elided because the number means nothing without it: three
  * frames a tick is a different verdict on a 4 MHz SM83 than on a 1.8 MHz 6502.
  */
-const CPU: Readonly<Record<string, string>> = { gb: "an SM83", nes: "a 6502", sms: "a Z80" };
+const CPU: Readonly<Record<string, string>> = {
+  gb: "an SM83",
+  nes: "a 6502",
+  sms: "a Z80",
+  md: "a 68000",
+};
 
 /**
  * A booted cartridge, whichever console it is for.
@@ -85,15 +97,18 @@ const CPU: Readonly<Record<string, string>> = { gb: "an SM83", nes: "a 6502", sm
  * The pane needs five things of a machine and no more, so this is those five —
  * and the three cores satisfy it without any of them learning about the page or
  * about each other. `chip` is the sound hardware the audio player attaches to,
- * and every console has one: the Game Boy's APU, the NES's 2A03, the Master
- * System's SN76489, each `@demake/chip`'s own model rather than a second copy
- * living in a core.
+ * and three of the four consoles have one: the Game Boy's APU, the NES's 2A03,
+ * the Master System's SN76489, each `@demake/chip`'s own model rather than a
+ * second copy living in a core. The Mega Drive has none — its audio is a second
+ * processor with an FM chip beside it and `demake build` emits neither yet (doc
+ * 16 §Still to come) — so it is `null` there and the sound control is withheld
+ * rather than offered and silent.
  */
 interface Player {
   readonly width: number;
   readonly height: number;
   readonly framebuffer: Uint8ClampedArray;
-  readonly chip: Listenable;
+  readonly chip: Listenable | null;
   setButtons(down: Button[]): void;
   runFrame(): void;
   readMemory(address: number, length: number): Uint8Array;
@@ -107,6 +122,21 @@ interface Player {
  * reads it through the worker like everything else it knows about the engine.
  */
 function boot(rom: Uint8Array, family: string): Player {
+  if (family === "md") {
+    const machine = new Md(rom);
+    return {
+      width: MD_WIDTH,
+      height: MD_HEIGHT,
+      framebuffer: machine.framebuffer,
+      // No chip: this console's sound is a second processor and an FM part, and
+      // the build emits neither. Saying so with a `null` is what keeps the
+      // toolbar honest.
+      chip: null,
+      setButtons: (down) => machine.setButtons(down as readonly MdButton[]),
+      runFrame: () => void machine.runFrame(),
+      readMemory: (address, length) => machine.readMemory(address, length),
+    };
+  }
   if (family === "sms") {
     // Which of the two machines it is comes out of the cartridge's own region
     // nibble, not from `consoleId` — the same rule the Game Boy family runs
@@ -308,20 +338,23 @@ export function RomPane({
   const consoleId = built.consoleId ?? program?.profile.id ?? "gb";
   const family = built.family ?? "gb";
   const extension = built.extension ?? "gb";
-  // Every console with a backend has a driver now, so the only question left is
-  // whether the browser will give us an `AudioContext`.
-  const canSound = audioSupported();
+  // Two questions, not one: whether the browser will give us an `AudioContext`,
+  // and whether this cartridge has a chip to listen to at all. The Mega Drive
+  // does not yet, and a control that did nothing would be worse than none.
+  const canSound = audioSupported() && family !== "md";
   // The canvas is sized by the console, not by CSS: these are two genuinely
   // different screens (160×144 against 256×240, and not the same aspect), and a
   // buffer put into a canvas of the wrong size is silently cropped.
   const screen =
     family === "nes"
       ? { width: NES_WIDTH, height: NES_HEIGHT }
-      : family === "sms"
-        ? consoleId === "gg"
-          ? { width: GG_WIDTH, height: GG_HEIGHT }
-          : { width: SMS_WIDTH, height: SMS_HEIGHT }
-        : { width: SCREEN_WIDTH, height: SCREEN_HEIGHT };
+      : family === "md"
+        ? { width: MD_WIDTH, height: MD_HEIGHT }
+        : family === "sms"
+          ? consoleId === "gg"
+            ? { width: GG_WIDTH, height: GG_HEIGHT }
+            : { width: SMS_WIDTH, height: SMS_HEIGHT }
+          : { width: SCREEN_WIDTH, height: SCREEN_HEIGHT };
 
   useEffect(() => {
     if (!rom || !layout) {
@@ -330,7 +363,7 @@ export function RomPane({
     }
     const booted = boot(rom, family);
     machine.current = booted;
-    player.current?.attach(booted.chip);
+    if (booted.chip) player.current?.attach(booted.chip);
     const element = canvas.current;
     const context = element?.getContext("2d");
     if (!context) return;
@@ -422,7 +455,7 @@ export function RomPane({
     void audio
       .resume()
       .then(() => {
-        if (machine.current) audio.attach(machine.current.chip);
+        if (machine.current?.chip) audio.attach(machine.current.chip);
         setPlaying(audio.active);
       })
       .catch(() => setPlaying(false));

@@ -125,6 +125,11 @@ const CASES = [
   { game: "shooter.dmt", consoleId: "gbc" },
   { game: "platformer.dmt", consoleId: "nes" },
   ...["gbc", "nes"].map((consoleId) => ({ game: "caves.dmt", consoleId })),
+  // And the Mega Drive on the two-backdrop game, because its art path shares the
+  // bank out max-min fair on demands read off a first pass — so a build there
+  // demakes some pictures twice, and doing that under a spread executor is where
+  // an order dependence would show.
+  { game: "platformer.dmt", consoleId: "md" },
 ];
 
 /** One executor for the whole file, so the job count means something at the end. */

@@ -206,9 +206,9 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     palettes were chosen for the title screen. Colour costs cartridge — around a
     kilobyte for a game with two demade backdrops — which is a fact the build
     reports rather than hides.
-  - **D4 — breadth** *(`nes` and `sms`/`gg` trace-green)*: `nes`, `sms`/`gg`,
-    `md`, `snes` backends, each trace-green then framebuffer-green. A backend is
-    per-family; the `Program` it compiles is not.
+  - **D4 — breadth** *(`nes`, `sms`/`gg` and `md` trace-green)*: `nes`,
+    `sms`/`gg`, `md`, `snes` backends, each trace-green then framebuffer-green. A
+    backend is per-family; the `Program` it compiles is not.
 
     The NES half is built: `demake build -c nes` produces a real NROM cartridge
     — 6502 machine code written for the game, art demade by the image pipeline
@@ -352,12 +352,79 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     therefore rides the frame at 59.92 Hz, like the NES's and for the same kind of
     reason, and `fitRate` now treats the frame as the candidate every other clock
     has to beat rather than as a fallback for when none is in range.
-  - **D5 — Play ROM in the page** *(done for `gb`, `gbc`, `nes`, `sms` and
-    `gg`)*: the browser
+    **The Mega Drive is the fourth console, and it is the first 16-bit one.**
+    `demake build -c md` produces a real 512 KiB cartridge — 68000 machine code
+    written for the game, vector table, header and word checksum, art demade into
+    a 1408-tile bank across three of the VDP's four sub-palettes — and the whole
+    example library traces identically there, in the same battery, at the same
+    one frame a tick. Nothing moved out of `backend.ts` or `shape.ts` for it
+    either.
+
+    What the wider machine changes is the *shape of the value layer*, and it is
+    the clearest evidence yet that the split is in the right place. A 16.16 value
+    is a **register** here: `move.l`, `add.l`, `sub.l`, `neg.l`, `asr.l` and
+    `cmp.l` each do in one instruction what the Z80 does in four and the 6502 in
+    eight, and `cmp.l` sets a signed condition directly rather than leaving one to
+    be synthesised. So `codegen/md/val.ts` is a quarter the size of the Sega's and
+    an eighth of the NES's, and the only two routines this console pulls in are
+    the ones the machine genuinely lacks — a 32×32 multiply, assembled from four
+    `mulu.w` products into a 64-bit one, and a divide whose fast path for a
+    whole-cell divisor is two `divu.w` instructions rather than a loop. Neither is
+    a bit loop, which is why an object whose *speed* can change is affordable here
+    in a way it is not on the other three.
+
+    The renderer is easier for one reason and one reason only: **the plane is
+    bigger than the screen.** Sixty-four cells by thirty-two against a
+    forty-by-twenty-eight window, so a scrolling scene paints its leading edge
+    twenty-four columns off the right-hand side and has no seam to hide — the
+    whole `R0`-bit-5 mechanism the Master System needs is simply absent. Both
+    wraps are powers of two, so the cell address is two masks rather than a
+    subtraction loop.
+
+    **Three things the trace could not see were wrong, and all three are the
+    68000 rather than the VDP.** A word or long access to an **odd address** is an
+    address error, and the shared RAM allocator packs bytes — so `MemoryPlan`
+    grew an `align`, and the two lists that interleave a count byte with word
+    entries (the tile contacts and the cached cell walk) are read a byte at a
+    time. The **backdrop blit** had the same fault from the other side: a packed
+    cell follows a control *byte*, so half of them are odd-addressed, and reading
+    them as words cost the first cell of every picture. And the trace reader
+    itself had to learn a machine's **byte order**, because this is the first
+    big-endian console in the set and a little-endian read reports every value
+    byte-swapped — which looks like an arithmetic bug three layers from its cause.
+    The fourth was a register convention rather than the hardware: `RngAdvance`
+    builds a 32-bit product out of `d0`–`d3`, so the draw's bound and count live
+    in `d6`/`d7`, and holding them lower produced random numbers that were
+    plausible and wrong.
+
+    Framebuffer-green is what remains here too, behind the same scripted input
+    tape. Until then `md-rom.test.ts` is the rendering oracle — the plane against
+    the level grid, cell by cell, after the camera has travelled — and
+    `md-arith.test.ts` the arithmetic one.
+
+    **Sound is the gap on this console, and it is a real one.** The Mega Drive's
+    audio is a second processor with a YM2612 beside it, and `demake build`
+    emits neither (§A5, doc 16 §Still to come). A game that names music and
+    effects still builds and still records what a rule asked for, so a silent
+    build traces identically to a sounding one — and the page withholds the sound
+    control rather than offering one that does nothing. The way in is the PSG: an
+    SN76489 sits at `$C00011`, `@demake/chip` already models it, and what is
+    missing is a 68000 driver and a `psgBinding` entry rather than a new chip.
+
+    The cartridge budget has no story here at all, which is itself the news:
+    512 KiB against 32, and 64 KiB of work RAM against an NROM cartridge's 2. The
+    scarce resources on this machine are the tile bank and the four sub-palettes,
+    which is why the art path is where the interesting decisions are — two
+    sub-palettes for background art, one for objects, one reserved for the font,
+    and the font's ink chosen against the backdrop because colour zero is
+    transparent on *both* layers here.
+  - **D5 — Play ROM in the page** *(done for `gb`, `gbc`, `nes`, `sms`, `gg` and
+    `md`)*: the browser
     compiles the
     game itself, because the assembler is ours and written in TypeScript, and
     demakes its art with our own rasteriser rather than the browser's. It boots
-    the result in `@demake/dmg`, `@demake/nes` or `@demake/sms` — ours, because
+    the result in `@demake/dmg`, `@demake/nes`, `@demake/sms` or `@demake/md` —
+    ours, because
     doc 07 forbids a CDN core and a WASM core we cannot read is the same bargain
     in a different wrapper. The bytes are identical to `demake build`'s, pinned by
     a Playwright spec on *every* console with a backend, and the pane offers them

@@ -1295,14 +1295,15 @@ function needBlitBackdrop(ctx: MdCtx): Ref {
 
     asm.subq("w", 1, eaD(0));
     asm.label(literal);
-    asm.move("w", eaPost(0), eaInd(1));
+    emitPackedCell(inner);
+    asm.move("w", eaD(2), eaInd(1));
     asm.dbra(0, literal);
     asm.bra(next);
 
     asm.label(run);
     asm.andi("w", 0x7f, eaD(0));
     asm.subq("w", 1, eaD(0));
-    asm.move("w", eaPost(0), eaD(2));
+    emitPackedCell(inner);
     asm.label(runLoop);
     asm.move("w", eaD(2), eaInd(1));
     asm.dbra(0, runLoop);
@@ -1311,6 +1312,22 @@ function needBlitBackdrop(ctx: MdCtx): Ref {
     asm.label(out);
     asm.rts();
   });
+}
+
+/**
+ * Read the next cell of a packed stream into `d2`, a byte at a time.
+ *
+ * Not `move.w (a0)+`: a cell in this stream follows a control *byte*, so half of
+ * them are at odd addresses — and a word read from an odd address is an address
+ * error on this CPU. It cost the first cell of every picture, which is exactly
+ * the kind of thing a cell-for-cell oracle finds and a screenshot does not.
+ */
+function emitPackedCell(ctx: MdCtx): void {
+  const { asm } = ctx;
+  asm.moveq(0, 2);
+  asm.move("b", eaPost(0), eaD(2));
+  asm.lsl("w", 8, 2);
+  asm.move("b", eaPost(0), eaD(2));
 }
 
 /** The labels holding one scene's name table and colour RAM. */

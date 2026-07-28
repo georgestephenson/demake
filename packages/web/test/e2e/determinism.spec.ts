@@ -127,13 +127,13 @@ for (const { name, options } of CASES) {
  * goes through a different fitter — mono shades, a fixed master palette, a
  * sixteen-colour bank — and the cartridge is wrapped differently. A page that
  * agreed with the CLI about the Game Boy would say nothing about whether it
- * agreed about the NES or the Master System.
+ * agreed about the NES, the Master System or the Mega Drive.
  *
  * The fixtures are read off disk rather than imported from the page's bundle:
  * the page gets them through Vite's `?raw`, which only exists inside a build,
  * and the point of the test is that both sides start from the same file.
  */
-for (const consoleId of ["gb", "nes", "sms"] as const) {
+for (const consoleId of ["gb", "nes", "sms", "md"] as const) {
   test(`the ${consoleId} ROM the page builds is byte-identical to the CLI's`, async ({ page }) => {
     // Demaking a full-screen picture is seconds of real work and the runner is
     // shared, so the budget is the *slowest* thing this can legitimately take
