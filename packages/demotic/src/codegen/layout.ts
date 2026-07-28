@@ -154,6 +154,22 @@ export interface MemoryPlan {
    * that came out wrong every few seconds, at no tick anyone could name.
    */
   interruptBytes: number;
+
+  /**
+   * Bytes the emitters that walk a *list* of entities keep their cursor in: a
+   * two-byte record pointer and a one-byte index.
+   *
+   * Zero on a console whose backend has somewhere cheaper. The 6502 keeps both
+   * in page zero (`codegen/nes/zp.ts`) because `($nn),y` is the only indirect
+   * mode it has, so the pointer must live there; the Z80 reaches a record
+   * through `hl`, `de` or `ix` and needs no such place — but a rule body fires
+   * between one iteration and the next and may use every register there is, so
+   * the cursor has to survive in memory rather than in a pair.
+   *
+   * Not `layout.scratch`, which is documented as valid for the length of one
+   * routine and is exactly what a rule body helps itself to.
+   */
+  loopBytes: number;
 }
 
 /**
@@ -175,6 +191,7 @@ export const GB_MEMORY: MemoryPlan = {
   audioBytes: 0,
   cellAttributes: false,
   interruptBytes: 0,
+  loopBytes: 0,
 };
 
 /** The same, for a Game Boy Color: an attribute byte per queued cell. */
@@ -220,6 +237,9 @@ export const NES_MEMORY: MemoryPlan = {
   audioBytes: NES_AUDIO_BYTES,
   cellAttributes: false,
   interruptBytes: 0,
+  // The 6502 backend's loops keep their cursor in page zero, which the allocator
+  // never sees; see {@link MemoryPlan.loopBytes}.
+  loopBytes: 0,
 };
 
 /**
@@ -271,6 +291,9 @@ export const SMS_MEMORY: MemoryPlan = {
   // byte, so a queued cell is a tile *and* an attribute — the same shape as the
   // Game Boy Color's, reached by different hardware.
   cellAttributes: true,
+  // The record pointer and index the collision, edge and movement loops walk
+  // with; see {@link MemoryPlan.loopBytes}.
+  loopBytes: 3,
 };
 
 /**
@@ -351,6 +374,13 @@ export interface Layout {
    * {@link MemoryPlan.interruptBytes} for why they cannot be scratch.
    */
   interrupt: number | null;
+  /**
+   * The entity-list cursor: a two-byte record pointer, then a one-byte index.
+   *
+   * `null` where the backend has somewhere cheaper; see
+   * {@link MemoryPlan.loopBytes}.
+   */
+  loop: number | null;
   /** Scratch the emitters use for pointers and counters. */
   scratch: number;
   /** The multiply/divide helpers' operands and workspace. */
@@ -689,6 +719,9 @@ export function planLayout(program: Program, analysis: Analysis, memory: MemoryP
       ? fast(memory.audioBytes)
       : null;
   const interrupt = memory.interruptBytes > 0 ? fast(memory.interruptBytes) : null;
+  // After the interrupt bytes, for the same reason they come after the driver's:
+  // a console that needs none has exactly the map it had before this existed.
+  const loop = memory.loopBytes > 0 ? fast(memory.loopBytes) : null;
 
   return {
     memory,
@@ -696,6 +729,7 @@ export function planLayout(program: Program, analysis: Analysis, memory: MemoryP
     used: heap.used,
     fastUsed: quick?.used ?? 0,
     interrupt,
+    loop,
     tick,
     scene,
     pending,

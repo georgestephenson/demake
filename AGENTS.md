@@ -867,6 +867,30 @@ is the game.
   two `sbc hl,de` is the whole test. Reaching for `pe`/`po` — the general Z80
   signed-compare idiom, sign exclusive-or overflow — would be correct and three
   instructions longer.
+- **Per-pair collision work is a routine, and the pairs are a loop.** Both
+  halves are the NES's, arrived at here for the same reason and worth the same
+  five lines. A box is one `ldir` into fixed staging, so the overlap test and the
+  separation are shared code; and the _pairs_ are walked from a table
+  (`emitPairLoop`/`emitEdgeLoop`) rather than copied, with the other object's
+  record in `layout.loop` and the rule body emitted once against `EntityAddr`'s
+  `ptr` case. Three shots against nine aliens went from 9.3 KiB of collision code
+  to under one, which is what made the shooter fit at all. A loop is only taken
+  where the objects agree about what an unrolled copy would have baked in — the
+  near margins, whether `visible` can change, their size — and never below three.
+  When you add an emitter that reads or writes a bound entity, take an
+  `EntityAddr` rather than an address, or it will be the one thing that cannot be
+  looped.
+- **And the integrator groups by what it would have compiled to.** `moveShape` is
+  every compile-time question `emitAxis` asks, so objects in one group would have
+  produced identical instructions and sharing a body is a proof rather than a
+  hope. A property the emitter reads _and_ writes goes through `openProp`: the
+  property's own address for a named instance, a staged temporary for a looped
+  one, so an unrolled object's code is byte-for-byte what it always was.
+- **The loop cursor is memory, not a register pair.** `MemoryPlan.loopBytes` buys
+  three bytes — a record pointer and an index — because a rule body fires between
+  one iteration and the next and helps itself to every register the Z80 has. Not
+  `layout.scratch`, which is documented as valid for the length of one routine and
+  is exactly what that rule body uses.
 - **The mapper's registers are decoded out of the RAM mirror.** `$FFFC`–`$FFFF`
   is `$DFFC`–`$DFFF` in real RAM, so those four bytes read back as ordinary
   memory and page a ROM bank out from under the program when written. The heap

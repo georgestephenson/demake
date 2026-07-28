@@ -3,7 +3,8 @@
 "@demake/sms": minor
 ---
 
-Fix what a Sega 8-bit cartridge actually draws, and pack its name tables.
+Fix what a Sega 8-bit cartridge draws, and make the whole example library fit
+on one.
 
 Every example game traced correctly on both machines and none of them looked
 right. Everything here sits between the state and the screen, which is exactly
@@ -52,12 +53,29 @@ release ago, one console further in.
   the bank is now shared out max-min fair on what the pictures actually ask for,
   and a picture is demade twice only where its share would change the fit.
 
-- **And the name tables are packed**, as the NES's already were — literals and
-  runs of whole _cells_, because an entry here is two bytes and a run of identical
-  cells contains no byte runs at all. About 1.5 KiB a game, which leaves the
-  tightest fixture at 1393 bytes free. The encoding is not the contract: what is
-  guaranteed is the bytes that reach the VDP, and `sms-rom.test.ts` checks those.
+And then the cartridge, because the shooter did not fit on either machine — 34.6
+KiB against 32.7. Three changes, all of them work the NES had already had:
 
-Sega cartridge bytes change for every game. The shooter still does not fit on
-either machine — 34.6 KiB against 32.7 — and the suite asserts the overflow;
-doc 13 §Phase D4 records the two ways out.
+- **The name tables are packed** — literals and runs of whole _cells_, because an
+  entry here is two bytes and a run of identical cells contains no byte runs at
+  all. About 1.5 KiB a game. The encoding is not the contract: what is guaranteed
+  is the bytes that reach the VDP, and `sms-rom.test.ts` checks those.
+
+- **Collision pairs are a loop, not a copy each.** A bullet against nine aliens is
+  twenty-seven pairs and each pair's code — the near test, the staging, the
+  overlap, the rule body, the separation, the contact bit — was about 350 bytes.
+  The other object's record goes in a memory pointer and the body is emitted once
+  against `EntityAddr`'s `ptr` case, which `expr.ts` has implemented all along, so
+  a rule body needed no special handling: 9.3 KiB of collision code became under
+  one. Rules that meet only the screen's edges are looped over their subjects the
+  same way. A loop is taken only where the objects agree about what an unrolled
+  copy would have baked in — the near margins, whether `visible` can change, their
+  size — and never below three.
+
+- **And the integrator groups by what it would have compiled to.** `moveShape` is
+  every compile-time question `emitAxis` asks, so nine aliens that move the same
+  way share one body rather than nine copies of two hundred bytes.
+
+The shooter is 25.6 KiB now and every example game builds on both machines with at
+least 3 KiB free, so the suite's over-budget list and the Sega's 512-byte headroom
+exception are both gone. Sega cartridge bytes change for every game.

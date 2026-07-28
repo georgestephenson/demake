@@ -310,20 +310,28 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     waited for — so only the full redraw needed `di`, and the frame it spends
     there is owed rather than lost.
 
-    **The cartridge budget runs out here too, and further.** The Sega name tables
-    are packed the way the NES's are — literals and runs, but of whole *cells*,
-    because an entry is a tile byte and an attribute byte and a run of identical
-    cells has no byte runs in it at all — which is worth about 1.5 KiB a game and
-    leaves the tightest fixture, the caves, at 1393 bytes free. The shooter still
-    does not fit: 34.6 KiB against 32.7 on a Master System, 33.9 on a Game Gear.
-    The tile bank is a quarter of the cartridge on its own (254 tiles at
-    thirty-two bytes, because characters here are ROM *and* video RAM), and the
-    rest is the same debt the NES paid off and this backend has not — a collision
-    emitter that is 9.3 KiB for that game and an integrator that is 2.8, both the
-    same body repeated with a different address in it. The other way out is the
-    one the hardware offers: these machines take **bank-switched cartridges**, the
-    slot at `$8000` is entirely unused today, and `@demake/sms` already implements
-    the mapper's registers. Neither is done; the suite asserts the overflow.
+    **The cartridge budget ran out here too, and the way out was the NES's.**
+    Three changes, in the order they were worth: the name tables are packed the
+    way the NES's are — literals and runs, but of whole *cells*, because an entry
+    is a tile byte and an attribute byte and a run of identical cells has no byte
+    runs in it at all (about 1.5 KiB a game); the collision pairs are walked from
+    a table rather than copied, with the other object's record in a memory pointer
+    and the rule body emitted once (9 KiB on the shooter, which is twenty-seven
+    pairs of a bullet against nine aliens); and the integrator groups objects by
+    every compile-time question `emitAxis` asks, so nine aliens that move
+    identically share one body. The shooter went from 34.6 KiB against a 32.7 KiB
+    cartridge to 25.6, and every example game now builds on both machines with at
+    least 3 KiB free. `Backend`'s claim is a little stronger for it: the second and
+    third of those were ports of code the 6502 backend already had, and neither
+    needed anything moved out of `backend.ts` or `shape.ts` — `EntityAddr`'s `ptr`
+    case, written for the NES, is what a Z80 rule body compiles against unchanged.
+
+    What is left on this console's budget is the tile bank, which is a quarter of
+    the cartridge on its own — 254 tiles at thirty-two bytes, because characters
+    here are ROM *and* video RAM. If a game ever needs past that, the way out is
+    the one the hardware offers rather than another emitter: these machines take
+    **bank-switched cartridges**, the slot at `$8000` is entirely unused today,
+    and `@demake/sms` already implements the mapper's registers.
 
     Sound is no longer the gap: there is a generated Z80 driver (§A5), and both
     machines carry their music and effects. The design question that was blocking
