@@ -66,6 +66,7 @@ const FRAME_RATE = 59.7;
 const MACHINE: Readonly<Record<string, string>> = {
   gb: "a Game Boy",
   gbc: "a Game Boy Color",
+  megaduck: "a Mega Duck",
   nes: "an NES",
   sms: "a Master System",
   gg: "a Game Gear",
@@ -106,7 +107,7 @@ interface Player {
  * consoles have a backend is `codegen/registry.ts`'s one list, and the page
  * reads it through the worker like everything else it knows about the engine.
  */
-function boot(rom: Uint8Array, family: string): Player {
+function boot(rom: Uint8Array, family: string, consoleId: string): Player {
   if (family === "sms") {
     // Which of the two machines it is comes out of the cartridge's own region
     // nibble, not from `consoleId` — the same rule the Game Boy family runs
@@ -152,7 +153,12 @@ function boot(rom: Uint8Array, family: string): Player {
       readMemory: (address, length) => machine.readMemory(address, length),
     };
   }
-  const machine = new Gameboy(rom);
+  // The one place the console id is needed rather than the family, and the
+  // reason is the absence of a fact rather than a preference: a Mega Duck
+  // cartridge has no header at all, so unlike the two Game Boys (whose CGB flag
+  // decides) and the two Sega machines (whose region nibble does), there is
+  // nothing in these bytes to read it out of.
+  const machine = new Gameboy(rom, consoleId === "megaduck" ? "megaduck" : "gameboy");
   return {
     width: SCREEN_WIDTH,
     height: SCREEN_HEIGHT,
@@ -328,7 +334,7 @@ export function RomPane({
       machine.current = null;
       return;
     }
-    const booted = boot(rom, family);
+    const booted = boot(rom, family, consoleId);
     machine.current = booted;
     player.current?.attach(booted.chip);
     const element = canvas.current;

@@ -17,7 +17,7 @@ import { describe, expect, it } from "vitest";
 
 import { getConsole, stampGbHeader } from "@demake/core";
 
-import { DMG_SHADES, Gameboy, SCREEN_WIDTH } from "../src/index.js";
+import { DMG_SHADES, Gameboy, MEGADUCK_SHADES, SCREEN_WIDTH } from "../src/index.js";
 
 /** A 32 KiB cartridge whose only job is to exist and carry a header. */
 function cartridge(color: boolean): Uint8Array {
@@ -52,15 +52,21 @@ function frame(machine: Gameboy): void {
 }
 
 describe("the Game Boy's screen", () => {
-  it("shows the green ramp the console spec calls the hardware's", () => {
-    const spec = getConsole("dmg");
-    const dac = spec.color.dac;
-    expect(dac.kind).toBe("mono-ramp");
-    const shades = dac.kind === "mono-ramp" ? dac.shades : [];
-    expect(DMG_SHADES.map((shade) => ({ r: shade[0], g: shade[1], b: shade[2] }))).toEqual(
-      shades.map((shade) => ({ r: shade.r, g: shade.g, b: shade.b })),
-    );
-  });
+  // A DAC model is a tested artifact here, not decoration: the same four
+  // colours have to reach the player, the CLI's PNG and the SameBoy comparison.
+  for (const [name, id, ramp] of [
+    ["green ramp", "dmg", DMG_SHADES],
+    ["grey ramp", "megaduck", MEGADUCK_SHADES],
+  ] as const) {
+    it(`shows the ${name} the ${id} console spec calls the hardware's`, () => {
+      const dac = getConsole(id).color.dac;
+      expect(dac.kind).toBe("mono-ramp");
+      const shades = dac.kind === "mono-ramp" ? dac.shades : [];
+      expect(ramp.map((shade) => ({ r: shade[0], g: shade[1], b: shade[2] }))).toEqual(
+        shades.map((shade) => ({ r: shade.r, g: shade.g, b: shade.b })),
+      );
+    });
+  }
 
   it("paints a monochrome frame in those shades and nothing else", () => {
     const machine = new Gameboy(cartridge(false));
@@ -209,5 +215,121 @@ describe("the Game Boy Color's screen", () => {
     // touches the register sees the flat 8 KiB a DMG has.
     machine.write(0xff70, 0);
     expect(machine.read(0xd000)).toBe(0x11);
+  });
+});
+
+/**
+ * The Mega Duck is a Game Boy with its I/O pins moved, and these are the tests
+ * that say so — the only place the rewiring is checked directly rather than
+ * through a whole cartridge.
+ *
+ * They matter because every other Mega Duck test would still pass if the
+ * translation were *self-consistent but wrong*: the game conformance suite
+ * builds the cartridge with the same table this routes it through, so a swapped
+ * pair would cancel out. These compare against the hardware's own numbers.
+ */
+describe("the Mega Duck's rewired I/O page", () => {
+  /** A 32 KiB cartridge with no header, because that console has none. */
+  function duck(): Gameboy {
+    const rom = new Uint8Array(0x8000);
+    rom[0] = 0x76; // halt: the tests drive the hardware themselves
+    return new Gameboy(rom, "megaduck");
+  }
+
+  it("comes up with the LCD off and the processor at $0000", () => {
+    const machine = duck();
+    expect(machine.duck).toBe(true);
+    expect(machine.cgb).toBe(false);
+    expect(machine.cpu.pc).toBe(0x0000);
+    // No boot ROM ran, so nothing left the Game Boy's $91 in LCDC.
+    expect(machine.read(0xff10)).toBe(0x00);
+  });
+
+  it("reaches the video registers at $FF10-$FF1B, in the console's own order", () => {
+    const machine = duck();
+    // Written through the Duck's address, read back through the Game Boy's.
+    for (const [duckAddress, gbRegister] of [
+      [0xff12, 0x42], // SCY
+      [0xff13, 0x43], // SCX
+      [0xff14, 0x48], // OBP0
+      [0xff15, 0x49], // OBP1
+      [0xff16, 0x4a], // WY
+      [0xff17, 0x4b], // WX
+      [0xff19, 0x45], // LYC
+      [0xff1b, 0x47], // BGP
+    ] as const) {
+      machine.write(duckAddress, 0x5a);
+      expect(machine.io[gbRegister], `$${duckAddress.toString(16)}`).toBe(0x5a);
+      expect(machine.read(duckAddress)).toBe(0x5a);
+    }
+  });
+
+  it("permutes LCDC's bits, and reads back the byte the program wrote", () => {
+    const machine = duck();
+    // %11010001 here is %10010011 there: LCD on, BG on, OBJ on, tiles at $8000.
+    machine.write(0xff10, 0b11010001);
+    expect(machine.io[0x40]).toBe(0b10010011);
+    expect(machine.read(0xff10)).toBe(0b11010001);
+    // Every value round-trips, which is what makes the permutation a rewiring
+    // rather than a lossy reinterpretation.
+    for (let value = 0; value < 256; value += 1) {
+      machine.write(0xff10, value);
+      expect(machine.read(0xff10)).toBe(value);
+    }
+  });
+
+  it("routes the moved sound registers to the same APU, under their real names", () => {
+    const machine = duck();
+    const seen: [number, number][] = [];
+    machine.apuTap = (reg, value) => seen.push([reg, value]);
+    // Power the chip on first: the APU ignores writes while NR52 bit 7 is clear,
+    // and NR52 is at $FF45 here rather than $FF26.
+    machine.write(0xff45, 0x80);
+    machine.write(0xff21, 0xf0); // NR12, at $FF21 rather than $FF12
+    machine.write(0xff22, 0x80); // NR11, at $FF22 rather than $FF11
+    machine.write(0xff46, 0x33); // NR51, at $FF46 rather than $FF25
+    machine.write(0xff35, 0xab); // wave RAM, which did not move
+    expect(seen).toEqual([
+      [0x26, 0x80],
+      [0x12, 0xf0],
+      [0x11, 0x80],
+      [0x25, 0x33],
+      [0x35, 0xab],
+    ]);
+    // The tap observes rather than intercepts, so the chip really has these.
+    // Wave RAM is the one block the model reads back (`GbApu.read` answers
+    // $FF elsewhere), and it is also the block that did *not* move — so it
+    // proves both halves at once.
+    expect(machine.apu.read(0x35)).toBe(0xab);
+    expect(machine.apu.read(0x26) & 0x80).toBe(0x80);
+  });
+
+  it("leaves the timer, the joypad and the interrupt flag where they were", () => {
+    const machine = duck();
+    machine.write(0xff06, 0x77); // TMA
+    machine.write(0xff07, 0x05); // TAC
+    expect(machine.read(0xff06)).toBe(0x77);
+    expect(machine.read(0xff07)).toBe(0x05);
+    machine.write(0xff00, 0x10); // select the buttons line
+    machine.setButtons(["a"]);
+    expect(machine.read(0xff00) & 0x01).toBe(0x00);
+  });
+
+  it("paints in the grey ramp rather than the Game Boy's green", () => {
+    const machine = duck();
+    solidTile(machine, 0, 1, 3);
+    machine.vram.fill(1, 0x1800, 0x1c00);
+    machine.write(0xff1b, 0b11100100); // BGP
+    machine.write(0xff10, 0b11010001); // LCDC
+    // Two frames: this console comes up with the LCD *off*, so the first one
+    // only starts once the program above has turned it on.
+    frame(machine);
+    frame(machine);
+    const at = (100 * SCREEN_WIDTH + 80) * 4;
+    expect([
+      machine.framebuffer[at],
+      machine.framebuffer[at + 1],
+      machine.framebuffer[at + 2],
+    ]).toEqual([...(MEGADUCK_SHADES[3] as readonly number[])]);
   });
 });

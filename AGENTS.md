@@ -118,6 +118,18 @@ Demotic program is now an **interface** (`codegen/backend.ts`) that a console
 implements, and what a program _means_ is shared (`codegen/shape.ts`), so the
 only thing a backend owns is its instruction set.
 
+**And one machine cost almost nothing, which is the point.**
+`demake build -c megaduck` produces a real Mega Duck cartridge, and it is not a
+backend: the console is a Game Boy clone whose I/O pins were rewired, so what it
+added was a _machine description_ — a register page (`core/src/asm/megaduck.ts`),
+a permuted `LCDC`, an entry point at `$0000` and no cartridge header — and not
+one instruction. The whole example library traces identically on it, in the same
+battery, and its audio is the same `@demake/chip` APU reached through a different
+address, proven by the same register diff. Doc 13 §Console rollout costs the rest
+of the consoles on those terms: the CPU is usually the cheap part, and what
+actually decides the price is whether the machine has a tilemap, a scroll
+register and hardware sprites.
+
 **And it has sound.** The NES's music and effects are demade by the same audio
 engine and played by a **generated 6502 driver** (`packages/audio/src/rom/nes-driver.ts`,
 `nes-game.ts`) — the SM83 driver's counterpart, sharing the packed format and
@@ -193,7 +205,10 @@ to undo by accident (§Working on audio).
 packages/core/       @demake/core — the engine (zero platform deps; ESM; ships types)
   src/asm/           the SM83, 6502 and Z80 assemblers + the GB, iNES and Sega
                      cartridge wrappers — shared by the Demotic game backends and
-                     the audio driver, so no backend owns the encoder for its own CPU
+                     the audio driver, so no backend owns the encoder for its own
+                     CPU. megaduck.ts is the Mega Duck's I/O map, here because
+                     three things read it (the core, the audio driver, the game
+                     backend)
   src/math/          deterministic kernels (exp/log/pow/cbrt/sin) + PCG32 PRNG
   src/parallel/      the executor seam: work described as jobs, run wherever the
                      edge says. `jobs.ts` is the contract and the inline runner
@@ -213,9 +228,13 @@ packages/core/       @demake/core — the engine (zero platform deps; ESM; ships
   src/inspect/       compliance oracle (inspect) + fidelity judge
 packages/cli-spec/   @demake/cli-spec — single source of truth: spec → parser, help, man
 packages/cli/        demake — thin CLI over core; re-exports core for scripting
-  src/rom/           edge: assemble `--format rom` per family (RGBDS / cc65 / WLA-DX / m68k / ARM / NASM)
+  src/rom/           edge: assemble `--format rom` per family (RGBDS / cc65 / WLA-DX / m68k / ARM / NASM).
+                     registry.ts is the one list of families that build, read by
+                     the dispatch and by the support matrix
   src/parallel/      edge: the `worker_threads` pool `--jobs` spends. A lane owns a
                      thread; the scheduling is core's, shared with the web app's
+  src/support.ts     the console support matrix, derived from four registries —
+                     the only place that sees all four domains at once
   man/               generated roff man pages (never hand-edited)
 rom-harness/{gb,nes,snes,sms,md,sg1000,gba,nds,pce,wsc}/  the display programs `gen --format rom` assembles
 emu-harness/gb/      SameBoy headless capturer for the GB pixel-perfect E2E (doc 10)
@@ -231,12 +250,14 @@ packages/nes/        @demake/nes — a self-hosted NES core, for the two jobs
                      background palette from a 16x16 attribute cell, because
                      those are the constraints the compiler's warnings and the
                      art path are written against
-packages/dmg/        @demake/dmg — a self-hosted Game Boy core, DMG *and* CGB: the
-                     Demotic and audio conformance harnesses in Vitest, and the web
-                     app's in-page player (doc 07: no CDN). Which machine it comes up
-                     as is the cartridge header's decision, never a setting. Its APU
-                     is @demake/chip's, not a second one, and `audioSink` is where
-                     its output goes
+packages/dmg/        @demake/dmg — a self-hosted Game Boy core, DMG *and* CGB *and*
+                     Mega Duck: the Demotic and audio conformance harnesses in
+                     Vitest, and the web app's in-page player (doc 07: no CDN).
+                     Which *Game Boy* it comes up as is the cartridge header's
+                     decision, never a setting; the Mega Duck is a constructor
+                     argument, because that console's cartridges have no header.
+                     Its APU is @demake/chip's, not a second one, and `audioSink`
+                     is where its output goes
 packages/sms/        @demake/sms — a self-hosted Sega 8-bit core, Master System *and*
                      Game Gear, decided by the cartridge's region nibble the way
                      @demake/dmg is decided by its header. Mode 4 only: the SG-1000's
@@ -327,6 +348,7 @@ pnpm eval:prep     # prep quality battery: scoreboard + side-by-side sheets (bui
 pnpm play          # Demotic: play the Pong fixture in a terminal (build first)
 pnpm test:dmt      # Demotic: run the .test.dmt suite on every console (build first)
 pnpm gen:demotic-docs  # regenerate the language reference from the registry (build first)
+pnpm gen:console-docs  # regenerate docs/console-support.md from the registries (build first)
 pnpm cli -- build packages/demotic/fixtures/pong.dmt -o pong.gb  # a playable cartridge
 pnpm cli -- build packages/demotic/fixtures/pong.dmt -c nes -o pong.nes  # the same game, 6502
 pnpm dev:web       # run the web app against the workspace core (build core first)
@@ -360,6 +382,14 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
 - **`packages/cli-spec` is the only place flags are defined** (doc 05); the
   parser, `--help`, and man pages are generated from it. Man pages are never
   hand-edited — run `pnpm gen:man` and a test enforces they match the spec.
+- **What each console supports is derived, never written down.**
+  `docs/console-support.md` is generated by `pnpm gen:console-docs` from the four
+  registries that decide it — the console specs, `cli/src/rom/registry.ts`,
+  `demotic/src/codegen/registry.ts` and the audio driver table — and
+  `packages/cli/test/support.test.ts` fails if it goes stale. Never state a
+  console's support level in prose: prose drifts, and this one had (eight specs
+  claimed a `rom` format with no builder behind it). Doc 03 §Support explains
+  what the columns mean and what _supported_ is.
 - **Language changes are the maintainer's call, not the agent's.** Adding,
   removing or altering a Demotic statement, property, unit, builtin, trigger or
   diagnostic — anything in `packages/demotic/src/lang/spec.ts` — needs the
@@ -1146,18 +1176,37 @@ that keep them from being undone. All of them come from doc 16.
 
 ## How to add a console
 
-Two files plus fixtures (doc 02 §Extensibility):
+Four steps, and they are independent — a console can gain any of them without the
+others, which is why `docs/console-support.md` has a column per step rather than
+one "supported" flag. Doc 13 §Console rollout says what each costs per console;
+run `pnpm gen:console-docs` when you land one.
 
-1. `packages/core/src/consoles/<id>.ts` — a declarative `ConsoleSpec`, then
-   register it in `consoles/registry.ts`. This alone makes the console work for
-   `prep`/`inspect` today (the generic tiled fitter or the mono path consumes
-   the spec). Cite primary hardware sources in `docs.sources` (doc 03).
-2. `packages/core/src/codegen/<family>.ts` — native data + display source, then
-   register it in `codegen/registry.ts` (Phase 2). The `gb` family is the model.
-3. `rom-harness/<family>/` (display program), `emu-harness/<family>/` (headless
-   capturer), and a pinned source-build provisioner in `tools/toolchains/`
-   (Docker not required — see the RGBDS/SameBoy scripts) — the console is only
-   "supported" when its pixel-perfect emulator E2E passes (Phase 2, doc 10).
+1. **Art** — `packages/core/src/consoles/<id>.ts`, a declarative `ConsoleSpec`,
+   registered in `consoles/registry.ts`. This alone makes the console work for
+   `prep`/`inspect` (the generic tiled fitter or the mono path consumes the
+   spec). Cite primary hardware sources in `docs.sources` (doc 03).
+2. **Data** — `packages/core/src/codegen/<family>.ts`, native data + display
+   source, registered in `codegen/registry.ts`. The `gb` family is the model.
+3. **Display ROM** — `rom-harness/<family>/` (display program),
+   `emu-harness/<family>/` (headless capturer), a pinned provisioner in
+   `tools/toolchains/` (Docker not required — see the RGBDS/SameBoy scripts), and
+   an entry in `cli/src/rom/registry.ts`. The console is only _supported_ when
+   its pixel-perfect E2E passes (doc 10) — add it to `EMULATOR_PROVEN` and name
+   the suite `<id>.e2e.test.ts`, which `support.test.ts` cross-checks.
+4. **Games** — a `Backend` in `packages/demotic/src/codegen/`, registered in
+   `codegen/registry.ts`, plus a profile in `profiles.ts` and a core to prove it
+   in. Add it to `rom.test.ts`'s target list and, if it has a driver, to
+   `audio.test.ts`'s: running the whole example library on every machine is what
+   makes `Backend` a contract rather than a resemblance.
+
+**Check first whether the console is a variant rather than a machine.** Three of
+the consoles that build games are not backends: the Game Boy Color is the Game
+Boy's machine code with a second half on the renderer, the Game Gear is the
+Master System's family with a different crop, and the Mega Duck is a Game Boy
+whose I/O pins moved — a register table, an `LCDC` permutation, an entry point
+and a cartridge with no header (`core/src/asm/megaduck.ts`). A variant costs a
+machine description and no instructions; if you find yourself copying an emitter,
+you are writing the wrong one of the two.
 
 ## Testing truths
 
@@ -1185,13 +1234,17 @@ Two files plus fixtures (doc 02 §Extensibility):
   via the `.claude/` SessionStart hook.
 - The Demotic ROM conformance suite (`packages/demotic/test/rom.test.ts`) builds
   a cartridge from each fixture game **for every console with a backend** — both
-  Game Boys and the NES — and runs it in `@demake/dmg` or `@demake/nes`,
-  asserting the trace matches the reference interpreter tick for tick. No
-  toolchain, no emulator install, so it runs everywhere `pnpm test` does. Running
-  the same battery on all three is what makes `Backend` a contract rather than a
-  resemblance: the colour build proves the attribute work never touched
-  simulation state, and the NES proves a second CPU's arithmetic and ordering
-  agree to the bit.
+  Game Boys, the Mega Duck, the NES, the Master System and the Game Gear — and
+  runs it in `@demake/dmg`, `@demake/nes` or `@demake/sms`, asserting the trace
+  matches the reference interpreter tick for tick. No toolchain, no emulator
+  install, so it runs everywhere `pnpm test` does. Running the same battery on
+  all six is what makes `Backend` a contract rather than a resemblance, and each
+  console proves something different: the colour build that the attribute work
+  never touched simulation state, the NES and the Master System that a second and
+  third CPU's arithmetic and ordering agree to the bit, and the Mega Duck that a
+  machine description never leaked into the code the tick runs. It also checks
+  the Duck's cartridge _fails_ on a Game Boy — identical traces are also what a
+  register map that had quietly become the identity would produce.
 - `packages/demotic/test/nes-arith.test.ts` is one layer below that: it assembles
   each 16.16 operation on its own, runs it in `@demake/nes` and compares with
   `fixed.ts`. A multiply that floors the wrong way for negative operands makes a
@@ -1448,6 +1501,24 @@ Two files plus fixtures (doc 02 §Extensibility):
   address is `ld h, HIGH(shadow)` plus a shifted count — cheaper as well as
   correct. Check the register a helper takes its arguments in before reaching for
   a 16-bit load.
+- **A machine description that is wrong _and consistent_ passes everything.**
+  The Mega Duck's I/O map is used to build the cartridge and to route its writes
+  in `@demake/dmg`, so a swapped pair cancels out: the game traces perfectly, the
+  audio diff matches, and the ROM would do nothing on real hardware. That is why
+  `packages/core/test/megaduck.test.ts` carries SameDuck's numbers _literally_
+  and compares against those rather than against the table's own inverse — and
+  it caught exactly that, twice. Any future variant console needs the same
+  treatment: pin the description against the hardware, not against itself.
+- **Inverting a sparse map by flipping every entry lets the identity clobber it.**
+  Building `GB_TO_MEGADUCK` from all 128 entries of `MEGADUCK_TO_GB` put `OBP0`
+  back at `$48` — its Game Boy address — because offset `$48` identity-maps to
+  itself and is written _after_ the entry that belongs there. Invert only the
+  entries that moved.
+- **The gaps a register move leaves are not identity, they are nothing.** Mega
+  Duck offsets `$1C`–`$1F` and `$47`–`$4B` have no register behind them, and they
+  are `NR32`/`NR33`/`NR34` and the palettes on a Game Boy — so falling through as
+  identity would let a write to an empty address change the music. They map to
+  `MEGADUCK_UNMAPPED` and the core stores them as plain bytes.
 - **A Game Boy screen is green, and that is a tested artifact.** `@demake/dmg`'s
   four DMG shades are the `dmg` console spec's `mono-ramp` DAC model, pinned
   against it by `packages/dmg/test/ppu.test.ts`, and the same four the SameBoy

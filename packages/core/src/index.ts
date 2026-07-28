@@ -140,6 +140,15 @@ export {
   type GbHeaderOptions,
 } from "./asm/gb-cart.js";
 export {
+  GB_TO_MEGADUCK,
+  MEGADUCK_ROM_SIZE,
+  MEGADUCK_TO_GB,
+  MEGADUCK_UNMAPPED,
+  lcdcFromDuck,
+  lcdcToDuck,
+  megaduckRegister,
+} from "./asm/megaduck.js";
+export {
   Asm6502,
   abs,
   absX,

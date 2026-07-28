@@ -21,7 +21,11 @@ import { planTiming, verifyNonAccumulating } from "../src/timing.js";
 import { render } from "../src/render.js";
 import { bandFixture, deepBassFixture, longBandFixture, scaleFixture } from "./_fixtures.js";
 
-const CONSOLES = ["dmg", "gbc", "nes", "sms", "gg", "sg1000"];
+// `megaduck` is here because its sound hardware *is* the Game Boy's — the whole
+// chip, the same clock, the same lattices — so the demakers work on it for free.
+// Where the console's registers live is a fact about the cartridge, applied when
+// a register number becomes an address, and never reaches a schedule.
+const CONSOLES = ["dmg", "gbc", "megaduck", "nes", "sms", "gg", "sg1000"];
 
 describe("ingest", () => {
   it("reads a Standard MIDI File into a score", () => {

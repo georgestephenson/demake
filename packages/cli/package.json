@@ -22,7 +22,8 @@
   },
   "scripts": {
     "build": "tsc --build",
-    "gen:man": "node dist/generate-man.js"
+    "gen:man": "node dist/generate-man.js",
+    "gen:console-docs": "node dist/generate-support.js"
   },
   "dependencies": {
     "@demake/cli-spec": "workspace:*",

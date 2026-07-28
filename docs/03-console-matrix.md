@@ -20,6 +20,47 @@ Numbers below are working values for planning. Phase 1 of the roadmap includes a
 documentation (e.g. Pan Docs, nesdev wiki, SNESdev wiki, Sega retro docs,
 GBATEK) and its values are locked in by emulator tests, not by this table.
 
+## Support — what works today
+
+**This document describes the hardware. What demake can currently *do* with each
+machine is [`console-support.md`](console-support.md), and that file is
+generated** — from the console registry, this edge's ROM builders, the Demotic
+backend registry and the audio driver registry, with a staleness test
+(`packages/cli/test/support.test.ts`) that fails CI if it drifts. Run
+`pnpm gen:console-docs` after changing any of them.
+
+It is generated because it had already drifted while it was prose: eight
+`ConsoleSpec`s declared `rom` in `codegen.formats` with no builder behind them,
+so they failed with `E_TOOLCHAIN_MISSING` — "install something" — when the truth
+was that this edge cannot assemble that family at all. A support claim that
+nothing checks is a support claim that is eventually false, which is the same
+reasoning behind "one list says which consoles build" for the game backends
+(AGENTS.md) and behind generating the man pages from `cli-spec` (doc 05).
+
+**Supported means proven on emulated hardware.** A console is not supported
+because a fitter accepts it or an assembler runs; it is supported when its ROM's
+framebuffer matches the DAC reference byte for byte in a headless core (doc 10),
+or — for a Demotic game — when its cartridge reproduces the reference
+interpreter's state tick for tick (doc 14 §Conformance). Everything short of
+that is a column with a dash in it, and the plan for filling those in is
+[doc 13 §Console rollout](13-roadmap.md).
+
+Three shorthands recur in the generated table and are worth stating once:
+
+- **A family is a codegen backend, not a console.** The Game Gear rides `sms`,
+  the Mega Duck rides `gb`, the Neo Geo Pocket pair share `ngpc`. A console
+  arrives cheaply exactly when its family already exists, which is why the
+  rollout order in doc 13 is grouped by instruction set rather than by tier.
+- **`rom` is withheld, not missing, in one case.** The Mega Duck's *data*
+  formats are the Game Boy's exactly, so it shares the `gb` family for
+  `bin`/`asm`/`c` — but its display program is not the Game Boy's, so the spec
+  does not declare `rom` and `gen` refuses rather than quietly assembling a
+  cartridge that shows nothing on the target.
+- **A game backend and a display ROM are different things.** `demake gen
+  --format rom` builds a cartridge that shows a picture; `demake build` compiles
+  a `.dmt` into a cartridge that plays. A console can have either without the
+  other, and the Mega Duck has the second without the first.
+
 ## Tier 1 — launch set
 
 | Console | Typical target res | Color model / master palette | Tile | Sub-palettes (BG) | Key quirks the fitter must handle |
@@ -37,13 +78,15 @@ GBATEK) and its values are locked in by emulator tests, not by this table.
 
 | Console | Typical target res | Color model | Tile | Sub-palettes | Key quirks |
 |---|---|---|---|---|---|
-| PC Engine / TurboGrafx-16 | 256×224 (variable H) | RGB333 (512) | 8×8, 4bpp | 16 × 16 | Big palette count = easy fits; odd VRAM layout in codegen |
+| PC Engine / TurboGrafx-16 | 256×224 (variable H) | RGB333 (512) | 8×8, 4bpp | 16 × 16 | Big palette count = easy fits; odd VRAM layout in codegen. The BAT is fixed at VRAM word $0000, so characters start at word $0400 |
+| TurboExpress | 256×224 | RGB333 (512) | 8×8, 4bpp | 16 × 16 | *Not a separate target.* The same HuC6280 and HuC6270 in a handheld shell, running the same HuCards — a display-window spec over the `pce` family, the way the Game Gear is over `sms` |
 | Sega Game Gear | 160×144 | RGB444 (4096) | 8×8, 4bpp | 1 × 16 BG (+16 sprite) | SMS sibling; smaller viewport crop rules |
 | SG-1000 / ColecoVision (TMS9918) | 256×192 | fixed 15-color TMS palette | Graphics II: per-8×1 row, 2 colors | — | The classic "2 colors per 8×1 strip" constraint — needs the row-pair fitter (doc 04 §Special cases) |
 | Neo Geo (AES/MVS) | 320×224 | RGB666-ish (15-bit + dark bit) | sprite strips 16×N + 8×8 fix layer | 256 × 15 | Sprite-only hardware; "background" = tiled sprite strips; palette abundance makes fitting easy, codegen is the work |
 | Atari 7800 | 160×192 (160A/B modes) | 256-color MARIA/TIA palette | variable-width sprites via display lists | 8 × 3 (+BG) | Display-list machine; holey DMA; per-zone palette scheduling |
-| WonderSwan / Color | 224×144 | mono 8-shade / RGB444 | 8×8, 2bpp/4bpp | 16 × 4 / 16 × 16 | Portrait-vs-landscape orientation flag |
-| Neo Geo Pocket Color | 160×152 | RGB444 | 8×8, 2bpp | 16 × 4 per plane | 2bpp with many small palettes — GBC-like fitter reuse |
+| WonderSwan Color | 224×144 | RGB444 | 8×8, 4bpp | 16 × 16 | Portrait-vs-landscape orientation flag — a *setting* in emulators, so the E2E asks for landscape explicitly. V30MZ (8086-compatible), so NASM is the native assembler |
+| WonderSwan (mono) | 224×144 | mono 8-shade | 8×8, 2bpp | 16 × 4 from an 8-shade pool | **Its own family, not a `wsc` sibling.** Four shades per tile through sixteen palettes indexing an eight-shade pool, itself picked from sixteen LCD levels: a two-level mono palette with per-tile selection that no fit path expresses yet (doc 13 §Phase 5). The current spec is knowingly optimistic |
+| Neo Geo Pocket / Color | 160×152 | mono 8-shade / RGB444 | 8×8, 2bpp | 1 × 8 / 16 × 4 per plane | 2bpp with many small palettes — GBC-like fitter reuse. TLCS-900/H, which no distro ships an assembler for |
 | Atari Lynx | 160×102 | RGB444 | framebuffer 4bpp | 1 × 16 (per-frame; per-scanline reload possible) | Framebuffer console; optional per-scanline palette strategy for >16 colors |
 
 ## Tier 3 — long tail
@@ -57,8 +100,8 @@ GBATEK) and its values are locked in by emulator tests, not by this table.
 | Fairchild Channel F | 102×58 effective | 8 colors, 4/line | Historical-completeness target |
 | Virtual Boy | 384×224 | 4 red shades (2bpp) | DMG-like mono pipeline, red ramp |
 | Pokémon Mini | 96×64 | 1bpp (+gray via flicker) | 1bpp threshold/dither pipeline |
-| Watara Supervision | 160×160 | 4 shades | DMG-family reuse |
-| Mega Duck / Cougar Boy | 160×144 | 4 shades | DMG variant, tweaked registers |
+| Watara Supervision | 160×160 | 4 shades | DMG-family reuse for the *fit*. The hardware is a 65C02 driving a linear bitmap held inside the 8 KB of system RAM — no tiles, no sprites, no scroll — so its codegen is a framebuffer path, not a tiled one |
+| Mega Duck / Cougar Boy | 160×144 | 4 shades | A Game Boy clone: same SM83, same 2bpp tiles, same maps, same OAM, same joypad, same interrupt vectors. What differs is the *display program* — LCD registers at $FF10–$FF1B in their own order, LCDC's bits permuted, sound registers at $FF20–$FF46 — and that there is no cartridge header and no boot ROM, so execution starts at $0000. `demake build` compiles games for it; `gen --format rom` is withheld until it has a harness of its own |
 | Game.com | 200×160 | 4 shades | DMG-family reuse |
 | Casio PV-1000, Epoch Cassette Vision, Arcadia 2001, Bally Astrocade, RCA Studio II, VC 4000, APF-MP1000 | various | various | Spec-only until a trustworthy toolchain+emulator pair is validated; prep (compliant PNG) ships before codegen |
 
