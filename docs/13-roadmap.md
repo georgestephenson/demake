@@ -404,26 +404,25 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     the level grid, cell by cell, after the camera has travelled — and
     `md-arith.test.ts` the arithmetic one.
 
-    **Sound is half built, and it is the half that exists.** An SN76489 sits at
-    `$C00011` — and not merely *like* a Master System's: the same chip, at the
-    same master-clock ÷15, in a frame of 262 lines of 228 chip cycles, so
-    `mdAudio` and `smsAudio` reduce to the same rational and `psgBinding` needed
-    no change at all. What the console needed was a **generated 68000 driver**
-    (`packages/audio/src/rom/md-driver.ts`, `md-game.ts`), and the news about the
-    fourth of those is how little of it was new: everything the *chip* decides
-    moved into `rom/psg.ts` and is shared with the Z80's driver verbatim, and
-    everything every driver does to a schedule before a CPU sees it moved into
-    `rom/shared.ts`. `packages/demotic/test/audio.test.ts` boots a cartridge that
-    is playing a game and diffs every register write the PSG receives against the
-    schedule, tick for tick, with no tolerance — the same battery the other three
-    consoles run.
+    **Sound is built, and it is all ten voices.** Two chips — a YM2612 at
+    `$A04000` and an SN76489 at `$C00011` — arranged against as one instrument,
+    because that is what they are on the board. The PSG half needed nothing new:
+    the same chip at the same master clock over fifteen, in a frame of 262 lines
+    of 228 chip cycles, so `mdAudio` and `smsAudio` reduce to the same rational.
+    The FM half needed a chip model, a binding, and the first *searched* timbre
+    in the project (§A5, doc 17 §Stage 3).
 
-    The YM2612 is still not emitted, and the console spec deliberately does not
-    name it (§A5, doc 16 §Still to come): an `AudioSpec` is the contract the
-    demakers arrange *against*, so a chip with no model and no binding in `chips`
-    would be a promise the arranger cannot keep. Six FM voices are what this
-    console's spec gains the day `@demake/chip` can play them; until then a Mega
-    Drive game has four, which is four more than none.
+    Two facts about the driver are worth recording. The packed register byte,
+    which on a one-chip console names a register, here names one of five
+    destinations — the FM chip's four consecutive bus addresses or the PSG — so
+    two chips cost the packed format nothing. And ten voices against a four-bit
+    channel field do not have to fit: preemption only asks whether an *effect*
+    may be using a voice, so only the voices effects were placed on are numbered
+    and the FM half of a track plays straight through a sound effect rather than
+    ducking for it.
+
+    What is still inert in the chip model, each a gap rather than a decision: the
+    LFO's pitch modulation, SSG-EG, and channel 3's per-operator frequency mode.
 
     The cartridge budget has no story here at all, which is itself the news:
     512 KiB against 32, and 64 KiB of work RAM against an NROM cartridge's 2. The
@@ -551,8 +550,8 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     lead, harmony) with confidences, plus the decoders. *Done means*: an MP3
     becomes a playable cartridge, and the parts it found are reported honestly
     enough that a wrong one can be corrected in one flag.
-  - **A5 — breadth** *(`nes`, `sms`, `gg` and the `md`'s PSG done, inside a
-    game)*: the 2A03 and the SN76489 each have a chip model, a binding and a
+  - **A5 — breadth** *(`nes`, `sms`, `gg` and `md` done, inside a game)*: the
+    2A03, the SN76489 and the YM2612 each have a chip model, a binding and a
     generated driver — 6502, Z80 and 68000 — and
     `demake build -c nes`/`-c sms`/`-c gg`/`-c md` puts music and effects in
     the cartridge with doc 16's Level A proof over all of them. What none of them
@@ -566,7 +565,12 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     runs the *same* SN76489 at the same clock, so its binding needed no change and
     its driver needed only the parts a 68000 does differently — everything the
     chip decides moved into `rom/psg.ts` and is shared with the Z80's driver
-    verbatim. Remaining: the `md`'s FM half (patch fitting), `snes` (BRR,
+    verbatim. The Mega Drive then went further and became the first *two-chip*
+    console: `BoundWrite.chip` carries which device a write addresses, `render()`
+    filters per write, `mix()` takes per-chip gains from the binding, and the
+    packed register byte names one of five destinations rather than a register.
+    It is also the first console whose timbre is *searched* — see §Stage 3 of doc
+    17, which had been waiting for an FM target. Remaining: `snes` (BRR,
     the SPC700 driver, sample budgeting), `gba`, `nds` — each is a chip model, a
     driver backend and a Level A/B harness, on the per-console definition of done
     Phase 2 used for images. Each faces the choice doc 16 §The driver contract

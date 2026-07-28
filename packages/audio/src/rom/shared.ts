@@ -78,7 +78,7 @@ export function restrict(
   let dropped = 0;
   const ticks = script.ticks.map((tick) => {
     const writes = tick.writes.filter((write) => {
-      const channels = tag(write.reg, write.value);
+      const channels = tag(write.reg, write.value, write.chip ?? 0);
       const keep = channels === 0 || (channels & owned) !== 0;
       if (!keep) dropped += 1;
       return keep;

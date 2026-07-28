@@ -102,7 +102,7 @@ byte-for-byte across an extensive image battery.
 | [`@demake/dmg`](packages/dmg)         | A Game Boy core: the conformance harness, and the web app's player.             |
 | [`@demake/nes`](packages/nes)         | An NES core, for the same two jobs.                                             |
 | [`@demake/sms`](packages/sms)         | A Sega 8-bit core: Master System and Game Gear.                                 |
-| [`@demake/md`](packages/md)           | A Mega Drive core: a 68000, a VDP and the PSG.                                  |
+| [`@demake/md`](packages/md)           | A Mega Drive core: a 68000, a VDP, the PSG and the FM chip.                     |
 | [`@demake/chip`](packages/chip)       | Every sound chip as a register-driven model (doc 16). Depends on nothing.       |
 | [`@demake/audio`](packages/audio)     | The music and sound demakers (docs 16, 17, 18).                                 |
 | [`@demake/web`](packages/web)         | The browser app (doc 07): the same core in a worker, no server.                 |

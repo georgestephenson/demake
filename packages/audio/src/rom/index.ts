@@ -61,6 +61,13 @@ const GAME_CLOCKS: Readonly<Record<string, "timer" | "frame">> = {
   // frame. A driver on it would perform the schedule correctly and play it
   // unevenly, which is worse than a coarser clock.
   sn76489: "frame",
+  // The YM2612 *has* a programmable timer, and `mdBinding.fitRate` will offer it
+  // to a standalone track. A game cannot have it: on this board the chip's
+  // interrupt line goes to the Z80, not to the 68000, so a game's driver would
+  // have to poll the status byte from its main loop — which is a clock whose
+  // rate is the loop's rather than the timer's, and therefore not a clock at
+  // all. The picture's interrupt is the one this CPU actually gets.
+  ym2612: "frame",
 };
 
 /**

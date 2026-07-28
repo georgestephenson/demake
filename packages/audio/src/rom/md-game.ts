@@ -2,34 +2,39 @@
  * The SN76489 audio driver a *game* embeds, on a Mega Drive (doc 16 §Two
  * streams, one clock).
  *
- * The fourth of these and the second for this chip, which is exactly why it is
- * the shortest: everything the SN76489 decides — the latched channel tag, the
- * latch discipline the packer's preemption rests on, what silencing a channel
- * means — is `psg.ts`'s and is shared with the Sega 8-bits' driver verbatim.
- * What is left is the console's, and there are three answers worth reading:
+ * The fourth of these and the first to drive **two chips**: six four-operator FM
+ * voices and four tone generators, on one board and one driver tick. Everything
+ * either chip decides lives in `md-chips.ts` and `psg.ts`; what is left is the
+ * console's, and there are three answers worth reading:
  *
- *   - **Nothing here is shared between the two streams.** A Game Boy has `NR51`,
- *     an NES has `$4015` and a Game Gear has its stereo latch; a Mega Drive's PSG
- *     is the mono part of a Master System's, so there is no byte two streams both
- *     write and no merge routine is emitted at all. The FM half is where this
- *     console's panning lives and `demake build` emits none of it.
- *   - **The clock is the frame, and it is the *picture's* frame.** The 68000 has
- *     no timer of its own and this VDP's line interrupt is a raster effect rather
- *     than a tempo, exactly as on the Sega 8-bits (`rom/index.ts` §`GAME_CLOCKS`).
- *     So the handler counts frames and the main loop performs what it owes, which
- *     is how the blanking interval stays the tilemap upload's.
- *   - **Room is not the constraint.** Half a megabyte of cartridge against
- *     thirty-two kilobytes on the other three, so a table entry is padded to a
- *     power of two and indexed with a shift rather than packed and indexed with a
- *     multiply — and the packed data's register byte, which this console has no
- *     use for, is stepped over rather than being reason to fork the format.
+ *   - **The packed register byte says which of five places a write goes.** The FM
+ *     chip's four bus addresses and the PSG's one. That is the same byte every
+ *     other console spends on a register number, carrying more here because this
+ *     console has more hardware to reach — and it is why two chips cost the
+ *     packed format nothing.
+ *   - **Ten voices, and a four-bit channel field.** They do not have to fit: what
+ *     preemption asks is whether an effect may be using a voice, so only the
+ *     voices effects were placed on are numbered and everything else tags zero.
+ *     The FM half of a track therefore plays *through* an effect rather than
+ *     ducking for it, which is better than what a four-voice console can manage
+ *     and is the hardware's doing rather than the driver's.
+ *   - **Nothing is shared between the two streams.** A Game Boy has `NR51`, an
+ *     NES has `$4015` and a Game Gear has its stereo latch; here panning is a
+ *     per-voice FM register and the PSG has none, so no merge routine is emitted
+ *     at all. Silencing is two gestures rather than one — a key-off for an FM
+ *     voice, an attenuation latch for a tone one.
+ *
+ *   The clock is the frame, as on the Sega 8-bits and the NES: the handler counts
+ *   frames and the main loop performs what it owes, which is how the blanking
+ *   interval stays the tilemap upload's.
  *
  * Sources:
  * - Plutiedev — the PSG at $C00011: https://plutiedev.com/psg-chip
+ * - Plutiedev — the YM2612 at $A04000: https://plutiedev.com/ym2612-registers
  * - SMS Power! — SN76489: https://www.smspower.org/Development/SN76489
  */
 
-import { Asm68k, eaAbs, eaD, eaDisp, eaImm, eaInd, eaPost, label } from "@demake/core";
+import { Asm68k, eaAbs, eaD, eaDisp, eaImm, eaPost, label } from "@demake/core";
 
 import type { ChipScript, Rational } from "../chipscript.js";
 import { bindingFor } from "../binding/registry.js";
@@ -37,8 +42,22 @@ import { bindingFor } from "../binding/registry.js";
 import type { DriverData } from "./data.js";
 import { AudioRomError } from "./gb.js";
 import type { GameEffect } from "./gb-game.js";
-import { emitStream, emitStreamData, PSG_ADDRESS, type MdStreamState } from "./md-driver.js";
-import { checkLatchDiscipline, psgAttenuationOff, psgChannelTag, PSG_CHANNELS } from "./psg.js";
+import {
+  emitStream,
+  emitStreamData,
+  PSG_ADDRESS,
+  YM_ADDRESS,
+  type MdStreamState,
+} from "./md-driver.js";
+import {
+  checkMdLatchDiscipline,
+  mdChannelTag,
+  mdPort,
+  mdSilenceWrites,
+  MD_FM_CHANNELS,
+  PSG_CHIP,
+  YM_CHIP,
+} from "./md-chips.js";
 import { clampByte, MAX_PENDING, pack, rateHz, restrict, shapeOf, stripBoot } from "./shared.js";
 
 /** The value that stops the music, rather than starting a track. */
@@ -168,22 +187,42 @@ export function buildMdGameAudio(input: MdGameAudioInput): MdGameAudio {
       );
     }
   }
-  for (const script of scripts) checkLatchDiscipline(script);
+  for (const script of scripts) checkMdLatchDiscipline(script);
 
   const clock = resolveMdClock(first);
   const boot = bindingFor(first.console).init();
 
   // Preemption machinery exists only when there is something to preempt: a game
   // with music and no effects packs the flat format, exactly as a cartridge that
-  // owns the chip does.
+  // owns the chips does.
   const shared = input.tracks.length > 0 && input.effects.length > 0;
-  const packOptions = shared ? { channelOf: psgChannelTag } : {};
+  // Ten voices against a four-bit channel field: what the field has to hold is
+  // not "which voice is this" but "may an effect be using it", so only the
+  // voices effects were actually placed on are numbered. Everything else — the
+  // whole FM half of a track, usually — tags zero and plays straight through an
+  // effect instead of ducking for it (`md-chips.ts` §mdChannelTag).
+  const stealable = [...new Set(input.effects.map((effect) => effect.channel))].sort(
+    (a, b) => a - b,
+  );
+  if (stealable.length > 4) {
+    throw new AudioRomError(
+      "E_TOO_MANY_EFFECT_CHANNELS",
+      `this game's effects are spread over ${stealable.length} voices and the packed run format numbers four`,
+      "the sound demaker places an effect on one pitched voice and one noise voice; this is a bug in the build, not in the effects.",
+    );
+  }
+  const channelOf = mdChannelTag(stealable);
+  // Always the run format on this console, even with nothing to preempt: a tick
+  // that installs six four-operator patches is four hundred writes, and a run's
+  // count is seven bits. The flags byte per run is what buys the chaining.
+  const packOptions = { channelOf, port: mdPort };
+  void shared;
 
   let restricted = 0;
   const tracks = input.tracks.map((script) => stripBoot(script, boot));
   const effects = input.effects.map((effect) => {
-    const owned = 1 << effect.channel;
-    const result = restrict(stripBoot(effect.script, boot), owned, psgChannelTag());
+    const owned = 1 << stealable.indexOf(effect.channel);
+    const result = restrict(stripBoot(effect.script, boot), owned, channelOf());
     restricted += result.dropped;
     return result.script;
   });
@@ -194,7 +233,6 @@ export function buildMdGameAudio(input: MdGameAudioInput): MdGameAudio {
   );
 
   const state = layout(input.state);
-  const stealable = input.effects.reduce((bits, effect) => bits | (1 << effect.channel), 0);
 
   const helpers: string[] = [];
   let code = 0;
@@ -247,7 +285,7 @@ export function buildMdGameAudio(input: MdGameAudioInput): MdGameAudio {
       asm.label("AudioEffects");
       for (let index = 0; index < effectData.length; index += 1) {
         asm.dl(label(`AudioSfxOrder${index}`));
-        asm.db(1 << (input.effects[index] as GameEffect).channel);
+        asm.db(1 << stealable.indexOf((input.effects[index] as GameEffect).channel));
         asm.db(clampByte((input.effects[index] as GameEffect).priority));
         asm.dw(0); // padding to ENTRY_BYTES, so the lookup is a shift
       }
@@ -395,8 +433,7 @@ function emitInit(
   boot: readonly { reg: number; value: number }[],
 ): void {
   asm.label("AudioInit");
-  asm.movea("l", eaImm(PSG_ADDRESS), 1);
-  for (const write of boot) asm.move("b", eaImm(write.value), eaInd(1));
+  for (const write of boot) emitChipWrite(asm, write);
   for (const byte of [
     state.music.active as number,
     state.sfx.active as number,
@@ -584,17 +621,16 @@ function emitSfxStart(asm: Asm68k, state: Layout, input: MdGameAudioInput): void
  * `a0`; a scene change that happened while an effect was playing would otherwise
  * start whichever track a scratch register happened to name.
  */
-function emitRelease(asm: Asm68k, state: Layout, stealable: number): void {
+function emitRelease(asm: Asm68k, state: Layout, stealable: readonly number[]): void {
   asm.label("AudioSfxRelease");
   asm.move("b", eaAbs(state.steal), eaD(1));
   asm.bcc("eq", "AudioReleaseDone");
-  asm.movea("l", eaImm(PSG_ADDRESS), 1);
-  for (let channel = 0; channel < PSG_CHANNELS; channel += 1) {
-    if ((stealable & (1 << channel)) === 0) continue;
-    const skip = `AudioRelease${channel}`;
-    asm.btst(channel, eaD(1));
+  for (let bit = 0; bit < stealable.length; bit += 1) {
+    const voice = stealable[bit] as number;
+    const skip = `AudioRelease${bit}`;
+    asm.btst(bit, eaD(1));
     asm.bcc("eq", skip);
-    asm.move("b", eaImm(psgAttenuationOff(channel)), eaInd(1));
+    for (const write of silenceVoice(voice)) emitChipWrite(asm, write);
     asm.label(skip);
   }
   asm.clr("b", eaAbs(state.steal));
@@ -603,12 +639,39 @@ function emitRelease(asm: Asm68k, state: Layout, stealable: number): void {
   asm.rts();
 }
 
+/**
+ * Silence one voice, on whichever chip it lives on.
+ *
+ * A key-off for an FM voice and an attenuation latch for a tone one — the same
+ * gesture in intent and nothing alike in registers, which is what having two
+ * chips on a board actually costs.
+ */
+function silenceVoice(voice: number): { reg: number; value: number; chip: number }[] {
+  if (voice < MD_FM_CHANNELS) {
+    const encoded = voice < 3 ? voice : voice + 1;
+    return [
+      { reg: 0, value: 0x28, chip: YM_CHIP },
+      { reg: 1, value: encoded, chip: YM_CHIP },
+    ];
+  }
+  return [{ reg: 0, value: 0x9f | ((voice - MD_FM_CHANNELS) << 5), chip: PSG_CHIP }];
+}
+
+/**
+ * One immediate write to one of the two chips.
+ *
+ * Absolute long, because this is boot and release code rather than the write
+ * loop: a handful of writes that each happen once, where holding a base in an
+ * address register would cost more instructions than it saved.
+ */
+function emitChipWrite(asm: Asm68k, write: { reg: number; value: number; chip?: number }): void {
+  const address = (write.chip ?? 0) === PSG_CHIP ? PSG_ADDRESS : YM_ADDRESS + (write.reg & 3);
+  asm.move("b", eaImm(write.value), eaAbs(address));
+}
+
 /** Turn every channel off — what stopping the music means. */
 function emitSilence(asm: Asm68k): void {
   asm.label("AudioSilence");
-  asm.movea("l", eaImm(PSG_ADDRESS), 1);
-  for (let channel = 0; channel < PSG_CHANNELS; channel += 1) {
-    asm.move("b", eaImm(psgAttenuationOff(channel)), eaInd(1));
-  }
+  for (const write of mdSilenceWrites()) emitChipWrite(asm, write);
   asm.rts();
 }

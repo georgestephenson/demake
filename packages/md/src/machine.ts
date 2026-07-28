@@ -7,12 +7,12 @@
  * emulator install, and play one in the page without fetching a core from
  * anywhere.
  *
- * The sound is **half** of this console's, and the half a `demake build`
- * cartridge actually uses: the SN76489 at `$C00011`, which is `@demake/chip`'s
- * `Sn76489` rather than a second implementation of it. The other half is a Z80
- * with a YM2612 beside it, and `demake build` emits neither (doc 16 §Still to
- * come), so the Z80's address space answers as ordinary RAM and its bus-request
- * registers answer "granted" — what a 68000-only program needs and nothing more.
+ * Both sound chips are here, because a `demake build` cartridge plays both: the
+ * SN76489 at `$C00011` and the YM2612 at `$A04000`, each `@demake/chip`'s model
+ * rather than a second implementation of it. What is absent is the Z80 that
+ * would normally drive them — nothing here emits one — so its address space
+ * answers as ordinary RAM and its bus-request registers answer "granted", which
+ * is what a 68000-only program needs and is why it can reach the FM bus at all.
  *
  * Two other omissions are deliberate rather than pending:
  *
@@ -28,7 +28,7 @@
  * Plutiedev's I/O notes (https://plutiedev.com/io-ports, https://plutiedev.com/psg-chip).
  */
 
-import { Sn76489, type SampleSink } from "@demake/chip";
+import { Sn76489, Ym2612, type SampleSink } from "@demake/chip";
 
 import { type Bus, M68k, VECTOR } from "./cpu.js";
 import { CYCLES_PER_LINE, FRAME_HEIGHT, FRAME_WIDTH, LINES_PER_FRAME, Vdp } from "./vdp.js";
@@ -55,8 +55,10 @@ export type Button = (typeof BUTTONS)[number];
 export class Md implements Bus {
   readonly cpu = new M68k(this);
   readonly vdp = new Vdp();
-  /** The half of the sound hardware a demade game uses — `@demake/chip`'s model. */
+  /** The tone half of the sound hardware — `@demake/chip`'s model, not a copy. */
   readonly psg = new Sn76489();
+  /** The FM half: six four-operator voices at `$A04000`. */
+  readonly ym = new Ym2612();
   /** The whole cartridge image. */
   readonly rom: Uint8Array;
   /** The console's 64 KiB, which is the whole of a game's state. */
@@ -74,10 +76,19 @@ export class Md implements Bus {
    * proof, Level A), and `@demake/sms`'s `psgTap` exactly: it observes rather
    * than intercepts, because an oracle that changed what the hardware saw would
    * be testing itself. The register it reports is `@demake/chip`'s numbering,
-   * which is a `ChipScript`'s — `0` for this chip's one write port, and there is
-   * no second device on this console to report.
+   * which is a `ChipScript`'s — `0` for this chip's one write port.
    */
   psgTap: ((reg: number, value: number) => void) | undefined = undefined;
+
+  /**
+   * The same, for the FM chip.
+   *
+   * Its "register" is the *port*, 0-3, because that is what the bus has and what
+   * a driver stores to: two addresses latch and two write. A tap that reported a
+   * decoded register number would be inventing a view the hardware does not have,
+   * and the schedule it is diffed against does not have one either.
+   */
+  ymTap: ((port: number, value: number) => void) | undefined = undefined;
 
   /**
    * Where the PSG's samples go, when anything is listening.
@@ -87,6 +98,16 @@ export class Md implements Bus {
    * hardware they never listen to.
    */
   audioSink: SampleSink | undefined = undefined;
+
+  /**
+   * Where the FM chip's samples go.
+   *
+   * A second sink rather than one, because the two chips run in different clock
+   * domains — master over seven against master over fifteen — and a sink owns the
+   * mapping from clocks to samples. Mixing them is the caller's, on the same
+   * terms `render()` mixes the two halves of a schedule.
+   */
+  ymSink: SampleSink | undefined = undefined;
 
   private held = 0;
   /** The controller's TH line, which selects which half of the pad is reported. */
@@ -126,6 +147,7 @@ export class Md implements Bus {
     const at = Md.map(address);
     if (at < 0x400000) return this.rom[at] ?? 0xff;
     if (at >= 0xff0000) return this.ram[at & 0xffff] as number;
+    if (at >= 0xa04000 && at <= 0xa04003) return this.ym.read();
     if (at >= 0xa00000 && at < 0xa04000) return this.z80ram[at & 0x1fff] as number;
     if (at >= 0xa10000 && at <= 0xa1001f) return this.readIo(at);
     if (at >= 0xa11100 && at <= 0xa11201) return 0x00;
@@ -159,6 +181,10 @@ export class Md implements Bus {
       this.ram[at & 0xffff] = value & 0xff;
       return;
     }
+    if (at >= 0xa04000 && at <= 0xa04003) {
+      this.writeYm(at & 3, value & 0xff);
+      return;
+    }
     if (at >= 0xa00000 && at < 0xa04000) {
       this.z80ram[at & 0x1fff] = value & 0xff;
       return;
@@ -172,6 +198,19 @@ export class Md implements Bus {
       // is what the PSG port at `$C00011` relies on.
       this.writeVdp(at & ~1, ((value & 0xff) << 8) | (value & 0xff));
     }
+  }
+
+  /**
+   * One byte to the FM chip.
+   *
+   * Four addresses, and the 68000 reaches them directly because nothing here
+   * emits a Z80 to contend for the bus. On hardware a program has to hold the
+   * Z80's bus request first, which is what the boot code does; a core that
+   * enforced it would be modelling an arbiter no demade cartridge can lose to.
+   */
+  private writeYm(port: number, value: number): void {
+    this.ym.write(port, value);
+    this.ymTap?.(port, value);
   }
 
   write16(address: number, value: number): void {
@@ -294,6 +333,9 @@ export class Md implements Bus {
       this.psgOwed -= clocks * 15;
       if (clocks > 0) this.psg.run(clocks, this.audioSink);
     }
+    // The FM chip shares the 68000's divider exactly, so this one has no
+    // remainder to carry: one CPU cycle is one chip clock.
+    if (this.ymSink) this.ym.run(cycles, this.ymSink);
     return cycles;
   }
 

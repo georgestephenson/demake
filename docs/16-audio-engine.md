@@ -46,25 +46,31 @@ audio cartridge for anything but the Game Boy, driver backends for the remaining
 consoles, `bin`/`asm`/`c` emit, Level B sample comparison, and the lossy
 encoders.
 
-The **Mega Drive** is where that gap is now half closed and half open, and the two
-halves are different sizes. The PSG half is built: an SN76489 sits at `$C00011`,
-and it is not merely *like* a Master System's — the same chip, at the same
-master-clock ÷15, in a frame of 262 lines of 228 chip cycles, so `mdAudio` and
-`smsAudio` reduce to the same rational and `psgBinding` needed no change. What
-that console needed was a fourth generated driver, for a 68000
-(`packages/audio/src/rom/md-driver.ts`, `md-game.ts`), and the news about the
-fourth is how little of it was new: everything the *chip* decides moved into
-`rom/psg.ts` and is shared with the Z80's driver verbatim.
+The **Mega Drive** is the console that made both halves of this real. It has *two*
+sound chips — a YM2612 and an SN76489 — and ten voices between them, and the
+engine now spends all of them (AGENTS.md §Iron rules: a demaker spends the whole
+machine). Three things had to exist and each generalised rather than special-cased:
 
-The FM half is the large one — the entry in the table below that says *timbre is
-fitted, not chosen*. Until it exists the console's `AudioSpec` deliberately names
-only the PSG (`consoles/audio-specs.ts` §`mdAudio`), because an `AudioSpec` is the
-contract the demakers arrange **against**: every channel in it must be one the
-binding encodes and the chip model plays, and `bindingFor` resolves a console
-through `chips[0]`. Naming a chip nothing can drive would be a promise the
-arranger cannot keep — the audio reading of doc 14's "a backend gap is a build
-error, never a silent difference". So `chips` on this console reads `["sn76489"]`
-today and becomes `["ym2612", "sn76489"]` the day `@demake/chip` has a YM2612.
+- **A chip model for the OPN2.** Six four-operator voices, eight algorithms, the
+  hardware's own log-sine and exponential ROM tables, envelopes with key scaling,
+  detune, feedback, per-voice stereo and the channel-6 DAC — integer and
+  table-driven like everything else here. Three parts are stored and inert and
+  each is a gap rather than a decision: the LFO's pitch modulation, SSG-EG, and
+  channel 3's per-operator frequency mode.
+- **A console with two chips.** `BoundWrite.chip` already existed for it;
+  `RegisterWrite` gained the same field, `render()` filters per *write* rather
+  than per tick, and `mix()` takes per-chip gains that come from the binding —
+  because how loud a PSG is against six FM voices is a fact about the board, and
+  a chip model that knew which board it was on would no longer be one model.
+- **A timbre that is fitted rather than chosen**, which is §Stage 3 of doc 17
+  arriving for the first time. See that document for how the search works; what
+  matters here is that it is hardware-in-the-loop — a candidate patch is played
+  on the model and *measured*, not scored by a formula about what it ought to
+  sound like.
+
+The PSG half needed no change at all: the same chip at the same master clock over
+fifteen, in a frame of 262 lines of 228 chip cycles, so `mdAudio` and `smsAudio`
+reduce to the same rational and `psgBinding` is called rather than reimplemented.
 
 ## The load-bearing idea, restated for sound
 
@@ -171,8 +177,7 @@ execute *by construction*, carrying its own provenance, with two serializations.
 ```ts
 interface ChipScript {
   console: string;                // "gb", "nes", … — resolves an AudioSpec
-  chips: ChipInstance[];          // usually one; the MD's hardware has two, but a
-                                  // spec names only chips something can drive
+  chips: ChipInstance[];          // usually one; the MD has two (YM2612 + SN76489)
   driver: {
     rate: Rational;               // exact ticks per second, e.g. 59.7275/1 or 150/1
     source: "vblank" | "timer" | "line-irq" | "spc-timer";
@@ -379,8 +384,7 @@ referenced from it, so `demake consoles --json` self-describes audio without
 
 ```ts
 interface AudioSpec {
-  chips: ChipRef[];               // ["gb-apu"] | ["sn76489"] | ["s-dsp"]; only
-                                  // chips with a model and a binding (§the MD)
+  chips: ChipRef[];               // ["gb-apu"] | ["ym2612", "sn76489"] | ["s-dsp"]
   driver: {
     sources: DriverClock[];       // vblank | timer | line-irq | spc-timer
     rateRange: [min: Rational, max: Rational];
@@ -454,7 +458,7 @@ locked by the tests, not by this table.
 | **Game Boy / Color** | GB APU (DMG/CGB) | 2 pulse (4 duties, 4-bit envelope, sweep on ch1), 1 wave (32 × 4-bit RAM), 1 noise (15/7-bit LFSR) | Four voices, one of which only does noise. The wave channel is the swing vote: bass, or a distinctive lead, not both. Hardware envelopes are decay-only, so swells cost driver writes. Stereo panning per channel (NR51) is free and under-used |
 | **NES** | 2A03 | 2 pulse (4 duties, envelope, sweep), 1 triangle (**no volume control**), 1 noise (16 periods, tonal short mode), 1 DPCM | The triangle is on/off — it is a bass voice and cannot be dynamic. DPCM buys real drums for real ROM bytes, and stalls the CPU while it plays. Non-linear mixing means channel balance is not additive |
 | **SMS / GG / SG-1000** | SN76489 (T6W28-like stereo on GG) | 3 square (fixed 50% duty), 1 noise (3 rates or ch3's pitch) | **No envelopes at all** — every volume shape is driver writes, so expression has a direct data cost. No duty variation, so timbre comes from arpeggio and vibrato. Hard pitch floor ~109 Hz; periodic noise is the bass trick. GG adds per-channel stereo |
-| **Mega Drive** | YM2612 + SN76489 | 6 FM (4-operator, 8 algorithms), ch6 switchable to 8-bit PCM; plus the 4 PSG channels | The only Tier-1 target where *timbre is fitted*, not chosen: a 4-op FM patch is a search problem against the source's spectrum (doc 17 §Stage 3). PCM on ch6 costs CPU per sample. **The PSG half is built and the FM half is not**, so the console's spec names four voices today (§Still to come) |
+| **Mega Drive** | YM2612 + SN76489 | 6 FM (4-operator, 8 algorithms), ch6 switchable to 8-bit PCM; plus the 4 PSG channels | The only Tier-1 target where *timbre is fitted*, not chosen: a 4-op FM patch is a search problem against the source's spectrum (doc 17 §Stage 3). PCM on ch6 costs CPU per sample. **Built, both chips**, and the first console here to need per-write chip routing |
 | **SNES** | SPC700 + S-DSP | 8 sample voices, ADSR/GAIN, per-voice stereo, echo (8-tap FIR), noise, pitch modulation | Sampling, not synthesis: the "palette" is a **sample set in 64 KB of ARAM**, shared by the whole track, minus driver and echo buffer. This is the tile-budget problem with different units. The driver is a separate program for a separate CPU |
 | **GBA** | 2 DirectSound PCM + the 4 GB APU channels | software-mixed voices at a timer rate | The constraint is *CPU*, not channels: a software mixer costs cycles per sample per voice. Budget is mixing rate × voices, and ROM for samples |
 | **NDS** | 16 hardware PCM channels (ch8–13 PSG, ch14–15 noise) | 16 | The most generous target; the interesting work is sample budget and the ARM7 hand-off |

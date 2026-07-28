@@ -17,12 +17,14 @@
 import { GbApu } from "./gb-apu.js";
 import { NesApu } from "./nes-apu.js";
 import { Sn76489 } from "./sn76489.js";
+import { Ym2612 } from "./ym2612.js";
 import type { ChipId, ChipModel } from "./types.js";
 
 export type { ChipId, ChipModel, Pcm, RegisterWrite, SampleSink } from "./types.js";
 export { GbApu, GB_CLOCK_HZ } from "./gb-apu.js";
 export { Sn76489, SN76489_CLOCK_HZ } from "./sn76489.js";
 export { NesApu, NES_CLOCK_HZ } from "./nes-apu.js";
+export { Ym2612, YM2612_CLOCK_HZ } from "./ym2612.js";
 export {
   blockDc,
   DcBlocker,
@@ -45,6 +47,8 @@ export function createChip(id: ChipId, options: { stereo?: boolean } = {}): Chip
       return new Sn76489(options);
     case "nes-apu":
       return new NesApu();
+    case "ym2612":
+      return new Ym2612();
     default: {
       const exhaustive: never = id;
       throw new Error(`unknown chip: ${String(exhaustive)}`);

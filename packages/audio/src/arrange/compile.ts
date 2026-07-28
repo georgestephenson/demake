@@ -88,7 +88,14 @@ export function compileScript(
     }
     const bound = binding.encode(frames, previous);
     const writes = tick === 0 ? [...initWrites, ...bound] : bound;
-    ticks.push({ writes: writes.map(({ reg, value }) => ({ reg, value })) });
+    // The chip tag rides along: a Mega Drive tick writes both an FM chip and a
+    // PSG, so which device a write addresses is a property of the *write* and
+    // not of the tick it happens on.
+    ticks.push({
+      writes: writes.map(({ reg, value, chip }) =>
+        chip === undefined ? { reg, value } : { reg, value, chip },
+      ),
+    });
     previous = frames;
   }
 

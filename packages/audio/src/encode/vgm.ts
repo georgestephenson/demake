@@ -33,9 +33,15 @@ export interface VgmOptions {
 
 /** Encode a script as a VGM 1.71 file. */
 export function encodeVgm(script: ChipScript, options: VgmOptions = {}): Uint8Array {
-  const chip = script.chips[0];
-  const emit = commandWriter(chip);
-  if (!emit) throw new Error(`no VGM chip command for '${String(chip)}'`);
+  // One writer per chip, because a console may have more than one and a write
+  // says which it addresses. VGM carries them in the same stream, which is
+  // exactly what makes it the right format for a Mega Drive.
+  const emitters = script.chips.map((chip) => {
+    const emit = commandWriter(chip);
+    if (!emit) throw new Error(`no VGM chip command for '${String(chip)}'`);
+    return emit;
+  });
+  if (emitters.length === 0) throw new Error("no VGM chip command for a script with no chips");
 
   const data: number[] = [];
   let loopOffset = -1;
@@ -43,7 +49,10 @@ export function encodeVgm(script: ChipScript, options: VgmOptions = {}): Uint8Ar
 
   for (let tick = 0; tick < script.ticks.length; tick += 1) {
     if (tick === script.loopTick) loopOffset = data.length;
-    for (const write of script.ticks[tick]!.writes) emit(data, write.reg, write.value);
+    for (const write of script.ticks[tick]!.writes) {
+      const emit = emitters[write.chip ?? script.ticks[tick]!.chip ?? 0];
+      if (emit) emit(data, write.reg, write.value);
+    }
     // Absolute placement: this tick ends at `sampleAt(tick + 1)`, so any
     // rounding is against the ideal position rather than against the last wait.
     const target = sampleAt(script, tick + 1);
@@ -70,7 +79,7 @@ export function encodeVgm(script: ChipScript, options: VgmOptions = {}): Uint8Ar
   }
   view.setUint32(0x24, Math.round(script.driver.rate.num / script.driver.rate.den), true);
   view.setUint32(0x34, headerSize - 0x34, true); // data offset
-  writeClock(view, chip);
+  for (const chip of script.chips) writeClock(view, chip);
 
   out.set(Uint8Array.from(data), headerSize);
   if (gd3.length > 0) out.set(gd3, headerSize + data.length);
@@ -119,9 +128,36 @@ function commandWriter(
       return (data, reg, value) => {
         data.push(0xb4, reg & 0xff, value & 0xff);
       };
+    case "ym2612":
+      // 0x52/0x53 are the two halves of the chip's bus, and each carries an
+      // address *and* a datum — so the model's four ports pair up into two
+      // commands, and a schedule that addressed a data port without latching an
+      // address first would have nothing to write. Which is why the binding
+      // always emits them together and this holds the pending address.
+      return ym2612Writer();
     default:
       return undefined;
   }
+}
+
+/**
+ * Pair the YM2612's four bus ports back into VGM's two commands.
+ *
+ * The model's interface is the hardware's — latch an address, then write a datum
+ * — and VGM's is one command carrying both. Holding the latched address is
+ * therefore not state this encoder invented: it is the chip's own, and a datum
+ * arriving before an address is a schedule bug rather than something to guess at.
+ */
+function ym2612Writer(): (data: number[], reg: number, value: number) => void {
+  const latched: [number, number] = [0, 0];
+  return (data, reg, value) => {
+    const half = (reg >> 1) & 1;
+    if ((reg & 1) === 0) {
+      latched[half] = value & 0xff;
+      return;
+    }
+    data.push(0x52 + half, latched[half] as number, value & 0xff);
+  };
 }
 
 /** Fill in the header's chip-clock field, which selects the chip on playback. */
@@ -135,6 +171,9 @@ function writeClock(view: DataView, chip: string | undefined): void {
       break;
     case "nes-apu":
       view.setUint32(0x84, 1789773, true);
+      break;
+    case "ym2612":
+      view.setUint32(0x2c, 7670453, true);
       break;
     default:
       break;

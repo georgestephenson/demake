@@ -132,30 +132,51 @@ so a scrolling scene paints its leading edge twenty-four columns off the
 right-hand side and has no seam to hide — the whole masking mechanism the Master
 System needs is absent, and both wraps are powers of two.
 
-**And it has sound — half of it, which is the half that exists.** An SN76489 sits
-at `$C00011`, and it is not merely _like_ a Master System's: the same chip, at the
-same master-clock ÷15, in a frame of 262 lines of 228 chip cycles — so `mdAudio`
-and `smsAudio` reduce to the same numbers and `psgBinding` needed no change at
-all. What is new is a **generated 68000 driver**
-(`packages/audio/src/rom/md-driver.ts`, `md-game.ts`), and the interesting thing
-about the fourth of these is how little of it is new: everything the _chip_
-decides — the latched channel tag, the latch discipline preemption rests on, what
-silencing a channel means — moved into `rom/psg.ts` and is shared with the Z80's
-driver verbatim. Three things are this machine's. A move sets the flags, so one
-`move.b (a0)+,d0` answers both of the dispatch's questions where the Z80 needs
-`or a` and then `bit 7,a`. A stream pointer is a **longword**, because the packed
-data is anywhere in half a megabyte — which is also why the tables have to start
-on an even address. And the chip is an _address_ rather than a port, held in `a1`
-across the write loop, which is why the packed register byte is stepped over
-rather than used: this console has one register and one way to reach it, so the
-byte carries nothing, and one byte per write is cheaper than a second packed
-format for every other driver to be right about.
+**And it has sound — all ten voices of it.** This is the first console here with
+_two_ sound chips and the first with FM: a YM2612 at `$A04000` and an SN76489 at
+`$C00011`, arranged against as one instrument, because that is what they are on
+the board. `@demake/chip` models the OPN2 in full — six four-operator voices,
+eight algorithms, the hardware's own log-sine and exponential ROM tables,
+envelopes with key scaling, detune, feedback, per-voice stereo and the channel-6
+DAC — and it is integer and table-driven throughout, so a render is reproducible
+sample for sample.
 
-The YM2612 is still not emitted, and the console spec deliberately does not name
-it (`consoles/audio-specs.ts` §`mdAudio`): an `AudioSpec` is the contract the
-demakers arrange _against_, so a chip with no model and no binding in `chips`
-would be a promise the arranger cannot keep. Six FM voices are what this
-console's spec gains the day `@demake/chip` can play them.
+**Timbre is _searched_ here, not selected** (`binding/fm-patch.ts`, doc 17 §Stage
+3). Every other console offers a fixed palette — a Game Boy pulse has four duties
+and that is the whole choice — but an FM voice is thirty-odd register bits, far
+too large a space to pick from a list. So a candidate patch is _played on the chip
+and measured_, hardware-in-the-loop on the sound demaker's precedent: where its
+energy sits, how fast it arrives, how much is left after half a second. What the
+part asks for is read off the source — the General MIDI family it named, and the
+articulation it is actually played with, because a source labelled "strings"
+playing staccato sixteenths is not asking for a slow swell.
+
+The **PSG half needed no change at all**: the same chip at the same master-clock
+÷15, in a frame of 262 lines of 228 chip cycles, so `mdAudio` and `smsAudio`
+reduce to the same rational and `psgBinding` is called rather than reimplemented.
+
+What the driver (`rom/md-driver.ts`, `md-game.ts`, `md-chips.ts`) had to learn is
+what having two chips costs, and the answer is: one byte. The packed register byte
+already existed and now says which of five destinations a write goes to — the FM
+chip's four consecutive bus addresses, or the PSG — so the write loop is an
+indexed store with one comparison in front of it. Two other things are this
+machine's: a move sets the flags, so one `move.b (a0)+,d0` answers both of the
+dispatch's questions where the Z80 needs `or a` then `bit 7,a`; and a stream
+pointer is a **longword**, because the packed data is anywhere in half a megabyte,
+which is also why the tables start on an even address.
+
+**Ten voices against a four-bit channel field**, and they do not have to fit. What
+preemption asks is whether an _effect_ may be using a voice, so only the voices
+effects were placed on are numbered and everything else tags zero — which means
+the FM half of a track plays _through_ a sound effect instead of ducking for it.
+That is better than any four-voice console can manage, and it is the hardware's
+doing rather than the driver's.
+
+Three things the chip model does not do yet, and each is a gap rather than a
+decision (§Iron rules): the LFO's _pitch_ modulation (its amplitude modulation is
+there and exact), the SSG-EG envelope modes, and channel 3's per-operator
+frequency mode. All three are stored and inert, no binding writes them, and
+closing any is a table and a few lines.
 
 **And it builds for a second machine.** `demake build -c nes` produces a real
 NROM cartridge — 6502 machine code written for the game, its art demade for a
@@ -196,11 +217,12 @@ doc 14 §Runtime model names).
 **The audio spine is built, and two consoles boot** (docs
 [16](docs/16-audio-engine.md), [17](docs/17-music-demaker.md),
 [18](docs/18-sound-demaker.md)): `@demake/chip` models the Game Boy APU, the
-SN76489 and the NES 2A03; `@demake/audio` holds both demakers; and
+SN76489, the NES 2A03 and the YM2612; `@demake/audio` holds both demakers; and
 `demake arrange`, `demake sfx` and `demake render` work for `dmg`, `gbc`, `nes`,
 `sms`, `gg`, `sg1000` and `md`. A track becomes a `.vgm` plus a WAV that is
-exactly what the schedule produces. The Mega Drive is on that list for its PSG
-alone, which is the half of its sound hardware anything here can play.
+exactly what the schedule produces. The Mega Drive is on that list for all ten of
+its voices — six four-operator FM and four tone — which is the first console here
+whose spec names two chips.
 
 `demake gen <schedule> -c dmg --format rom` then turns that schedule into a real
 32 KiB cartridge, with an SM83 driver **generated for it** — no fixed player, no
@@ -233,9 +255,10 @@ Still to come for audio: `bin`/`asm`/`c` emit, a _standalone_ audio cartridge fo
 anything but the Game Boy (the NES, the Sega 8-bits and the Mega Drive have
 drivers, but only inside a game), driver backends for the remaining consoles
 (each needs a CPU encoder or a checked-in driver source, plus a core to prove it
-in), Level B sample comparison, the remaining chips (YM2612 — which is what would
-give the Mega Drive its other six voices — S-DSP, the handhelds), tracker and
-lossy-audio input with the transcription front end, and FLAC/M4A export. Read doc
+in), Level B sample comparison, the remaining chips (S-DSP, the handhelds) and the
+three parts of the YM2612 that are stored and inert (LFO pitch modulation,
+SSG-EG, channel 3's per-operator mode), tracker and lossy-audio input with the
+transcription front end, and FLAC/M4A export. Read doc
 16 before touching any of it — several of its decisions are load-bearing and easy
 to undo by accident (§Working on audio).
 
@@ -332,6 +355,8 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
 packages/chip/       @demake/chip — every sound chip as a register-driven model (doc 16)
   src/gb-apu.ts      Game Boy APU: 2 pulse + wave + noise, envelopes, panning
   src/sn76489.ts     the SMS/GG/SG-1000/MD PSG: no envelopes, ~109 Hz pitch floor
+  src/ym2612.ts      the Mega Drive's OPN2: 6 four-operator FM voices, 8 algorithms,
+                     the hardware's own log-sine and exponential ROM tables
   src/nes-apu.ts     the 2A03: volume-less triangle, non-linear mixing
   src/mix.ts         exact box-integration render, DC block, the one renderer
   src/stream.ts      the same renderer for a chip that is still running: the
@@ -340,7 +365,9 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
   src/score/         Score: the hardware-free representation, and the MIDI parser
   src/analysis.ts    roles, salience, sections, loop choice
   src/arrange/       assignment, exchange refinement, and the schedule compiler
-  src/binding/       per-console register encoders + the driver-rate fits
+  src/binding/       per-console register encoders + the driver-rate fits.
+                     md.ts is the one that drives two chips at once; fm-patch.ts
+                     is where a timbre is *searched* rather than selected
   src/timing.ts      absolute row placement: the tempo guarantee lives here
   src/sfx/           gesture families, class gate, hardware-in-the-loop fitting
   src/rom/           the console hand-off: schedule packing (data.ts, shared) +
@@ -352,8 +379,9 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
                      shared.ts is what none of them owns — the boot strip, the
                      channel restriction, the player's shape — and psg.ts is what
                      the *chip* owns, shared by the two CPUs that drive an
-                     SN76489. gameDriverRate says which clock a game's driver
-                     rides on a console
+                     SN76489; md-chips.ts is the same for a console with two of
+                     them. gameDriverRate says which clock a game's driver rides
+                     on a console
   src/dsp.ts         deterministic FFT/resampler/pitch, all on core's kernels
   src/manifest.ts    the --emit-manifest sidecar: one shape, two callers (CLI, web)
   src/render.ts      ChipScript → PCM; the only way anything makes sound
@@ -405,6 +433,17 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
 
 ## Iron rules
 
+- **A demaker spends the whole machine.** The tool constrains a modern asset
+  exactly as far as the hardware forces it and no further — a console with ten
+  voices gets ten, a console with four sub-palettes gets four. So a `ConsoleSpec`
+  describes **what the hardware can do**, not what the engine currently
+  implements: a chip with no model is a _gap to close_, never a reason to narrow
+  the spec, and "the arranger would promise something it cannot keep" is an
+  argument for building the model, not for declaring less hardware. The same rule
+  the art path already runs under — an under-fed fit looks like a bad fit
+  (§Gotchas) — and it is the reason the tool exists at all. If a demake cannot
+  yet reach some of the hardware, say so in the report and in doc 13, and leave
+  the spec honest.
 - **`core` stays platform-pure**: no `fs`/`Buffer`/DOM, no Node built-ins.
   I/O lives at the edges (CLI/web/desktop). Lint enforces (doc 02).
 - **`core` stays deterministic**: no wall clock (`Date.now`, `new Date`), no
@@ -1130,6 +1169,11 @@ most of the value layer stops being a problem and three new ones appear.
   the interesting decisions are — not the emitter. It is also why the audio
   driver steps over a packed byte rather than forking the packed format to save
   it: on this machine that byte costs nothing worth having.
+- **Two sound chips, and the packed byte says which.** The FM chip's four bus
+  addresses at `$A04000` are consecutive, so a write to one is an indexed store
+  off a held base and the PSG at `$C00011` is one comparison away. Both bases
+  live in address registers across the write loop. Nothing about having twice the
+  hardware costs the packed format a second shape.
 - **A call into the audio driver is a `jsr`, not a `bsr`.** `bsr` is the same
   sixteen signed bits `Bcc` is, and the driver is emitted after every rule body in
   the program — tens of kilobytes away in a real game. Inside the driver the same
@@ -1213,8 +1257,12 @@ that keep them from being undone. All of them come from doc 16.
 - **_Which_ interrupt is the console's answer, and so is the rate.**
   `gameDriverRate` lives in `@demake/audio` because it is a fact about the driver
   that has to keep it: a Game Boy has a timer and gets 120 Hz; an NES, a Sega
-  8-bit and a Mega Drive have the frame the picture runs on and get 60. Never ask
-  a frame-clocked
+  8-bit and a Mega Drive have the frame the picture runs on and get 60. The Mega
+  Drive is the interesting one: its YM2612 _has_ a programmable timer and
+  `fitRate` will offer it to a standalone track, but on that board the chip's
+  interrupt line goes to the Z80 rather than the 68000 — so a game would have to
+  poll it from the main loop, which is the loop's rate and not the timer's. Never
+  ask a frame-clocked
   console for a multiple of its frame rate to "improve resolution" — the driver
   would tick twice at the top of a frame and then not at all for sixteen
   milliseconds, which is a schedule performed correctly and heard wrongly. And
@@ -1238,7 +1286,19 @@ that keep them from being undone. All of them come from doc 16.
   the schedule's when nothing is preempting — the whole proof rests on that. The
   NES's `$4015` and the Game Gear's stereo latch are the same problem and the same
   answer; a Master System and a Mega Drive are the two machines with no such
-  byte, and they emit no merge at all rather than a merge that folds nothing.
+  byte, and they emit no merge at all rather than a merge that folds nothing —
+  on the Mega Drive because panning is a per-voice FM register rather than a
+  shared one.
+- **A console with two chips tags the write, not the tick.** `BoundWrite.chip`
+  and `RegisterWrite.chip` say which device a write addresses, `render()` filters
+  per write, and `mix()` takes per-chip gains from the binding — because how loud
+  a PSG is against six FM voices is a fact about the _board_, and a chip model
+  that knew which board it was on would no longer be one model.
+- **Timbre on an FM voice is searched, and the search is hardware-in-the-loop.**
+  `binding/fm-patch.ts` plays each candidate on `Ym2612` and measures it; it does
+  not score a patch by a formula about what it should sound like. Memoise per
+  part, never per tick — the search is about a second and the arranger runs four
+  candidates over the same parts.
 - **A chip may put the channel in the data rather than in the address, and it may
   latch it.** So `packScript`'s `channelOf` is a **factory** for a
   `(reg, value) => channels` tag, fresh per schedule — the SN76489 is the case it

@@ -41,6 +41,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildGameAudio,
+  mdChannelTag,
   buildMdGameAudio,
   buildNesGameAudio,
   buildSmsGameAudio,
@@ -83,8 +84,8 @@ const games = join(fixtures, "games");
 interface Machine {
   /** Run one instruction, and say where the program counter ended up. */
   step(): number;
-  /** Everything the chip receives, observed rather than intercepted. */
-  tap(listener: (reg: number, value: number) => void): void;
+  /** Everything the chips receive, observed rather than intercepted. */
+  tap(listener: (reg: number, value: number, chip: number) => void): void;
   setButtons(down: readonly string[]): void;
   runFrame(): void;
   listen(sink: SampleSink | undefined): void;
@@ -253,7 +254,10 @@ const TARGETS: readonly Target[] = [
     mergeReg: null,
     mergeHelper: "stereo-merge",
     ratio: 0.5,
-    tag: psgChannelTag,
+    // All ten voices, unlike the driver's own tag: the packed run format numbers
+    // only the stealable ones because its field is four bits, and nothing here
+    // is packed — this only has to give one voice one number.
+    tag: () => mdChannelTag([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])(),
     async build(source, dir) {
       const program = compile(source, { profile: getProfile("md"), levels: levelsIn(dir) });
       const assets = assetsIn(dir);
@@ -284,7 +288,14 @@ function wrap(machine: Gameboy | Nes | Sms | Md): Machine {
     tap: (listener) => {
       // The two Sega cores call it a PSG rather than an APU; the shape is the
       // same, and so is the promise — it observes, it does not intercept.
-      if (machine instanceof Sms || machine instanceof Md) machine.psgTap = listener;
+      if (machine instanceof Md) {
+        // Two chips, and the tag has to know which: an FM bus port and a PSG
+        // write are both "register 0" and mean nothing alike.
+        machine.ymTap = (reg, value) => listener(reg, value, 0);
+        machine.psgTap = (reg, value) => listener(reg, value, 1);
+        return;
+      }
+      if (machine instanceof Sms) machine.psgTap = listener;
       else machine.apuTap = listener;
     },
     setButtons: (down) => machine.setButtons(down as never),
@@ -313,10 +324,12 @@ function build(target: Target, source: string, dir = fixtures) {
   return made;
 }
 
-/** One register write the chip received. */
+/** One register write a chip received. */
 interface Write {
   reg: number;
   value: number;
+  /** Which chip, for the one console with two. */
+  chip?: number;
 }
 
 /**
@@ -336,7 +349,9 @@ function capture(
   const machine = target.boot(rom);
   const groups: Write[][] = [];
   let current: Write[] | undefined;
-  machine.tap((reg, value) => current?.push({ reg, value }));
+  machine.tap((reg, value, chip) =>
+    current?.push(chip === undefined || chip === 0 ? { reg, value } : { reg, value, chip }),
+  );
   let guard = 0;
   while (groups.length <= ticks) {
     if (machine.step() === tickAddress) {
@@ -351,7 +366,9 @@ function capture(
 }
 
 function show(writes: readonly Write[]): string {
-  return writes.map((w) => `$${hex(w.reg)}=$${hex(w.value)}`).join(" ");
+  return writes
+    .map((w) => `${w.chip ? `c${w.chip}:` : ""}$${hex(w.reg)}=$${hex(w.value)}`)
+    .join(" ");
 }
 
 function hex(value: number): string {
@@ -442,7 +459,7 @@ for (const target of TARGETS) {
       // latching chip the filter cannot be a predicate on one write.
       const mine = (writes: readonly Write[]) => {
         const tag = target.tag();
-        return writes.filter((write) => tag(write.reg, write.value) === owned);
+        return writes.filter((write) => tag(write.reg, write.value, write.chip ?? 0) === owned);
       };
 
       // Find where the effect started: the first tick carrying its opening writes.
@@ -469,7 +486,7 @@ for (const target of TARGETS) {
       const window = groups.slice(start, start + effect.ticks.length + 60).flat();
       const others = target.tag();
       const elsewhere = window
-        .map((write) => others(write.reg, write.value))
+        .map((write) => others(write.reg, write.value, write.chip ?? 0))
         .filter((channel) => channel !== owned && channel !== 0);
       expect(elsewhere.length, "the music stopped while the effect played").toBeGreaterThan(0);
 
@@ -667,7 +684,7 @@ function channelOfEffect(target: Target, effect: ChipScript): number {
   // latching chip an early write is what *gives* a later one its channel.
   for (const tick of effect.ticks) {
     for (const write of tick.writes) {
-      const channel = tag(write.reg, write.value);
+      const channel = tag(write.reg, write.value, write.chip ?? 0);
       if (found === 0) found = channel;
     }
   }

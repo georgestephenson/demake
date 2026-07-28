@@ -40,6 +40,16 @@ export interface ChipBinding {
   chips: readonly string[];
   /** The spec the binding was built against. */
   spec: AudioSpec;
+  /**
+   * How loud each chip is against the others, for a console with more than one.
+   *
+   * Absent where there is only one chip, which is every console but the Mega
+   * Drive. It lives here rather than in a chip model because it is a fact about
+   * the *board*: the same SN76489 is the whole output on a Master System and
+   * sits well below six FM voices on a Mega Drive, and a model that knew which
+   * would no longer be one model (doc 16 §Packages).
+   */
+  chipGains?: readonly number[];
   /** Writes that put the chip in a known state before anything plays. */
   init(): BoundWrite[];
   /**

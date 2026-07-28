@@ -359,7 +359,7 @@ bundled track or effect on arrival instead, so every section demos itself.
   Contrast is always set with an explicit colour, **never with opacity** — a
   translucent foreground composites against whatever is behind it, which is both
   a measured contrast failure and genuinely harder to read.
-- Budget: < 335 KB JS gzipped before WASM codecs (lazy-loaded per input format);
+- Budget: < 355 KB JS gzipped before WASM codecs (lazy-loaded per input format);
   Lighthouse ≥ 95 across the board, checked in CI. The figure is a **sum over the
   whole site** — entry chunk, all five lazy sections, both workers — which is more
   than any one visit costs: opening the heaviest section downloads about 150 KB.

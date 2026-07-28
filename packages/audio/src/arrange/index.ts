@@ -13,6 +13,8 @@ import { getConsole, type AudioSpec } from "@demake/core";
 
 import { analyze, type AnalyzeOptions } from "../analysis.js";
 import { bindingFor } from "../binding/registry.js";
+import { fitPatchForPart, type FmPatchFit } from "../binding/fm-patch.js";
+import { mdBinding, type MdBindingOptions } from "../binding/md.js";
 import type { ChipScript, Dropped, TimingReport } from "../chipscript.js";
 import { encodeVgm } from "../encode/vgm.js";
 import { inspectScript, type AudioViolation } from "../inspect.js";
@@ -131,11 +133,51 @@ export function candidates(spec: AudioSpec): Candidate[] {
   return melodic <= 1 ? base.filter((candidate) => candidate.id !== "melody-first") : base;
 }
 
+/**
+ * Fit a patch for every FM voice this plan uses.
+ *
+ * `undefined` for a console with no FM channels, which is every one but the Mega
+ * Drive — and returning it rather than an empty object is what keeps those
+ * consoles on the binding they were built with rather than a rebuilt copy.
+ *
+ * Memoised by part, because the timbre search plays fifty-odd candidates through
+ * the chip and a four-candidate portfolio would otherwise repeat it four times
+ * for the same part.
+ */
+function fitPatches(
+  spec: AudioSpec,
+  plan: ArrangementPlan,
+  cache: Map<string, FmPatchFit>,
+): MdBindingOptions | undefined {
+  const fmChannels = spec.channels.filter((channel) => channel.kind === "fm").length;
+  if (fmChannels === 0) return undefined;
+  const patches: (FmPatchFit["patch"] | undefined)[] = new Array(fmChannels).fill(
+    undefined,
+  ) as undefined[];
+  for (const assignment of plan.assignments) {
+    if (assignment.channelIndex >= fmChannels) continue;
+    // A channel carrying several parts is one voice playing all of them, so the
+    // timbre follows the *first* — which is the part the plan considered the
+    // channel's own, the rest having been folded onto it.
+    const part = assignment.parts[0];
+    if (part === undefined) continue;
+    let fit = cache.get(part.id);
+    if (fit === undefined) {
+      fit = fitPatchForPart(part);
+      cache.set(part.id, fit);
+    }
+    patches[assignment.channelIndex] = fit.patch;
+  }
+  return { patches };
+}
+
 /** Demake a score into chip music. */
 export function arrangeScore(input: Score, options: ArrangeOptions): ArrangeResult {
   const consoleSpec = getConsole(options.console);
   const binding = bindingFor(options.console);
   const spec: AudioSpec = consoleSpec.audio!;
+  /** Timbre searches, memoised per part so a four-candidate portfolio pays once. */
+  const patchCache = new Map<string, FmPatchFit>();
 
   const analyzeOptions: AnalyzeOptions = {
     ...(options.roles ? { roles: options.roles } : {}),
@@ -177,7 +219,13 @@ export function arrangeScore(input: Score, options: ArrangeOptions): ArrangeResu
       ...(options.tempo ? { tempo: options.tempo } : {}),
       ...(options.driverHz === undefined ? {} : { driverHz: options.driverHz }),
     });
-    const script = compileScript(analysed, spec, binding, plan, timing, candidate.compile);
+    // An FM voice's timbre is *searched* rather than selected (doc 17 §Stage 3),
+    // and the search needs the plan: which part a voice carries is what decides
+    // what it should sound like. So a console with FM channels gets a binding of
+    // its own per candidate, carrying that candidate's fitted patches.
+    const fitted = fitPatches(spec, plan, patchCache);
+    const bound = fitted === undefined ? binding : mdBinding(options.console, spec, fitted);
+    const script = compileScript(analysed, spec, bound, plan, timing, candidate.compile);
 
     const inspection = inspectScript(script);
     if (!inspection.compliant) {

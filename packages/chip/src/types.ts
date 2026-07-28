@@ -22,12 +22,20 @@
  */
 
 /** Chips demake can model. Extend by adding a model and a spec, never a branch. */
-export type ChipId = "gb-apu" | "sn76489" | "nes-apu";
+export type ChipId = "gb-apu" | "sn76489" | "nes-apu" | "ym2612";
 
 /** A single write to a chip register, in the chip's own address space. */
 export interface RegisterWrite {
   reg: number;
   value: number;
+  /**
+   * Which chip of a multi-chip console this addresses; absent means the first.
+   *
+   * A Mega Drive is the case: six FM voices and four tone generators on two
+   * devices, written within one driver tick, so the tag belongs to the write
+   * rather than to the tick it lands on.
+   */
+  chip?: number;
 }
 
 /** De-interleaved audio: one `Float32Array` per output channel. */

@@ -9,9 +9,8 @@
  * because the one thing doc 16 makes a contract is the register stream, and four
  * hand-written copies of a walk are four chances to disagree about it.
  *
- * The *chip* is the Master System's and everything the chip decides lives in
- * `psg.ts`. What is this processor's is small, and all of it makes the player
- * shorter rather than longer:
+ * The *chips* are a YM2612 and an SN76489, and everything they decide lives in
+ * `md-chips.ts` and `psg.ts`. What is this processor's is small:
  *
  *   - **A move sets the flags.** `move.b (a0)+,d0` leaves Z set for the block
  *     terminator and N set for the rest opcode's top bit, so one instruction
@@ -22,24 +21,24 @@
  *     a Mega Drive cartridge runs to `$07FFFF`, so an order entry, a block
  *     pointer and the loop entry are all 32-bit — one `move.l` either way, and
  *     the only cost is that the tables have to start on an even address.
- *   - **The chip is an address, not a port.** `$C00011` is outside the two-byte
- *     absolute form's reach, so the write loop holds it in `a1` and each write is
- *     a two-byte `move.b d0,(a1)`. That in turn is why the packed data's register
- *     byte is *skipped* rather than used: this chip has one register and this
- *     console reaches it one way, so the byte carries nothing. Keeping it costs
- *     one byte per write on a cartridge with half a megabyte, and forking the
- *     packed format to save them would cost every other console's driver a second
- *     shape to be right about.
+ *   - **There are two chips and five ways in.** The FM chip's four bus addresses
+ *     are consecutive at `$A04000`, so a write to one is an indexed store off a
+ *     held base; the PSG at `$C00011` is a comparison away. Both live in address
+ *     registers across the write loop, and the packed data's register byte says
+ *     which — the same byte the Game Boy spends on a high-RAM offset and the Z80
+ *     on a port number, carrying more here because this console has more
+ *     hardware to reach.
  *   - **Every conditional branch reaches.** `bcc.w` takes a sixteen-bit
  *     displacement, so nothing here needs the 6502 player's invert-and-jump
  *     dance.
  *
  * Sources:
  * - Plutiedev — the PSG at $C00011: https://plutiedev.com/psg-chip
+ * - Plutiedev — the YM2612 at $A04000: https://plutiedev.com/ym2612-registers
  * - SMS Power! — SN76489: https://www.smspower.org/Development/SN76489
  */
 
-import { Asm68k, eaA, eaAbs, eaD, eaImm, eaInd, eaPost, label } from "@demake/core";
+import { Asm68k, eaA, eaAbs, eaD, eaIdx, eaImm, eaInd, eaPost, label } from "@demake/core";
 
 import { RUN, type DriverData } from "./data.js";
 import { AudioRomError } from "./gb.js";
@@ -52,12 +51,26 @@ import { AudioRomError } from "./gb.js";
  */
 export const PSG_ADDRESS = 0xc00011;
 
+/**
+ * Where the FM chip's four bus addresses start.
+ *
+ * `$A04000`/`$A04001` latch and write for voices 1-3, `$A04002`/`$A04003` for
+ * 4-6 — four consecutive bytes, which is why the packed port byte can simply be
+ * an index off this base and the PSG is the one destination that needs a test.
+ */
+export const YM_ADDRESS = 0xa04000;
+
+/** The packed port byte that means the PSG rather than one of the FM's four. */
+export const PSG_PORT = 4;
+
 /** Registers the player uses, named so the allocation is readable in one place. */
 const REG = {
   /** The packed data pointer, walking a block. */
   data: 0,
-  /** The chip, held across a write loop. */
+  /** The FM chip's bus base, held across a write loop. */
   chip: 1,
+  /** The PSG's address, held beside it. */
+  psg: 2,
   /** The fetched byte, and every scratch use. */
   byte: 0,
   /** Writes left in the run. */
@@ -66,6 +79,8 @@ const REG = {
   flags: 2,
   /** The preemption test's scratch. */
   steal: 3,
+  /** Which of the five destinations this write goes to. */
+  port: 4,
 } as const;
 
 /**
@@ -174,7 +189,8 @@ export function emitStream(asm: Asm68k, options: MdStreamOptions): string[] {
   // Both ways into the fetch pass through here, so the chip pointer is loaded in
   // one place: a block boundary can call `onEnd`, which writes the chip itself.
   asm.label(`${p}TickReload`);
-  asm.movea("l", eaImm(PSG_ADDRESS), REG.chip);
+  asm.movea("l", eaImm(YM_ADDRESS), REG.chip);
+  asm.movea("l", eaImm(PSG_ADDRESS), REG.psg);
 
   asm.label(`${p}TickFetch`);
   asm.move("b", eaPost(REG.data), eaD(REG.byte));
@@ -188,7 +204,7 @@ export function emitStream(asm: Asm68k, options: MdStreamOptions): string[] {
     helpers.push(preemptible ? "preemptible-runs" : "runs");
   } else {
     asm.label(`${p}TickWrite`);
-    emitWrite(asm);
+    emitWrite(asm, `${p}TickFlat`);
     asm.subq("b", 1, eaD(REG.count));
     asm.bcc("ne", `${p}TickWrite`);
     asm.bra(`${p}TickSave`);
@@ -224,16 +240,29 @@ export function emitStream(asm: Asm68k, options: MdStreamOptions): string[] {
 }
 
 /**
- * One packed write: step over the register byte, then the value out to the chip.
+ * One packed write: the destination, then the value out to it.
  *
  * The register byte is the one the Game Boy spends on a high-RAM offset and the
- * Z80 on a port number. Here there is nothing for it to say, so it is stepped
- * over — see this file's header for why it is still there.
+ * Z80 on a port number; here it says *which of five places* the byte goes — the
+ * FM chip's four bus addresses, or the PSG. Four of them are consecutive so the
+ * common case is an indexed store, and the PSG is one comparison away.
+ *
+ * The FM address is the more common by a wide margin — a four-operator patch is
+ * twenty-nine registers and a tone is two — so it is the fall-through.
  */
-function emitWrite(asm: Asm68k): void {
-  asm.addq("l", 1, eaA(REG.data));
+function emitWrite(asm: Asm68k, label: string): void {
+  asm.move("b", eaPost(REG.data), eaD(REG.port));
   asm.move("b", eaPost(REG.data), eaD(REG.byte));
-  asm.move("b", eaD(REG.byte), eaInd(REG.chip));
+  asm.cmpi("b", PSG_PORT, eaD(REG.port));
+  asm.bcc("ne", `${label}Fm`);
+  asm.move("b", eaD(REG.byte), eaInd(REG.psg));
+  asm.bra(`${label}Done`);
+  asm.label(`${label}Fm`);
+  // The index has to be widened: `move.b` leaves a register's high three bytes
+  // alone, and an indexed address mode reads the whole long.
+  asm.andi("l", 3, eaD(REG.port));
+  asm.move("b", eaD(REG.byte), eaIdx(REG.chip, 0, REG.port));
+  asm.label(`${label}Done`);
 }
 
 /**
@@ -260,7 +289,7 @@ function emitRuns(asm: Asm68k, options: MdStreamOptions, preemptible: boolean): 
   asm.label(`${p}TickOwn`);
 
   asm.label(`${p}TickWrite`);
-  emitWrite(asm);
+  emitWrite(asm, `${p}TickRunW`);
   asm.subq("b", 1, eaD(REG.count));
   asm.bcc("ne", `${p}TickWrite`);
   asm.bra(`${p}TickNext`);
