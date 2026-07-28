@@ -1321,7 +1321,28 @@ Two files plus fixtures (doc 02 §Extensibility):
   and look at the side-by-side sheets in `tools/prep-eval/out/`; the behavioral
   floors live in `packages/core/test/quality.test.ts`. Drop extra real-world
   sources into `tools/prep-eval/local/` (gitignored — never commit assets that
-  aren't public domain).
+  aren't public domain). Pass a console to check another family —
+  `pnpm eval:prep -- nes` is the fixed-master path, which is not what the default
+  battery exercises.
+- **Every slot the console has is a slot the fit must spend**, and a slot left
+  unspent is invisible in every number the tournament reports: the fit is
+  internally consistent, and the judge scores what it produced rather than what
+  it could have. It surfaced as NES title screens in six colours of a possible
+  thirteen. Two causes, both now held by `quality.test.ts`. Two centroids can
+  converge on different Oklab means and snap to the _same_ lattice colour —
+  routine on a fixed master palette, where the shadow end is sparse — and
+  dedupe then returned a palette shorter than the caller asked for, so
+  `latticeKmeans` tops up from the point it serves worst. And a sub-palette that
+  loses all its cells can never win one back, because a cell only ever moves to
+  the palette that serves it _best_ and an unused one serves nothing, so
+  `seedUnusedPalettes` reseeds it from the cell its own palette serves worst.
+- **A reserved backdrop is a frozen centroid, not a colour prepended
+  afterwards.** On a `sharedIndex0` console index 0 is decided before the fit, so
+  it goes _into_ the k-means and competes for points: the other K−1 then cover
+  what the backdrop cannot. Fitting K−1 free colours over the whole cell and
+  putting the backdrop in front of them is how a Nintendo palette came to hold
+  three colours on hardware that has four — one of the free centroids simply
+  landed back on the backdrop and dedupe dropped it.
 - DAC models are tested artifacts: they decide pixel-perfect emulator comparisons.
   The MD `md-vdp` model reproduces genesis-plus-gx's Mode-5 normal-intensity
   color exactly (its `MAKE_PIXEL(2·code, …)` in 5:6:5); the SMS/GG cores render
