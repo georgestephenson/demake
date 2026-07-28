@@ -1072,6 +1072,14 @@ that keep them from being undone. All of them come from doc 16.
   handling, a one-shot ships a stop path and a track does not. Never add a
   routine unconditionally and never prune afterwards — the same rule the Demotic
   backend runs under, and `stats.helpers` is what makes it checkable.
+- **A driver's size is a query, not a value.** The emitter is a closure the
+  assembler runs, so `stats.code`, `stats.data` and `stats.helpers` are all zero
+  or empty until it has — which happens in `assemble`, one step after
+  `bindAudio`. A backend that copies them out of the binding reports that zero,
+  and `demake build` did exactly that for every cartridge it made until PR #31
+  caught it in passing. `BoundAudioShape` states the rule for all three;
+  `demotic/test/audio.test.ts`'s size sweep asserts the numbers are real, which
+  is the part that had been missing — the bug survived because nothing checked.
 - **The driver format is not part of the contract.** The only guarantee is that
   on tick N the driver performs exactly the writes `ChipScript.ticks[N]` lists,
   in order. Blocks, dedup, the order list and the opcodes can all change freely;

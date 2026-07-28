@@ -721,6 +721,15 @@ describe("the example library", async () => {
           const { built } = await build(target, readFileSync(join(dir, file), "utf8"), dir);
           expect(built.stats.missingAudio).toEqual([]);
           expect(built.stats.audio?.effects ?? 0).toBeGreaterThan(0);
+          // What the audio cost, and *that* it was measured at all. A driver is
+          // emitted during `assemble`, so a backend that copies its sizes out of
+          // the binding instead of querying them reports the zero they held
+          // beforehand (`backend.ts` §BoundAudioShape) — which every backend did
+          // until recently, and `demake build` said "0 bytes of driver, 0 of
+          // schedule" for every cartridge it made. Nothing caught it, because
+          // nothing asserted the number was real. This is that assertion.
+          expect(built.stats.audio?.code ?? 0).toBeGreaterThan(0);
+          expect(built.stats.audio?.data ?? 0).toBeGreaterThan(0);
           // Headroom, deliberately asserted: a fixture built to the last hundred
           // bytes turns the next code-generator change into a mystery.
           expect(built.stats.free).toBeGreaterThan(HEADROOM[target.id] ?? 1024);

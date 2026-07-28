@@ -182,15 +182,19 @@ export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
       options,
       tracks: driver?.stats.tracks ?? 0,
       effects: driver?.stats.effects ?? 0,
-      // Getters: the driver has not been emitted yet, so its sizes are zero until
-      // `assemble` has run (`BoundAudioShape`).
-      get code() {
+      // Queries, not copies: the driver is emitted during `assemble`, which has
+      // not run yet, so its sizes are still zero here (`backend.ts`
+      // §BoundAudioShape). `helpers` would survive being copied and is a query
+      // anyway, so the three read alike and none of them is a special case.
+      get code(): number {
         return driver?.stats.code ?? 0;
       },
-      get data() {
+      get data(): number {
         return driver?.stats.data ?? 0;
       },
-      helpers: driver?.stats.helpers ?? [],
+      get helpers(): readonly string[] {
+        return driver?.stats.helpers ?? [];
+      },
       rateHz: driver ? driver.stats.rate.num / driver.stats.rate.den : 0,
       writesRestricted: driver?.stats.writesRestricted ?? 0,
       ...(names
