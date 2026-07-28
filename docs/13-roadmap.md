@@ -381,14 +381,22 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     matters more here than on either predecessor because every routine it covers
     is a *different program* from the eight-bit one those consoles proved.
 
-    **Sound is the one gap, and it is a chip model rather than a language
-    feature.** The S-SMP is a second processor with its own memory and its own
-    program, and until `@demake/chip` has an S-DSP there is nothing for a driver
-    to be faithful to (doc 16 §Still to come). So a game with `music` and `sound`
-    builds, records what each rule asked for — which is a field of the trace, so a
-    silent build traces identically to a sounding one — and makes no noise; the
-    web app's button says "No sound yet" rather than doing nothing. Refusing the
-    build instead would refuse games this console otherwise plays perfectly.
+    **Sound arrived as a whole second program**, which is what this console's
+    hardware makes of the question. The S-SMP is an SPC700 with its own 64 KiB,
+    its own timers and no access to the cartridge, so `demake build -c snes` emits
+    two programs and the cartridge uploads one of them through four mailbox bytes
+    at boot. `@demake/chip` gained the S-DSP, `@demake/core` gained an SPC700
+    assembler, and `@demake/audio` gained the driver
+    (`rom/spc-driver.ts`, `rom/spc-game.ts`). Three things about it are the
+    hardware's rather than the pattern's: the clock is the sound processor's own
+    timer, so 125 Hz is exact and a frame the game overruns costs no tempo; the
+    one shared register is a *pulse*, so preemption is a mask rather than two
+    shadows folded; and the chip plays samples, so the waveform bank is part of
+    the artifact and the standalone file is an `.spc` rather than a `.vgm`. What
+    is still absent in the chip model is the echo unit and pitch modulation —
+    accepted and ignored rather than half-implemented — and Gaussian
+    interpolation, which is linear here; none of the three touches doc 16's
+    Level A, which compares register writes.
 
     The budget is not the constraint it was on the two 8-bit machines. Bank zero
     is 32 KiB of program and bank one is 32 KiB of tile art the program never

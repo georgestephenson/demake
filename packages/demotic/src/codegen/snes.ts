@@ -23,17 +23,24 @@
  *     tile number is eight bits plus the ninth its attribute byte carries, and the
  *     name-select field puts the second half of the bank exactly where the first
  *     half runs out.
- *   - **There is no sound.** The S-SMP is a second processor with its own memory
- *     and its own program, and the audio engine has no S-DSP model to build a
- *     driver against (doc 16 §Still to come). That is a gap and it is named as
- *     one: a game with `music` or `sound` still builds and still traces
- *     identically, because the request a rule records is a field of the trace and
- *     not a fact about a chip — what it does not do is make a noise.
+ *   - **The sound is a second computer's, and it is uploaded.** The S-SMP has its
+ *     own processor, its own 64 KiB and no access to the cartridge, so this
+ *     backend builds *two* programs: 65816 for the game, and — through
+ *     `@demake/audio` — an SPC700 driver carrying the demade schedules and the
+ *     waveforms they play. `Reset` hands the whole block over four mailbox bytes
+ *     at a time and then never calls a driver again; asking for a track or an
+ *     effect is three bytes of work RAM and one routine in the main loop. The
+ *     block sits at the *top* of bank one, under the tile art, because both are
+ *     sized by what the game contains and only one of them can have the low end
+ *     without the other having to know how big it got.
  */
 
 import {
   AsmError,
   packSnesRom,
+  SNES_BANK_SIZE,
+  SNES_TILE_BANK,
+  SNES_TILE_BASE,
   SNES_CODE_SIZE,
   SNES_ORIGIN,
   SNES_ROM_SIZE,
@@ -42,12 +49,15 @@ import {
   type Executor,
 } from "@demake/core";
 
+import { buildSpcGameAudio, type SpcGameAudio } from "@demake/audio";
+
 import { getProfile } from "../profiles.js";
 import type { Program } from "../program.js";
 import { BUILTIN_TILES } from "../rom/graphics.js";
 
 import { type Analysis } from "./analyze.js";
 import type { AssetBytes } from "./art.js";
+import { bindAudio, effectIndices, trackForScene } from "./audio.js";
 import {
   buildRom,
   BuildError,
@@ -87,6 +97,8 @@ export const CODE_SIZE = SNES_CODE_SIZE;
  * different games.
  */
 interface SnesAudio extends BoundAudioShape {
+  /** The emitter options the driver contributes: itself, and where it will sit. */
+  options: SnesEmitOptions;
   hooks?: { driver: boolean; music: number; request: number; effects: readonly number[] };
 }
 
@@ -144,32 +156,63 @@ export const snesBackend: Backend<SnesEmitOptions, SnesAudio> = {
     );
   },
 
-  async bindAudio(program: Program): Promise<BoundAssets<SnesAudio>> {
+  async bindAudio(
+    program: Program,
+    assets: AssetBytes,
+    layout: Layout,
+    executor?: Executor,
+  ): Promise<BoundAssets<SnesAudio>> {
+    // Three bytes of work RAM, which the allocator only reserves for a program
+    // that names audio — so a game with none reaches here with nowhere to put a
+    // request and does not need one.
+    const state = layout.audio;
+    const bound =
+      state === null
+        ? { driver: undefined, missing: [] as readonly string[], notes: [] as readonly string[] }
+        : await bindAudio(
+            program,
+            assets,
+            { build: (tracks, effects) => buildSpcGameAudio({ tracks, effects }) },
+            executor,
+          );
     const names = program.tracks.length > 0 || program.sounds.length > 0;
+    const driver: SpcGameAudio | undefined = bound.driver;
+    // The image sits at the *top* of the second cartridge bank, under the tile
+    // art rather than over it: the art's size is decided by the picture and this
+    // one's by the music, and only one of them can be given the low end without
+    // the other having to know how big it got.
+    const options: SnesEmitOptions = driver
+      ? {
+          audio: driver,
+          audioAt: (SNES_TILE_BANK << 16) | (SNES_TILE_BASE + SNES_BANK_SIZE - driver.image.length),
+          effectIndices: effectIndices(program, bound),
+          sceneTracks: trackForScene(program, bound),
+        }
+      : {};
     const emit: SnesAudio = {
-      present: false,
-      tracks: 0,
-      effects: 0,
-      code: 0,
-      data: 0,
-      helpers: [],
-      rateHz: 0,
-      writesRestricted: 0,
+      present: driver !== undefined,
+      options,
+      tracks: driver?.stats.tracks ?? 0,
+      effects: driver?.stats.effects ?? 0,
+      code: driver?.stats.code ?? 0,
+      // What the cartridge pays is the whole uploaded block, driver code
+      // included — it is data here, however it reads on the other processor.
+      data: driver === undefined ? 0 : driver.stats.image - driver.stats.code,
+      helpers: driver?.stats.helpers ?? [],
+      rateHz: driver ? driver.stats.rate.num / driver.stats.rate.den : 0,
+      writesRestricted: driver?.stats.writesRestricted ?? 0,
       ...(names
         ? {
             hooks: {
-              driver: false,
-              music: 0,
-              request: 0,
-              effects: program.sounds.map(() => -1),
+              driver: driver !== undefined,
+              music: state ?? 0,
+              request: (state ?? 0) + 1,
+              effects: options.effectIndices ?? program.sounds.map(() => -1),
             },
           }
         : {}),
     };
-    // Files the program names are not reported missing: this console asks for
-    // none of them, so a build with no audio bytes supplied is not a build with
-    // anything absent.
-    return { emit, tiles: 0, missing: [] };
+    return { emit, tiles: 0, missing: bound.missing, notes: bound.notes };
   },
 
   assemble({ program, analysis, layout, art, audio, title }): Assembled {
@@ -185,7 +228,7 @@ export const snesBackend: Backend<SnesEmitOptions, SnesAudio> = {
     }
     let code: Uint8Array;
     try {
-      emitProgram(ctx, art);
+      emitProgram(ctx, { ...art, ...audio.options });
       code = ctx.asm.assemble();
     } catch (error) {
       if (error instanceof AsmError) {
@@ -198,16 +241,22 @@ export const snesBackend: Backend<SnesEmitOptions, SnesAudio> = {
     }
 
     const bank = banks.get(art)?.options.bank ?? new Uint8Array(0);
-    if (bank.length > SNES_TILE_CAPACITY) {
+    const spc = audio.options.audio?.image ?? new Uint8Array(0);
+    const capacity = SNES_TILE_CAPACITY - spc.length;
+    if (bank.length > capacity) {
       throw new BuildError(
         "E_BACKDROP_TILES",
-        `this game's tile art is ${bank.length} bytes and the art bank holds ${SNES_TILE_CAPACITY}`,
+        `this game's tile art is ${bank.length} bytes and the art bank holds ${capacity}`,
+        spc.length > 0
+          ? `the sound processor's program takes ${spc.length} bytes of the same bank; a shorter track leaves more for the picture`
+          : undefined,
       );
     }
 
     const image = new Uint8Array(SNES_ROM_SIZE);
     image.set(code.subarray(0, Math.min(code.length, SNES_ROM_SIZE)), 0);
     image.set(bank, SNES_TILE_OFFSET);
+    image.set(spc, SNES_TILE_OFFSET + SNES_BANK_SIZE - spc.length);
     return {
       bytes: packSnesRom(
         image,

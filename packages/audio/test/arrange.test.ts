@@ -21,7 +21,7 @@ import { planTiming, verifyNonAccumulating } from "../src/timing.js";
 import { render } from "../src/render.js";
 import { bandFixture, deepBassFixture, longBandFixture, scaleFixture } from "./_fixtures.js";
 
-const CONSOLES = ["dmg", "gbc", "nes", "sms", "gg", "sg1000"];
+const CONSOLES = ["dmg", "gbc", "nes", "sms", "gg", "sg1000", "snes"];
 
 describe("ingest", () => {
   it("reads a Standard MIDI File into a score", () => {
@@ -219,7 +219,7 @@ describe("the console registry", () => {
   });
 
   it("explains a console it cannot demake", () => {
-    expect(() => bindingFor("snes")).toThrow(/no audio spec yet/);
+    expect(() => bindingFor("md")).toThrow(/no audio spec yet/);
   });
 });
 

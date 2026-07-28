@@ -41,10 +41,34 @@ one clock: an SN76489 puts the channel in the data byte and latches it, so
 The web app's audio sections are live over the same engine, the browser's `.vgm`,
 sidecar, WAV and cartridge are byte-identical to the CLI's (doc 07 §The audio
 sections), and the ROM pane plays whichever chip the running cartridge has. What
-is not built: the remaining chips (YM2612, S-DSP, the handhelds), a *standalone*
-audio cartridge for anything but the Game Boy, driver backends for the remaining
+is not built: the remaining chips (YM2612, the handhelds), a *standalone* audio
+cartridge for anything but the Game Boy, driver backends for the remaining
 consoles, `bin`/`asm`/`c` emit, Level B sample comparison, and the lossy
 encoders.
+
+**And the Super Nintendo, which is a fourth driver and a different shape of
+problem.** Its sound hardware is a second computer: an SPC700 with its own 64 KiB,
+its own timers and no access to the cartridge, so `demake build -c snes` emits two
+programs and the cartridge *uploads* one of them through four mailbox bytes at
+boot. Three things about it are new rather than restated:
+
+- **The clock is not the picture's.** An 8 kHz prescaler over an eight-bit divisor
+  gives 125 Hz exactly, and a frame the game overruns costs it no tempo — the only
+  console in the set where that is true.
+- **The shared register is a pulse.** `KON` starts the voices whose bits are set
+  and does nothing to the rest, so two streams do not fold shadows the way `NR51`
+  and `$4015` force. Each carries one byte — the voices it owns — and the driver
+  skips a run naming anything outside it and masks a merge write down to it.
+- **The chip plays samples rather than generating them**, so a `ChipScript` is
+  only half an artifact. The other half is a bank of single-cycle BRR waveforms
+  (§The sample bank), and it is why this console's file is an `.spc` — a snapshot
+  of the sound processor's RAM, which is exactly what the cartridge uploads —
+  rather than a `.vgm`, a format with no block for a sample player.
+
+The gap that remains on it is the *echo unit* and pitch modulation, which
+`@demake/chip`'s S-DSP accepts and ignores rather than half-implementing, and
+interpolation, which is linear here and a four-tap Gaussian on the hardware. Both
+are stated in the model. Neither touches Level A, which compares register writes.
 
 ## The load-bearing idea, restated for sound
 
@@ -433,7 +457,7 @@ locked by the tests, not by this table.
 | **NES** | 2A03 | 2 pulse (4 duties, envelope, sweep), 1 triangle (**no volume control**), 1 noise (16 periods, tonal short mode), 1 DPCM | The triangle is on/off — it is a bass voice and cannot be dynamic. DPCM buys real drums for real ROM bytes, and stalls the CPU while it plays. Non-linear mixing means channel balance is not additive |
 | **SMS / GG / SG-1000** | SN76489 (T6W28-like stereo on GG) | 3 square (fixed 50% duty), 1 noise (3 rates or ch3's pitch) | **No envelopes at all** — every volume shape is driver writes, so expression has a direct data cost. No duty variation, so timbre comes from arpeggio and vibrato. Hard pitch floor ~109 Hz; periodic noise is the bass trick. GG adds per-channel stereo |
 | **Mega Drive** | YM2612 + SN76489 | 6 FM (4-operator, 8 algorithms), ch6 switchable to 8-bit PCM; plus the 4 PSG channels | The only Tier-1 target where *timbre is fitted*, not chosen: a 4-op FM patch is a search problem against the source's spectrum (doc 17 §Stage 3). PCM on ch6 costs CPU per sample |
-| **SNES** | SPC700 + S-DSP | 8 sample voices, ADSR/GAIN, per-voice stereo, echo (8-tap FIR), noise, pitch modulation | Sampling, not synthesis: the "palette" is a **sample set in 64 KB of ARAM**, shared by the whole track, minus driver and echo buffer. This is the tile-budget problem with different units. The driver is a separate program for a separate CPU |
+| **SNES** | SPC700 + S-DSP | 8 sample voices, ADSR/GAIN, per-voice stereo, echo (8-tap FIR), noise, pitch modulation | Sampling, not synthesis: the "palette" is a **sample set in 64 KB of ARAM**, shared by the whole track, minus driver and echo buffer. This is the tile-budget problem with different units. The driver is a separate program for a separate CPU. Pitch is a **multiplier**, not a divider — the only chip here that counts up, so its lattice is uniform in frequency and nothing needs octave-folding |
 | **GBA** | 2 DirectSound PCM + the 4 GB APU channels | software-mixed voices at a timer rate | The constraint is *CPU*, not channels: a software mixer costs cycles per sample per voice. Budget is mixing rate × voices, and ROM for samples |
 | **NDS** | 16 hardware PCM channels (ch8–13 PSG, ch14–15 noise) | 16 | The most generous target; the interesting work is sample budget and the ARM7 hand-off |
 
@@ -646,6 +670,31 @@ format, stores `NR51` outright and has no preemption test anywhere in it; one
 with effects and no music has no music player at all. That is the same
 pulled-not-pushed discipline as everything else here, applied inside a routine
 rather than between routines.
+
+## The sample bank
+
+Every other chip demake targets generates its own waveform from a duty cycle, a
+staircase or a shift register. The S-DSP generates nothing: a voice reads
+compressed blocks out of the sound processor's RAM, so a demade arrangement needs
+waveforms to *exist* before a note can sound. `packages/audio/src/binding/sdsp-bank.ts`
+is where they come from, and three decisions in it are load-bearing.
+
+**They are single cycles, sixteen samples long** — one BRR block each, looping to
+itself. That is not a compromise: sixteen samples is the block length the format
+is built around, a looping single cycle is what an oscillator *is*, and it makes
+the pitch register a plain multiplier of `32000 / 16 = 2000 Hz`. The whole bank is
+under a hundred bytes of the 64 KiB.
+
+**The file is one definition with two readers.** The binding puts a waveform's
+index in a voice's `SRCN`; the driver builder uploads those bytes to that address.
+A second copy of either number is a game whose bass plays the snare.
+
+**A schedule carries the bank rather than assuming it.** `ChipScript.sampleRam`
+exists for exactly this, and `render()` defaults it to the built-in bank — so the
+CLI's WAV, the page's playback and the cartridge's output are the same waveforms
+without every caller having to remember. It is the one place the "a schedule is a
+complete artifact" claim needed qualifying, and it is a fact about sample hardware
+rather than a leak in the representation.
 
 ## The proof
 

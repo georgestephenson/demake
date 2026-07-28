@@ -22,7 +22,7 @@
  */
 
 /** Chips demake can model. Extend by adding a model and a spec, never a branch. */
-export type ChipId = "gb-apu" | "sn76489" | "nes-apu";
+export type ChipId = "gb-apu" | "sn76489" | "nes-apu" | "s-dsp";
 
 /** A single write to a chip register, in the chip's own address space. */
 export interface RegisterWrite {

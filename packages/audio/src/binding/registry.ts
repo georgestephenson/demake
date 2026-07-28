@@ -13,6 +13,7 @@ import { consoles, getConsole, type AudioSpec, type ConsoleSpec } from "@demake/
 import { gbBinding } from "./gb.js";
 import { nesBinding } from "./nes.js";
 import { psgBinding } from "./psg.js";
+import { sdspBinding } from "./sdsp.js";
 import type { ChipBinding } from "./types.js";
 
 /** Thrown when a console cannot be demade to audio, with the reason. */
@@ -44,6 +45,8 @@ export function bindingFor(consoleId: string): ChipBinding {
       return psgBinding(spec.id, audio);
     case "nes-apu":
       return nesBinding(spec.id, audio);
+    case "s-dsp":
+      return sdspBinding(spec.id, audio);
     default:
       throw new UnsupportedConsoleError(
         spec.id,

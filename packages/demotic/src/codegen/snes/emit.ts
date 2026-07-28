@@ -27,17 +27,21 @@
  *     minus-one convention, unlike the NES; what there is instead is a nine-bit X,
  *     and this runtime uses only the eight-bit range and drops what falls outside
  *     it, exactly as the other backends do.
- *   - **There is no sound.** The S-SMP is a second processor with its own memory
- *     and its own program, and the audio engine has no S-DSP model to build one
- *     against (doc 16 §Still to come). A rule still *records* the effect it asked
- *     for, because that is a field of the trace.
+ *   - **The sound is a second computer's, and it is handed its program at boot.**
+ *     The S-SMP has its own processor, its own 64 KiB and its own timer, so the
+ *     driver is not in this file's instruction set at all: `Reset` performs the
+ *     upload handshake through four mailbox bytes and then never calls a driver
+ *     again. Asking for a track or an effect is two request bytes and a sequence
+ *     byte the other computer watches — which is why this is the one console
+ *     where a frame the game overruns costs it no tempo.
  *
  * The tick order, the rule bodies and every compile-time decision are shared with
  * the other backends (`backend.ts`, `shape.ts`). Nothing in this file decides what
  * the game does.
  */
 
-import { imm16, imm8, label, SNES_TILE_BANK, SNES_TILE_BASE, type Ref } from "@demake/core";
+import { SPC_PORT, SPC_STOP, type SpcGameAudio } from "@demake/audio";
+import { imm16, imm8, label, longX, SNES_TILE_BANK, SNES_TILE_BASE, type Ref } from "@demake/core";
 
 import { ACTIONS, type InstanceDef, type RuleDef } from "../../program.js";
 import {
@@ -65,7 +69,7 @@ import {
 
 import type { SnesCtx } from "./ctx.js";
 import { emitTest, propOffset, type Binding } from "./expr.js";
-import { absX, clearByte, clearBytes, DP, incByte, loadByte, mem, setByte } from "./ops.js";
+import { abs, absX, clearByte, clearBytes, DP, incByte, loadByte, mem, setByte } from "./ops.js";
 import {
   emitAssignments,
   emitCamera,
@@ -136,6 +140,14 @@ const R = {
   DAS0: 0x4305,
   /** Start the channels named in the low eight bits. */
   MDMAEN: 0x420b,
+  /**
+   * The sound processor's mailbox: four bytes, read and written from both sides.
+   *
+   * The whole interface between the two computers. `$2140` carries the boot
+   * handshake and then the request sequence; `$2141`–`$2143` carry the upload's
+   * data and address and then the two request bytes.
+   */
+  APUIO: 0x2140,
 } as const;
 
 /** Where the video hardware's tables live, which the register writes decide. */
@@ -194,6 +206,19 @@ export interface SnesEmitOptions {
   palette?: Uint8Array;
   /** Per-scene colour RAM, where a backdrop chose its own. */
   scenePalettes?: ReadonlyMap<string, Uint8Array>;
+  /**
+   * The sound processor's whole program, already built from the demade audio.
+   *
+   * Absent for a game with no audio, and then the cartridge is exactly what it
+   * was before this existed: no upload, no service call, no table.
+   */
+  audio?: SpcGameAudio;
+  /** Where the image sits in the second cartridge bank, as a long address. */
+  audioAt?: number;
+  /** The driver's effect index for each of the program's sounds, or `-1`. */
+  effectIndices?: readonly number[];
+  /** Which track each scene asks for, or `-1` for a scene that plays none. */
+  sceneTracks?: readonly number[];
 }
 
 /** Dispatch on the running scene to one of a set of labels. */
@@ -227,7 +252,8 @@ export function emitProgram(ctx: SnesCtx, options: SnesEmitOptions = {}): void {
 
   emitReset(ctx, options);
   emitNmi(ctx);
-  emitMainLoop(ctx);
+  emitMainLoop(ctx, options.audio !== undefined);
+  if (options.audio) emitAudio(ctx, options);
   emitInput(ctx);
   emitTickDispatch(ctx, scenes);
   emitSceneChange(ctx, scenes);
@@ -382,6 +408,20 @@ function emitReset(ctx: SnesCtx, options: SnesEmitOptions): void {
   setByte(ctx, layout.pending, 0xff);
   setByte(ctx, layout.scene, sceneIndexOf(program, program.entryScene));
   setByte(ctx, layout.redraw, 1);
+
+  // The sound processor is handed its program here, and asked for the entry
+  // scene's music in the same breath. The order is the point: its timer starts
+  // when its program does, so a request posted after anything long — the first
+  // full redraw, say — would arrive a tick or two into a schedule that had
+  // already been playing to nobody. No scene *change* will ever ask for the
+  // entry scene's track either, which is the other half of why this is here.
+  if (options.audio) {
+    asm.jsr("AudioUpload");
+    if (program.tracks.length > 0) {
+      asm.jsr("SceneMusic");
+      asm.jsr("AudioService");
+    }
+  }
   if (layout.interrupt !== null) clearBytes(ctx, layout.interrupt, 1);
   emitClearState(ctx);
   emitSeedRng(ctx);
@@ -581,7 +621,7 @@ function emitNmi(ctx: SnesCtx): void {
   asm.rti();
 }
 
-function emitMainLoop(ctx: SnesCtx): void {
+function emitMainLoop(ctx: SnesCtx, audio: boolean): void {
   const { asm, layout } = ctx;
   const wait = ctx.unique("waitFrame");
   // The flag is cleared *after* it is seen, not before the wait: a tick that
@@ -594,8 +634,136 @@ function emitMainLoop(ctx: SnesCtx): void {
   asm.jsr("UploadFrame");
   asm.jsr("ReadInput");
   asm.jsr("Tick");
+  if (audio) asm.jsr("AudioService");
   asm.jsr("BuildFrame");
   asm.jmp("Main");
+}
+
+/**
+ * Everything the sound processor needs from this one: a program and a request.
+ *
+ * Three routines, and the shortest audio path of any backend here — because none
+ * of it is a driver. `AudioUpload` hands the other computer its whole program at
+ * boot through four mailbox bytes; `AudioService` posts whatever the tick asked
+ * for; `SceneMusic` decides what a scene asks for. After that the two processors
+ * share nothing but the mailbox, and the tempo is the sound side's problem.
+ *
+ * All three run under {@link SnesCtx.narrow}, because a mailbox byte is a *byte*:
+ * a sixteen-bit store to `$2140` would write `$2141` as well, which in the middle
+ * of the handshake is the data byte being overwritten by the counter.
+ */
+function emitAudio(ctx: SnesCtx, options: SnesEmitOptions): void {
+  const { asm, layout, program } = ctx;
+  const driver = options.audio as SpcGameAudio;
+  const at = options.audioAt as number;
+  const music = layout.audio as number;
+  const effect = music + 1;
+  const sequence = music + 2;
+
+  // --- the boot upload -------------------------------------------------------
+  //
+  // The protocol, from this side: wait for `$AA`/`$BB`, state the destination,
+  // kick with `$CC`, then send each byte with its own counter and wait for the
+  // counter to come back. A counter *two* past the last one ends the block, and
+  // a zero in port 1 with it means "jump to the address in ports 2 and 3".
+  asm.label("AudioUpload");
+  ctx.narrow(() => {
+    const ready = ctx.unique("apuReady");
+    asm.label(ready);
+    asm.lda(abs(R.APUIO));
+    asm.cmp(imm8(0xaa));
+    asm.bne(ready);
+    asm.lda(abs(R.APUIO + 1));
+    asm.cmp(imm8(0xbb));
+    asm.bne(ready);
+
+    asm.lda(imm8(driver.address & 0xff));
+    asm.sta(abs(R.APUIO + 2));
+    asm.lda(imm8((driver.address >> 8) & 0xff));
+    asm.sta(abs(R.APUIO + 3));
+    asm.lda(imm8(0x01));
+    asm.sta(abs(R.APUIO + 1));
+    asm.lda(imm8(0xcc));
+    asm.sta(abs(R.APUIO));
+    const kicked = ctx.unique("apuKicked");
+    asm.label(kicked);
+    asm.cmp(abs(R.APUIO));
+    asm.bne(kicked);
+
+    // The counter is the low byte of the index, because the bytes go in order
+    // from zero — so there is nothing to keep in step with it.
+    asm.ldx(imm16(0));
+    const byte = ctx.unique("apuByte");
+    asm.label(byte);
+    asm.lda(longX(at));
+    asm.sta(abs(R.APUIO + 1));
+    asm.txa();
+    asm.sta(abs(R.APUIO));
+    const acked = ctx.unique("apuAcked");
+    asm.label(acked);
+    asm.cmp(abs(R.APUIO));
+    asm.bne(acked);
+    asm.inx();
+    asm.cpx(imm16(driver.image.length));
+    asm.bne(byte);
+
+    asm.lda(imm8(driver.entry & 0xff));
+    asm.sta(abs(R.APUIO + 2));
+    asm.lda(imm8((driver.entry >> 8) & 0xff));
+    asm.sta(abs(R.APUIO + 3));
+    asm.stz(abs(R.APUIO + 1));
+    asm.txa();
+    asm.inc();
+    asm.sta(abs(R.APUIO));
+  });
+  asm.rts();
+
+  // --- posting a request -----------------------------------------------------
+  //
+  // The sequence byte is what makes this safe without a handshake: the sound
+  // side acts only when it *changes*, so a frame that asks for nothing costs
+  // three instructions and a frame that asks twice cannot be seen once.
+  asm.label("AudioService");
+  ctx.narrow(() => {
+    const idle = ctx.unique("apuIdle");
+    asm.lda(mem(music));
+    asm.ora(mem(effect));
+    asm.beq(idle);
+    asm.lda(mem(music));
+    asm.sta(abs(R.APUIO + SPC_PORT.music));
+    asm.lda(mem(effect));
+    asm.sta(abs(R.APUIO + SPC_PORT.sfx));
+    asm.lda(mem(sequence));
+    asm.inc();
+    asm.sta(mem(sequence));
+    asm.sta(abs(R.APUIO + SPC_PORT.sequence));
+    asm.stz(mem(music));
+    asm.stz(mem(effect));
+    asm.label(idle);
+  });
+  asm.rts();
+
+  // --- what a scene plays ----------------------------------------------------
+  //
+  // Music follows the scene, so it is asked for where the scene changes. Asking
+  // rather than starting is what keeps it one byte: the request is posted from
+  // the loop, and a scene change is not where that happens.
+  asm.label("SceneMusic");
+  loadByte(ctx, layout.scene);
+  asm.tax();
+  ctx.narrow(() => {
+    asm.lda(absX(label("SceneTracks")));
+    asm.sta(mem(music));
+  });
+  asm.rts();
+
+  asm.label("SceneTracks");
+  for (let index = 0; index < program.scenes.length; index += 1) {
+    const track = options.sceneTracks?.[index] ?? -1;
+    // A scene with no music of its own stops whatever the last one started,
+    // rather than letting a title theme run under a level.
+    asm.db(track < 0 ? SPC_STOP : track + 1);
+  }
 }
 
 /**
@@ -719,6 +887,7 @@ function emitSceneChange(ctx: SnesCtx, scenes: readonly SceneCtx[]): void {
     asm.sta(mem(layout.scene));
   });
   setByte(ctx, layout.pending, 0xff);
+  if (ctx.audio?.driver === true) asm.jsr("SceneMusic");
   asm.jsr("ResetScene");
   emitSeedRng(ctx);
   emitClearState(ctx);

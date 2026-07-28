@@ -57,11 +57,16 @@ export function snapPitch(lattice: PitchLattice, hz: number): SnappedPitch {
     target = max;
     clamped = "above";
   }
-  const ideal = lattice.clockHz / (lattice.step * target);
+  const multiplier = lattice.kind === "multiplier";
+  const ideal = multiplier
+    ? (target * lattice.step) / lattice.clockHz
+    : lattice.clockHz / (lattice.step * target);
   let divider = Math.round(ideal);
   if (divider < lattice.minDivider) divider = lattice.minDivider;
   if (divider > lattice.maxDivider) divider = lattice.maxDivider;
-  const actual = lattice.clockHz / (lattice.step * divider);
+  const actual = multiplier
+    ? (lattice.clockHz * divider) / lattice.step
+    : lattice.clockHz / (lattice.step * divider);
   return {
     divider,
     hz: actual,

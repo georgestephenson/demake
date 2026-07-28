@@ -16,6 +16,7 @@
 
 import { GbApu } from "./gb-apu.js";
 import { NesApu } from "./nes-apu.js";
+import { SDsp } from "./s-dsp.js";
 import { Sn76489 } from "./sn76489.js";
 import type { ChipId, ChipModel } from "./types.js";
 
@@ -23,6 +24,15 @@ export type { ChipId, ChipModel, Pcm, RegisterWrite, SampleSink } from "./types.
 export { GbApu, GB_CLOCK_HZ } from "./gb-apu.js";
 export { Sn76489, SN76489_CLOCK_HZ } from "./sn76489.js";
 export { NesApu, NES_CLOCK_HZ } from "./nes-apu.js";
+export {
+  SDsp,
+  encodeBrrBlock,
+  ARAM_SIZE,
+  SDSP_CLOCK_HZ,
+  SDSP_SAMPLE_CLOCKS,
+  SDSP_SAMPLE_RATE,
+  SDSP_VOICES,
+} from "./s-dsp.js";
 export {
   blockDc,
   DcBlocker,
@@ -37,7 +47,10 @@ export {
 export { StreamSink, type StreamOptions } from "./stream.js";
 
 /** Construct a chip model by id — the one place a chip id becomes an object. */
-export function createChip(id: ChipId, options: { stereo?: boolean } = {}): ChipModel {
+export function createChip(
+  id: ChipId,
+  options: { stereo?: boolean; ram?: Uint8Array } = {},
+): ChipModel {
   switch (id) {
     case "gb-apu":
       return new GbApu();
@@ -45,6 +58,11 @@ export function createChip(id: ChipId, options: { stereo?: boolean } = {}): Chip
       return new Sn76489(options);
     case "nes-apu":
       return new NesApu();
+    case "s-dsp":
+      // The only chip here that needs to be *given* something: a sample player
+      // with no samples in its RAM renders silence, so whoever holds the
+      // waveform bank passes it in (doc 16 §The sample bank).
+      return new SDsp(options.ram === undefined ? {} : { ram: options.ram });
     default: {
       const exhaustive: never = id;
       throw new Error(`unknown chip: ${String(exhaustive)}`);

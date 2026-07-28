@@ -14,10 +14,11 @@
  *     WASM emulator we cannot read would be the same bargain in a different
  *     wrapper.
  *
- * Unlike the other three it has no `@demake/chip` dependency, and that is a gap
- * rather than a design: the S-DSP is not modelled and the S-SMP is not
- * implemented, so a cartridge this core runs is silent. Doc 16 §Still to come is
- * where that sits. Everything else a Demotic cartridge uses is here.
+ * It carries a whole second computer, which none of the others do: the S-SMP is
+ * an SPC700 with its own 64 KiB and its own program, and the S-DSP hanging off it
+ * is `@demake/chip`'s — not a second model, on the same terms as every other
+ * console here. A cartridge boots by *uploading* its sound driver through four
+ * mailbox bytes, so `smp.ts` implements the handshake as well as the processor.
  *
  * Platform-pure on the same terms as `@demake/core`: no `fs`, no DOM, no wall
  * clock. Rendering produces a plain RGBA buffer; where that goes is the caller's
@@ -33,6 +34,7 @@ export {
   VBLANK_LINE,
   objectSizeBit,
 } from "./ppu.js";
+export { BOOT_ROM, BOOT_ROM_BASE, DSP_CLOCKS_PER_CYCLE, SPC_CLOCK_HZ, Smp } from "./smp.js";
 export {
   BUTTONS,
   FRAME_CYCLES,

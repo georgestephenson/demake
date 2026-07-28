@@ -133,9 +133,18 @@ function boot(rom: Uint8Array, family: string): Player {
       width: SNES_WIDTH,
       height: SNES_HEIGHT,
       framebuffer: machine.framebuffer,
-      // No chip: the S-SMP is a second processor with its own program, and there
-      // is nothing here to be faithful to yet.
-      chip: null,
+      // The sound chip is a second computer's, and the cartridge uploaded its
+      // program at boot — so what plays here is the game's own generated SPC700
+      // driver, through the same `StreamSink` the other three consoles use.
+      chip: {
+        get audioSink() {
+          return machine.audioSink;
+        },
+        set audioSink(sink) {
+          machine.audioSink = sink;
+        },
+        apu: machine.smp.dsp,
+      },
       setButtons: (down) =>
         // This pad's B and Y sit where the NES's A and B sat, which is the
         // mapping every game on it used and the one the cartridge assumes.
@@ -351,8 +360,7 @@ export function RomPane({
   // and whether this cartridge's console has sound at all. The second is the
   // Super Nintendo's answer today, and saying so is better than a button that
   // does nothing.
-  const hasChip = family !== "snes";
-  const canSound = audioSupported() && hasChip;
+  const canSound = audioSupported();
   // The canvas is sized by the console, not by CSS: these are two genuinely
   // different screens (160×144 against 256×240, and not the same aspect), and a
   // buffer put into a canvas of the wrong size is silently cropped.
@@ -525,7 +533,7 @@ export function RomPane({
           onClick={toggleSound}
           disabled={!canSound}
         >
-          {hasChip ? (sound ? "Sound on" : "Sound off") : "No sound yet"}
+          {sound ? "Sound on" : "Sound off"}
         </button>
         <button type="button" data-testid="rom-download" onClick={save}>
           Download {name}.{extension}
@@ -545,9 +553,6 @@ export function RomPane({
         {sound
           ? " The sound is the cartridge's own chip, rendered by the same model the CLI writes WAVs with — the page synthesizes nothing."
           : ""}
-        {hasChip
-          ? ""
-          : " This console\u2019s sound is a second processor with its own program, and the audio engine has no model of its chip yet, so this cartridge is silent."}
       </p>
       {sound && !playing ? (
         <p class="hint" data-testid="rom-sound-blocked">

@@ -349,11 +349,13 @@ export const SNES_MEMORY: MemoryPlan = {
   viewH: 28,
   queueMax: 96,
   plotMax: 96,
-  // No driver: the S-SMP is a second processor with its own memory and its own
-  // program, and the audio engine has no S-DSP model to build one against yet
-  // (doc 16 §Still to come). A game that names music still reserves the byte its
-  // trace records the request in, which is `sound` and not this.
-  audioBytes: 0,
+  // Three bytes, and the smallest driver state of any console here — because the
+  // driver is not on this processor. Everything a Game Boy or an NES keeps in
+  // work RAM (order cursors, block pointers, rest counters, steal masks) lives in
+  // the *sound* processor's own page zero; what the game keeps is a music
+  // request, an effect request and the sequence byte that tells the other
+  // computer they are new.
+  audioBytes: 3,
   // A tilemap entry is a word — ten bits of tile, three of palette, two of flip
   // and one of priority — so a queued cell carries its data as two bytes, the
   // same shape the Game Boy Color's and the Sega VDP's do.

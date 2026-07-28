@@ -9,11 +9,13 @@
  *
  * Scope is set by what the generated runtime uses. **LoROM without a
  * coprocessor**, because that is the cartridge the backend builds and a mapper
- * nothing emits is a mapper nothing tests. There is no sound: the S-SMP is a
- * second processor with its own memory and its own program, and until the audio
- * engine has an S-DSP model and a driver to run on it there is nothing for a core
- * to be faithful *to* — so the ports at `$2140`–`$2143` answer as an APU that has
- * finished booting and nothing writes to them.
+ * nothing emits is a mapper nothing tests. Sound is a whole second computer
+ * rather than a peripheral — `smp.ts` — and the four ports at `$2140`–`$2143` are
+ * the only wire between them, which is why they are the only sound-related thing
+ * in this file. They are decoded **before** the picture's registers, because they
+ * sit inside that range: a bus that asks "is this a PPU register" first answers
+ * every mailbox read with the PPU's, and a cartridge then spins for ever in the
+ * boot handshake waiting for a greeting the sound side has already sent.
  *
  * Two things about the memory map are worth stating because they are what make
  * the backend's arrangement work:
@@ -32,8 +34,11 @@
  * (https://snes.nesdev.org/wiki/Controller_registers).
  */
 
+import type { SampleSink } from "@demake/chip";
+
 import { type Bus, Cpu } from "./cpu.js";
 import { LINES_PER_FRAME, MASTER_PER_LINE, Ppu, SCREEN_HEIGHT, SCREEN_WIDTH } from "./ppu.js";
+import { Smp } from "./smp.js";
 
 export { SCREEN_HEIGHT, SCREEN_WIDTH };
 
@@ -75,6 +80,8 @@ const BANK_SIZE = 0x8000;
 export class Snes implements Bus {
   readonly cpu = new Cpu(this);
   readonly ppu = new Ppu();
+  /** The sound side, with its own processor, its own RAM and its own program. */
+  readonly smp = new Smp();
   /** The whole cartridge image. */
   readonly rom: Uint8Array;
   /** The console's 128 KiB of work RAM, of which bank zero sees the first 8. */
@@ -112,6 +119,28 @@ export class Snes implements Bus {
     return this.ppu.framebuffer;
   }
 
+  /**
+   * Every S-DSP register write, for the conformance harness.
+   *
+   * The counterpart of `@demake/dmg`'s `apuTap` and `@demake/sms`'s `psgTap`, and
+   * it observes rather than intercepts for the same reason: an oracle that
+   * changed what the hardware saw would be testing itself.
+   */
+  get dspTap(): ((reg: number, value: number) => void) | undefined {
+    return this.smp.dspTap;
+  }
+  set dspTap(tap: ((reg: number, value: number) => void) | undefined) {
+    this.smp.dspTap = tap;
+  }
+
+  /** Where the sound side's output goes when anything is listening. */
+  get audioSink(): SampleSink | undefined {
+    return this.smp.audioSink;
+  }
+  set audioSink(sink: SampleSink | undefined) {
+    this.smp.audioSink = sink;
+  }
+
   // --- bus -------------------------------------------------------------------
 
   /**
@@ -133,13 +162,12 @@ export class Snes implements Bus {
 
     if (low <= 0x3f) {
       if (offset < 0x2000) return this.wram[offset] as number;
+      // The sound processor's four ports, mirrored across the whole range, and
+      // *before* the picture's registers because they sit inside that range: this
+      // is the entire interface between the two computers, and a cartridge
+      // uploads its driver through it at boot.
+      if (offset >= 0x2140 && offset <= 0x217f) return this.smp.readPort(offset & 3);
       if (offset < 0x2200) return this.ppu.readRegister(0x2000 | offset);
-      if (offset >= 0x2140 && offset <= 0x217f) {
-        // The sound processor's four ports. There is no S-SMP here, so they read
-        // back the value its boot ROM leaves — which is what a program polling for
-        // "the APU is ready" would see, and nothing this backend emits polls.
-        return offset % 2 === 0 ? 0xaa : 0xbb;
-      }
       if (offset >= 0x2180 && offset <= 0x2183) {
         if (offset === 0x2180) {
           const byte = this.wram[this.wramAddr & 0x1ffff] as number;
@@ -176,6 +204,10 @@ export class Snes implements Bus {
     if (low > 0x3f) return; // the cartridge has nothing writable
     if (offset < 0x2000) {
       this.wram[offset] = byte;
+      return;
+    }
+    if (offset >= 0x2140 && offset <= 0x217f) {
+      this.smp.writePort(offset & 3, byte);
       return;
     }
     if (offset < 0x2200) {
@@ -313,7 +345,11 @@ export class Snes implements Bus {
       this.dmaCycles = 0;
     }
     const before = this.ppu.frames;
-    this.ppu.step(cycles * MASTER_PER_CPU);
+    const master = cycles * MASTER_PER_CPU;
+    this.ppu.step(master);
+    // The two processors share a crystal and nothing else, so the sound side is
+    // paid in master cycles and converts them itself.
+    this.smp.run(master);
     if (this.ppu.vblankStarted) {
       this.ppu.vblankStarted = false;
       this.nmiFlag = true;

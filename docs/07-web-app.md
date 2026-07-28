@@ -152,11 +152,11 @@ headless machine for each console anyway, and one core now serves both jobs.
 Together they are in the entry-adjacent game chunk rather than the worker,
 because playing a cartridge is what the *page* does with one.
 
-One of the four arrives silent, and the button says so rather than doing nothing:
-the Super Nintendo's sound is a second processor with its own program, and the
-audio engine has no model of its chip to build one against (doc 16 §Still to
-come). "No sound yet" is a different claim from "sound off", and a control that
-made them look alike would be the page lying about the hardware.
+All four make sound, and the fourth makes it the hard way: the Super Nintendo's
+chip belongs to a second processor with its own program, so what plays in the page
+is the SPC700 driver the cartridge uploaded at boot — generated for that game,
+running on its own timer, and rendered through the same `StreamSink` the other
+three use. The page still synthesizes nothing.
 
 **Everything on screen describes the cartridge, not the picker.** The selector
 changes the *cartridge*, and a cartridge takes a demake to arrive — seconds, when

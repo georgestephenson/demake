@@ -40,8 +40,10 @@ import {
   buildGameAudio,
   buildNesGameAudio,
   buildSmsGameAudio,
+  buildSpcGameAudio,
   gbChannelOf,
   nesChannelOf,
+  sdspChannelTag,
   smsChannelTag,
   type ChannelTag,
   type ChipScript,
@@ -50,6 +52,7 @@ import {
 import {
   GB_CLOCK_HZ,
   NES_CLOCK_HZ,
+  SDSP_CLOCK_HZ,
   SN76489_CLOCK_HZ,
   StreamSink,
   type SampleSink,
@@ -57,6 +60,7 @@ import {
 import { Gameboy } from "@demake/dmg";
 import { Nes } from "@demake/nes";
 import { Sms } from "@demake/sms";
+import { Snes } from "@demake/snes";
 
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
@@ -65,6 +69,7 @@ import type { BuiltRom } from "../src/codegen/backend.js";
 import { buildGbRom } from "../src/codegen/gb.js";
 import { buildNesRom } from "../src/codegen/nes.js";
 import { buildSmsRom } from "../src/codegen/sms.js";
+import { buildSnesRom } from "../src/codegen/snes.js";
 import { Sim } from "../src/sim.js";
 import { tape, trace } from "../src/trace.js";
 
@@ -83,6 +88,18 @@ interface Machine {
   runFrame(): void;
   listen(sink: SampleSink | undefined): void;
   readonly listening: boolean;
+  /**
+   * Call `onEnter` every time the driver reaches `address`, where a core can.
+   *
+   * Absent on three of these consoles because it is not needed: one host step is
+   * one instruction of the processor the driver runs on, so sampling the program
+   * counter afterwards sees every arrival. On the Super Nintendo the driver runs
+   * on a processor with its own clock, and one step of the game can advance it by
+   * several instructions — long enough for a whole driver tick to begin and end
+   * unseen. Watching its instruction stream is still observation: nothing is
+   * added to the cartridge, which is what the proof rests on.
+   */
+  watch?(address: number, onEnter: () => void): void;
 }
 
 /** One console, as everything below addresses it. */
@@ -93,6 +110,16 @@ interface Target {
   clockHz: number;
   /** Compile and build the cartridge, and demake its audio again beside it. */
   build(source: string, dir: string): { built: BuiltRom; bound: BoundAudio<Driver> };
+  /**
+   * Where a driver tick begins, as a program counter.
+   *
+   * Asked of the target rather than read out of the cartridge's symbol table,
+   * because on one of these consoles the driver is not in the cartridge's
+   * instruction set at all: the Super Nintendo's runs on the *sound* processor,
+   * so its symbols are the sound processor's and mixing the two address spaces
+   * into one map would be a symbol file nobody could read.
+   */
+  tickAddress(built: BuiltRom, bound: BoundAudio<Driver>): number;
   boot(rom: Uint8Array): Machine;
   /**
    * A **fresh** tag: which voice a write belongs to, `0` for none.
@@ -124,9 +151,16 @@ interface Target {
   ratio: number;
 }
 
-/** What both drivers agree to hand back, which is all this file uses. */
+/** What every driver agrees to hand back, which is all this file uses. */
 interface Driver {
   performed: { tracks: readonly ChipScript[]; effects: readonly ChipScript[] };
+  /** Present only where the driver runs on a processor of its own. */
+  symbols?: ReadonlyMap<string, number>;
+}
+
+/** The usual answer: the tick routine is a label in the cartridge's own code. */
+function cartridgeTick(built: BuiltRom): number {
+  return built.symbols.get("AudioTick") as number;
 }
 
 /** Every file in a directory, as the bytes a build is handed. */
@@ -164,6 +198,7 @@ const TARGETS: readonly Target[] = [
     mergeHelper: "panning-merge",
     ratio: 1,
     tag: () => gbChannelOf,
+    tickAddress: cartridgeTick,
     async build(source, dir) {
       const program = compile(source, { profile: getProfile("gb"), levels: levelsIn(dir) });
       const assets = assetsIn(dir);
@@ -187,6 +222,7 @@ const TARGETS: readonly Target[] = [
     mergeHelper: "enable-merge",
     ratio: 0.5,
     tag: () => nesChannelOf,
+    tickAddress: cartridgeTick,
     async build(source, dir) {
       const program = compile(source, { profile: getProfile("nes"), levels: levelsIn(dir) });
       const assets = assetsIn(dir);
@@ -217,6 +253,7 @@ const TARGETS: readonly Target[] = [
     mergeHelper: "stereo-merge",
     ratio: 0.5,
     tag: smsChannelTag,
+    tickAddress: cartridgeTick,
     async build(source, dir) {
       const program = compile(source, { profile: getProfile("sms"), levels: levelsIn(dir) });
       const assets = assetsIn(dir);
@@ -235,22 +272,72 @@ const TARGETS: readonly Target[] = [
       return wrap(machine);
     },
   },
+  {
+    id: "snes",
+    name: "Super Nintendo",
+    clockHz: SDSP_CLOCK_HZ,
+    // `KON` is the one byte two streams both want, and it is a *pulse*: writing
+    // it starts the voices whose bits are set and does nothing to the rest, so
+    // the driver masks the value down to what the stream still owns instead of
+    // folding two shadows the way `NR51` and `$4015` force.
+    mergeReg: 0x4c,
+    mergeHelper: "music-merge",
+    // The sound processor has a timer of its own, so this driver runs at 125 Hz
+    // where the Game Boy's runs at 120 — near enough that the same tick windows
+    // cover the same seconds.
+    ratio: 125 / 120,
+    tag: sdspChannelTag,
+    // The driver is a second program on a second processor, so the label is in
+    // *its* symbol table and not in the cartridge's.
+    tickAddress: (_built, bound) => (bound.driver as Driver).symbols?.get("AudioTick") as number,
+    async build(source, dir) {
+      const program = compile(source, { profile: getProfile("snes"), levels: levelsIn(dir) });
+      const assets = assetsIn(dir);
+      const built = await buildSnesRom(program, { assets });
+      const bound = await bindAudio(program, assets, {
+        build: (tracks, effects) => buildSpcGameAudio({ tracks, effects: effects as GameEffect[] }),
+      });
+      return { built, bound };
+    },
+    boot(rom) {
+      const machine = new Snes(rom);
+      const wrapped = wrap(machine);
+      return {
+        ...wrapped,
+        watch: (address, onEnter) => {
+          machine.smp.pcTap = (pc) => {
+            if (pc === address) onEnter();
+          };
+        },
+      };
+    },
+  },
 ];
 
-/** All three cores answer the same five questions; this is the adapter, once. */
-function wrap(machine: Gameboy | Nes | Sms): Machine {
+/** All four cores answer the same five questions; this is the adapter, once. */
+function wrap(machine: Gameboy | Nes | Sms | Snes): Machine {
   return {
     step: () => {
       machine.stepInstruction();
-      return machine.cpu.pc;
+      // On the Super Nintendo the program counter that matters is the *sound*
+      // processor's: the driver runs there, so that is where a tick begins.
+      return machine instanceof Snes ? machine.smp.pc : machine.cpu.pc;
     },
     tap: (listener) => {
-      // The Sega core calls it a PSG rather than an APU; the shape is the same,
-      // and so is the promise — it observes, it does not intercept.
+      // Each core names it after its own chip; the shape is the same, and so is
+      // the promise — it observes, it does not intercept.
       if (machine instanceof Sms) machine.psgTap = listener;
+      else if (machine instanceof Snes) machine.dspTap = listener;
       else machine.apuTap = listener;
     },
-    setButtons: (down) => machine.setButtons(down as never),
+    setButtons: (down) =>
+      machine instanceof Snes
+        ? // This pad's B and Y sit where the NES's A and B sat, which is the
+          // mapping the cartridge assumes and the one the page uses.
+          machine.setButtons(
+            down.map((name) => (name === "a" ? "b" : name === "b" ? "y" : name)) as never,
+          )
+        : machine.setButtons(down as never),
     runFrame: () => void machine.runFrame(),
     listen: (sink) => {
       machine.audioSink = sink;
@@ -299,13 +386,20 @@ function capture(
   const machine = target.boot(rom);
   const groups: Write[][] = [];
   let current: Write[] | undefined;
+  const open = (): void => {
+    current = [];
+    groups.push(current);
+  };
   machine.tap((reg, value) => current?.push({ reg, value }));
+  // Where the core can say when the driver entered its tick, it says so — and
+  // where it cannot, one host step is one instruction and the program counter
+  // afterwards is the same answer.
+  const watched = machine.watch !== undefined;
+  machine.watch?.(tickAddress, open);
   let guard = 0;
   while (groups.length <= ticks) {
-    if (machine.step() === tickAddress) {
-      current = [];
-      groups.push(current);
-    }
+    const pc = machine.step();
+    if (!watched && pc === tickAddress) open();
     if (press !== undefined && groups.length === press) machine.setButtons(["a"]);
     guard += 1;
     if (guard > 100_000_000) throw new Error("the driver stopped ticking");
@@ -355,7 +449,7 @@ for (const target of TARGETS) {
       const { built, bound } = await build(target, MUSIC_ONLY);
       const script = bound.driver?.performed.tracks[0];
       expect(script).toBeDefined();
-      const address = built.symbols.get("AudioTick");
+      const address = target.tickAddress(built, bound);
       expect(address).toBeDefined();
 
       const ticks = 600;
@@ -370,7 +464,7 @@ for (const target of TARGETS) {
       // can see.
       const { built, bound } = await build(target, WITH_EFFECT);
       const script = bound.driver?.performed.tracks[0] as ChipScript;
-      const address = built.symbols.get("AudioTick") as number;
+      const address = target.tickAddress(built, bound);
       const ticks = 600;
       const expected = script.ticks.slice(0, ticks).map((tick) => [...tick.writes]);
       expect(firstDivergence(expected, capture(target, built.bytes, address, ticks))).toBeNull();
@@ -378,7 +472,7 @@ for (const target of TARGETS) {
 
     it("starts at the top of the schedule, with no silencing in front of it", async () => {
       const { built, bound } = await build(target, MUSIC_ONLY);
-      const address = built.symbols.get("AudioTick") as number;
+      const address = target.tickAddress(built, bound);
       const first = capture(target, built.bytes, address, 1)[0] as Write[];
       const want = bound.driver?.performed.tracks[0] as ChipScript;
       expect(show(first)).toBe(show([...(want.ticks[0] as { writes: Write[] }).writes]));
@@ -390,7 +484,7 @@ for (const target of TARGETS) {
       const { built, bound } = await build(target, WITH_EFFECT);
       const driver = bound.driver as Driver;
       const effect = driver.performed.effects[0] as ChipScript;
-      const address = built.symbols.get("AudioTick") as number;
+      const address = target.tickAddress(built, bound);
       // The press lands at the same *moment* on every machine rather than at the
       // same tick index: a frame-clocked driver ticks half as often as a Game
       // Boy's, so a fixed tick number would be a different second of the track.
@@ -454,7 +548,7 @@ for (const target of TARGETS) {
         const driver = bound.driver as Driver;
         const effect = driver.performed.effects[0] as ChipScript;
         const owned = channelOfEffect(target, effect);
-        const address = built.symbols.get("AudioTick") as number;
+        const address = target.tickAddress(built, bound);
         const press = Math.round(120 * target.ratio);
         const groups = capture(target, built.bytes, address, Math.round(400 * target.ratio), press);
 
@@ -710,10 +804,18 @@ describe("the example library", async () => {
    * fixture, in exchange for a title screen fitted to the tiles it actually needs
    * rather than to half the bank.
    */
-  const BUILD_TIMEOUT = 120_000;
+  const BUILD_TIMEOUT = 240_000;
 
   for (const target of TARGETS) {
-    for (const [file, dir] of cases) {
+    // The Super Nintendo takes one fixture rather than seven, for the reason the
+    // colour case below takes one: demaking a 256x224 picture into seven
+    // sixteen-colour sub-palettes is thirty seconds of tournament against five,
+    // so seven games' worth would be most of `pnpm test`. The shooter because it
+    // is the tightest in the library — two demade backdrops, nine aliens, a theme
+    // and four effects — and a budget can only decide a cartridge already near
+    // the edge. `rom.test.ts` builds every fixture for this console regardless.
+    const sweep = target.id === "snes" ? cases.filter(([file]) => file === "shooter.dmt") : cases;
+    for (const [file, dir] of sweep) {
       if (OVER_BUDGET[target.id]?.includes(file)) continue;
       it(
         `${file} fits in a ${target.name} cartridge with its music and effects`,

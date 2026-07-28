@@ -2,7 +2,7 @@
   "name": "@demake/snes",
   "version": "0.0.0",
   "private": true,
-  "description": "A self-hosted Super Nintendo core: the Demotic conformance harness, and the web app's in-page player. Platform-pure.",
+  "description": "A self-hosted Super Nintendo core, sound side included: the Demotic conformance harness, and the web app's in-page player. Platform-pure.",
   "type": "module",
   "license": "MIT",
   "sideEffects": false,
@@ -23,6 +23,7 @@
     "build": "tsc --build"
   },
   "devDependencies": {
+    "@demake/chip": "workspace:*",
     "@demake/core": "workspace:*"
   }
 }

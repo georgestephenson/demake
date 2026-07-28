@@ -28,6 +28,7 @@ import type { ChannelFrame, ChipScript, TickWrites } from "../chipscript.js";
 import { countWrites, peakWritesPerTick } from "../chipscript.js";
 import { correlation, resample, resize } from "../dsp.js";
 import { snapPitch } from "../pitch.js";
+import { artifactFormat, encodeSpc } from "../encode/spc.js";
 import { encodeVgm } from "../encode/vgm.js";
 import { inspectScript } from "../inspect.js";
 import { render } from "../render.js";
@@ -374,10 +375,16 @@ export async function demakeSfx(bytes: Uint8Array, options: SfxOptions): Promise
 
   const channelIndex = best.gesture.noise ? noiseIndex : pitchedIndex;
   const channel = spec.channels[channelIndex]!;
-  const artifact = encodeVgm(best.script, {
-    ...(options.title ? { title: options.title } : {}),
-    system: consoleSpec.name,
-  });
+  const artifact =
+    artifactFormat(best.script.chips[0]) === "spc"
+      ? encodeSpc(best.script, {
+          ...(options.title ? { title: options.title } : {}),
+          game: consoleSpec.name,
+        })
+      : encodeVgm(best.script, {
+          ...(options.title ? { title: options.title } : {}),
+          system: consoleSpec.name,
+        });
 
   return {
     script: best.script,

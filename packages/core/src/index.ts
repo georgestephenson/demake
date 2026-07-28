@@ -239,6 +239,38 @@ export {
   type Mode65816,
   type Operand65816,
 } from "./asm/wdc65816.js";
+// The SPC700's constructors collide with both of the above for the same reason
+// and are prefixed for the same reason: `dp` on this CPU is an operand of a
+// different type, in a different address space, on a different processor. The
+// registers (`A`, `X`, `Y`, `YA`, `SP`, `PSW`, `C`) are operands rather than
+// modes here, so they have no counterpart to collide with and keep their names.
+export {
+  A,
+  Asm700,
+  C,
+  PSW,
+  SP,
+  X,
+  Y,
+  YA,
+  abs as spcAbs,
+  absX as spcAbsX,
+  absY as spcAbsY,
+  dp as spcDp,
+  dpX as spcDpX,
+  dpY as spcDpY,
+  idxIndY as spcIdxIndY,
+  imm as spcImm,
+  indIdxX as spcIndIdxX,
+  indX as spcIndX,
+  indXInc as spcIndXInc,
+  indY as spcIndY,
+  type Branch700,
+  type Implied700,
+  type Mnemonic700,
+  type Spc700Operand,
+  type Spc700Tag,
+} from "./asm/spc700.js";
 export {
   SNES_BANK_SIZE,
   SNES_CODE_SIZE,

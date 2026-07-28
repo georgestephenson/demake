@@ -203,6 +203,155 @@ function psgAudio(options: {
   };
 }
 
+const SNES_SOURCES = [
+  "SNESdev Wiki — S-DSP: https://snes.nesdev.org/wiki/S-DSP",
+  "SNESdev Wiki — S-SMP (timers and the boot protocol): https://snes.nesdev.org/wiki/S-SMP",
+];
+
+/**
+ * The S-DSP's pitch lattice, and the first one in the set that counts *up*.
+ *
+ * A voice plays a waveform at `32000 × PITCH / 4096` samples a second, and the
+ * built-in waveforms are one cycle in sixteen samples — so the note is
+ * `32000 × PITCH / 65536`, uniform steps of 0.488 Hz all the way up. Every other
+ * chip here divides, which crowds its lattice at the bottom and thins it at the
+ * top; this one is the reverse, so nothing ever has to be octave-folded to fit
+ * and it is the deepest bass that quantises.
+ */
+const SNES_PITCH = {
+  kind: "multiplier" as const,
+  clockHz: 32000,
+  step: 16 * 4096,
+  minDivider: 1,
+  maxDivider: 16383,
+};
+
+/** Seven bits of level, and it is a *level* rather than an attenuation. */
+const SNES_VOLUME = { steps: 128, law: "linear" as const };
+
+/** The exponential-decrease GAIN mode, which is the chip's own decay. */
+const SNES_ENVELOPE = { kind: "decay" as const, ratePerSecond: 64 };
+
+/**
+ * The Super Nintendo's S-DSP.
+ *
+ * Eight voices of identical hardware, which is why the kinds below are the
+ * *demaker's* assignment rather than the chip's: a voice is a sample player, so
+ * what makes it a pulse or a saw is which of the built-in waveforms the driver
+ * points it at. Fixing the assignment here is what lets the arranger plan against
+ * a stable palette and the driver know its sample bank at build time.
+ *
+ * Six melodic voices is twice what any other console in the set offers, and it is
+ * the one place a demade arrangement is not mostly about what had to go.
+ */
+export const snesAudio: AudioSpec = {
+  chips: ["s-dsp"],
+  channels: [
+    {
+      id: "pulse1",
+      kind: "pulse",
+      chip: 0,
+      pitch: SNES_PITCH,
+      volume: SNES_VOLUME,
+      duties: [0.125, 0.25, 0.5],
+      envelope: SNES_ENVELOPE,
+      panning: "lr-level",
+    },
+    {
+      id: "pulse2",
+      kind: "pulse",
+      chip: 0,
+      pitch: SNES_PITCH,
+      volume: SNES_VOLUME,
+      duties: [0.125, 0.25, 0.5],
+      envelope: SNES_ENVELOPE,
+      panning: "lr-level",
+    },
+    {
+      id: "pulse3",
+      kind: "pulse",
+      chip: 0,
+      pitch: SNES_PITCH,
+      volume: SNES_VOLUME,
+      duties: [0.125, 0.25, 0.5],
+      envelope: SNES_ENVELOPE,
+      panning: "lr-level",
+    },
+    {
+      id: "pulse4",
+      kind: "pulse",
+      chip: 0,
+      pitch: SNES_PITCH,
+      volume: SNES_VOLUME,
+      duties: [0.125, 0.25, 0.5],
+      envelope: SNES_ENVELOPE,
+      panning: "lr-level",
+    },
+    {
+      id: "wave1",
+      kind: "wave",
+      chip: 0,
+      pitch: SNES_PITCH,
+      volume: SNES_VOLUME,
+      waveform: { samples: 16, bits: 4 },
+      envelope: SNES_ENVELOPE,
+      panning: "lr-level",
+    },
+    {
+      id: "wave2",
+      kind: "wave",
+      chip: 0,
+      pitch: SNES_PITCH,
+      volume: SNES_VOLUME,
+      waveform: { samples: 16, bits: 4 },
+      envelope: SNES_ENVELOPE,
+      panning: "lr-level",
+    },
+    {
+      id: "triangle",
+      kind: "triangle",
+      chip: 0,
+      pitch: SNES_PITCH,
+      // Unlike the NES's, this triangle has a volume register like every other
+      // voice: it is a triangle because of the waveform, not because of the wiring.
+      volume: SNES_VOLUME,
+      envelope: SNES_ENVELOPE,
+      panning: "lr-level",
+    },
+    {
+      id: "noise",
+      kind: "noise",
+      chip: 0,
+      volume: SNES_VOLUME,
+      // The noise clock is one five-bit field in `FLG`, shared by every voice
+      // `NON` selects — which is why exactly one voice here is a noise voice.
+      noise: { periods: 32, tonalMode: false },
+      envelope: SNES_ENVELOPE,
+      panning: "lr-level",
+    },
+  ],
+  driver: {
+    // The sound processor has three timers of its own, so the driver's clock is
+    // not borrowed from the picture on this console — the only one in the set
+    // where that is true.
+    sources: ["spc-timer", "vblank"],
+    frameRate: { num: 21477272, den: 357368 },
+    timerRange: [32, 500],
+    // Eight voices stating themselves at once is about fifty writes, and the
+    // sound processor has eight thousand cycles between ticks at 125 Hz — some
+    // thirty of them per write. The bound here is the packed format's own
+    // ceiling rather than the CPU's, which is the only console in the set where
+    // that is true.
+    writesPerTick: 120,
+  },
+  // A schedule lives in the sound chip's own RAM rather than in the cartridge,
+  // and it gets there by being uploaded at boot — so it costs cartridge *and*
+  // sample RAM, and the second budget is the tighter one on a long track.
+  budgets: { romBytes: 16384, sampleRamBytes: 0xc000 },
+  mixing: { channels: 2, linear: true },
+  docs: { sources: SNES_SOURCES },
+};
+
 /** NTSC Master System / SG-1000: 3579545 / (262 × 228) ≈ 59.92 Hz. */
 const SMS_FRAME_RATE = { num: 3579545, den: 59736 };
 
