@@ -67,8 +67,12 @@ export interface GameAudioInput {
    * of the difference, so it is the whole of what this carries: one function
    * applied wherever a register number becomes an address, and nothing above it
    * — not the schedules, not the channel map, not the proof — has to know.
+   *
+   * Named for `PackOptions.port`, which is the same idea reached from the other
+   * end: the Z80's driver stores a port because its chip has no register
+   * numbers, and this one stores a different address for the same registers.
    */
-  regMap?: (reg: number) => number;
+  port?: (reg: number) => number;
 }
 
 /** Sizes and reductions, reported rather than assumed. */
@@ -176,12 +180,17 @@ export function buildGameAudio(input: GameAudioInput): GameAudio {
   const shared = input.tracks.length > 0 && input.effects.length > 0;
   // The boot writes are taken off the *schedules*, not by the packer, so
   // `performed` is exactly what the conformance harness should expect to see.
-  // The map goes on both packing paths, shared or not: it is the console's
-  // wiring, not a consequence of two streams sharing the chip.
-  const at = input.regMap ?? ((reg: number) => reg);
+  // The tag is a factory because one chip in the set latches its channel in the
+  // data byte (`data.ts` §`channelOf`); this one does not, so the factory hands
+  // back the same stateless function every time.
+  //
+  // `port` is the console's wiring rather than the chip's, so it goes on both
+  // packing paths, shared or not: a Mega Duck has this exact APU at
+  // `$FF20`-`$FF46` instead of `$FF10`-`$FF26`.
+  const at = input.port ?? ((reg: number) => reg);
   const packOptions = shared
-    ? { channelOf: gbChannelOf, mergeRegs: new Set([NR51]), regMap: at }
-    : { regMap: at };
+    ? { channelOf: () => gbChannelOf, mergeRegs: new Set([NR51]), port: at }
+    : { port: at };
 
   let restricted = 0;
   const tracks = input.tracks.map((script) => stripBoot(script, boot));
@@ -601,6 +610,13 @@ function emitSfxStart(asm: Asm, state: Layout, input: GameAudioInput): void {
  * values, and the music picks it up again at its next note. Restoring what the
  * music *would* have been playing would mean keeping a shadow of every register
  * on every channel, to hide a gap of at most a few ticks.
+ *
+ * The mask is held in `c` rather than `b` because **`b` is live in the caller**:
+ * `AudioMusicStart` holds the track it was asked for there across this call, and
+ * a scene change that happened while an effect was playing would otherwise start
+ * whichever track the effect's channel mask happened to name — or start one where
+ * the scene asked for silence. `c` is free by then and dead again before
+ * `AudioPan` reaches for it.
  */
 function emitRelease(
   asm: Asm,
@@ -613,12 +629,12 @@ function emitRelease(
   asm.ldha(state.steal);
   asm.alu("or", "a");
   asm.ret("z");
-  asm.ld("b", "a");
+  asm.ld("c", "a");
   asm.alu("xor", "a");
   for (let channel = 0; channel < CHANNEL_OFF.length; channel += 1) {
     if ((stealable & (1 << channel)) === 0) continue;
     const skip = `AudioRelease${channel}`;
-    asm.bit(channel, "b");
+    asm.bit(channel, "c");
     asm.jr(skip, "z");
     asm.stha(at(CHANNEL_OFF[channel] as number));
     asm.label(skip);

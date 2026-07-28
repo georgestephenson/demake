@@ -55,8 +55,30 @@ export type { DacModel } from "./image/dac.js";
 export * as math from "./math/kernels.js";
 export { makePrng, type Prng } from "./math/prng.js";
 
+// --- parallelism -------------------------------------------------------------
+// The executor seam (doc 04 §Running the tournament). Core describes independent
+// work as jobs and never runs it anywhere but here unless an edge hands it
+// somewhere else to run; these are what an edge needs to build that somewhere.
+export {
+  defineJob,
+  describeFailure,
+  inlineExecutor,
+  jobHandlers,
+  runJob,
+  throwFailure,
+  unwrap,
+  type AnyJobKind,
+  type Executor,
+  type Job,
+  type JobFailure,
+  type JobHandlers,
+  type JobKind,
+  type JobOutcome,
+} from "./parallel/jobs.js";
+export { poolExecutor, type Lane } from "./parallel/pool.js";
+
 // --- prep --------------------------------------------------------------------
-export { prep, prepSync } from "./pipeline/prep.js";
+export { prep, coreJobKinds } from "./pipeline/prep.js";
 export {
   buildSpriteBank,
   paletteRegister,
@@ -159,3 +181,31 @@ export {
   type NesHeaderOptions,
   type NesMirroring,
 } from "./asm/nes-cart.js";
+export {
+  AsmZ80,
+  highByte,
+  lowByte,
+  type Imm8,
+  type Z80AluOp,
+  type Z80CC,
+  type Z80Index,
+  type Z80JrCC,
+  type Z80R8,
+  type Z80R16,
+  type Z80ShiftOp,
+} from "./asm/z80.js";
+export {
+  SMS_HEADER_OFFSET,
+  SMS_HEADER_SIZE,
+  SMS_IRQ_VECTOR,
+  SMS_NMI_VECTOR,
+  SMS_ORIGIN,
+  SMS_RAM_END,
+  SMS_RAM_START,
+  SMS_ROM_SIZE,
+  packSegaRom,
+  regionFor,
+  segaChecksum,
+  type SegaHeaderOptions,
+  type SegaRegion,
+} from "./asm/sms-cart.js";

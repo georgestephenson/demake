@@ -157,7 +157,7 @@ rom` and *not* for `demake build`. Encoders pay for more than one console:
 | SM83 | built (`core/src/asm/sm83.ts`) | Game Boy, Game Boy Color, **Mega Duck** |
 | 6502 | built (`core/src/asm/mos6502.ts`) | NES, **Atari 7800**; the CMOS additions extend it to Lynx and Supervision |
 | HuC6280 | a 65C02 superset — additive over the above | PC Engine, TurboExpress |
-| Z80 | new | Master System, Game Gear, SG-1000 |
+| Z80 | built (`core/src/asm/z80.ts`) | Master System, Game Gear; the SG-1000 needs no more of it |
 | 68000 | new | Mega Drive, Neo Geo |
 | 65816 | new, but extends the 6502 | SNES |
 | ARM/Thumb | new | GBA, NDS |
@@ -224,8 +224,11 @@ tighter than the NES.
    E2E all exist already (§Phase 5). 8 KB of work RAM against the NROM's 2 KB,
    hardware scroll, 16 palettes of 16, a 2048-tile budget, and a built-in
    6-channel wavetable PSG that `@demake/chip` would gain.
-3. **Z80** — SG-1000, Master System and Game Gear from one encoder. The SG-1000
-   lands with `unsupported()` naming the camera, which is what that hook is for.
+3. **Z80** — *done for the Master System and the Game Gear*, from one encoder,
+   with an SN76489 driver behind them. **SG-1000** is what the encoder has left
+   to buy: the same CPU against a TMS9918 rather than a Mode 4 VDP, so it is a
+   renderer and a 1 KB memory plan rather than an instruction set, and it lands
+   with `unsupported()` naming the camera — which is what that hook is for.
 4. **WonderSwan Color**, then the **tiled-mono fitter**, then **WonderSwan**. The
    mono machine's blocker is the art path, not the CPU, and the fitter is an
    engine increment that stands on its own.
@@ -323,9 +326,9 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     palettes were chosen for the title screen. Colour costs cartridge — around a
     kilobyte for a game with two demade backdrops — which is a fact the build
     reports rather than hides.
-  - **D4 — breadth** *(`nes` trace-green)*: `nes`, `sms`/`gg`, `md`, `snes`
-    backends, each trace-green then framebuffer-green. A backend is per-family;
-    the `Program` it compiles is not.
+  - **D4 — breadth** *(`nes` and `sms`/`gg` trace-green)*: `nes`, `sms`/`gg`,
+    `md`, `snes` backends, each trace-green then framebuffer-green. A backend is
+    per-family; the `Program` it compiles is not.
 
     The NES half is built: `demake build -c nes` produces a real NROM cartridge
     — 6502 machine code written for the game, art demade by the image pipeline
@@ -371,14 +374,63 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     is the backdrop nametable, which is stored raw; the play screen's would pack
     to a third of its size and the title screen's to about the same, so a
     literal-and-run encoding is worth roughly six hundred bytes a game.
-  - **D5 — Play ROM in the page** *(done for `gb`, `gbc` and `nes`)*: the browser
+
+    **The Sega 8-bits are the third console, and they cost the interface
+    nothing.** `demake build -c sms` (and `-c gg`) produces a real 32 KiB Sega
+    cartridge — Z80 machine code written for the game, `TMR SEGA` header and
+    checksum, art demade into 16-colour tiles — and the whole example library
+    traces identically there, in the same battery, at the same one frame a tick.
+    Nothing moved out of `backend.ts` or `shape.ts` to make room for it, which is
+    the strongest evidence so far that the interface is one: the only thing the
+    Sega backend owns is an instruction set.
+
+    What the Z80 made cheap and what it made dear are both worth recording. The
+    16-bit register file makes 32-bit arithmetic short — `add hl,de` with `adc
+    hl,de` is a 32-bit add in four instructions and no pointer — and `ldir` makes
+    a block copy one instruction, which is what a collision box and a VRAM upload
+    both are. What it lacks is a cheap *region*: there is no page zero and no high
+    RAM, every address is three bytes, so the layout has no `fast` pool at all and
+    the cheapness lives in the registers instead. And the name table is exactly as
+    wide as the screen — thirty-two cells against thirty-two — so a scrolling
+    scene has no spare column to paint into and writes the new one into the cell
+    straddling the masked left edge, which is what `R0` bit 5 is turned on for.
+
+    Framebuffer-green is what remains here too, and behind the same scripted
+    input tape. Until then `sms-rom.test.ts` is the rendering oracle and
+    `sms-arith.test.ts` the arithmetic one — every 16.16 operation assembled on
+    its own, run in `@demake/sms` and compared with `fixed.ts`, because a multiply
+    that floors the wrong way makes a game that plays almost right and diverges a
+    thousand ticks later.
+
+    Sound is no longer the gap: there is a generated Z80 driver (§A5), and both
+    machines carry their music and effects. The design question that was blocking
+    it was in the packer, and it resolved the way it was expected to — the
+    SN76489 puts the channel in the *data* byte and latches it across writes, so
+    `channelOf(reg)` became a *factory* for a `channelOf(reg, value)` carrying a
+    per-schedule latch, and `buildSmsGameAudio` refuses (`E_PSG_LATCH`) rather
+    than guessing if a schedule ever opens a tick with a data byte and no latch in
+    front of it. That refusal is what makes preemption safe: every run of a PSG
+    stream begins with a latch byte, so a run the music skips takes its own
+    channel selection with it.
+
+    The clock is the other thing this console decided for itself. `psgBinding`
+    will fit a rate to the VDP's line interrupt, and for a *game* that is the
+    wrong answer — the line counter is reloaded on every scanline outside the
+    active display, so a line interrupt every N lines fires a handful of times
+    inside the picture and then not at all until the next frame. A game's driver
+    therefore rides the frame at 59.92 Hz, like the NES's and for the same kind of
+    reason, and `fitRate` now treats the frame as the candidate every other clock
+    has to beat rather than as a fallback for when none is in range.
+  - **D5 — Play ROM in the page** *(done for `gb`, `gbc`, `nes`, `sms` and
+    `gg`)*: the browser
     compiles the
     game itself, because the assembler is ours and written in TypeScript, and
     demakes its art with our own rasteriser rather than the browser's. It boots
-    the result in `@demake/dmg` or `@demake/nes` — ours, because doc 07 forbids a
-    CDN core and a WASM core we cannot read is the same bargain in a different
-    wrapper. The bytes are identical to `demake build`'s, pinned by a Playwright
-    spec on *both* consoles, and the pane offers them as a download. Picking a
+    the result in `@demake/dmg`, `@demake/nes` or `@demake/sms` — ours, because
+    doc 07 forbids a CDN core and a WASM core we cannot read is the same bargain
+    in a different wrapper. The bytes are identical to `demake build`'s, pinned by
+    a Playwright spec on *every* console with a backend, and the pane offers them
+    as a download. Picking a
     console in the selector changes the **cartridge**, not a setting on one:
     Game Boy Color builds a `.gbc` that the same core plays in colour because the
     machine it comes up as is the cartridge header's decision, and NES builds a
@@ -487,13 +539,17 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     lead, harmony) with confidences, plus the decoders. *Done means*: an MP3
     becomes a playable cartridge, and the parts it found are reported honestly
     enough that a wrong one can be corrected in one flag.
-  - **A5 — breadth** *(`nes` done, inside a game)*: the 2A03 has a chip model, a
-    binding and a generated 6502 driver, and `demake build -c nes` puts music and
-    effects in the cartridge with doc 16's Level A proof over both. What it does
-    not have yet is a *standalone* audio cartridge — `demake gen … --format rom`
-    is still the Game Boy's alone — because a cartridge whose only job is one
-    track is what the next caller needs and not what a game needed. Remaining:
-    `sms`/`gg`, `md` (FM patch fitting), `snes` (BRR,
+  - **A5 — breadth** *(`nes`, `sms` and `gg` done, inside a game)*: the 2A03 and
+    the SN76489 each have a chip model, a binding and a generated driver — 6502
+    and Z80 — and `demake build -c nes`/`-c sms`/`-c gg` puts music and effects in
+    the cartridge with doc 16's Level A proof over all of them. What none of them
+    has yet is a *standalone* audio cartridge — `demake gen … --format rom` is
+    still the Game Boy's alone — because a cartridge whose only job is one track is
+    what the next caller needs and not what a game needed. The SN76489 is also the
+    one that stretched the shared packing layer: its channel is in the data byte
+    and latched, so `channelOf` became a factory over a per-schedule latch and a
+    schedule that opens a tick with a bare data byte is refused rather than
+    guessed at. Remaining: `md` (FM patch fitting), `snes` (BRR,
     the SPC700 driver, sample budgeting), `gba`, `nds` — each is a chip model, a
     driver backend and a Level A/B harness, on the per-console definition of done
     Phase 2 used for images. Each faces the choice doc 16 §The driver contract

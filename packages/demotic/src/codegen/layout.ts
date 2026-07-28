@@ -28,11 +28,12 @@
  * able to read either machine's entity table with one function.
  */
 
-import { NES_AUDIO_BYTES } from "@demake/audio";
+import { NES_AUDIO_BYTES, SMS_AUDIO_BYTES } from "@demake/audio";
 
 import type { Program } from "../program.js";
 
 import type { Analysis } from "./analyze.js";
+import { ZP_FREE } from "./nes/zp.js";
 
 /** Stored properties, in record order. Index × 4 is the byte offset. */
 export const PROPS = [
@@ -113,14 +114,15 @@ export interface MemoryPlan {
   /** Background cells `number` and `text` objects may occupy at once. */
   plotMax: number;
   /**
-   * Cheap bytes the console's audio driver keeps its own state in, or zero.
+   * Bytes the console's audio driver keeps its own state in, or zero.
    *
    * Zero where the driver has somewhere better to be: the Game Boy's lives in
-   * high RAM, which the allocator does not hand out at all. The NES has no such
-   * region — page zero *is* the cheap region, and the driver's two stream
-   * pointers have to be in it because `($nn),y` is the only indirection the CPU
-   * has — so it takes them from the same pool everything else does, and a game
-   * with no audio takes none.
+   * high RAM, which the allocator does not hand out at all. The other two take
+   * them from the same pool everything else does, for opposite reasons — the
+   * NES's two stream pointers *have* to be in page zero, because `($nn),y` is the
+   * only indirection that CPU has, while the Z80 makes every address the same
+   * width and so gives its driver nowhere better than anywhere else. A game with
+   * no audio takes none either way.
    */
   audioBytes: number;
 
@@ -134,6 +136,24 @@ export interface MemoryPlan {
    * is a plan field and not a colour flag.
    */
   cellAttributes: boolean;
+
+  /**
+   * Bytes this console's interrupt handlers own outright.
+   *
+   * An interrupt writes a byte in the middle of whatever the game was doing, so
+   * that byte cannot be borrowed from anything a routine is using — and the
+   * backend scratch blocks are all explicitly one-routine scratch. Zero on the
+   * consoles whose handlers write somewhere the allocator does not hand out (the
+   * Game Boy's flag is in high RAM) or a block the backend owns alone (the NES's
+   * is one of its own named scratch bytes, saved and restored around the upload
+   * the handler performs).
+   *
+   * The Sega handlers need two: the frame flag the main loop waits on, and the
+   * Pause key's latch. They were in the shared scratch, and a frame interrupt
+   * landing inside the modulo loop of `random()` overwrote its divisor — a draw
+   * that came out wrong every few seconds, at no tick anyone could name.
+   */
+  interruptBytes: number;
 }
 
 /**
@@ -154,6 +174,7 @@ export const GB_MEMORY: MemoryPlan = {
   plotMax: 96,
   audioBytes: 0,
   cellAttributes: false,
+  interruptBytes: 0,
 };
 
 /** The same, for a Game Boy Color: an attribute byte per queued cell. */
@@ -186,16 +207,16 @@ export const MEGADUCK_MEMORY: MemoryPlan = { ...GB_MEMORY, machine: "Mega Duck" 
  * of them, and a queued cell costs more here because the address goes out through
  * a register rather than being the store's own operand.
  *
- * The cheap region starts at `$0010` rather than `$0000` because the backend keeps
- * a handful of named pointers of its own below it (`codegen/nes/zp.ts`): a routine
- * that walks a table needs a pointer at a *fixed* address, not one the allocator
- * chose, and sixteen bytes is what the routines between them use.
+ * The cheap region starts above the backend's own named pointers rather than at
+ * `$0000` (`codegen/nes/zp.ts` owns them, and states where the allocator may
+ * begin): a routine that walks a table needs a pointer at a *fixed* address, not
+ * one the allocator chose.
  */
 export const NES_MEMORY: MemoryPlan = {
   machine: "NES",
   heapStart: 0x0300,
   heapEnd: 0x0800,
-  fastStart: 0x0010,
+  fastStart: ZP_FREE,
   fastEnd: 0x0100,
   oamShadow: 0x0200,
   oamEntries: 64,
@@ -209,6 +230,74 @@ export const NES_MEMORY: MemoryPlan = {
   plotMax: 16,
   audioBytes: NES_AUDIO_BYTES,
   cellAttributes: false,
+  interruptBytes: 0,
+};
+
+/**
+ * The Master System's plan, which is the roomy one again.
+ *
+ * Eight kilobytes of work RAM, like the Game Boy's, and the same freedom with
+ * it. Three things about the range are the hardware's rather than a choice:
+ *
+ *   - It starts at `$C000` and is mirrored at `$E000`, so an address above
+ *     `$E000` is the same byte seen twice and there is nothing to gain from it.
+ *   - The **mapper's four control registers are decoded out of the mirror**, at
+ *     `$FFFC`–`$FFFF` — which is `$DFFC`–`$DFFF` in real RAM. A game that stored
+ *     state there would page a ROM bank out from under itself, so the heap stops
+ *     short of them and the stack sits below.
+ *   - There is **no cheaply-addressed region**, because this CPU does not have
+ *     one. The 6502's page zero and the Game Boy's high RAM both make some
+ *     addresses shorter to reach; the Z80 makes every address the same width and
+ *     puts its cheapness in the register file instead. So no `fastStart`, and the
+ *     allocator hands everything out of one pool.
+ *
+ * The object shadow is a plain RAM copy of the sprite attribute table, uploaded
+ * through the data port in the blanking window. There is no DMA on this machine
+ * to align it for — unlike both other consoles — but keeping it at the bottom of
+ * the heap costs nothing and keeps one upload contiguous.
+ */
+export const SMS_MEMORY: MemoryPlan = {
+  machine: "Master System",
+  heapStart: 0xc100,
+  heapEnd: 0xdf00,
+  oamShadow: 0xc000,
+  oamEntries: 64,
+  viewW: 32,
+  viewH: 24,
+  // A queued cell here carries its own address as well as two bytes of data, so
+  // an entry is four bytes and the count of them is a *byte* — which caps the
+  // queue at sixty rather than at what a blanking interval would hold. Sixty is
+  // what a diagonal scroll needs: a column of twenty-five and a row of
+  // thirty-three, painted in the same frame.
+  queueMax: 60,
+  plotMax: 40,
+  // Out of the same pool as everything else, because the Z80 has no cheap region
+  // to keep them in: a load and a store carry a full address wherever the byte
+  // lives, so there is nothing to be economical about. Both other consoles pay
+  // this reservation somewhere the allocator never sees.
+  audioBytes: SMS_AUDIO_BYTES,
+  // The frame flag and the Pause latch; see {@link MemoryPlan.interruptBytes}.
+  interruptBytes: 2,
+  // A name-table entry carries its palette-select and flip bits in a second
+  // byte, so a queued cell is a tile *and* an attribute — the same shape as the
+  // Game Boy Color's, reached by different hardware.
+  cellAttributes: true,
+};
+
+/**
+ * The same, for a Game Gear: a 160×144 window on the identical VDP.
+ *
+ * The chip renders the whole 256×192 frame either way and the LCD shows the
+ * middle of it, so what changes is how much of the name table a game may treat
+ * as visible — twenty by eighteen cells rather than thirty-two by twenty-four.
+ * Nothing about the memory map differs, because nothing about the memory map is
+ * different.
+ */
+export const GG_MEMORY: MemoryPlan = {
+  ...SMS_MEMORY,
+  machine: "Game Gear",
+  viewW: 20,
+  viewH: 18,
 };
 
 /** Raised when a game needs more state than the machine has. */
@@ -266,6 +355,13 @@ export interface Layout {
    * trace comparable with a sounding one's byte for byte.
    */
   audio: number | null;
+  /**
+   * Bytes the interrupt handlers own, or `null` where they need none.
+   *
+   * The Sega handlers' frame flag and Pause latch; see
+   * {@link MemoryPlan.interruptBytes} for why they cannot be scratch.
+   */
+  interrupt: number | null;
   /** Scratch the emitters use for pointers and counters. */
   scratch: number;
   /** The multiply/divide helpers' operands and workspace. */
@@ -596,17 +692,21 @@ export function planLayout(program: Program, analysis: Analysis, memory: MemoryP
   const oamPrev = fast(1);
   const words = fast(16 * 2);
   // Last, deliberately: the order of these calls is the order of the addresses,
-  // so anything added anywhere else would move every entity record.
+  // so anything added anywhere else would move every entity record. Which is
+  // also why the interrupt bytes go after the driver's rather than beside the
+  // scratch they were taken out of — a console that needs none is unchanged.
   const audio =
     memory.audioBytes > 0 && program.tracks.length + program.sounds.length > 0
       ? fast(memory.audioBytes)
       : null;
+  const interrupt = memory.interruptBytes > 0 ? fast(memory.interruptBytes) : null;
 
   return {
     memory,
     entities,
     used: heap.used,
     fastUsed: quick?.used ?? 0,
+    interrupt,
     tick,
     scene,
     pending,

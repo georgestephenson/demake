@@ -225,6 +225,10 @@ Two further consequences of authoring in cells, unchanged:
   `ConsoleSpec`'s `overscanSafe` rect. The raw NES frame is 30 cells tall but only
   28 are reliably visible, so something at raw `screenheight - 1` sits in
   overscan. `rawscreenwidth`/`rawscreenheight` remain for callers who know.
+  A backdrop is demade at that same safe area rather than at the raw frame, so a
+  picture's edges are the edges the game's rules talk about; the rows past it are
+  drawn with a repeat of the last one, because a television would have cropped
+  them and black would not be an improvement.
 - Speeds are per *second*, divided by the frame rate at compile time, so a 50 Hz
   build plays at the same speed as a 60 Hz one rather than 5/6 as fast.
 
@@ -837,19 +841,20 @@ controls and rules, console-specific only in that constants are folded — and a
 backend then compiles that `Program` into code written for this game and no
 other (§2).
 
-Two backends exist, in `packages/demotic/src/codegen/`: `gb` (SM83) and `nes`
-(6502, NROM). Nothing about either is a table format, so there is no format
-contract to keep in step with an assembly file.
+Three backends exist, in `packages/demotic/src/codegen/`: `gb` (SM83), `nes`
+(6502, NROM) and `sms` (Z80). Nothing about any of them is a table format, so
+there is no format contract to keep in step with an assembly file.
 
-**Two backends, four consoles** — because a console is not always a machine. The
-`gb` backend builds for three: a Game Boy, a Game Boy Color (the same machine
-code with a second half bolted to the renderer, §Colour) and a Mega Duck (the
-same machine code through that console's own I/O page). A variant costs a
-*machine description* — a register table, a permuted `LCDC`, an entry point, a
-cartridge shape — and not one instruction, which is why the whole example library
-traces identically on all four. Before writing a backend, check whether the
-console is a variant of one you have: if you find yourself copying an emitter,
-it is.
+**Three backends, six consoles** — because a console is not always a machine.
+The `gb` backend builds for three: a Game Boy, a Game Boy Color (the same
+machine code with a second half bolted to the renderer, §Colour) and a Mega Duck
+(the same machine code through that console's own I/O page). The `sms` backend
+builds for two, a Master System and a Game Gear. A variant costs a *machine
+description* — a register table, a permuted `LCDC`, an entry point, a cartridge
+shape, a smaller window — and not one instruction, which is why the whole example
+library traces identically on all six. Before writing a backend, check whether
+the console is a variant of one you have: if you find yourself copying an
+emitter, it is.
 
 **A backend is an implementation of an interface, not a file that resembles
 another one.** `codegen/backend.ts` is the contract: a console answers six

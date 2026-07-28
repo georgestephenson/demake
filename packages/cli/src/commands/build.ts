@@ -35,6 +35,7 @@ import {
 import type { ParsedValue } from "@demake/cli-spec";
 
 import type { CliEnv } from "../env.js";
+import { parseJobs, withPool } from "../parallel/pool.js";
 import { EXIT, type ExitCode } from "../exit-codes.js";
 import { CliError, resolveInput } from "../io.js";
 
@@ -198,7 +199,13 @@ export async function runBuild(
   let stats;
   let symbols: ReadonlyMap<string, number>;
   try {
-    const built = buildGame(program, { title, assets: loadAssets(env, program, sourcePath) });
+    const assets = loadAssets(env, program, sourcePath);
+    // Most of a build is the art and audio tournaments, and their candidates
+    // cannot see each other — so they get the machine's cores. The cartridge is
+    // the same bytes whatever `--jobs` says (doc 04 §Running the tournament).
+    const built = await withPool(parseJobs(str(values, "jobs")), (executor) =>
+      buildGame(program, { title, assets, ...(executor === undefined ? {} : { executor }) }),
+    );
     stats = built.stats;
     symbols = built.symbols;
     product = format === "sym" ? new TextEncoder().encode(formatSymbols(symbols)) : built.bytes;
@@ -287,8 +294,13 @@ export async function runBuild(
       for (const note of audio.notes) env.errOut(`  ${note}\n`);
     }
     if (stats.missingAudio.length > 0) {
+      // "not built" rather than "not found", because both are reasons to be here
+      // and only one of them is about the file: a console whose driver does not
+      // exist yet reports every track it was handed, and telling someone their
+      // `rally.mid` is missing when it is sitting next to the `.dmt` sends them
+      // looking in the wrong place.
       env.errOut(
-        `note: no audio found for ${stats.missingAudio.join(", ")}; the game plays without it\n`,
+        `note: no audio was built for ${stats.missingAudio.join(", ")}; the game plays without it\n`,
       );
     }
     if (program.warnings.length > 0) {

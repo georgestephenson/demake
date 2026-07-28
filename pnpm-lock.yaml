@@ -91,6 +91,12 @@ importers:
       '@demake/dmg':
         specifier: workspace:*
         version: link:../dmg
+      '@demake/nes':
+        specifier: workspace:*
+        version: link:../nes
+      '@demake/sms':
+        specifier: workspace:*
+        version: link:../sms
 
   packages/dmg:
     dependencies:
@@ -102,6 +108,16 @@ importers:
         version: link:../core
 
   packages/nes:
+    dependencies:
+      '@demake/chip':
+        specifier: workspace:*
+        version: link:../chip
+    devDependencies:
+      '@demake/core':
+        specifier: workspace:*
+        version: link:../core
+
+  packages/sms:
     dependencies:
       '@demake/chip':
         specifier: workspace:*
@@ -134,6 +150,9 @@ importers:
       '@demake/nes':
         specifier: workspace:*
         version: link:../nes
+      '@demake/sms':
+        specifier: workspace:*
+        version: link:../sms
       preact:
         specifier: ^10.29.7
         version: 10.29.7

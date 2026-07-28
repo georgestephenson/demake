@@ -22,6 +22,7 @@ import type { Program } from "../../program.js";
 import type { Analysis } from "../analyze.js";
 import { CtxBase } from "../ctx.js";
 import type { Layout } from "../layout.js";
+import { selectBank, type SelectedBank } from "../../rom/graphics.js";
 
 /** A branch condition, named as the 6502 names its branches. */
 export type Cond = "eq" | "ne" | "cs" | "cc" | "mi" | "pl";
@@ -41,15 +42,30 @@ export type NesHelperBody = (ctx: NesCtx) => void;
 export class NesCtx extends CtxBase<NesCtx, Asm6502> {
   readonly asm: Asm6502;
 
+  /**
+   * The built-in pattern bank this build pulled.
+   *
+   * On the context rather than threaded through every emitter because a glyph's
+   * tile number is needed wherever a character is drawn — including the decimal
+   * renderer, which is shared code with no notion of a scene's art. It is a
+   * *build*'s bank, not a module constant, because which patterns exist depends
+   * on what the program draws (doc 15 §The conversion path).
+   */
+  readonly bank: SelectedBank;
+
   constructor(
     program: Program,
     analysis: Analysis,
     layout: Layout,
     profile: ConsoleProfile,
     origin: number,
+    // A context built without one — the arithmetic tests do that — gets a bank
+    // with the placeholders and nothing to say, which is what emits no glyphs.
+    bank: SelectedBank = selectBank({ characters: "", patterns: true, objectBlock: true }),
   ) {
     super(program, analysis, layout, profile);
     this.asm = new Asm6502(origin);
+    this.bank = bank;
   }
 
   /** Take a branch of any length: invert it and jump when it cannot reach. */

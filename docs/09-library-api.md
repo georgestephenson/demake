@@ -33,8 +33,10 @@ import {
   prep, gen, inspect,
   consoles, getConsole,
   decodeImage, encodePng,
+  jobHandlers, runJob, poolExecutor, coreJobKinds,   // the executor seam (doc 04)
   type PrepOptions, type GenOptions, type PrepResult, type GenResult,
   type ConsoleSpec, type CompliantImage, type Manifest,
+  type Executor, type Job, type JobOutcome, type Lane,
 } from "@demake/core";
 
 // --- prep --------------------------------------------------------------------
@@ -57,6 +59,7 @@ const res: PrepResult = await prep(inputBytes, {
   strict?: boolean,
   onProgress?: (stage: string, fraction: number) => void,
   signal?: AbortSignal,
+  executor?: Executor,              // where the tournament's candidates run (doc 04 §Running the tournament)
 });
 // res: { png: Uint8Array; image: CompliantImage; manifest: Manifest;
 //        decisions: AutoDecisions; stats: FitStats; warnings: Warning[];
@@ -125,7 +128,7 @@ trace(sim, tape("1:a,90:,90:left"));            // the conformance oracle, as te
 runTests(parseTests(suite), program);           // assertions, per console
 
 const assets = new Map([["ball.svg", svgBytes]]);                 // the art it names
-const { bytes, stats } = buildGbRom(program, { title: "PONG", assets });
+const { bytes, stats } = await buildGbRom(program, { title: "PONG", assets });
 unsupportedFeatures(program);                   // [] when the backend can build it
 ```
 
@@ -133,7 +136,10 @@ unsupportedFeatures(program);                   // [] when the backend can build
 the helper routines something in it reached, and demakes the art it was given
 through `@demake/core` on the way. The assembler is TypeScript, so it needs no
 toolchain and runs in a browser, and passing the same assets gives the same
-bytes on both. It throws rather than emit a cartridge that would play
+bytes on both. It is `async` because most of a build is the art and audio
+tournaments and those may be spread across cores — pass `executor` to say where
+(doc 04 §Running the tournament); leave it out and everything runs on the calling
+thread, for the same cartridge. It throws rather than emit a cartridge that would play
 differently from `Sim`, which is what `unsupportedFeatures` lets a caller ask
 about first. `stats` reports the code size, the work RAM used, the helpers that
 survived, and any art the program named but was not given.
@@ -161,7 +167,7 @@ const music = await arrange(midiBytes, {
   transpose?: number | "auto",
   effort?: "fast" | "default" | "max",
   seed?: number, strict?: boolean,
-  onProgress?, signal?,
+  onProgress?, signal?, executor?,   // `sfx` fans its gesture families out too (doc 18)
 });
 // music: { script: ChipScript; artifact: Uint8Array;  // the .vgm/.spc/.dmm
 //          manifest: AudioManifest; score: Score;     // what analysis understood
@@ -197,6 +203,11 @@ agents and users can measure exactly what the tournament measured.
   same PR (doc 10 §Goldens). Patch releases never change output bytes.
 - **Cross-platform determinism**: same bytes on Node/browser/all OSes — enforced in
   CI. This is why the core forbids platform codecs and `Math.random` (lint rules).
+- **And the same bytes on any number of cores.** A tournament may be spread over
+  an `executor` (doc 04 §Running the tournament), and the machine it ran on is not
+  an input: the winner is reduced in portfolio order, so `--jobs 1` and `--jobs 16`
+  are the same file. Lane count is therefore never reported in `--json` or a
+  manifest — it is not part of what was produced.
 - **Demotic semantics are output bytes too**: a change that alters any golden
   trace is a minor bump on `@demake/demotic`, with traces re-baselined, a
   changeset and a release-note line, in the same PR. Patch releases never change

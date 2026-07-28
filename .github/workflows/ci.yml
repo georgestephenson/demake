@@ -14,9 +14,35 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Affected gates
+    runs-on: ubuntu-latest
+    # Which gates this change can actually break, derived from the workspace
+    # dependency graph rather than a hand-written path list (doc 11 §Affected-only
+    # gates). A push to `main` passes no base ref, so `main` always runs the whole
+    # matrix: the PR is what gets fast, the branch releases are cut from stays
+    # fully proven.
+    outputs:
+      unit: ${{ steps.affected.outputs.unit }}
+      browser: ${{ steps.affected.outputs.browser }}
+      lighthouse: ${{ steps.affected.outputs.lighthouse }}
+      e2e: ${{ steps.affected.outputs.e2e }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The base commit has to be in the clone for `git diff base...HEAD` to
+          # answer; without it the script fails open and runs everything.
+          fetch-depth: 0
+      - id: affected
+        run: node tools/ci/affected.mjs
+        env:
+          DEMAKE_BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+
   lint:
     name: Lint & typecheck
     runs-on: ubuntu-latest
+    # Never gated: it is forty seconds and it is the one job that reads every
+    # file in the repo, including the paths the affected script calls inert.
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
@@ -32,6 +58,8 @@ jobs:
 
   test-unit:
     name: Unit (${{ matrix.os }}, Node ${{ matrix.node }})
+    needs: changes
+    if: needs.changes.outputs.unit == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -48,13 +76,26 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # Build first so the spawned-binary surface test runs against real dist.
       - run: pnpm build
+      # The whole suite, never a subset of its files: `vitest.config.ts` aliases
+      # every `@demake/*` specifier to source, so a test can import a package its
+      # own package.json does not declare. Job-level gating only ever asks
+      # whether a package is in the closure, which that hazard cannot affect.
       - run: pnpm test
 
   test-browser:
-    name: "Browser (Playwright: determinism + functional)"
+    name: "Browser (${{ matrix.browser }})"
+    needs: changes
+    if: needs.changes.outputs.browser == 'true'
     runs-on: ubuntu-latest
     # doc 07 §Principles + doc 10 §Determinism: the web app must produce
-    # byte-identical output to the CLI, in three independent engines.
+    # byte-identical output to the CLI, in three independent engines. One job per
+    # engine — the three ran sequentially inside a single job for five and a half
+    # minutes, which was the whole run's critical path while every other job had
+    # been finished for three.
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
@@ -64,24 +105,41 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      - name: Install browsers
-        run: pnpm --filter @demake/web exec playwright install --with-deps chromium firefox webkit
+      - name: Cache the browser download
+        id: browser-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ matrix.browser }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - name: Install the browser
+        if: steps.browser-cache.outputs.cache-hit != 'true'
+        run: pnpm --filter @demake/web exec playwright install --with-deps ${{ matrix.browser }}
+      # The download is cacheable; the apt packages it needs are not, so a cache
+      # hit still has to put the system libraries back (WebKit is the one this
+      # matters for).
+      - name: Install the browser's system dependencies
+        if: steps.browser-cache.outputs.cache-hit == 'true'
+        run: pnpm --filter @demake/web exec playwright install-deps ${{ matrix.browser }}
       - run: pnpm test:browser
-      - name: JS budget (doc 07 §Quality bar)
-        run: pnpm build:web && node tools/ci/check-web-budget.mjs
+        env:
+          DEMAKE_BROWSERS: ${{ matrix.browser }}
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.browser }}
           path: packages/web/playwright-report
           retention-days: 7
 
-  lighthouse:
-    name: Lighthouse budget (web)
+  web-quality:
+    name: Web budget & Lighthouse
+    needs: changes
+    if: needs.changes.outputs.lighthouse == 'true'
     runs-on: ubuntu-latest
     # The site is built here rather than inside Lighthouse's `startServerCommand`,
     # so the server-ready window never races a compile, and it is audited at the
-    # `/demake/` base Pages actually serves it from.
+    # `/demake/` base Pages actually serves it from. The JS budget rides along
+    # because it needs the same build and nothing else: it was costing the browser
+    # job a second `build:web` after the Playwright run.
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
@@ -92,6 +150,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm build:web
+      - name: JS budget (doc 07 §Quality bar)
+        run: node tools/ci/check-web-budget.mjs
       # Three runs, asserted against the best of them (lhci's default
       # `optimistic` aggregation for a `minScore`). Noise on a shared runner
       # only ever makes a page look slower than it is, so the least-contaminated
@@ -116,10 +176,12 @@ jobs:
 
   test-e2e:
     name: Pixel-perfect E2E (ROM → emulator)
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-latest
     # The ROM + emulator loop of doc 10: assemblers and libretro cores are built
     # from source (or installed from the distro archive) and cached, then the
-    # same `pnpm test` runs with every self-skipping E2E enabled. This is what
+    # self-skipping E2E suites run with every one of them present. This is what
     # makes "supported" mean supported (doc 13 §Phase 2).
     steps:
       - uses: actions/checkout@v5
@@ -155,4 +217,35 @@ jobs:
           LIBRETRO_STRICT: "1"
       - name: Fail if any console E2E would silently self-skip
         run: node tools/ci/check-e2e-ready.mjs
-      - run: pnpm test
+      # Only the suites that need a toolchain. This job used to run `pnpm test`,
+      # which re-ran the entire unit suite a second time on the same runner
+      # image the `Unit (ubuntu-latest, Node 22)` job had already run it on —
+      # and no test outside a `*.e2e.test.ts` behaves differently for having an
+      # assembler on PATH.
+      - run: pnpm test:rom-e2e
+
+  gate:
+    name: CI gate
+    if: always()
+    needs: [changes, lint, test-unit, test-browser, web-quality, test-e2e]
+    runs-on: ubuntu-latest
+    # One check name for branch protection to require, so which jobs a PR skips
+    # is a CI decision rather than something a human has to keep in the repo
+    # settings. A skipped job is a pass; anything else — failed, cancelled,
+    # timed out — is not.
+    steps:
+      - name: Require every job that ran to have succeeded
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS"
+          bad=$(echo "$RESULTS" | jq -r '
+            to_entries[]
+            | select(.value.result != "success" and .value.result != "skipped")
+            | "  \(.key): \(.value.result)"')
+          if [ -n "$bad" ]; then
+            echo "These jobs did not pass:"
+            echo "$bad"
+            exit 1
+          fi
+          echo "Every job that ran passed."

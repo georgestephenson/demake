@@ -5,6 +5,13 @@
  * calls exactly the API the CLI calls — same `prep`, same `gen`, same manifest
  * builder — so browser output is byte-identical to `demake` on the command line
  * (doc 10 §Determinism). Nothing here reads the DOM, the network, or storage.
+ *
+ * Building a game's cartridge is here for the same reason and one more. The
+ * same reason: `buildGame` demakes the art the game names through this very
+ * engine, so it is seconds of arithmetic that would otherwise freeze the tab.
+ * The one more: it is the *only* place the image engine is bundled, so the
+ * whole site ships one copy of it rather than one per thread that wanted it —
+ * which is what the doc 07 §Quality bar budget is a sum in order to notice.
  */
 
 import {
@@ -14,18 +21,29 @@ import {
   consoles,
   encodeManifest,
   encodeRgbaPng,
+  coreJobKinds,
   gen,
+  jobHandlers,
+  poolExecutor,
   prep,
   renderCompliant,
+  runJob,
   sourceHash,
   strategies,
   type ConsoleSpec,
+  type Executor,
+  type Job,
+  type JobOutcome,
+  type Lane,
   type PrepOptions,
 } from "@demake/core";
+import { audioJobKinds } from "@demake/audio";
+import { buildGame, familyFor, romExtension, unsupportedFor } from "@demake/demotic";
 
 import { buildDemoImage } from "../lib/demo-image.js";
 import { toPrepOptions } from "../lib/options.js";
 import type {
+  BuiltRomPayload,
   ConsoleInfo,
   GenArtifactPayload,
   PaletteSwatches,
@@ -165,6 +183,40 @@ function demoPng(): ArrayBuffer {
   return copy.buffer;
 }
 
+/**
+ * Compile a game to a cartridge, exactly as `demake build` does.
+ *
+ * The refusal case is a *result*, not an error: a console whose backend cannot
+ * do what the `.dmt` asks for has a working game and no cartridge, and the
+ * caller needs the console and the extension in order to say so.
+ */
+async function runBuildGame(
+  program: Parameters<typeof buildGame>[0],
+  title: string,
+  assets: Map<string, Uint8Array>,
+): Promise<BuiltRomPayload> {
+  const consoleId = program.profile.id;
+  const base = {
+    console: consoleId,
+    family: familyFor(consoleId) ?? "gb",
+    extension: romExtension(program),
+    unsupported: [...unsupportedFor(program)],
+  };
+  if (base.unsupported.length > 0) return base;
+  // Most of a build is the art and audio tournaments, and their candidates
+  // cannot see each other — so they go to the lanes if the page gave us any
+  // (doc 04 §Running the tournament). The cartridge is the same bytes either
+  // way, which is what `determinism.spec.ts` compares against the CLI's.
+  const built = await buildGame(program, {
+    title,
+    assets,
+    ...(lanes === undefined ? {} : { executor: lanes }),
+  });
+  // `slice()` because the ROM is transferred: a cartridge built out of a bank
+  // the assembler still holds a view on would be handed away underneath it.
+  return { ...base, rom: built.bytes.slice().buffer, layout: built.layout };
+}
+
 function post(message: WorkerResponse, transfer: Transferable[] = []): void {
   (self as unknown as Worker).postMessage(message, transfer);
 }
@@ -182,11 +234,83 @@ function errorResponse(id: number, err: unknown): WorkerResponse {
   return { id, ok: false, code: "E_INTERNAL", message: String((err as Error)?.message ?? err) };
 }
 
+/**
+ * Both engines' job tables, which is what makes every instance of this worker a
+ * pool lane (doc 04 §Running the tournament).
+ *
+ * `@demake/audio`'s as well as `@demake/core`'s, because this worker already
+ * pulls in both — it builds cartridges, and a cartridge's music and effects are
+ * demade here too. One lane therefore answers for a whole build rather than
+ * needing a second kind of worker for the sound half.
+ */
+const handlers = jobHandlers([...coreJobKinds, ...audioJobKinds]);
+
+/**
+ * The lanes, once the page has handed them over. Absent until then, and absent
+ * in a lane itself — a lane is sent no ports, so a job never fans out again.
+ */
+let lanes: Executor | undefined;
+
+/** Answer job requests arriving on `port` — what a lane does, and all it does. */
+function serve(port: MessagePort): void {
+  port.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
+    const request = event.data;
+    if (request.kind !== "job") return;
+    const reply: WorkerResponse = {
+      id: request.id,
+      ok: true,
+      kind: "job",
+      outcome: runJob(handlers, request.job),
+    };
+    port.postMessage(reply);
+  });
+  port.start();
+}
+
+/** Turn one port into a lane: one job at a time, which is `poolExecutor`'s contract. */
+function laneFor(port: MessagePort): Lane {
+  let nextId = 1;
+  const waiting = new Map<number, (outcome: JobOutcome) => void>();
+  port.addEventListener("message", (event: MessageEvent<WorkerResponse>) => {
+    const reply = event.data;
+    if (!("ok" in reply) || !reply.ok || reply.kind !== "job") return;
+    const settle = waiting.get(reply.id);
+    waiting.delete(reply.id);
+    settle?.(reply.outcome);
+  });
+  port.start();
+  return (job: Job) =>
+    new Promise<JobOutcome>((resolve) => {
+      const id = nextId;
+      nextId += 1;
+      waiting.set(id, resolve);
+      const request: WorkerRequest = { id, kind: "job", job };
+      port.postMessage(request);
+    });
+}
+
 self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
   const req = event.data;
   void (async () => {
     try {
       switch (req.kind) {
+        case "job": {
+          // A pool lane. Nothing here is image-specific: this worker holds both
+          // engines' dispatch tables and runs whatever kind it is handed, and a
+          // failure comes back as data rather than as a dead worker.
+          post({ id: req.id, ok: true, kind: "job", outcome: runJob(handlers, req.job) });
+          return;
+        }
+        case "lanes": {
+          lanes = req.ports.length > 0 ? poolExecutor(req.ports.map(laneFor)) : undefined;
+          post({ id: req.id, ok: true, kind: "lanes" });
+          return;
+        }
+        case "serve": {
+          serve(req.port);
+          post({ id: req.id, ok: true, kind: "serve" });
+          return;
+        }
         case "consoles": {
           post({ id: req.id, ok: true, kind: "consoles", consoles: consoleList() });
           return;
@@ -227,6 +351,14 @@ self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
           post(
             { id: req.id, ok: true, kind: "gen", artifacts },
             artifacts.map((a) => a.bytes),
+          );
+          return;
+        }
+        case "build-game": {
+          const result = await runBuildGame(req.program, req.title, req.assets);
+          post(
+            { id: req.id, ok: true, kind: "build-game", result },
+            result.rom ? [result.rom] : [],
           );
           return;
         }

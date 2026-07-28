@@ -10,6 +10,16 @@
  * Initialization is deterministic k-means++ seeded from the {@link Prng}, so the
  * whole thing is reproducible; empty clusters are re-seeded from the worst-fit
  * point rather than dropped, keeping the palette full.
+ *
+ * **How often a cluster empties is the console's, not the picture's.** A
+ * centroid is snapped to the hardware lattice every iteration, so on a coarse
+ * one two centroids land on the same colour and one of them loses all its
+ * members: a Master System's sixty-four colours empty several clusters most
+ * iterations where a Game Gear's four thousand ninety-six almost never do. That
+ * is why the reseed is on the assignment scan's own answer rather than in a pass
+ * of its own — it used to be the single most expensive thing in the pipeline for
+ * exactly one family of consoles, and it was recomputing what had just been
+ * found.
  */
 
 import { deltaESq, oklabToLinear, type Oklab } from "../color/oklab.js";
@@ -109,8 +119,17 @@ export function latticeKmeans(
 
   const assign = new Int32Array(points.count);
   for (let iter = 0; iter < iterations; iter += 1) {
-    // Assignment step.
+    // Assignment step, which also finds the point that fits worst.
+    //
+    // The two are the same scan: "how far is this point from its nearest centre"
+    // is what assignment computes and what a reseed needs, so keeping the answer
+    // costs a multiply and a compare per point and saves a second pass over
+    // every point and every centre. The tie-break is the same one the separate
+    // scan used — the first index with a strictly greater score — so the reseed
+    // picks exactly the point it picked before.
     let moved = false;
+    let worst = 0;
+    let worstScore = -1;
     for (let i = 0; i < points.count; i += 1) {
       const lab = labAt(points, i);
       let best = 0;
@@ -124,6 +143,11 @@ export function latticeKmeans(
       }
       if (assign[i] !== best) moved = true;
       assign[i] = best;
+      const scored = bestD * points.weight[i]!;
+      if (scored > worstScore) {
+        worstScore = scored;
+        worst = i;
+      }
     }
 
     // Update step: weighted Oklab mean → linear → snap.
@@ -151,8 +175,11 @@ export function latticeKmeans(
         const lin = oklabToLinear(lab);
         next.push(space.snapLinear(lin.r, lin.g, lin.b));
       } else {
-        // Empty cluster: reseed from the worst-fit point (deterministic).
-        const worst = worstFitPoint(points, centers, lWeight);
+        // Empty cluster: reseed from the worst-fit point (deterministic). Every
+        // empty cluster in one iteration reseeds from the *same* point — the
+        // answer depends on `points` and on the centres this iteration assigned
+        // against, and neither changes while the new centres accumulate into
+        // `next`.
         const lab = labAt(points, worst);
         const lin = oklabToLinear(lab);
         next.push(space.snapLinear(lin.r, lin.g, lin.b));
@@ -209,25 +236,6 @@ function collapseToMembers(
     }
     return bestColor;
   });
-}
-
-function worstFitPoint(points: Points, centers: HwColor[], lWeight: number): number {
-  let worst = 0;
-  let worstD = -1;
-  for (let i = 0; i < points.count; i += 1) {
-    const lab = labAt(points, i);
-    let bestD = Infinity;
-    for (const c of centers) {
-      const d = deltaESq(lab, c.lab, lWeight);
-      if (d < bestD) bestD = d;
-    }
-    const scored = bestD * points.weight[i]!;
-    if (scored > worstD) {
-      worstD = scored;
-      worst = i;
-    }
-  }
-  return worst;
 }
 
 /** Remove duplicate hardware colors (same raw codes), preserving order. */

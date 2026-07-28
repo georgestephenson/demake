@@ -38,10 +38,13 @@
  * on: with nothing preempting it, a run-packed stream performs exactly the
  * writes the `ChipScript` lists, in order, exactly as the flat one does.
  *
- * Registers are stored as the low byte of their hardware address, so the driver
- * writes them with `ld [$FF00+c], a` and the packed data reads the way the Pan
- * Docs do. That is a Game Boy detail living in a shared file, and it is the only
- * one: a chip whose registers are not in high RAM would carry a full address.
+ * What the register byte *means* is the console's, through
+ * {@link PackOptions.port}. The Game Boy stores the low byte of the register's
+ * hardware address, so the driver writes it with `ld [$FF00+c], a` and the packed
+ * data reads the way the Pan Docs do; the NES stores the same byte for an
+ * unrelated reason, its registers being `$4000 + reg`. The SN76489 has no
+ * register numbers at all — one port, and the addressing is inside the value — so
+ * it stores the port. One byte in every case, and no driver pays to translate.
  */
 
 import type { RegisterWrite } from "@demake/chip";
@@ -67,17 +70,34 @@ export const RUN = {
   channels: 0x0f,
 } as const;
 
+/**
+ * Which channels a write belongs to; `0` for one that belongs to none.
+ *
+ * A *function of the value as well as the register*, because on one of these
+ * chips the register number says nothing at all: an SN76489 is written through a
+ * single port and carries the channel in the top bits of the data byte — and
+ * carries it *latched*, so a byte with bit 7 clear continues whatever the byte
+ * before it selected.
+ */
+export type ChannelTag = (reg: number, value: number) => number;
+
 /** How a stream shares the chip with the other one, when there is another. */
 export interface PackOptions {
   /**
-   * Channel bits a register belongs to; `0` for one that belongs to no channel.
+   * Channel bits a register belongs to, as a **factory**.
    *
    * Supplying it packs the stream in runs (see the format note above), which is
    * what a driver needs to skip a preempted channel cheaply. Leaving it out
    * packs the flat format, which is what a cartridge that owns the whole chip
    * wants.
+   *
+   * A factory rather than a plain function because a {@link ChannelTag} may
+   * carry a latch, and a latch is per *schedule*: two calls to `packScript`
+   * sharing one would tag the second stream's opening bytes from the first
+   * stream's last write. `packScript` asks for a fresh tag once and walks the
+   * ticks in order, which is exactly the order the chip will see them in.
    */
-  channelOf?: (reg: number) => number;
+  channelOf?: () => ChannelTag;
   /**
    * Registers whose writes are merges under a mask rather than plain stores.
    *
@@ -86,6 +106,20 @@ export interface PackOptions {
    * a stream must only ever change its own bits.
    */
   mergeRegs?: ReadonlySet<number>;
+  /**
+   * How a register number is written into the packed data.
+   *
+   * The Game Boy and the NES store the register itself, because their drivers
+   * turn it into an address by adding a base (`$FF00` and `$4000`). A Z80 reaches
+   * its chip through `out (c), a`, so the SN76489's driver stores the **port** —
+   * one byte either way, and a translation the write loop would otherwise pay for
+   * on every write of every tick. Defaults to the register unchanged.
+   *
+   * It never reaches {@link PackOptions.channelOf} or
+   * {@link PackOptions.mergeRegs}: both are asked about the schedule's own
+   * register, so a console that renumbers here does not renumber those.
+   */
+  port?: (reg: number) => number;
   /**
    * Writes performed once, elsewhere, and therefore stripped from tick 0.
    *
@@ -106,26 +140,6 @@ export interface PackOptions {
    * the music with it.
    */
   end?: "silence" | "stop";
-  /**
-   * Where a register lives on the machine this data is *for*.
-   *
-   * Everything above works in the chip's own register numbers — `channelOf`,
-   * `mergeRegs`, the boot comparison, the `ChipScript` the proof diffs against —
-   * because those are facts about the chip. Which address the CPU stores to is a
-   * fact about the *console*, and the two came apart when the Mega Duck arrived:
-   * it has the Game Boy's APU wired to `$FF20`–`$FF46` with four pairs swapped.
-   *
-   * So the translation happens once, here, at the last moment before a register
-   * becomes a byte. A schedule packed with a map performs the same writes to the
-   * same chip; only the addresses differ, which is exactly what the console
-   * changed. Defaults to identity.
-   */
-  regMap?: (reg: number) => number;
-}
-
-/** The register a write lands on, after the console's own wiring. */
-function mapped(options: PackOptions, reg: number): number {
-  return (options.regMap?.(reg) ?? reg) & 0xff;
 }
 
 /** Raised when a schedule cannot be packed for a console. */
@@ -177,6 +191,9 @@ export interface DriverData {
 export function packScript(script: ChipScript, options: PackOptions = {}): DriverData {
   const total = script.ticks.length;
   const ticks = tickWrites(script, options.boot ?? []);
+  // One tag for this schedule, walked in tick order — see `PackOptions.channelOf`
+  // for why it cannot be shared with the next call.
+  const tag = options.channelOf?.();
   const oneShot = script.loopTick < 0;
   const loopTick = oneShot ? total : Math.min(Math.max(script.loopTick, 0), total);
 
@@ -197,7 +214,7 @@ export function packScript(script: ChipScript, options: PackOptions = {}): Drive
     const end = cuts[cut + 1]!;
     if (end <= start) continue;
     if (start === loopTick) loopOrderIndex = order.length;
-    const body = encodeBlock(ticks, start, end, options);
+    const body = encodeBlock(ticks, start, end, options, tag);
     if (body.rests) hasRests = true;
     if (body.merges) hasMerges = true;
     const key = keyOf(body.bytes);
@@ -218,7 +235,7 @@ export function packScript(script: ChipScript, options: PackOptions = {}): Drive
   // `destroy` in Demotic — an inert thing it already knows how to represent
   // beats a second mode it would have to be right about.
   if (oneShot && (options.end ?? "silence") === "silence") {
-    const stop = silenceBlock(script, options);
+    const stop = silenceBlock(script, options, tag);
     hasRests = true;
     const key = keyOf(stop);
     let at = index.get(key);
@@ -290,7 +307,9 @@ function encodeBlock(
   start: number,
   end: number,
   options: PackOptions,
+  tag: ChannelTag | undefined,
 ): { bytes: Uint8Array; rests: boolean; merges: boolean } {
+  const port = options.port ?? ((reg: number) => reg);
   const out: number[] = [];
   let rests = false;
   let merges = false;
@@ -314,10 +333,10 @@ function encodeBlock(
         "the console's per-tick write budget is far below this, so the schedule would overrun its tick on hardware too; `demake inspect` reports it.",
       );
     }
-    if (options.channelOf === undefined) {
+    if (tag === undefined) {
       out.push(writes.length);
-      for (const write of writes) out.push(mapped(options, write.reg), write.value & 0xff);
-    } else if (encodeRuns(out, writes, options)) {
+      for (const write of writes) out.push(port(write.reg) & 0xff, write.value & 0xff);
+    } else if (encodeRuns(out, writes, options, tag)) {
       merges = true;
     }
     tick += 1;
@@ -337,11 +356,15 @@ function encodeRuns(
   out: number[],
   writes: readonly RegisterWrite[],
   options: PackOptions,
+  channelOf: ChannelTag,
 ): boolean {
-  const channelOf = options.channelOf as (reg: number) => number;
+  const port = options.port ?? ((reg: number) => reg);
   const merge = options.mergeRegs ?? new Set<number>();
+  // Tagged in the order the chip will see them, and every write is offered to
+  // the tag even when it turns out to belong to no channel: a latching chip
+  // updates its selection from writes the run format then never asks about.
   const tags = writes.map((write) => ({
-    channels: channelOf(write.reg) & RUN.channels,
+    channels: channelOf(write.reg, write.value) & RUN.channels,
     merge: merge.has(write.reg),
   }));
 
@@ -369,7 +392,7 @@ function encodeRuns(
     if (tag.merge) merged = true;
     out.push(to - from, flags);
     for (let index = from; index < to; index += 1) {
-      out.push(mapped(options, writes[index]!.reg), writes[index]!.value & 0xff);
+      out.push(port(writes[index]!.reg) & 0xff, writes[index]!.value & 0xff);
     }
   }
   return merged;
@@ -382,13 +405,18 @@ function encodeRuns(
  * of registers repeated here, so a chip whose "off" is not `NRx2 = 0` cannot
  * end up with a sound effect that rings forever.
  */
-function silenceBlock(script: ChipScript, options: PackOptions): Uint8Array {
+function silenceBlock(
+  script: ChipScript,
+  options: PackOptions,
+  tag: ChannelTag | undefined,
+): Uint8Array {
+  const port = options.port ?? ((reg: number) => reg);
   const off = silenceWrites(script.console);
   const out: number[] = [];
-  if (options.channelOf === undefined) {
-    out.push(off.length, ...off.flatMap((w) => [mapped(options, w.reg), w.value]));
+  if (tag === undefined) {
+    out.push(off.length, ...off.flatMap((w) => [port(w.reg), w.value]));
   } else {
-    encodeRuns(out, off, options);
+    encodeRuns(out, off, options, tag);
   }
   out.push(0x80 | (MAX_REST - 1), 0x00);
   return Uint8Array.from(out);
@@ -396,9 +424,12 @@ function silenceBlock(script: ChipScript, options: PackOptions): Uint8Array {
 
 /** Note-off for each channel, by console family. */
 function silenceWrites(consoleId: string): { reg: number; value: number }[] {
-  // Only the Game Boy family has a driver backend; `buildAudioRom` refuses the
-  // rest before anything reaches here, so this stays a fact about one chip
-  // rather than a table that quietly grows wrong entries.
+  // Reached only by a *cartridge* whose one job is a sound effect, and the Game
+  // Boy family is the only one that builds such a cartridge — `buildAudioRom`
+  // refuses the rest before anything gets here, and a game's effects ask for
+  // `end: "stop"` instead, because a block that silenced every channel would
+  // take the music with it. So this stays a fact about one chip rather than a
+  // table that quietly grows wrong entries for the other two.
   void consoleId;
   return [
     { reg: 0x12, value: 0x00 },

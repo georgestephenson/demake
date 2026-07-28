@@ -31,23 +31,25 @@ import {
   backendFor,
   buildSpriteBank,
   getConsole,
-  prepSync,
+  prep,
+  type Executor,
   type SpriteBank,
   type SpriteSource,
 } from "@demake/core";
 
 import type { Program } from "../program.js";
-import { builtinChr, BUILTIN_TILES, TILE_BYTES } from "../rom/graphics.js";
+import { selectBank, TILE_BYTES, type SelectedBank } from "../rom/graphics.js";
 
 import { artRequests, TilePool, type AssetBytes } from "./art.js";
+import { artKey, instanceCells } from "./shape.js";
 import { NES_MEMORY } from "./layout.js";
 import { ART_PALETTES, SYSTEM_PALETTE, type NesEmitOptions } from "./nes/emit.js";
 
 /** Patterns one table holds; the console has two, and they do not share. */
 export const PATTERNS_PER_TABLE = 256;
 
-/** Patterns left for art once the built-in bank has its share of a table. */
-export const ART_PATTERNS = PATTERNS_PER_TABLE - BUILTIN_TILES;
+/** Background sub-palettes a picture may use: all of them (see `packBackdropPalette`). */
+export const BACKDROP_PALETTES = 4;
 
 /** What the art binding produced, beyond the emitter's own options. */
 export interface BoundNesArt {
@@ -59,6 +61,17 @@ export interface BoundNesArt {
   /** Patterns it added to each table, which is what the hardware budget is. */
   backgroundPatterns: number;
   objectPatterns: number;
+  /** Patterns the built-in bank took out of both tables. */
+  bankPatterns: number;
+  /**
+   * What each scene's picture was demade against, by scene name.
+   *
+   * Reported because it is the difference between a title screen and a smudge,
+   * and because it is what makes the claim checkable: the cartridge's picture is
+   * `prep`'s picture at *this* budget, and `nes-rom.test.ts` compares them cell
+   * by cell rather than taking it on trust.
+   */
+  backdropFits: ReadonlyMap<string, { table: 0 | 1; budget: number }>;
   /** Files the program names that no bytes were supplied for. */
   missing: readonly string[];
 }
@@ -78,11 +91,60 @@ export interface BoundNesArt {
  * scene in the example library whose backdrop the fit made white.
  */
 function systemRamp(backdrop: number): readonly number[] {
-  const master = getConsole("nes").color;
-  const colour = master.masterPalette?.[backdrop & 0x3f];
-  // Rec. 601 luma, which is what "light or dark" means to an eye.
-  const luma = colour ? 0.299 * colour.r + 0.587 * colour.g + 0.114 * colour.b : 0;
-  return luma > 128 ? [backdrop, 0x10, 0x00, 0x0f] : [backdrop, 0x00, 0x10, 0x30];
+  return luma(backdrop) > 128 ? [backdrop, 0x10, 0x00, 0x0f] : [backdrop, 0x00, 0x10, 0x30];
+}
+
+/** Rec. 601 luma of a master-palette entry, which is what "light or dark" means. */
+function luma(code: number): number {
+  const colour = getConsole("nes").color.masterPalette?.[code & 0x3f];
+  return colour ? 0.299 * colour.r + 0.587 * colour.g + 0.114 * colour.b : 0;
+}
+
+/**
+ * Pack a picture's palettes, and find the caption a colour to be read in.
+ *
+ * The Game Boy Color reserves a whole sub-palette for the font, and this build
+ * used to as well — which cost a picture a quarter of its colour. It does not have
+ * to: a caption's cells are *replaced* by glyph tiles, so the only two colours
+ * that matter there are the universal backdrop, which every palette shares, and
+ * whatever sits at the ink's index. And the fitter rarely fills every slot — three
+ * colours and a backdrop is a common answer — so the font takes a slot the picture
+ * left empty and the picture keeps all four palettes.
+ *
+ * Where the fit really did use all sixteen, the caption goes in whichever palette
+ * has the most contrast at the ink's index. That is a worse caption and a whole
+ * picture, rather than a better caption and a picture missing a palette, and it is
+ * the only case where the choice is a compromise at all.
+ */
+function packBackdropPalette(
+  palettes: readonly (readonly { codes: readonly number[] }[])[],
+  backdrop: number,
+): { bytes: Uint8Array; fontPalette: number } {
+  const bytes = new Uint8Array(16);
+  for (let palette = 0; palette < 4; palette += 1) {
+    bytes[palette * 4] = backdrop;
+    const colours = palettes[palette] ?? [];
+    for (let colour = 1; colour < 4; colour += 1) {
+      bytes[palette * 4 + colour] = colours[colour]?.codes[0] ?? backdrop;
+    }
+  }
+  const ink = systemRamp(backdrop)[3] as number;
+  for (let palette = 0; palette < 4; palette += 1) {
+    if ((palettes[palette]?.length ?? 0) <= 3) {
+      bytes[palette * 4 + 3] = ink;
+      return { bytes, fontPalette: palette };
+    }
+  }
+  let best = 0;
+  let apart = -1;
+  for (let palette = 0; palette < 4; palette += 1) {
+    const distance = Math.abs(luma(bytes[palette * 4 + 3] as number) - luma(backdrop));
+    if (distance > apart) {
+      apart = distance;
+      best = palette;
+    }
+  }
+  return { bytes, fontPalette: best };
 }
 
 /** Pack four palettes of four master indices into the sixteen bytes the PPU takes. */
@@ -124,9 +186,8 @@ function systemOnlyPalette(): Uint8Array {
 }
 
 /** Assemble the character bank: the built-in tiles in both tables, then the art. */
-function buildChr(background: Uint8Array, objects: Uint8Array): Uint8Array {
+function buildChr(builtin: Uint8Array, background: Uint8Array, objects: Uint8Array): Uint8Array {
   const chr = new Uint8Array(0x2000);
-  const builtin = builtinChr();
   // The same tiles in both tables, at the same indices. The bank is a fixed 8 KiB
   // whatever is in it, so this costs nothing and means a glyph can be drawn on
   // either layer without the runtime knowing which table it came from.
@@ -137,36 +198,129 @@ function buildChr(background: Uint8Array, objects: Uint8Array): Uint8Array {
   return chr;
 }
 
+/**
+ * The bank this program needs: the characters it draws, and whether it draws the
+ * placeholders at all.
+ *
+ * A `number` brings the ten digits and the minus sign the decimal renderer emits
+ * for a negative; a `text` brings its own letters. The level patterns come along
+ * only where a legend entry has no art to draw, and the object block only where an
+ * object has none — both of which are known once the art has been demade, which is
+ * why this is asked after the fits rather than from the program alone.
+ */
+function bankFor(
+  program: Program,
+  bound: { tiles?: ReadonlyMap<string, unknown>; sprites?: ReadonlyMap<string, unknown> },
+): SelectedBank {
+  const characters = new Set<string>([" "]);
+  let numbers = false;
+  for (const instance of program.instances) {
+    if (instance.className === "text") {
+      for (const character of instance.strings["text"] ?? "") characters.add(character);
+    }
+    if (instance.className === "number") numbers = true;
+  }
+  if (numbers) for (const character of "0123456789-") characters.add(character);
+
+  // A legend entry with art draws it; one without falls back to a pattern.
+  let patterns = false;
+  for (const scene of program.scenes) {
+    for (const tile of scene.level?.tiles ?? []) {
+      const art = tile.art;
+      if (art === undefined || !(bound.tiles?.has(artKey(art, 1, 1)) || bound.tiles?.has(art))) {
+        patterns = true;
+      }
+    }
+  }
+  let objectBlock = false;
+  for (const instance of program.instances) {
+    const asset = instance.strings["sprite"];
+    if (asset === undefined) continue;
+    const width = instanceCells(instance, "width");
+    const height = instanceCells(instance, "height");
+    if (!(bound.sprites?.has(artKey(asset, width, height)) || bound.sprites?.has(asset))) {
+      objectBlock = true;
+    }
+  }
+  return selectBank({ characters, patterns, objectBlock });
+}
+
+/**
+ * A pool over one pattern table: what is already in it, and what is left.
+ *
+ * `TilePool` interns against tiles it has been shown, so a picture's cell that
+ * matches a glyph, a level tile or a sprite costs nothing. `free()` is what the
+ * fit is told it may spend, and it is the honest number: the table's 256 minus
+ * the built-in bank minus whatever else this table carries minus what earlier
+ * pictures in it have already added.
+ */
+function newPool(builtin: Uint8Array, art: Uint8Array | undefined, next: number) {
+  const known = new Uint8Array(builtin.length + (art?.length ?? 0));
+  known.set(builtin, 0);
+  if (art) known.set(art, builtin.length);
+  const pool = new TilePool(known, next);
+  return {
+    intern: (tile: Uint8Array) => pool.intern(tile),
+    tail: () => pool.tail(),
+    free: () => PATTERNS_PER_TABLE - next - pool.tail().length / TILE_BYTES,
+  };
+}
+
 /** One demade backdrop: a nametable, its attribute table, and its palette. */
 interface Backdrop {
   chr: Uint8Array;
   map: Uint8Array;
   attr: Uint8Array;
   palette: Uint8Array;
+  /** The palette a caption over it is drawn in — see {@link packBackdropPalette}. */
+  fontPalette: number;
 }
+
+/**
+ * Rows of the name table the game's own screen covers.
+ *
+ * Twenty-eight, not the raster's thirty: the profile's screen is the
+ * overscan-safe rect, so `screenbottom` is row 28 and a paddle at
+ * `screenheight - 1` is row 27 (`profiles.ts` §the cell grid). A picture fitted
+ * to thirty is therefore a picture whose edges are not the game's — pong's
+ * scoreboard band landed a row and a half below the HUD written on it, and the
+ * court's bottom rail sat below the floor the ball bounces off.
+ *
+ * The two rows past it are what a television would have cropped. They are drawn
+ * rather than left blank, and drawn with a repeat of the last row: a level scene
+ * paints those rows from its own grid for exactly the same reason (`emit.ts`
+ * §the full redraw), and sixteen lines of black under the picture is the one
+ * thing worse than sixteen lines of overscan.
+ */
+const GAME_ROWS = 28;
 
 /**
  * Demake one scene's backdrop through the image pipeline.
  *
- * Exactly the window the PPU displays, in pixels — 32×30 cells. Letting `prep`
- * choose would fit the *source's* size, and a title screen has to be a screenful:
- * the nametable it produces and the block copy that paints it are the same
- * rectangle.
+ * Exactly the window the *game* plays in, in pixels — 32×28 cells, extended to
+ * the name table's thirty by {@link extendToRaster}. Letting `prep` choose would
+ * fit the *source's* size, and a title screen has to be a screenful: the
+ * nametable it produces and the block copy that paints it are the same rectangle.
  */
-function demakeBackdrop(bytes: Uint8Array, maxTiles: number): Backdrop {
+async function demakeBackdrop(
+  bytes: Uint8Array,
+  maxTiles: number,
+  executor: Executor | undefined,
+): Promise<Backdrop> {
   const spec = getConsole("nes");
-  const fitted = prepSync(bytes, {
+  const fitted = await prep(bytes, {
     console: "nes",
-    size: { w: NES_MEMORY.viewW * 8, h: NES_MEMORY.viewH * 8 },
+    size: { w: NES_MEMORY.viewW * 8, h: GAME_ROWS * 8 },
     fit: "cover",
-    // One palette is the font's, so a picture gets the rest. Reserving it here
-    // rather than taking it back afterwards keeps the fit honest: the tournament
-    // optimises against the budget it will actually be shown with.
-    maxSubPalettes: ART_PALETTES,
+    // All four. A picture is not asked to give one up for the font any more: a
+    // caption takes a colour slot the fit left empty, and only compromises where
+    // it left none (see {@link packBackdropPalette}).
+    maxSubPalettes: BACKDROP_PALETTES,
     // And the same for the bank. A screenful here is 960 cells against a Game
     // Boy's 360, and the pattern table is the same 256 either way, so a picture
     // that was not told what it could afford would always overrun.
     maxTiles,
+    ...(executor === undefined ? {} : { executor }),
   });
   const backend = backendFor("nes");
   if (!backend) throw new Error("the nes image backend is missing");
@@ -179,15 +333,47 @@ function demakeBackdrop(bytes: Uint8Array, maxTiles: number): Backdrop {
   const find = (suffix: string): Uint8Array =>
     artifacts.find((artifact) => artifact.suffix === suffix)?.bytes ?? new Uint8Array(0);
   const backdrop = fitted.image.palettes[0]?.colors[0]?.codes[0] ?? 0x0f;
+  const packed = packBackdropPalette(
+    fitted.image.palettes.map((palette) => palette.colors),
+    backdrop,
+  );
+  const raster = extendToRaster(find(".nam.bin"), find(".attr.bin"));
   return {
     chr: find(".chr.bin"),
-    map: find(".nam.bin"),
-    attr: find(".attr.bin"),
-    palette: packPalette(
-      fitted.image.palettes.map((palette) => palette.colors),
-      backdrop,
-    ),
+    map: raster.map,
+    attr: raster.attr,
+    palette: packed.bytes,
+    fontPalette: packed.fontPalette,
   };
+}
+
+/**
+ * A 32×28 picture as the 32×30 name table the PPU reads.
+ *
+ * The two rows below the game's screen repeat the last one — and so must their
+ * attributes, or the overscan strip shows the right tiles in whatever palette
+ * block row seven happened to hold. A 16×16 attribute cell is two rows, so row 27
+ * is the *bottom* half of block row six, and it becomes both halves of block row
+ * seven: the second half covers rows 30 and 31, which do not exist, and giving
+ * them the same answer is cheaper than caring.
+ */
+function extendToRaster(map: Uint8Array, attr: Uint8Array): { map: Uint8Array; attr: Uint8Array } {
+  const width = NES_MEMORY.viewW;
+  const full = new Uint8Array(width * NES_MEMORY.viewH);
+  full.set(map.subarray(0, width * GAME_ROWS), 0);
+  const last = map.subarray(width * (GAME_ROWS - 1), width * GAME_ROWS);
+  for (let row = GAME_ROWS; row < NES_MEMORY.viewH; row += 1) full.set(last, row * width);
+
+  const table = new Uint8Array(64);
+  table.set(attr.subarray(0, 64), 0);
+  const above = (GAME_ROWS >> 2) - 1; // the block row row 27 sits in
+  for (let column = 0; column < 8; column += 1) {
+    const byte = table[above * 8 + column] as number;
+    const left = (byte >> 4) & 3;
+    const right = (byte >> 6) & 3;
+    table[(above + 1) * 8 + column] = left | (right << 2) | (left << 4) | (right << 6);
+  }
+  return { map: full, attr: table };
 }
 
 /**
@@ -198,7 +384,11 @@ function demakeBackdrop(bytes: Uint8Array, maxTiles: number): Backdrop {
  * and a choice of *which* three, while a background tile has four and no choice at
  * all. On this console they do not even share a pattern table.
  */
-export function bindNesArt(program: Program, assets: AssetBytes): BoundNesArt {
+export async function bindNesArt(
+  program: Program,
+  assets: AssetBytes,
+  executor?: Executor,
+): Promise<BoundNesArt> {
   const requests = artRequests(program);
   const missing: string[] = [];
   const sources: Record<"sprite" | "tile", SpriteSource[]> = { sprite: [], tile: [] };
@@ -243,9 +433,18 @@ export function bindNesArt(program: Program, assets: AssetBytes): BoundNesArt {
   const objects = demakeBank("sprite");
   const backgrounds = demakeBank("tile");
 
-  const options: NesEmitOptions = {};
+  // What the built-in bank has to hold is known once the art is demade: a legend
+  // entry or an object that got real art needs no placeholder. The bank's size
+  // then sets where everything else in the table starts.
+  const bank = bankFor(program, {
+    tiles: new Map((backgrounds?.art ?? new Map()).entries()),
+    sprites: new Map((objects?.art ?? new Map()).entries()),
+  });
+  const BANK = bank.count;
+
+  const options: NesEmitOptions = { bank };
   const backgroundArt: Uint8Array[] = [];
-  let backgroundNext = BUILTIN_TILES;
+  let backgroundNext = BANK;
   let levelBackdrop = 0x0f;
 
   if (backgrounds) {
@@ -267,7 +466,7 @@ export function bindNesArt(program: Program, assets: AssetBytes): BoundNesArt {
     >();
     for (const [name, art] of objects.art) {
       sprites.set(name, {
-        tile: BUILTIN_TILES + art.tile,
+        tile: BANK + art.tile,
         width: art.width,
         height: art.height,
         palette: art.palette,
@@ -280,54 +479,98 @@ export function bindNesArt(program: Program, assets: AssetBytes): BoundNesArt {
     options.objectPalette = packPalette(objects.palettes, levelBackdrop);
   }
 
-  // Backdrops go after the level art in the background table, and through a pool:
-  // a cell already drawn by the built-in font, by a level tile or by an earlier
-  // picture is pointed at rather than stored again. Two title screens that share a
-  // night sky then cost one pattern between them.
+  // Backdrops go through a pool — a cell already drawn by the built-in font, by a
+  // level tile, by a sprite or by an earlier picture is pointed at rather than
+  // stored again — and each picture is given a *whole pattern table*.
   //
-  // The budget is divided evenly among the pictures rather than given to the first
-  // one, because "whichever screen the author wrote first gets to look better" is
-  // not a decision a build should be making. Pooling can only return room, never
-  // take it, so a later picture that shares with an earlier one gets its share back.
-  const backdrops = new Map<string, { map: Uint8Array; attr: Uint8Array; palette: Uint8Array }>();
-  const builtin = builtinChr();
-  const known = new Uint8Array(builtin.length + (backgrounds?.tiles.length ?? 0));
-  known.set(builtin, 0);
-  if (backgrounds) known.set(backgrounds.tiles, builtin.length);
-  const pool = new TilePool(known, backgroundNext);
-  for (const [index, scene] of backdropScenes.entries()) {
-    const left = ART_PATTERNS + BUILTIN_TILES - backgroundNext;
-    const share = Math.max(1, Math.floor(left / (backdropScenes.length - index)));
-    const art = demakeBackdrop(assets.get(scene.backdrop as string) as Uint8Array, share);
+  // That is the console's own answer to "a screenful is 960 cells and a table is
+  // 256 patterns": there are two tables, and `PPUCTRL` bit 4 chooses which one the
+  // background reads. Sharing one between every picture in the game halved what
+  // each got and the fitter spent the difference merging cells — 216 of the
+  // shooter's 960 at a 97-pattern share, against 57 at a full one. So a picture is
+  // assigned to whichever table has the most room left when its turn comes, and
+  // the two-backdrop games in the library end up with one each.
+  //
+  // Room is what the *other* contents leave: level art shares table 0 and object
+  // art shares table 1, because those are the tables the background and the
+  // objects are read from.
+  const backdrops = new Map<
+    string,
+    {
+      map: Uint8Array;
+      attr: Uint8Array;
+      palette: Uint8Array;
+      table: 0 | 1;
+      fontPalette: number;
+    }
+  >();
+  const objectArt = objects?.tiles ?? new Uint8Array(0);
+  const pools = [
+    newPool(bank.chr, backgrounds?.tiles, backgroundNext),
+    newPool(bank.chr, objectArt, BANK + objectArt.length / TILE_BYTES),
+  ] as const;
+  const backdropFits = new Map<string, { table: 0 | 1; budget: number }>();
+  for (const scene of backdropScenes) {
+    // The table with the most room, and the room it has. A picture is never given
+    // less than one pattern, because a build that produced no picture at all would
+    // be a worse answer than a coarse one.
+    const table = pools[0].free() >= pools[1].free() ? 0 : 1;
+    const pool = pools[table];
+    const budget = Math.max(1, pool.free());
+    backdropFits.set(scene.name, { table, budget });
+    // One picture at a time, unlike the Game Boy's: which table a picture goes in
+    // and what it may spend are both decided by what the ones before it left, so a
+    // later conversion cannot start until an earlier one has been interned. The
+    // tournament inside each conversion still spreads across the executor's lanes,
+    // which is where a backdrop's time actually goes.
+    const art = await demakeBackdrop(
+      assets.get(scene.backdrop as string) as Uint8Array,
+      budget,
+      executor,
+    );
     const map = new Uint8Array(art.map.length);
     for (let cell = 0; cell < art.map.length; cell += 1) {
       const local = (art.map[cell] as number) * TILE_BYTES;
       map[cell] = pool.intern(art.chr.subarray(local, local + TILE_BYTES)) & 0xff;
     }
-    backgroundNext =
-      BUILTIN_TILES + (backgrounds?.uniqueTiles ?? 0) + pool.tail().length / TILE_BYTES;
-    backdrops.set(scene.name, { map, attr: art.attr, palette: art.palette });
+    backdrops.set(scene.name, {
+      map,
+      attr: art.attr,
+      palette: art.palette,
+      table,
+      fontPalette: art.fontPalette,
+    });
   }
-  const pooled = pool.tail();
+  const pooled = pools[0].tail();
   if (pooled.length > 0) backgroundArt.push(pooled);
   if (backdrops.size > 0) options.backdrops = backdrops;
   if (options.levelPalette === undefined) options.levelPalette = systemOnlyPalette();
   if (options.objectPalette === undefined) options.objectPalette = systemOnlyPalette();
 
-  const background = new Uint8Array(backgroundArt.reduce((total, part) => total + part.length, 0));
-  let at = 0;
-  for (const part of backgroundArt) {
-    background.set(part, at);
-    at += part.length;
-  }
-  const objectTiles = objects?.tiles ?? new Uint8Array(0);
+  const background = concat(backgroundArt);
+  // Table 1 is the objects' own, and it carries the pictures assigned to it —
+  // which the background layer reads by pointing `PPUCTRL` at it for that scene.
+  const objectTiles = concat([objectArt, pools[1].tail()]);
 
   return {
     options,
-    chr: buildChr(background, objectTiles),
+    chr: buildChr(bank.chr, background, objectTiles),
     tiles: background.length / TILE_BYTES + objectTiles.length / TILE_BYTES,
     backgroundPatterns: background.length / TILE_BYTES,
     objectPatterns: objectTiles.length / TILE_BYTES,
+    bankPatterns: BANK,
+    backdropFits,
     missing,
   };
+}
+
+/** Join blobs of tile bytes, in order. */
+function concat(parts: readonly Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.length;
+  }
+  return out;
 }

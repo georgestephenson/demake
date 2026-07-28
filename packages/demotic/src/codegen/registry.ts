@@ -13,9 +13,14 @@ import type { Program } from "../program.js";
 import { anyBackend, type AnyBackend, type BuiltRom, type BuildOptions } from "./backend.js";
 import { gbBackend } from "./gb.js";
 import { nesBackend } from "./nes.js";
+import { smsBackend } from "./sms.js";
 
 /** Every backend, in the order a listing shows them. */
-const BACKENDS: readonly AnyBackend[] = [anyBackend(gbBackend), anyBackend(nesBackend)];
+const BACKENDS: readonly AnyBackend[] = [
+  anyBackend(gbBackend),
+  anyBackend(nesBackend),
+  anyBackend(smsBackend),
+];
 
 /** Console ids a Demotic program can be built for. */
 export const runtimeConsoles: readonly string[] = BACKENDS.flatMap((backend) => backend.consoles);
@@ -49,7 +54,7 @@ export function unsupportedFor(program: Program): string[] {
 }
 
 /** Build a cartridge for whichever console the program was compiled for. */
-export function buildGame(program: Program, options: BuildOptions = {}): BuiltRom {
+export function buildGame(program: Program, options: BuildOptions = {}): Promise<BuiltRom> {
   const backend = BACKENDS.find((entry) => entry.consoles.includes(program.profile.id));
   if (!backend) {
     throw new Error(

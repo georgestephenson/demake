@@ -34,7 +34,7 @@ import { AUDIO_STOP, type NesGameAudio } from "@demake/audio";
 import { abs, absX, imm, immHigh, immLow, indY, label, type Ref } from "@demake/core";
 
 import type { InstanceDef, RuleDef } from "../../program.js";
-import { glyphTile, OBJECT_TILE, patternTile } from "../../rom/graphics.js";
+import type { SelectedBank } from "../../rom/graphics.js";
 import { isMutable } from "../analyze.js";
 import { emitTickSteps, type TickSteps } from "../backend.js";
 import { ENTITY_SIZE, PROPS, TILE_CONTACT_MAX, W } from "../layout.js";
@@ -150,7 +150,24 @@ export interface NesEmitOptions {
    * Demade backdrops by scene name: the nametable the picture fills, its packed
    * attribute table, and the sixteen master-palette indices it chose.
    */
-  backdrops?: ReadonlyMap<string, { map: Uint8Array; attr: Uint8Array; palette: Uint8Array }>;
+  backdrops?: ReadonlyMap<
+    string,
+    {
+      map: Uint8Array;
+      attr: Uint8Array;
+      palette: Uint8Array;
+      /** Which pattern table this picture's tiles went into (doc 15 §Budgets). */
+      table: 0 | 1;
+      /** The palette a caption over this picture is drawn in. */
+      fontPalette: number;
+    }
+  >;
+  /**
+   * The built-in bank this build pulled, and where each glyph and pattern is in
+   * it. Absent only in a context that emits no code — everything that draws a
+   * character asks it rather than computing an index from a character code.
+   */
+  bank?: SelectedBank;
   /** The palette a level's tile art and the built-in patterns are drawn with. */
   levelPalette?: Uint8Array;
   /** The object palettes: three the art chose, then the font's ramp. */
@@ -225,7 +242,7 @@ export function emitProgram(ctx: NesCtx, options: NesEmitOptions = {}): void {
         ? (options.tiles?.get(artKey(art, 1, 1)) ?? options.tiles?.get(art))
         : undefined;
       // A legend entry with no art draws a built-in pattern.
-      return bound?.tile ?? patternTile(index, level.file.tiles[index]?.solid ?? false);
+      return bound?.tile ?? ctx.bank.pattern(index, level.file.tiles[index]?.solid ?? false);
     };
     emitLevelData(asm, level, (index) => boundTile(index) & 0xff);
     emitTileAt(ctx, level);
@@ -243,12 +260,12 @@ export function emitProgram(ctx: NesCtx, options: NesEmitOptions = {}): void {
     const art = options.backdrops?.get(scene.def.name);
     if (art) {
       asm.label(backdropLabel(scene));
-      asm.bytes(art.map);
+      asm.bytes(packCells(art.map));
       asm.label(backdropPaletteLabel(scene));
       asm.bytes(art.palette);
     }
     asm.label(sceneAttrLabel(scene));
-    asm.bytes(sceneAttributes(ctx, scene, options));
+    asm.bytes(packCells(sceneAttributes(ctx, scene, options)));
   }
   asm.label("LevelPalette");
   asm.bytes(options.levelPalette ?? defaultBackgroundPalette());
@@ -392,11 +409,11 @@ function emitReset(ctx: NesCtx, options: NesEmitOptions): void {
     if (program.tracks.length > 0) asm.jsr("SceneMusic");
   }
 
-  // Rendering on, and the NMI with it: background and objects, patterns at
-  // $0000 for the background and $1000 for the objects.
+  // Rendering on, and the NMI with it. Which pattern table the background reads
+  // is the scene's, and `SceneRender` has already said so.
   asm.lda(imm(0x1e));
   asm.sta(abs(R.PPUMASK));
-  asm.lda(imm(0x88));
+  asm.lda(mem(layout.scratch + PPU_CTRL));
   asm.sta(abs(R.PPUCTRL));
   asm.lda(imm(1));
   asm.sta(mem(layout.booted));
@@ -485,24 +502,90 @@ function emitClearState(ctx: NesCtx): void {
 }
 
 /**
- * The VBlank handler, which does nothing but say that VBlank happened.
+ * The two flags the frame loop runs on, in page zero beside the render scratch.
  *
- * The frame is uploaded by the main loop rather than from here, exactly as on the
- * Game Boy, and for the same reason: the loop then owns the scratch the renderer
- * uses and no interrupt can arrive in the middle of a tick's use of it. The
- * handler is eleven cycles, so the upload still begins at the top of the window.
+ * `VBLANKED` is the clock: the handler raises it and the main loop consumes it.
+ * `FRAME_READY` is the hand-off: the main loop raises it when a frame's worth of
+ * queue and object shadow is *complete*, and the handler lowers it once that
+ * frame has been uploaded. A half-built queue is never uploaded, because the flag
+ * that offers it is set only after `BuildFrame` returns.
+ */
+const VBLANKED = 7;
+const FRAME_READY = 6;
+
+/**
+ * The scene's `PPUCTRL`, kept in RAM because three places have to agree about it.
+ *
+ * It carries the NMI enable, the object pattern table (always the second) and —
+ * the part that changes per scene — the *background* pattern table. A picture is
+ * given a whole table of its own where there is one to give, so the byte that
+ * says which one is the scene's, not the build's, and the queue flush and the
+ * scroll write have to OR their own bits into it rather than name a constant.
+ */
+const PPU_CTRL = 5;
+
+/** `PPUCTRL` bits the runtime always wants: NMI on, objects from `$1000`. */
+const CTRL_BASE = 0x88;
+
+/** The bit that points the background at the second pattern table. */
+const CTRL_BG_TABLE = 0x10;
+
+/**
+ * The VBlank handler, which is where the picture is uploaded.
+ *
+ * Not from the main loop, and this is the one place the NES departs from the
+ * Game Boy's shape deliberately. The loop's flag says "a VBlank *happened*", not
+ * "we are in one" — so a tick that overran its frame made the loop upload
+ * immediately, in the middle of active rendering, where the PPU reloads its
+ * address register from the scroll latch at the pre-render line. The last rows of
+ * a scrolled column then landed back at the top of the column, which is the
+ * flickering a scrolling level showed every few frames.
+ *
+ * Uploading from the handler puts the writes inside the window by construction,
+ * whatever the tick costs. The price is that the handler now interrupts a tick
+ * that owns the render scratch, so it saves the seven bytes the upload uses —
+ * about a hundred cycles out of a window of two thousand two hundred.
  */
 function emitNmi(ctx: NesCtx, options: NesEmitOptions): void {
   const { asm, layout } = ctx;
+  const idle = ctx.unique("nmiNoFrame");
+  // The scratch the upload borrows, saved because the tick may be mid-expression.
+  const borrowed = [ZP.p0, ZP.p0 + 1, ZP.t0, ZP.t1, ZP.t3, ZP.spare, ZP.spare + 1];
+
   asm.label("Nmi");
   asm.pha();
+  asm.txa();
+  asm.pha();
+  asm.tya();
+  asm.pha();
+
+  asm.lda(mem(layout.scratch + FRAME_READY));
+  asm.beq(idle);
+  for (const byte of borrowed) {
+    asm.lda(mem(byte));
+    asm.pha();
+  }
+  asm.jsr("UploadFrame");
+  for (const byte of [...borrowed].reverse()) {
+    asm.pla();
+    asm.sta(mem(byte));
+  }
+  asm.lda(imm(0));
+  asm.sta(mem(layout.scratch + FRAME_READY));
+
+  asm.label(idle);
   asm.lda(imm(1));
-  asm.sta(mem(layout.scratch + 7));
+  asm.sta(mem(layout.scratch + VBLANKED));
   // The audio driver is *counted* here and performed in the main loop. The
   // vertical blank is the picture's — a driver tick taken in the handler is a
   // tick the tilemap upload waits behind — and the frame is still what keeps the
-  // tempo, because a frame the game overran is owed rather than lost.
+  // tempo, because a frame the game overran is owed rather than lost. It runs
+  // before the registers are restored, so it may use them freely.
   if (options.audio) asm.jsr(options.audio.routines.frame);
+  asm.pla();
+  asm.tay();
+  asm.pla();
+  asm.tax();
   asm.pla();
   asm.rti();
 
@@ -517,19 +600,23 @@ function emitMainLoop(ctx: NesCtx, options: NesEmitOptions): void {
   const wait = ctx.unique("waitVblank");
   // The flag is cleared *after* it is seen, not before the wait: a tick that
   // overran its frame would otherwise wait for the next one and run at half rate.
+  // It is safe to run on from a stale one now, because what the loop does next is
+  // the tick — the *upload* waits for a real window, in the handler.
   asm.label("Main");
   asm.label(wait);
-  asm.lda(mem(layout.scratch + 7));
+  asm.lda(mem(layout.scratch + VBLANKED));
   asm.beq(wait);
   asm.lda(imm(0));
-  asm.sta(mem(layout.scratch + 7));
-  asm.jsr("UploadFrame");
+  asm.sta(mem(layout.scratch + VBLANKED));
   asm.jsr("ReadInput");
   asm.jsr("Tick");
   // After the tick, so an effect a rule asked for is heard this frame rather
   // than next; after the upload, so the frame it delays is nobody's.
   if (options.audio) asm.jsr(options.audio.routines.service);
   asm.jsr("BuildFrame");
+  // The frame is whole: the next window may show it.
+  asm.lda(imm(1));
+  asm.sta(mem(layout.scratch + FRAME_READY));
   asm.jmp("Main");
 }
 
@@ -1067,6 +1154,13 @@ function emitSceneRender(
   const { asm, layout } = ctx;
   asm.label(`SceneRender_${scene.index}`);
 
+  // Which pattern table this scene's background reads, restated every frame
+  // rather than at the scene change: it is two instructions, and a byte that can
+  // only be wrong if it is set somewhere else is a byte that cannot drift.
+  const table = options.backdrops?.get(scene.def.name)?.table ?? 0;
+  asm.lda(imm(CTRL_BASE | (table === 1 ? CTRL_BG_TABLE : 0)));
+  asm.sta(mem(layout.scratch + PPU_CTRL));
+
   // Camera in pixels: a 16.16 cell coordinate shifted right thirteen places.
   if (layout.camera !== null) {
     emitPixelsFromFixed(ctx, layout.camera, layout.words + W.camX * 2);
@@ -1075,6 +1169,18 @@ function emitSceneRender(
     asm.lda(imm(0));
     asm.sta(mem(layout.words + W.camX * 2));
     asm.sta(mem(layout.words + W.camX * 2 + 1));
+    asm.sta(mem(layout.words + W.camY * 2));
+    asm.sta(mem(layout.words + W.camY * 2 + 1));
+  }
+  // A level the nametable already holds whole does not scroll vertically, however
+  // far the *game's* camera travels down it: the map is thirty rows and so is the
+  // raster, so a scroll of even one row would bring the level's own top back in at
+  // the bottom. That is what the game camera's two rows of vertical travel were
+  // doing — the screen is 28 rows because the last two are overscan, and those two
+  // showed the ceiling. Pinned, the same two rows show the level's real bottom,
+  // which is what a television would have cropped anyway.
+  if (pinsRows(level)) {
+    asm.lda(imm(0));
     asm.sta(mem(layout.words + W.camY * 2));
     asm.sta(mem(layout.words + W.camY * 2 + 1));
   }
@@ -1103,8 +1209,19 @@ function emitSceneRender(
     emitHud(ctx, scene, "dynamic");
     emitSwapPlots(ctx);
   }
-  emitOam(ctx, scene, options);
+  emitOam(ctx, scene, options, pinsRows(level));
   asm.rts();
+}
+
+/**
+ * Whether this scene's vertical scroll is pinned, and objects with it.
+ *
+ * The background and the objects have to agree about where the top of the view
+ * is, or a coin sits sixteen pixels off the ledge it is resting on. So the same
+ * question decides both, and it is a compile-time one.
+ */
+function pinsRows(level: LevelData | undefined): boolean {
+  return level !== undefined && !scrollsRows(level);
 }
 
 /** `dst16 = floor(value * 8 / 65536)` — cells to pixels. */
@@ -1137,15 +1254,22 @@ function emitFullRedraw(
 ): void {
   const { asm, layout } = ctx;
   // Rendering off: the PPU's address register is the scroll position, so writing
-  // a screenful with it on would tear and take three frames.
+  // a screenful with it on would tear and take three frames. The control register
+  // goes with it, because the screenful about to be written steps one cell at a
+  // time and has to name the table this scene draws from.
   asm.lda(imm(0));
   asm.sta(abs(R.PPUMASK));
+  asm.lda(mem(layout.scratch + PPU_CTRL));
+  asm.sta(abs(R.PPUCTRL));
 
   const backdrop = options.backdrops?.get(scene.def.name);
   if (backdrop) {
-    // A backdrop is a whole nametable in order, so painting it is a block copy.
+    // A backdrop is a whole nametable in order, so painting it is one walk from
+    // the first cell — but it is *packed*, because 960 raw bytes a picture is
+    // three per cent of the cartridge each and a demade screen is mostly runs.
     emitPpuAddress(ctx, NAMETABLE);
-    emitPpuBlock(ctx, backdropLabel(scene), MAP_W * MAP_H);
+    ctx.pointer(ZP.p0, label(backdropLabel(scene)));
+    asm.jsr(needBlitCells(ctx));
     emitPpuAddress(ctx, PALETTE);
     emitPpuBlock(ctx, backdropPaletteLabel(scene), 16);
   } else {
@@ -1211,13 +1335,123 @@ function emitFullRedraw(
   // The attribute table, whatever the scene drew: a picture's own, or a level's
   // single palette, with the blocks a caption covers switched to the font's ramp.
   emitPpuAddress(ctx, ATTRIBUTES);
-  emitPpuBlock(ctx, sceneAttrLabel(scene), 64);
+  ctx.pointer(ZP.p0, label(sceneAttrLabel(scene)));
+  asm.jsr(needBlitCells(ctx));
 
   // Captions go on now, with the background they sit on. A scrolling scene draws
   // its whole HUD with sprites instead, so it has none to paint here.
   if (!scrolls(ctx, scene)) emitHud(ctx, scene, "static");
   asm.lda(imm(0x1e));
   asm.sta(abs(R.PPUMASK));
+}
+
+/**
+ * A packed nametable: literals and runs, and the walk that unpacks it.
+ *
+ * ```text
+ *   $00        the end
+ *   $01..$7F   n cells follow, one byte each
+ *   $81..$FF   the next byte, (n & $7F) times
+ * ```
+ *
+ * A screenful is 960 cells and an NROM cartridge is 32 KiB, so two pictures
+ * stored raw were six per cent of the whole program — which is what put the
+ * shooter, with nine aliens' worth of collision code, within a few hundred bytes
+ * of not fitting. A demade screen is mostly runs (sky, a floor, a wall) and packs
+ * to a third of that.
+ *
+ * The format is the encoder's and the decoder's business and nothing else's: what
+ * is guaranteed is the 960 bytes that reach the PPU, and `nes-rom.test.ts` checks
+ * those against the map the build produced rather than checking this encoding.
+ * Same rule the audio driver's packing runs under (doc 16 §The driver format is
+ * not part of the contract).
+ */
+export function packCells(cells: Uint8Array): Uint8Array {
+  const out: number[] = [];
+  let at = 0;
+  while (at < cells.length) {
+    let run = 1;
+    while (run < 127 && at + run < cells.length && cells[at + run] === cells[at]) run += 1;
+    // Two of a kind is a wash — three bytes either way — so a run has to be worth
+    // the control byte before it is taken, and pairs go through as literals.
+    if (run >= 3) {
+      out.push(0x80 | run, cells[at] as number);
+      at += run;
+      continue;
+    }
+    // Literals up to the next run worth taking, or the cap.
+    const start = at;
+    while (at < cells.length && at - start < 127) {
+      let ahead = 1;
+      while (ahead < 3 && at + ahead < cells.length && cells[at + ahead] === cells[at]) ahead += 1;
+      if (ahead >= 3) break;
+      at += 1;
+    }
+    out.push(at - start, ...cells.subarray(start, at));
+  }
+  out.push(0x00);
+  return Uint8Array.from(out);
+}
+
+/** `p0` = a packed nametable; write it to the PPU's data port. */
+function needBlitCells(ctx: NesCtx): Ref {
+  return ctx.need("BlitCells", (inner) => {
+    const { asm } = inner;
+    const next = inner.unique("blitNext");
+    const literal = inner.unique("blitLiteral");
+    const run = inner.unique("blitRun");
+    const runLoop = inner.unique("blitRunLoop");
+    const done = inner.unique("blitDone");
+    const wrapA = inner.unique("blitWrapA");
+    const wrapB = inner.unique("blitWrapB");
+    const wrapC = inner.unique("blitWrapC");
+
+    // The cursor is `y` with the pointer's high byte bumped as it wraps, rather
+    // than a 16-bit add per byte: a packed screen is a few hundred bytes, and the
+    // inner loops are what this routine is.
+    asm.ldy(imm(0));
+    asm.label(next);
+    asm.lda(indY(ZP.p0));
+    asm.iny();
+    asm.bne(wrapA);
+    asm.inc(mem(ZP.p0, 1));
+    asm.label(wrapA);
+    // The cursor's own flags are in the way, so the control byte is re-tested
+    // rather than branched on where it was loaded. `cmp #0` restores both: zero
+    // for the terminator, and the sign bit that tells a run from a literal.
+    asm.cmp(imm(0));
+    asm.beq(done);
+    asm.bmi(run);
+
+    asm.tax();
+    asm.label(literal);
+    asm.lda(indY(ZP.p0));
+    asm.iny();
+    asm.bne(wrapB);
+    asm.inc(mem(ZP.p0, 1));
+    asm.label(wrapB);
+    asm.sta(abs(R.PPUDATA));
+    asm.dex();
+    asm.bne(literal);
+    asm.beq(next); // always: the count reached zero
+
+    asm.label(run);
+    asm.and(imm(0x7f));
+    asm.tax();
+    asm.lda(indY(ZP.p0));
+    asm.iny();
+    asm.bne(wrapC);
+    asm.inc(mem(ZP.p0, 1));
+    asm.label(wrapC);
+    asm.label(runLoop);
+    asm.sta(abs(R.PPUDATA));
+    asm.dex();
+    asm.bne(runLoop);
+    asm.beq(next); // always, for the same reason
+
+    asm.label(done);
+    asm.rts();
+  });
 }
 
 /** Copy a compile-time block of bytes straight into the PPU. */
@@ -1299,11 +1533,15 @@ function sceneAttributes(ctx: NesCtx, scene: SceneCtx, options: NesEmitOptions):
   if (backdrop) table.set(backdrop.attr.subarray(0, 64), 0);
   if (scrolls(ctx, scene)) return table; // a scrolling scene draws its HUD with objects
 
+  // The palette a caption is drawn in is the one the picture left room in, not a
+  // reserved one — see `nes-art.ts` §the font's slot. A scene with no picture has
+  // all four to itself and keeps the last.
+  const font = backdrop?.fontPalette ?? SYSTEM_PALETTE;
   const set = (column: number, row: number): void => {
     if (column < 0 || row < 0 || column >= MAP_W || row >= MAP_H) return;
     const at = (row >> 2) * 8 + (column >> 2);
     const quadrant = ((row & 2) << 1) | (column & 2);
-    table[at] = ((table[at] as number) & ~(3 << quadrant)) | (SYSTEM_PALETTE << quadrant);
+    table[at] = ((table[at] as number) & ~(3 << quadrant)) | (font << quadrant);
   };
   for (const id of scene.def.instanceIds) {
     const instance = ctx.program.instances[id] as InstanceDef;
@@ -1455,7 +1693,18 @@ function emitPaintEdge(ctx: NesCtx, level: LevelData, isColumn: boolean, offset:
   const across = isColumn ? layout.words + W.tileCol * 2 : layout.words + W.tileRow * 2;
   const originAcross = isColumn ? layout.words + W.mapCol * 2 : layout.words + W.mapRow * 2;
   const originAlong = isColumn ? layout.words + W.mapRow * 2 : layout.words + W.mapCol * 2;
-  const count = (isColumn ? layout.memory.viewH : layout.memory.viewW) + 1;
+  // A column is the height of the view plus the row the next vertical step will
+  // need — but only where there *is* a next vertical step. A level the map holds
+  // whole does not scroll rows, and a thirty-first row would wrap onto the first
+  // and blank the top of the very column being painted.
+  // A column is the height of the view plus the row the next vertical step will
+  // need — but only where there *is* a next vertical step. A level the map holds
+  // whole does not scroll rows, and a thirty-first write does not wrap onto the
+  // first row: it lands in the attribute table, one 16×16 block of the wrong
+  // palette per column the camera crosses.
+  const count = isColumn
+    ? layout.memory.viewH + (scrollsRows(level) ? 1 : 0)
+    : layout.memory.viewW + 1;
   // Not `temp`: the grid lookup uses that word for its row-times-width multiply,
   // and a counter clobbered mid-loop paints a strip of whatever tile the count
   // happened to land on — which is how a scrolled edge came to show the font.
@@ -1583,7 +1832,7 @@ function emitHud(ctx: NesCtx, scene: SceneCtx, want: "static" | "dynamic"): void
     if (isText) {
       const text = instance.strings["text"] ?? "";
       for (const character of [...text].slice(0, MAP_W)) {
-        asm.lda(imm(glyphTile(character)));
+        asm.lda(imm(ctx.bank.glyph(character)));
         asm.jsr(plot);
       }
     } else {
@@ -1623,51 +1872,60 @@ function needPokeNumber(ctx: NesCtx): Ref {
  * outward by a cell, so an object straddling the edge is never culled — the test
  * may say "maybe" when the answer is no, and never the other way round.
  */
-function needOnscreen(ctx: NesCtx): Ref {
-  return ctx.need("Onscreen", (inner) => {
-    const { asm, layout } = inner;
-    const camera = layout.camera as number;
-    const apart = inner.unique("cullOff");
-    const delta = ZP.spare;
+function needOnscreen(ctx: NesCtx, pinnedRows: boolean): Ref {
+  // A pinned scene shows every row its level has, so there is nothing for the
+  // vertical half to reject — and asking it anyway would reject the top of the
+  // level, whose cells are *above* a game camera that has scrolled down.
+  if (pinnedRows) {
+    return ctx.need("OnscreenColumns", (inner) => emitOnscreenBody(inner, false));
+  }
+  return ctx.need("Onscreen", (inner) => emitOnscreenBody(inner, true));
+}
 
-    const axis = (offset: number, margin: number, span: number): void => {
-      asm.sec();
-      asm.ldy(imm(offset + 2));
-      asm.lda(indY(ZP.p0));
-      asm.sbc(mem(camera + offset + 2));
-      asm.sta(mem(delta));
-      asm.ldy(imm(offset + 3));
-      asm.lda(indY(ZP.p0));
-      asm.sbc(mem(camera + offset + 3));
-      asm.sta(mem(delta, 1));
-      // Off the near side: the object's far edge is left of (or above) the view.
-      asm.clc();
-      asm.lda(mem(delta));
-      asm.adc(mem(margin));
-      asm.lda(mem(delta, 1));
-      asm.adc(imm(0));
-      inner.far("mi", apart);
-      // Off the far side: the object's near edge is past the last visible cell.
-      asm.sec();
-      asm.lda(mem(delta));
-      asm.sbc(imm(span + 1));
-      asm.lda(mem(delta, 1));
-      asm.sbc(imm(0));
-      inner.far("pl", apart);
-    };
-    axis(propOffset("x"), ZP.t0, layout.memory.viewW);
-    axis(propOffset("y"), ZP.t1, layout.memory.viewH);
+/** The cull itself: the horizontal axis always, the vertical one on request. */
+function emitOnscreenBody(ctx: NesCtx, rows: boolean): void {
+  const { asm, layout } = ctx;
+  const camera = layout.camera as number;
+  const apart = ctx.unique("cullOff");
+  const delta = ZP.spare;
 
-    asm.lda(imm(1));
-    asm.rts();
-    asm.label(apart);
-    asm.lda(imm(0));
-    asm.rts();
-  });
+  const axis = (offset: number, margin: number, span: number): void => {
+    asm.sec();
+    asm.ldy(imm(offset + 2));
+    asm.lda(indY(ZP.p0));
+    asm.sbc(mem(camera + offset + 2));
+    asm.sta(mem(delta));
+    asm.ldy(imm(offset + 3));
+    asm.lda(indY(ZP.p0));
+    asm.sbc(mem(camera + offset + 3));
+    asm.sta(mem(delta, 1));
+    // Off the near side: the object's far edge is left of (or above) the view.
+    asm.clc();
+    asm.lda(mem(delta));
+    asm.adc(mem(margin));
+    asm.lda(mem(delta, 1));
+    asm.adc(imm(0));
+    ctx.far("mi", apart);
+    // Off the far side: the object's near edge is past the last visible cell.
+    asm.sec();
+    asm.lda(mem(delta));
+    asm.sbc(imm(span + 1));
+    asm.lda(mem(delta, 1));
+    asm.sbc(imm(0));
+    ctx.far("pl", apart);
+  };
+  axis(propOffset("x"), ZP.t0, layout.memory.viewW);
+  if (rows) axis(propOffset("y"), ZP.t1, layout.memory.viewH);
+
+  asm.lda(imm(1));
+  asm.rts();
+  asm.label(apart);
+  asm.lda(imm(0));
+  asm.rts();
 }
 
 /** Build the object shadow from the scene's sprite objects. */
-function emitOam(ctx: NesCtx, scene: SceneCtx, options: NesEmitOptions): void {
+function emitOam(ctx: NesCtx, scene: SceneCtx, options: NesEmitOptions, pinnedRows = false): void {
   const { asm, layout, program } = ctx;
   asm.lda(imm(0));
   asm.sta(mem(layout.oamCount));
@@ -1700,7 +1958,7 @@ function emitOam(ctx: NesCtx, scene: SceneCtx, options: NesEmitOptions): void {
       asm.sta(mem(ZP.t0));
       asm.lda(imm(height));
       asm.sta(mem(ZP.t1));
-      asm.jsr(needOnscreen(ctx));
+      asm.jsr(needOnscreen(ctx, pinnedRows));
       ctx.far("eq", skip);
     }
     // Screen pixels are level pixels minus the camera's.
@@ -1710,29 +1968,15 @@ function emitOam(ctx: NesCtx, scene: SceneCtx, options: NesEmitOptions): void {
       if (layout.camera !== null) sub32(ctx, temp, layout.camera);
       emitPixelsFromFixed(ctx, temp, layout.words + W.temp * 2);
       copy32(ctx, temp, base + propOffset("y"));
-      if (layout.camera !== null) sub32(ctx, temp, layout.camera + 4);
+      if (layout.camera !== null && !pinnedRows) sub32(ctx, temp, layout.camera + 4);
       emitPixelsFromFixed(ctx, temp, layout.words + W.count * 2);
     });
 
     const palette = art?.palette ?? SYSTEM_PALETTE;
     for (let row = 0; row < height; row += 1) {
       for (let column = 0; column < width; column += 1) {
-        const tile = art ? art.tile + row * art.width + column : OBJECT_TILE;
-        // The PPU draws an object one line below its Y, so the shadow carries the
-        // position minus one — which also parks a sprite at Y=$FF off screen.
-        asm.lda(mem(layout.words + W.count * 2));
-        asm.clc();
-        asm.adc(imm((row * 8 - 1) & 0xff));
-        asm.sta(mem(ZP.t0));
-        asm.lda(mem(layout.words + W.temp * 2));
-        asm.clc();
-        asm.adc(imm(column * 8));
-        asm.sta(mem(ZP.t1));
-        asm.lda(imm(tile & 0xff));
-        asm.sta(mem(ZP.t2));
-        asm.lda(imm(palette & 0x03));
-        asm.sta(mem(ZP.t3));
-        asm.jsr(needPushSprite(ctx));
+        const tile = art ? art.tile + row * art.width + column : ctx.bank.objectTile;
+        emitSpriteCell(ctx, column, row, tile, palette);
       }
     }
     asm.label(skip);
@@ -1782,7 +2026,7 @@ function emitHudSprites(ctx: NesCtx, scene: SceneCtx): void {
     if (isText) {
       const text = instance.strings["text"] ?? "";
       for (const character of [...text].slice(0, MAP_W)) {
-        asm.lda(imm(glyphTile(character)));
+        asm.lda(imm(ctx.bank.glyph(character)));
         asm.jsr(needHudGlyph(ctx));
       }
     } else {
@@ -1798,10 +2042,23 @@ function needHudGlyph(ctx: NesCtx): Ref {
   return ctx.need("HudGlyph", (inner) => {
     const { asm, layout } = inner;
     asm.sta(mem(ZP.t2));
+    // Same bounds rule as an object's cell, and the same exception: the pen is
+    // sixteen bits and a sprite's position is a byte, so a glyph the screen does
+    // not hold is skipped rather than wrapped — but the top line is a position
+    // the hardware cannot express rather than one it cannot show, so a caption
+    // there is drawn a line low. The pen still advances either way, so the rest
+    // of a caption lands where it would have.
+    const offscreen = inner.unique("hudOff");
+    const onLineZero = inner.unique("hudTop");
+    asm.lda(mem(layout.words + W.count * 2 + 1));
+    asm.bne(offscreen);
     asm.lda(mem(layout.words + W.count * 2));
-    asm.sec();
-    asm.sbc(imm(1));
     asm.sta(mem(ZP.t0));
+    asm.beq(onLineZero);
+    asm.dec(mem(ZP.t0));
+    asm.label(onLineZero);
+    asm.lda(mem(layout.words + W.temp * 2 + 1));
+    asm.bne(offscreen);
     asm.lda(mem(layout.words + W.temp * 2));
     asm.sta(mem(ZP.t1));
     // The font's own palette, which stays the plain ramp: the art's own palette is
@@ -1809,6 +2066,7 @@ function needHudGlyph(ctx: NesCtx): Ref {
     asm.lda(imm(SYSTEM_PALETTE));
     asm.sta(mem(ZP.t3));
     asm.jsr(needPushSprite(inner));
+    asm.label(offscreen);
     asm.clc();
     asm.lda(mem(layout.words + W.temp * 2));
     asm.adc(imm(8));
@@ -1822,6 +2080,76 @@ function needHudNumber(ctx: NesCtx): Ref {
   return ctx.need("DrawNumberOam", (inner) => {
     emitDecimal(inner, needHudGlyph(inner));
   });
+}
+
+/**
+ * One cell of an object, at the pen, and only if the hardware can put it there.
+ *
+ * An object's position is a *screen* position and can be off either edge; a
+ * sprite's is a byte and cannot. So the cell's position is computed sixteen bits
+ * wide and pushed only when the high byte is zero — which is the whole of the
+ * check, because both ways of failing it show up there: a negative position
+ * arrives as `$FFxx` and one past the right edge as `$01xx`.
+ *
+ * Getting this wrong does not clip, it *wraps*: a coin one pixel off the right of
+ * a scrolling level reappears inside the wall on the left, and blinks in and out
+ * as the camera moves. The Game Boy is not exposed to it — 160 pixels of screen
+ * against a 256-value byte leaves the wrapped positions in the hidden range — so
+ * this is a real difference between the machines rather than a copy of one.
+ *
+ * The vertical arithmetic carries the PPU's own convention: an object is drawn on
+ * the line *after* its Y, so the shadow holds the position minus one — and a cell
+ * whose top row is the screen's first line is the one position this hardware
+ * cannot express, because the shadow would have to hold minus one.
+ *
+ * It is drawn a line low rather than not drawn. The bounds test is therefore on
+ * the position itself and the subtraction happens after it, which is three
+ * instructions a cell and buys back a whole object: pong's opponent sits at
+ * `y 0` for the entire game, and dropping the cell dropped the paddle — a game
+ * whose second player is invisible, on the console where the trace said it was
+ * playing perfectly.
+ */
+function emitSpriteCell(
+  ctx: NesCtx,
+  column: number,
+  row: number,
+  tile: number,
+  palette: number,
+): void {
+  const { asm, layout } = ctx;
+  const penX = layout.words + W.temp * 2;
+  const penY = layout.words + W.count * 2;
+  const offscreen = ctx.unique("spriteOff");
+  const onLineZero = ctx.unique("spriteTop");
+  const dx = column * 8;
+  const dy = row * 8;
+
+  asm.clc();
+  asm.lda(mem(penX));
+  asm.adc(imm(dx & 0xff));
+  asm.sta(mem(ZP.t1));
+  asm.lda(mem(penX, 1));
+  asm.adc(imm((dx >> 8) & 0xff));
+  asm.bne(offscreen);
+  asm.clc();
+  asm.lda(mem(penY));
+  asm.adc(imm(dy & 0xff));
+  asm.sta(mem(ZP.t0));
+  asm.lda(mem(penY, 1));
+  asm.adc(imm((dy >> 8) & 0xff));
+  asm.bne(offscreen);
+  // Y minus one, except at zero, where the shadow keeps zero and the cell is
+  // drawn on the line below the one it asked for.
+  asm.lda(mem(ZP.t0));
+  asm.beq(onLineZero);
+  asm.dec(mem(ZP.t0));
+  asm.label(onLineZero);
+  asm.lda(imm(tile & 0xff));
+  asm.sta(mem(ZP.t2));
+  asm.lda(imm(palette & 0x03));
+  asm.sta(mem(ZP.t3));
+  asm.jsr(needPushSprite(ctx));
+  asm.label(offscreen);
 }
 
 /** `t0` = y, `t1` = x, `t2` = tile, `t3` = palette; append an object entry. */
@@ -2032,11 +2360,12 @@ export function emitRenderHelpers(ctx: NesCtx): void {
   asm.and(imm(0x80));
   const acrossRun = ctx.unique("runAcross");
   asm.beq(acrossRun);
-  asm.lda(imm(0x8c));
+  asm.lda(mem(layout.scratch + PPU_CTRL));
+  asm.ora(imm(0x04));
   const setStep = ctx.unique("runStep");
   asm.bne(setStep);
   asm.label(acrossRun);
-  asm.lda(imm(0x88));
+  asm.lda(mem(layout.scratch + PPU_CTRL));
   asm.label(setStep);
   asm.sta(abs(R.PPUCTRL));
   asm.ldy(imm(1));
@@ -2086,7 +2415,7 @@ export function emitRenderHelpers(ctx: NesCtx): void {
   // position. PPUCTRL first, since the horizontal nametable is one of its bits.
   asm.lda(mem(layout.words + W.scrollX * 2 + 1));
   asm.and(imm(1));
-  asm.ora(imm(0x88));
+  asm.ora(mem(layout.scratch + PPU_CTRL));
   asm.sta(abs(R.PPUCTRL));
   asm.lda(mem(layout.words + W.scrollX * 2));
   asm.sta(abs(R.PPUSCROLL));
@@ -2235,7 +2564,7 @@ function emitDecimal(ctx: NesCtx, plot: Ref): void {
   asm.lda(imm(0));
   asm.sbc(mem(value, 1));
   asm.sta(mem(value, 1));
-  asm.lda(imm(glyphTile("-")));
+  asm.lda(imm(ctx.bank.glyph("-")));
   asm.jsr(plot);
   asm.label(positive);
 
@@ -2279,7 +2608,7 @@ function emitDecimal(ctx: NesCtx, plot: Ref): void {
   asm.sta(mem(flag));
   asm.clc();
   asm.lda(mem(digit));
-  asm.adc(imm(glyphTile("0")));
+  asm.adc(imm(ctx.bank.glyph("0")));
   asm.jsr(plot);
   asm.label(skipDigit);
   asm.clc();

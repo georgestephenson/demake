@@ -118,6 +118,19 @@ export abstract class CtxBase<Self, A extends CodeBuffer> {
     return this.helpers.has(name);
   }
 
+  /**
+   * Ask for a table to be emitted after the code, with the data.
+   *
+   * A helper is a routine and this is its argument: an emitter that loops over
+   * something needs the something *somewhere*, and it cannot be in the middle of
+   * the instruction stream. Queued in request order, so the output stays a
+   * function of the program rather than of when the queue was drained.
+   */
+  data(body: (asm: A) => void): void {
+    this.tables.push(body);
+  }
+  private readonly tables: ((asm: A) => void)[] = [];
+
   /** Every helper the program pulled in — what the build report shows. */
   helperNames(): readonly string[] {
     return [...this.helpers.keys()];
@@ -167,6 +180,8 @@ export abstract class CtxBase<Self, A extends CodeBuffer> {
         (this.helpers.get(name) as (ctx: Self) => void)(this as unknown as Self);
       }
     }
+    // After the helpers, because a helper may have asked for a table of its own.
+    for (const table of this.tables) table(this.asm);
     for (const [value, name] of this.constants) {
       this.asm.label(name);
       this.asm.dd(value);

@@ -91,7 +91,29 @@ const OUTPUT_FLAGS: readonly FlagSpec[] = [
   { name: "force", short: "f", type: "boolean", help: "Overwrite an existing output file." },
 ];
 
+/**
+ * How many candidates a tournament may fit at once (doc 04 §Running the
+ * tournament).
+ *
+ * On the commands that run one — everything that fits an image or a sound. It is
+ * a speed control and nothing else: the winner is decided in portfolio order
+ * whatever ran where, so `--jobs 1` and `--jobs 16` write the same file. That is
+ * exactly why it can be a flag rather than a decision, and why `--json` does not
+ * report it: it is not part of what was produced.
+ */
+const PARALLEL_FLAGS: readonly FlagSpec[] = [
+  {
+    name: "jobs",
+    short: "j",
+    type: "string",
+    metavar: "<n>",
+    default: "auto",
+    help: "Candidates to fit at once: a number, or auto for one per core.",
+  },
+];
+
 const PREP_FLAGS: readonly FlagSpec[] = [
+  ...PARALLEL_FLAGS,
   {
     name: "console",
     short: "c",
@@ -201,6 +223,7 @@ const PREP_FLAGS: readonly FlagSpec[] = [
 ];
 
 const GEN_FLAGS: readonly FlagSpec[] = [
+  ...PARALLEL_FLAGS,
   {
     name: "console",
     short: "c",
@@ -270,6 +293,7 @@ const INSPECT_FLAGS: readonly FlagSpec[] = [
 ];
 
 const BUILD_FLAGS: readonly FlagSpec[] = [
+  ...PARALLEL_FLAGS,
   {
     name: "console",
     short: "c",
@@ -404,6 +428,7 @@ const ARRANGE_FLAGS: readonly FlagSpec[] = [
 
 const SFX_FLAGS: readonly FlagSpec[] = [
   ...AUDIO_COMMON_FLAGS,
+  ...PARALLEL_FLAGS,
   {
     name: "max-length",
     type: "string",

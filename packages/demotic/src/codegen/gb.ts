@@ -28,6 +28,7 @@ import {
   GB_ROM_SIZE,
   megaduckRegister,
   stampGbHeader,
+  type Executor,
 } from "@demake/core";
 
 import { getProfile } from "../profiles.js";
@@ -135,8 +136,12 @@ export const gbBackend: Backend<EmitOptions, GbAudio> = {
     return GB_MEMORY;
   },
 
-  bindArt(program: Program, assets: AssetBytes): BoundAssets<EmitOptions> {
-    const art = bindArt(program, assets);
+  async bindArt(
+    program: Program,
+    assets: AssetBytes,
+    executor?: Executor,
+  ): Promise<BoundAssets<EmitOptions>> {
+    const art = await bindArt(program, assets, executor);
     return { emit: art, tiles: art.tiles8, missing: art.missing };
   },
 
@@ -157,19 +162,29 @@ export const gbBackend: Backend<EmitOptions, GbAudio> = {
     );
   },
 
-  bindAudio(program: Program, assets: AssetBytes): BoundAssets<GbAudio> {
-    const bound = bindAudio(program, assets, {
-      build: (tracks, effects) =>
-        buildGameAudio({
-          tracks,
-          effects,
-          hram: HRAM_AUDIO,
-          // The chip is the Game Boy's; only its address on the bus differs, so
-          // the schedules, the channel map and the proof are untouched and the
-          // driver stores to a different byte.
-          ...(program.profile.id === "megaduck" ? { regMap: megaduckRegister } : {}),
-        }),
-    });
+  async bindAudio(
+    program: Program,
+    assets: AssetBytes,
+    _layout: Layout,
+    executor?: Executor,
+  ): Promise<BoundAssets<GbAudio>> {
+    const bound = await bindAudio(
+      program,
+      assets,
+      {
+        build: (tracks, effects) =>
+          buildGameAudio({
+            tracks,
+            effects,
+            hram: HRAM_AUDIO,
+            // The chip is the Game Boy's; only where it answers on the bus
+            // differs, so the schedules, the channel map and the proof are all
+            // untouched and the driver simply stores to a different byte.
+            ...(program.profile.id === "megaduck" ? { port: megaduckRegister } : {}),
+          }),
+      },
+      executor,
+    );
     const names = program.tracks.length > 0 || program.sounds.length > 0;
     const driver = bound.driver;
     const options: EmitOptions = driver
@@ -184,8 +199,14 @@ export const gbBackend: Backend<EmitOptions, GbAudio> = {
       options,
       tracks: driver?.stats.tracks ?? 0,
       effects: driver?.stats.effects ?? 0,
-      code: driver?.stats.code ?? 0,
-      data: driver?.stats.data ?? 0,
+      // Getters: the driver has not been emitted yet, so its sizes are zero until
+      // `assemble` has run (`BoundAudioShape`).
+      get code() {
+        return driver?.stats.code ?? 0;
+      },
+      get data() {
+        return driver?.stats.data ?? 0;
+      },
       helpers: driver?.stats.helpers ?? [],
       rateHz: driver ? driver.stats.rate.num / driver.stats.rate.den : 0,
       writesRestricted: driver?.stats.writesRestricted ?? 0,
@@ -270,7 +291,7 @@ export function unsupportedFeatures(program: Program): string[] {
 }
 
 /** Compile a program into a bootable `.gb`. */
-export function buildGbRom(program: Program, options: RomOptions = {}): BuiltRom {
+export function buildGbRom(program: Program, options: RomOptions = {}): Promise<BuiltRom> {
   return buildRom(program, gbBackend, options);
 }
 

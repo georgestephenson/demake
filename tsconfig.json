@@ -18,6 +18,9 @@
       "path": "./packages/nes"
     },
     {
+      "path": "./packages/sms"
+    },
+    {
       "path": "./packages/chip"
     },
     {

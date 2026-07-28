@@ -25,11 +25,17 @@
  */
 
 import { buildNesGameAudio } from "@demake/audio";
-import { AsmError, NES_CHR_SIZE, NES_PRG_ORIGIN, NES_PRG_SIZE, packInesRom } from "@demake/core";
+import {
+  AsmError,
+  NES_CHR_SIZE,
+  NES_PRG_ORIGIN,
+  NES_PRG_SIZE,
+  packInesRom,
+  type Executor,
+} from "@demake/core";
 
 import { getProfile } from "../profiles.js";
 import type { Program } from "../program.js";
-import { BUILTIN_TILES } from "../rom/graphics.js";
 
 import { type Analysis } from "./analyze.js";
 import type { AssetBytes } from "./art.js";
@@ -45,7 +51,7 @@ import {
   type BuiltRom,
 } from "./backend.js";
 import { NES_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
-import { ART_PATTERNS, bindNesArt, type BoundNesArt } from "./nes-art.js";
+import { bindNesArt, PATTERNS_PER_TABLE, type BoundNesArt } from "./nes-art.js";
 import { NesCtx } from "./nes/ctx.js";
 import { emitProgram, type NesEmitOptions } from "./nes/emit.js";
 
@@ -112,8 +118,12 @@ export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
     return NES_MEMORY;
   },
 
-  bindArt(program: Program, assets: AssetBytes): BoundAssets<NesEmitOptions> {
-    const art = bindNesArt(program, assets);
+  async bindArt(
+    program: Program,
+    assets: AssetBytes,
+    executor?: Executor,
+  ): Promise<BoundAssets<NesEmitOptions>> {
+    const art = await bindNesArt(program, assets, executor);
     // The character bank travels with the options rather than through a second
     // return value, because `assemble` is the only thing that wants it.
     banks.set(art.options, art);
@@ -123,12 +133,13 @@ export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
   checkTiles(program: Program, art: BoundAssets<NesEmitOptions>): void {
     const bound = banks.get(art.emit);
     if (!bound) return;
+    const room = PATTERNS_PER_TABLE - bound.bankPatterns;
     const over = (kind: string, used: number): void => {
-      if (used <= ART_PATTERNS) return;
+      if (used <= room) return;
       const backdrops = program.scenes.filter((scene) => scene.backdrop !== undefined).length;
       throw new BuildError(
         "E_BACKDROP_TILES",
-        `this game needs ${used + BUILTIN_TILES} ${kind} patterns and the NES has ${ART_PATTERNS + BUILTIN_TILES}`,
+        `this game needs ${used + bound.bankPatterns} ${kind} patterns and the NES has ${PATTERNS_PER_TABLE}`,
         backdrops > 0
           ? "a backdrop costs one pattern per distinct 8x8 cell — flatter areas and repeated motifs cost fewer"
           : "fewer objects, or smaller ones; every distinct 8x8 cell of art is a pattern",
@@ -138,7 +149,12 @@ export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
     over("object", bound.objectPatterns);
   },
 
-  bindAudio(program: Program, assets: AssetBytes, layout: Layout): BoundAssets<NesAudio> {
+  async bindAudio(
+    program: Program,
+    assets: AssetBytes,
+    layout: Layout,
+    executor?: Executor,
+  ): Promise<BoundAssets<NesAudio>> {
     // The driver's state is page zero the allocator set aside for it, which it
     // only does for a program that names audio — so a game with none reaches
     // `bindAudio` with nowhere to put a driver and does not need one.
@@ -146,9 +162,12 @@ export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
     const bound =
       state === null
         ? { driver: undefined, missing: [] as readonly string[], notes: [] as readonly string[] }
-        : bindAudio(program, assets, {
-            build: (tracks, effects) => buildNesGameAudio({ tracks, effects, state }),
-          });
+        : await bindAudio(
+            program,
+            assets,
+            { build: (tracks, effects) => buildNesGameAudio({ tracks, effects, state }) },
+            executor,
+          );
     const names = program.tracks.length > 0 || program.sounds.length > 0;
     const driver = bound.driver;
     const options: NesEmitOptions = driver
@@ -163,8 +182,14 @@ export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
       options,
       tracks: driver?.stats.tracks ?? 0,
       effects: driver?.stats.effects ?? 0,
-      code: driver?.stats.code ?? 0,
-      data: driver?.stats.data ?? 0,
+      // Getters: the driver has not been emitted yet, so its sizes are zero until
+      // `assemble` has run (`BoundAudioShape`).
+      get code() {
+        return driver?.stats.code ?? 0;
+      },
+      get data() {
+        return driver?.stats.data ?? 0;
+      },
       helpers: driver?.stats.helpers ?? [],
       rateHz: driver ? driver.stats.rate.num / driver.stats.rate.den : 0,
       writesRestricted: driver?.stats.writesRestricted ?? 0,
@@ -190,6 +215,7 @@ export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
       layout,
       getProfile(program.profile.id),
       NES_PRG_ORIGIN,
+      art.bank,
     );
     if (audio.hooks) {
       ctx.audio = {
@@ -258,7 +284,7 @@ export function unsupportedNesFeatures(program: Program): string[] {
 }
 
 /** Compile a program into a bootable `.nes`. */
-export function buildNesRom(program: Program, options: NesRomOptions = {}): BuiltRom {
+export function buildNesRom(program: Program, options: NesRomOptions = {}): Promise<BuiltRom> {
   return buildRom(program, nesBackend, options);
 }
 

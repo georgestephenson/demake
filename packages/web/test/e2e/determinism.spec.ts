@@ -122,18 +122,25 @@ for (const { name, options } of CASES) {
  * object art *and* legend art. Everything the compiler and the image pipeline do
  * is in those kilobytes, so a single divergent byte anywhere shows up here.
  *
- * Once per console with a backend, because the two share a compiler and share
- * nothing below it: the code is a different instruction set, the art goes through
- * a different fitter — mono shades against a picture demade in colour — and the
- * cartridge is wrapped differently. A page that agreed with the CLI about the
- * Game Boy would say nothing about whether it agreed about the NES.
+ * Once per console with a backend, because they share a compiler and share
+ * nothing below it: the code is a different instruction set each time, the art
+ * goes through a different fitter — mono shades, a fixed master palette, a
+ * sixteen-colour bank — and the cartridge is wrapped differently. A page that
+ * agreed with the CLI about the Game Boy would say nothing about whether it
+ * agreed about the NES or the Master System.
  *
  * The fixtures are read off disk rather than imported from the page's bundle:
  * the page gets them through Vite's `?raw`, which only exists inside a build,
  * and the point of the test is that both sides start from the same file.
  */
-for (const consoleId of ["gb", "nes"] as const) {
+for (const consoleId of ["gb", "nes", "sms"] as const) {
   test(`the ${consoleId} ROM the page builds is byte-identical to the CLI's`, async ({ page }) => {
+    // Demaking a full-screen picture is seconds of real work and the runner is
+    // shared, so the budget is the *slowest* thing this can legitimately take
+    // rather than the fastest it has been seen to. What is being asserted is
+    // byte-identity; how long the page took to get there is not the claim, and a
+    // tight limit here only ever fails on someone else's busy machine.
+    test.slow();
     const fixtures = dirname(
       createRequire(import.meta.url).resolve("@demake/demotic/fixtures/pong.dmt"),
     );
@@ -151,16 +158,16 @@ for (const consoleId of ["gb", "nes"] as const) {
     for (const name of [...program.assets, ...program.tracks, ...program.sounds]) {
       assets.set(name, new Uint8Array(await readFile(join(games, name))));
     }
-    const expected = buildGame(program, { title: "caves", assets }).bytes;
+    const expected = (await buildGame(program, { title: "caves", assets })).bytes;
 
     await page.goto("/#section=game");
     await page.getByTestId("example-select").selectOption("caves");
     if (consoleId !== "gb") await page.getByTestId("console-select").selectOption(consoleId);
-    // Waiting on the *cartridge's* console, not the picker's: demaking two
-    // full-screen pictures in colour is the whole `prep` tournament, and until it
+    // Waiting on the *cartridge's* console, not the picker's: demaking a
+    // full-screen picture in colour is the whole `prep` tournament, and until it
     // finishes the pane is still playing — and still offering — the last one.
     await expect(page.getByTestId("rom-canvas")).toHaveAttribute("data-console", consoleId, {
-      timeout: 60_000,
+      timeout: 150_000,
     });
 
     const [download] = await Promise.all([
@@ -236,7 +243,7 @@ test("the music demaker's artifacts are byte-identical to Node's", async ({ page
  */
 test("the sound demaker's artifacts are byte-identical to Node's", async ({ page }) => {
   const source = new Uint8Array(await readFile(join(fixtureDir(), "bounce.wav")));
-  const result = demakeSfx(source, toSfxOptions(DEFAULT_SFX));
+  const result = await demakeSfx(source, toSfxOptions(DEFAULT_SFX));
   const expected = {
     vgm: result.artifact,
     wav: encodeWav(render(result.script, toRenderOptions(DEFAULT_SFX))),

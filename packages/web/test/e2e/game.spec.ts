@@ -413,6 +413,37 @@ test("builds and plays a real NES ROM in the page", async ({ page }) => {
   await expect(page.getByTestId("rom-stat")).toContainText("per tick", { timeout: 8000 });
 });
 
+test("builds and plays a real Master System ROM in the page", async ({ page }) => {
+  // Demaking a full-screen picture for a sixty-four-colour lattice is the whole
+  // `prep` tournament, and this is the console it costs the most on.
+  test.slow();
+  await page.goto("/#section=game");
+  const canvas = page.getByTestId("rom-canvas");
+  await expect(canvas).toBeVisible();
+
+  await page.getByTestId("console-select").selectOption("sms");
+  await expect(canvas).toHaveAttribute("data-console", "sms", { timeout: 150_000 });
+
+  // A third cartridge shape: a flat 32 KiB with the `TMR SEGA` header inside it,
+  // on a screen that is neither of the other two.
+  await expect(page.getByTestId("rom-stat")).toContainText("32 KiB");
+  await expect(page.getByTestId("rom-download")).toContainText(".sms");
+  await expect(canvas).toHaveAttribute("width", "256");
+  await expect(canvas).toHaveAttribute("height", "192");
+
+  // It boots to the title screen, and a press starts the game.
+  await expect.poll(async () => romPainted(page), { timeout: 8000 }).toBeGreaterThan(0);
+  const title = await romPainted(page);
+  await page.locator(".rom-canvas").click();
+  await page.keyboard.press("KeyZ");
+  await expect.poll(async () => romPainted(page), { timeout: 8000 }).not.toBe(title);
+  await expect(page.getByTestId("rom-stat")).toContainText("per tick");
+
+  // And the sound button works here too: the SN76489 has a generated Z80 driver
+  // now, so the third console offers what the other two do.
+  await expect(page.getByTestId("rom-sound")).toBeEnabled();
+});
+
 test("opens on the cartridge, and shows the interpreter when asked", async ({ page }) => {
   await page.goto("/#section=game");
   await expect(page.getByRole("heading", { name: "Play" })).toBeVisible();

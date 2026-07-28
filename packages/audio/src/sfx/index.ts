@@ -10,7 +10,17 @@
  * limit is a design decision rather than a restriction being tolerated.
  */
 
-import { getConsole, math, type AudioSpec } from "@demake/core";
+import {
+  defineJob,
+  getConsole,
+  inlineExecutor,
+  jobHandlers,
+  math,
+  sourceHash,
+  unwrap,
+  type AudioSpec,
+  type Executor,
+} from "@demake/core";
 
 import { bindingFor } from "../binding/registry.js";
 import { silentFrames, type ChipBinding, type DriverRateFit } from "../binding/types.js";
@@ -44,6 +54,14 @@ export interface SfxOptions {
    * step on it (doc 16 §Two streams, one clock).
    */
   rateHz?: number;
+  /**
+   * Where the gesture families are fitted (doc 18 §The tournament).
+   *
+   * Families cannot see each other, so an edge with threads to spare can hand
+   * one in. Omitted, they are fitted on this thread in order — same effect, same
+   * bytes.
+   */
+  executor?: Executor;
 }
 
 /** One family's best fit, with its score. */
@@ -93,8 +111,63 @@ const SCORING_RATE = 16000;
 const SCORING_FRAME = 512;
 const SCORING_HOP = 256;
 
-/** Demake a sound file into a chip effect. */
-export function demakeSfx(bytes: Uint8Array, options: SfxOptions): SfxResult {
+/**
+ * Everything the tournament derives before it knows which gesture it is fitting.
+ *
+ * Cheap next to the fitting — around a twentieth of an effect's work — but not
+ * free, and every gesture needs all of it, so it is memoised by content the way
+ * the image path's prologue is (`@demake/core`'s `candidate.ts`). One worker
+ * handed four gestures for one sound analyses it once.
+ */
+interface SfxPrologue {
+  readonly consoleSpec: ReturnType<typeof getConsole>;
+  readonly spec: AudioSpec;
+  readonly binding: ChipBinding;
+  readonly features: SoundFeatures;
+  readonly diagnostics: SfxResult["diagnostics"];
+  readonly fit: DriverRateFit;
+  readonly noiseIndex: number;
+  readonly pitchedIndex: number;
+  readonly portfolio: readonly Gesture[];
+  readonly scoringTarget: SoundFeatures;
+  readonly seed: GestureParams;
+}
+
+/**
+ * The prologue cache: two sounds, for the same reason the image path keeps two.
+ *
+ * Keyed by a digest and confirmed by comparing the bytes, because a collision
+ * would demake one effect from another's waveform and "unlikely" is not a
+ * standard an output-byte guarantee is held to.
+ */
+const PROLOGUE_CACHE_ENTRIES = 2;
+const prologueCache: { key: string; bytes: Uint8Array; value: SfxPrologue }[] = [];
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+function prologueKey(bytes: Uint8Array, options: SfxOptions): string {
+  const entries = Object.entries(options)
+    .filter(([name]) => name !== "strategy")
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return `${sourceHash(bytes)}:${bytes.length}:${JSON.stringify(entries)}`;
+}
+
+function prologue(bytes: Uint8Array, options: SfxOptions): SfxPrologue {
+  const key = prologueKey(bytes, options);
+  const hit = prologueCache.find((entry) => entry.key === key && sameBytes(entry.bytes, bytes));
+  if (hit) return hit.value;
+  const value = derivePrologue(bytes, options);
+  prologueCache.unshift({ key, bytes, value });
+  if (prologueCache.length > PROLOGUE_CACHE_ENTRIES) prologueCache.length = PROLOGUE_CACHE_ENTRIES;
+  return value;
+}
+
+function derivePrologue(bytes: Uint8Array, options: SfxOptions): SfxPrologue {
   const consoleSpec = getConsole(options.console);
   const binding = bindingFor(options.console);
   const spec = consoleSpec.audio!;
@@ -120,24 +193,7 @@ export function demakeSfx(bytes: Uint8Array, options: SfxOptions): SfxResult {
 
   const noiseIndex = spec.channels.findIndex((channel) => channel.kind === "noise");
   const pitchedIndex = spec.channels.findIndex((channel) => channel.pitch !== undefined);
-  let portfolio = gesturesFor(features.soundClass, noiseIndex >= 0);
-  if (options.strategy) {
-    portfolio = portfolio.filter((gesture) => gesture.id === options.strategy);
-    if (portfolio.length === 0) {
-      throw new SfxError(
-        "E_UNKNOWN_STRATEGY",
-        `no gesture named '${options.strategy}' is eligible for a ${features.soundClass} source`,
-      );
-    }
-  } else if ((options.effort ?? "default") === "fast") {
-    portfolio = portfolio.slice(0, 1);
-  }
-  if (portfolio.length === 0) {
-    throw new SfxError(
-      "E_NO_ELIGIBLE_GESTURE",
-      `nothing can represent a ${features.soundClass} source on ${consoleSpec.name}`,
-    );
-  }
+  const portfolio = gesturesFor(features.soundClass, noiseIndex >= 0);
 
   // The source is described twice: once properly, for reporting and for the
   // class gate, and once at the scoring resolution so candidates are compared
@@ -156,44 +212,159 @@ export function demakeSfx(bytes: Uint8Array, options: SfxOptions): SfxResult {
     brightness: meanOf(features.brightness),
   });
 
-  const scored: SfxCandidateScore[] = [];
-  let best:
-    { gesture: Gesture; params: GestureParams; script: ChipScript; score: number } | undefined;
+  return {
+    consoleSpec,
+    spec,
+    binding,
+    features,
+    diagnostics,
+    fit,
+    noiseIndex,
+    pitchedIndex,
+    portfolio,
+    scoringTarget,
+    seed,
+  };
+}
 
-  for (const gesture of portfolio) {
-    const channelIndex = gesture.noise ? noiseIndex : pitchedIndex;
-    if (channelIndex < 0) continue;
-    const refined = refine(
-      gesture,
-      seed,
-      spec,
-      binding,
-      channelIndex,
-      fit,
-      scoringTarget,
-      features,
-      options,
-    );
-    const script = buildScript(gesture, refined.params, spec, binding, channelIndex, fit);
-    const inspection = inspectScript(script);
-    if (!inspection.compliant) {
-      scored.push({
+/** What one gesture needs to know, and all of it structured-cloneable. */
+export interface GestureJob {
+  readonly source: Uint8Array;
+  readonly options: SfxOptions;
+  /** Which gesture of the source's own portfolio to fit — an id, since the family is derived. */
+  readonly gesture: string;
+}
+
+/** What one gesture's fit produced. */
+export interface GestureOutcome {
+  readonly score: SfxCandidateScore;
+  /** `null` when the fit came out non-compliant, which is when nothing scored it. */
+  readonly script: ChipScript | null;
+}
+
+/**
+ * Fit one gesture family to a sound and judge it — the engine's unit of parallel
+ * work in this domain, and the counterpart of the image path's `runCandidate`.
+ *
+ * Takes the source bytes rather than the analysis for the same reason: what
+ * crosses a thread has to be data, and re-deriving the analysis behind a memo is
+ * cheaper than shipping it.
+ */
+export function runGesture(job: GestureJob): GestureOutcome {
+  const derived = prologue(job.source, job.options);
+  const gesture = derived.portfolio.find((one) => one.id === job.gesture);
+  if (!gesture) {
+    throw new SfxError("E_UNKNOWN_STRATEGY", `no gesture named '${job.gesture}' in this portfolio`);
+  }
+  const channelIndex = gesture.noise ? derived.noiseIndex : derived.pitchedIndex;
+  const refined = refine(
+    gesture,
+    derived.seed,
+    derived.spec,
+    derived.binding,
+    channelIndex,
+    derived.fit,
+    derived.scoringTarget,
+    derived.features,
+    job.options,
+  );
+  const script = buildScript(
+    gesture,
+    refined.params,
+    derived.spec,
+    derived.binding,
+    channelIndex,
+    derived.fit,
+  );
+  const inspection = inspectScript(script);
+  if (!inspection.compliant) {
+    return {
+      score: {
         id: gesture.id,
         summary: gesture.summary,
         aggregate: 0,
         metrics: [],
         disqualified: { reason: inspection.violations[0]?.message ?? "not compliant" },
-      });
-      continue;
-    }
-    scored.push({
+      },
+      script: null,
+    };
+  }
+  return {
+    score: {
       id: gesture.id,
       summary: gesture.summary,
       aggregate: refined.score,
       metrics: refined.metrics,
-    });
-    if (!best || refined.score > best.score) {
-      best = { gesture, params: refined.params, script, score: refined.score };
+    },
+    script,
+  };
+}
+
+/** The gesture job, as an executor sees it. */
+export const gestureJob = defineJob<GestureJob, GestureOutcome>("audio.sfx.gesture", runGesture);
+
+/** Fit gestures here, in order — the default, and the reference answer. */
+const inline: Executor = inlineExecutor(jobHandlers([gestureJob]));
+
+/**
+ * Demake a sound file into a chip effect.
+ *
+ * `async` because the gesture families are independent and may be fitted on
+ * other threads (doc 18 §The tournament); with no `executor` they are fitted
+ * here, in order, for the same bytes.
+ */
+export async function demakeSfx(bytes: Uint8Array, options: SfxOptions): Promise<SfxResult> {
+  const derived = prologue(bytes, options);
+  const { consoleSpec, spec, features, diagnostics, noiseIndex, pitchedIndex } = derived;
+
+  let portfolio = derived.portfolio;
+  if (options.strategy) {
+    portfolio = portfolio.filter((gesture) => gesture.id === options.strategy);
+    if (portfolio.length === 0) {
+      throw new SfxError(
+        "E_UNKNOWN_STRATEGY",
+        `no gesture named '${options.strategy}' is eligible for a ${features.soundClass} source`,
+      );
+    }
+  } else if ((options.effort ?? "default") === "fast") {
+    portfolio = portfolio.slice(0, 1);
+  }
+  // A gesture whose channel this console does not have cannot be fitted at all,
+  // so it is dropped before the fan-out rather than occupying a lane to say so.
+  portfolio = portfolio.filter((gesture) => (gesture.noise ? noiseIndex : pitchedIndex) >= 0);
+  if (portfolio.length === 0) {
+    throw new SfxError(
+      "E_NO_ELIGIBLE_GESTURE",
+      `nothing can represent a ${features.soundClass} source on ${consoleSpec.name}`,
+    );
+  }
+
+  const executor = options.executor ?? inline;
+  // The executor is the thing carrying the jobs; it cannot also be inside one.
+  const { executor: carrier, ...portable } = options;
+  void carrier;
+  const jobs = portfolio.map((gesture) =>
+    gestureJob.job({ source: bytes, options: portable, gesture: gesture.id }),
+  );
+  const outcomes = await executor(jobs);
+  if (outcomes.length !== jobs.length) {
+    throw new SfxError(
+      "E_INTERNAL",
+      `the executor answered ${outcomes.length} of ${jobs.length} gestures`,
+    );
+  }
+
+  const scored: SfxCandidateScore[] = [];
+  let best: { gesture: Gesture; script: ChipScript; score: number } | undefined;
+  // Walked in portfolio order, not arrival order: ties break by the fixed order
+  // of the families, so the winner cannot depend on how many lanes ran them.
+  for (let index = 0; index < portfolio.length; index += 1) {
+    const gesture = portfolio[index]!;
+    const outcome = unwrap<GestureOutcome>(outcomes[index]!);
+    scored.push(outcome.score);
+    if (outcome.script === null) continue;
+    if (!best || outcome.score.aggregate > best.score) {
+      best = { gesture, script: outcome.script, score: outcome.score.aggregate };
     }
   }
 

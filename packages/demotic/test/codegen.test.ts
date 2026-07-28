@@ -23,26 +23,26 @@ const fixtures = join(import.meta.dirname, "..", "fixtures");
 const read = (name: string) => readFileSync(join(fixtures, name), "utf8");
 const build = (source: string) => compile(source, { profile: getProfile("gb") });
 
-describe("what a program needs", () => {
-  it("leaves out the helpers a game never reaches", () => {
+describe("what a program needs", async () => {
+  it("leaves out the helpers a game never reaches", async () => {
     // Two objects and one rule that only adds: no multiply, no divide, no
     // generator. A fixed engine would ship all three.
     const still = build(
       ["start play", "scene play", "create object mark (x 1, y 1, sprite m.png)"].join("\n"),
     );
-    expect(buildGbRom(still).stats.helpers).toEqual([]);
+    expect((await buildGbRom(still)).stats.helpers).toEqual([]);
 
     // Pong divides (the opponent's proportional steering), multiplies
     // (direction by speed) and draws (the opponent's wandering aim), so exactly
     // those three arrive.
-    const pong = buildGbRom(build(read("pong.dmt"))).stats;
+    const pong = (await buildGbRom(build(read("pong.dmt")))).stats;
     expect(pong.helpers).toContain("Div32");
     expect(pong.helpers).toContain("Mul32");
     expect(pong.helpers).toContain("RngPick");
 
     // Breakout does the same arithmetic and never draws, so it ships no
     // generator at all — which is the half of this that is easy to get wrong.
-    const breakout = buildGbRom(build(read(join("games", "breakout.dmt")))).stats;
+    const breakout = (await buildGbRom(build(read(join("games", "breakout.dmt"))))).stats;
     expect(breakout.helpers).toContain("Div32");
     expect(breakout.helpers).not.toContain("RngPick");
   });
@@ -77,8 +77,8 @@ describe("what a program needs", () => {
     expect(analysis.writes.get(score?.id ?? -1)?.has("value")).toBe(true);
   });
 
-  it("compiles a whole game into a fraction of the cartridge", () => {
-    const { stats } = buildGbRom(build(read("pong.dmt")));
+  it("compiles a whole game into a fraction of the cartridge", async () => {
+    const { stats } = await buildGbRom(build(read("pong.dmt")));
     expect(stats.bytes).toBeGreaterThan(1024);
     expect(stats.free).toBeGreaterThan(0x4000);
   });

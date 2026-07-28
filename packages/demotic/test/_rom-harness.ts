@@ -23,10 +23,12 @@
 
 import { Gameboy, type Button as GbButton, type Machine as GbMachine } from "@demake/dmg";
 import { Nes, type Button as NesButton } from "@demake/nes";
+import { Sms, type Button as SmsButton } from "@demake/sms";
 
 import { buildGbRom } from "../src/codegen/gb.js";
 import type { Layout } from "../src/codegen/layout.js";
 import { buildNesRom } from "../src/codegen/nes.js";
+import { buildSmsRom } from "../src/codegen/sms.js";
 import type { BuildOptions, BuiltRom } from "../src/codegen/backend.js";
 import type { Program } from "../src/program.js";
 import { romReady, romTraceLine } from "../src/rom/trace.js";
@@ -46,7 +48,7 @@ export interface RomMachine {
 export interface RomTarget {
   /** The console id a program is compiled for. */
   readonly console: string;
-  build(program: Program, options: BuildOptions): BuiltRom;
+  build(program: Program, options: BuildOptions): Promise<BuiltRom>;
   boot(bytes: Uint8Array): RomMachine;
 }
 
@@ -98,6 +100,23 @@ export const nesTarget: RomTarget = {
   },
 };
 
+export const smsTarget: RomTarget = {
+  console: "sms",
+  build: (program, options) => buildSmsRom(program, options),
+  boot: (bytes) => {
+    const machine = new Sms(bytes);
+    return {
+      readMemory: (address, length) => machine.readMemory(address, length),
+      stepInstruction: () => machine.stepInstruction(),
+      runFrame: () => machine.runFrame(),
+      setButtons: (down) => machine.setButtons(down as SmsButton[]),
+    };
+  },
+};
+
+/** The same backend, the same machine code, a smaller window. */
+export const ggTarget: RomTarget = { ...smsTarget, console: "gg" };
+
 /** A booted ROM, ready to be stepped a tick at a time. */
 export class RomRunner {
   readonly machine: RomMachine;
@@ -106,17 +125,31 @@ export class RomRunner {
   private readonly read = (address: number, length: number) =>
     this.machine.readMemory(address, length);
 
-  constructor(
+  private constructor(
     readonly program: Program,
-    options: BuildOptions = {},
-    readonly target: RomTarget = gbTarget,
+    built: BuiltRom,
+    readonly target: RomTarget,
   ) {
-    const built = target.build(program, options);
     this.layout = built.layout;
     this.rom = built.bytes;
     this.machine = target.boot(built.bytes);
     // Let the runtime finish initialising before the first input is offered.
     this.settle();
+  }
+
+  /**
+   * Build the cartridge and boot it.
+   *
+   * A factory rather than a constructor because building is asynchronous now:
+   * the art and audio tournaments may be spread across threads (doc 04 §Running
+   * the tournament), and a constructor cannot wait for one.
+   */
+  static async create(
+    program: Program,
+    options: BuildOptions = {},
+    target: RomTarget = gbTarget,
+  ): Promise<RomRunner> {
+    return new RomRunner(program, await target.build(program, options), target);
   }
 
   /**
@@ -160,13 +193,13 @@ export class RomRunner {
  * offered, exactly as `new Sim(program)` starts on tick zero with the entry
  * scene reset. Both sides therefore report tick 1 after one tape frame.
  */
-export function romTrace(
+export async function romTrace(
   program: Program,
   tape: InputTape,
   options: BuildOptions = {},
   target: RomTarget = gbTarget,
-): string {
-  const runner = new RomRunner(program, options, target);
+): Promise<string> {
+  const runner = await RomRunner.create(program, options, target);
   const lines: string[] = traceHeader(program);
   for (const frame of tape) {
     runner.step(frame);
