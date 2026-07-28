@@ -165,7 +165,10 @@ export function buildGameAudio(input: GameAudioInput): GameAudio {
   const shared = input.tracks.length > 0 && input.effects.length > 0;
   // The boot writes are taken off the *schedules*, not by the packer, so
   // `performed` is exactly what the conformance harness should expect to see.
-  const packOptions = shared ? { channelOf: gbChannelOf, mergeRegs: new Set([NR51]) } : {};
+  // The tag is a factory because one chip in the set latches its channel in the
+  // data byte (`data.ts` §`channelOf`); this one does not, so the factory hands
+  // back the same stateless function every time.
+  const packOptions = shared ? { channelOf: () => gbChannelOf, mergeRegs: new Set([NR51]) } : {};
 
   let restricted = 0;
   const tracks = input.tracks.map((script) => stripBoot(script, boot));
@@ -584,18 +587,25 @@ function emitSfxStart(asm: Asm, state: Layout, input: GameAudioInput): void {
  * values, and the music picks it up again at its next note. Restoring what the
  * music *would* have been playing would mean keeping a shadow of every register
  * on every channel, to hide a gap of at most a few ticks.
+ *
+ * The mask is held in `c` rather than `b` because **`b` is live in the caller**:
+ * `AudioMusicStart` holds the track it was asked for there across this call, and
+ * a scene change that happened while an effect was playing would otherwise start
+ * whichever track the effect's channel mask happened to name — or start one where
+ * the scene asked for silence. `c` is free by then and dead again before
+ * `AudioPan` reaches for it.
  */
 function emitRelease(asm: Asm, state: Layout, stealable: number, shared: boolean): void {
   asm.label("AudioSfxRelease");
   asm.ldha(state.steal);
   asm.alu("or", "a");
   asm.ret("z");
-  asm.ld("b", "a");
+  asm.ld("c", "a");
   asm.alu("xor", "a");
   for (let channel = 0; channel < CHANNEL_OFF.length; channel += 1) {
     if ((stealable & (1 << channel)) === 0) continue;
     const skip = `AudioRelease${channel}`;
-    asm.bit(channel, "b");
+    asm.bit(channel, "c");
     asm.jr(skip, "z");
     asm.stha(CHANNEL_OFF[channel] as number);
     asm.label(skip);

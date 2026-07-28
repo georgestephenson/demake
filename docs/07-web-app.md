@@ -206,19 +206,18 @@ APU. So the sound button lives in the cartridge view, the preview is silent, and
 in *Preview* there is no sound control at all — which is the honest way to say
 that a simulator has nothing to play.
 
-Both Nintendo families have a driver, so the button is available there. The Sega
-cartridges do not yet — the SN76489 driver is doc 13's work — so on those the
-button is *disabled* rather than silent, and the pane says why: a switch that
-turns on nothing is worse than one that is plainly unavailable.
+Every console with a backend has a driver now, so the button is never withheld:
+the only thing that can take it away is a browser that will not give the page an
+`AudioContext`.
 
 The ROM pane plays the cartridge's own sound, and every sample of it comes out of
-`@demake/chip`'s model of that console's chip — the Game Boy's APU or the NES's
-2A03, whichever cartridge is running, and in both cases the same model the audio
-pipeline renders WAVs with and the same one the conformance suite diffs register
-writes against. Which model is playing follows the cartridge for the same reason
-the core does, and the stream is rebuilt against *that chip's* clock: 4.19 MHz
-against 1.79, and a sink handed the wrong one would play the game at the wrong
-speed rather than sounding wrong. The page
+`@demake/chip`'s model of that console's chip — the Game Boy's APU, the NES's
+2A03 or the Sega's SN76489, whichever cartridge is running, and in every case the
+same model the audio pipeline renders WAVs with and the same one the conformance
+suite diffs register writes against. Which model is playing follows the cartridge
+for the same reason the core does, and the stream is rebuilt against *that chip's*
+clock: 4.19 MHz, 1.79 and 3.58, and a sink handed the wrong one would play the
+game at the wrong speed rather than sounding wrong. The page
 computes nothing: `StreamSink` box-integrates and DC-blocks the chip's output
 exactly as the offline renderer does (`packages/chip/test/stream.test.ts` pins
 the two as bit-identical, in any chunk size), and what reaches Web Audio is a
@@ -358,7 +357,7 @@ bundled track or effect on arrival instead, so every section demos itself.
   Contrast is always set with an explicit colour, **never with opacity** — a
   translucent foreground composites against whatever is behind it, which is both
   a measured contrast failure and genuinely harder to read.
-- Budget: < 300 KB JS gzipped before WASM codecs (lazy-loaded per input format);
+- Budget: < 310 KB JS gzipped before WASM codecs (lazy-loaded per input format);
   Lighthouse ≥ 95 across the board, checked in CI. The figure is a **sum over the
   whole site** — entry chunk, all five lazy sections, both workers — which is more
   than any one visit costs: opening the heaviest section downloads about 150 KB.
@@ -379,5 +378,18 @@ bundled track or effect on arrival instead, so every section demos itself.
   also stops the tab freezing while a colour backdrop is fitted, and it restores
   the rule the rest of the app already followed: the workers are the only place
   the page touches an engine.
+
+  **It moved once, from 300, and the arithmetic is worth keeping.** By the time
+  the Sega vertical and its Z80 audio driver had landed the site sat 36 bytes
+  under 300 KB — a coincidence rather than headroom. Running the tournaments in
+  parallel (doc 04 §Running the tournament) then cost 3.3 KB, nearly all of it the
+  engine's executor seam and the content-keyed prologue cache that stops a fan-out
+  decoding its source once per candidate. Both live in `@demake/core`, so the CLI
+  half of that work pays for them too. The page's own share is nil, and that was
+  the design rather than luck: a lane is *another instance of `core.worker.ts`*,
+  which already holds both engines because it compiles cartridges, so the browser
+  has the chunk cached and starting six of them downloads nothing. The alternative
+  was built and measured first — a purpose-built lane worker gets its own module
+  graph and re-ships a whole engine, 41 KB.
 - Browser matrix: last 2 versions of Chrome/Firefox/Safari/Edge, tested via
   Playwright in CI (functional + determinism suites).

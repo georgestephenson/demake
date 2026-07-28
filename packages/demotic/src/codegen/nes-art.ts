@@ -31,7 +31,8 @@ import {
   backendFor,
   buildSpriteBank,
   getConsole,
-  prepSync,
+  prep,
+  type Executor,
   type SpriteBank,
   type SpriteSource,
 } from "@demake/core";
@@ -276,18 +277,40 @@ interface Backdrop {
 }
 
 /**
+ * Rows of the name table the game's own screen covers.
+ *
+ * Twenty-eight, not the raster's thirty: the profile's screen is the
+ * overscan-safe rect, so `screenbottom` is row 28 and a paddle at
+ * `screenheight - 1` is row 27 (`profiles.ts` §the cell grid). A picture fitted
+ * to thirty is therefore a picture whose edges are not the game's — pong's
+ * scoreboard band landed a row and a half below the HUD written on it, and the
+ * court's bottom rail sat below the floor the ball bounces off.
+ *
+ * The two rows past it are what a television would have cropped. They are drawn
+ * rather than left blank, and drawn with a repeat of the last row: a level scene
+ * paints those rows from its own grid for exactly the same reason (`emit.ts`
+ * §the full redraw), and sixteen lines of black under the picture is the one
+ * thing worse than sixteen lines of overscan.
+ */
+const GAME_ROWS = 28;
+
+/**
  * Demake one scene's backdrop through the image pipeline.
  *
- * Exactly the window the PPU displays, in pixels — 32×30 cells. Letting `prep`
- * choose would fit the *source's* size, and a title screen has to be a screenful:
- * the nametable it produces and the block copy that paints it are the same
- * rectangle.
+ * Exactly the window the *game* plays in, in pixels — 32×28 cells, extended to
+ * the name table's thirty by {@link extendToRaster}. Letting `prep` choose would
+ * fit the *source's* size, and a title screen has to be a screenful: the
+ * nametable it produces and the block copy that paints it are the same rectangle.
  */
-function demakeBackdrop(bytes: Uint8Array, maxTiles: number): Backdrop {
+async function demakeBackdrop(
+  bytes: Uint8Array,
+  maxTiles: number,
+  executor: Executor | undefined,
+): Promise<Backdrop> {
   const spec = getConsole("nes");
-  const fitted = prepSync(bytes, {
+  const fitted = await prep(bytes, {
     console: "nes",
-    size: { w: NES_MEMORY.viewW * 8, h: NES_MEMORY.viewH * 8 },
+    size: { w: NES_MEMORY.viewW * 8, h: GAME_ROWS * 8 },
     fit: "cover",
     // All four. A picture is not asked to give one up for the font any more: a
     // caption takes a colour slot the fit left empty, and only compromises where
@@ -297,6 +320,7 @@ function demakeBackdrop(bytes: Uint8Array, maxTiles: number): Backdrop {
     // Boy's 360, and the pattern table is the same 256 either way, so a picture
     // that was not told what it could afford would always overrun.
     maxTiles,
+    ...(executor === undefined ? {} : { executor }),
   });
   const backend = backendFor("nes");
   if (!backend) throw new Error("the nes image backend is missing");
@@ -313,13 +337,43 @@ function demakeBackdrop(bytes: Uint8Array, maxTiles: number): Backdrop {
     fitted.image.palettes.map((palette) => palette.colors),
     backdrop,
   );
+  const raster = extendToRaster(find(".nam.bin"), find(".attr.bin"));
   return {
     chr: find(".chr.bin"),
-    map: find(".nam.bin"),
-    attr: find(".attr.bin"),
+    map: raster.map,
+    attr: raster.attr,
     palette: packed.bytes,
     fontPalette: packed.fontPalette,
   };
+}
+
+/**
+ * A 32×28 picture as the 32×30 name table the PPU reads.
+ *
+ * The two rows below the game's screen repeat the last one — and so must their
+ * attributes, or the overscan strip shows the right tiles in whatever palette
+ * block row seven happened to hold. A 16×16 attribute cell is two rows, so row 27
+ * is the *bottom* half of block row six, and it becomes both halves of block row
+ * seven: the second half covers rows 30 and 31, which do not exist, and giving
+ * them the same answer is cheaper than caring.
+ */
+function extendToRaster(map: Uint8Array, attr: Uint8Array): { map: Uint8Array; attr: Uint8Array } {
+  const width = NES_MEMORY.viewW;
+  const full = new Uint8Array(width * NES_MEMORY.viewH);
+  full.set(map.subarray(0, width * GAME_ROWS), 0);
+  const last = map.subarray(width * (GAME_ROWS - 1), width * GAME_ROWS);
+  for (let row = GAME_ROWS; row < NES_MEMORY.viewH; row += 1) full.set(last, row * width);
+
+  const table = new Uint8Array(64);
+  table.set(attr.subarray(0, 64), 0);
+  const above = (GAME_ROWS >> 2) - 1; // the block row row 27 sits in
+  for (let column = 0; column < 8; column += 1) {
+    const byte = table[above * 8 + column] as number;
+    const left = (byte >> 4) & 3;
+    const right = (byte >> 6) & 3;
+    table[(above + 1) * 8 + column] = left | (right << 2) | (left << 4) | (right << 6);
+  }
+  return { map: full, attr: table };
 }
 
 /**
@@ -330,7 +384,11 @@ function demakeBackdrop(bytes: Uint8Array, maxTiles: number): Backdrop {
  * and a choice of *which* three, while a background tile has four and no choice at
  * all. On this console they do not even share a pattern table.
  */
-export function bindNesArt(program: Program, assets: AssetBytes): BoundNesArt {
+export async function bindNesArt(
+  program: Program,
+  assets: AssetBytes,
+  executor?: Executor,
+): Promise<BoundNesArt> {
   const requests = artRequests(program);
   const missing: string[] = [];
   const sources: Record<"sprite" | "tile", SpriteSource[]> = { sprite: [], tile: [] };
@@ -460,7 +518,16 @@ export function bindNesArt(program: Program, assets: AssetBytes): BoundNesArt {
     const pool = pools[table];
     const budget = Math.max(1, pool.free());
     backdropFits.set(scene.name, { table, budget });
-    const art = demakeBackdrop(assets.get(scene.backdrop as string) as Uint8Array, budget);
+    // One picture at a time, unlike the Game Boy's: which table a picture goes in
+    // and what it may spend are both decided by what the ones before it left, so a
+    // later conversion cannot start until an earlier one has been interned. The
+    // tournament inside each conversion still spreads across the executor's lanes,
+    // which is where a backdrop's time actually goes.
+    const art = await demakeBackdrop(
+      assets.get(scene.backdrop as string) as Uint8Array,
+      budget,
+      executor,
+    );
     const map = new Uint8Array(art.map.length);
     for (let cell = 0; cell < art.map.length; cell += 1) {
       const local = (art.map[cell] as number) * TILE_BYTES;

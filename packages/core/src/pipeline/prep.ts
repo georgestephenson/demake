@@ -7,176 +7,55 @@
  * console, options), so the whole run is reproducible. The tournament is
  * invisible by default — one image in, one image out — with the full scoreboard
  * available in the result for `--json`/`-v` and for pinning `--strategy`.
+ *
+ * What lives here is only the tournament: derive the shared prologue, ask for
+ * every candidate at once, and reduce the answers. Running a candidate is
+ * `candidate.ts`, because that is the unit an {@link Executor} spreads across
+ * cores — the CLI's over `worker_threads`, the page's over Web Workers, and the
+ * default right here in order. The reduce is deliberately written over the
+ * candidate list rather than over arrival order: the winner is the first strict
+ * improvement in portfolio order, so a machine with more cores must not be able
+ * to break a tie differently (doc 04 §Running the tournament).
  */
 
 import { DemakeError } from "../errors.js";
-import { makePrng } from "../math/prng.js";
-import { authorSpaceUsesRaw } from "../image/dac.js";
-import { decodeImage } from "../image/decode.js";
-import { getConsole } from "../consoles/registry.js";
-import type { ConsoleSpec, TileLayout } from "../consoles/types.js";
-import { checkCompliantImage } from "../inspect/inspect.js";
-import { referenceLab, scoreLab, labFromRgba, palettePressure } from "../inspect/judge.js";
+import { inlineExecutor, jobHandlers, unwrap, type Executor } from "../parallel/jobs.js";
 
-import { analyze } from "./analyze.js";
-import { enforceBudget } from "./budget.js";
-import { encodeCompliantPng, renderCompliant } from "./encode-image.js";
-import { applyGrade } from "./grade.js";
-import { fitTiled, type FitParams } from "./fit-tiled.js";
-import { fitTms } from "./fit-tms.js";
-import { chooseAutoSize, resize, snapExplicitSize } from "./geometry.js";
-import { makeColorSpace, type HwColor, type HwColorSpace } from "./hwcolor.js";
-import { fitMono } from "./mono.js";
-import { normalize } from "./normalize.js";
+import {
+  analyzeSource,
+  candidateJob,
+  portableOptions,
+  type CandidateOutcome,
+} from "./candidate.js";
+import { encodeCompliantPng } from "./encode-image.js";
 import { buildPortfolio, effortParams, type Candidate } from "./portfolio.js";
-import { remap } from "./remap.js";
-import type {
-  AutoDecisions,
-  CandidateScore,
-  CompliantImage,
-  PrepOptions,
-  PrepResult,
-  Profile,
-} from "./types.js";
+import type { AutoDecisions, CandidateScore, PrepOptions, PrepResult } from "./types.js";
 
-const DEFAULT_SEED = 0x9e3779b9;
+/** The engine's own job kinds, for an edge assembling a worker's dispatch table. */
+export const coreJobKinds = [candidateJob];
 
-/** Run one candidate to a compliant image + its budget result. */
-function runCandidate(
-  candidate: Candidate,
-  srcLin: ReturnType<typeof normalize>,
-  spec: ConsoleSpec,
-  size: { w: number; h: number },
-  profile: Profile,
-  opts: PrepOptions,
-): { image: CompliantImage; uniqueTiles: number; merges: number; budget: number | null } {
-  const seed = (opts.seed ?? DEFAULT_SEED) >>> 0;
-  const prng = makePrng(seed);
-  let work = resize(srcLin, size.w, size.h, candidate.scale);
-  // Graded candidates exaggerate tone/chroma before fitting (doc 04 §The
-  // tournament); the judge still scores them against the ungraded reference.
-  if (candidate.grade) {
-    work = applyGrade(work, candidate.grade);
-  }
-  const strict = opts.strict === true;
-
-  if (candidate.kind === "mono" || candidate.kind === "tms") {
-    const image =
-      candidate.kind === "mono"
-        ? fitMono(work, spec, candidate.dither.alg, candidate.dither.strength)
-        : fitTms(work, spec, candidate.dither.alg, candidate.dither.strength);
-    const budget = enforceBudget(image, spec, strict, opts.maxTiles);
-    return {
-      image: budget.image,
-      uniqueTiles: budget.uniqueTiles,
-      merges: budget.merges,
-      budget: budget.budget,
-    };
-  }
-
-  const eff = effortParams(opts.effort ?? "default");
-  const params: FitParams = {
-    restarts: eff.restarts,
-    kmeansIters: eff.kmeansIters,
-    refineRounds: eff.refineRounds,
-    lWeight: profile === "art" ? 1.2 : 1,
-    denoise: candidate.clean === true,
-    collapse: candidate.clean === true,
-    ...(opts.maxSubPalettes === undefined ? {} : { maxPalettes: opts.maxSubPalettes }),
-  };
-  const space = makeColorSpace(spec);
-  const layout = spec.layout as TileLayout;
-  const reserved = layout.subPalettes.sharedIndex0 ? computeBackdrop(work, space) : null;
-  const fit = fitTiled(work, spec, space, prng, params, reserved);
-  const image = remap(
-    fit,
-    spec,
-    size.w,
-    size.h,
-    candidate.dither.alg,
-    candidate.dither.strength,
-    params.lWeight,
-  );
-  const budget = enforceBudget(image, spec, strict, opts.maxTiles);
-  return {
-    image: budget.image,
-    uniqueTiles: budget.uniqueTiles,
-    merges: budget.merges,
-    budget: budget.budget,
-  };
-}
-
-/**
- * The shared backdrop for a `sharedIndex0` console: the single displayable color
- * the most pixels snap to (deterministic mode, lowest-code tiebreak). Forced into
- * index 0 of every sub-palette so the whole frame shares one universal backdrop.
- */
-function computeBackdrop(work: ReturnType<typeof normalize>, space: HwColorSpace): HwColor {
-  const counts = new Map<string, { color: HwColor; n: number }>();
-  const n = work.width * work.height;
-  for (let i = 0; i < n; i += 1) {
-    const o = i * 3;
-    const c = space.snapLinear(work.data[o]!, work.data[o + 1]!, work.data[o + 2]!);
-    const k = c.codes.join(",");
-    const e = counts.get(k);
-    if (e) e.n += 1;
-    else counts.set(k, { color: c, n: 1 });
-  }
-  let best: HwColor | null = null;
-  let bestN = -1;
-  let bestKey = "";
-  for (const [k, v] of counts) {
-    if (v.n > bestN || (v.n === bestN && k < bestKey)) {
-      bestN = v.n;
-      best = v.color;
-      bestKey = k;
-    }
-  }
-  return best ?? space.snapLinear(0, 0, 0);
-}
+/** Run candidates here, in order — the default, and the reference answer. */
+const inline: Executor = inlineExecutor(jobHandlers(coreJobKinds));
 
 /**
  * Convert an arbitrary source image into a hardware-compliant image (doc 09).
  *
- * `prep` is the entry point almost everything uses; it is `async` so that a
- * caller can `await` it uniformly alongside work that really does suspend.
- * Nothing in the conversion itself does — it is deterministic arithmetic from
- * end to end — so {@link prepSync} is the same function without the wrapper, for
- * callers that cannot be asynchronous. `demake build` is one: a ROM is built
- * synchronously so the browser and the CLI produce the same bytes through the
- * same call, and a title screen is demade inside that call.
+ * `prep` is the entry point almost everything uses. It is `async` because the
+ * tournament may be spread over other threads, not because the conversion
+ * suspends — with no `executor` in the options nothing leaves this one, and the
+ * result is the same bytes either way. That equality is the contract the whole
+ * fan-out rests on, and `parallel.test.ts` pins it.
  */
 export async function prep(input: Uint8Array, options: PrepOptions): Promise<PrepResult> {
-  return prepSync(input, options);
-}
-
-/** {@link prep} without the promise. Same conversion, same bytes. */
-export function prepSync(input: Uint8Array, options: PrepOptions): PrepResult {
-  const spec = getConsole(options.console);
-  const source = decodeImage(input);
-  const analysis = analyze(source);
-  const profile: Profile =
-    options.profile && options.profile !== "auto" ? options.profile : analysis.profile;
-
-  const size = options.size
-    ? snapExplicitSize(options.size.w, options.size.h, spec)
-    : chooseAutoSize(source.width, source.height, spec);
-  if (size.w <= 0 || size.h <= 0) {
-    throw new DemakeError("E_INVALID_SIZE", `computed an empty output size for ${spec.id}`, {
-      hint: "pass an explicit --size WxH that is a positive multiple of the tile size.",
-    });
-  }
-
-  // Output/judging color space: raw lattice expansion in the console's author
-  // space (panel-filter DACs like the CGB LCD are simulation-only), DAC-decoded
-  // otherwise; `--raw-colors` / `--dac-colors` force one or the other.
-  const useRaw =
-    options.dacColors === true
-      ? false
-      : options.rawColors === true || authorSpaceUsesRaw(spec.color.dac);
-
-  const srcLin = normalize(source, options.background ?? "#000000");
-  const candidates = buildPortfolio(spec, analysis, options);
+  const portable = portableOptions(options);
+  // Only the half of the prologue this thread reads: the console, the analysis
+  // the portfolio is ordered by, and the size the result reports. The other half
+  // — a full-resolution linear source and the judge's reference — is built by
+  // whichever thread runs a candidate, and recalled from `candidate.ts`'s
+  // content-keyed memo by the rest, so no thread derives it twice and this one
+  // never derives it at all.
+  const analysed = analyzeSource(input, portable);
+  const candidates = buildPortfolio(analysed.spec, analysed.analysis, options);
   if (candidates.length === 0) {
     throw new DemakeError(
       "E_INVALID_OPTION",
@@ -187,65 +66,45 @@ export function prepSync(input: Uint8Array, options: PrepOptions): PrepResult {
     );
   }
 
-  const refLab = referenceLab(srcLin, size.w, size.h, profile === "art" ? "art" : "photo");
-  // Palette pressure slides judge weights from absolute fidelity toward
-  // separation/structure as the console's budget falls short of the source's
-  // diversity (doc 04 §The objective).
-  const pressure = palettePressure(refLab, size.w * size.h, spec);
-  const scores: CandidateScore[] = [];
-  let winner: {
-    candidate: Candidate;
-    image: CompliantImage;
-    aggregate: number;
-    uniqueTiles: number;
-    merges: number;
-    budget: number | null;
-    rawMean: number;
-    rawP95: number;
-  } | null = null;
+  if (options.signal?.aborted) {
+    throw new DemakeError("E_INTERNAL", "prep aborted");
+  }
 
-  for (let ci = 0; ci < candidates.length; ci += 1) {
-    const candidate = candidates[ci]!;
-    options.onProgress?.(`candidate:${candidate.id}`, (ci + 1) / candidates.length);
-    if (options.signal?.aborted) {
-      throw new DemakeError("E_INTERNAL", "prep aborted");
-    }
+  const executor = options.executor ?? inline;
+  const jobs = candidates.map((candidate) =>
+    candidateJob.job({ source: input, options: portable, candidate }),
+  );
 
-    const run = runCandidate(candidate, srcLin, spec, size, profile, options);
-    const violations = checkCompliantImage(run.image, spec);
-    if (violations.length > 0) {
-      scores.push({
-        strategy: candidate.id,
-        aggregate: 0,
-        metrics: {},
-        disqualified: { reason: violations.map((v) => v.code).join(",") },
-      });
-      continue;
-    }
-
-    const rendered = renderCompliant(run.image, useRaw);
-    const resLab = labFromRgba(rendered);
-    const judged = scoreLab(
-      refLab,
-      resLab,
-      size.w,
-      size.h,
-      profile === "art" ? "art" : "photo",
-      pressure,
+  // Progress counts finished candidates rather than tracking a position in the
+  // list: a fan-out finishes them in whatever order the lanes free up, and a
+  // fraction derived from the last index to arrive would jump backwards.
+  let done = 0;
+  const outcomes = await executor(jobs, (index) => {
+    done += 1;
+    options.onProgress?.(`candidate:${candidates[index]!.id}`, done / candidates.length);
+  });
+  if (outcomes.length !== jobs.length) {
+    throw new DemakeError(
+      "E_INTERNAL",
+      `the executor answered ${outcomes.length} of ${jobs.length} candidates`,
+      { hint: "an Executor must resolve one outcome per job, in the order given." },
     );
-    scores.push({ strategy: candidate.id, aggregate: judged.aggregate, metrics: judged.metrics });
+  }
 
-    if (!winner || judged.aggregate > winner.aggregate) {
-      winner = {
-        candidate,
-        image: run.image,
-        aggregate: judged.aggregate,
-        uniqueTiles: run.uniqueTiles,
-        merges: run.merges,
-        budget: run.budget,
-        rawMean: judged.rawMeanDeltaE,
-        rawP95: judged.rawP95DeltaE,
-      };
+  if (options.signal?.aborted) {
+    throw new DemakeError("E_INTERNAL", "prep aborted");
+  }
+
+  const scores: CandidateScore[] = [];
+  let winner: { candidate: Candidate; outcome: CandidateOutcome } | null = null;
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index]!;
+    const outcome = unwrap<CandidateOutcome>(outcomes[index]!);
+    scores.push(outcome.score);
+    if (outcome.image === null) continue;
+    if (!winner || outcome.score.aggregate > winner.outcome.score.aggregate) {
+      winner = { candidate, outcome };
     }
   }
 
@@ -255,30 +114,36 @@ export function prepSync(input: Uint8Array, options: PrepOptions): PrepResult {
     });
   }
 
-  const png = encodeCompliantPng(winner.image, useRaw);
+  const image = winner.outcome.image!;
+  const png = encodeCompliantPng(image, analysed.useRaw);
   const decisions: AutoDecisions = {
-    profile: profile === "art" ? "art" : "photo",
-    size,
+    profile: analysed.profile === "art" ? "art" : "photo",
+    size: analysed.size,
     scale: winner.candidate.scale,
     dither: winner.candidate.dither,
     strategy: winner.candidate.id,
   };
   const warnings =
-    winner.merges > 0
-      ? [{ code: "W_TILE_MERGE", message: `${winner.merges} tiles merged to fit the VRAM budget` }]
+    winner.outcome.merges > 0
+      ? [
+          {
+            code: "W_TILE_MERGE",
+            message: `${winner.outcome.merges} tiles merged to fit the VRAM budget`,
+          },
+        ]
       : [];
 
   return {
     png,
-    image: winner.image,
+    image,
     decisions,
     stats: {
-      meanDeltaE: winner.rawMean,
-      p95DeltaE: winner.rawP95,
-      palettePressure: pressure,
-      uniqueTiles: winner.uniqueTiles,
-      tileBudget: winner.budget,
-      tileMerges: winner.merges,
+      meanDeltaE: winner.outcome.rawMeanDeltaE,
+      p95DeltaE: winner.outcome.rawP95DeltaE,
+      palettePressure: winner.outcome.palettePressure,
+      uniqueTiles: winner.outcome.uniqueTiles,
+      tileBudget: winner.outcome.budget,
+      tileMerges: winner.outcome.merges,
       restarts: effortParams(options.effort ?? "default").restarts,
     },
     warnings,

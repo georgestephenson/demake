@@ -157,7 +157,18 @@ because it changes what "demaking a sound" even means:
 
 For each eligible family, find the parameters that best reproduce the source, and
 then let the tournament pick the family. The search is deterministic and
-three-tiered:
+three-tiered.
+
+Families cannot see each other, so this is a fan-out like the image path's: one
+family is one job on `demakeSfx`'s `executor`, and with none supplied they are
+fitted here in order (doc 04 §Running the tournament). Fitting a family is around
+145 ms against a 60 ms prologue — measured on a Game Boy at the game driver's
+rate — so an effect goes from 930 ms to roughly 400 ms on four cores. The winner
+is reduced in the families' own fixed order, so how many lanes ran them cannot
+reach the schedule; `packages/cli/test/pool.test.ts` compares the artifact from a
+real thread pool against the inline one.
+
+The three tiers:
 
 1. **Analytic seed.** Most parameters are read straight off the analysis: the
    pitch ramp's endpoints come from the f0 track, the decay rate from the

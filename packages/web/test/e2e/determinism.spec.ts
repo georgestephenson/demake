@@ -158,7 +158,7 @@ for (const consoleId of ["gb", "nes", "sms"] as const) {
     for (const name of [...program.assets, ...program.tracks, ...program.sounds]) {
       assets.set(name, new Uint8Array(await readFile(join(games, name))));
     }
-    const expected = buildGame(program, { title: "caves", assets }).bytes;
+    const expected = (await buildGame(program, { title: "caves", assets })).bytes;
 
     await page.goto("/#section=game");
     await page.getByTestId("example-select").selectOption("caves");
@@ -243,7 +243,7 @@ test("the music demaker's artifacts are byte-identical to Node's", async ({ page
  */
 test("the sound demaker's artifacts are byte-identical to Node's", async ({ page }) => {
   const source = new Uint8Array(await readFile(join(fixtureDir(), "bounce.wav")));
-  const result = demakeSfx(source, toSfxOptions(DEFAULT_SFX));
+  const result = await demakeSfx(source, toSfxOptions(DEFAULT_SFX));
   const expected = {
     vgm: result.artifact,
     wav: encodeWav(render(result.script, toRenderOptions(DEFAULT_SFX))),

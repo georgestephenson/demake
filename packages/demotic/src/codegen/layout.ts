@@ -28,7 +28,7 @@
  * able to read either machine's entity table with one function.
  */
 
-import { NES_AUDIO_BYTES } from "@demake/audio";
+import { NES_AUDIO_BYTES, SMS_AUDIO_BYTES } from "@demake/audio";
 
 import type { Program } from "../program.js";
 
@@ -114,14 +114,15 @@ export interface MemoryPlan {
   /** Background cells `number` and `text` objects may occupy at once. */
   plotMax: number;
   /**
-   * Cheap bytes the console's audio driver keeps its own state in, or zero.
+   * Bytes the console's audio driver keeps its own state in, or zero.
    *
    * Zero where the driver has somewhere better to be: the Game Boy's lives in
-   * high RAM, which the allocator does not hand out at all. The NES has no such
-   * region — page zero *is* the cheap region, and the driver's two stream
-   * pointers have to be in it because `($nn),y` is the only indirection the CPU
-   * has — so it takes them from the same pool everything else does, and a game
-   * with no audio takes none.
+   * high RAM, which the allocator does not hand out at all. The other two take
+   * them from the same pool everything else does, for opposite reasons — the
+   * NES's two stream pointers *have* to be in page zero, because `($nn),y` is the
+   * only indirection that CPU has, while the Z80 makes every address the same
+   * width and so gives its driver nowhere better than anywhere else. A game with
+   * no audio takes none either way.
    */
   audioBytes: number;
 
@@ -135,6 +136,24 @@ export interface MemoryPlan {
    * is a plan field and not a colour flag.
    */
   cellAttributes: boolean;
+
+  /**
+   * Bytes this console's interrupt handlers own outright.
+   *
+   * An interrupt writes a byte in the middle of whatever the game was doing, so
+   * that byte cannot be borrowed from anything a routine is using — and the
+   * backend scratch blocks are all explicitly one-routine scratch. Zero on the
+   * consoles whose handlers write somewhere the allocator does not hand out (the
+   * Game Boy's flag is in high RAM) or a block the backend owns alone (the NES's
+   * is one of its own named scratch bytes, saved and restored around the upload
+   * the handler performs).
+   *
+   * The Sega handlers need two: the frame flag the main loop waits on, and the
+   * Pause key's latch. They were in the shared scratch, and a frame interrupt
+   * landing inside the modulo loop of `random()` overwrote its divisor — a draw
+   * that came out wrong every few seconds, at no tick anyone could name.
+   */
+  interruptBytes: number;
 }
 
 /**
@@ -155,6 +174,7 @@ export const GB_MEMORY: MemoryPlan = {
   plotMax: 96,
   audioBytes: 0,
   cellAttributes: false,
+  interruptBytes: 0,
 };
 
 /** The same, for a Game Boy Color: an attribute byte per queued cell. */
@@ -199,6 +219,7 @@ export const NES_MEMORY: MemoryPlan = {
   plotMax: 16,
   audioBytes: NES_AUDIO_BYTES,
   cellAttributes: false,
+  interruptBytes: 0,
 };
 
 /**
@@ -239,10 +260,13 @@ export const SMS_MEMORY: MemoryPlan = {
   // thirty-three, painted in the same frame.
   queueMax: 60,
   plotMax: 40,
-  // Nothing to reserve while there is no SN76489 driver to reserve it for. When
-  // one arrives it takes bytes from this pool like everything else, because the
-  // Z80 has no cheap region to keep them in.
-  audioBytes: 0,
+  // Out of the same pool as everything else, because the Z80 has no cheap region
+  // to keep them in: a load and a store carry a full address wherever the byte
+  // lives, so there is nothing to be economical about. Both other consoles pay
+  // this reservation somewhere the allocator never sees.
+  audioBytes: SMS_AUDIO_BYTES,
+  // The frame flag and the Pause latch; see {@link MemoryPlan.interruptBytes}.
+  interruptBytes: 2,
   // A name-table entry carries its palette-select and flip bits in a second
   // byte, so a queued cell is a tile *and* an attribute — the same shape as the
   // Game Boy Color's, reached by different hardware.
@@ -320,6 +344,13 @@ export interface Layout {
    * trace comparable with a sounding one's byte for byte.
    */
   audio: number | null;
+  /**
+   * Bytes the interrupt handlers own, or `null` where they need none.
+   *
+   * The Sega handlers' frame flag and Pause latch; see
+   * {@link MemoryPlan.interruptBytes} for why they cannot be scratch.
+   */
+  interrupt: number | null;
   /** Scratch the emitters use for pointers and counters. */
   scratch: number;
   /** The multiply/divide helpers' operands and workspace. */
@@ -650,17 +681,21 @@ export function planLayout(program: Program, analysis: Analysis, memory: MemoryP
   const oamPrev = fast(1);
   const words = fast(16 * 2);
   // Last, deliberately: the order of these calls is the order of the addresses,
-  // so anything added anywhere else would move every entity record.
+  // so anything added anywhere else would move every entity record. Which is
+  // also why the interrupt bytes go after the driver's rather than beside the
+  // scratch they were taken out of — a console that needs none is unchanged.
   const audio =
     memory.audioBytes > 0 && program.tracks.length + program.sounds.length > 0
       ? fast(memory.audioBytes)
       : null;
+  const interrupt = memory.interruptBytes > 0 ? fast(memory.interruptBytes) : null;
 
   return {
     memory,
     entities,
     used: heap.used,
     fastUsed: quick?.used ?? 0,
+    interrupt,
     tick,
     scene,
     pending,

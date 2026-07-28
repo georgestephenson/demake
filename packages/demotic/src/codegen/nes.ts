@@ -25,7 +25,14 @@
  */
 
 import { buildNesGameAudio } from "@demake/audio";
-import { AsmError, NES_CHR_SIZE, NES_PRG_ORIGIN, NES_PRG_SIZE, packInesRom } from "@demake/core";
+import {
+  AsmError,
+  NES_CHR_SIZE,
+  NES_PRG_ORIGIN,
+  NES_PRG_SIZE,
+  packInesRom,
+  type Executor,
+} from "@demake/core";
 
 import { getProfile } from "../profiles.js";
 import type { Program } from "../program.js";
@@ -111,8 +118,12 @@ export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
     return NES_MEMORY;
   },
 
-  bindArt(program: Program, assets: AssetBytes): BoundAssets<NesEmitOptions> {
-    const art = bindNesArt(program, assets);
+  async bindArt(
+    program: Program,
+    assets: AssetBytes,
+    executor?: Executor,
+  ): Promise<BoundAssets<NesEmitOptions>> {
+    const art = await bindNesArt(program, assets, executor);
     // The character bank travels with the options rather than through a second
     // return value, because `assemble` is the only thing that wants it.
     banks.set(art.options, art);
@@ -138,7 +149,12 @@ export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
     over("object", bound.objectPatterns);
   },
 
-  bindAudio(program: Program, assets: AssetBytes, layout: Layout): BoundAssets<NesAudio> {
+  async bindAudio(
+    program: Program,
+    assets: AssetBytes,
+    layout: Layout,
+    executor?: Executor,
+  ): Promise<BoundAssets<NesAudio>> {
     // The driver's state is page zero the allocator set aside for it, which it
     // only does for a program that names audio — so a game with none reaches
     // `bindAudio` with nowhere to put a driver and does not need one.
@@ -146,9 +162,12 @@ export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
     const bound =
       state === null
         ? { driver: undefined, missing: [] as readonly string[], notes: [] as readonly string[] }
-        : bindAudio(program, assets, {
-            build: (tracks, effects) => buildNesGameAudio({ tracks, effects, state }),
-          });
+        : await bindAudio(
+            program,
+            assets,
+            { build: (tracks, effects) => buildNesGameAudio({ tracks, effects, state }) },
+            executor,
+          );
     const names = program.tracks.length > 0 || program.sounds.length > 0;
     const driver = bound.driver;
     const options: NesEmitOptions = driver
@@ -163,10 +182,10 @@ export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
       options,
       tracks: driver?.stats.tracks ?? 0,
       effects: driver?.stats.effects ?? 0,
-      // Live queries, not copies: the driver is emitted during `assemble`, which
-      // has not run yet, so its sizes are still zero here (`backend.ts`
-      // §BoundAudioShape). Reading them at bind time is how `demake build` came
-      // to report "0 bytes of driver" for a cartridge that was playing music.
+      // Queries, not copies: the driver is emitted during `assemble`, which has
+      // not run yet, so its sizes are still zero here (`backend.ts`
+      // §BoundAudioShape). `helpers` would survive being copied and is a query
+      // anyway, so the three read alike and none of them is a special case.
       get code(): number {
         return driver?.stats.code ?? 0;
       },
@@ -269,7 +288,7 @@ export function unsupportedNesFeatures(program: Program): string[] {
 }
 
 /** Compile a program into a bootable `.nes`. */
-export function buildNesRom(program: Program, options: NesRomOptions = {}): BuiltRom {
+export function buildNesRom(program: Program, options: NesRomOptions = {}): Promise<BuiltRom> {
   return buildRom(program, nesBackend, options);
 }
 

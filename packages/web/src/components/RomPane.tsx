@@ -118,10 +118,9 @@ function boot(rom: Uint8Array, family: string): Player {
       height: view.height,
       framebuffer: view.pixels,
       // The Sega's sound chip is a PSG, not an APU, so it is adapted rather
-      // than renamed — the core keeps calling it what it is. Nothing writes to
-      // it yet (the SN76489 driver is doc 13's work) and the sound button is
-      // withheld below for exactly that reason; when the driver lands, the
-      // button is the only thing that changes.
+      // than renamed — the core keeps calling it what it is. What it plays is
+      // the cartridge's own generated Z80 driver, through the same `StreamSink`
+      // the other two consoles use.
       chip: {
         get audioSink() {
           return machine.audioSink;
@@ -309,10 +308,9 @@ export function RomPane({
   const consoleId = built.consoleId ?? program?.profile.id ?? "gb";
   const family = built.family ?? "gb";
   const extension = built.extension ?? "gb";
-  // Both Nintendo consoles have a driver now; the SN76489's is doc 13's work,
-  // and a button that turned on nothing would be worse than one that is plainly
-  // unavailable.
-  const canSound = audioSupported() && family !== "sms";
+  // Every console with a backend has a driver now, so the only question left is
+  // whether the browser will give us an `AudioContext`.
+  const canSound = audioSupported();
   // The canvas is sized by the console, not by CSS: these are two genuinely
   // different screens (160×144 against 256×240, and not the same aspect), and a
   // buffer put into a canvas of the wrong size is silently cropped.
@@ -501,9 +499,6 @@ export function RomPane({
         {CPU[family] ?? "this console’s CPU"}.
         {sound
           ? " The sound is the cartridge's own chip, rendered by the same model the CLI writes WAVs with — the page synthesizes nothing."
-          : ""}
-        {family === "sms"
-          ? " There is no sound on this console yet: its driver is still to be written, and a button that turned on nothing would be worse than one that is plainly unavailable."
           : ""}
       </p>
       {sound && !playing ? (

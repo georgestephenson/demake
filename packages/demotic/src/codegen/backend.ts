@@ -30,6 +30,8 @@
  * denominator between a machine with seven registers and one with three.
  */
 
+import type { Executor } from "@demake/core";
+
 import type { Program } from "../program.js";
 
 import { analyze, type Analysis } from "./analyze.js";
@@ -123,7 +125,15 @@ export interface Assembled {
 /** Raw bytes of the assets a program names, keyed by the file name it wrote. */
 export type AssetBytes = ReadonlyMap<string, Uint8Array>;
 
-/** What every console's audio binding has in common. */
+/**
+ * What every console's audio binding has in common.
+ *
+ * `code` and `data` are only known once the driver has been *emitted*, which
+ * happens inside `assemble` — long after a binding hands this back — so a backend
+ * exposes them as getters over the driver's own stats rather than copying the
+ * numbers out early. `helpers` reads correctly either way because it is the
+ * driver's own array, filled in by reference as routines are pulled.
+ */
 export interface BoundAudioShape {
   /** Absent for a game with no `music` and no `sound`. */
   present: boolean;
@@ -131,17 +141,20 @@ export interface BoundAudioShape {
   effects: number;
   /**
    * Driver code and packed schedule bytes — **read after {@link buildRom} has
-   * assembled, and therefore not knowable when the binding is made.**
+   * assembled, and never before.**
    *
    * A driver is emitted lazily: `@demake/audio` hands back `emitCode`/`emitData`
-   * closures and only learns their sizes when the assembler has run them, which
-   * happens inside `assemble` — a step *after* `bindAudio`. So a backend must
-   * expose these as live queries rather than copy them out of the driver at bind
-   * time, or it reports the zero they held before anything was emitted.
+   * closures and only learns their sizes once the assembler has run them, which
+   * happens inside `assemble` — a step *after* `bindAudio`. So a backend exposes
+   * these as live queries rather than copying them out of the driver at bind
+   * time, or it reports the zero they held before anything was emitted, which is
+   * what `demake build` did for every cartridge it made until this became a rule.
    *
-   * `helpers` is the same: the emitter pushes into it as routines are pulled in.
-   * It happens to survive being copied, because copying an array copies the
-   * reference — but that is luck rather than design, so it is a query here too.
+   * `helpers` is the same shape and is a query for the same reason. It would
+   * survive being copied — copying an array copies its reference, and the emitter
+   * pushes rather than replaces — but that is luck, not design, and it is not a
+   * distinction worth asking the next backend to remember.
+   *
    * Everything above these three is known when the audio is demade.
    */
   readonly code: number;
@@ -181,8 +194,16 @@ export interface Backend<Art, Audio extends BoundAudioShape> {
   /** Where this machine's state goes. */
   memory(program: Program): MemoryPlan;
 
-  /** Demake the art the program names, through the image engine. */
-  bindArt(program: Program, assets: AssetBytes): BoundAssets<Art>;
+  /**
+   * Demake the art the program names, through the image engine.
+   *
+   * `async` because the image engine's tournament may be spread over cores, and
+   * the `executor` is where the edge said to spread it (doc 04 §Running the
+   * tournament). A backend passes it through and never inspects it: which
+   * threads ran a fit cannot change what the fit produced, and a backend that
+   * behaved differently with one would have broken that guarantee.
+   */
+  bindArt(program: Program, assets: AssetBytes, executor?: Executor): Promise<BoundAssets<Art>>;
 
   /**
    * Demake the music and effects, through the audio engine.
@@ -191,8 +212,16 @@ export interface Backend<Art, Audio extends BoundAudioShape> {
    * lives, and that is a plan the build has already made: the Game Boy's is at a
    * fixed high-RAM address the allocator never hands out, the NES's is page-zero
    * bytes the allocator chose.
+   *
+   * `async` for the same reason `bindArt` is: an effect's gesture families are a
+   * tournament, and `executor` is where the edge said to run one.
    */
-  bindAudio(program: Program, assets: AssetBytes, layout: Layout): BoundAssets<Audio>;
+  bindAudio(
+    program: Program,
+    assets: AssetBytes,
+    layout: Layout,
+    executor?: Executor,
+  ): Promise<BoundAssets<Audio>>;
 
   /**
    * Refuse a game whose art does not fit the tile hardware.
@@ -228,7 +257,7 @@ export interface AnyBackend {
   readonly consoles: readonly string[];
   extension(program: Program): string;
   unsupported(program: Program): string[];
-  build(program: Program, options: BuildOptions): BuiltRom;
+  build(program: Program, options: BuildOptions): Promise<BuiltRom>;
 }
 
 /** Erase a backend's binding types, keeping the contract. */
@@ -256,6 +285,16 @@ export interface BuildOptions {
    * and every decision from rasterising to tile dedup happens in one place.
    */
   assets?: AssetBytes;
+  /**
+   * Where the art and audio tournaments run (doc 04 §Running the tournament).
+   *
+   * A build is mostly tournaments — a colour backdrop is around seventy per cent
+   * of one — and their candidates cannot see each other, so an edge with threads
+   * to spare hands one in: the CLI's runs on `worker_threads`, the page's on Web
+   * Workers. Omitted, everything runs on this thread, and the cartridge is the
+   * same bytes either way.
+   */
+  executor?: Executor;
 }
 
 /**
@@ -265,11 +304,11 @@ export interface BuildOptions {
  * codes — because they describe the same failures. What changes is the number in
  * the message and the machine's name.
  */
-export function buildRom<Art, Audio extends BoundAudioShape>(
+export async function buildRom<Art, Audio extends BoundAudioShape>(
   program: Program,
   backend: Backend<Art, Audio>,
   options: BuildOptions = {},
-): BuiltRom {
+): Promise<BuiltRom> {
   const missing = backend.unsupported(program);
   if (missing.length > 0) {
     throw new BuildError(
@@ -289,19 +328,32 @@ export function buildRom<Art, Audio extends BoundAudioShape>(
   }
 
   const assets = options.assets ?? new Map<string, Uint8Array>();
-  const art = backend.bindArt(program, assets);
+
+  // Art and audio have nothing to say to each other, so they are demade at the
+  // same time: on a game with a colour backdrop the art is most of the build and
+  // the effects are most of the rest, and running them in sequence left whichever
+  // lanes the shorter one was not using idle.
+  //
+  // Settled rather than raced, because *which* failure a build reports must not
+  // depend on which demaker happened to fail first in wall-clock terms. Art is
+  // checked first, exactly as it was when the two ran in order.
+  const [artResult, audioResult] = await Promise.allSettled([
+    backend.bindArt(program, assets, options.executor),
+    backend.bindAudio(program, assets, layout, options.executor),
+  ]);
+
+  if (artResult.status === "rejected") throw artResult.reason;
+  const art = artResult.value;
   backend.checkTiles(program, art);
 
-  let audio: BoundAssets<Audio>;
-  try {
-    audio = backend.bindAudio(program, assets, layout);
-  } catch (error) {
+  if (audioResult.status === "rejected") {
     throw new BuildError(
       "E_AUDIO",
-      `this game's audio could not be demade: ${(error as Error).message}`,
+      `this game's audio could not be demade: ${(audioResult.reason as Error).message}`,
       "the track or the effect is what to look at; `demake arrange` and `demake sfx` report the same failure on their own",
     );
   }
+  const audio = audioResult.value;
 
   const built = backend.assemble({
     program,

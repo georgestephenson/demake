@@ -38,7 +38,8 @@ import {
   buildSpriteBank,
   getConsole,
   paletteRegister,
-  prepSync,
+  prep,
+  type Executor,
   type PaletteColor,
   type SpriteBank,
   type SpriteSource,
@@ -70,20 +71,58 @@ export type AssetBytes = ReadonlyMap<string, Uint8Array>;
  */
 const CACHE_LIMIT = 24;
 
-function remember<T>(cache: Map<string, T>, key: string, make: () => T): T {
+export function remember<T>(
+  cache: Map<string, T>,
+  key: string,
+  make: () => T,
+  limit = CACHE_LIMIT,
+): T {
   const hit = cache.get(key);
   if (hit !== undefined) return hit;
   const value = make();
   cache.set(key, value);
-  if (cache.size > CACHE_LIMIT) {
+  evict(cache, limit);
+  return value;
+}
+
+/** Drop the oldest entries until the cache is within its limit. */
+function evict(cache: Map<string, unknown>, limit: number): void {
+  while (cache.size > limit) {
     const oldest = cache.keys().next();
-    if (!oldest.done) cache.delete(oldest.value);
+    if (oldest.done) return;
+    cache.delete(oldest.value);
   }
+}
+
+/**
+ * The same, for a conversion that is now in flight rather than finished.
+ *
+ * What is remembered is the *promise*, not the result, because two scenes
+ * sharing a backdrop are converted at the same time once backdrops convert
+ * concurrently — and caching only finished work would let both of them start.
+ * A rejection is forgotten again: a build that failed because an edge handed
+ * over half an asset must be retryable, and a cached rejection would fail every
+ * later build in the same process for a reason that no longer exists.
+ */
+export function rememberAsync<T>(
+  cache: Map<string, Promise<T>>,
+  key: string,
+  make: () => Promise<T>,
+  limit = CACHE_LIMIT,
+): Promise<T> {
+  const hit = cache.get(key);
+  if (hit !== undefined) return hit;
+  const value = make().catch((error: unknown) => {
+    cache.delete(key);
+    throw error;
+  });
+  cache.set(key, value);
+  evict(cache, limit);
   return value;
 }
 
 /** FNV-1a over a byte string — a cache key, never a checksum anyone relies on. */
-function digest(bytes: Uint8Array): string {
+export function digest(bytes: Uint8Array): string {
   let hash = 0x811c9dc5;
   for (const byte of bytes) {
     hash ^= byte;
@@ -92,7 +131,7 @@ function digest(bytes: Uint8Array): string {
   return `${hash.toString(16)}:${bytes.length}`;
 }
 
-const backdropCache = new Map<string, Backdrop>();
+const backdropCache = new Map<string, Promise<Backdrop>>();
 const bankCache = new Map<string, SpriteBank>();
 
 /** One asset the program needs, with the box the game says it fills. */
@@ -233,19 +272,30 @@ interface Backdrop {
  * build the same call also produces the per-cell attributes and the palettes,
  * because that is what the backend emits for the `gbc` spec.
  */
-function convertBackdrop(bytes: Uint8Array, consoleId: string): Backdrop {
-  return remember(backdropCache, `${consoleId}:${digest(bytes)}`, () =>
-    demakeBackdrop(bytes, consoleId),
+function convertBackdrop(
+  bytes: Uint8Array,
+  consoleId: string,
+  executor: Executor | undefined,
+): Promise<Backdrop> {
+  // The executor is deliberately out of the key: which threads ran the
+  // tournament is not part of what the tournament produced, and a cache that
+  // said otherwise would convert the same picture twice to reach the same bytes.
+  return rememberAsync(backdropCache, `${consoleId}:${digest(bytes)}`, () =>
+    demakeBackdrop(bytes, consoleId, executor),
   );
 }
 
-function demakeBackdrop(bytes: Uint8Array, consoleId: string): Backdrop {
+async function demakeBackdrop(
+  bytes: Uint8Array,
+  consoleId: string,
+  executor: Executor | undefined,
+): Promise<Backdrop> {
   const spec = getConsole(consoleId);
   const color = spec.color.model === "rgb";
   // Exactly the window the renderer paints, in pixels. Letting `prep` choose
   // would fit the *source's* size, and a title screen has to be a screenful:
   // the map it produces and the loop that draws it are the same rectangle.
-  const fitted = prepSync(bytes, {
+  const fitted = await prep(bytes, {
     console: consoleId,
     size: { w: GB_MEMORY.viewW * 8, h: GB_MEMORY.viewH * 8 },
     fit: "cover",
@@ -253,6 +303,7 @@ function demakeBackdrop(bytes: Uint8Array, consoleId: string): Backdrop {
     // rather than taking it back afterwards is what keeps the fit honest: the
     // tournament optimises against the budget it will actually be shown with.
     ...(color ? { maxSubPalettes: ART_PALETTES } : {}),
+    ...(executor === undefined ? {} : { executor }),
   });
   const palette = fitted.image.palettes[0];
   const backend = backendFor("gb");
@@ -385,7 +436,11 @@ function cellAttribute(source: number, tile: number): number {
  * on a colour build they do not even share palette hardware, since the CGB has
  * eight background palettes and eight object ones.
  */
-export function bindArt(program: Program, assets: AssetBytes): BoundArt {
+export async function bindArt(
+  program: Program,
+  assets: AssetBytes,
+  executor?: Executor,
+): Promise<BoundArt> {
   // The image engine's path is chosen by the console the *build* targets: a
   // `gb` cartridge is DMG art whichever Game Boy plays it, and a `gbc` one is
   // fitted to the colour hardware it will really run on.
@@ -487,8 +542,18 @@ export function bindArt(program: Program, assets: AssetBytes): BoundArt {
   known.set(builtinTiles(), 0);
   known.set(extraTiles, builtinTiles().length);
   const pool = new TilePool(known, BUILTIN_TILES + extraTiles.length / TILE_BYTES);
-  for (const scene of backdropScenes) {
-    const art = convertBackdrop(assets.get(scene.backdrop as string) as Uint8Array, consoleId);
+  // Converted concurrently, interned in scene order. The conversions cannot see
+  // each other, but the pool very much can: a tile's number is where it landed,
+  // so interning has to happen in a fixed order or two scenes would swap tile
+  // numbers depending on which tournament finished first.
+  const converted = await Promise.all(
+    backdropScenes.map((scene) =>
+      convertBackdrop(assets.get(scene.backdrop as string) as Uint8Array, consoleId, executor),
+    ),
+  );
+  for (let index = 0; index < backdropScenes.length; index += 1) {
+    const scene = backdropScenes[index]!;
+    const art = converted[index]!;
     const map = new Uint8Array(art.map.length);
     const attr = new Uint8Array(color ? art.map.length : 0);
     for (let cell = 0; cell < art.map.length; cell += 1) {

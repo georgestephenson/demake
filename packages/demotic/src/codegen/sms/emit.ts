@@ -36,6 +36,7 @@
  * decides what the game does.
  */
 
+import { AUDIO_STOP, type SmsGameAudio } from "@demake/audio";
 import { label, type Ref } from "@demake/core";
 
 import type { InstanceDef, RuleDef } from "../../program.js";
@@ -147,15 +148,48 @@ export const SPRITE_COLORS = 16 - SYSTEM_COLORS;
  * Where the visible window sits inside the frame the VDP renders.
  *
  * Zero on a Master System, whose screen *is* the frame. A Game Gear shows the
- * middle 160×144, so the scroll registers carry a bias that puts name-table cell
- * (0,0) at the window's top left — and every other coordinate in the renderer is
- * then the same on both machines.
+ * middle 160×144 of the same 256×192 picture, so the window's top left is 48
+ * pixels in and 24 down — and everything the runtime draws in *screen* pixels has
+ * to be put there, or the game plays in a rectangle the LCD does not show.
+ *
+ * Two layers reach it by different roads, which is the whole reason this is one
+ * number in one place. The background is moved by the scroll registers
+ * ({@link scrollBias}); an object's position is a **frame** coordinate the VDP
+ * reads straight out of the sprite table, so it carries the origin itself
+ * ({@link needPushSprite}). Bias one and not the other and the two layers
+ * disagree about where the top of the world is: a paddle at `y 0` lands 24 lines
+ * above the window and is simply not there.
  */
+function windowOrigin(ctx: SmsCtx): { x: number; y: number } {
+  return ctx.gameGear ? { x: 48, y: 24 } : { x: 0, y: 0 };
+}
+
+/**
+ * The byte the frame interrupt raises and the main loop waits on.
+ *
+ * Its own byte, not a scratch word. An interrupt lands in the middle of whatever
+ * the game was doing, and everything in `layout.scratch` is documented as valid
+ * for the length of one routine — so a flag parked there is a flag written over
+ * somebody's working value. It was `S.w3`, which `Mod16` uses for its divisor,
+ * and a frame boundary inside the sixteen-iteration loop of `random()` therefore
+ * produced a draw outside its own bounds. Nothing named the tick, because the
+ * tick that broke was whichever one the raster happened to cross.
+ */
+function frameFlag(ctx: SmsCtx): number {
+  return ctx.layout.interrupt as number;
+}
+
+/** The Pause key's latch, which the input read turns into an edge. */
+function pauseFlag(ctx: SmsCtx): number {
+  return (ctx.layout.interrupt as number) + 1;
+}
+
+/** The same origin, as the two scroll registers want it. */
 function scrollBias(ctx: SmsCtx): { x: number; y: number } {
-  if (!ctx.gameGear) return { x: 0, y: 0 };
+  const origin = windowOrigin(ctx);
   // The horizontal register shifts the picture right and the vertical one shifts
   // it up, which is why one bias is added and the other subtracted from the wrap.
-  return { x: 48, y: (MAP_H * 8 - 24) % (MAP_H * 8) };
+  return { x: origin.x, y: (MAP_H * 8 - origin.y) % (MAP_H * 8) };
 }
 
 /** Everything the emitter needs beyond the program itself. */
@@ -172,6 +206,19 @@ export interface SmsEmitOptions {
   palette?: Uint8Array;
   /** Per-scene colour RAM, where a backdrop chose its own. */
   scenePalettes?: ReadonlyMap<string, Uint8Array>;
+  /**
+   * The game's audio driver, already built from its demade tracks and effects.
+   *
+   * Absent for a game with no audio, and then the ROM is exactly what it was
+   * before sound existed — no counter in the interrupt, no service call in the
+   * main loop, no driver. Pulled in by a game that asks for it, like everything
+   * else.
+   */
+  audio?: SmsGameAudio;
+  /** Driver index of each of the program's sounds, or `-1` when unsupplied. */
+  effectIndices?: readonly number[];
+  /** Which track each scene plays, as an index into the driver's table. */
+  sceneTracks?: readonly number[];
 }
 
 /** Dispatch on the running scene to one of a set of labels. */
@@ -203,9 +250,9 @@ export function emitProgram(ctx: SmsCtx, options: SmsEmitOptions = {}): void {
     if (found) levelFor.set(scene.index, found);
   }
 
-  emitVectors(ctx);
+  emitVectors(ctx, options);
   emitReset(ctx, options);
-  emitMainLoop(ctx);
+  emitMainLoop(ctx, options.audio !== undefined);
   emitInput(ctx);
   emitTickDispatch(ctx, scenes);
   emitSceneChange(ctx, scenes);
@@ -219,6 +266,7 @@ export function emitProgram(ctx: SmsCtx, options: SmsEmitOptions = {}): void {
 
   emitRenderHelpers(ctx);
   emitTileContactHelper(ctx);
+  if (options.audio) options.audio.emitCode(asm);
   ctx.finish();
 
   // --- data ------------------------------------------------------------------
@@ -253,6 +301,20 @@ export function emitProgram(ctx: SmsCtx, options: SmsEmitOptions = {}): void {
       asm.bytes(palette);
     }
   }
+  if (options.audio) {
+    if (program.tracks.length > 0) {
+      asm.label("SceneTracks");
+      // One byte per scene: the request value that starts its track, or the one
+      // that stops the music. A table rather than a dispatch because a scene
+      // change already costs a redraw, and this is the cheapest thing in it.
+      for (const scene of scenes) {
+        const track = options.sceneTracks?.[scene.index] ?? -1;
+        asm.db(track < 0 ? AUDIO_STOP : track + 1);
+      }
+    }
+    options.audio.emitData(asm);
+  }
+
   asm.label("TileBank");
   asm.bytes(options.bank ?? new Uint8Array(0));
   asm.label("Palette");
@@ -288,8 +350,8 @@ function defaultPalette(): Uint8Array {
  * over the vectors rather than a header the console reads — unlike both other
  * machines, where the entry point is data.
  */
-function emitVectors(ctx: SmsCtx): void {
-  const { asm, layout } = ctx;
+function emitVectors(ctx: SmsCtx, options: SmsEmitOptions): void {
+  const { asm } = ctx;
   asm.label("Boot");
   asm.di();
   asm.jp("Reset");
@@ -303,7 +365,14 @@ function emitVectors(ctx: SmsCtx): void {
   asm.push("af");
   asm.inN(PORT.CONTROL); // reading the status byte is how the VDP is acknowledged
   asm.ldn("a", 1);
-  asm.sta(layout.scratch + S.w3);
+  asm.sta(frameFlag(ctx));
+  // The driver's tick is *counted* here and performed in the main loop, exactly
+  // as on the NES and for the same reason: the blanking interval is the
+  // picture's, and a driver tick taken here is a tick the tilemap upload waits
+  // behind. A frame the game overran is then owed rather than lost, which is what
+  // keeps the tempo the frame's rather than the loop's. `AudioFrame` touches `a`
+  // and the flags and nothing else, which is why `af` alone is saved.
+  if (options.audio) asm.call(options.audio.routines.frame);
   asm.pop("af");
   asm.ei();
   asm.reti();
@@ -315,7 +384,7 @@ function emitVectors(ctx: SmsCtx): void {
   // an edge like any other.
   asm.push("af");
   asm.ldn("a", 1);
-  asm.sta(layout.scratch + S.w3 + 1);
+  asm.sta(pauseFlag(ctx));
   asm.pop("af");
   asm.retn();
 }
@@ -387,6 +456,11 @@ function emitReset(ctx: SmsCtx, options: SmsEmitOptions): void {
   }
   asm.call("BuildFrame");
   asm.call("UploadFrame");
+
+  if (options.audio) {
+    asm.call("AudioInit");
+    if (program.tracks.length > 0) asm.call("SceneMusic");
+  }
 
   // Display on, frame interrupt on. Everything above ran with it off, which is
   // what makes a screenful of name table safe to write without tearing.
@@ -584,21 +658,24 @@ function emitClearState(ctx: SmsCtx): void {
   }
 }
 
-function emitMainLoop(ctx: SmsCtx): void {
-  const { asm, layout } = ctx;
+function emitMainLoop(ctx: SmsCtx, audio: boolean): void {
+  const { asm } = ctx;
   const wait = ctx.unique("waitFrame");
   // The flag is cleared *after* it is seen, not before the wait: a tick that
   // overran its frame would otherwise wait for the next one and run at half rate.
   asm.label("Main");
   asm.label(wait);
-  asm.lda(layout.scratch + S.w3);
+  asm.lda(frameFlag(ctx));
   asm.aluN("or", 0);
   ctx.far("z", wait);
   asm.alu("xor", "a");
-  asm.sta(layout.scratch + S.w3);
+  asm.sta(frameFlag(ctx));
   asm.call("UploadFrame");
   asm.call("ReadInput");
   asm.call("Tick");
+  // After the tick, so an effect a rule asked for is heard this frame rather than
+  // next; after the upload, so the frame it delays is nobody's.
+  if (audio) asm.call("AudioService");
   asm.call("BuildFrame");
   asm.jp("Main");
 }
@@ -648,13 +725,13 @@ function emitInput(ctx: SmsCtx): void {
     asm.aluN("and", 0x80);
     ctx.far("nz", noStart);
   } else {
-    asm.lda(layout.scratch + S.w3 + 1);
+    asm.lda(pauseFlag(ctx));
     asm.aluN("or", 0);
     ctx.far("z", noStart);
     // A latch, not a level: the interrupt fires once per press and the edge
     // machinery below turns it into `pressed` for exactly one tick.
     asm.alu("xor", "a");
-    asm.sta(layout.scratch + S.w3 + 1);
+    asm.sta(pauseFlag(ctx));
   }
   asm.lda(out);
   asm.aluN("or", startBit);
@@ -704,7 +781,7 @@ function emitTickDispatch(ctx: SmsCtx, scenes: readonly SceneCtx[]): void {
 }
 
 function emitSceneChange(ctx: SmsCtx, scenes: readonly SceneCtx[]): void {
-  const { asm, layout } = ctx;
+  const { asm, layout, program } = ctx;
   asm.label("SceneChange");
   asm.lda(layout.pending);
   asm.aluN("cp", 0xff);
@@ -715,6 +792,7 @@ function emitSceneChange(ctx: SmsCtx, scenes: readonly SceneCtx[]): void {
   asm.sta(layout.scene);
   asm.ldn("a", 0xff);
   asm.sta(layout.pending);
+  if (ctx.audio?.driver === true && program.tracks.length > 0) asm.call("SceneMusic");
   asm.call("ResetScene");
   emitSeedRng(ctx);
   emitClearState(ctx);
@@ -722,6 +800,21 @@ function emitSceneChange(ctx: SmsCtx, scenes: readonly SceneCtx[]): void {
   asm.ldn("a", 1);
   asm.sta(layout.redraw);
   asm.ret();
+
+  // Music follows the scene, so it starts where the scene does. Asking for it
+  // rather than starting it here is what keeps the request one byte: the driver
+  // is serviced from the loop, and a scene change is not where it happens.
+  if (ctx.audio?.driver === true && program.tracks.length > 0) {
+    asm.label("SceneMusic");
+    asm.lda(layout.scene);
+    asm.ld("l", "a");
+    asm.ldn("h", 0);
+    asm.ld16("de", label("SceneTracks"));
+    asm.addHL("de");
+    asm.ld("a", "hlp");
+    asm.sta(ctx.audio.music);
+    asm.ret();
+  }
 
   asm.label("ResetScene");
   emitSceneDispatch(
@@ -1848,6 +1941,13 @@ function needHudNumber(ctx: SmsCtx): Ref {
 /**
  * `b` = y, `c` = x, `e` = tile; append an object entry to the shadow.
  *
+ * The position arriving here is a *screen* position, and the sprite table takes
+ * a **frame** one — the same coordinate on a Master System and 48 pixels in and
+ * 24 down on a Game Gear, whose LCD shows the middle of the frame. The window
+ * origin is added once, here, because this is the one door every object cell and
+ * every HUD glyph goes through; adding it at each call site is how one of them
+ * comes to be missed.
+ *
  * The shadow is the sprite attribute table's own layout — sixty-four Y bytes,
  * then sixty-four (X, tile) pairs — so the upload is two block copies rather
  * than a scatter. That is the whole reason the two halves are 128 bytes apart in
@@ -1858,6 +1958,21 @@ function needPushSprite(ctx: SmsCtx): Ref {
     const { asm, layout } = inner;
     const room = inner.unique("oamRoom");
     const shadow = layout.memory.oamShadow;
+    const origin = windowOrigin(inner);
+    // The window origin goes on before the count is loaded, because the count
+    // stays in `a` from the check below all the way into `emitAddA` — the entry's
+    // address is built from it. Biasing after the load costs every object its
+    // slot and draws nothing at all.
+    if (origin.y !== 0) {
+      asm.ld("a", "b");
+      asm.aluN("add", origin.y);
+      asm.ld("b", "a");
+    }
+    if (origin.x !== 0) {
+      asm.ld("a", "c");
+      asm.aluN("add", origin.x);
+      asm.ld("c", "a");
+    }
     asm.lda(layout.oamCount);
     asm.aluN("cp", layout.memory.oamEntries);
     asm.jr(room, "c");
@@ -2041,24 +2156,40 @@ export function emitRenderHelpers(ctx: SmsCtx): void {
 
   // Objects: the Y table, then the (X, tile) pairs, as two runs through the data
   // port — which auto-increments, so each is one address write and a block.
+  //
+  // Only the entries in use, and `otir` rather than a loop. Both are the same
+  // observation twice: this runs inside the blanking interval, and a table that
+  // is 192 bytes whatever the scene holds is the largest thing in it. The list
+  // *terminates* — the first parked entry is `$D0` and the hardware stops there
+  // — so the Y run is one byte past the last object and the pair run stops with
+  // it; a game showing eleven sprites uploads thirty-five bytes instead of a
+  // hundred and ninety-two. It was thirteen per cent of pong's tick.
+  const noObjects = ctx.unique("noObjects");
+  asm.lda(layout.oamCount);
+  // One past the last, for the terminator — unless every entry is in use, in
+  // which case there is no terminator to send and `b` would wrap to zero.
+  const full = ctx.unique("oamFull");
+  asm.aluN("cp", layout.memory.oamEntries);
+  asm.jr(full, "nc");
+  asm.inc("a");
+  asm.label(full);
+  asm.ld("b", "a");
   emitVramAddress(ctx, VRAM.SAT);
   asm.ld16("hl", layout.memory.oamShadow);
-  asm.ldn("b", 64);
-  const yLoop = ctx.unique("satY");
-  asm.label(yLoop);
-  asm.ld("a", "hlp");
-  asm.outN(PORT.DATA);
-  asm.inc16("hl");
-  asm.djnz(yLoop);
+  asm.ldn("c", PORT.DATA);
+  asm.otir();
+  // The pairs are two bytes an entry and there is nothing to park, so a frame
+  // with no objects at all skips the run — `otir` with `b` at zero writes 256.
+  asm.lda(layout.oamCount);
+  asm.alu("or", "a");
+  ctx.far("z", noObjects);
+  asm.alu("add", "a");
+  asm.ld("b", "a");
   emitVramAddress(ctx, VRAM.SAT + 0x80);
   asm.ld16("hl", layout.memory.oamShadow + 0x80);
-  asm.ldn("b", 128);
-  const xLoop = ctx.unique("satX");
-  asm.label(xLoop);
-  asm.ld("a", "hlp");
-  asm.outN(PORT.DATA);
-  asm.inc16("hl");
-  asm.djnz(xLoop);
+  asm.ldn("c", PORT.DATA);
+  asm.otir();
+  asm.label(noObjects);
 
   emitScrollWrite(ctx);
   asm.ret();

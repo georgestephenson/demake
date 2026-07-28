@@ -9,6 +9,7 @@
  */
 
 import type { RGB8 } from "../consoles/types.js";
+import type { Executor } from "../parallel/jobs.js";
 
 /** A linear-light RGB working image (`data.length === width * height * 3`). */
 export interface LinImage {
@@ -132,6 +133,15 @@ export interface PrepOptions {
   dacColors?: boolean;
   onProgress?: (stage: string, fraction: number) => void;
   signal?: AbortSignalLike;
+  /**
+   * Where the tournament's candidates run (doc 04 §Running the tournament).
+   *
+   * Candidates cannot see each other, so an edge with threads to spare can hand
+   * one in: the CLI's runs on `worker_threads`, the page's on Web Workers.
+   * Omitted, they run on this thread in order — same conversion, same bytes,
+   * just the one core.
+   */
+  executor?: Executor;
 }
 
 /** Auto-decisions the pipeline made, surfaced so callers can pin them. */

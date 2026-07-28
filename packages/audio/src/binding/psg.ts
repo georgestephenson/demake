@@ -111,10 +111,21 @@ export function psgBinding(console: string, spec: AudioSpec): ChipBinding {
     },
 
     fitRate(desiredHz): DriverRateFit {
+      // The frame interrupt is always available and always exact, so it is the
+      // candidate every other one has to beat rather than a fallback for when
+      // none is in range. It is also the *only* clock a game gets: a game's two
+      // streams share one interrupt with the picture, and this VDP reloads its
+      // line counter outside the active display — so a line interrupt every N
+      // lines fires a few times inside the picture and not at all in the border,
+      // which is a schedule performed correctly and heard wrongly (doc 16 §Two
+      // streams, one clock). `gameDriverRate` therefore asks for exactly this
+      // rate, and the zero error below is what hands it back.
+      const frameHz = spec.driver.frameRate.num / spec.driver.frameRate.den;
+      let best: DriverRateFit = { rate: spec.driver.frameRate, source: "vblank" };
+      let bestError = Math.abs(frameHz - desiredHz);
       // The VDP's line interrupt fires every (N+1) scanlines, which gives a far
-      // finer set of rates than vblank and is how an SMS driver holds a tempo.
-      let best: DriverRateFit | undefined;
-      let bestError = Infinity;
+      // finer set of rates than vblank and is how a *standalone* SMS driver holds
+      // a tempo above the frame rate.
       for (let n = 0; n <= 255; n += 1) {
         const den = CYCLES_PER_LINE * (n + 1);
         const hz = PSG_CLOCK / den;
@@ -125,8 +136,7 @@ export function psgBinding(console: string, spec: AudioSpec): ChipBinding {
           best = { rate: { num: PSG_CLOCK, den }, source: "line-irq", divisor: n };
         }
       }
-      if (best) return best;
-      return { rate: spec.driver.frameRate, source: "vblank" };
+      return best;
     },
   };
 }
