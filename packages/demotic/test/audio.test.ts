@@ -689,11 +689,12 @@ describe("the example library", async () => {
    * The kilobyte is the real floor and the exception is a debt, not a fact about
    * the hardware. The NES carried the same exception until its rule code stopped
    * being copied per object — packing the backdrop nametables bought about 940
-   * bytes and looping the pairs bought six thousand — and the Sega backend has not
-   * had that work yet: its collision emitter is 9.3 KiB for the shooter and its
-   * integrator 2.8 KiB, both of which are the same body repeated with a different
-   * address in it. Until then the caves, the next tightest fixture, lands at 986
-   * bytes free.
+   * bytes and looping the pairs bought six thousand — and the Sega backend has had
+   * only the first half of that work: its name tables are packed now, which bought
+   * about 1.5 KiB a game, but its collision emitter is still 9.3 KiB for the
+   * shooter and its integrator 2.8 KiB, both of which are the same body repeated
+   * with a different address in it. Until then the caves, the next tightest
+   * fixture, lands at 1393 bytes free.
    */
   const HEADROOM: Readonly<Record<string, number>> = { sms: 512 };
 
@@ -704,8 +705,15 @@ describe("the example library", async () => {
    * picture, which is seconds rather than the fraction of one the mono path costs
    * — so the sweep states its own budget instead of inheriting one written for a
    * test that runs a single pipeline.
+   *
+   * The Sega 8-bits are the slow end of it, and knowingly. A Master System
+   * picture is 768 cells against a shared bank of 256 tiles, so two full-screen
+   * pictures routinely want more of it than there is — and where sharing the bank
+   * out changes what a picture may spend, that picture is demade a second time
+   * (`sms-art.ts`). Half again on the worst fixture, in exchange for a title
+   * screen fitted to the tiles it actually needs rather than to half the bank.
    */
-  const BUILD_TIMEOUT = 60_000;
+  const BUILD_TIMEOUT = 120_000;
 
   for (const target of TARGETS) {
     for (const [file, dir] of cases) {

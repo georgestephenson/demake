@@ -37,8 +37,9 @@ import { Sms } from "@demake/sms";
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
 import { builtinSega, BUILTIN_TILES, SEGA_TILE_BYTES } from "../src/rom/graphics.js";
+import { bindSmsArt } from "../src/codegen/sms-art.js";
 import { buildSmsRom, CODE_SIZE } from "../src/codegen/sms.js";
-import { SYSTEM_INK } from "../src/codegen/sms/emit.js";
+import { packCells, SYSTEM_INK } from "../src/codegen/sms/emit.js";
 
 const fixtures = join(import.meta.dirname, "..", "fixtures");
 const read = (name: string) => readFileSync(join(fixtures, name), "utf8");
@@ -317,6 +318,83 @@ describe("objects", async () => {
     expect(ink).toBe(true);
   });
 });
+
+describe("a demade backdrop", async () => {
+  // The one place in this file that pays for a real `prep` tournament, because
+  // there is no cheaper oracle for it: what reaches the name table is the picture
+  // after a pool, an encoding and an unpacker, and every one of those has been
+  // wrong. A Game Gear, because its window is the smaller picture of the two.
+  const assets = new Map([
+    ["pong.title.svg", asset("pong.title.svg")],
+    ["ball.svg", asset("ball.svg")],
+    ["paddle.svg", asset("paddle.svg")],
+  ]);
+  const built = await buildSmsRom(build("pong.dmt", undefined, "gg"), { assets });
+  const art = await bindSmsArt(build("pong.dmt", undefined, "gg"), assets, "gg");
+  const machine = boot(built.bytes, built.layout.booted);
+  for (let frame = 0; frame < 4; frame += 1) machine.runFrame();
+
+  it("puts the picture in the name table, flips and all", () => {
+    // Cell for cell against the map the build produced — the *whole* entry, not
+    // just the tile number. This layout is flip-aware, so the fitter stores one
+    // tile for up to four orientations and says which in bits 1 and 2; dropping
+    // them costs the right-hand end of every mirrored brick, ledge and letter.
+    // The encoding between the two is deliberately not checked: what is
+    // guaranteed is the bytes that reach the VDP.
+    const map = art.options.backdrops?.get("title")?.map;
+    expect(map).toBeDefined();
+    if (!map) return;
+    let flipped = 0;
+    for (let row = 0; row < built.layout.memory.viewH; row += 1) {
+      for (let column = 0; column < built.layout.memory.viewW; column += 1) {
+        const cell = (row * 32 + column) * 2;
+        const at = 0x3800 + cell;
+        // The caption the title screen writes over the picture is the runtime's,
+        // so only the cells the picture owns are compared.
+        if ((machine.vdp.vram[at + 1] as number) & 0x08) continue;
+        expect([machine.vdp.vram[at], machine.vdp.vram[at + 1]]).toEqual([
+          map[cell],
+          map[cell + 1],
+        ]);
+        if (((map[cell + 1] as number) & 0x06) !== 0) flipped += 1;
+      }
+    }
+    // And the picture really does use them, or the check above proves nothing.
+    expect(flipped).toBeGreaterThan(0);
+  });
+
+  it("stores that picture packed, because a name table is cartridge", () => {
+    // The counterpart of the NES's assertion, and the reason the check above
+    // reads the VDP rather than the ROM: two screenfuls stored raw were a tenth
+    // of a mapper-less Sega cartridge.
+    const map = art.options.backdrops?.get("title")?.map as Uint8Array;
+    expect(packCells(map).length).toBeLessThan(map.length * 0.8);
+  });
+
+  it("uploads both colour banks, in the bytes this machine spends on a colour", () => {
+    // A Game Gear colour is two bytes, so counting *colours* into a Master
+    // System-sized loop leaves the whole sprite bank — every object in the game,
+    // and the paper a caption is read on — unwritten.
+    const palette = art.options.scenePalettes?.get("title");
+    expect(palette?.length).toBe(64);
+    expect([...machine.vdp.cram]).toEqual([...(palette as Uint8Array)]);
+  });
+
+  it("gives a scene without a picture the build's own palette, not the last one's", () => {
+    // Pong's ending scenes have no backdrop. Uploading nothing there would leave
+    // colour RAM holding whichever title screen the player arrived from, which is
+    // how a level comes out in a title screen's colours.
+    const ending = new Sms(built.bytes);
+    for (let guard = 0; guard < 4_000_000; guard += 1) {
+      if (ending.readMemory(built.layout.booted, 1)[0] !== 0) break;
+      ending.stepInstruction();
+    }
+    ending.setButtons(["a"]);
+    for (let frame = 0; frame < 4; frame += 1) ending.runFrame();
+    expect([...ending.vdp.cram]).not.toEqual([...(art.options.scenePalettes?.get("title") ?? [])]);
+    expect([...ending.vdp.cram]).toEqual([...(art.options.palette as Uint8Array)]);
+  });
+}, 120_000);
 
 describe("the two machines", async () => {
   it("compile to the same code, and differ only in the window and the colours", async () => {

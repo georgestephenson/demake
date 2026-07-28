@@ -282,6 +282,49 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     that floors the wrong way makes a game that plays almost right and diverges a
     thousand ticks later.
 
+    **Everything the trace could not see was wrong, and the list is worth
+    keeping**, because every entry is a thing this hardware does that neither of
+    the first two consoles does. The background layer is **opaque**: colour zero
+    is an ordinary colour drawn from the cell's own bank, and register 7's
+    backdrop fills the border and the masked column and nothing else — so a
+    renderer that treated it as transparent showed the border through every flat
+    area a demade picture has, which is a whole sky. A name-table entry's second
+    byte carries **flip bits**, so the fitter stores one tile for up to four
+    orientations, and a pool that kept the tile number and dropped those bits drew
+    the right-hand end of every mirrored brick, ledge and letter the wrong way
+    round. The vertical scroll register wraps at **224** and not at 256, because
+    the name table is twenty-eight rows — reducing it in the accumulator loses
+    thirty-two pixels every time the sum passes 255, and the four rows a picture
+    slid by were the four nothing had painted. A colour is **two bytes on a Game
+    Gear**, so a boot upload that counted thirty-two of them left the whole sprite
+    bank — every object, and the paper a caption is read on — unwritten. And a
+    scene with no picture of its own has to upload the build's palette rather than
+    inherit the last scene's, or a level comes out in a title screen's colours.
+
+    The sharpest of them is not a fact about the VDP but about the **two-byte
+    control port**: acknowledging the frame interrupt means reading that port,
+    which resets its half-written state, so a handler landing between the two
+    bytes of an address leaves the second read as a first and one cell of the
+    screen is written somewhere else entirely. The rest of the runtime is safe by
+    construction — `UploadFrame` runs a few instructions after the interrupt it
+    waited for — so only the full redraw needed `di`, and the frame it spends
+    there is owed rather than lost.
+
+    **The cartridge budget runs out here too, and further.** The Sega name tables
+    are packed the way the NES's are — literals and runs, but of whole *cells*,
+    because an entry is a tile byte and an attribute byte and a run of identical
+    cells has no byte runs in it at all — which is worth about 1.5 KiB a game and
+    leaves the tightest fixture, the caves, at 1393 bytes free. The shooter still
+    does not fit: 34.6 KiB against 32.7 on a Master System, 33.9 on a Game Gear.
+    The tile bank is a quarter of the cartridge on its own (254 tiles at
+    thirty-two bytes, because characters here are ROM *and* video RAM), and the
+    rest is the same debt the NES paid off and this backend has not — a collision
+    emitter that is 9.3 KiB for that game and an integrator that is 2.8, both the
+    same body repeated with a different address in it. The other way out is the
+    one the hardware offers: these machines take **bank-switched cartridges**, the
+    slot at `$8000` is entirely unused today, and `@demake/sms` already implements
+    the mapper's registers. Neither is done; the suite asserts the overflow.
+
     Sound is no longer the gap: there is a generated Z80 driver (§A5), and both
     machines carry their music and effects. The design question that was blocking
     it was in the packer, and it resolved the way it was expected to — the

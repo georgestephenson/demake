@@ -338,9 +338,17 @@ export class Vdp {
   /**
    * Draw the background, and report which pixels want to be in front of sprites.
    *
-   * A cell's priority bit means "this cell's non-zero pixels cover sprites", so
-   * the answer is per pixel rather than per cell — a priority cell's transparent
-   * pixels still let a sprite through.
+   * **The background layer is opaque.** Colour zero is an ordinary colour here,
+   * drawn from whichever bank the cell selected — it is the *sprites* that treat
+   * index zero as transparency. Register 7's backdrop colour fills the border and
+   * the masked left column, never a cell of the active display. A renderer that
+   * skipped colour-zero background pixels would show the border colour through
+   * every flat area of a demade picture, which is a whole sky.
+   *
+   * What colour zero does mean is priority: a cell's priority bit says "this
+   * cell's *non-zero* pixels cover sprites", so the answer is per pixel rather
+   * than per cell — a priority cell's colour-zero pixels still let a sprite
+   * through.
    */
   private renderBackground(line: number, base: number): Uint8Array {
     const priority = this.priorityRow;
@@ -374,12 +382,10 @@ export class Vdp {
       const row = flipY ? 7 - (sourceY & 7) : sourceY & 7;
       const bit = flipX ? sourceX & 7 : 7 - (sourceX & 7);
       const pixel = this.readTilePixel(tile * 32 + row * 4, bit);
-      if (pixel !== 0) {
-        this.indices[base + x] = palette + pixel;
-        // Only where the cell is opaque: a priority cell's colour-zero pixels
-        // still let a sprite through.
-        if (inFront) priority[x] = 1;
-      }
+      this.indices[base + x] = palette + pixel;
+      // Only where the cell is opaque: a priority cell's colour-zero pixels
+      // still let a sprite through.
+      if (inFront && pixel !== 0) priority[x] = 1;
     }
     return priority;
   }

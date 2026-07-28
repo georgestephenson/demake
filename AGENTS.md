@@ -420,7 +420,20 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   (`packCells`) and come out through one walk with rendering off, at 279–682 bytes
   a picture. The encoding is never the contract: what is guaranteed is the bytes
   that reach the PPU, so `nes-rom.test.ts` boots the cartridge and reads the PPU's
-  own memory rather than checking the format.
+  own memory rather than checking the format. The Sega name tables pack the same
+  way and the packer is a separate one, because an entry there is _two_ bytes —
+  a run of identical cells is `T A T A T A` and has no byte runs in it at all.
+- **When several pictures share a bank, share it on what they ask for.** A
+  conversion reports what it _wanted_ as well as what it took
+  (`stats.uniqueTiles + stats.tileMerges`), because `maxTiles` reaches the
+  pipeline after the fit — so a build can demake every picture against an even
+  split, read the demands off, and hand the bank out max-min fair without a
+  second tournament for anything whose share would not change its fit. Dividing
+  the bank evenly and leaving it there is what merged the letters of BREAKOUT
+  into each other on a Master System: the title screen wanted 229 tiles of the
+  183 free and the court wanted 21, so half each starved one to reserve seventy
+  the other never asked for. Never allocate to the pictures before they have said
+  what they cost.
 - **And music and effects are demade by the audio engine, the same way.** The
   same `assets` map carries `.mid` and `.wav` bytes, `codegen/audio.ts` hands
   them to `@demake/audio`, and the driver that plays them is `@demake/audio`'s
@@ -889,7 +902,44 @@ is the game.
   interval by construction; do not reach for it on a path that might not.
 - **A name-table entry is two bytes**, so `cellAttributes` is true here: the
   second byte carries the palette-select, flip and priority bits. Same shape as
-  the Game Boy Color's attribute byte, reached by different hardware.
+  the Game Boy Color's attribute byte, reached by different hardware. **The flip
+  bits are the fitter's**, not decoration: this layout is flip-aware, so one tile
+  stands for up to four orientations and the cell says which. A pool that carried
+  the tile number and dropped bits 1 and 2 drew the right-hand end of every
+  mirrored brick, ledge and letter the wrong way round — on every title screen in
+  the library, and it cost no tiles to fix because it is the same tile either way.
+- **The background layer is opaque.** Colour zero is an ordinary colour, drawn
+  from whichever bank the cell selected; transparency belongs to the sprites, and
+  register 7's backdrop fills the border and the masked left column and nothing
+  else. Two things follow. A renderer that skips colour-zero background pixels
+  shows the border through every flat area a demade picture has — a whole sky, in
+  the flesh — which is what `packages/sms/test/vdp.test.ts` now pins. And a
+  caption has _paper_: the font draws its shade zero as the sprite bank's colour
+  zero, which no sprite can ever render because it is their transparency slot, so
+  `packPalette` pins it to black rather than leaving it to whatever the object fit
+  happened to put there.
+- **The vertical scroll register wraps at 224; the horizontal one wraps at 256.**
+  Thirty-two columns is exactly a byte, so a level wider than 255 pixels needs
+  nothing special. Twenty-eight _rows_ is not: reducing `camY + bias` in the
+  accumulator throws away thirty-two pixels every time the sum passes 255, and the
+  four rows the picture slides by are the four nothing has painted. It is done in
+  `hl`, which also covers a level taller than a byte.
+- **Every scene uploads a palette, whether it has a picture or not.** A scene with
+  a backdrop brings that picture's colours and one without brings the build's —
+  the level tiles' and the objects' fit. Leaving colour RAM alone made a level
+  wear whichever title screen the player came from, which looks like a corrupt
+  tilemap rather than a wrong palette. And the upload counts _bytes_: a Game Gear
+  colour is two of them, so a loop written for thirty-two leaves the whole sprite
+  bank unwritten there.
+- **The control port is two writes, and the interrupt handler resets it.**
+  Acknowledging the frame interrupt means reading that port, which clears its
+  half-written state — so a handler landing between the two bytes of an address
+  leaves the second one read as a first, and one cell of the screen is written
+  somewhere else entirely. `UploadFrame` is safe by construction, because it runs
+  a few instructions after the interrupt it waited for; the full redraw is the one
+  thing long enough to be interrupted, so it runs under `di` and the frame it
+  spends there is owed rather than lost. Before adding a VDP path that runs with
+  interrupts on, ask which of its control writes can be split.
 - **The bank is capped at 256 tiles, not the 448 that fit.** A sprite's tile
   number in the attribute table is a single byte, so anything an object can draw
   has to be below 256; letting the background reach higher would mean two budgets

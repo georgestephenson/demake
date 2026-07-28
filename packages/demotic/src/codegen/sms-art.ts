@@ -68,6 +68,10 @@ export const ART_TILES = BANK_TILES - BUILTIN_TILES;
 /** Cells the name table is wide, which a backdrop's rows are padded to. */
 const MAP_W = 32;
 
+/** The flip bits of a name-table entry's second byte, which the fitter sets. */
+const FLIP_X = 0x02;
+const FLIP_Y = 0x04;
+
 /** What the art binding produced, beyond the emitter's own options. */
 export interface BoundSmsArt {
   options: SmsEmitOptions;
@@ -144,6 +148,15 @@ function colourBytes(gameGear: boolean): number {
  * The last three of the sprite bank are always the font's, whatever the art
  * chose — which is the reservation, stated once, in the one place that writes
  * the bytes.
+ *
+ * So is the *first*, and for the opposite reason. Entry zero of the sprite bank
+ * is what an object's transparency indexes, so no sprite ever renders it and the
+ * fit has no opinion about it — but a background cell has no transparency at all
+ * on this hardware, and the font, the level patterns, the placeholder block and
+ * every blank cell draw in that bank. Its colour zero is therefore the paper a
+ * caption is read on, and leaving it to whatever the object fit happened to
+ * leave in the slot is how a score comes out white on white. Black, so the three
+ * rising greys above it read.
  */
 function packPalette(
   background: readonly { codes: readonly number[] }[],
@@ -154,6 +167,7 @@ function packPalette(
   const bytes = new Uint8Array(32 * width);
   bytes.set(encodeColours(background, gameGear, 16), 0);
   bytes.set(encodeColours(sprites, gameGear, 16 - 3), 16 * width);
+  bytes.fill(0, 16 * width, 17 * width);
   bytes.set(systemRamp(gameGear), (16 + SYSTEM_INK - 2) * width);
   return bytes;
 }
@@ -168,11 +182,50 @@ function systemOnlyPalette(gameGear: boolean): Uint8Array {
   return bytes;
 }
 
+/**
+ * Share a bank out among pictures that together want more of it than there is.
+ *
+ * Max-min fair, which is the honest reading of "no picture is squeezed while
+ * another has slack": serve the cheapest first, give it what it asks for if that
+ * is no more than an even split of what is left, and offer the remainder to the
+ * rest. A picture that wants half a bank on its own gets half a bank; the one
+ * beside it that wants ten tiles gets ten and not a hundred and twenty.
+ *
+ * Order comes from the demands, not from the scenes, so "whichever screen the
+ * author wrote first" decides nothing — ties fall back to scene order only so
+ * that the answer is one answer.
+ */
+function fairShares(demands: readonly number[], capacity: number): number[] {
+  const order = demands.map((_, index) => index).sort((a, b) => demands[a]! - demands[b]! || a - b);
+  const shares = demands.map(() => 0);
+  let left = capacity;
+  let waiting = demands.length;
+  for (const index of order) {
+    const even = Math.floor(left / waiting);
+    // At least one tile each: a picture demade into nothing at all would be a
+    // blank screen, which reads as a broken build rather than a tight one.
+    shares[index] = Math.max(1, Math.min(demands[index]!, even));
+    left -= shares[index]!;
+    waiting -= 1;
+  }
+  return shares;
+}
+
 /** One demade backdrop: the tiles it needs and the name table that places them. */
 interface Backdrop {
   tiles: Uint8Array;
   map: Uint8Array;
   palette: readonly { codes: readonly number[] }[];
+  /**
+   * Tiles the picture would have taken with nothing in its way.
+   *
+   * The whole reason a budget can be shared out sensibly without demaking
+   * anything twice. `maxTiles` reaches the pipeline *after* the fit — it is the
+   * merge stage and nothing else — so a conversion always reports how many tiles
+   * it wanted as well as how many it was allowed, and a fit that merged nothing
+   * is byte-for-byte what any larger budget would have produced.
+   */
+  demand: number;
 }
 
 /**
@@ -215,6 +268,7 @@ async function demakeBackdrop(
     tiles: find(".tiles.bin"),
     map: find(".map.bin"),
     palette: fitted.image.palettes[0]?.colors ?? [],
+    demand: fitted.stats.uniqueTiles + fitted.stats.tileMerges,
   };
 }
 
@@ -314,10 +368,6 @@ export async function bindSmsArt(
   // font, by a level tile, by an object or by an earlier picture is pointed at
   // rather than stored again. Two title screens that share a night sky then cost
   // one tile between them.
-  //
-  // The budget is divided evenly among the pictures rather than given to the
-  // first one, because "whichever screen the author wrote first gets to look
-  // better" is not a decision a build should be making.
   const backdrops = new Map<string, { map: Uint8Array }>();
   const scenePalettes = new Map<string, Uint8Array>();
   const known = new Uint8Array(bankParts.reduce((total, part) => total + part.length, 0));
@@ -327,44 +377,98 @@ export async function bindSmsArt(
     cursor += part.length;
   }
   const poolStart = next;
-  const pool = new TilePool(known, poolStart, SEGA_TILE_BYTES);
-  for (const [index, scene] of backdropScenes.entries()) {
-    const left = BANK_TILES - next;
-    const share = Math.max(1, Math.floor(left / (backdropScenes.length - index)));
-    const source = assets.get(scene.backdrop as string) as Uint8Array;
-    // The share is part of the key: the same picture fitted into a different
-    // number of tiles is a different conversion, and two scenes sharing a bank
-    // get different shares.
-    // One picture at a time, like the NES's: what a picture may spend is what the
-    // ones before it left, so a later conversion cannot start until an earlier one
-    // has been interned. The tournament inside each conversion still spreads over
-    // the executor's lanes, which is where a backdrop's time actually goes.
-    const art = await rememberAsync(
+  const free = BANK_TILES - poolStart;
+  const pictures = backdropScenes.map(
+    (scene) => assets.get(scene.backdrop as string) as Uint8Array,
+  );
+  // The budget is part of the key: the same picture fitted into a different
+  // number of tiles is a different conversion.
+  const convert = (source: Uint8Array, cap: number): Promise<Backdrop> =>
+    rememberAsync(
       backdropCache,
-      `${consoleId}:${share}:${digest(source)}`,
-      () => demakeBackdrop(source, consoleId, share, executor),
+      `${consoleId}:${cap}:${digest(source)}`,
+      () => demakeBackdrop(source, consoleId, cap, executor),
       CACHE_LIMIT,
     );
-    // The engine's map is two bytes a cell and as wide as the picture; the name
-    // table is thirty-two cells wide on both machines, so each row is padded.
-    const map = new Uint8Array(MAP_W * memory.viewH * 2);
-    for (let row = 0; row < memory.viewH; row += 1) {
-      for (let column = 0; column < memory.viewW; column += 1) {
-        const cell = row * memory.viewW + column;
-        const local =
-          (art.map[cell * 2] as number) | (((art.map[cell * 2 + 1] as number) & 1) << 8);
-        const at = local * SEGA_TILE_BYTES;
-        const tile = pool.intern(art.tiles.subarray(at, at + SEGA_TILE_BYTES));
-        const out = (row * MAP_W + column) * 2;
-        map[out] = tile & 0xff;
-        map[out + 1] = (tile >> 8) & 1;
+
+  /**
+   * Intern a set of conversions into a fresh pool, in scene order.
+   *
+   * Scene order and not arrival order, because a tile's number is where it
+   * landed — the Game Boy's arrangement, and the reason its backdrops may be
+   * demade concurrently. The pool is fresh each time because interning is what
+   * decides the numbers, so a second attempt has to start from the same place
+   * the first one did.
+   *
+   * The engine's map is two bytes a cell and as wide as the picture; the name
+   * table is thirty-two cells wide on both machines, so each row is padded. And
+   * the second byte carries more than the tile's ninth bit: this layout is
+   * flip-aware (`ConsoleSpec.tiles.flip`), so the fitter stores one tile for up
+   * to four orientations and says which one a cell wants in bits 1 and 2. Those
+   * bits have to survive the pool, or every mirrored cell is drawn the wrong way
+   * round — it is the same tile either way, so nothing here changes what the bank
+   * costs; what changes is that the right-hand end of a brick, a ledge or a
+   * letter is the shape the picture was fitted with.
+   */
+  const internAll = (arts: readonly Backdrop[]): { pool: TilePool; maps: Uint8Array[] } => {
+    const pool = new TilePool(known, poolStart, SEGA_TILE_BYTES);
+    const maps = arts.map((art) => {
+      const map = new Uint8Array(MAP_W * memory.viewH * 2);
+      for (let row = 0; row < memory.viewH; row += 1) {
+        for (let column = 0; column < memory.viewW; column += 1) {
+          const cell = row * memory.viewW + column;
+          const high = art.map[cell * 2 + 1] as number;
+          const local = (art.map[cell * 2] as number) | ((high & 1) << 8);
+          const at = local * SEGA_TILE_BYTES;
+          const tile = pool.intern(art.tiles.subarray(at, at + SEGA_TILE_BYTES));
+          const out = (row * MAP_W + column) * 2;
+          map[out] = tile & 0xff;
+          map[out + 1] = ((tile >> 8) & 1) | (high & (FLIP_X | FLIP_Y));
+        }
       }
-    }
-    next = poolStart + pool.tail().length / SEGA_TILE_BYTES;
-    backdrops.set(scene.name, { map });
-    scenePalettes.set(scene.name, packPalette(art.palette, spriteColours, gameGear));
+      return map;
+    });
+    return { pool, maps };
+  };
+
+  // An even split first — not because it is the answer, but because it is a
+  // budget every picture can be demade against at once, and a conversion reports
+  // what it *wanted* as well as what it took. The bank is then shared out max-min
+  // fair on those demands: the cheapest picture is served first and what it does
+  // not want is offered to the rest.
+  //
+  // The even split alone was the bug. Breakout's Master System title screen wants
+  // 229 tiles and its court wants 21, against a bank with 183 free — so half each
+  // starved the title of sixty-eight tiles to reserve seventy the court never
+  // asked for, and merged the letters of the word BREAKOUT into each other to pay
+  // for it. That is the "an under-fed fit looks like a bad fit" rule with the fit
+  // under-fed by arithmetic rather than by hardware.
+  //
+  // A picture is demade a second time only where the share it ends up with would
+  // change its fit, which is why this costs nothing on a game whose pictures all
+  // want more than their share (they keep it) and nothing on a game with one
+  // picture (it had the whole bank already).
+  const share = Math.max(1, Math.floor(free / backdropScenes.length));
+  let converted = await Promise.all(pictures.map((source) => convert(source, share)));
+  const demands = converted.map((art) => art.demand);
+  const shares = fairShares(demands, free);
+  // What a fit produces is `min(budget, demand)` tiles, and below the demand the
+  // budget does not reach the fit at all — so a conversion is already the one the
+  // final share would have produced whenever those two numbers agree.
+  converted = await Promise.all(
+    converted.map((art, index) =>
+      Math.min(shares[index]!, demands[index]!) === Math.min(share, demands[index]!)
+        ? Promise.resolve(art)
+        : convert(pictures[index]!, shares[index]!),
+    ),
+  );
+  const interned = internAll(converted);
+
+  for (const [index, scene] of backdropScenes.entries()) {
+    backdrops.set(scene.name, { map: interned.maps[index]! });
+    scenePalettes.set(scene.name, packPalette(converted[index]!.palette, spriteColours, gameGear));
   }
-  const pooled = pool.tail();
+  const pooled = interned.pool.tail();
   if (pooled.length > 0) bankParts.push(pooled);
   if (backdrops.size > 0) {
     options.backdrops = backdrops;
