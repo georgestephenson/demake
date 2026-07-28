@@ -91,6 +91,9 @@ importers:
       '@demake/dmg':
         specifier: workspace:*
         version: link:../dmg
+      '@demake/md':
+        specifier: workspace:*
+        version: link:../md
       '@demake/nes':
         specifier: workspace:*
         version: link:../nes

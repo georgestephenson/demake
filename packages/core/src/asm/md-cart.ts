@@ -67,6 +67,16 @@ export interface MdHeaderOptions {
   title?: string;
   /** Bytes the cartridge holds. Must be a power of two, at least 128 KiB. */
   size?: number;
+  /**
+   * Where the vertical interrupt goes.
+   *
+   * Defaults to the reset address, which is what a cartridge that never enables
+   * the interrupt wants; a game does enable it, and a vector left pointing at
+   * the reset code would restart the game sixty times a second.
+   */
+  vint?: number;
+  /** The same, for the horizontal interrupt, which nothing here enables. */
+  hint?: number;
 }
 
 /** Bytes a Demotic cartridge is padded to. */
@@ -134,6 +144,8 @@ export function packMdRom(
   long(0x00, stack);
   long(0x04, reset);
   for (let vector = 2; vector < 64; vector += 1) long(vector * 4, reset);
+  long(MD_HINT_VECTOR, options.hint ?? reset);
+  long(MD_VINT_VECTOR, options.vint ?? reset);
 
   const header = MD_HEADER_OFFSET;
   const write = (at: number, bytes: readonly number[]): void => {

@@ -30,6 +30,7 @@ import {
   gbTarget,
   gbcTarget,
   ggTarget,
+  mdTarget,
   nesTarget,
   RomRunner,
   romTrace,
@@ -105,7 +106,7 @@ describe("ROM conformance across the example library", async () => {
   // byte — this is where it would show, and it would name the tick. And the NES,
   // because a second CPU is where an arithmetic or an ordering difference would
   // surface, and the whole point of the shared spine is that neither can.
-  for (const target of [gbTarget, gbcTarget, nesTarget, smsTarget, ggTarget]) {
+  for (const target of [gbTarget, gbcTarget, nesTarget, smsTarget, ggTarget, mdTarget]) {
     for (const [file, script, levels] of cases) {
       it(`matches the interpreter for ${file} on ${target.console}`, async () => {
         const program = build(read(file), levels, target.console);

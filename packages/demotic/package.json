@@ -26,6 +26,7 @@
   "devDependencies": {
     "@demake/chip": "workspace:*",
     "@demake/dmg": "workspace:*",
+    "@demake/md": "workspace:*",
     "@demake/nes": "workspace:*",
     "@demake/sms": "workspace:*"
   },
