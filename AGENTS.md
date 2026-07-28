@@ -521,6 +521,16 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   `sound` whose trigger exactly matches an existing rule is _merged into it_ by
   the compiler — same tick either way, and the difference between thirty bytes
   and four and a half kilobytes when the trigger is a collision over nine aliens.
+- **A wide object is a relative size the per-scanline sprite budget will not pay
+  for.** Eight sprites to a scanline is the limit on the NES and both Sega
+  8-bits — ten on a Game Boy — and an object `w` cells wide costs `ceil(w)` of
+  them on every line it covers. So a `55vw` platform is eleven sprites on a Game
+  Gear and eighteen on a Master System, and the hardware simply stops drawing
+  after the eighth: the platformer's floor lost its right-hand third, and the hero
+  stepping into that row pushed one more off. Anything that has to span the screen
+  belongs in the backdrop or a level, and anything an object draws is sized in
+  _cells_ so the count does not grow with the screen. `E_SPRITE_BUDGET` counts a
+  scene's total and not its worst line, so this one is still found by looking.
 - **Audio costs cartridge the way a backdrop costs tiles.** A track is a few
   kilobytes of register schedule on a machine with 32 KiB and no mapper, which is
   why the shooter's theme is two bars and the platformer's is eight. Every
@@ -948,6 +958,16 @@ is the game.
   accumulator throws away thirty-two pixels every time the sum passes 255, and the
   four rows the picture slides by are the four nothing has painted. It is done in
   `hl`, which also covers a level taller than a byte.
+- **The name table holds the window plus one cell on each axis, and only a Master
+  System has to wrap to do it.** A scroll of part of a cell shows a sliver of the
+  next column and the next row, so a cell nothing painted shows the scene before
+  it. A Game Gear's window is twenty columns of thirty-two, so the incoming column
+  has a cell of its own: no seam, no mask, and a leftward step paints the origin
+  itself. A Master System's screen is all thirty-two, so its extra column wraps
+  onto the cell straddling the masked left edge and a leftward step paints offset
+  _one_ — offset zero is that shared cell, and painting it puts the left-hand
+  column into the right-hand sliver. `spareColumn` is the one question, and rows
+  never ask it because twenty-eight always beats twenty-four.
 - **Every scene uploads a palette, whether it has a picture or not.** A scene with
   a backdrop brings that picture's colours and one without brings the build's —
   the level tiles' and the objects' fit. Leaving colour RAM alone made a level

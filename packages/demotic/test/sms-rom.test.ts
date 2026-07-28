@@ -17,9 +17,11 @@
  *     camera has travelled — which is what catches an edge painter that walks
  *     the wrong column, or a wrap computed at the wrong modulus.
  *   - **The seam, and the mask that hides it.** The name table is exactly as
- *     wide as the screen, so a scrolling scene writes its new column into the
- *     cell straddling the left edge. The mask is what makes that invisible, and
- *     it must be off for a scene that does not scroll.
+ *     wide as a Master System's screen, so a scrolling scene there writes its new
+ *     column into the cell straddling the left edge. The mask is what makes that
+ *     invisible, and it must be off for a scene that does not scroll — and for a
+ *     Game Gear, whose window is twenty of the same thirty-two columns and which
+ *     therefore has no seam to hide.
  *   - **The reserved colours.** There is no third palette to keep back for the
  *     font, so three entries at the top of the sprite bank are the reservation —
  *     and a caption is only legible if the art's fit never reaches them.
@@ -279,6 +281,125 @@ describe("the name table against the level", async () => {
     }
     expect(patterns).toBeGreaterThan(0);
   });
+});
+
+/**
+ * The edge painter, on a level that scrolls both ways on both machines.
+ *
+ * Written here rather than taken from the example library for the same reason
+ * the NES suite writes its own: the caves are the only level that scrolls, and a
+ * hero that falls into spikes cannot be walked back the way it came — so
+ * *leaving* a column behind and coming back to it was the one direction nothing
+ * exercised. It is also the direction the two machines disagree about.
+ *
+ * What is checked is one cell past the window as well as the window itself,
+ * because the scroll registers move by pixels: any camera that is not a whole
+ * number of cells along shows a sliver of the next column and the next row, and
+ * a cell nothing ever painted shows whatever the last scene left there. A Master
+ * System's near column is the exception and is skipped — it shares its cell with
+ * the far sliver and is masked for exactly that reason.
+ */
+describe("the edge painter on both machines", () => {
+  const columns = 80;
+  const rows = 30;
+  // A pattern with a long period on both axes, so a column painted one cell out
+  // of place is a mismatch rather than a coincidence.
+  const grid = Array.from({ length: rows }, (_, row) =>
+    Array.from({ length: columns }, (_, column) =>
+      (column + row * 3) % 7 === 0 ? "#" : column % 5 === 0 ? "." : " ",
+    ).join(""),
+  ).join("\n");
+  const levels = { "wide.dmtl": ["tile # wall solid", "tile . dot", "map", grid, ""].join("\n") };
+  const source = [
+    "start play",
+    "",
+    "scene play",
+    "level wide from wide.dmtl",
+    "camera follows walker",
+    "",
+    "create object mover (width 1 cell, height 1 cell, speed 30)",
+    // Mid-level on both axes, so the camera is off its clamp in every direction
+    // and a step back is a step the painter has to make rather than a no-op.
+    "create mover walker in play (x 40, y 15)",
+    "",
+    "control walker left (xdirection -1) on hold",
+    "control walker right (xdirection 1) on hold",
+    "control walker up (ydirection -1) on hold",
+    "control walker down (ydirection 1) on hold",
+    "",
+  ].join("\n");
+
+  for (const consoleId of ["sms", "gg"] as const) {
+    it(`keeps every cell the ${consoleId} window can show painted from the grid`, async () => {
+      const program = compile(source, { profile: getProfile(consoleId), levels });
+      const built = await buildSmsRom(program);
+      const { viewW, viewH } = built.layout.memory;
+      const camera = built.layout.camera as number;
+      const machine = boot(built.bytes, built.layout.booted);
+
+      const originOf = (offset: number): number =>
+        (machine.readMemory(camera + offset + 2, 1)[0] as number) |
+        ((machine.readMemory(camera + offset + 3, 1)[0] as number) << 8);
+
+      // A Master System's screen is the whole name table, so the near column and
+      // the far sliver are one cell — masked, and holding whichever of the two the
+      // last paint put there. Both are therefore skipped, which leaves exactly the
+      // columns the screen really shows. A Game Gear has a cell for each.
+      const spare = viewW < 32;
+      const first = spare ? 0 : 1;
+      const last = spare ? viewW : viewW - 1;
+
+      const check = (where: string): void => {
+        const originCol = originOf(0);
+        const originRow = originOf(4);
+        for (let row = originRow; row <= originRow + viewH; row += 1) {
+          for (let column = originCol + first; column <= originCol + last; column += 1) {
+            if (column >= columns || row >= rows) continue;
+            const blank = (grid.split("\n")[row] ?? "")[column] === " ";
+            const entry = entryAt(machine, column, row);
+            const drawn = entry.tile !== 0;
+            expect(
+              drawn,
+              `${where}: cell (${column},${row}) with origin ${originCol},${originRow}`,
+            ).toBe(!blank);
+          }
+        }
+      };
+
+      const travel = (down: readonly string[], frames: number): void => {
+        machine.setButtons(down as never);
+        for (let frame = 0; frame < frames; frame += 1) machine.runFrame();
+        // A full redraw runs with the display off and spans several frames, so a
+        // scene is compared once it has settled rather than part-way through the
+        // picture the runtime is still painting.
+        machine.setButtons([] as never);
+        for (let frame = 0; frame < 40; frame += 1) machine.runFrame();
+      };
+
+      travel([], 20);
+      check("at rest");
+      // Out and back on each axis in turn, then both at once: a diagonal step
+      // paints a column and a row in the same tick, which is the case the queue
+      // is sized for.
+      for (const [out, home] of [
+        [["right"], ["left"]],
+        [["down"], ["up"]],
+        [
+          ["right", "down"],
+          ["left", "up"],
+        ],
+      ] as const) {
+        travel(out, 40);
+        check(`after ${out.join("+")}`);
+        travel(home, 40);
+        check(`after ${home.join("+")}`);
+      }
+      // The camera really did leave its clamp, or none of the above moved a cell.
+      travel(["right"], 120);
+      expect(originOf(0)).toBeGreaterThan(20);
+      check("far from the start");
+    });
+  }
 });
 
 describe("objects", async () => {
