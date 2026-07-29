@@ -57,6 +57,14 @@ needs, and the first whose sound is a **second computer**.
   actually has is a snapshot of the sound processor's RAM, which is exactly what
   the cartridge uploads.
 
+The web JS budget moves from 310 KB gzipped to 360, which is the largest single
+step it has taken and the second time it has moved for a whole console. The
+vertical is 48.7 KB: two assemblers and the largest codegen backend in the core
+worker, a 65816 and an SPC700 in the game chunk because doc 07 forbids fetching a
+core, and the S-DSP with its driver in the audio worker. Nothing is duplicated
+across chunks and the emulator reaches neither worker; both were checked before
+the number moved (`tools/ci/check-web-budget.mjs`).
+
 Output bytes: no existing console's cartridge changes. `Packing` gains a `pairs`
 member for the S-PPU's plane-pair tile layout, which no other family emits, and
 the driver format gains a wide channel mask for chips with more than four voices,

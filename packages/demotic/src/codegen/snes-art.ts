@@ -65,9 +65,6 @@ const bankCache = new Map<string, SpriteBank>();
 /** Tiles left for art once the built-in bank has its share. */
 export const ART_TILES = BANK_TILES - BUILTIN_TILES;
 
-/** Cells the tilemap is wide, which a backdrop's rows are padded to. */
-const MAP_W = 64;
-
 /** The flip bits of a tilemap entry, which the fitter sets. */
 const FLIP_X = 0x4000;
 const FLIP_Y = 0x8000;
@@ -382,7 +379,15 @@ export async function bindSnesArt(
   const internAll = (arts: readonly Backdrop[]): { pool: TilePool; maps: Uint16Array[] } => {
     const pool = new TilePool(known, poolStart, SNES_TILE_BYTES);
     const maps = arts.map((art) => {
-      const map = new Uint16Array(MAP_W * SNES_MEMORY.viewH);
+      // A screen's worth of cells, **thirty-two to a row and not sixty-four**.
+      // The tilemap is 64 columns wide and the picture fills the left 32 of them,
+      // but those two facts do not compose the way an array does: a 64x32 tilemap
+      // is two 32x32 *screens* a kilobyte apart, so screen zero's rows are
+      // contiguous at 32 words each and column 32 is nowhere near column 31. A
+      // row of 64 with the right half blank streams into video RAM as a picture
+      // stretched to double height with every other row empty — which is exactly
+      // what it did (§Gotchas).
+      const map = new Uint16Array(SNES_MEMORY.viewW * SNES_MEMORY.viewH);
       for (let row = 0; row < SNES_MEMORY.viewH; row += 1) {
         for (let column = 0; column < SNES_MEMORY.viewW; column += 1) {
           const cell = row * SNES_MEMORY.viewW + column;
@@ -390,7 +395,7 @@ export async function bindSnesArt(
           const local = word & 0x3ff;
           const at = local * SNES_TILE_BYTES;
           const tile = pool.intern(art.tiles.subarray(at, at + SNES_TILE_BYTES));
-          map[row * MAP_W + column] = (tile & 0x3ff) | (word & (0x1c00 | FLIP_X | FLIP_Y));
+          map[cell] = (tile & 0x3ff) | (word & (0x1c00 | FLIP_X | FLIP_Y));
         }
       }
       return map;

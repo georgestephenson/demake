@@ -43,6 +43,7 @@ import { Snes } from "@demake/snes";
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
 import { builtinSnes, BUILTIN_TILES, patternTile, SNES_TILE_BYTES } from "../src/rom/graphics.js";
+import { bindSnesArt } from "../src/codegen/snes-art.js";
 import { buildSnesRom, CODE_SIZE } from "../src/codegen/snes.js";
 import { packCells, SYSTEM_INK, SYSTEM_PALETTE } from "../src/codegen/snes/emit.js";
 
@@ -72,6 +73,22 @@ function boot(bytes: Uint8Array, bootedAt: number): Snes {
  * screen is *not* one word past the first, and a reader that assumed it was would
  * agree with a renderer that made the same mistake.
  */
+/** The demade tilemap for a scene's backdrop, as the build produced it. */
+async function backdropFor(program: ReturnType<typeof build>, scene: string): Promise<Uint16Array> {
+  const art = await bindSnesArt(
+    program,
+    new Map([
+      ["pong.title.svg", asset("pong.title.svg")],
+      ["pong.play.svg", asset("pong.play.svg")],
+      ["ball.svg", asset("ball.svg")],
+      ["paddle.svg", asset("paddle.svg")],
+    ]),
+  );
+  const map = art.options.backdrops?.get(scene)?.map;
+  if (!map) throw new Error(`no backdrop for scene '${scene}'`);
+  return map;
+}
+
 function entryAt(machine: Snes, column: number, row: number): number {
   const mapColumn = column & 63;
   const at = (mapColumn & 32 ? 0x400 : 0) + (row & 31) * 32 + (mapColumn & 31);
@@ -285,6 +302,100 @@ describe("the tilemap against the level", async () => {
       }
     }
     expect(patterns).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * A backdrop is a *block copy*, and that is a different path from a level.
+ *
+ * The level tests above walk the tilemap cell by cell because that is how a level
+ * is painted. A picture is not: it is streamed into video RAM through the
+ * auto-incrementing data port from one address, so nothing about it is checked by
+ * asking whether a cell matches a grid — and the row stride it is packed at is
+ * invisible to every other test in this file.
+ *
+ * It was wrong. A 64-column tilemap is two 32×32 *screens* a kilobyte apart, so
+ * screen zero's rows are contiguous at thirty-two words each; a picture packed
+ * sixty-four to a row with the right half blank streams in as a picture stretched
+ * to double height with every other row empty. Which is what the title screen
+ * showed, in the flesh, in a browser.
+ */
+describe("a backdrop, which is a block copy rather than a walk", async () => {
+  const program = build("pong.dmt");
+  const built = await buildSnesRom(program, {
+    assets: new Map([
+      ["pong.title.svg", asset("pong.title.svg")],
+      ["pong.play.svg", asset("pong.play.svg")],
+      ["ball.svg", asset("ball.svg")],
+      ["paddle.svg", asset("paddle.svg")],
+    ]),
+  });
+
+  it("fills every visible row, rather than every other one", () => {
+    const machine = boot(built.bytes, built.layout.booted);
+    for (let frame = 0; frame < 8; frame += 1) machine.runFrame();
+
+    // Every row of the window has to carry cells. The failure this catches puts
+    // the picture on the even rows and leaves the odd ones at tile zero, so a
+    // per-row count is what separates "a picture with blank rows in it" from
+    // "a picture written at the wrong stride".
+    const rows: number[] = [];
+    for (let row = 0; row < built.layout.memory.viewH; row += 1) {
+      let filled = 0;
+      for (let column = 0; column < built.layout.memory.viewW; column += 1) {
+        if ((entryAt(machine, column, row) & 0x3ff) !== 0) filled += 1;
+      }
+      rows.push(filled);
+    }
+    expect(rows.filter((count) => count === 0)).toEqual([]);
+  });
+
+  it("puts the picture in the first screen and leaves the second alone", () => {
+    // The other half of the same fact: a 32-column picture belongs entirely in
+    // screen zero. Anything reaching screen one is a row that ran off the end.
+    const machine = boot(built.bytes, built.layout.booted);
+    for (let frame = 0; frame < 8; frame += 1) machine.runFrame();
+    let second = 0;
+    for (let index = 0; index < 0x400; index += 1) {
+      if (((machine.ppu.vram[0x400 + index] as number) & 0x3ff) !== 0) second += 1;
+    }
+    expect(second).toBe(0);
+  });
+
+  it("draws the picture the image engine demade, cell for cell", async () => {
+    // The strongest form: what the image engine produced against what is in
+    // video RAM, every cell. The exception is the caption, which is painted over
+    // the picture in the *same* pass — a static caption goes in with the
+    // background rather than through the per-frame HUD — so a cell it covers
+    // holds a built-in glyph in the reserved palette and not the picture's own.
+    // Naming that exception is the point: anything else differing is the stream
+    // landing somewhere the renderer does not read.
+    const machine = boot(built.bytes, built.layout.booted);
+    for (let frame = 0; frame < 8; frame += 1) machine.runFrame();
+    const art = await backdropFor(program, "title");
+
+    let matched = 0;
+    let captioned = 0;
+    for (let row = 0; row < built.layout.memory.viewH; row += 1) {
+      for (let column = 0; column < built.layout.memory.viewW; column += 1) {
+        const want = art[row * built.layout.memory.viewW + column] as number;
+        const got = entryAt(machine, column, row);
+        if (got === want) {
+          matched += 1;
+          continue;
+        }
+        // A caption cell: a built-in glyph, in the palette reserved for the font.
+        expect((got >> 10) & 0x07).toBe(SYSTEM_PALETTE);
+        expect(got & 0x3ff).toBeLessThan(BUILTIN_TILES);
+        captioned += 1;
+      }
+    }
+    const cells = built.layout.memory.viewW * built.layout.memory.viewH;
+    expect(matched + captioned).toBe(cells);
+    // A caption is a line of text on a screenful; if it were most of the screen
+    // the assertion above would be proving nothing.
+    expect(captioned).toBeLessThan(cells / 8);
+    expect(matched).toBeGreaterThan(cells - cells / 8);
   });
 });
 

@@ -1167,7 +1167,15 @@ Clamp32` is the whole calling convention and there is one clamp routine where
   `$400` words from column 0, not one word from column 31. A reader that assumed
   a rectangle would agree with a renderer that made the same mistake, which is
   why `snes-rom.test.ts` computes the address the hardware's way and checks that
-  both screens carry cells once the camera has crossed.
+  both screens carry cells once the camera has crossed. **And it is why a
+  backdrop is packed thirty-two cells to a row, not sixty-four** — a picture fills
+  the left half of the map, but "the left half of a 64-wide row" is not a thing
+  the hardware has: screen zero's rows are contiguous at thirty-two words each. A
+  row of sixty-four with the right half blank streams into video RAM as a picture
+  stretched to double height with every other row empty. It shipped that way and
+  a browser is where it was seen, because the level tests walk a grid cell by cell
+  and a picture is a _block copy_ — no test in that file could see its stride
+  until one was written for it.
 - **An object's Y is direct.** No minus-one convention, unlike the NES: this chip
   draws an object's top row _on_ the line its Y names, so `y 0` is the top of the
   screen and needs no exception. Its X is nine bits; this runtime uses eight of

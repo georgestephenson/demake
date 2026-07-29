@@ -33,11 +33,35 @@ const DIST = process.argv[2] ?? "packages/web/dist";
  * fan-out decoding its source once per candidate, both in `@demake/core` and so
  * in every chunk that carries the engine — the CLI pays for them too. The page's
  * own share is nil, because a lane is another instance of `core.worker.ts` rather
- * than a new kind of worker; the alternative was measured at 41 KB. The rule has
- * not changed and the next thing that does not fit should still be made smaller
- * first, but this one already was.
+ * than a new kind of worker; the alternative was measured at 41 KB.
+ *
+ * Then the Super Nintendo moved it a second time, from 310 to 360, and it is the
+ * largest single step this number has taken: **48.7 KB gzipped**, measured
+ * against `main` at 306.9. Where it went, and why none of it is in the wrong
+ * chunk:
+ *
+ * - **27.5 KB in `core.worker`** — the 65816 and SPC700 assemblers and the
+ *   `snes` codegen backend, which is the largest of the four. A cartridge is
+ *   built in the page (doc 07 §Playing the real ROM in the page), so the
+ *   assemblers have to be here.
+ * - **13.8 KB in the game chunk** — `@demake/snes`: a 65816 whose registers
+ *   change width at run time, a Mode 1 S-PPU, and an SPC700 with its own RAM and
+ *   timers. Doc 07 forbids fetching a core, so a fourth console is a fourth core.
+ * - **7.3 KB in `audio.worker`** — the S-DSP, its binding, the waveform bank and
+ *   the generated SPC700 driver.
+ *
+ * That is two processors, two assemblers, two chip-adjacent models and a backend,
+ * against 21 KB for the Sega vertical and 4.6 for the NES — which reused a 6502
+ * assembler that was already here. Nothing is duplicated across chunks and the
+ * emulator does not reach either worker, both checked before this number moved.
+ * What was *not* done is trimming the assemblers' named per-mnemonic methods
+ * (~2 KB gzipped across two chunks): they are what makes a call site read like
+ * assembly, and the repo pays that deliberately.
+ *
+ * The rule has not changed: the next thing that does not fit should still be made
+ * smaller first. Both times this number has moved, it moved for a whole console.
  */
-const BUDGET_KB = 310;
+const BUDGET_KB = 360;
 
 function walk(dir) {
   const out = [];
