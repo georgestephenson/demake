@@ -33,6 +33,7 @@ import { describe, expect, it } from "vitest";
 
 import { analyze } from "../src/codegen/analyze.js";
 import { GbaCtx } from "../src/codegen/gba/ctx.js";
+import { emitRngPick } from "../src/codegen/gba/expr.js";
 import {
   abs32,
   add32,
@@ -56,10 +57,35 @@ import {
 import { GBA_MEMORY, planLayout } from "../src/codegen/layout.js";
 import { compile } from "../src/compile.js";
 import { clampFixed, div, mul, ONE } from "../src/fixed.js";
+import { advance, pick } from "../src/rng.js";
 import { getProfile } from "../src/profiles.js";
 
 /** A program with nothing in it: all these tests need from one is a layout. */
 const PROGRAM = compile("start only\n\nscene only\n", { profile: getProfile("gba") });
+
+/** The seed the generator test starts from, and the one its program declares. */
+const SEED = 20260726;
+
+/**
+ * A program that draws, so the layout allocates the generator's state.
+ *
+ * Which it does only when something asks — `analysis.usesRandom` — so a test of
+ * the generator needs a program that names it, exactly as a game does.
+ */
+const RANDOM_PROGRAM = compile(
+  [
+    "start only",
+    `seed ${SEED}`,
+    "",
+    "scene only",
+    "",
+    "create number counter in only (x 1, y 1, value 0, visible 0)",
+    "",
+    "when always in only then counter.value as random(0, 10)",
+    "",
+  ].join("\n"),
+  { profile: getProfile("gba") },
+);
 
 /** A third of a cell, as a whole 16.16 value — `ONE / 3` is not one. */
 const THIRD = Math.floor(ONE / 3);
@@ -77,11 +103,11 @@ const NEAR_A = 0x03000c00;
 const NEAR_B = 0x03000c04;
 
 /** Assemble `body` into a cartridge, run it to its spin loop, hand it back. */
-function run(body: (ctx: GbaCtx) => void): Gba {
-  const analysis = analyze(PROGRAM);
-  const layout = planLayout(PROGRAM, analysis, GBA_MEMORY);
+function run(body: (ctx: GbaCtx) => void, program = PROGRAM): Gba {
+  const analysis = analyze(program);
+  const layout = planLayout(program, analysis, GBA_MEMORY);
   const origin = ROM_BASE + GBA_HEADER_SIZE;
-  const ctx = new GbaCtx(PROGRAM, analysis, layout, getProfile("gba"), ROM_BASE);
+  const ctx = new GbaCtx(program, analysis, layout, getProfile("gba"), ROM_BASE);
   const { asm } = ctx;
 
   asm.b("Start");
@@ -101,6 +127,11 @@ function run(body: (ctx: GbaCtx) => void): Gba {
     machine.stepInstruction();
   }
   throw new Error("gba: the program never reached its spin loop");
+}
+
+/** The same, for the program that has a generator. */
+function runRandom(body: (ctx: GbaCtx) => void): Gba {
+  return run(body, RANDOM_PROGRAM);
 }
 
 /** The signed 32-bit value at `address`. */
@@ -272,6 +303,98 @@ describe("the value layer", () => {
         ctx.asm.label("notLess");
       });
       expect(read32(machine, OUT)).toBe(value < ONE ? 1 : 0);
+    }
+  });
+
+  it("draws from the generator the way `rng.ts` defines it", () => {
+    // Not a statistical test: the generator is part of the language, so this is
+    // the same arithmetic run twice and compared exactly. The modulo is the
+    // interesting half — this is the only console in the set with no divide
+    // instruction, so the remainder comes from a restoring loop.
+    //
+    // The state is seeded here rather than left as the RAM found it, because the
+    // boot code that would do it is the part of this backend not yet written.
+    const seeded = advance(SEED);
+    for (const [low, high] of [
+      [0, 10],
+      [13, 16],
+      [-5, 5],
+      [0, 1],
+      [1, 1],
+      [-20, -3],
+      [0, 1023],
+    ] as const) {
+      const machine = runRandom((ctx) => {
+        set32(ctx, ctx.layout.rng as number, SEED);
+        set32(ctx, ctx.layout.mathA, low * ONE);
+        set32(ctx, ctx.layout.mathB, high * ONE);
+        ctx.asm.bl(ctx.need("RngPick", emitRngPick));
+        copy32(ctx, OUT, at(ctx.layout.mathA));
+        // The state the draw left behind, so a run that skipped the advance is
+        // distinguishable from one that took it.
+        copy32(ctx, OUT + 4, at(ctx.layout.rng as number));
+      });
+      // `sim.ts` advances unconditionally; every backend skips the advance when
+      // the bounds cross, so the reference here is the backends' — see the note
+      // on `emitRngPick`.
+      const crossed = high <= low;
+      const expected = crossed ? low * ONE : (low + pick(seeded, high - low + 1)) * ONE;
+      expect(`random(${low}, ${high}) = ${read32(machine, OUT)}`).toBe(
+        `random(${low}, ${high}) = ${expected}`,
+      );
+      expect(read32(machine, OUT + 4) >>> 0).toBe(crossed ? SEED : seeded);
+    }
+  });
+
+  it("pulls in the divider only when something divides", () => {
+    // The reachability rule, on the console where it is newest: a game that never
+    // divides ships no divider, because nothing ever asked for one.
+    const analysis = analyze(PROGRAM);
+    const layout = planLayout(PROGRAM, analysis, GBA_MEMORY);
+    const plain = new GbaCtx(PROGRAM, analysis, layout, getProfile("gba"), ROM_BASE);
+    add32(plain, A, at(B));
+    mul32(plain, A, at(B));
+    // The multiply is inline on this machine, so even *that* pulls in nothing.
+    expect(plain.helperNames()).toEqual([]);
+
+    const dividing = new GbaCtx(PROGRAM, analysis, layout, getProfile("gba"), ROM_BASE);
+    div32(dividing, A, at(B));
+    expect(dividing.helperNames()).toContain("Div32");
+  });
+
+  it("assembles the same bytes every time", () => {
+    // The determinism the browser-versus-CLI parity contract rests on, at the
+    // layer it is cheapest to check.
+    const build = (): Uint8Array => {
+      const analysis = analyze(PROGRAM);
+      const layout = planLayout(PROGRAM, analysis, GBA_MEMORY);
+      const ctx = new GbaCtx(PROGRAM, analysis, layout, getProfile("gba"), ROM_BASE);
+      mul32(ctx, A, at(B));
+      div32(ctx, A, at(B));
+      ctx.finish();
+      return ctx.asm.assemble();
+    };
+    expect([...build()]).toEqual([...build()]);
+  });
+
+  it("keeps every allocation the emitters read as a word on a word boundary", () => {
+    // An unaligned `ldr` *rotates* on this core rather than faulting, so a
+    // misaligned allocation is a wrong number rather than a crash — which is
+    // worse, and is why the plan asks for four-byte alignment.
+    const analysis = analyze(PROGRAM);
+    const layout = planLayout(PROGRAM, analysis, GBA_MEMORY);
+    for (const address of [
+      layout.mathA,
+      layout.mathB,
+      layout.mathWork,
+      layout.queue,
+      layout.plot,
+      layout.plotPrev,
+      ...layout.temps,
+      ...layout.staging,
+      ...layout.entities,
+    ]) {
+      expect(address % 4).toBe(0);
     }
   });
 
