@@ -113,6 +113,15 @@ export interface ControlDef {
   line: number;
 }
 
+/**
+ * A side a collision may be qualified by, as the runtime tests it.
+ *
+ * The name a program writes, kept rather than lowered to an axis-and-sign pair,
+ * because every backend wants it as a name for a symbol and the arithmetic is
+ * one lookup in `SIDE_AXES` wherever it is actually needed.
+ */
+export type Side = "above" | "below" | "left" | "right";
+
 /** The compiled trigger half of a rule. */
 export type CEvent =
   | {
@@ -124,6 +133,15 @@ export type CEvent =
       tiles: readonly string[];
       /** `touches`: fire every tick of overlap, not only on entry. */
       level: boolean;
+      /**
+       * `from above, left` — the sides the subject may have been on.
+       *
+       * Empty means any, which is what a rule written without a `from` means.
+       * Each entry is a {@link Side}: the axis separation resolved the overlap
+       * on and which way round the pair sat, described from the *subject's*
+       * point of view.
+       */
+      sides: readonly Side[];
     }
   | { kind: "input"; action: Action; edge: "pressed" | "released" }
   | { kind: "reaches"; left: CExpr; right: CExpr }

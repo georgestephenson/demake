@@ -115,6 +115,16 @@ export function romExtension(program: Program): string {
  */
 export function unsupportedFor(program: Program): string[] {
   if (!descriptorFor(program.profile.id)) return [`a runtime for ${program.profile.name}`];
+  // `from above` is in the language and in the interpreter; no backend emits the
+  // side test yet. Named here rather than in each family because none of them
+  // has it — this is a gap in the emitters as a group, not a difference between
+  // them, and it needs no backend loaded to answer. A cartridge that ignored the
+  // clause would play a *different game* from the preview and the trace oracle
+  // would report the divergence three layers from its cause, which is the whole
+  // reason gaps are named (AGENTS.md §Iron rules).
+  if (program.rules.some((rule) => rule.event.kind === "hits" && rule.event.sides.length > 0)) {
+    return ["`from <side>` on a collision trigger"];
+  }
   return [];
 }
 

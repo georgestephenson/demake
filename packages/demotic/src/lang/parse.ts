@@ -539,7 +539,17 @@ function parseEvent(cursor: Cursor): Event {
     do {
       others.push(cursor.expectIdent("something to collide with").value);
     } while (cursor.eatPunct(","));
-    return { kind: "hits", subject: first.value, others, level };
+    // `from above, left` narrows the rule to contacts resolved on those sides.
+    // It is parsed here rather than as part of the target list because a target
+    // and a side are different vocabularies, and `from` is what separates them —
+    // the same word `level ... from <file>` already uses for "drawn from".
+    const sides: string[] = [];
+    if (cursor.eatKeyword("from")) {
+      do {
+        sides.push(cursor.expectIdent("a side: above, below, left or right").value);
+      } while (cursor.eatPunct(","));
+    }
+    return { kind: "hits", subject: first.value, others, level, sides };
   }
 
   // `when <action> pressed | released`

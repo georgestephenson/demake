@@ -20,7 +20,8 @@
  * there is one model to learn rather than two.
  */
 
-import { type Fixed, floorToInt, fromInt } from "../fixed.js";
+import { type Fixed, floorToInt, fromInt, ONE } from "../fixed.js";
+import type { Side } from "../program.js";
 import type { ConsoleProfile } from "../profiles.js";
 
 import { type LevelFile, tileAt } from "./parse.js";
@@ -117,6 +118,53 @@ function ceilOpen(edge: Fixed): number {
 }
 
 /**
+ * Which side of an overlap the first box sat on, and how far to push it clear.
+ *
+ * One decision, not two, and that is the point. Separating an overlap means
+ * choosing the shallower axis and a direction — resolving the deeper one would
+ * teleport a walking object over a wall it merely brushed — and *that choice is
+ * the side*. `from above` in a rule and the push that follows it therefore
+ * cannot disagree, because they are the same arithmetic read twice.
+ *
+ * The side is named from the first box's point of view: `above` means it was
+ * above the second and is pushed up, which is a landing.
+ */
+export function contactOf(
+  ax: Fixed,
+  ay: Fixed,
+  aw: Fixed,
+  ah: Fixed,
+  bx: Fixed,
+  by: Fixed,
+  bw: Fixed,
+  bh: Fixed,
+): { side: Side; pushX: Fixed; pushY: Fixed } {
+  const left = ax + aw - bx;
+  const right = bx + bw - ax;
+  const top = ay + ah - by;
+  const bottom = by + bh - ay;
+
+  const pushX = left < right ? -left : right;
+  const pushY = top < bottom ? -top : bottom;
+
+  if (Math.abs(pushX) < Math.abs(pushY)) {
+    return { side: pushX < 0 ? "left" : "right", pushX, pushY: 0 };
+  }
+  return { side: pushY < 0 ? "above" : "below", pushX: 0, pushY };
+}
+
+/** The side of a cell an object sat on, for a rule that asked. */
+export function tileContactSide(
+  hit: TileHit,
+  x: Fixed,
+  y: Fixed,
+  width: Fixed,
+  height: Fixed,
+): Side {
+  return contactOf(x, y, width, height, fromInt(hit.column), fromInt(hit.row), ONE, ONE).side;
+}
+
+/**
  * Push an object out of a solid cell along its shallower axis.
  *
  * Same rule as object separation, and for the same reason: resolving the deeper
@@ -129,13 +177,15 @@ export function separateFromTile(
   width: Fixed,
   height: Fixed,
 ): { x: Fixed; y: Fixed } {
-  const left = x + width - fromInt(hit.column);
-  const right = fromInt(hit.column + 1) - x;
-  const top = y + height - fromInt(hit.row);
-  const bottom = fromInt(hit.row + 1) - y;
-
-  const pushX = left < right ? -left : right;
-  const pushY = top < bottom ? -top : bottom;
-
-  return Math.abs(pushX) < Math.abs(pushY) ? { x: x + pushX, y } : { x, y: y + pushY };
+  const { pushX, pushY } = contactOf(
+    x,
+    y,
+    width,
+    height,
+    fromInt(hit.column),
+    fromInt(hit.row),
+    ONE,
+    ONE,
+  );
+  return pushX !== 0 ? { x: x + pushX, y } : { x, y: y + pushY };
 }

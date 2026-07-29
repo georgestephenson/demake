@@ -776,14 +776,25 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   ledge touches two of its cells in one tick; the first hit sets `ydirection` to
   zero and `>= 0` reads that back as a landing on the second — so bonking your
   head hands you a jump, in mid-air, for ever.
-- **A contact does not say which side it happened on**, which decides two things.
+- **A contact says which side it happened on, and `from` is how a rule asks.**
+  `when hero touches ledge from above` fires only where the hero was above the
+  ledge — the subject's side, not the direction of travel — so footing is taken
+  from a landing and not from a platform's edge. The side and the separation are
+  one decision (`level/scene.ts` §contactOf: choosing the shallower axis and a
+  direction _is_ choosing the side), so a rule and the push that follows it
+  cannot disagree. **No backend emits the side test yet**, and `unsupportedFor`
+  names it, so a program using `from` previews and traces but will not build a
+  cartridge; closing that is one routine per backend, splitting the existing pair
+  separation into a part that decides and a part that applies.
+- **Without `from`, a contact still says nothing**, which is what shaped `quest`.
   An `else` that stops a rise belongs on a rule naming only tiles that are
   overhead, or it cancels a jump every time the hero brushes the edge of the
   platform it was aiming for. And footing granted by a landing surface is granted
   from its _sides_ too, so a solid slab of ground is a slab you can inch up:
   `quest`'s levels make every landing surface one cell thick with `bedrock`
   underneath, and its pits six cells wide, because a hero two cells tall catches
-  the far lip of anything narrower instead of falling clear.
+  the far lip of anything narrower instead of falling clear. Those are geometry
+  standing in for a rule, and they can be rules once the backends catch up.
 - **The examples are the shop window: keep them spare** (doc 14 §The example
   library). The web app shows a game's source beside the cartridge it built, and
   the claim is that a whole game is sixty lines — an example whose commentary
