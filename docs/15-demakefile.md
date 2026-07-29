@@ -8,6 +8,12 @@ game and knows nothing about hardware; the Demakefile describes the build and
 knows nothing about gameplay. Neither can do the other's job, and that separation
 is enforced, not merely encouraged:
 
+**Where it sits is [doc 19](19-projects.md)**: at the root of a project folder,
+beside `src/`, `art/`, `music/`, `sound/` and `levels/`. That folder supplies
+three of this document's defaults on its own — `source` is the single `.dmt` in
+`src/`, `assets` is the four resource directories, `out` is `build/` — and it is
+where the `targets` shorthand and the `music`/`sound` blocks below come from.
+
 > **Delete the Demakefile and the game still plays identically.** Only the
 > artifacts change.
 
@@ -121,12 +127,15 @@ art paddle.svg
 | Directive | Arity | Meaning | Default |
 |---|---|---|---|
 | `project <name>` | block | Metadata block | the source file's basename |
-| `source <path>` | 1 | The `.dmt` entry point | the single `.dmt` beside the Demakefile |
-| `assets <dir>` | 1 | Root for art lookup (repeatable — searched in order) | `art/`, then the project root |
+| `source <path>` | 1 | The `.dmt` entry point | the single `.dmt` in `src/`, then the one beside the Demakefile |
+| `assets <dir>` | 1 | Extra root for asset lookup (repeatable — searched in order, *ahead* of the standard four) | `art/`, `music/`, `sound/`, `levels/`, then the project root (doc 19) |
 | `out <dir>` | 1 | Root for every output path | `build/` |
-| `defaults` | block | Conversion options applied to all art | — |
+| `defaults` | block | Conversion options, per domain | — |
+| `targets <id>…` | n | Shorthand: one default target per console named | every console with a runtime |
 | `target <name>` | block | One build | see below |
-| `art <name>` | block | How one asset is converted | — |
+| `art <name>` | block | How one image asset is converted | — |
+| `music <name>` | block | How one track is demade (doc 19) | — |
+| `sound <name>` | block | How one effect is demade (doc 19) | — |
 
 `project` fields: `title`, `author`, `version`, `license`. They feed ROM headers
 and generated source provenance; none affect gameplay.
@@ -201,11 +210,15 @@ header by omission.
 
 ## Resolution
 
-Conversion options cascade, most specific winning:
+Conversion options cascade, most specific winning, per domain:
 
 ```
-defaults  <  target  <  art  <  art/for <target>
+defaults/<domain>  <  target  <  <domain> <name>  <  <domain> <name>/for <target>
 ```
+
+where `<domain>` is `art`, `music` or `sound`. Options written directly under
+`defaults` are art's, because art was the only domain when this file was written;
+`demake fmt` writes the nested form (doc 19 §The Demakefile, still optional).
 
 Everything resolved is reported by `demake build --dry-run --json`: the source,
 every target, every asset with its final option set, and every path that will be
@@ -353,15 +366,19 @@ Named so the shape stays honest, and roughly in the order they would arrive.
 - **Bank layout and memory control.** Needed once a game exceeds one bank; until
   a real game does, any design would be speculative.
 - **Art that overhangs its collision box**, with the anchoring rules that implies.
-- **Multiple `.dmt` sources**, and `include` in Demotic itself.
-- **Audio settings.** The Demotic side is built — a `.dmt` names its music and
-  its effects, and `demake build` demakes both into the cartridge (doc 14
-  §Sound). What has no build-file surface yet is the *how*: an `[audio]` block
-  saying which arranger strategy, which channels to reserve, which effort level
-  and which cartridge budget — never which notes, exactly as an `[art]` block
-  never says which pixels. Today those are the demakers' defaults, chosen by the
-  game's console rather than by anything a build file said, which keeps the
-  operational rule intact (a Demakefile may not change how a game plays) with no
-  work at all.
+- **Multiple `.dmt` sources**, and `include` in Demotic itself. Doc 19 §Splitting
+  a game states the two shapes it could take and the evidence that it is not yet
+  urgent; it is a language change, so it is the maintainer's call rather than a
+  planning decision.
+- **Audio settings** — *designed in [doc 19](19-projects.md), not yet built.*
+  The Demotic side is built: a `.dmt` names its music and its effects, and
+  `demake build` demakes both into the cartridge (doc 14 §Sound). What has no
+  build-file surface yet is the *how*, and doc 19 gives it the shape this
+  document already uses for art — `music <name>` and `sound <name>` blocks
+  carrying the doc-05 audio flags, and a `defaults` block with a section per
+  domain. Never which notes, exactly as an `art` block never says which pixels.
+  Today those are the demakers' defaults, chosen by the game's console rather than
+  by anything a build file said, which keeps the operational rule intact (a
+  Demakefile may not change how a game plays) with no work at all.
 - **Custom target inheritance** (`target md-pal extends md`). Two nearly-identical
   targets is not yet enough duplication to justify the concept.

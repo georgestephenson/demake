@@ -1053,12 +1053,18 @@ Named rather than hidden, in rough order of how much they matter.
   no second scroll plane. Enough for the examples; not enough for a game that
   wants the view ahead of the player.
 - **Single file.** No `include`; large games will want one.
+  [Doc 19](19-projects.md) §Splitting a game states the two shapes it could
+  take — every `.dmt` in a project's `src/` concatenated, or an explicit
+  `import` — with the argument that the example library does not yet ask for
+  either (96 lines is the largest game). It is a language change, so it waits on
+  the maintainer rather than on a plan.
 
 ## Where the rest of it lives
 
 | Concern | Document |
 |---|---|
 | The build manifest, art binding, ROM headers | [15 — Demakefile](15-demakefile.md) |
+| The project folder, and how a bare asset name finds its file | [19 — Projects](19-projects.md) |
 | `build` / `run` / `check` / `trace` / `init` / `fmt` | [05 — CLI](05-cli-spec.md) |
 | Runtime artifacts and per-family assembly | [06 — Codegen](06-codegen-spec.md) |
 | The Demotic section of the web app | [07 — Web App](07-web-app.md) |

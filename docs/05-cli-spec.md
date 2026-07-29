@@ -58,6 +58,17 @@ code is ours, in TypeScript — which is why `--boot-logo`, the one step that do
 need `rgbfix`, is opt-in and reports its absence rather than guessing. It also
 demakes the game's art on the way, through the same image pipeline `prep` uses.
 
+**That group takes a folder as well as a file** ([doc 19](19-projects.md)). A
+project is a directory with an optional Demakefile at its root and `src/`,
+`art/`, `music/`, `sound/` and `levels/` under it, so `build`, `check` and `fmt`
+each accept one — `demake build ./pong` builds every target the Demakefile
+declares, `demake check ./pong` resolves the whole plan, and `demake init`
+scaffolds the folders it would need. Passing a `.dmt` is unchanged and stays the
+zero-config path. The resolver behind it is a pure function from a file tree to a
+resolved plan and lives in `@demake/demotic`, which is what lets the web app
+resolve a project with exactly this code rather than a second implementation of
+it.
+
 **`check` and `inspect` are different questions**, and the file extension makes
 it obvious which you want: `inspect` asks *is this image hardware-compliant?*;
 `check` asks *is this source valid, and will it fit?* The man pages

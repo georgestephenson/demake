@@ -653,13 +653,18 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     "follow". Scrolling is also where per-scanline sprite pressure bites, so the
     backends will have opinions.
 
-- **Projects in the web app**: today each section holds one artifact. A *project*
-  is a folder with a Demakefile at its root — a `.dmt`, its `.test.dmt`, and an
-  art directory — and it is the unit the site should actually operate on:
-  open one, edit any file in it, build every target. It is the same object the
-  CLI already builds, so the work is the browser's file handling (File System
-  Access API where available, an in-memory tree elsewhere) plus import/export as
-  a zip, not a second configuration model.
+- **Projects in the web app** — **designed, in [doc 19](19-projects.md)**: today
+  each section holds one artifact. A *project* is a folder with an optional
+  Demakefile at its root and five resource directories — `src/`, `art/`,
+  `music/`, `sound/`, `levels/` — and it is the unit the site should actually
+  operate on: open one, edit any file in it, build every target. It is the same
+  object the CLI already builds, so the work is the browser's file handling (File
+  System Access API where available, an in-memory tree elsewhere) plus
+  import/export as a zip, not a second configuration model. Doc 19 §Order of work
+  has the seven steps; the first is a pure resolver in `@demake/demotic` that
+  both edges share, and the one open question it leaves is whether a game may be
+  split across several `.dmt` files (§Splitting a game — a language change, and
+  therefore the maintainer's).
 
 - **Agent-driven demaking**: the workflow doc 01 §Why exists for, closed. Attach
   an agent, describe a game in one prompt, and get back a `.dmt`, its art assets,
@@ -673,13 +678,18 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   line-oriented, order-free, with total error recovery and structured
   diagnostics — so most of the work is packaging rather than new capability.
 
-- **A level editor in the web app**: `.dmtl` is a text format an LLM can edit,
-  and that was the point — but a person drawing a room wants to draw it. The
-  planned shape is a top-level site section after the four demakers: paint into
-  a grid, name tiles, mark them solid, bind art, and see the result scroll at
-  every console's viewport at once. The file it writes is the same `.dmtl` the
-  compiler already reads, so it is a view over the format rather than a second
-  one, and a game stays hand-editable whether or not the editor was used.
+- **A level editor in the web app** — **designed, in [doc 19](19-projects.md)
+  §The level editor**: `.dmtl` is a text format an LLM can edit, and that was the
+  point — but a person drawing a room wants to draw it. The shape is a top-level
+  site section after the four demakers: paint into a grid, name tiles, mark them
+  solid, bind art, and see the result scroll at every console's viewport at once.
+  The file it writes is the same `.dmtl` the compiler already reads, so it is a
+  view over the format rather than a second one, and a game stays hand-editable
+  whether or not the editor was used. It comes last of doc 19's seven steps
+  because its legend picks art out of the project, so it wants the resolver under
+  it — and the three things it must never do to a file all come from `.dmtl`
+  being literal: no reflow, no dropped blank row, and a file it did not change
+  comes back byte-identical.
 
 - **Tile editing — a question, not a plan**: a tileset exists because hardware
   forces art to be shared, which makes it a *hardware* concern leaking into an

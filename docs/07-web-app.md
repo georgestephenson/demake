@@ -38,10 +38,20 @@ images are only one kind (doc 01 §Scope):
 | **art demaker** | the image pipeline described below | live |
 | **music demaker** | tracks → chip music (docs 16, 17) | live |
 | **sound demaker** | effects → chip sound (docs 16, 18) | live |
+| **level editor** | draw a `.dmtl` room, see it at every console's viewport | planned (doc 19) |
 
 The route lives in the hash as `#section=<id>`, and the **art demaker is the
 unmarked default** — so every option permalink shared before the site grew
 sections still opens exactly what it used to.
+
+**The sections are becoming views on one project** ([doc 19](19-projects.md)).
+Today each holds a single artifact and offers a bundled demo to fill it; the unit
+the site should operate on is a *folder* — a `.dmt` and its test suite, its art,
+its music, its effects, its levels and a Demakefile — because that is the object
+the CLI already builds. Doc 19 is the design: a rail listing the open project, a
+section per resource kind showing that project's files, opening and saving a real
+directory, and the parity claim restated at the level of a folder. Nothing about
+what a section *does* changes; what changes is where its input comes from.
 
 ### The Demotic section
 

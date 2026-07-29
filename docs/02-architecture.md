@@ -43,7 +43,8 @@ demake/          # repo
 │   │   │   ├── testing/     # .test.dmt: parse + run assertions on every console
 │   │   │   ├── codegen/     # the console backend: SM83 assembler, analysis, emitters (doc 14)
 │   │   │   ├── rom/         # the built-in tile bank and the trace readers
-│   │   │   └── demakefile/  # the build manifest: parse, resolve, emit (doc 15)
+│   │   │   ├── demakefile/  # the build manifest: parse, resolve, emit (doc 15)
+│   │   │   └── project/     # file tree → resolved project: sources, assets, targets (doc 19)
 │   │   └── test/
 │   ├── dmg/                 # @demake/dmg — our Game Boy core, DMG and CGB: the conformance
 │   │                        #   harness (doc 10) and the web app's in-page player (doc 07)
