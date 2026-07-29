@@ -477,8 +477,17 @@ test("builds and plays a real Mega Drive ROM in the page", async ({ page }) => {
   // And it is in colour, which no amount of Game Boy green would produce.
   expect(await romColors(page)).toBeGreaterThan(4);
 
-  // Both of this console's chips have a driver, so the button is live here too.
-  await expect(page.getByTestId("rom-sound")).toBeEnabled();
+  // And it has sound — from *two* chips, which no other console here does. Six
+  // four-operator FM voices and four tone generators run on different clocks, so
+  // the pane builds a sink per chip and sums them; a mistake there stops the
+  // machine rather than sounding wrong, because with sound on the audio device
+  // is what clocks the emulator.
+  const toggle = page.getByTestId("rom-sound");
+  await expect(toggle).toBeEnabled();
+  await toggle.click();
+  await expect(toggle).toHaveText("Sound on");
+  await expect.poll(async () => romPainted(page), { timeout: 8000 }).toBeGreaterThan(0);
+  await expect(page.getByTestId("rom-stat")).toContainText("per tick", { timeout: 8000 });
 });
 
 test("opens on the cartridge, and shows the interpreter when asked", async ({ page }) => {
