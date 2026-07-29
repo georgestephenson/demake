@@ -115,6 +115,27 @@ describe("the processor", () => {
     expect(word(gba, SCRATCH) | 0).toBe(-8.125 * 65536);
   });
 
+  it("sets the overflow flag on a comparison, which is not a logical operation", () => {
+    // `cmp` and `cmn` are arithmetic and set V like the `sub` and `add` they
+    // are; `tst` and `teq` are logical and leave it. Classifying the four
+    // together produces flags that are right until a comparison overflows —
+    // which is what comparing against the end of the 16.16 range does, so the
+    // symptom was a value clamped to the wrong end of it.
+    const gba = run((asm) => {
+      asm.movImm32(0, 0x03000000);
+      asm.movImm32(1, 0x80000000); // the most negative integer
+      asm.cmp(1, armImm(0x04000000));
+      asm.mov(2, armImm(0));
+      asm.mov(2, armImm(1), "gt"); // must be false: the subtraction overflows
+      asm.str(2, armAt(0, 0));
+      asm.mov(2, armImm(0));
+      asm.mov(2, armImm(1), "lt"); // and this must be true
+      asm.str(2, armAt(0, 4));
+    }, 60);
+    expect(word(gba, SCRATCH)).toBe(0);
+    expect(word(gba, SCRATCH + 4)).toBe(1);
+  });
+
   it("shifts arithmetically, keeping a negative fixed-point value negative", () => {
     const gba = run((asm) => {
       asm.movImm32(0, SCRATCH);

@@ -511,7 +511,13 @@ export class Arm7 {
     const setFlags = (op & 0x00100000) !== 0;
     const rn = (op >>> 16) & 0xf;
     const rd = (op >>> 12) & 0xf;
-    const logical = opcode === 0 || opcode === 1 || opcode >= 8;
+    // Which opcodes leave the overflow flag alone, and it is not simply "the
+    // ones above seven": `cmp` and `cmn` are *arithmetic* comparisons and set V
+    // like the `sub` and `add` they are, while `tst` and `teq` are logical ones
+    // and do not. Getting that wrong produces flags that are right until a
+    // comparison overflows — which is exactly what a clamp against the ends of
+    // the 16.16 range does, so it surfaces as a value clamped to the wrong end.
+    const logical = opcode <= 1 || opcode === 8 || opcode === 9 || opcode >= 12;
 
     // The four comparison opcodes with the S bit clear are not comparisons at
     // all — that hole in the encoding is where the status-register transfers
