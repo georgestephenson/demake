@@ -13,10 +13,13 @@
  * not use the camera has no camera variables; one that never divides has no
  * remainder; one with no `hold` bindings has no snapshots.
  *
- * The entity record keeps the interpreter's nine-property, 36-byte shape. That
- * is not laziness — it is what lets the conformance harness read a trace
- * straight out of work RAM (doc 14 §Conformance), and the alternative saves
- * bytes only for objects that would still need somewhere to put them.
+ * The entity record keeps the interpreter's nine-property *order*, because that
+ * is what lets the conformance harness read a trace straight out of work RAM
+ * (doc 14 §Conformance). What it does not keep is the interpreter's fixed 36
+ * bytes: a record stops at the highest slot the program can observe, so a coin
+ * that never moves does not pay for a speed and two directions it cannot have
+ * (see {@link entityBytes}). On a console whose cartridge adds no RAM at all
+ * that is the difference between a game fitting and not.
  *
  * **One allocator, one plan per machine.** What a game needs is a property of the
  * game; where it goes is a property of the console, and the difference between
@@ -36,17 +39,25 @@ import type { Analysis } from "./analyze.js";
 import { ZP_FREE } from "./nes/zp.js";
 import { DP_FREE } from "./snes/ops.js";
 
-/** Stored properties, in record order. Index × 4 is the byte offset. */
+/**
+ * Stored properties, in record order. Index × 4 is the byte offset.
+ *
+ * The order is load-bearing twice over. `x`, `y`, `width`, `height` lead because
+ * a collision box has to be a contiguous run (see {@link BOX_SIZE}). And the
+ * three movement properties trail because most objects in a game never move, and
+ * a record is allocated only as far as the highest slot the program can observe
+ * (see {@link entityBytes}) — so where a property sits decides what a coin costs.
+ */
 export const PROPS = [
   "x",
   "y",
   "width",
   "height",
+  "visible",
+  "value",
   "speed",
   "xdirection",
   "ydirection",
-  "visible",
-  "value",
 ] as const;
 
 /** One stored property name. */
@@ -55,8 +66,64 @@ export type Prop = (typeof PROPS)[number];
 /** Bytes per stored property. */
 export const PROP_SIZE = 4;
 
-/** Bytes per entity record. */
+/** Bytes of a full record — what an object that moves and counts costs. */
 export const ENTITY_SIZE = PROPS.length * PROP_SIZE;
+
+/**
+ * Bytes one entity's record actually needs.
+ *
+ * RAM is the scarcest thing on these machines — an NROM cartridge adds none to
+ * the console's two kilobytes — and a fixed-size record spends it on absences:
+ * a coin that never moves was still paying for a speed, an x-direction and a
+ * y-direction it could not have.
+ *
+ * A property needs storage only when something can *observe* it at run time, and
+ * the backend already folds the rest: `rules.ts` reads an immutable `speed` or
+ * direction as a constant and drops an object that cannot move out of the
+ * integrator entirely, and `visible` is only loaded where a rule can write it.
+ * So the stored set is
+ *
+ *   - the collision box, always, because it is block-copied as a unit and every
+ *     drawn object's position is read from it;
+ *   - everything any rule, control or `on hold` restore can write;
+ *   - `value`, for a `number`, because the digit renderer reads it;
+ *   - the movement trio, for anything that can move — which is anything whose
+ *     speed or direction a rule can change, plus anything that starts moving.
+ *
+ * The record is then allocated up to the highest slot in that set rather than
+ * per property, because every emitter addresses a property as `base + slot × 4`
+ * and a per-instance slot map would be a second thing to keep in step — with
+ * `rom/trace.ts`, which reads either machine's table with one function.
+ *
+ * Conservative in the same direction as the rest of `analyze.ts`: a slot kept
+ * that could have gone costs four bytes, a slot dropped that was read costs a
+ * wrong game.
+ */
+export function entityBytes(program: Program, analysis: Analysis, id: number): number {
+  const instance = program.instances[id];
+  if (!instance) return ENTITY_SIZE;
+  const written = analysis.writes.get(id);
+  let top = PROP_SLOT["height"] as number;
+  const need = (prop: string): void => {
+    top = Math.max(top, PROP_SLOT[prop] as number);
+  };
+
+  if (written) for (const prop of written) if (prop in PROP_SLOT) need(prop);
+  if (instance.className === "number") need("value");
+
+  const fixed = (prop: string): number => instance.numbers[prop] ?? 0;
+  const canMove =
+    written !== undefined &&
+    (written.has("speed") || written.has("xdirection") || written.has("ydirection"));
+  if (
+    canMove ||
+    (fixed("speed") !== 0 && (fixed("xdirection") !== 0 || fixed("ydirection") !== 0))
+  ) {
+    need("ydirection");
+  }
+
+  return (top + 1) * PROP_SIZE;
+}
 
 /**
  * Bytes of an entity record that make up its collision box.
@@ -491,6 +558,16 @@ export interface Layout {
   memory: MemoryPlan;
   /** Base address of each instance's record, by instance id. */
   entities: readonly number[];
+  /**
+   * Bytes of each instance's record, by instance id.
+   *
+   * Not `ENTITY_SIZE` for everything: a record is allocated only as far as the
+   * highest slot the program can observe ({@link entityBytes}). Every whole-record
+   * copy — the boot restore, each scene's reset, and the `Defaults_` table each
+   * copies from — reads this, so the three cannot fall out of step, and so can
+   * `rom/trace.ts`, which walks the same table on eight different machines.
+   */
+  entitySizes: readonly number[];
   /** Bytes of work RAM in use. */
   used: number;
   /** Bytes of the cheaply-addressed region in use; zero where there is none. */
@@ -758,8 +835,11 @@ export function planLayout(program: Program, analysis: Analysis, memory: MemoryP
   const fast = (bytes: number): number => (quick ?? heap).take(bytes);
 
   const entities: number[] = [];
+  const entitySizes: number[] = [];
   for (let id = 0; id < program.instances.length; id += 1) {
-    entities.push(heap.take(ENTITY_SIZE));
+    const size = entityBytes(program, analysis, id);
+    entitySizes.push(size);
+    entities.push(heap.take(size));
   }
 
   const tick = fast(2);
@@ -887,6 +967,7 @@ export function planLayout(program: Program, analysis: Analysis, memory: MemoryP
   return {
     memory,
     entities,
+    entitySizes,
     used: heap.used,
     fastUsed: quick?.used ?? 0,
     interrupt,

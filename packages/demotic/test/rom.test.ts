@@ -160,7 +160,14 @@ describe("ROM conformance across the example library", async () => {
     const program = build(read("pong.dmt"), undefined, "megaduck");
     const frames = tape(PONG_TAPE);
     const onDuck = await romTrace(program, frames, {}, megaduckTarget);
-    const onGameboy = await romTrace(program, frames, {}, gbTarget);
+    // *How* it fails is not the guarantee and must not be pinned: where its
+    // writes land on a Game Boy decides whether the game merely plays wrongly or
+    // stops reaching the end of a tick at all, and that is a function of the
+    // memory map — so a change that moves one address can move it between the
+    // two. What is guaranteed is that this cartridge is not a Game Boy's.
+    const onGameboy = await romTrace(program, frames, {}, gbTarget).catch(
+      (error: unknown) => `did not run: ${String(error)}`,
+    );
     expect(onGameboy).not.toBe(onDuck);
     // And the cartridge carries no header for a Game Boy to read: the title
     // field is this game's own code, not "PONG", and there is no CGB flag.

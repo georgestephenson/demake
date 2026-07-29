@@ -50,7 +50,7 @@ import {
 } from "../../rom/graphics.js";
 import { isMutable } from "../analyze.js";
 import { emitTickSteps, type TickSteps } from "../backend.js";
-import { ENTITY_SIZE, PROPS, TILE_CONTACT_MAX, W } from "../layout.js";
+import { PROPS, TILE_CONTACT_MAX, W } from "../layout.js";
 import {
   artKey,
   emitInstanceDefaults,
@@ -307,7 +307,7 @@ export function emitProgram(ctx: SmsCtx, options: SmsEmitOptions = {}): void {
       }
     }
   }
-  emitInstanceDefaults(asm, program, PROPS);
+  emitInstanceDefaults(asm, program, PROPS, ctx.layout.entitySizes);
 
   for (const scene of scenes) {
     const art = options.backdrops?.get(scene.def.name);
@@ -444,7 +444,7 @@ function emitReset(ctx: SmsCtx, options: SmsEmitOptions): void {
       ctx,
       label(`Defaults_${instance.id}`),
       layout.entities[instance.id] as number,
-      ENTITY_SIZE,
+      layout.entitySizes[instance.id] as number,
     );
   }
 
@@ -894,7 +894,12 @@ function emitSceneReset(ctx: SmsCtx, scene: SceneCtx): void {
   const { asm, layout } = ctx;
   asm.label(`SceneReset_${scene.index}`);
   for (const id of scene.def.instanceIds) {
-    emitCopyBlock(ctx, label(`Defaults_${id}`), layout.entities[id] as number, ENTITY_SIZE);
+    emitCopyBlock(
+      ctx,
+      label(`Defaults_${id}`),
+      layout.entities[id] as number,
+      layout.entitySizes[id] as number,
+    );
   }
   asm.ret();
 }

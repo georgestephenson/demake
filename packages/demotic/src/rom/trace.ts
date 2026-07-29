@@ -64,8 +64,19 @@ export function romTick(layout: Layout, read: MemoryReader): number {
   return readInt(layout, read(layout.tick, 2));
 }
 
-/** One stored property of one entity, as a signed 16.16 value. */
+/**
+ * One property of one entity, as a signed 16.16 value.
+ *
+ * Not always a read. A record stops at the highest slot the program can observe
+ * (`codegen/layout.ts` §entityBytes), so a coin that never moves has no
+ * `xdirection` in RAM at all — and the bytes at that offset belong to the next
+ * object. What the oracle wants is the *state*, and the state of a property
+ * nothing can write is the value it was declared with, which is exactly what the
+ * emitted code folds into its instructions. So the fallback is not an
+ * approximation: it is where that number lives on this machine.
+ */
 export function romProp(
+  program: Program,
   layout: Layout,
   read: MemoryReader,
   instanceId: number,
@@ -75,6 +86,10 @@ export function romProp(
   if (slot === undefined) throw new Error(`'${prop}' is not a stored property`);
   const base = layout.entities[instanceId];
   if (base === undefined) throw new Error(`no entity ${instanceId}`);
+  const stored = layout.entitySizes[instanceId] ?? 0;
+  if (slot * PROP_SIZE >= stored) {
+    return program.instances[instanceId]?.numbers[prop] ?? 0;
+  }
   const raw = readInt(layout, read(base + slot * PROP_SIZE, PROP_SIZE));
   return raw >= 0x80000000 ? raw - 0x100000000 : raw;
 }
@@ -106,7 +121,7 @@ export function romTraceLine(program: Program, layout: Layout, read: MemoryReade
   const entities = (scene?.instanceIds ?? [])
     .map((id) => {
       const name = program.instances[id]?.name ?? `#${id}`;
-      const values = TRACED.map((prop) => romProp(layout, read, id, prop));
+      const values = TRACED.map((prop) => romProp(program, layout, read, id, prop));
       return `${name}=${values.join(",")}`;
     })
     .join(" ");

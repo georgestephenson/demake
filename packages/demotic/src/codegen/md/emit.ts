@@ -52,7 +52,7 @@ import type { InstanceDef, RuleDef } from "../../program.js";
 import { glyphTile, OBJECT_TILE, patternTile } from "../../rom/graphics.js";
 import { isMutable } from "../analyze.js";
 import { emitTickSteps, type TickSteps } from "../backend.js";
-import { ENTITY_SIZE, PROPS, TILE_CONTACT_MAX, W } from "../layout.js";
+import { PROPS, TILE_CONTACT_MAX, W } from "../layout.js";
 import {
   artKey,
   emitInstanceDefaults,
@@ -306,7 +306,7 @@ export function emitProgram(ctx: MdCtx, options: MdEmitOptions = {}): void {
     }
   }
   asm.align();
-  emitInstanceDefaults(asm, program, PROPS);
+  emitInstanceDefaults(asm, program, PROPS, ctx.layout.entitySizes);
 
   for (const scene of scenes) {
     const art = options.backdrops?.get(scene.def.name);
@@ -421,7 +421,12 @@ function emitReset(ctx: MdCtx, options: MdEmitOptions): void {
   // Every entity starts from its declared values, not just the entry scene's: a
   // rule may name an object in a scene the game has not reached.
   for (const instance of program.instances) {
-    emitCopyBlock(ctx, label(`Defaults_${instance.id}`), layout.entities[instance.id] as number);
+    emitCopyBlock(
+      ctx,
+      label(`Defaults_${instance.id}`),
+      layout.entities[instance.id] as number,
+      layout.entitySizes[instance.id] as number,
+    );
   }
 
   asm.clr("w", at(layout.tick));
@@ -606,11 +611,11 @@ function emitBlankPlanes(ctx: MdCtx): void {
 }
 
 /** Copy an entity's defaults from the cartridge into work RAM. */
-function emitCopyBlock(ctx: MdCtx, source: Ref, dest: number): void {
+function emitCopyBlock(ctx: MdCtx, source: Ref, dest: number, bytes: number): void {
   const { asm } = ctx;
   asm.lea(eaAbs(source), 0);
   asm.lea(at(dest), 1);
-  for (let index = 0; index < ENTITY_SIZE / 4; index += 1) {
+  for (let index = 0; index < bytes / 4; index += 1) {
     asm.move("l", eaPost(0), eaPost(1));
   }
 }
@@ -828,7 +833,12 @@ function emitSceneReset(ctx: MdCtx, scene: SceneCtx): void {
   const { asm, layout } = ctx;
   asm.label(`SceneReset_${scene.index}`);
   for (const id of scene.def.instanceIds) {
-    emitCopyBlock(ctx, label(`Defaults_${id}`), layout.entities[id] as number);
+    emitCopyBlock(
+      ctx,
+      label(`Defaults_${id}`),
+      layout.entities[id] as number,
+      layout.entitySizes[id] as number,
+    );
   }
   asm.rts();
 }
