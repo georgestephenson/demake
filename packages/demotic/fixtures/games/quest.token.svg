@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- token — the collectable that is not currency. Three of them, one a level. -->
+  <rect x="24" y="0" width="16" height="8" fill="#fff6c9"/>
+  <rect x="24" y="8" width="16" height="8" fill="#fff6c9"/>
+  <rect x="0" y="16" width="64" height="8" fill="#fff6c9"/>
+  <rect x="8" y="24" width="48" height="8" fill="#f0b52a"/>
+  <rect x="16" y="32" width="32" height="8" fill="#f0b52a"/>
+  <rect x="8" y="40" width="16" height="8" fill="#f0b52a"/>
+  <rect x="40" y="40" width="16" height="8" fill="#f0b52a"/>
+  <rect x="8" y="48" width="8" height="8" fill="#f0b52a"/>
+  <rect x="48" y="48" width="8" height="8" fill="#f0b52a"/>
+</svg>

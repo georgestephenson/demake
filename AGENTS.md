@@ -580,6 +580,19 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   assembler, which is what lets the browser produce byte-identical ROMs with no
   toolchain (doc 13 §D5). Doc 14 §2 records the reversal and the measurement —
   don't reintroduce a table interpreter without reading it.
+- **An entity record is as long as the object needs.** `codegen/layout.ts`'s
+  `entityBytes` allocates up to the highest slot the program can _observe_ — the
+  collision box always, whatever a rule can write, `value` for a `number`, and
+  the movement trio only for something that can move — because the backend
+  already folds the rest into the instructions that use it. That is why `PROPS`
+  puts `visible` and `value` ahead of `speed`/`xdirection`/`ydirection`: where a
+  property sits decides what a coin costs, and a coin is most of the objects in
+  a game. Three things read `Layout.entitySizes` and none of them may recompute
+  it — the boot restore, each scene's reset, and the `Defaults_` table they copy
+  from — and so does `rom/trace.ts`, which reports the _declared_ value for a
+  property with no storage rather than whatever the next object left there. Any
+  new emitter that reads a property off a record has to ask whether that slot is
+  allocated for that instance; reading past the end is a wrong game, not a crash.
 - **Unused features must leave no trace in the ROM.** Helpers are _pulled_, never
   pushed: `ctx.need(name, body)` is the only way a routine reaches the output, so
   a game that never divides ships no divider. Never add a routine unconditionally
@@ -743,6 +756,29 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   (`packages/demotic/fixtures/games/`). Each example is there for something the
   others do not exercise; `touches`, the `reaches` crossing rule and `visible`'s
   collision meaning were all found by writing one.
+- **A rule that names a class covers every scene that class lives in.** `quest`
+  is written that way — almost every rule names `hero` rather than one of its
+  four hero objects — because a class rule binds each instance in turn and skips
+  the ones whose scene is not running. One line of gravity is gravity in all four
+  levels. What cannot do it is a rule a _button_ fires: an input trigger binds
+  nothing, so `a pressed` has to name an object and is written per scene.
+- **State that outlives a level is declared in the scene the game starts on.**
+  Entering a scene resets that scene's objects, so a counter declared in `play`
+  is a counter that goes back to zero every time the player dies. `quest` keeps
+  coins, lives and the power-up in `title` and reads them from everywhere, which
+  also makes "reaching `title` is a new game" a fact rather than a reset routine.
+- **A landing rule wants `ydirection > 0`, not `>= 0`.** A cell-wide hero under a
+  ledge touches two of its cells in one tick; the first hit sets `ydirection` to
+  zero and `>= 0` reads that back as a landing on the second — so bonking your
+  head hands you a jump, in mid-air, for ever.
+- **A contact does not say which side it happened on**, which decides two things.
+  An `else` that stops a rise belongs on a rule naming only tiles that are
+  overhead, or it cancels a jump every time the hero brushes the edge of the
+  platform it was aiming for. And footing granted by a landing surface is granted
+  from its _sides_ too, so a solid slab of ground is a slab you can inch up:
+  `quest`'s levels make every landing surface one cell thick with `bedrock`
+  underneath, and its pits six cells wide, because a hero two cells tall catches
+  the far lip of anything narrower instead of falling clear.
 - **The examples are the shop window: keep them spare** (doc 14 §The example
   library). The web app shows a game's source beside the cartridge it built, and
   the claim is that a whole game is sixty lines — an example whose commentary
@@ -1928,6 +1964,20 @@ you are writing the wrong one of the two.
   which is why `packages/web/test/sw.test.ts` runs the worker in a fake global
   instead. Changing `CACHE`'s name is what rescues visitors holding a poisoned
   shell, and it costs them one further reload.
+- **The web JS budget is a per-_site_ sum, so the example library is in it.**
+  The page bundles every example's source and every fixture SVG twice — once as
+  raw text, because the ROM build has to rasterise it with `@demake/core` to get
+  the CLI's pixels, and once as a URL for the preview. Adding a game costs about
+  seven kilobytes gzipped for its art alone and fourteen with its sources and
+  levels, and `pnpm check:web-budget` currently reports 399.1 KB of 400. So the
+  next example added to `fixtures/games/` breaks the gate, and
+  `tools/ci/check-web-budget.mjs` says in its own header that the number is not
+  to move again — the way out it names is splitting `core.worker.ts` by console
+  family so the budget becomes per-visitor. De-duplicating the two copies of
+  every asset is the smaller one and is worth about a kilobyte, which is not
+  enough. Measure with a **clean** `dist`: the checker sums every `.js` it finds,
+  and comparing two runs without deleting it in between compares two different
+  builds' chunks added together.
 - **A one-run Lighthouse audit is a coin toss on a shared runner.** The job asks
   for `numberOfRuns: 3` and asserts against the best of them, which is lhci's
   default `optimistic` aggregation for a `minScore`. Noise only ever makes a page

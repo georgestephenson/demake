@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- crawler — the walker. Pale rim, dark body, so it reads on turf and on rock. -->
+  <rect x="16" y="0" width="32" height="8" fill="#8a4a1e"/>
+  <rect x="8" y="8" width="48" height="8" fill="#8a4a1e"/>
+  <rect x="0" y="16" width="8" height="8" fill="#8a4a1e"/>
+  <rect x="8" y="16" width="16" height="8" fill="#fdf3d8"/>
+  <rect x="24" y="16" width="16" height="8" fill="#8a4a1e"/>
+  <rect x="40" y="16" width="16" height="8" fill="#fdf3d8"/>
+  <rect x="56" y="16" width="8" height="8" fill="#8a4a1e"/>
+  <rect x="0" y="24" width="8" height="8" fill="#8a4a1e"/>
+  <rect x="8" y="24" width="8" height="8" fill="#fdf3d8"/>
+  <rect x="16" y="24" width="32" height="8" fill="#2a1405"/>
+  <rect x="48" y="24" width="8" height="8" fill="#fdf3d8"/>
+  <rect x="56" y="24" width="8" height="8" fill="#8a4a1e"/>
+  <rect x="0" y="32" width="64" height="8" fill="#8a4a1e"/>
+  <rect x="8" y="40" width="48" height="8" fill="#8a4a1e"/>
+  <rect x="8" y="48" width="8" height="8" fill="#c98a3c"/>
+  <rect x="24" y="48" width="16" height="8" fill="#c98a3c"/>
+  <rect x="48" y="48" width="8" height="8" fill="#c98a3c"/>
+  <rect x="0" y="56" width="16" height="8" fill="#c98a3c"/>
+  <rect x="56" y="56" width="8" height="8" fill="#c98a3c"/>
+</svg>
