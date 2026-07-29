@@ -150,6 +150,33 @@ describe("ROM conformance across the example library", async () => {
     expect(await body(megaduckTarget)).toBe(await body(gbTarget));
   });
 
+  /**
+   * And the biggest game in the library, on the one console that can hold it.
+   *
+   * Not in the matrix above, and the reason is the cartridge rather than the
+   * code: three levels, a boss and a room behind a pipe compile to around
+   * 122 KiB of SM83 and 117 of Z80 against a mapper-less 32 (doc 13 §Banked
+   * cartridges). The Mega Drive has 512 KiB and uses 96 of them, so this is the
+   * only place the claim can be made at all — and it is worth making, because
+   * nothing else in the library has four playfields, two of them sharing a tile
+   * bank, or a rule set written against classes rather than named objects.
+   *
+   * The tape runs the meadow: fall, run, jump the first pit, and keep going into
+   * the second one — which is a tile walk, a camera that scrolls on one axis,
+   * an object collected, a level restart and a counter that outlives it.
+   */
+  it("matches the interpreter for the quest fixture on md", async () => {
+    const levels = Object.fromEntries(
+      ["meadow.dmtl", "vault.dmtl", "hollow.dmtl", "keep.dmtl"].map((name) => [
+        name,
+        read(join("games", name)),
+      ]),
+    );
+    const program = build(read(join("games", "quest.dmt")), levels, "md");
+    const frames = tape("2:,1:a,85:right,1:a,90:right,60:right,120:right");
+    expect(await romTrace(program, frames, {}, mdTarget)).toBe(trace(new Sim(program), frames));
+  }, 120_000);
+
   it("builds a Mega Duck cartridge that a Game Boy could not run", async () => {
     // The guard the test above cannot be: identical traces are also what a map
     // that had quietly become the identity would produce, since the same wrong
