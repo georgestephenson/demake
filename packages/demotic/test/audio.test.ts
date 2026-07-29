@@ -802,6 +802,20 @@ describe("the example library", async () => {
   const BUILD_TIMEOUT = 120_000;
 
   /**
+   * And the Mega Drive is slower still, for the same reason one layer along.
+   *
+   * A fit's cost is its pixels, and this console has the biggest screen in the
+   * set: 320x224 against a Master System's 256x192 and a Game Boy's 160x144. One
+   * backdrop through the tournament is around twenty-five seconds here — nearly
+   * all of it inside `latticeKmeans`, which is the fit doing its job rather than
+   * a redundant scan — so a two-backdrop game with objects is minutes. The
+   * number is generous rather than tight because what it guards against is a
+   * hang, and a build that got half again slower should be caught by someone
+   * reading a duration rather than by a red test with nothing to say about why.
+   */
+  const TIMEOUT: Readonly<Record<string, number>> = { md: 360_000 };
+
+  /**
    * How much of the library each console sweeps.
    *
    * All of it, except on the console with nothing to overflow. This sweep exists
@@ -843,7 +857,7 @@ describe("the example library", async () => {
           // bytes turns the next code-generator change into a mystery.
           expect(built.stats.free).toBeGreaterThan(HEADROOM[target.id] ?? 1024);
         },
-        BUILD_TIMEOUT,
+        TIMEOUT[target.id] ?? BUILD_TIMEOUT,
       );
     }
 
@@ -854,7 +868,7 @@ describe("the example library", async () => {
           const source = readFileSync(join(games, file), "utf8");
           await expect(build(target, source, games)).rejects.toThrowError(/E_GAME_TOO_LARGE|holds/);
         },
-        BUILD_TIMEOUT,
+        TIMEOUT[target.id] ?? BUILD_TIMEOUT,
       );
     }
   }

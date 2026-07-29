@@ -125,41 +125,61 @@ const CASES = [
   { game: "shooter.dmt", consoleId: "gbc" },
   { game: "platformer.dmt", consoleId: "nes" },
   ...["gbc", "nes"].map((consoleId) => ({ game: "caves.dmt", consoleId })),
-  // And the Mega Drive on the two-backdrop game, because its art path shares the
-  // bank out max-min fair on demands read off a first pass — so a build there
-  // demakes some pictures twice, and doing that under a spread executor is where
-  // an order dependence would show.
-  { game: "platformer.dmt", consoleId: "md" },
 ];
+
+/**
+ * And the Mega Drive, which is the same case with a different clock.
+ *
+ * It belongs in the matrix above for the same reason the NES does — its art path
+ * shares the bank out max-min fair on demands read off a first pass, so a build
+ * there demakes some pictures twice, and doing that under a spread executor is
+ * where an order dependence would show. It is written out separately only for
+ * its timeout: a fit's cost is its pixels and this console has the biggest
+ * screen in the set (320x224 against a Game Boy's 160x144), so one backdrop
+ * through the tournament is around twenty-five seconds here against a handful
+ * anywhere else. Folding that ceiling into `it.each` would raise it for every
+ * fast case too, and a six-minute limit on a ten-second build is a guard that
+ * catches nothing.
+ */
+const SLOW = { game: "platformer.dmt", consoleId: "md" };
 
 /** One executor for the whole file, so the job count means something at the end. */
 const fanOut = adversarial();
 
+/** Build one game twice — spread, then alone — and compare everything. */
+async function compareBuilds(game: string, consoleId: string): Promise<void> {
+  const source = readFileSync(join(games, game), "utf8");
+  const program = compile(source, {
+    profile: getProfile(consoleId),
+    levels: levelsIn(games),
+  });
+  const assets = assetsIn(games);
+
+  // Spread first, on a cold conversion cache. The other order would let the
+  // second build recall every backdrop the first one demade and hand back the
+  // right bytes without a candidate ever reaching the executor — a test that
+  // passed by not running the thing it is about.
+  const spread = await buildGame(program, { title: game, assets, executor: fanOut });
+  const alone = await buildGame(program, { title: game, assets });
+
+  expect(spread.bytes).toEqual(alone.bytes);
+  // The stats too, not just the cartridge: a build that reported a different
+  // tile count while emitting the same bytes would mean the two paths
+  // disagreed somewhere the ROM happens not to show.
+  expect(spread.stats).toEqual(alone.stats);
+}
+
 describe("a fanned-out build", () => {
   it.each(CASES)(
     "builds $game for $consoleId to the bytes one thread builds",
-    async ({ game, consoleId }) => {
-      const source = readFileSync(join(games, game), "utf8");
-      const program = compile(source, {
-        profile: getProfile(consoleId),
-        levels: levelsIn(games),
-      });
-      const assets = assetsIn(games);
-
-      // Spread first, on a cold conversion cache. The other order would let the
-      // second build recall every backdrop the first one demade and hand back the
-      // right bytes without a candidate ever reaching the executor — a test that
-      // passed by not running the thing it is about.
-      const spread = await buildGame(program, { title: game, assets, executor: fanOut });
-      const alone = await buildGame(program, { title: game, assets });
-
-      expect(spread.bytes).toEqual(alone.bytes);
-      // The stats too, not just the cartridge: a build that reported a different
-      // tile count while emitting the same bytes would mean the two paths
-      // disagreed somewhere the ROM happens not to show.
-      expect(spread.stats).toEqual(alone.stats);
-    },
+    ({ game, consoleId }) => compareBuilds(game, consoleId),
     120_000,
+  );
+
+  it(
+    `builds '${SLOW.game}' for '${SLOW.consoleId}' to the bytes one thread builds`,
+    () => compareBuilds(SLOW.game, SLOW.consoleId),
+    360_000,
   );
 
   it("actually ran the candidates it was given", () => {
