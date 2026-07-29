@@ -24,6 +24,9 @@
       "path": "./packages/snes"
     },
     {
+      "path": "./packages/md"
+    },
+    {
       "path": "./packages/chip"
     },
     {

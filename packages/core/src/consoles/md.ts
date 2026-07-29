@@ -7,6 +7,7 @@
  * unique-tile budget, not the palette, is usually the binding constraint.
  */
 
+import { mdAudio } from "./audio-specs.js";
 import type { ConsoleSpec } from "./types.js";
 
 export const md = {
@@ -33,10 +34,12 @@ export const md = {
     flip: true,
   },
   codegen: { family: "md", formats: ["bin", "asm", "c", "rom"] },
+  audio: mdAudio,
   docs: {
     sources: [
       "Sega Genesis Software Manual — VDP CRAM (RGB333, 4×16 palettes)",
       "Plutiedev — VDP tiles & plane cells (flip bits, transparent color 0): https://plutiedev.com/vdp-planes",
+      "Plutiedev — the PSG at $C00011, and the master clock's ÷15: https://plutiedev.com/psg-chip",
     ],
   },
 } satisfies ConsoleSpec;

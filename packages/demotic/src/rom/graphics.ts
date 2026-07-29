@@ -289,6 +289,40 @@ export function builtinSnes(ink: number): Uint8Array {
   return bank;
 }
 
+/** Bytes per Mega Drive 4bpp tile: two pixels a byte, eight rows. */
+export const MD_TILE_BYTES = 32;
+
+/**
+ * The same bank again, as Mega Drive 4bpp — two pixels a byte, left in the high
+ * nibble.
+ *
+ * Not a bitplane layout at all, which is the whole difference from
+ * {@link builtinSega}: this VDP reads a tile as sixteen-colour *pixels* rather
+ * than as four planes, so the same pictures pack a third way. `ink` is where the
+ * brightest of the four authored shades lands and the two below it follow, for
+ * the same reason it is a parameter there — which colours the runtime art may
+ * use is the backend's decision and not the font's. Shade zero stays index zero,
+ * which on this console is transparent on *both* layers: a glyph's paper is the
+ * backdrop register, and a sprite's is whatever is behind it.
+ */
+export function builtinMd(ink: number): Uint8Array {
+  const bank = new Uint8Array(BUILTIN_TILES * MD_TILE_BYTES);
+  const map = [0, ink - 2, ink - 1, ink];
+  let at = 0;
+  for (const cell of builtinCells()) {
+    for (let y = 0; y < 8; y += 1) {
+      const row = cell[y] ?? "";
+      for (let x = 0; x < 8; x += 2) {
+        const high = map[Number.parseInt(row[x] ?? "0", 10) || 0] as number;
+        const low = map[Number.parseInt(row[x + 1] ?? "0", 10) || 0] as number;
+        bank[at + y * 4 + (x >> 1)] = ((high & 0x0f) << 4) | (low & 0x0f);
+      }
+    }
+    at += MD_TILE_BYTES;
+  }
+  return bank;
+}
+
 /** The cells of the built-in bank, in order, as 8×8 colour-index rows. */
 export function builtinCells(): readonly (readonly string[])[] {
   const cells: (readonly string[])[] = [];

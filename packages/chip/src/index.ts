@@ -18,12 +18,14 @@ import { GbApu } from "./gb-apu.js";
 import { NesApu } from "./nes-apu.js";
 import { SDsp } from "./s-dsp.js";
 import { Sn76489 } from "./sn76489.js";
+import { Ym2612 } from "./ym2612.js";
 import type { ChipId, ChipModel } from "./types.js";
 
 export type { ChipId, ChipModel, Pcm, RegisterWrite, SampleSink } from "./types.js";
 export { GbApu, GB_CLOCK_HZ } from "./gb-apu.js";
 export { Sn76489, SN76489_CLOCK_HZ } from "./sn76489.js";
 export { NesApu, NES_CLOCK_HZ } from "./nes-apu.js";
+export { Ym2612, YM2612_CLOCK_HZ } from "./ym2612.js";
 export {
   SDsp,
   encodeBrrBlock,
@@ -58,6 +60,8 @@ export function createChip(
       return new Sn76489(options);
     case "nes-apu":
       return new NesApu();
+    case "ym2612":
+      return new Ym2612();
     case "s-dsp":
       // The only chip here that needs to be *given* something: a sample player
       // with no samples in its RAM renders silence, so whoever holds the

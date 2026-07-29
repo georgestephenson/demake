@@ -196,7 +196,7 @@ export function renderSchedule(
 }
 
 /** Sum several chips' renders into one buffer (the Mega Drive's two, say). */
-export function mix(parts: readonly Pcm[]): Pcm {
+export function mix(parts: readonly Pcm[], gains?: readonly number[]): Pcm {
   if (parts.length === 0) throw new Error("mix: nothing to mix");
   const sampleRate = parts[0]!.sampleRate;
   let length = 0;
@@ -208,11 +208,13 @@ export function mix(parts: readonly Pcm[]): Pcm {
   }
   const left = new Float32Array(length);
   const right = new Float32Array(length);
-  for (const part of parts) {
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index]!;
+    const gain = gains?.[index] ?? 1;
     const l = part.channels[0]!;
     const r = part.channels[1] ?? l;
-    for (let i = 0; i < l.length; i += 1) left[i] = left[i]! + l[i]!;
-    for (let i = 0; i < r.length; i += 1) right[i] = right[i]! + r[i]!;
+    for (let i = 0; i < l.length; i += 1) left[i] = left[i]! + l[i]! * gain;
+    for (let i = 0; i < r.length; i += 1) right[i] = right[i]! + r[i]! * gain;
   }
   return { sampleRate, channels: [left, right] };
 }

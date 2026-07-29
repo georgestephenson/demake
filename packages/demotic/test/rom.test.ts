@@ -30,6 +30,7 @@ import {
   gbTarget,
   gbcTarget,
   ggTarget,
+  mdTarget,
   megaduckTarget,
   nesTarget,
   RomRunner,
@@ -123,6 +124,7 @@ describe("ROM conformance across the example library", async () => {
     smsTarget,
     ggTarget,
     snesTarget,
+    mdTarget,
   ]) {
     for (const [file, script, levels] of cases) {
       it(`matches the interpreter for ${file} on ${target.console}`, async () => {

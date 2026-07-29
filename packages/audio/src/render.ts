@@ -13,8 +13,8 @@
 
 import { createChip, mix, renderSchedule, type OutputStage, type Pcm } from "@demake/chip";
 
+import { bindingFor } from "./binding/registry.js";
 import { sampleAram } from "./binding/sdsp-bank.js";
-
 import type { ChipScript } from "./chipscript.js";
 
 export interface RenderAudioOptions {
@@ -41,8 +41,10 @@ export function render(script: ChipScript, options: RenderAudioOptions = {}): Pc
       stereo: true,
       ...(ram === undefined ? {} : { ram }),
     });
+    // Filtered per *write* rather than per tick: a console with two chips writes
+    // both within one driver tick, and a tick-level tag could not say so.
     const schedule = ticks.map((tick) => ({
-      writes: (tick.chip ?? 0) === index ? tick.writes : [],
+      writes: tick.writes.filter((write) => (write.chip ?? tick.chip ?? 0) === index),
     }));
     parts.push(
       renderSchedule(chip, schedule, script.driver.rate, {
@@ -52,7 +54,11 @@ export function render(script: ChipScript, options: RenderAudioOptions = {}): Pc
       }),
     );
   }
-  return parts.length === 1 ? parts[0]! : mix(parts);
+  if (parts.length === 1) return parts[0] as Pcm;
+  // How loud each chip is against the other is a fact about the *board* rather
+  // than about either model — an SN76489 that normalised itself for a Master
+  // System would drown six FM voices — so the balance comes from the binding.
+  return mix(parts, bindingFor(script.console).chipGains);
 }
 
 /**

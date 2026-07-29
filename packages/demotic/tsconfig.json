@@ -13,6 +13,7 @@
     { "path": "../audio/tsconfig.json" },
     { "path": "../chip/tsconfig.json" },
     { "path": "../dmg/tsconfig.json" },
+    { "path": "../md/tsconfig.json" },
     { "path": "../nes/tsconfig.json" },
     { "path": "../sms/tsconfig.json" },
     { "path": "../snes/tsconfig.json" }

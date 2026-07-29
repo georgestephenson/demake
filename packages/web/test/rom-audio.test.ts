@@ -14,6 +14,8 @@
 
 import { describe, expect, it } from "vitest";
 
+import type { SampleSink } from "@demake/chip";
+
 import { RomAudio } from "../src/lib/rom-audio.js";
 
 /** Everything `RomAudio` asks of a browser, and nothing else. */
@@ -62,9 +64,14 @@ class FakeContext {
   async close(): Promise<void> {}
 }
 
-/** A machine to point the stream at: the two things `Listenable` asks for. */
+/**
+ * A machine to point the stream at: the two things `Listenable` asks for.
+ *
+ * A list, because the player takes one — a console may have two chips on two
+ * clocks, and every other console is a list of one.
+ */
 function machine(clockHz: number) {
-  return { audioSink: undefined, apu: { clockHz } };
+  return [{ audioSink: undefined as SampleSink | undefined, apu: { clockHz } }];
 }
 
 function withFakeAudio<T>(body: () => T): T {
@@ -79,7 +86,7 @@ function withFakeAudio<T>(body: () => T): T {
 
 /** Fill the sink with a second of something and hand it to the device. */
 function play(audio: RomAudio, clockHz: number): void {
-  audio.sink.add(0.5, -0.5, clockHz);
+  for (const { sink } of audio.sinks) sink.add(0.5, -0.5, clockHz);
   audio.flush();
 }
 
@@ -115,7 +122,7 @@ describe("the cartridge player's queue", () => {
 
       await audio.suspend(target);
       expect(first.stopped).toBe(true);
-      expect(target.audioSink).toBeUndefined();
+      expect(target[0]!.audioSink).toBeUndefined();
 
       context.state = "running";
       audio.attach(target);
@@ -124,6 +131,49 @@ describe("the cartridge player's queue", () => {
       expect(second.stopped).toBe(false);
       await audio.resume();
       expect(second.stopped).toBe(true);
+      audio.close();
+    });
+  });
+
+  it("sums a console's two chips at the board's own levels", () => {
+    // The Mega Drive is the only machine here with two of them, and Playwright
+    // can see that a page makes sound without hearing that it is making two at
+    // once (this file's opening paragraph, in the case it was written for). The
+    // relative level is the *board's* rather than either chip's, which is why it
+    // arrives on the machine — so a mix that ignored it would play a four-voice
+    // PSG as loudly as six four-operator FM voices.
+    withFakeAudio(() => {
+      const audio = new RomAudio();
+      const ym = { audioSink: undefined as SampleSink | undefined, apu: { clockHz: 7_670_453 } };
+      const psg = {
+        audioSink: undefined as SampleSink | undefined,
+        apu: { clockHz: 3_579_545 },
+        gain: 0.5,
+      };
+      audio.attach([ym, psg]);
+      expect(audio.sinks.length).toBe(2);
+      expect(audio.sinks.map(({ gain }) => gain)).toEqual([1, 0.5]);
+
+      // Each chip is clocked at its own rate, which is the reason for two sinks:
+      // the same number of samples takes a different number of chip cycles.
+      const rate = (FakeContext.made.at(-1) as FakeContext).sampleRate;
+      for (let sample = 0; sample < 64; sample += 1) {
+        audio.sinks[0]!.sink.add(0.5, 0.5, 7_670_453 / rate);
+        audio.sinks[1]!.sink.add(0.25, 0.25, 3_579_545 / rate);
+      }
+      audio.flush();
+
+      const context = FakeContext.made.at(-1) as FakeContext;
+      const played = (context.sources[0] as FakeSource).buffer as {
+        getChannelData(index: number): Float32Array;
+      };
+      // 0.5 from the FM chip plus 0.25 from the PSG at half gain: 0.625, and the
+      // window is narrow on purpose. Dropping a chip or overwriting instead of
+      // adding lands on 0.5 or 0.125; applying the gain to neither lands on 0.75.
+      // Only the sum the board asks for is inside it.
+      const peak = Math.max(...played.getChannelData(0));
+      expect(peak).toBeGreaterThan(0.6);
+      expect(peak).toBeLessThan(0.65);
       audio.close();
     });
   });

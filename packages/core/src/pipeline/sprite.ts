@@ -163,7 +163,7 @@ export interface SpriteOptions {
 }
 
 /** How a tile's bitplanes are arranged in memory. */
-export type Packing = "interleaved" | "grouped" | "planar" | "pairs";
+export type Packing = "interleaved" | "grouped" | "planar" | "packed4" | "pairs";
 
 /** A downscaled sprite in linear light, with straight alpha kept separate. */
 interface Sampled {
@@ -317,12 +317,14 @@ function stretch(light: number, lo: number, span: number, steps: number): number
 /**
  * Pack one 8×8 block of colour indices, in the console's own bitplane layout.
  *
- * Three layouts, one picture. `interleaved` puts the two planes byte by byte
+ * Four layouts, one picture. `interleaved` puts the two planes byte by byte
  * down the rows, which is what the Game Boy addresses; `grouped` stores the
  * whole low plane then the whole high plane, which is the NES's character
  * format; `planar` writes every plane of a row before moving on, which is what
- * the Sega VDP reads and is the only one of the three that generalises past two
- * bits. Which one a console wants is the hardware's business and not the art's.
+ * the Sega VDP reads. `packed4` is not a bitplane layout at all — it is two
+ * pixels a byte, left pixel in the high nibble, which is what the Mega Drive's
+ * VDP and the ARM consoles' 2D engines read. Which one a console wants is the
+ * hardware's business and not the art's.
  */
 function packTile(
   indices: Uint8Array,
@@ -333,6 +335,16 @@ function packTile(
   bpp: number,
 ): Uint8Array {
   const bytes = new Uint8Array(8 * bpp);
+  if (packing === "packed4") {
+    for (let row = 0; row < 8; row += 1) {
+      for (let column = 0; column < 8; column += 2) {
+        const high = indices[(originY + row) * width + originX + column] as number;
+        const low = indices[(originY + row) * width + originX + column + 1] as number;
+        bytes[row * 4 + (column >> 1)] = ((high & 0x0f) << 4) | (low & 0x0f);
+      }
+    }
+    return bytes;
+  }
   for (let row = 0; row < 8; row += 1) {
     const planes = new Uint8Array(bpp);
     for (let column = 0; column < 8; column += 1) {

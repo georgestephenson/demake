@@ -195,6 +195,38 @@ export {
   type Z80ShiftOp,
 } from "./asm/z80.js";
 export {
+  Asm68k,
+  eaA,
+  eaAbs,
+  eaD,
+  eaDisp,
+  eaIdx,
+  eaImm,
+  eaInd,
+  eaPc,
+  eaPost,
+  eaPre,
+  fitsAbsWord,
+  type Ea,
+  type M68kCC,
+  type M68kSize,
+} from "./asm/m68k.js";
+export {
+  MD_CHECKSUM_OFFSET,
+  MD_CHECKSUM_START,
+  MD_HEADER_OFFSET,
+  MD_HEADER_SIZE,
+  MD_HINT_VECTOR,
+  MD_ORIGIN,
+  MD_RAM_END,
+  MD_RAM_START,
+  MD_ROM_SIZE,
+  MD_VINT_VECTOR,
+  mdChecksum,
+  packMdRom,
+  type MdHeaderOptions,
+} from "./asm/md-cart.js";
+export {
   SMS_HEADER_OFFSET,
   SMS_HEADER_SIZE,
   SMS_IRQ_VECTOR,

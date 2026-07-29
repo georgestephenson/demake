@@ -12,7 +12,7 @@
  * hardware, and a test compares them.
  */
 
-import type { AudioSpec } from "./audio.js";
+import type { AudioChannelSpec, AudioSpec } from "./audio.js";
 
 const GB_CLOCK = 4194304;
 const NES_CLOCK = 1789773;
@@ -358,3 +358,99 @@ const SMS_FRAME_RATE = { num: 3579545, den: 59736 };
 export const smsAudio: AudioSpec = psgAudio({ stereo: false, frameRate: SMS_FRAME_RATE });
 export const ggAudio: AudioSpec = psgAudio({ stereo: true, frameRate: SMS_FRAME_RATE });
 export const sg1000Audio: AudioSpec = psgAudio({ stereo: false, frameRate: SMS_FRAME_RATE });
+
+/** The YM2612's clock on an NTSC Mega Drive: the master clock divided by seven. */
+const YM2612_CLOCK = 7670453;
+
+/**
+ * One four-operator FM voice.
+ *
+ * The pitch lattice is not a divider here — it is a *phase increment*, which is
+ * the opposite arrangement and the reason this is the only channel in the set
+ * whose resolution improves as the note rises rather than collapsing. A whole
+ * cycle is 2^20 increment units at the chip's own 53.267 kHz, and the F-number
+ * is eleven bits shifted by a three-bit block, so the lattice is expressed as a
+ * divider of the same total span: 2^20 / (fnum << block).
+ *
+ * Volume is total level: seven bits of attenuation at 0.75 dB a step, which is
+ * finer than anything else on this board by a factor of eight and is what lets
+ * an FM part actually swell.
+ */
+function fmChannel(id: string): AudioChannelSpec {
+  return {
+    id,
+    kind: "fm",
+    chip: 0,
+    // Expressed as the equivalent divider: f = clock / (144 * 2^20 / (fnum<<block)),
+    // so `step` is the 144 clocks a sample takes and the divider spans the
+    // eleven-bit F-number over eight blocks.
+    pitch: { clockHz: YM2612_CLOCK, step: 144, minDivider: 4, maxDivider: 1 << 20 },
+    volume: { steps: 128, law: "db", stepDb: 0.75 },
+    // The envelope is the chip's, and it is a full four-stage one rather than
+    // the decay-only ramps every other chip here offers — so a swell, a pluck
+    // and a pad are all patches rather than driver writes.
+    envelope: { kind: "decay", ratePerSecond: 17756 },
+    panning: "lr-enable",
+  };
+}
+
+/**
+ * The Mega Drive: six FM voices and the four PSG ones, on two chips.
+ *
+ * **Ten voices, which is what this console has.** The PSG half is a Master
+ * System's chip and not by resemblance — the same SN76489 fed by the same master
+ * clock divided by fifteen, and an NTSC frame is 262 lines of 3420 master cycles,
+ * which is 228 *PSG* cycles a line, so its numbers reduce to exactly
+ * {@link SMS_FRAME_RATE}. The FM half is a YM2612 at master over seven.
+ *
+ * The two are one instrument rather than two, which is why they are one spec: the
+ * arranger assigns a part to whichever of the ten voices suits it, and "this is
+ * an FM voice and that is a square wave" is a property of the channel it lands
+ * on. `BoundWrite.chip` is how a write says which of them it addresses.
+ */
+export const mdAudio: AudioSpec = {
+  chips: ["ym2612", "sn76489"],
+  channels: [
+    fmChannel("fm1"),
+    fmChannel("fm2"),
+    fmChannel("fm3"),
+    fmChannel("fm4"),
+    fmChannel("fm5"),
+    fmChannel("fm6"),
+    ...psgAudio({ stereo: false, frameRate: SMS_FRAME_RATE }).channels.map((channel) => ({
+      ...channel,
+      // The PSG is the *second* chip here, where on a Master System it is the
+      // only one; every other number about it is identical.
+      chip: 1,
+      id: `psg-${channel.id}`,
+    })),
+  ],
+  driver: {
+    sources: ["timer", "vblank"],
+    frameRate: SMS_FRAME_RATE,
+    // The YM2612's timer A is a real clock a driver can hold a tempo on, unlike
+    // this VDP's line interrupt — 10 bits at the chip's own sample rate.
+    timerRange: [52, 500],
+    // Far larger than any 8-bit console's, and it is arithmetic rather than
+    // generosity. An NTSC frame is 127,856 cycles of a 7.67 MHz 68000; a write
+    // here is a byte store to an absolute address, about 24 cycles with the
+    // packed-data fetch around it. Twelve per cent of a frame is therefore about
+    // 640 writes, and the driver runs in the main loop rather than the blanking
+    // interval so that is a real twelve per cent rather than a raster deadline.
+    //
+    // The peak is not the steady state: installing six four-operator patches at
+    // the head of a track is ~500 writes and every tick after it is a few dozen.
+    // The budget has to cover the peak, because that is the tick that would
+    // overrun.
+    writesPerTick: 640,
+  },
+  budgets: { romBytes: 262144 },
+  mixing: { channels: 2, linear: true },
+  docs: {
+    sources: [
+      ...PSG_SOURCES,
+      "Sega — YM2612 application manual (register map, F-number, key-on slot order)",
+      "Plutiedev — YM2612 from the 68000: https://plutiedev.com/ym2612-registers",
+    ],
+  },
+};

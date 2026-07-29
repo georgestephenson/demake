@@ -22,12 +22,14 @@
  */
 
 import { Gameboy, type Button as GbButton, type Machine as GbMachine } from "@demake/dmg";
+import { Md, type Button as MdButton } from "@demake/md";
 import { Nes, type Button as NesButton } from "@demake/nes";
 import { Sms, type Button as SmsButton } from "@demake/sms";
 import { Snes, type Button as SnesButton } from "@demake/snes";
 
 import { buildGbRom } from "../src/codegen/gb.js";
 import type { Layout } from "../src/codegen/layout.js";
+import { buildMdRom } from "../src/codegen/md.js";
 import { buildNesRom } from "../src/codegen/nes.js";
 import { buildSmsRom } from "../src/codegen/sms.js";
 import { buildSnesRom } from "../src/codegen/snes.js";
@@ -136,6 +138,20 @@ export const snesTarget: RomTarget = {
       runFrame: () => machine.runFrame(),
       setButtons: (down) =>
         machine.setButtons(down.map((name) => map[name] ?? (name as SnesButton))),
+    };
+  },
+};
+
+export const mdTarget: RomTarget = {
+  console: "md",
+  build: (program, options) => buildMdRom(program, options),
+  boot: (bytes) => {
+    const machine = new Md(bytes);
+    return {
+      readMemory: (address, length) => machine.readMemory(address, length),
+      stepInstruction: () => machine.stepInstruction(),
+      runFrame: () => machine.runFrame(),
+      setButtons: (down) => machine.setButtons(down as MdButton[]),
     };
   },
 };

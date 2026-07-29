@@ -19,7 +19,8 @@ import { describe, expect, it } from "vitest";
 import type { ChipScript, Rational, TickWrites } from "../src/chipscript.js";
 import { bindingFor } from "../src/binding/registry.js";
 import { packScript, RUN } from "../src/rom/data.js";
-import { buildSmsGameAudio, smsChannelTag } from "../src/rom/sms-game.js";
+import { psgChannelTag } from "../src/rom/psg.js";
+import { buildSmsGameAudio } from "../src/rom/sms-game.js";
 
 /** A latch byte: `%1cctdddd`. `volume` picks the attenuation register. */
 function latch(channel: number, volume: boolean, data = 0): number {
@@ -60,7 +61,7 @@ function scriptOf(ticks: readonly TickWrites[], rate: Rational = FRAME): ChipScr
 
 describe("the SN76489's latched channel", () => {
   it("gives a data byte the channel the latch before it selected", () => {
-    const tag = smsChannelTag();
+    const tag = psgChannelTag();
     // Tone 3's period, which is the only two-byte write this chip has: a latch
     // carrying the low four bits, then a bare data byte carrying the high six.
     expect(tag(0, latch(2, false, 0x0a))).toBe(1 << 2);
@@ -72,7 +73,7 @@ describe("the SN76489's latched channel", () => {
   });
 
   it("says the stereo latch belongs to no channel, and leaves the selection alone", () => {
-    const tag = smsChannelTag();
+    const tag = psgChannelTag();
     expect(tag(0, latch(1, false, 0x07))).toBe(1 << 1);
     // A different device entirely — it must not be read as a latch byte, even
     // though its value has bit 7 set.
@@ -81,11 +82,11 @@ describe("the SN76489's latched channel", () => {
   });
 
   it("starts fresh, so one schedule cannot inherit another's selection", () => {
-    const first = smsChannelTag();
+    const first = psgChannelTag();
     first(0, latch(3, true, 0x0f));
     expect(first(0, 0x11)).toBe(1 << 3);
     // A second call to the factory is a second chip, as far as tagging goes.
-    expect(smsChannelTag()(0, 0x11)).toBe(1 << 0);
+    expect(psgChannelTag()(0, 0x11)).toBe(1 << 0);
   });
 });
 
@@ -101,7 +102,7 @@ describe("packing a stream whose channel is latched", () => {
   const script = scriptOf([{ writes: tick }]);
 
   it("keeps a data byte in the same run as the latch that named it", () => {
-    const data = packScript(script, { channelOf: smsChannelTag });
+    const data = packScript(script, { channelOf: psgChannelTag });
     const block = data.blocks[0] as Uint8Array;
     // First run: three writes on tone 3 — the period pair and its attenuation.
     expect(block[0]).toBe(3);
@@ -118,7 +119,7 @@ describe("packing a stream whose channel is latched", () => {
     // packed bytes rather than asserted about the binding. A run whose first
     // write had bit 7 clear would be a run that inherits its channel from writes
     // the music may not have performed.
-    const data = packScript(script, { channelOf: smsChannelTag });
+    const data = packScript(script, { channelOf: psgChannelTag });
     const block = data.blocks[0] as Uint8Array;
     let at = 1; // past the opening run's count
     for (;;) {

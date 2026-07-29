@@ -4,24 +4,20 @@
  * Doc 13 §D5 says the browser must never need a toolchain, and it does not: the
  * assemblers are ours and written in TypeScript, so the page *compiles* the game
  * — to SM83 for a Game Boy, to 6502 for an NES, to Z80 for a Master System, to
- * 65816 for a Super Nintendo — the same way the CLI does and gets the same bytes.
- * What the Download button hands you is byte-identical to what `demake build`
- * writes on the command line, which is the doc-07 parity contract restated for
- * games.
+ * 65816 for a Super Nintendo, to 68000 for a Mega Drive — the same way the CLI
+ * does and gets the same bytes. What the Download button hands you is
+ * byte-identical to what `demake build` writes on the command line, which is the
+ * doc-07 parity contract restated for games.
  *
- * The emulators are `@demake/dmg`, `@demake/nes`, `@demake/sms` and
- * `@demake/snes`, ours, for the reason doc 07 gives: a core fetched from a CDN is
- * forbidden, and a WASM core we cannot read would be the same bargain in a
+ * The emulators are `@demake/dmg`, `@demake/nes`, `@demake/sms`, `@demake/snes`
+ * and `@demake/md`, ours, for the reason doc 07 gives: a core fetched from a CDN
+ * is forbidden, and a WASM core we cannot read would be the same bargain in a
  * different wrapper. Which one runs is decided by the console the game was
- * compiled for, and *within* two of the four families by the cartridge itself — a
+ * compiled for, and *within* two of the five families by the cartridge itself — a
  * `gbc` build carries the CGB flag in its header and comes up in colour, a `gg`
  * build carries a Game Gear region nibble and comes up as a handheld — so the
  * console selector above this pane changes the **cartridge**, and the player
  * follows it rather than being a setting of its own.
- *
- * One console arrives silent, and the button says so rather than lying: the
- * Super Nintendo's sound is a second processor with its own program, and the
- * audio engine has no model to build one against yet (doc 16 §Still to come).
  *
  * **The frame counter under the screen is not decoration.** It is the measured
  * cost of one game tick on an 8-bit CPU, and reporting it is how the pane stays
@@ -32,6 +28,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 
 import { romReady, type Layout, type Program } from "@demake/demotic";
 import { Gameboy, SCREEN_HEIGHT, SCREEN_WIDTH, type Button } from "@demake/dmg";
+import {
+  FRAME_HEIGHT as MD_HEIGHT,
+  FRAME_WIDTH as MD_WIDTH,
+  Md,
+  PSG_MIX_GAIN as MD_PSG_MIX_GAIN,
+  type Button as MdButton,
+} from "@demake/md";
 import { Nes, SCREEN_HEIGHT as NES_HEIGHT, SCREEN_WIDTH as NES_WIDTH } from "@demake/nes";
 import {
   FRAME_HEIGHT as SMS_HEIGHT,
@@ -50,7 +53,7 @@ import {
 
 import { demoAssetBytes, demoAudioBytes } from "../lib/demo-game.js";
 import { download } from "../lib/download.js";
-import { audioSupported, RomAudio, type Listenable } from "../lib/rom-audio.js";
+import { audioSupported, RomAudio, type ListenableMachine } from "../lib/rom-audio.js";
 import { createEngine } from "../worker/client.js";
 
 /**
@@ -83,6 +86,7 @@ const MACHINE: Readonly<Record<string, string>> = {
   sms: "a Master System",
   gg: "a Game Gear",
   snes: "a Super Nintendo",
+  md: "a Mega Drive",
 };
 
 /**
@@ -90,18 +94,20 @@ const MACHINE: Readonly<Record<string, string>> = {
  *
  * The pane needs five things of a machine and no more, so this is those five —
  * and the four cores satisfy it without any of them learning about the page or
- * about each other. `chip` is the sound hardware the audio player attaches to:
- * the Game Boy's APU, the NES's 2A03, the Master System's SN76489, each
- * `@demake/chip`'s own model rather than a second copy living in a core. It is
- * `null` on a console whose sound this project cannot yet make, which is a
- * different thing from a console with the sound turned off — and the button
- * reads it rather than guessing from the family.
+ * about each other. `chips` is the sound hardware the audio player attaches to,
+ * and every console with a backend has some: the Game Boy's APU, the NES's 2A03,
+ * the SN76489 on both Sega machines, the Super Nintendo's S-DSP — which is not on
+ * the console's own processor at all — and *two* on a Mega Drive, each
+ * `@demake/chip`'s own model rather than a second copy living in a core. A list
+ * rather than one, because that console's two run on different clocks and a sink
+ * is built against a clock; an empty one would say a cartridge has nothing to
+ * play rather than offering a control that does nothing.
  */
 interface Player {
   readonly width: number;
   readonly height: number;
   readonly framebuffer: Uint8ClampedArray;
-  readonly chip: Listenable | null;
+  readonly chips: ListenableMachine;
   setButtons(down: Button[]): void;
   runFrame(): void;
   readMemory(address: number, length: number): Uint8Array;
@@ -123,16 +129,18 @@ function boot(rom: Uint8Array, family: string, consoleId: string): Player {
       framebuffer: machine.framebuffer,
       // The sound chip is a second computer's, and the cartridge uploaded its
       // program at boot — so what plays here is the game's own generated SPC700
-      // driver, through the same `StreamSink` the other three consoles use.
-      chip: {
-        get audioSink() {
-          return machine.audioSink;
+      // driver, through the same `StreamSink` every other console uses.
+      chips: [
+        {
+          get audioSink() {
+            return machine.audioSink;
+          },
+          set audioSink(sink) {
+            machine.audioSink = sink;
+          },
+          apu: machine.smp.dsp,
         },
-        set audioSink(sink) {
-          machine.audioSink = sink;
-        },
-        apu: machine.smp.dsp,
-      },
+      ],
       setButtons: (down) =>
         // This pad's B and Y sit where the NES's A and B sat, which is the
         // mapping every game on it used and the one the cartridge assumes.
@@ -140,6 +148,52 @@ function boot(rom: Uint8Array, family: string, consoleId: string): Player {
           down.map((name) => (name === "a" ? "b" : name === "b" ? "y" : (name as SnesButton))),
         ),
       runFrame: () => void machine.runFrame(),
+      readMemory: (address, length) => machine.readMemory(address, length),
+    };
+  }
+  if (family === "md") {
+    const machine = new Md(rom);
+    return {
+      width: MD_WIDTH,
+      height: MD_HEIGHT,
+      framebuffer: machine.framebuffer,
+      // The only console here with two chips, and the cartridge plays both: six
+      // four-operator FM voices and four tone generators. They are handed over
+      // separately because they run on different clocks — the master clock over
+      // seven and over fifteen — and the relative level is the *board's* rather
+      // than either chip's, which is why it arrives here rather than being asked
+      // of a model (doc 16 §Packages).
+      chips: [
+        {
+          get audioSink() {
+            return machine.ymSink;
+          },
+          set audioSink(sink) {
+            machine.ymSink = sink;
+          },
+          apu: machine.ym,
+        },
+        {
+          get audioSink() {
+            return machine.audioSink;
+          },
+          set audioSink(sink) {
+            machine.audioSink = sink;
+          },
+          apu: machine.psg,
+          gain: MD_PSG_MIX_GAIN,
+        },
+      ],
+      setButtons: (down) => machine.setButtons(down as readonly MdButton[]),
+      // This VDP draws when it is *asked* to, not as the beam passes: `view()`
+      // renders the whole picture out of video RAM and into the buffer handed
+      // over above. So a frame has to end with one, exactly as the Game Gear's
+      // crop does — without it the canvas keeps showing the blank frame boot
+      // rendered, which is a console that plays perfectly and displays nothing.
+      runFrame: () => {
+        machine.runFrame();
+        machine.vdp.view();
+      },
       readMemory: (address, length) => machine.readMemory(address, length),
     };
   }
@@ -157,15 +211,17 @@ function boot(rom: Uint8Array, family: string, consoleId: string): Player {
       // than renamed — the core keeps calling it what it is. What it plays is
       // the cartridge's own generated Z80 driver, through the same `StreamSink`
       // the other two consoles use.
-      chip: {
-        get audioSink() {
-          return machine.audioSink;
+      chips: [
+        {
+          get audioSink() {
+            return machine.audioSink;
+          },
+          set audioSink(sink) {
+            machine.audioSink = sink;
+          },
+          apu: machine.psg,
         },
-        set audioSink(sink) {
-          machine.audioSink = sink;
-        },
-        apu: machine.psg,
-      },
+      ],
       // A Sega pad has no Select, so the one button the portable set does not
       // include is dropped rather than mapped onto something else.
       setButtons: (down) => machine.setButtons(down as readonly SmsButton[]),
@@ -182,7 +238,7 @@ function boot(rom: Uint8Array, family: string, consoleId: string): Player {
       width: NES_WIDTH,
       height: NES_HEIGHT,
       framebuffer: machine.framebuffer,
-      chip: machine,
+      chips: [machine],
       setButtons: (down) => machine.setButtons(down),
       runFrame: () => void machine.runFrame(),
       readMemory: (address, length) => machine.readMemory(address, length),
@@ -198,7 +254,7 @@ function boot(rom: Uint8Array, family: string, consoleId: string): Player {
     width: SCREEN_WIDTH,
     height: SCREEN_HEIGHT,
     framebuffer: machine.framebuffer,
-    chip: machine,
+    chips: [machine],
     setButtons: (down) => machine.setButtons(down),
     runFrame: () => void machine.runFrame(),
     readMemory: (address, length) => machine.readMemory(address, length),
@@ -349,10 +405,9 @@ export function RomPane({
   const consoleId = built.consoleId ?? program?.profile.id ?? "gb";
   const family = built.family ?? "gb";
   const extension = built.extension ?? "gb";
-  // Two questions, not one: whether the browser will give us an `AudioContext`,
-  // and whether this cartridge's console has sound at all. The second is the
-  // Super Nintendo's answer today, and saying so is better than a button that
-  // does nothing.
+  // Whether the browser will give us an `AudioContext`. Every console with a
+  // backend now has a chip the cartridge's own driver plays, so this is the only
+  // question left — a control that did nothing would be worse than none.
   const canSound = audioSupported();
   // The canvas is sized by the console, not by CSS: these are two genuinely
   // different screens (160×144 against 256×240, and not the same aspect), and a
@@ -362,11 +417,13 @@ export function RomPane({
       ? { width: NES_WIDTH, height: NES_HEIGHT }
       : family === "snes"
         ? { width: SNES_WIDTH, height: SNES_HEIGHT }
-        : family === "sms"
-          ? consoleId === "gg"
-            ? { width: GG_WIDTH, height: GG_HEIGHT }
-            : { width: SMS_WIDTH, height: SMS_HEIGHT }
-          : { width: SCREEN_WIDTH, height: SCREEN_HEIGHT };
+        : family === "md"
+          ? { width: MD_WIDTH, height: MD_HEIGHT }
+          : family === "sms"
+            ? consoleId === "gg"
+              ? { width: GG_WIDTH, height: GG_HEIGHT }
+              : { width: SMS_WIDTH, height: SMS_HEIGHT }
+            : { width: SCREEN_WIDTH, height: SCREEN_HEIGHT };
 
   useEffect(() => {
     if (!rom || !layout) {
@@ -375,7 +432,7 @@ export function RomPane({
     }
     const booted = boot(rom, family, consoleId);
     machine.current = booted;
-    if (booted.chip) player.current?.attach(booted.chip);
+    if (booted.chips.length > 0) player.current?.attach(booted.chips);
     const element = canvas.current;
     const context = element?.getContext("2d");
     if (!context) return;
@@ -458,7 +515,7 @@ export function RomPane({
     }
     if (sound) {
       setSound(false);
-      void audio.suspend(machine.current?.chip ?? null).then(() => setPlaying(audio.active));
+      void audio.suspend(machine.current?.chips ?? null).then(() => setPlaying(audio.active));
       return;
     }
     // The click *is* the gesture a browser wants before it will start a
@@ -467,8 +524,7 @@ export function RomPane({
     void audio
       .resume()
       .then(() => {
-        const chip = machine.current?.chip;
-        if (chip) audio.attach(chip);
+        if (machine.current?.chips.length) audio.attach(machine.current.chips);
         setPlaying(audio.active);
       })
       .catch(() => setPlaying(false));

@@ -39,10 +39,29 @@ export function romReady(layout: Layout, read: MemoryReader): number {
   return read(layout.ready, 1)[0] as number;
 }
 
+/**
+ * Read a run of bytes as one unsigned integer, in the machine's own order.
+ *
+ * The one place the trace reader knows a console apart. Three of the four store
+ * the low byte first and the 68000 stores the high byte first, and a reader that
+ * assumed either would report every value in a Mega Drive's work RAM
+ * byte-swapped — which reads as an arithmetic bug three layers from its cause.
+ */
+function readInt(layout: Layout, bytes: Uint8Array): number {
+  let value = 0;
+  if (layout.memory.bigEndian === true) {
+    for (const byte of bytes) value = (value * 256 + byte) >>> 0;
+    return value >>> 0;
+  }
+  for (let index = bytes.length - 1; index >= 0; index -= 1) {
+    value = (value * 256 + (bytes[index] as number)) >>> 0;
+  }
+  return value >>> 0;
+}
+
 /** Ticks the ROM has completed. */
 export function romTick(layout: Layout, read: MemoryReader): number {
-  const bytes = read(layout.tick, 2);
-  return (bytes[0] as number) | ((bytes[1] as number) << 8);
+  return readInt(layout, read(layout.tick, 2));
 }
 
 /** One stored property of one entity, as a signed 16.16 value. */
@@ -56,13 +75,7 @@ export function romProp(
   if (slot === undefined) throw new Error(`'${prop}' is not a stored property`);
   const base = layout.entities[instanceId];
   if (base === undefined) throw new Error(`no entity ${instanceId}`);
-  const bytes = read(base + slot * PROP_SIZE, PROP_SIZE);
-  const raw =
-    ((bytes[0] as number) |
-      ((bytes[1] as number) << 8) |
-      ((bytes[2] as number) << 16) |
-      ((bytes[3] as number) << 24)) >>>
-    0;
+  const raw = readInt(layout, read(base + slot * PROP_SIZE, PROP_SIZE));
   return raw >= 0x80000000 ? raw - 0x100000000 : raw;
 }
 

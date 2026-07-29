@@ -123,12 +123,12 @@ worker is the version of that which does not stop the tab at all.
 
 The preview runs the reference interpreter, which is the specification — but the
 product claim is a *ROM*, so the page builds one and plays it. **Live for `gb`,
-`gbc`, `nes`, `sms` and `gg`.**
+`gbc`, `nes`, `sms`, `gg` and `md`.**
 
 **Assembling needs no assembler installed** (doc 06), because the assemblers are
 ours: `packages/core/src/asm/` is TypeScript and holds one for the SM83, one for
-the 6502 and one for the Z80, so the page compiles the game to whichever the
-chosen console runs, exactly as the CLI does. The art travels the same way — the
+the 6502, one for the Z80 and one for the 68000, so the page compiles the game to
+whichever the chosen console runs, exactly as the CLI does. The art travels the same way — the
 page hands the build
 raw SVG text and `@demake/core`'s own rasteriser turns it into tiles, rather than
 the browser's SVG renderer, which would antialias differently from Node's and put
@@ -140,10 +140,11 @@ with a backend, and compares hashes — and the pane offers them as a download.
 Once per console is the point: they share a compiler and share nothing below it.
 Different instruction set, a different fitter for the art, a different cartridge
 wrapper. A page that agreed with the CLI about the Game Boy would say nothing
-about whether it agreed about the NES or the Master System.
+about whether it agreed about the NES, the Master System or the Mega Drive.
 
 **Playing it needs an emulator**, and they are ours: `@demake/dmg`,
-`@demake/nes`, `@demake/sms` and `@demake/snes`, each around a thousand lines of
+`@demake/nes`, `@demake/sms`, `@demake/snes` and `@demake/md`, each around a
+thousand lines of
 dependency-free TypeScript. Self-hosting a WASM core would have satisfied the never-from-a-CDN
 rule, but not the reason behind it — a core we cannot read is a dependency we
 cannot trust with the claim "this is what the hardware does". Writing them was
@@ -152,11 +153,12 @@ headless machine for each console anyway, and one core now serves both jobs.
 Together they are in the entry-adjacent game chunk rather than the worker,
 because playing a cartridge is what the *page* does with one.
 
-All four make sound, and the fourth makes it the hard way: the Super Nintendo's
+All five make sound, and two of them make it the hard way. The Super Nintendo's
 chip belongs to a second processor with its own program, so what plays in the page
-is the SPC700 driver the cartridge uploaded at boot — generated for that game,
-running on its own timer, and rendered through the same `StreamSink` the other
-three use. The page still synthesizes nothing.
+is the SPC700 driver the cartridge uploaded at boot — generated for that game and
+running on its own timer. The Mega Drive has *two* chips on different clocks, so
+the pane builds a sink apiece and sums them. Both arrive through the same
+`StreamSink` the other three use, and the page still synthesizes nothing.
 
 **Everything on screen describes the cartridge, not the picker.** The selector
 changes the *cartridge*, and a cartridge takes a demake to arrive — seconds, when
@@ -217,7 +219,10 @@ the only thing that can take it away is a browser that will not give the page an
 
 The ROM pane plays the cartridge's own sound, and every sample of it comes out of
 `@demake/chip`'s model of that console's chip — the Game Boy's APU, the NES's
-2A03 or the Sega's SN76489, whichever cartridge is running, and in every case the
+2A03, the SN76489 on either Sega machine, or *both* of a Mega Drive's — six
+four-operator FM voices and four tone generators, which is the one console here
+that hands the player two chips on two clocks and has them summed — and in every
+case the
 same model the audio pipeline renders WAVs with and the same one the conformance
 suite diffs register writes against. Which model is playing follows the cartridge
 for the same reason the core does, and the stream is rebuilt against *that chip's*
@@ -362,7 +367,7 @@ bundled track or effect on arrival instead, so every section demos itself.
   Contrast is always set with an explicit colour, **never with opacity** — a
   translucent foreground composites against whatever is behind it, which is both
   a measured contrast failure and genuinely harder to read.
-- Budget: < 310 KB JS gzipped before WASM codecs (lazy-loaded per input format);
+- Budget: < 355 KB JS gzipped before WASM codecs (lazy-loaded per input format);
   Lighthouse ≥ 95 across the board, checked in CI. The figure is a **sum over the
   whole site** — entry chunk, all five lazy sections, both workers — which is more
   than any one visit costs: opening the heaviest section downloads about 150 KB.

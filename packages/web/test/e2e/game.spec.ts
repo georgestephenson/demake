@@ -476,12 +476,58 @@ test("builds and plays a real Super Nintendo ROM in the page", async ({ page }) 
 
   // And it has sound, on the console where that is a second computer: the button
   // plays the SPC700 driver the cartridge uploaded, through the same `StreamSink`
-  // the other three use. Turning it on must not stop the machine.
+  // the other four use. Turning it on must not stop the machine.
   const toggle = page.getByTestId("rom-sound");
   await expect(toggle).toBeEnabled();
   await toggle.click();
   await expect(toggle).toHaveText("Sound on");
   await expect.poll(async () => romPainted(page), { timeout: 15_000 }).toBeGreaterThan(0);
+});
+
+test("builds and plays a real Mega Drive ROM in the page", async ({ page }) => {
+  // Demaking a full-screen picture is the whole `prep` tournament, and this
+  // console's is the biggest of them: 320x224 against a Game Boy's 160x144.
+  test.slow();
+  await page.goto("/#section=game");
+  const canvas = page.getByTestId("rom-canvas");
+  await expect(canvas).toBeVisible();
+
+  await page.getByTestId("console-select").selectOption("md");
+  await expect(canvas).toHaveAttribute("data-console", "md", { timeout: 150_000 });
+
+  // A fourth cartridge shape: half a megabyte with its header *outside* the
+  // program, on the widest screen in the set.
+  await expect(page.getByTestId("rom-stat")).toContainText("512 KiB");
+  await expect(page.getByTestId("rom-download")).toContainText(".md");
+  await expect(canvas).toHaveAttribute("width", "320");
+  await expect(canvas).toHaveAttribute("height", "224");
+
+  // It boots to the title screen, and a press starts the game. This assertion
+  // is the one this console needs most: its VDP draws when it is *asked* to
+  // rather than as the beam passes, so a frame loop that never asks plays the
+  // game perfectly behind a canvas that still holds the blank frame boot
+  // rendered — which is exactly what it did.
+  await expect.poll(async () => romPainted(page), { timeout: 8000 }).toBeGreaterThan(0);
+  const title = await romPainted(page);
+  await page.locator(".rom-canvas").click();
+  await page.keyboard.press("KeyZ");
+  await expect.poll(async () => romPainted(page), { timeout: 8000 }).not.toBe(title);
+  await expect(page.getByTestId("rom-stat")).toContainText("per tick");
+
+  // And it is in colour, which no amount of Game Boy green would produce.
+  expect(await romColors(page)).toBeGreaterThan(4);
+
+  // And it has sound — from *two* chips, which no other console here does. Six
+  // four-operator FM voices and four tone generators run on different clocks, so
+  // the pane builds a sink per chip and sums them; a mistake there stops the
+  // machine rather than sounding wrong, because with sound on the audio device
+  // is what clocks the emulator.
+  const toggle = page.getByTestId("rom-sound");
+  await expect(toggle).toBeEnabled();
+  await toggle.click();
+  await expect(toggle).toHaveText("Sound on");
+  await expect.poll(async () => romPainted(page), { timeout: 8000 }).toBeGreaterThan(0);
+  await expect(page.getByTestId("rom-stat")).toContainText("per tick", { timeout: 8000 });
 });
 
 test("opens on the cartridge, and shows the interpreter when asked", async ({ page }) => {

@@ -8,21 +8,24 @@
  * borrows a channel from the music and gives it back, and none of that is
  * allowed to change a single register write.
  *
- * **And it runs on four drivers**, which is what makes it a proof of the
- * *contract* rather than of one emitter. They share nothing below the packed
- * format: an SM83 player on a programmable timer at 120 Hz, a 6502 player on the
- * picture's own interrupt at 60, a Z80 player on the Sega VDP's frame interrupt
- * writing an I/O port rather than an address, and an SPC700 player that is not on
- * the console's processor at all — a second computer, handed its program at boot
- * and keeping its own 125 Hz. `NR51` merged, `$4015` merged, `KON` *masked*
- * because it is a pulse rather than a state, and — on a Master System — no shared
+ * **And it runs on every console with a driver**, which is what makes it a proof
+ * of the *contract* rather than of one emitter. They share nothing below the
+ * packed format: an SM83 player on a programmable timer at 120 Hz, a 6502 player
+ * on the picture's own interrupt at 60, a Z80 player on the Sega VDP's frame
+ * interrupt writing an I/O port rather than an address, a 68000 player storing a
+ * byte to an address, and an SPC700 player that is not on the console's processor
+ * at all — a second computer, handed its program at boot and keeping its own
+ * 125 Hz. `NR51` merged, `$4015` merged, `KON` *masked* because it is a pulse
+ * rather than a state, and — on a Master System and a Mega Drive — no shared
  * register to merge at all. Four writes to silence a Game Boy channel, one bit to
  * silence an NES's, one attenuation latch to silence a PSG's, one `GAIN` of zero
- * to silence an S-DSP voice. And on the Sega the *channel* is not in the register
- * number but in the data byte, latched across writes, so "which voice does this
- * write belong to" is a question with a running answer.
+ * to silence an S-DSP voice. And on the three machines that share a chip the
+ * *channel* is not in the register number but in the data byte, latched across
+ * writes, so "which voice does this write belong to" is a question with a running
+ * answer — the same question, answered by the same code, from two instruction
+ * sets.
  *
- * What all four share is the only thing doc 16 promises — on tick N the driver
+ * What all of them share is the only thing doc 16 promises — on tick N the driver
  * performs exactly the writes `ChipScript.ticks[N]` lists, in order — so the
  * battery below is written once and pointed at each machine in turn.
  *
@@ -32,7 +35,7 @@
  * cartridge under test has to be the cartridge that ships.
  *
  * It runs with no toolchain and no emulator install — the assemblers are ours
- * and so are the four cores — which is what makes an exact audio proof something
+ * and so are the cores — which is what makes an exact audio proof something
  * `pnpm test` can do on every change.
  */
 
@@ -42,13 +45,15 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildGameAudio,
+  mdChannelTag,
+  buildMdGameAudio,
   buildNesGameAudio,
   buildSmsGameAudio,
   buildSpcGameAudio,
   gbChannelOf,
   nesChannelOf,
+  psgChannelTag,
   sdspChannelTag,
-  smsChannelTag,
   type ChannelTag,
   type ChipScript,
   type GameEffect,
@@ -63,6 +68,7 @@ import {
 } from "@demake/chip";
 import { megaduckRegister } from "@demake/core";
 import { Gameboy } from "@demake/dmg";
+import { Md } from "@demake/md";
 import { Nes } from "@demake/nes";
 import { Sms } from "@demake/sms";
 import { Snes } from "@demake/snes";
@@ -72,6 +78,7 @@ import { getProfile } from "../src/profiles.js";
 import { bindAudio, type BoundAudio } from "../src/codegen/audio.js";
 import type { BuiltRom } from "../src/codegen/backend.js";
 import { buildGbRom } from "../src/codegen/gb.js";
+import { buildMdRom } from "../src/codegen/md.js";
 import { buildNesRom } from "../src/codegen/nes.js";
 import { buildSmsRom } from "../src/codegen/sms.js";
 import { buildSnesRom } from "../src/codegen/snes.js";
@@ -87,8 +94,8 @@ const games = join(fixtures, "games");
 interface Machine {
   /** Run one instruction, and say where the program counter ended up. */
   step(): number;
-  /** Everything the chip receives, observed rather than intercepted. */
-  tap(listener: (reg: number, value: number) => void): void;
+  /** Everything the chips receive, observed rather than intercepted. */
+  tap(listener: (reg: number, value: number, chip: number) => void): void;
   setButtons(down: readonly string[]): void;
   runFrame(): void;
   listen(sink: SampleSink | undefined): void;
@@ -96,7 +103,7 @@ interface Machine {
   /**
    * Call `onEnter` every time the driver reaches `address`, where a core can.
    *
-   * Absent on three of these consoles because it is not needed: one host step is
+   * Absent on every console but one because it is not needed: one host step is
    * one instruction of the processor the driver runs on, so sampling the program
    * counter afterwards sees every arrival. On the Super Nintendo the driver runs
    * on a processor with its own clock, and one step of the game can advance it by
@@ -292,7 +299,7 @@ const TARGETS: readonly Target[] = [
     mergeReg: null,
     mergeHelper: "stereo-merge",
     ratio: 0.5,
-    tag: smsChannelTag,
+    tag: psgChannelTag,
     tickAddress: cartridgeTick,
     async build(source, dir) {
       const program = compile(source, { profile: getProfile("sms"), levels: levelsIn(dir) });
@@ -352,10 +359,45 @@ const TARGETS: readonly Target[] = [
       };
     },
   },
+  {
+    id: "md",
+    name: "Mega Drive",
+    clockHz: SN76489_CLOCK_HZ,
+    // The Master System's chip, and the Master System's answer: four independent
+    // attenuation latches and no byte carrying more than one of them. The Game
+    // Gear's stereo latch is the one place this chip grows a shared register, and
+    // it is not on this console — the panning here lives in the FM half, which
+    // `demake build` does not emit.
+    mergeReg: null,
+    mergeHelper: "stereo-merge",
+    ratio: 0.5,
+    // All ten voices, unlike the driver's own tag: the packed run format numbers
+    // only the stealable ones because its field is four bits, and nothing here
+    // is packed — this only has to give one voice one number.
+    tag: () => mdChannelTag([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])(),
+    async build(source, dir) {
+      const program = compile(source, { profile: getProfile("md"), levels: levelsIn(dir) });
+      const assets = assetsIn(dir);
+      const built = await buildMdRom(program, { assets });
+      // Work RAM the allocator set aside, which is the address the cartridge
+      // itself was built against — asking the layout is how the two stay one.
+      const state = built.layout.audio as number;
+      const bound = await bindAudio(program, assets, {
+        build: (tracks, effects) =>
+          buildMdGameAudio({ tracks, effects: effects as GameEffect[], state }),
+      });
+      return { built, bound };
+    },
+    tickAddress: cartridgeTick,
+    boot(rom) {
+      const machine = new Md(rom);
+      return wrap(machine);
+    },
+  },
 ];
 
-/** All four cores answer the same five questions; this is the adapter, once. */
-function wrap(machine: Gameboy | Nes | Sms | Snes): Machine {
+/** Every core answers the same five questions; this is the adapter, once. */
+function wrap(machine: Gameboy | Nes | Sms | Snes | Md): Machine {
   return {
     step: () => {
       machine.stepInstruction();
@@ -366,6 +408,13 @@ function wrap(machine: Gameboy | Nes | Sms | Snes): Machine {
     tap: (listener) => {
       // Each core names it after its own chip; the shape is the same, and so is
       // the promise — it observes, it does not intercept.
+      if (machine instanceof Md) {
+        // Two chips, and the tag has to know which: an FM bus port and a PSG
+        // write are both "register 0" and mean nothing alike.
+        machine.ymTap = (reg, value) => listener(reg, value, 0);
+        machine.psgTap = (reg, value) => listener(reg, value, 1);
+        return;
+      }
       if (machine instanceof Sms) machine.psgTap = listener;
       else if (machine instanceof Snes) machine.dspTap = listener;
       else machine.apuTap = listener;
@@ -403,10 +452,12 @@ function build(target: Target, source: string, dir = fixtures) {
   return made;
 }
 
-/** One register write the chip received. */
+/** One register write a chip received. */
 interface Write {
   reg: number;
   value: number;
+  /** Which chip, for the one console with two. */
+  chip?: number;
 }
 
 /**
@@ -430,7 +481,9 @@ function capture(
     current = [];
     groups.push(current);
   };
-  machine.tap((reg, value) => current?.push({ reg, value }));
+  machine.tap((reg, value, chip) =>
+    current?.push(chip === undefined || chip === 0 ? { reg, value } : { reg, value, chip }),
+  );
   // Where the core can say when the driver entered its tick, it says so — and
   // where it cannot, one host step is one instruction and the program counter
   // afterwards is the same answer.
@@ -448,7 +501,9 @@ function capture(
 }
 
 function show(writes: readonly Write[]): string {
-  return writes.map((w) => `$${hex(w.reg)}=$${hex(w.value)}`).join(" ");
+  return writes
+    .map((w) => `${w.chip ? `c${w.chip}:` : ""}$${hex(w.reg)}=$${hex(w.value)}`)
+    .join(" ");
 }
 
 function hex(value: number): string {
@@ -539,7 +594,7 @@ for (const target of TARGETS) {
       // latching chip the filter cannot be a predicate on one write.
       const mine = (writes: readonly Write[]) => {
         const tag = target.tag();
-        return writes.filter((write) => tag(write.reg, write.value) === owned);
+        return writes.filter((write) => tag(write.reg, write.value, write.chip ?? 0) === owned);
       };
 
       // Find where the effect started: the first tick carrying its opening writes.
@@ -566,7 +621,7 @@ for (const target of TARGETS) {
       const window = groups.slice(start, start + effect.ticks.length + 60).flat();
       const others = target.tag();
       const elsewhere = window
-        .map((write) => others(write.reg, write.value))
+        .map((write) => others(write.reg, write.value, write.chip ?? 0))
         .filter((channel) => channel !== owned && channel !== 0);
       expect(elsewhere.length, "the music stopped while the effect played").toBeGreaterThan(0);
 
@@ -764,7 +819,7 @@ function channelOfEffect(target: Target, effect: ChipScript): number {
   // latching chip an early write is what *gives* a later one its channel.
   for (const tick of effect.ticks) {
     for (const write of tick.writes) {
-      const channel = tag(write.reg, write.value);
+      const channel = tag(write.reg, write.value, write.chip ?? 0);
       if (found === 0) found = channel;
     }
   }
@@ -844,19 +899,54 @@ describe("the example library", async () => {
    * fixture, in exchange for a title screen fitted to the tiles it actually needs
    * rather than to half the bank.
    */
-  const BUILD_TIMEOUT = 240_000;
+  const BUILD_TIMEOUT = 120_000;
+
+  /**
+   * And the Mega Drive is slower still, for the same reason one layer along.
+   *
+   * A fit's cost is its pixels, and this console has the biggest screen in the
+   * set: 320x224 against a Master System's 256x192 and a Game Boy's 160x144. One
+   * backdrop through the tournament is around twenty-five seconds here — nearly
+   * all of it inside `latticeKmeans`, which is the fit doing its job rather than
+   * a redundant scan — so a two-backdrop game with objects is minutes. The
+   * number is generous rather than tight because what it guards against is a
+   * hang, and a build that got half again slower should be caught by someone
+   * reading a duration rather than by a red test with nothing to say about why.
+   */
+  const TIMEOUT: Readonly<Record<string, number>> = { md: 360_000, snes: 240_000 };
+
+  /**
+   * How much of the library each console sweeps.
+   *
+   * All of it, except on the console with nothing to overflow. This sweep exists
+   * to catch a cartridge that no longer fits — that is what the headroom
+   * assertion is — and a Mega Drive game is twenty-odd kilobytes of a
+   * half-megabyte image. Seven whole art-and-audio builds to assert that 487 KiB
+   * is more than one is eight minutes of `pnpm test` buying nothing, so it builds
+   * the shooter alone: the tightest fixture everywhere else, with two demade
+   * backdrops, nine aliens, a theme and four effects. What the other six would
+   * have covered is covered elsewhere — the register-level battery above builds a
+   * real game for this console, `md-rom.test.ts` demakes real art for it, and
+   * `rom.test.ts` traces all seven.
+   *
+   * The day this console grows a mapper story, or an FM driver with a schedule
+   * ten times the size of a PSG one, this is the entry to delete.
+   */
+  const SWEEP: Readonly<Record<string, readonly string[]>> = {
+    md: ["shooter.dmt"],
+    // The Super Nintendo, for the same reason arrived at from the other end.
+    // Demaking a 256x224 picture into seven sixteen-colour sub-palettes is
+    // thirty seconds of tournament against five, so seven games' worth would be
+    // most of `pnpm test`. The shooter because it is the tightest in the
+    // library, and a budget can only decide a cartridge already near the edge.
+    // `rom.test.ts` builds every fixture for this console regardless.
+    snes: ["shooter.dmt"],
+  };
 
   for (const target of TARGETS) {
-    // The Super Nintendo takes one fixture rather than seven, for the reason the
-    // colour case below takes one: demaking a 256x224 picture into seven
-    // sixteen-colour sub-palettes is thirty seconds of tournament against five,
-    // so seven games' worth would be most of `pnpm test`. The shooter because it
-    // is the tightest in the library — two demade backdrops, nine aliens, a theme
-    // and four effects — and a budget can only decide a cartridge already near
-    // the edge. `rom.test.ts` builds every fixture for this console regardless.
-    const sweep = target.id === "snes" ? cases.filter(([file]) => file === "shooter.dmt") : cases;
-    for (const [file, dir] of sweep) {
+    for (const [file, dir] of cases) {
       if (OVER_BUDGET[target.id]?.includes(file)) continue;
+      if (SWEEP[target.id] !== undefined && !SWEEP[target.id]?.includes(file)) continue;
       it(
         `${file} fits in a ${target.name} cartridge with its music and effects`,
         async () => {
@@ -876,7 +966,7 @@ describe("the example library", async () => {
           // bytes turns the next code-generator change into a mystery.
           expect(built.stats.free).toBeGreaterThan(HEADROOM[target.id] ?? 1024);
         },
-        BUILD_TIMEOUT,
+        TIMEOUT[target.id] ?? BUILD_TIMEOUT,
       );
     }
 
@@ -887,7 +977,7 @@ describe("the example library", async () => {
           const source = readFileSync(join(games, file), "utf8");
           await expect(build(target, source, games)).rejects.toThrowError(/E_GAME_TOO_LARGE|holds/);
         },
-        BUILD_TIMEOUT,
+        TIMEOUT[target.id] ?? BUILD_TIMEOUT,
       );
     }
   }

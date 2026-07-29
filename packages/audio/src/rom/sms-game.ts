@@ -11,11 +11,12 @@
  *     divided by four; an SN76489 has one write port and puts the channel in the
  *     top bits of the byte — and only in *some* bytes, because a byte with bit 7
  *     clear continues whatever the byte before it selected. So the packer is
- *     handed a tag that carries a latch ({@link smsChannelTag}), and preemption
+ *     handed a tag that carries a latch, and preemption
  *     skips whole runs rather than writes: every run opens with a latch byte, so
  *     a skipped run takes its own selection with it and the next one that is
  *     written selects again before writing anything. That property is checked
- *     rather than assumed — see {@link checkLatchDiscipline}.
+ *     rather than assumed. Both are `psg.ts`'s, because both are the chip's
+ *     rather than this processor's.
  *   - **The shared register exists only on one of the two machines.** A Master
  *     System has nothing two streams both have to write, so it emits no merge
  *     path at all. A Game Gear has the stereo port: one byte carrying every
@@ -46,9 +47,11 @@ import { AsmZ80, label } from "@demake/core";
 import type { ChipScript, Rational } from "../chipscript.js";
 import { bindingFor } from "../binding/registry.js";
 
-import { packScript, PackError, type ChannelTag, type DriverData } from "./data.js";
+import type { DriverData } from "./data.js";
 import { AudioRomError } from "./gb.js";
 import type { GameEffect } from "./gb-game.js";
+import { checkLatchDiscipline, psgAttenuationOff, psgChannelTag, PSG_STEREO_REG } from "./psg.js";
+import { clampByte, MAX_PENDING, pack, rateHz, restrict, shapeOf, stripBoot } from "./shared.js";
 import { emitStream, emitStreamData, type SmsStreamState } from "./sms-driver.js";
 
 /** The value that stops the music, rather than starting a track. */
@@ -65,15 +68,6 @@ export const STOP = 0xff;
 const PORT = { psg: 0x7f, stereo: 0x06 } as const;
 
 /**
- * The schedule register that carries the Game Gear's panning.
- *
- * `@demake/chip`'s SN76489 models the stereo latch as register `$06` and the
- * write port as register `0`, which is the numbering `binding/psg.ts` emits — so
- * this is the schedule's own name for it, not a port.
- */
-const STEREO_REG = 0x06;
-
-/**
  * How a schedule's register number reaches the packed data.
  *
  * The port, because a Z80 writes a chip with `out (c), a` and the packed byte is
@@ -81,33 +75,7 @@ const STEREO_REG = 0x06;
  * high-RAM offset — and the write loop pays nothing to translate.
  */
 function portOf(reg: number): number {
-  return reg === STEREO_REG ? PORT.stereo : PORT.psg;
-}
-
-/**
- * A channel tag with the chip's latch in it.
- *
- * Fresh per schedule, because the latch is hardware state that runs *through* a
- * stream: the third byte of a tone write means nothing without the two before it.
- * `data.ts` asks for a factory for exactly this reason.
- *
- * The mapping is the chip's own encoding. A byte with bit 7 set is a latch:
- * `%1cctdddd`, where `cc` selects one of four channels and `t` says whether the
- * rest is a volume or a tone/noise value — and it *is* the write, for a volume or
- * a noise-control change. A byte with bit 7 clear is the high six bits of
- * whatever the last latch selected. The stereo latch is a different device
- * entirely and belongs to no single channel, which is what makes it a merge.
- */
-export function smsChannelTag(): ChannelTag {
-  let latched = 0;
-  return (reg: number, value: number): number => {
-    if (reg === STEREO_REG) return 0;
-    // A latch byte moves the selection and *is* a write on it; a data byte only
-    // reads it. Which is why there is one return: the answer is the selection
-    // either way, and the only difference is whether this byte set it.
-    if ((value & 0x80) !== 0) latched = (value >> 5) & 0x03;
-    return 1 << latched;
-  };
+  return reg === PSG_STEREO_REG ? PORT.stereo : PORT.psg;
 }
 
 /** What the game hands the driver builder. */
@@ -240,9 +208,9 @@ export function buildSmsGameAudio(input: SmsGameAudioInput): SmsGameAudio {
   const shared = input.tracks.length > 0 && input.effects.length > 0;
   const packOptions = shared
     ? {
-        channelOf: smsChannelTag,
+        channelOf: psgChannelTag,
         port: portOf,
-        ...(stereo ? { mergeRegs: new Set([STEREO_REG]) } : {}),
+        ...(stereo ? { mergeRegs: new Set([PSG_STEREO_REG]) } : {}),
       }
     : { port: portOf };
 
@@ -250,7 +218,7 @@ export function buildSmsGameAudio(input: SmsGameAudioInput): SmsGameAudio {
   const tracks = input.tracks.map((script) => stripBoot(script, boot));
   const effects = input.effects.map((effect) => {
     const owned = 1 << effect.channel;
-    const result = restrict(stripBoot(effect.script, boot), owned);
+    const result = restrict(stripBoot(effect.script, boot), owned, psgChannelTag());
     restricted += result.dropped;
     return result.script;
   });
@@ -262,7 +230,7 @@ export function buildSmsGameAudio(input: SmsGameAudioInput): SmsGameAudio {
 
   const state = layout(input.state);
   const stealable = input.effects.reduce((bits, effect) => bits | (1 << effect.channel), 0);
-  const bootStereo = boot.find((write) => write.reg === STEREO_REG)?.value ?? 0xff;
+  const bootStereo = boot.find((write) => write.reg === PSG_STEREO_REG)?.value ?? 0xff;
   const merging = shared && stereo;
 
   const helpers: string[] = [];
@@ -390,119 +358,6 @@ export function resolveSmsClock(script: ChipScript): SmsGameAudio["clock"] {
 }
 
 // --- the schedules, as the ROM will perform them -----------------------------
-
-/**
- * Check that no tick leaves a data byte without the latch that gives it meaning.
- *
- * The whole of preemption on this chip rests on it: a run is a maximal group of
- * consecutive writes that agree about which channel they belong to, so a data
- * byte can only ever *start* a run if it is the first write of a tick — and a
- * skipped run whose latch was in the tick before it would leave the next stream's
- * selection pointing at the wrong channel. The binding never emits one (it writes
- * a channel's registers together, leading with the latch), which is exactly why
- * this is checked rather than worked around: if it ever stops being true, the
- * symptom is a note on the wrong voice several ticks later.
- */
-function checkLatchDiscipline(script: ChipScript): void {
-  for (let tick = 0; tick < script.ticks.length; tick += 1) {
-    let latched = false;
-    for (const write of script.ticks[tick]?.writes ?? []) {
-      if (write.reg === STEREO_REG) continue;
-      if ((write.value & 0x80) !== 0) {
-        latched = true;
-        continue;
-      }
-      if (!latched) {
-        throw new AudioRomError(
-          "E_PSG_LATCH",
-          `tick ${tick} of an audio schedule opens with a data byte and no latch in front of it`,
-          "this chip carries the channel in the latch byte, so a driver could not tell which voice the write belongs to; this is a bug in the binding, not in the track.",
-        );
-      }
-    }
-  }
-}
-
-/**
- * A schedule with the chip's initialisation taken off its first tick.
- *
- * The ROM performs those writes once, at boot. Leaving them at the head of every
- * stream would mean an effect silenced all four channels each time it fired.
- */
-function stripBoot(
-  script: ChipScript,
-  boot: readonly { reg: number; value: number }[],
-): ChipScript {
-  const ticks = script.ticks.map((tick) => ({ ...tick, writes: [...tick.writes] }));
-  const head = ticks[0];
-  if (head === undefined) return script;
-  const matches = boot.every((write, index) => {
-    const got = head.writes[index];
-    return got !== undefined && got.reg === write.reg && got.value === write.value;
-  });
-  if (!matches) {
-    throw new AudioRomError(
-      "E_BOOT_PREFIX",
-      "an audio schedule does not open with the chip initialisation the ROM performs at boot",
-      "this is a bug in the ROM builder, not in the track.",
-    );
-  }
-  ticks[0] = { ...head, writes: head.writes.slice(boot.length) };
-  return { ...script, ticks };
-}
-
-/**
- * A schedule cut down to the channels it is allowed to touch.
- *
- * An effect borrows one channel from the music; every write it makes to another
- * one would be the music's note being silenced. The stereo latch stays, because
- * it is merged rather than stored and nothing else survives the boot strip.
- *
- * The tag is fresh and sees *every* write, dropped ones included — the latch is
- * the schedule's own state, and skipping the writes that set it would tag the
- * survivors from a selection the chip never made.
- */
-function restrict(script: ChipScript, owned: number): { script: ChipScript; dropped: number } {
-  const tag = smsChannelTag();
-  let dropped = 0;
-  const ticks = script.ticks.map((tick) => {
-    const writes = tick.writes.filter((write) => {
-      const channels = tag(write.reg, write.value);
-      const keep = channels === 0 || (channels & owned) !== 0;
-      if (!keep) dropped += 1;
-      return keep;
-    });
-    return { ...tick, writes };
-  });
-  return { script: { ...script, ticks }, dropped };
-}
-
-/**
- * The shape one player has to cope with, across every stream it plays.
- *
- * A player is emitted once and walks any of its streams, so what it needs is the
- * *union* of what they ask for: one track with a rest in it means the rest path
- * is emitted, and every track can then use one.
- */
-function shapeOf(streams: readonly DriverData[]): DriverData {
-  const base = streams[0] as DriverData;
-  return {
-    ...base,
-    hasRests: streams.some((one) => one.hasRests),
-    hasMerges: streams.some((one) => one.hasMerges),
-    hasOrder: streams.some((one) => one.hasOrder),
-    oneShot: streams.some((one) => one.oneShot),
-  };
-}
-
-function pack(script: ChipScript, options: Parameters<typeof packScript>[1]): DriverData {
-  try {
-    return packScript(script, options);
-  } catch (error) {
-    if (error instanceof PackError) throw new AudioRomError(error.code, error.message, error.hint);
-    throw error;
-  }
-}
 
 // --- state -------------------------------------------------------------------
 
@@ -643,9 +498,6 @@ function emitClock(asm: AsmZ80, state: Layout, ticksPerFrame: number): void {
   for (let tick = 0; tick < ticksPerFrame; tick += 1) asm.call("AudioTick");
   asm.jp("AudioService");
 }
-
-/** Frames the driver may fall behind before it stops counting them. */
-const MAX_PENDING = 4;
 
 /**
  * One driver tick: take what the game asked for, then step each stream.
@@ -816,7 +668,7 @@ function emitRelease(asm: AsmZ80, state: Layout, stealable: number, merging: boo
     const skip = `AudioRelease${channel}`;
     asm.bit(channel, "c");
     asm.jr(skip, "z");
-    asm.ldn("a", attenuationOff(channel));
+    asm.ldn("a", psgAttenuationOff(channel));
     asm.outN(PORT.psg);
     asm.label(skip);
   }
@@ -835,21 +687,10 @@ function emitRelease(asm: AsmZ80, state: Layout, stealable: number, merging: boo
 function emitSilence(asm: AsmZ80): void {
   asm.label("AudioSilence");
   for (let channel = 0; channel < 4; channel += 1) {
-    asm.ldn("a", attenuationOff(channel));
+    asm.ldn("a", psgAttenuationOff(channel));
     asm.outN(PORT.psg);
   }
   asm.ret();
-}
-
-/**
- * The latch byte that cuts one channel: `%1cc1 1111`.
- *
- * Attenuation, not volume — fifteen is silence on this chip and zero is full
- * scale, which is the one place its register map reads backwards from every other
- * chip in the set.
- */
-function attenuationOff(channel: number): number {
-  return 0x90 | (channel << 5) | 0x0f;
 }
 
 /**
@@ -890,12 +731,4 @@ function emitStereoMerge(asm: AsmZ80, state: Layout): void {
   asm.alu("or", "e");
   asm.outN(PORT.stereo);
   asm.ret();
-}
-
-function rateHz(rate: Rational): string {
-  return (rate.num / rate.den).toFixed(3);
-}
-
-function clampByte(value: number): number {
-  return Math.max(0, Math.min(255, Math.round(value)));
 }

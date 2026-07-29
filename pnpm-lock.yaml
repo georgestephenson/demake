@@ -94,6 +94,9 @@ importers:
       '@demake/dmg':
         specifier: workspace:*
         version: link:../dmg
+      '@demake/md':
+        specifier: workspace:*
+        version: link:../md
       '@demake/nes':
         specifier: workspace:*
         version: link:../nes
@@ -109,6 +112,16 @@ importers:
       '@demake/chip':
         specifier: workspace:*
         version: link:../chip
+      '@demake/core':
+        specifier: workspace:*
+        version: link:../core
+
+  packages/md:
+    dependencies:
+      '@demake/chip':
+        specifier: workspace:*
+        version: link:../chip
+    devDependencies:
       '@demake/core':
         specifier: workspace:*
         version: link:../core
@@ -162,6 +175,9 @@ importers:
       '@demake/dmg':
         specifier: workspace:*
         version: link:../dmg
+      '@demake/md':
+        specifier: workspace:*
+        version: link:../md
       '@demake/nes':
         specifier: workspace:*
         version: link:../nes
