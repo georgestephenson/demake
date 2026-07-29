@@ -32,6 +32,13 @@
  *     external RAM on a 16-bit bus with two. The bus charges for the difference,
  *     so the speed figure a build reports reflects it.
  *
+ * Two gaps, named rather than left to be discovered: the horizontal blank has no
+ * flag and raises no interrupt, and the window, blend and mosaic registers are
+ * not decoded. Both are hardware `demake build` programs nothing of, and both
+ * are a raster effect the language has no way to ask for — so they are the same
+ * gap the affine modes are, on the same terms as `@demake/snes`'s missing
+ * background layers (AGENTS.md §Iron rules).
+ *
  * Sources: GBATEK — *GBA Memory Map*, *DMA Transfers*, *Timers*, *Interrupt
  * Control*, *GBA Sound Controller* (https://problemkaputt.de/gbatek.htm).
  */
