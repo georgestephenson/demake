@@ -444,6 +444,46 @@ test("builds and plays a real Master System ROM in the page", async ({ page }) =
   await expect(page.getByTestId("rom-sound")).toBeEnabled();
 });
 
+test("builds and plays a real Super Nintendo ROM in the page", async ({ page }) => {
+  // A 256x224 picture fitted into seven sixteen-colour sub-palettes is three
+  // times any other console's screen, and the whole `prep` tournament runs on it.
+  test.slow();
+  await page.goto("/#section=game");
+  const canvas = page.getByTestId("rom-canvas");
+  await expect(canvas).toBeVisible();
+
+  await page.getByTestId("console-select").selectOption("snes");
+  await expect(canvas).toHaveAttribute("data-console", "snes", { timeout: 240_000 });
+
+  // A fourth cartridge shape: two 32 KiB banks, the second of which no
+  // instruction addresses — it holds the tile art and, above it, the program the
+  // sound processor is handed at boot.
+  await expect(page.getByTestId("rom-stat")).toContainText("64 KiB");
+  await expect(page.getByTestId("rom-download")).toContainText(".sfc");
+  await expect(canvas).toHaveAttribute("width", "256");
+  await expect(canvas).toHaveAttribute("height", "224");
+
+  // It boots to the title screen, and a press starts the game. The boot is
+  // longer here than on any other console because the cartridge hands the sound
+  // processor its whole program four mailbox bytes at a time before the screen
+  // comes on.
+  await expect.poll(async () => romPainted(page), { timeout: 15_000 }).toBeGreaterThan(0);
+  const title = await romPainted(page);
+  await page.locator(".rom-canvas").click();
+  await page.keyboard.press("KeyZ");
+  await expect.poll(async () => romPainted(page), { timeout: 15_000 }).not.toBe(title);
+  await expect(page.getByTestId("rom-stat")).toContainText("per tick");
+
+  // And it has sound, on the console where that is a second computer: the button
+  // plays the SPC700 driver the cartridge uploaded, through the same `StreamSink`
+  // the other four use. Turning it on must not stop the machine.
+  const toggle = page.getByTestId("rom-sound");
+  await expect(toggle).toBeEnabled();
+  await toggle.click();
+  await expect(toggle).toHaveText("Sound on");
+  await expect.poll(async () => romPainted(page), { timeout: 15_000 }).toBeGreaterThan(0);
+});
+
 test("builds and plays a real Mega Drive ROM in the page", async ({ page }) => {
   // Demaking a full-screen picture is the whole `prep` tournament, and this
   // console's is the biggest of them: 320x224 against a Game Boy's 160x144.

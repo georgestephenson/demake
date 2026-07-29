@@ -119,6 +119,17 @@ export interface ChipScript {
   loopTick: number;
   channels: ChannelSpan[];
   timing: TimingReport;
+  /**
+   * The sample RAM a schedule needs, where the chip plays samples rather than
+   * generating them.
+   *
+   * The Super Nintendo's, and only its: "play sample 3" means nothing without
+   * the samples, so a schedule for a sample player is only half an artifact. The
+   * register stream is still the whole of the compliance contract — it is what
+   * the driver must write — but a *render* needs this as well, which is a fact
+   * about sample hardware rather than a leak in the representation.
+   */
+  sampleRam?: Uint8Array;
   budgets: {
     /** Total register writes, the rough proxy for driver data size. */
     writes: number;

@@ -4,18 +4,20 @@
  * Doc 13 §D5 says the browser must never need a toolchain, and it does not: the
  * assemblers are ours and written in TypeScript, so the page *compiles* the game
  * — to SM83 for a Game Boy, to 6502 for an NES, to Z80 for a Master System, to
- * 68000 for a Mega Drive — the same way the CLI does and gets the same bytes. What the Download button hands you is byte-identical to
- * what `demake build` writes on the command line, which is the doc-07 parity
- * contract restated for games.
+ * 65816 for a Super Nintendo, to 68000 for a Mega Drive — the same way the CLI
+ * does and gets the same bytes. What the Download button hands you is
+ * byte-identical to what `demake build` writes on the command line, which is the
+ * doc-07 parity contract restated for games.
  *
- * The emulators are `@demake/dmg`, `@demake/nes`, `@demake/sms` and `@demake/md`,
- * ours, for the reason doc 07 gives: a core fetched from a CDN is forbidden, and a WASM core we
- * cannot read would be the same bargain in a different wrapper. Which one runs is
- * decided by the console the game was compiled for, and *within* two of the three
- * families by the cartridge itself — a `gbc` build carries the CGB flag in its
- * header and comes up in colour, a `gg` build carries a Game Gear region nibble
- * and comes up as a handheld — so the console selector above this pane changes the
- * **cartridge**, and the player follows it rather than being a setting of its own.
+ * The emulators are `@demake/dmg`, `@demake/nes`, `@demake/sms`, `@demake/snes`
+ * and `@demake/md`, ours, for the reason doc 07 gives: a core fetched from a CDN
+ * is forbidden, and a WASM core we cannot read would be the same bargain in a
+ * different wrapper. Which one runs is decided by the console the game was
+ * compiled for, and *within* two of the five families by the cartridge itself — a
+ * `gbc` build carries the CGB flag in its header and comes up in colour, a `gg`
+ * build carries a Game Gear region nibble and comes up as a handheld — so the
+ * console selector above this pane changes the **cartridge**, and the player
+ * follows it rather than being a setting of its own.
  *
  * **The frame counter under the screen is not decoration.** It is the measured
  * cost of one game tick on an 8-bit CPU, and reporting it is how the pane stays
@@ -42,6 +44,12 @@ import {
   Sms,
   type Button as SmsButton,
 } from "@demake/sms";
+import {
+  SCREEN_HEIGHT as SNES_HEIGHT,
+  SCREEN_WIDTH as SNES_WIDTH,
+  Snes,
+  type Button as SnesButton,
+} from "@demake/snes";
 
 import { demoAssetBytes, demoAudioBytes } from "../lib/demo-game.js";
 import { download } from "../lib/download.js";
@@ -77,6 +85,7 @@ const MACHINE: Readonly<Record<string, string>> = {
   nes: "an NES",
   sms: "a Master System",
   gg: "a Game Gear",
+  snes: "a Super Nintendo",
   md: "a Mega Drive",
 };
 
@@ -87,7 +96,8 @@ const MACHINE: Readonly<Record<string, string>> = {
  * and the four cores satisfy it without any of them learning about the page or
  * about each other. `chips` is the sound hardware the audio player attaches to,
  * and every console with a backend has some: the Game Boy's APU, the NES's 2A03,
- * the SN76489 on both Sega machines, and *two* on a Mega Drive — each
+ * the SN76489 on both Sega machines, the Super Nintendo's S-DSP — which is not on
+ * the console's own processor at all — and *two* on a Mega Drive, each
  * `@demake/chip`'s own model rather than a second copy living in a core. A list
  * rather than one, because that console's two run on different clocks and a sink
  * is built against a clock; an empty one would say a cartridge has nothing to
@@ -111,6 +121,36 @@ interface Player {
  * reads it through the worker like everything else it knows about the engine.
  */
 function boot(rom: Uint8Array, family: string, consoleId: string): Player {
+  if (family === "snes") {
+    const machine = new Snes(rom);
+    return {
+      width: SNES_WIDTH,
+      height: SNES_HEIGHT,
+      framebuffer: machine.framebuffer,
+      // The sound chip is a second computer's, and the cartridge uploaded its
+      // program at boot — so what plays here is the game's own generated SPC700
+      // driver, through the same `StreamSink` every other console uses.
+      chips: [
+        {
+          get audioSink() {
+            return machine.audioSink;
+          },
+          set audioSink(sink) {
+            machine.audioSink = sink;
+          },
+          apu: machine.smp.dsp,
+        },
+      ],
+      setButtons: (down) =>
+        // This pad's B and Y sit where the NES's A and B sat, which is the
+        // mapping every game on it used and the one the cartridge assumes.
+        machine.setButtons(
+          down.map((name) => (name === "a" ? "b" : name === "b" ? "y" : (name as SnesButton))),
+        ),
+      runFrame: () => void machine.runFrame(),
+      readMemory: (address, length) => machine.readMemory(address, length),
+    };
+  }
   if (family === "md") {
     const machine = new Md(rom);
     return {
@@ -375,13 +415,15 @@ export function RomPane({
   const screen =
     family === "nes"
       ? { width: NES_WIDTH, height: NES_HEIGHT }
-      : family === "md"
-        ? { width: MD_WIDTH, height: MD_HEIGHT }
-        : family === "sms"
-          ? consoleId === "gg"
-            ? { width: GG_WIDTH, height: GG_HEIGHT }
-            : { width: SMS_WIDTH, height: SMS_HEIGHT }
-          : { width: SCREEN_WIDTH, height: SCREEN_HEIGHT };
+      : family === "snes"
+        ? { width: SNES_WIDTH, height: SNES_HEIGHT }
+        : family === "md"
+          ? { width: MD_WIDTH, height: MD_HEIGHT }
+          : family === "sms"
+            ? consoleId === "gg"
+              ? { width: GG_WIDTH, height: GG_HEIGHT }
+              : { width: SMS_WIDTH, height: SMS_HEIGHT }
+            : { width: SCREEN_WIDTH, height: SCREEN_HEIGHT };
 
   useEffect(() => {
     if (!rom || !layout) {

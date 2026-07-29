@@ -11,6 +11,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { profiles, runtimeConsoles } from "@demake/demotic";
+
 import type { CliEnv } from "../src/env.js";
 import { EXIT } from "../src/exit-codes.js";
 import { run } from "../src/run.js";
@@ -101,14 +103,21 @@ describe("demake build", () => {
     expect((h.written.get("caves.gb") as Uint8Array).length).toBe(0x8000);
   });
 
-  it("refuses a console with no backend, naming the ones that have one", async () => {
-    // `snes` is the one profile left without a backend, and the example moves as
-    // backends land: this said `md` until the Mega Drive built.
-    const h = harness({ "pong.dmt": read("pong.dmt") });
-    expect(await run(["build", "pong.dmt", "-c", "snes", "-o", "pong.bin"], h.env)).toBe(
-      EXIT.UNAVAILABLE,
-    );
-    expect(h.err()).toContain("no console runtime");
+  // This was a test that a console with no backend refuses itself, and its
+  // example moved as backends landed — `md` until the Mega Drive built, then
+  // `snes`. It has run out of consoles: every Demotic profile now has a backend,
+  // so `build`'s `E_NO_RUNTIME` branch cannot be reached through the CLI at all.
+  //
+  // Deleting it would drop the rule rather than the example, so what it asserts
+  // is the fact that made it unsatisfiable. The day someone adds a profile ahead
+  // of its backend — which is the normal order, since a profile is what a backend
+  // is written against — this fails, and that is exactly when the refusal it used
+  // to check becomes reachable again and wants an example naming that console.
+  //
+  // The neighbouring `E_UNKNOWN_CONSOLE` path is a different branch and is still
+  // covered directly, in `run.test.ts`.
+  it("has a backend for every console a game can be compiled for", () => {
+    expect([...profiles].map((profile) => profile.id).sort()).toEqual([...runtimeConsoles].sort());
   });
 
   it("builds a Mega Drive cartridge, vectors and header and all", async () => {

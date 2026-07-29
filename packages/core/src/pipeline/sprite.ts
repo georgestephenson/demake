@@ -142,7 +142,9 @@ export interface SpriteOptions {
    * Boy addresses; `grouped` stores the whole low plane then the whole high
    * plane, which is what the NES does; `planar` writes every plane of a row
    * before the next row, which is the Sega VDP's layout and the only one that
-   * generalises past two bits. It is the hardware's business and not the art's —
+   * generalises past two bits; `pairs` interleaves plane 0 with plane 1 down the
+   * rows and then plane 2 with plane 3, which is how the S-PPU reads a 4bpp tile
+   * — two 2bpp tiles stacked. It is the hardware's business and not the art's —
    * the same picture, packed three ways — so it is a flag here rather than a
    * second conversion, and each family's image backend packs its own data the
    * same way.
@@ -161,7 +163,7 @@ export interface SpriteOptions {
 }
 
 /** How a tile's bitplanes are arranged in memory. */
-export type Packing = "interleaved" | "grouped" | "planar" | "packed4";
+export type Packing = "interleaved" | "grouped" | "planar" | "packed4" | "pairs";
 
 /** A downscaled sprite in linear light, with straight alpha kept separate. */
 interface Sampled {
@@ -354,7 +356,12 @@ function packTile(
     for (let plane = 0; plane < bpp; plane += 1) {
       const byte = planes[plane] as number;
       if (packing === "grouped") bytes[plane * 8 + row] = byte;
-      else if (packing === "planar") bytes[row * bpp + plane] = byte;
+      // Plane *pairs*: the S-PPU reads a 4bpp tile as two 2bpp tiles stacked, so
+      // planes 0 and 1 interleave down the rows for sixteen bytes and then planes
+      // 2 and 3 do the same. It is `planar` for two bits and something else
+      // entirely for four, which is why it is a fourth name rather than a flag on
+      // one of the others.
+      else if (packing === "pairs") bytes[(plane >> 1) * 16 + row * 2 + (plane & 1)] = byte;
       else bytes[row * bpp + plane] = byte;
     }
   }

@@ -29,7 +29,7 @@ columns are [doc 03](03-console-matrix.md); the plan for the empty cells is
 | Nintendo DS | `nds` | `nds` | yes | `bin` `asm` `c` | GNU ARM binutils | DeSmuME | — | — | — |
 | Nintendo Entertainment System | `nes` | `nes` | yes | `bin` `asm` `c` | cc65 | fceumm | `nes` | yes | 60.1 Hz |
 | Sega Master System | `sms` | `sms` | yes | `bin` `asm` `c` | WLA-DX | genesis-plus-gx | `sms` | yes | 59.92 Hz |
-| Super Nintendo Entertainment System | `snes` | `snes` | yes | `bin` `asm` `c` | WLA-DX | snes9x | — | — | — |
+| Super Nintendo Entertainment System | `snes` | `snes` | yes | `bin` `asm` `c` | WLA-DX | snes9x | `snes` | yes | 125 Hz |
 
 ## Tier 2
 
@@ -58,5 +58,5 @@ columns are [doc 03](03-console-matrix.md); the plan for the empty cells is
 
 - **21** consoles have a spec, so all 21 do art.
 - **12** build a display ROM; **12** of those are proven pixel-perfect in an emulator.
-- **7** compile a Demotic game.
-- **8** demake music and sound effects; **7** play it from inside a game.
+- **8** compile a Demotic game.
+- **9** demake music and sound effects; **8** play it from inside a game.

@@ -9,5 +9,9 @@
   // `packages/demotic/tsconfig.json` gives: Playwright's tsconfig loader walks
   // these when a spec imports a package that reaches this one, and it resolves a
   // bare directory to `<dir>.json`.
-  "references": [{ "path": "../core/tsconfig.json" }, { "path": "../chip/tsconfig.json" }]
+  "references": [
+    { "path": "../core/tsconfig.json" },
+    { "path": "../chip/tsconfig.json" },
+    { "path": "../snes/tsconfig.json" }
+  ]
 }

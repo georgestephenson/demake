@@ -15,6 +15,7 @@
     { "path": "../dmg/tsconfig.json" },
     { "path": "../md/tsconfig.json" },
     { "path": "../nes/tsconfig.json" },
-    { "path": "../sms/tsconfig.json" }
+    { "path": "../sms/tsconfig.json" },
+    { "path": "../snes/tsconfig.json" }
   ]
 }

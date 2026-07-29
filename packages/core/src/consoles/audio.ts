@@ -28,22 +28,40 @@ export type ChannelKind = "pulse" | "wave" | "noise" | "triangle" | "fm" | "samp
  * and lives with the chip binding; what a musician can hear lives here.
  */
 export interface PitchLattice {
+  /**
+   * Whether the register divides the clock or multiplies it.
+   *
+   * Every chip in the set until the S-DSP counts *down* — the register is a
+   * period, so the reachable pitches crowd together at the bottom and thin out
+   * at the top, and a lattice is coarse exactly where a melody lives. A sample
+   * player is the other way round: the S-DSP's `PITCH` is a rate multiplier, so
+   * its steps are uniform in *frequency* and it is the bass that quantises.
+   * Absent means `divider`, so every existing spec reads unchanged.
+   */
+  kind?: "divider" | "multiplier";
   clockHz: number;
-  /** Clocks per divider count, e.g. 32 for a Game Boy pulse. */
+  /**
+   * Clocks per divider count, e.g. 32 for a Game Boy pulse.
+   *
+   * For a multiplier lattice it is the scale the register is measured against
+   * instead: `f = clockHz × multiplier / step`.
+   */
   step: number;
-  /** Smallest usable divider (highest note). */
+  /** Smallest usable register value. */
   minDivider: number;
-  /** Largest usable divider (lowest note). */
+  /** Largest usable register value. */
   maxDivider: number;
 }
 
 /** Lowest frequency a lattice can produce, in Hz. */
 export function latticeMinHz(lattice: PitchLattice): number {
+  if (lattice.kind === "multiplier") return (lattice.clockHz * lattice.minDivider) / lattice.step;
   return lattice.clockHz / (lattice.step * lattice.maxDivider);
 }
 
 /** Highest frequency a lattice can produce, in Hz. */
 export function latticeMaxHz(lattice: PitchLattice): number {
+  if (lattice.kind === "multiplier") return (lattice.clockHz * lattice.maxDivider) / lattice.step;
   return lattice.clockHz / (lattice.step * lattice.minDivider);
 }
 

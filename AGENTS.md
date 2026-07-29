@@ -12,12 +12,12 @@ something 8/16-bit-era consoles and handhelds up to the Nintendo DS could
 actually run. Four demakers, sharing one engine and one proof (a real ROM, in a
 real emulator, compared pixel for pixel):
 
-| Demaker               | Docs   | State                                                                     |
-| --------------------- | ------ | ------------------------------------------------------------------------- |
-| art (images)          | 03–06  | working, ten consoles proven on hardware                                  |
-| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on six consoles |
-| music (`arrange`)     | 16, 17 | MIDI → chip music, seven consoles — and a Game Boy ROM that plays it      |
-| sound (`sfx`)         | 16, 18 | WAV → chip effects, seven consoles — same ROM, same proof                 |
+| Demaker               | Docs   | State                                                                       |
+| --------------------- | ------ | --------------------------------------------------------------------------- |
+| art (images)          | 03–06  | working, ten consoles proven on hardware                                    |
+| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on eight consoles |
+| music (`arrange`)     | 16, 17 | MIDI → chip music, nine consoles — and a Game Boy ROM that plays it         |
+| sound (`sfx`)         | 16, 18 | WAV → chip effects, nine consoles — same ROM, same proof                    |
 
 The four are not four tools that share a repo any more: a `.dmt` says
 `music theme.mid` and `sound bounce.wav on ball hits paddle`, and `demake build`
@@ -108,6 +108,40 @@ write and emits no merge at all, while a Game Gear's stereo latch is `NR51`'s
 exact shape and is merged the same way. And the **clock is the frame**, at 59.92
 Hz, because this VDP reloads its line counter outside the active display — a line
 interrupt is a raster effect, not a tempo.
+
+**And it builds for a Super Nintendo.** `demake build -c snes` produces a real
+64 KiB LoROM cartridge — 65816 machine code written for the game, a Mode 1
+background demade into 4bpp tiles across seven sixteen-colour sub-palettes, and
+tile art in a _second cartridge bank_ that no instruction ever addresses because
+it reaches video RAM by DMA — and the whole example library traces identically
+there too, in the same battery, at the same one frame per tick. The page plays it
+in `@demake/snes`, one of the five self-hosted cores.
+
+This is the first console that is bigger than the language needs, and what it
+changes is the _size_ of the backend rather than its shape. With `M` clear the
+accumulator is sixteen bits, so a 16.16 add is two `lda`/`adc`/`sta` triples
+where the 6502 needs four; the index registers are sixteen bits with it, so
+`$nnnn,x` reaches all of bank zero and a shared helper is handed an address in
+`X` rather than through a pointer somebody had to write first. `codegen/snes/` is
+about two thirds of `codegen/nes/` for the same games. The bill is a discipline
+neither 8-bit backend has — **the width flags are part of the machine state a
+label promises** — and §The 65816 half is where it is stated.
+
+**And it has sound, which here is a whole second computer.** The S-SMP is an
+SPC700 with its own 64 KiB, its own timers and no access to the cartridge, so
+`demake build -c snes` emits _two_ programs: 65816 for the game, and an SPC700
+driver (`packages/audio/src/rom/spc-driver.ts`, `spc-game.ts`) that the cartridge
+uploads through four mailbox bytes at boot. After that the game posts two request
+bytes and carries on. Three things follow and none of them is true of any other
+console here. The **clock is the sound processor's own timer** — an 8 kHz
+prescaler over an eight-bit divisor, so 125 Hz is exact and a frame the game
+overruns costs it no tempo. The **shared register is a pulse**: `KON` starts the
+voices whose bits are set and does nothing to the rest, so preemption is one
+`and` against a per-stream `own` byte rather than two shadows folded together.
+And the **chip plays samples rather than generating them**, so a schedule is only
+half an artifact — the waveform bank in `binding/sdsp-bank.ts` is the other half,
+and `render()` puts it behind the model so the WAV and the cartridge sound the
+same.
 
 **And it builds for a Mega Drive.** `demake build -c md` produces a real 512 KiB
 cartridge — 68000 machine code written for the game, the art demade into a
@@ -223,17 +257,20 @@ take the button away is a browser that will not give the page an `AudioContext`.
 Still to come: the remaining Tier 2/3 consoles (each = a codegen backend, a ROM
 harness + toolchain, and a libretro core + DAC calibration), the remaining
 framebuffer/scanline layout paths (Lynx, GBA/NDS bitmap modes, 2600/7800), and
-the rest of the Demotic runtime story (the other CPU families and the speed work
+the rest of the Demotic runtime story (the Mega Drive's 68000 and the speed work
 doc 14 §Runtime model names).
 
 **The audio spine is built, and two consoles boot** (docs
 [16](docs/16-audio-engine.md), [17](docs/17-music-demaker.md),
 [18](docs/18-sound-demaker.md)): `@demake/chip` models the Game Boy APU, the
-SN76489, the NES 2A03 and the YM2612; `@demake/audio` holds both demakers; and
-`demake arrange`, `demake sfx` and `demake render` work for `dmg`, `gbc`, `nes`,
-`sms`, `gg`, `sg1000` and `md`. A track becomes a `.vgm` plus a WAV that is
-exactly what the schedule produces. The Mega Drive is on that list for all ten of
-its voices — six four-operator FM and four tone — which is the first console here
+SN76489, the NES 2A03, the YM2612 and the Super Nintendo's S-DSP; `@demake/audio`
+holds both demakers; and `demake arrange`, `demake sfx` and `demake render` work
+for `dmg`, `gbc`, `megaduck`, `nes`, `sms`, `gg`, `sg1000`, `snes` and `md`. A
+track becomes a `.vgm` plus a WAV that is exactly what the schedule produces — or,
+on the one console whose chip plays samples rather than generating them, an
+`.spc`, which is a snapshot of the sound processor's RAM and therefore exactly
+what a cartridge uploads. The Mega Drive is on that list for all ten of its
+voices — six four-operator FM and four tone — which is the first console here
 whose spec names two chips.
 
 `demake gen <schedule> -c dmg --format rom` then turns that schedule into a real
@@ -249,11 +286,12 @@ artifact _is_ the schedule.
 effect per event, one clock serving both, and the same proof one level up —
 `packages/demotic/test/audio.test.ts` boots a cartridge that is playing a game
 and diffs every register write against the schedules the demakers produced.
-It does that on **every** console the game backend builds for, over four drivers
+It does that on **every** console the game backend builds for, over five drivers
 that share only the packed format and — where the chip is the same — what the
 chip decides: an SM83 player on a programmable timer, a 6502 player on the
-picture's interrupt, a Z80 player writing an I/O port, and a 68000 player storing
-a byte to an address.
+picture's interrupt, a Z80 player writing an I/O port, a 68000 player storing a
+byte to an address, and an SPC700 player that is not on the console's processor
+at all.
 
 **And both demakers are on the web** (doc 07 §The audio sections): a music
 section and a sound section over their own worker, carrying the whole
@@ -265,12 +303,13 @@ four pinned byte-identical to the CLI's by
 
 Still to come for audio: `bin`/`asm`/`c` emit, a _standalone_ audio cartridge for
 anything but the Game Boy (the NES, the Sega 8-bits and the Mega Drive have
-drivers, but only inside a game), driver backends for the remaining consoles
-(each needs a CPU encoder or a checked-in driver source, plus a core to prove it
-in), Level B sample comparison, the remaining chips (S-DSP, the handhelds) and the
-three parts of the YM2612 that are stored and inert (LFO pitch modulation,
-SSG-EG, channel 3's per-operator mode), tracker and lossy-audio input with the
-transcription front end, and FLAC/M4A export. Read doc
+drivers, but only inside a game; the Super Nintendo's driver writes an `.spc`
+rather than a cartridge), driver backends for the remaining consoles (each needs
+a CPU encoder or a checked-in driver source, plus a core to prove it in), Level B
+sample comparison, the remaining chips (the handhelds) and the three parts of the
+YM2612 that are stored and inert (LFO pitch modulation, SSG-EG, channel 3's
+per-operator mode), tracker and lossy-audio input with the transcription front
+end, and FLAC/M4A export. Read doc
 16 before touching any of it — several of its decisions are load-bearing and easy
 to undo by accident (§Working on audio).
 
@@ -278,12 +317,14 @@ to undo by accident (§Working on audio).
 
 ```
 packages/core/       @demake/core — the engine (zero platform deps; ESM; ships types)
-  src/asm/           the SM83, 6502, Z80 and 68000 assemblers + the GB, iNES, Sega
-                     and Mega Drive cartridge wrappers — shared by the Demotic game
-                     backends and the audio driver, so no backend owns the encoder
-                     for its own CPU. megaduck.ts is the Mega Duck's I/O map, here
-                     because three things read it (the core, the audio driver, the
-                     game backend)
+  src/asm/           the SM83, 6502, Z80, 65816, SPC700 and 68000 assemblers + the
+                     GB, iNES, Sega, LoROM and Mega Drive cartridge wrappers —
+                     shared by the Demotic game backends and the audio drivers, so
+                     no backend owns the encoder for its own CPU. megaduck.ts is
+                     the Mega Duck's I/O map, here because three things read it
+                     (the core, the audio driver, the game backend). The SPC700 is
+                     the odd one out: it is nobody's main processor, and the only
+                     thing written in it is a sound driver
   src/math/          deterministic kernels (exp/log/pow/cbrt/sin) + PCG32 PRNG
   src/parallel/      the executor seam: work described as jobs, run wherever the
                      edge says. `jobs.ts` is the contract and the inline runner
@@ -338,6 +379,13 @@ packages/sms/        @demake/sms — a self-hosted Sega 8-bit core, Master Syste
                      @demake/dmg is decided by its header. Mode 4 only: the SG-1000's
                      Graphics II is a different renderer, not a flag on this one. Its
                      PSG is @demake/chip's SN76489
+packages/snes/       @demake/snes — a self-hosted Super Nintendo core: a 65816 whose
+                     registers change width at run time, a Mode 1 S-PPU with BG1
+                     and the object layer, and — in `smp.ts` — a whole second
+                     computer: an SPC700 with its own 64 KiB, three timers, and a
+                     boot ROM of *ours* that speaks the documented upload
+                     handshake rather than transcribing Nintendo's. Its S-DSP is
+                     @demake/chip's, not a second one
 packages/md/         @demake/md — a self-hosted Mega Drive core: a 68000, a VDP and
                      the SN76489 at $C00011 (@demake/chip's, not a second copy),
                      for the two jobs the other three cores exist for. The FM half
@@ -369,6 +417,7 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
     gb.ts, emit/rules/expr/val/tiles.ts   the SM83 backend
     nes.ts, nes-art.ts, nes/              the 6502 backend and its image path
     sms.ts, sms-art.ts, sms/              the Z80 backend and its image path
+    snes.ts, snes-art.ts, snes/           the 65816 backend and its image path
     md.ts, md-art.ts, md/                 the 68000 backend and its image path
     audio.ts         the hand-off to @demake/audio, art.ts's twin
   demo/              terminal runner (play.mjs) and test runner (test.mjs)
@@ -378,6 +427,10 @@ packages/chip/       @demake/chip — every sound chip as a register-driven mode
   src/ym2612.ts      the Mega Drive's OPN2: 6 four-operator FM voices, 8 algorithms,
                      the hardware's own log-sine and exponential ROM tables
   src/nes-apu.ts     the 2A03: volume-less triangle, non-linear mixing
+  src/s-dsp.ts       the Super Nintendo's: eight sample-playing voices, BRR
+                     decoding, ADSR and GAIN, and a pitch register that
+                     *multiplies* where every other chip here divides. Echo and
+                     pitch modulation are absent rather than half-implemented
   src/mix.ts         exact box-integration render, DC block, the one renderer
   src/stream.ts      the same renderer for a chip that is still running: the
                      ring buffer the web app's ROM pane plays from
@@ -395,13 +448,18 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
                      (gb-driver.ts), two callers — the cartridge (gb.ts) and the
                      driver a game embeds (gb-game.ts). 6502: nes-driver.ts and
                      nes-game.ts; Z80: sms-driver.ts and sms-game.ts; 68000:
-                     md-driver.ts and md-game.ts. One caller each so far.
-                     shared.ts is what none of them owns — the boot strip, the
-                     channel restriction, the player's shape — and psg.ts is what
-                     the *chip* owns, shared by the two CPUs that drive an
-                     SN76489; md-chips.ts is the same for a console with two of
-                     them. gameDriverRate says which clock a game's driver rides
-                     on a console
+                     md-driver.ts and md-game.ts; SPC700: spc-driver.ts and
+                     spc-game.ts, and it is the one that does not run on the
+                     console's own processor — what it builds is a block to
+                     *upload*. One caller each so far. shared.ts is what none of
+                     them owns — the boot strip, the channel restriction, the
+                     player's shape — and psg.ts is what the *chip* owns, shared
+                     by the two CPUs that drive an SN76489; md-chips.ts is the
+                     same for a console with two of them. gameDriverRate says
+                     which clock a game's driver rides on a console
+  src/binding/sdsp-bank.ts  the Super Nintendo's built-in waveforms: single-cycle
+                     BRR blocks, one definition read by the binding (which puts
+                     one in a voice's SRCN) and the driver (which uploads them)
   src/dsp.ts         deterministic FFT/resampler/pitch, all on core's kernels
   src/manifest.ts    the --emit-manifest sidecar: one shape, two callers (CLI, web)
   src/render.ts      ChipScript → PCM; the only way anything makes sound
@@ -443,6 +501,7 @@ pnpm gen:demotic-docs  # regenerate the language reference from the registry (bu
 pnpm gen:console-docs  # regenerate docs/console-support.md from the registries (build first)
 pnpm cli -- build packages/demotic/fixtures/pong.dmt -o pong.gb  # a playable cartridge
 pnpm cli -- build packages/demotic/fixtures/pong.dmt -c nes -o pong.nes  # the same game, 6502
+pnpm cli -- build packages/demotic/fixtures/pong.dmt -c snes -o pong.sfc # the same game, 65816
 pnpm dev:web       # run the web app against the workspace core (build core first)
 pnpm build:web     # typecheck + bundle the web app into packages/web/dist
 pnpm test:rom-e2e  # just the emulator E2E suites (needs toolchains + emulator)
@@ -656,8 +715,8 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   and four and a half kilobytes when the trigger is a collision over nine aliens.
 - **A wide object is a relative size the per-scanline sprite budget will not pay
   for.** Eight sprites to a scanline is the limit on the NES and both Sega
-  8-bits — ten on a Game Boy — and an object `w` cells wide costs `ceil(w)` of
-  them on every line it covers. So a `55vw` platform is eleven sprites on a Game
+  8-bits — ten on a Game Boy, thirty-two on a Super Nintendo — and an object `w`
+  cells wide costs `ceil(w)` of them on every line it covers. So a `55vw` platform is eleven sprites on a Game
   Gear and eighteen on a Master System, and the hardware simply stops drawing
   after the eighth: the platformer's floor lost its right-hand third, and the hero
   stepping into that row pushed one more off. Anything that has to span the screen
@@ -1161,6 +1220,137 @@ is the game.
   it back, expanded by one instruction because the Z80 has no `swap`. That is the
   only thing in the driver that differs between the two machines.
 
+### The 65816 half
+
+`demake build -c snes` builds a playable 64 KiB LoROM cartridge, and the whole
+example library traces identically on it. This CPU is a 6502 with three things
+added, and every bullet here is one of them biting.
+
+- **The width flags are part of the machine state a label promises.** `M` decides
+  whether the accumulator is eight bits or sixteen, and _the instruction stream
+  changes length with it_ — an immediate is one operand byte or two. So the
+  backend fixes an invariant and keeps it: **sixteen bits at every label, every
+  call and every return.** `ctx.narrow()` is the only sanctioned way to leave it,
+  nothing inside one may branch out or call a routine, and a routine that wants
+  eight-bit arithmetic throughout narrows once at its entry and widens before its
+  `rts`. Getting this wrong does not produce a wrong number; it executes an
+  operand as an opcode, somewhere else entirely.
+- **A byte field is read as a word and written under `narrow`.** Most of a game's
+  state is 16.16 and the accumulator is sixteen bits to suit it, but a flag, a
+  counter and a contact bitfield are one byte each — and the byte beside them
+  belongs to something else. `loadByte` masks the neighbour away for nothing;
+  `setByte`/`clearByte`/`incByte` narrow for the length of the store. A
+  sixteen-bit `sta` to a one-byte field is a bug that surfaces as an unrelated
+  flag changing value.
+- **`tsb` is how a bit is set without narrowing.** It writes back `memory | A`, so
+  a mask whose high byte is zero leaves the byte above the target exactly as it
+  found it. The indexed contact-bit path uses a plain read-modify-write for the
+  same reason and it is safe for the same reason — `tsb` has no indexed form.
+- **A helper is handed an address in `X`, not through a pointer.** `$nnnn,x`
+  reaches all of bank zero with sixteen-bit index registers, so `ldx #Addr; jsr
+Clamp32` is the whole calling convention and there is one clamp routine where
+  the 6502 backend needs two. The same thing makes `EntityAddr`'s `ptr` case one
+  `ldx` and an indexed load rather than four indirections. `X` is reloaded per
+  access rather than kept live, because a rule body between two accesses uses
+  every register there is.
+- **Reset lands in emulation mode.** There is no native reset vector, so a
+  cartridge's first instructions are `clc; xce; rep #$38`. `snes-rom.test.ts`
+  pins those three bytes, because a build that forgot them fetches every
+  sixteen-bit immediate one byte short.
+- **The tile art is in a second cartridge bank and no instruction addresses it.**
+  DMA takes its source bank as a _data byte_, so sixteen kilobytes of art costs
+  the 32 KiB program bank nothing. Do not reach for long addressing to read it:
+  the whole point of the split is that the data bank stays at zero, where the
+  console's first 8 KiB of work RAM is mirrored and every property is a plain
+  sixteen-bit absolute.
+- **The background is scrolled one line late.** Screen line `N` shows background
+  line `BG1VOFS + N + 1`, so the vertical register written is the camera's minus
+  one. That is the same `$3FF` the image E2E's harness has always written, and
+  without it every scene sits a pixel high.
+- **A 64-wide tilemap is two 32×32 screens a kilobyte apart.** Column 32 is
+  `$400` words from column 0, not one word from column 31. A reader that assumed
+  a rectangle would agree with a renderer that made the same mistake, which is
+  why `snes-rom.test.ts` computes the address the hardware's way and checks that
+  both screens carry cells once the camera has crossed. **And it is why a
+  backdrop is packed thirty-two cells to a row, not sixty-four** — a picture fills
+  the left half of the map, but "the left half of a 64-wide row" is not a thing
+  the hardware has: screen zero's rows are contiguous at thirty-two words each. A
+  row of sixty-four with the right half blank streams into video RAM as a picture
+  stretched to double height with every other row empty. It shipped that way and
+  a browser is where it was seen, because the level tests walk a grid cell by cell
+  and a picture is a _block copy_ — no test in that file could see its stride
+  until one was written for it.
+- **An object's Y is direct.** No minus-one convention, unlike the NES: this chip
+  draws an object's top row _on_ the line its Y names, so `y 0` is the top of the
+  screen and needs no exception. Its X is nine bits; this runtime uses eight of
+  them and drops what falls outside, as the other backends do.
+- **The map is bigger than the screen in both directions**, so both axes scroll by
+  painting a leading edge and neither needs the NES's row pinning or the Master
+  System's seam mask. This is the one console where that machinery is simply
+  absent rather than worked around.
+- **Object priority runs the other way, and the per-line cap does not.** Entry
+  zero is in front, but the thirty-two the hardware evaluates are chosen by
+  scanning _forward_ — so the objects that get dropped are not the ones that lose
+  the priority fight, and `@demake/snes`'s renderer does the two passes in
+  opposite directions for exactly that reason.
+- **A picture is thirty seconds of tournament, not five.** 256×224 fitted into
+  seven sixteen-colour sub-palettes is three times any other console's screen.
+  `bindSnesArt` memoises by content hash for the same reason `bindArt` does, and
+  the parallel suite runs one fixture here rather than three. Before adding an
+  art-heavy test on this console, check what it does to the suite's budget.
+
+### The SPC700 half
+
+`demake build -c snes` puts a second program in the cartridge, and the cartridge
+hands it to a second processor at boot. Everything here is a consequence of that.
+
+- **The driver is uploaded, not called.** `AudioUpload` performs the documented
+  handshake — wait for `$AA`/`$BB`, state a destination, kick with `$CC`, then a
+  byte and its counter at a time — and the whole block (the waveform bank, the
+  driver, its tables and its packed schedules) goes across four mailbox bytes
+  before the screen comes on. After that the game writes two request bytes and a
+  sequence byte and never waits for sound again.
+- **The mailbox is inside the picture's register range, and it must be decoded
+  first.** `$2140`–`$217F` sits under `$2100`–`$21FF`, so a bus that asks "is this
+  a PPU register" before "is this the sound processor" answers every mailbox read
+  with the PPU's, and the upload spins forever waiting for a greeting that has
+  already been sent. `@demake/snes`'s bus checks the mailbox first for exactly
+  that reason.
+- **Every mailbox access is a byte, so it runs under `ctx.narrow`.** A sixteen-bit
+  store to `$2140` writes `$2141` as well — which in the middle of the handshake
+  is the counter overwriting the data byte the sound side is about to read.
+- **The entry scene's music is asked for beside the upload, not after the first
+  redraw.** The sound processor's timer starts when its program does, so a request
+  posted after a full-screen redraw arrives a tick or two into a schedule that has
+  already been playing to nobody. No scene _change_ asks for the entry scene's
+  track either, which is the other half of why it is there.
+- **The shared register is a pulse, so preemption is a mask rather than a fold.**
+  `KON` starts the voices whose bits are set and does nothing to the rest, so each
+  stream carries one `own` byte — the voices it may touch — and the driver skips a
+  run naming anything outside it and `and`s a merge write down to it. Music's
+  `own` is the complement of what an effect took; an effect's is what it took.
+  There are no shadows and no `NR51`-shaped byte to recompute.
+- **A note's level lives in `GAIN` and its panning in the volume registers.**
+  `GAIN`'s direct mode is one byte that _is_ the level, so a whole dynamic shape
+  costs one write a tick and note-off is `GAIN = 0` — which is also why the driver
+  never writes `KOF`, the only other byte two streams would have shared.
+  Percussion is the exception and takes the opposite arrangement, because its
+  `GAIN` is carrying the chip's own exponential decay.
+- **The waveform bank is one definition with two readers.**
+  `binding/sdsp-bank.ts` decides where the sample directory lives, what is in it
+  and how loud it is; the binding puts an index in a voice's `SRCN` and the driver
+  uploads the bytes. A second copy of either number is a game whose bass plays the
+  snare.
+- **A schedule for this console is only half an artifact.** The chip plays samples,
+  so `render()` puts the bank behind the model rather than making every caller
+  remember — and `demake arrange -c snes` writes an `.spc` rather than a `.vgm`,
+  because a write log without the RAM is not a piece of music and an SPC is
+  exactly what the cartridge uploads.
+- **The image sits at the top of the second cartridge bank, under the tile art.**
+  Both are sized by what the game contains and only one of them can have the low
+  end without the other having to know how big it got; `E_BACKDROP_TILES` names
+  the sound processor's share when there is one.
+
 ### The 68000 half
 
 `demake build -c md` builds a playable Mega Drive cartridge, and the whole
@@ -1418,17 +1608,26 @@ you are writing the wrong one of the two.
 
 ## Testing truths
 
-- `pnpm test` runs the Vitest unit suite locally with no Docker. It is about
-  eight and a half minutes now, not the two the plan wanted, and one file is most
-  of it: `packages/demotic/test/audio.test.ts` builds every example game _with its
-  art and its audio_ on every console with a driver, and demaking a picture is
-  the whole `prep` tournament. That is the price of the size assertions — they
-  are the only thing that would catch a cartridge overflowing — so before
-  trimming it, check that what you are removing is not the coverage. The Mega
-  Drive is the one console that sweep skips (it builds one fixture there, not
-  seven), and the reason is stated in the file: a game is twenty-odd kilobytes of
-  a half-megabyte image, so there is no overflow for the assertion to catch and
-  seven whole art-and-audio builds would be eight minutes buying nothing.
+- `pnpm test` runs the Vitest unit suite locally with no Docker. It is ten to
+  twenty minutes now depending on how many cores it gets, not the two the plan
+  wanted, and one file is most of it:
+  `packages/demotic/test/audio.test.ts` builds every example game _with its art
+  and its audio_ on every console with a driver, and demaking a picture is the
+  whole `prep` tournament. That is the price of the size assertions — they are the
+  only thing that would catch a cartridge overflowing — so before trimming it,
+  check that what you are removing is not the coverage. Two consoles run the whole
+  register-conformance battery but **one fixture** of the size sweep, for opposite
+  reasons that `SWEEP` states in the file: the Mega Drive because a game is
+  twenty-odd kilobytes of a half-megabyte image and there is no overflow for the
+  assertion to catch, and the Super Nintendo because a picture there is thirty
+  seconds of tournament rather than five. Both build the shooter, because a budget
+  can only decide a cartridge already near the edge.
+- **`unsupported` names language gaps, not hardware ones**, and every console's
+  list is empty. It stayed empty on the Super Nintendo through the period when
+  that machine had no sound, because a `.dmt` that says `music theme.mid`
+  compiled, recorded the request its rules made, and traced identically to a build
+  that played it. A gap that changed what a _trace_ says is the one that must be
+  named.
 - **The parallel contract is tested at four levels, and they are not redundant.**
   `packages/core/test/parallel.test.ts` pins the ordering rules with executors
   that run jobs backwards and interleave two tournaments (fast, no threads);
@@ -1446,18 +1645,20 @@ you are writing the wrong one of the two.
   via the `.claude/` SessionStart hook.
 - The Demotic ROM conformance suite (`packages/demotic/test/rom.test.ts`) builds
   a cartridge from each fixture game **for every console with a backend** — both
-  Game Boys, the Mega Duck, the NES, both Sega 8-bits and the Mega Drive — and
-  runs it in the matching owned core, asserting the trace matches the reference
-  interpreter tick for tick. No toolchain, no emulator
-  install, so it runs everywhere `pnpm test` does. Running the same battery on
-  all seven is what makes `Backend` a contract rather than a resemblance, and each
+  Game Boys, the Mega Duck, the NES, both Sega 8-bits, the Super Nintendo and the
+  Mega Drive — and runs it in the matching self-hosted core, asserting the trace
+  matches the reference interpreter tick for tick. No toolchain, no emulator
+  install, so it runs everywhere `pnpm test` does. Running the same battery on all
+  eight is what makes `Backend` a contract rather than a resemblance, and each
   console proves something different: the colour build that the attribute work
   never touched simulation state, the NES, the Master System and the Mega Drive
-  that a second, third and fourth CPU's arithmetic and ordering agree to the bit,
-  and the Mega Duck that a
-  machine description never leaked into the code the tick runs. It also checks
-  the Duck's cartridge _fails_ on a Game Boy — identical traces are also what a
-  register map that had quietly become the identity would produce.
+  that a second, third and fifth CPU's arithmetic and ordering agree to the bit,
+  the Mega Duck that a machine description never leaked into the code the tick
+  runs, and the Super Nintendo that a value layer whose accumulator is _sixteen_
+  bits agrees too — every routine there is a different program from the one the
+  8-bit consoles share. It also checks the Duck's cartridge _fails_ on a Game
+  Boy — identical traces are also what a register map that had quietly become the
+  identity would produce.
 - `packages/demotic/test/md-arith.test.ts` and `md-rom.test.ts` are the Mega
   Drive's two oracles, and they are the pair every new backend gets: the first
   assembles each 16.16 operation on its own and compares with `fixed.ts`, the
@@ -1470,6 +1671,20 @@ you are writing the wrong one of the two.
   `fixed.ts`. A multiply that floors the wrong way for negative operands makes a
   game that plays _almost_ right and diverges a thousand ticks later, by which
   point the trace names a position rather than an operation.
+- `packages/demotic/test/snes-arith.test.ts` is the same test for the 65816, and
+  it matters more here than on either 8-bit console: those two share an
+  eight-bit-accumulator shape, and this one does not, so nothing it covers was
+  proved by anything that came before. `packages/snes/test/{cpu,ppu}.test.ts` sit
+  under it — the CPU is driven by `core`'s own 65816 assembler, so an encoder and
+  a decoder that agreed with each other and not with the hardware would still fail
+  against the published opcode bytes `packages/core/test/wdc65816.test.ts` pins.
+- `packages/demotic/test/snes-rom.test.ts` is the rendering oracle for that
+  console, and it is where the things a trace cannot see are checked: that the
+  tile bank really left the second cartridge bank and arrived in video RAM, that
+  every visible cell matches the level's own grid, that a camera which has crossed
+  column 32 has painted into the _second_ 32×32 screen rather than one word
+  further along, and that the reserved sub-palette survives whatever the art
+  chose. Let the scene settle before comparing, for the reason the Sega one gives.
 - `packages/demotic/test/sms-arith.test.ts` is the same test for the Z80, and it
   is the first thing that runs code the Sega backend wrote. Until the rest of that
   backend exists it is also the only one — so it is where a new value-layer
@@ -1491,6 +1706,12 @@ you are writing the wrong one of the two.
   travelled. Its wide-level case is written in the test rather than taken from
   the library, because no example level is wider than the nametable pair and the
   edge painter would otherwise be the one path nothing ran.
+- `packages/audio/test/spc.test.ts` is the driver proof one layer below the game
+  one: it builds an SPC700 driver for an arranged track, performs the upload
+  handshake against `@demake/snes`'s S-SMP directly, and diffs every S-DSP write
+  against the schedule. It exists because a failure in `audio.test.ts` on that
+  console could be the driver, the cartridge's upload or the request protocol, and
+  this file can only be the first.
 - The audio ROM conformance suite (`packages/audio/test/rom.test.ts`) is its
   counterpart for sound, and doc 16 §The proof's Level A: it builds a cartridge
   from an arranged track and from a demade effect, boots each in `@demake/dmg`,
@@ -1785,6 +2006,39 @@ you are writing the wrong one of the two.
   hardware; `demake build --boot-logo` asks `rgbfix` to stamp it. Default output
   is therefore byte-identical between the CLI and the browser, which is the
   doc-07 parity contract restated for games.
+- **A 65816 immediate's width is not in its opcode**, so `Asm65816` makes it the
+  caller's: `imm8` and `imm16` are different operands and the assembler infers
+  nothing. A `rep`/`sep` behind a branch is enough to make the width unknowable at
+  assembly time, and guessing wrong does not produce a wrong value — it produces a
+  wrong instruction stream, because the extra operand byte is executed.
+- **The 65816's operand constructors collide with the 6502's by name and not by
+  type.** `@demake/core` exports the five that clash under a `snes` prefix and
+  `codegen/snes/ops.ts` aliases them back in one place, so a call site still reads
+  like assembly and nothing can hand a 6502 operand to a 65816 instruction.
+- **The sound processor's mailbox is inside the picture's register range.**
+  `$2140`–`$217F` lies under `$2100`–`$21FF`, so a bus that asks "is this a PPU
+  register" first answers every mailbox read with the PPU's — and a cartridge then
+  spins for ever in the boot handshake waiting for a greeting the sound side has
+  already sent. It presents as a game that never starts, with the sound
+  processor's program counter parked in its boot ROM. `@demake/snes` decodes the
+  mailbox first, and `packages/audio/test/spc.test.ts` would not have caught it,
+  because that file talks to the S-SMP directly.
+- **The S-DSP interpolates linearly here and by a Gaussian window on the
+  hardware.** That is the one place the chip model is knowingly not the chip, and
+  it is stated in `s-dsp.ts` rather than hidden: the real filter is a 512-entry
+  constant table, and a table transcribed with one entry wrong is worse than an
+  interpolator that says what it is. It affects timbre only — doc 16's Level A
+  proof compares register writes — and it is what doc 16's Level B would need.
+- **`@demake/snes` renders BG1 and the objects and nothing else.** The other three
+  backgrounds, the two extra modes with them, colour maths, windows, mosaic and
+  offset-per-tile are absent rather than half-implemented, because a renderer that
+  answered plausibly for hardware nothing drives is a renderer nobody is checking.
+  A backend that starts programming one of them has to implement it here first.
+- **The Super Nintendo's plot list is two words an entry against a plan that
+  allows two bytes a cell**, so the emitter caps recording at half `plotMax` and
+  says so. The other three backends write four bytes an entry into the same
+  allocation and are saved only by their HUDs being small; if that ever changes,
+  the fix is `layout.ts`'s, not a backend's.
 - The PNG encoder must stay deterministic (no libpng drift) once it exists.
 - Source imports use explicit `.js` extensions (NodeNext ESM); Vitest resolves
   them to `.ts` via the workspace alias.

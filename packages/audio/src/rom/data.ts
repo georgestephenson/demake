@@ -34,6 +34,21 @@
  *                     flags bits 3-0: channels the run belongs to.
  * ```
  *
+ * Four channel bits are three chips' worth and one chip's short: the S-DSP has
+ * eight voices. A console that says so ({@link PackOptions.channels}) gets a
+ * **channel byte of its own** after the flags, and the flags then carry only the
+ * two booleans:
+ *
+ * ```text
+ *   $01..$7F   n writes, a flags byte, a channel byte, then n (register, value)
+ *              pairs.
+ * ```
+ *
+ * Which shape a stream used is {@link DriverData.wideChannels}, because the
+ * driver that reads it is generated for that stream and nothing else has to
+ * guess. The format is not part of the contract — only the register stream is —
+ * so widening it costs the proof nothing.
+ *
  * The grouping never reorders anything, which is the property the proof rests
  * on: with nothing preempting it, a run-packed stream performs exactly the
  * writes the `ChipScript` lists, in order, exactly as the flat one does.
@@ -49,6 +64,8 @@
 
 import type { RegisterWrite } from "@demake/chip";
 
+import { bindingFor } from "../binding/registry.js";
+import { silentFrames } from "../binding/types.js";
 import type { ChipScript } from "../chipscript.js";
 
 /** Ticks a block covers before the order list moves on. */
@@ -104,6 +121,14 @@ export interface PackOptions {
    * ticks in order, which is exactly the order the chip will see them in.
    */
   channelOf?: () => ChannelTag;
+  /**
+   * How many channels the chip has, when it has more than the flags byte holds.
+   *
+   * Four or fewer packs the channel mask into the run header's low nibble; more
+   * puts it in a byte of its own. Defaults to four, so every console that had a
+   * driver before the S-DSP packs byte-identically to what it packed before.
+   */
+  channels?: number;
   /**
    * Registers whose writes are merges under a mask rather than plain stores.
    *
@@ -177,6 +202,8 @@ export interface DriverData {
   runs: boolean;
   /** Whether any run merges under a mask, which pulls the driver's merge path. */
   hasMerges: boolean;
+  /** Whether a run's channel mask is a byte of its own rather than four bits. */
+  wideChannels: boolean;
   /** Whether more than one block plays, which decides if the order list moves. */
   hasOrder: boolean;
   /** A one-shot (a sound effect) ends in silence instead of repeating. */
@@ -275,6 +302,7 @@ export function packScript(script: ChipScript, options: PackOptions = {}): Drive
     hasRests,
     runs: options.channelOf !== undefined,
     hasMerges,
+    wideChannels: (options.channels ?? 4) > 4,
     hasOrder: order.length > 1,
     oneShot,
     bytes,
@@ -372,11 +400,13 @@ function encodeRuns(
 ): boolean {
   const port = options.port ?? ((reg: number) => reg);
   const merge = options.mergeRegs ?? new Set<number>();
+  const wide = (options.channels ?? 4) > 4;
+  const mask = wide ? 0xff : RUN.channels;
   // Tagged in the order the chip will see them, and every write is offered to
   // the tag even when it turns out to belong to no channel: a latching chip
   // updates its selection from writes the run format then never asks about.
   const tags = writes.map((write) => ({
-    channels: channelOf(write.reg, write.value, write.chip ?? 0) & RUN.channels,
+    channels: channelOf(write.reg, write.value, write.chip ?? 0) & mask,
     merge: merge.has(write.reg),
   }));
 
@@ -405,9 +435,12 @@ function encodeRuns(
     const to = starts[run + 1]!;
     const tag = tags[from]!;
     const flags =
-      (run + 2 < starts.length ? RUN.more : 0) | (tag.merge ? RUN.merge : 0) | tag.channels;
+      (run + 2 < starts.length ? RUN.more : 0) |
+      (tag.merge ? RUN.merge : 0) |
+      (wide ? 0 : tag.channels);
     if (tag.merge) merged = true;
     out.push(to - from, flags);
+    if (wide) out.push(tag.channels);
     for (let index = from; index < to; index += 1) {
       const write = writes[index]!;
       out.push(port(write.reg, write.chip ?? 0) & 0xff, write.value & 0xff);
@@ -440,21 +473,22 @@ function silenceBlock(
   return Uint8Array.from(out);
 }
 
-/** Note-off for each channel, by console family. */
+/**
+ * Note-off for every channel, asked of the binding rather than tabulated.
+ *
+ * "What silences this chip" is the binding's answer already — it is what
+ * `encode` emits for a channel that has just stopped — so the way to get it is
+ * to ask for a silent frame after a sounding one. A table here would be a second
+ * answer, and it would be the one that quietly grew a wrong entry the first time
+ * a console was added.
+ */
 function silenceWrites(consoleId: string): { reg: number; value: number }[] {
-  // Reached only by a *cartridge* whose one job is a sound effect, and the Game
-  // Boy family is the only one that builds such a cartridge — `buildAudioRom`
-  // refuses the rest before anything gets here, and a game's effects ask for
-  // `end: "stop"` instead, because a block that silenced every channel would
-  // take the music with it. So this stays a fact about one chip rather than a
-  // table that quietly grows wrong entries for the other two.
-  void consoleId;
-  return [
-    { reg: 0x12, value: 0x00 },
-    { reg: 0x17, value: 0x00 },
-    { reg: 0x1a, value: 0x00 },
-    { reg: 0x21, value: 0x00 },
-  ];
+  const binding = bindingFor(consoleId);
+  const sounding = binding.spec.channels.map(() => ({ on: true, hz: 440, level: 1 }));
+  return binding.encode(silentFrames(binding.spec), sounding).map((write) => ({
+    reg: write.reg,
+    value: write.value,
+  }));
 }
 
 function keyOf(bytes: Uint8Array): string {

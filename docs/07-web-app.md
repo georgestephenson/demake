@@ -143,15 +143,22 @@ wrapper. A page that agreed with the CLI about the Game Boy would say nothing
 about whether it agreed about the NES, the Master System or the Mega Drive.
 
 **Playing it needs an emulator**, and they are ours: `@demake/dmg`,
-`@demake/nes`, `@demake/sms` and `@demake/md`, each around a thousand lines of
+`@demake/nes`, `@demake/sms`, `@demake/snes` and `@demake/md`, each around a
+thousand lines of
 dependency-free TypeScript. Self-hosting a WASM core would have satisfied the never-from-a-CDN
 rule, but not the reason behind it — a core we cannot read is a dependency we
 cannot trust with the claim "this is what the hardware does". Writing them was
 also the cheaper option, because the Demotic conformance suite (doc 10) needed a
 headless machine for each console anyway, and one core now serves both jobs.
-Together they cost about 21 KB gzipped, and they are in the entry-adjacent game
-chunk rather than the worker because playing a cartridge is what the *page* does
-with one.
+Together they are in the entry-adjacent game chunk rather than the worker,
+because playing a cartridge is what the *page* does with one.
+
+All five make sound, and two of them make it the hard way. The Super Nintendo's
+chip belongs to a second processor with its own program, so what plays in the page
+is the SPC700 driver the cartridge uploaded at boot — generated for that game and
+running on its own timer. The Mega Drive has *two* chips on different clocks, so
+the pane builds a sink apiece and sums them. Both arrive through the same
+`StreamSink` the other three use, and the page still synthesizes nothing.
 
 **Everything on screen describes the cartridge, not the picker.** The selector
 changes the *cartridge*, and a cartridge takes a demake to arrive — seconds, when

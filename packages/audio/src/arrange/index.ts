@@ -16,6 +16,7 @@ import { bindingFor } from "../binding/registry.js";
 import { fitPatchForPart, type FmPatchFit } from "../binding/fm-patch.js";
 import { mdBinding, type MdBindingOptions } from "../binding/md.js";
 import type { ChipScript, Dropped, TimingReport } from "../chipscript.js";
+import { artifactFormat, encodeSpc } from "../encode/spc.js";
 import { encodeVgm } from "../encode/vgm.js";
 import { inspectScript, type AudioViolation } from "../inspect.js";
 import { judgeArrangement, type JudgeResult } from "../judge.js";
@@ -274,10 +275,18 @@ export function arrangeScore(input: Score, options: ArrangeOptions): ArrangeResu
     );
   }
 
-  const artifact = encodeVgm(script, {
-    ...(options.title ? { title: options.title } : {}),
-    system: consoleSpec.name,
-  });
+  // A Super Nintendo schedule is written as an `.spc`, because VGM has no block
+  // for a sample player and could not usefully have one (doc 16 §The artifact).
+  const artifact =
+    artifactFormat(script.chips[0]) === "spc"
+      ? encodeSpc(script, {
+          ...(options.title ? { title: options.title } : {}),
+          game: consoleSpec.name,
+        })
+      : encodeVgm(script, {
+          ...(options.title ? { title: options.title } : {}),
+          system: consoleSpec.name,
+        });
   return {
     script,
     artifact,

@@ -14,6 +14,7 @@
 import { createChip, mix, renderSchedule, type OutputStage, type Pcm } from "@demake/chip";
 
 import { bindingFor } from "./binding/registry.js";
+import { sampleAram } from "./binding/sdsp-bank.js";
 import type { ChipScript } from "./chipscript.js";
 
 export interface RenderAudioOptions {
@@ -31,8 +32,14 @@ export function render(script: ChipScript, options: RenderAudioOptions = {}): Pc
   const ticks = withLoops(script, options.loops ?? 0);
   const parts: Pcm[] = [];
   for (let index = 0; index < script.chips.length; index += 1) {
-    const chip = createChip(script.chips[index] as Parameters<typeof createChip>[0], {
+    const id = script.chips[index] as Parameters<typeof createChip>[0];
+    // A sample player is handed the RAM its waveforms live in, and the built-in
+    // bank is the default rather than something every caller has to remember —
+    // a schedule may override it, and nothing does yet (doc 16 §The sample bank).
+    const ram = script.sampleRam ?? (id === "s-dsp" ? sampleAram() : undefined);
+    const chip = createChip(id, {
       stereo: true,
+      ...(ram === undefined ? {} : { ram }),
     });
     // Filtered per *write* rather than per tick: a console with two chips writes
     // both within one driver tick, and a tick-level tag could not say so.

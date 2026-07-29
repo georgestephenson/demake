@@ -129,11 +129,17 @@ for (const { name, options } of CASES) {
  * agreed with the CLI about the Game Boy would say nothing about whether it
  * agreed about the NES, the Master System or the Mega Drive.
  *
+ * The Super Nintendo is here for the same reason and costs the most: its picture
+ * is 256×224 fitted into seven sixteen-colour sub-palettes, which is around
+ * thirty seconds of tournament on each side. `test.slow()` covers it, and the
+ * claim it buys — that a browser and Node agree on a fourth instruction set and a
+ * fourth fitter — is the one this whole file exists for.
+ *
  * The fixtures are read off disk rather than imported from the page's bundle:
  * the page gets them through Vite's `?raw`, which only exists inside a build,
  * and the point of the test is that both sides start from the same file.
  */
-for (const consoleId of ["gb", "nes", "sms", "md"] as const) {
+for (const consoleId of ["gb", "nes", "sms", "snes", "md"] as const) {
   test(`the ${consoleId} ROM the page builds is byte-identical to the CLI's`, async ({ page }) => {
     // Demaking a full-screen picture is seconds of real work and the runner is
     // shared, so the budget is the *slowest* thing this can legitimately take

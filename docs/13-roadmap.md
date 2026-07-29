@@ -326,7 +326,7 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     palettes were chosen for the title screen. Colour costs cartridge — around a
     kilobyte for a game with two demade backdrops — which is a fact the build
     reports rather than hides.
-  - **D4 — breadth** *(`nes`, `sms`/`gg` and `md` trace-green)*: `nes`,
+  - **D4 — breadth** *(`nes`, `sms`/`gg`, `snes` and `md` trace-green)*: `nes`,
     `sms`/`gg`, `md`, `snes` backends, each trace-green then framebuffer-green. A
     backend is per-family; the `Program` it compiles is not.
 
@@ -453,6 +453,80 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     **bank-switched cartridges**, the slot at `$8000` is entirely unused today,
     and `@demake/sms` already implements the mapper's registers.
 
+    **The Super Nintendo is the fourth console, and it is the first one that is
+    bigger than the language needs.** `demake build -c snes` produces a real
+    64 KiB LoROM cartridge — 65816 machine code written for the game, a Mode 1
+    background demade into 4bpp tiles across seven sixteen-colour sub-palettes,
+    and art in a second cartridge bank that reaches video RAM by transfer — and
+    the whole example library traces identically there, in the same battery, at
+    the same one frame a tick. Nothing moved out of `backend.ts` or `shape.ts` for
+    it either.
+
+    What the 65816 changes is the *size* of the backend rather than its shape,
+    and the reason is one bit of status: with `M` clear the accumulator is
+    sixteen bits, so a 16.16 add is two `lda`/`adc`/`sta` triples where the 6502
+    needs four, a copy is two loads and two stores, and a zero test is a single
+    `ora`. The index registers are sixteen bits with it, which removes the other
+    half of the 6502's cost: `$nnnn,x` reaches all of bank zero, so a shared
+    helper is handed an address in `X` and there is no page-zero pointer to write
+    first. The whole of `codegen/snes/` is about two thirds of `codegen/nes/`.
+
+    The bill for that is a discipline the other three do not have. **The width
+    flags are part of the machine state a label promises**: an immediate is one
+    byte or two depending on `M`, so a `sep #$20` that is not matched by a
+    `rep #$20` does not produce a wrong number, it desynchronises the instruction
+    stream and executes an operand. The backend fixes an invariant — sixteen bits
+    at every label, every call and every return — and `ctx.narrow()` is the only
+    sanctioned way to leave it, for a stretch of straight-line code that cannot be
+    branched out of. Byte fields are *read* as words with the neighbour masked
+    away, which costs nothing, and *written* under that helper.
+
+    Three of the hardware's own facts are load-bearing and each produces a
+    cartridge that traces perfectly and looks wrong. The background is scrolled
+    **one line late** — screen line `N` shows background line `VOFS + N + 1` — so
+    the vertical register is the camera's minus one, which is the same `$3FF` the
+    image E2E's harness has always written. A 64-wide tilemap is **two 32×32
+    screens a kilobyte apart** rather than a rectangle, so column 32 is not one
+    word past column 31. And an object's Y is **direct**, with none of the NES's
+    minus-one convention, so `y 0` is the top of the screen and needs no
+    exception — which is one of the two places this console is simply easier than
+    its predecessors. The other is that the map is larger than the screen in both
+    directions, so both axes scroll by painting a leading edge and neither needs
+    the NES's row pinning or the Master System's seam mask.
+
+    Framebuffer-green is what remains here too, behind the same scripted input
+    tape. Until then `snes-rom.test.ts` is the rendering oracle — the tilemap
+    against the level grid, cell by cell, before and after the camera has crossed
+    into the second screen — and `snes-arith.test.ts` the arithmetic one, which
+    matters more here than on either predecessor because every routine it covers
+    is a *different program* from the eight-bit one those consoles proved.
+
+    **Sound arrived as a whole second program**, which is what this console's
+    hardware makes of the question. The S-SMP is an SPC700 with its own 64 KiB,
+    its own timers and no access to the cartridge, so `demake build -c snes` emits
+    two programs and the cartridge uploads one of them through four mailbox bytes
+    at boot. `@demake/chip` gained the S-DSP, `@demake/core` gained an SPC700
+    assembler, and `@demake/audio` gained the driver
+    (`rom/spc-driver.ts`, `rom/spc-game.ts`). Three things about it are the
+    hardware's rather than the pattern's: the clock is the sound processor's own
+    timer, so 125 Hz is exact and a frame the game overruns costs no tempo; the
+    one shared register is a *pulse*, so preemption is a mask rather than two
+    shadows folded; and the chip plays samples, so the waveform bank is part of
+    the artifact and the standalone file is an `.spc` rather than a `.vgm`. What
+    is still absent in the chip model is the echo unit and pitch modulation —
+    accepted and ignored rather than half-implemented — and Gaussian
+    interpolation, which is linear here; none of the three touches doc 16's
+    Level A, which compares register writes.
+
+    The budget is not the constraint it was on the two 8-bit machines. Bank zero
+    is 32 KiB of program and bank one is 32 KiB of tile art the program never
+    addresses, so a game with two demade backdrops uses about 12 KiB of the first
+    and 11 of the second. What *is* expensive is the demake itself: a 256×224
+    picture fitted into seven sixteen-colour sub-palettes is around thirty seconds
+    of tournament, three times any other console's screen, which is why the
+    conversion memo matters more here and why the parallel suite runs one fixture
+    on this console rather than three.
+
     Sound is no longer the gap: there is a generated Z80 driver (§A5), and both
     machines carry their music and effects. The design question that was blocking
     it was in the packer, and it resolved the way it was expected to — the
@@ -474,7 +548,7 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     therefore rides the frame at 59.92 Hz, like the NES's and for the same kind of
     reason, and `fitRate` now treats the frame as the candidate every other clock
     has to beat rather than as a fallback for when none is in range.
-    **The Mega Drive is the fourth console, and it is the first 16-bit one.**
+    **The Mega Drive is the fifth console, and it is the first 16-bit one.**
     `demake build -c md` produces a real 512 KiB cartridge — 68000 machine code
     written for the game, vector table, header and word checksum, art demade into
     a 1408-tile bank across three of the VDP's four sub-palettes — and the whole
@@ -636,7 +710,9 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     their provisioner, and FLAC.
   - **A2 — `arrange`** *(built for MIDI; the Game Boy boots)*: ingest, analysis,
     the arrangement tournament, absolute-placement timing, the judge and the
-    `.vgm` artifact run on all six consoles. Tempo is preserved outright rather
+    `.vgm` artifact run on all eight consoles with a chip model — and on the one
+    whose chip plays samples the artifact is an `.spc` instead, because a write
+    log without the sound processor's RAM is not a piece of music. Tempo is preserved outright rather
     than approximately, and a test shows the error shrinking with length rather
     than compounding. Outstanding: tracker ingest, `bin`/`asm`/`c` emit, driver
     backends beyond the Game Boy, and the listening sheets the judge weights get
@@ -670,14 +746,18 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     lead, harmony) with confidences, plus the decoders. *Done means*: an MP3
     becomes a playable cartridge, and the parts it found are reported honestly
     enough that a wrong one can be corrected in one flag.
-  - **A5 — breadth** *(`nes`, `sms`, `gg` and `md` done, inside a game)*: the
-    2A03, the SN76489 and the YM2612 each have a chip model, a binding and a
-    generated driver — 6502, Z80 and 68000 — and
-    `demake build -c nes`/`-c sms`/`-c gg`/`-c md` puts music and effects in
-    the cartridge with doc 16's Level A proof over all of them. What none of them
+  - **A5 — breadth** *(`nes`, `sms`, `gg`, `snes` and `md` done, inside a game)*:
+    the 2A03, the SN76489, the S-DSP and the YM2612 each have a chip model, a
+    binding and a generated driver — 6502, Z80, SPC700 and 68000 — and
+    `demake build -c nes`/`-c sms`/`-c gg`/`-c snes`/`-c md` puts music and
+    effects in the cartridge with doc 16's Level A proof over all of them. What
+    none of them
     has yet is a *standalone* audio cartridge — `demake gen … --format rom` is
     still the Game Boy's alone — because a cartridge whose only job is one track is
-    what the next caller needs and not what a game needed. The SN76489 is also the
+    what the next caller needs and not what a game needed. The Super Nintendo is
+    the near miss: `demake arrange -c snes` writes an `.spc`, which is the same
+    driver and the same schedules in the format that console's own players read,
+    but it is a RAM image rather than a cartridge. The SN76489 is also the
     one that stretched the shared packing layer: its channel is in the data byte
     and latched, so `channelOf` became a factory over a per-schedule latch and a
     schedule that opens a tick with a bare data byte is refused rather than
@@ -690,8 +770,11 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     filters per write, `mix()` takes per-chip gains from the binding, and the
     packed register byte names one of five destinations rather than a register.
     It is also the first console whose timbre is *searched* — see §Stage 3 of doc
-    17, which had been waiting for an FM target. Remaining: `snes` (BRR,
-    the SPC700 driver, sample budgeting), `gba`, `nds` — each is a chip model, a
+    17, which had been waiting for an FM target. The Super Nintendo stretched the
+    layer in the other direction, and is the first console whose driver does not
+    run on its own processor at all — a chip model, an SPC700 assembler, a
+    generated driver and a boot upload, all of which §D4 records. Remaining:
+    `gba`, `nds` — each is a chip model, a
     driver backend and a Level A/B harness, on the per-console definition of done
     Phase 2 used for images. Each faces the choice doc 16 §The driver contract
     records: own the CPU's encoder (as the Game Boy does, which buys the browser

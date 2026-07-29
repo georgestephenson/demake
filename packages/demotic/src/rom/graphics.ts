@@ -251,6 +251,44 @@ export function builtinSega(ink: number): Uint8Array {
   return bank;
 }
 
+/** Bytes per SNES 4bpp tile: two 2bpp tiles stacked. */
+export const SNES_TILE_BYTES = 32;
+
+/**
+ * The same bank again, as SNES 4bpp — planes 0 and 1 interleaved down the rows
+ * for sixteen bytes, then planes 2 and 3.
+ *
+ * `ink` is where the brightest of the four authored shades lands inside the
+ * sub-palette the runtime reserves for the font, and the two below it follow.
+ * The parameter exists for the reason the Sega one does: which colours the
+ * runtime art may use is the backend's decision and not the font's. Shade zero
+ * stays index zero, which on this chip is transparency on *both* layers — a
+ * background cell of colour zero shows the fixed backdrop — so one glyph draws
+ * correctly whether it is a tilemap cell or an object.
+ */
+export function builtinSnes(ink: number): Uint8Array {
+  const bank = new Uint8Array(BUILTIN_TILES * SNES_TILE_BYTES);
+  // Shades 1, 2 and 3 become the three reserved entries, brightest last.
+  const map = [0, ink - 2, ink - 1, ink];
+  let at = 0;
+  for (const cell of builtinCells()) {
+    for (let y = 0; y < 8; y += 1) {
+      const row = cell[y] ?? "";
+      for (let x = 0; x < 8; x += 1) {
+        const shade = Number.parseInt(row[x] ?? "0", 10) || 0;
+        const colour = map[shade] as number;
+        for (let plane = 0; plane < 4; plane += 1) {
+          if (((colour >> plane) & 1) === 0) continue;
+          const index = at + (plane >> 1) * 16 + y * 2 + (plane & 1);
+          bank[index] = (bank[index] as number) | (0x80 >> x);
+        }
+      }
+    }
+    at += SNES_TILE_BYTES;
+  }
+  return bank;
+}
+
 /** Bytes per Mega Drive 4bpp tile: two pixels a byte, eight rows. */
 export const MD_TILE_BYTES = 32;
 

@@ -59,6 +59,17 @@ export {
 } from "./chipscript.js";
 export { bindingFor, audioConsoles, UnsupportedConsoleError } from "./binding/registry.js";
 export type { ChipBinding, DriverRateFit } from "./binding/types.js";
+export {
+  ARAM_DIR,
+  ARAM_DIR_PAGE,
+  MASTER_VOLUME,
+  sampleAram,
+  sampleNumber,
+  waveformBank,
+  WAVEFORMS,
+  type Waveform,
+} from "./binding/sdsp-bank.js";
+export { NOISE_VOICE, SDSP_MERGE_REGS, SDSP_REG, sdspChannelTag } from "./binding/sdsp.js";
 export { planTiming, verifyNonAccumulating, type TimingPlan } from "./timing.js";
 export {
   centsToHz,
@@ -112,6 +123,17 @@ export {
   type SmsGameAudioStats,
 } from "./rom/sms-game.js";
 export {
+  buildSpcGameAudio,
+  resolveSpcClock,
+  SPC_CODE_BASE,
+  SPC_IMAGE_BASE,
+  SPC_PORT,
+  STOP as SPC_STOP,
+  type SpcGameAudio,
+  type SpcGameAudioInput,
+  type SpcGameAudioStats,
+} from "./rom/spc-game.js";
+export {
   buildMdGameAudio,
   resolveMdClock,
   MD_AUDIO_BYTES,
@@ -129,6 +151,7 @@ export { mdChannelTag, mdPort, MD_FM_CHANNELS, MD_PSG_PORT } from "./rom/md-chip
 export { render, type RenderAudioOptions } from "./render.js";
 export { encodeWav, type WavOptions } from "./encode/wav.js";
 export { encodeVgm, type VgmOptions } from "./encode/vgm.js";
+export { encodeSpc, artifactFormat, type SpcOptions } from "./encode/spc.js";
 
 // --- the sound demaker -------------------------------------------------------
 export {

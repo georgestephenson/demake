@@ -27,6 +27,7 @@
     "build": "tsc --build"
   },
   "devDependencies": {
-    "@demake/dmg": "workspace:*"
+    "@demake/dmg": "workspace:*",
+    "@demake/snes": "workspace:*"
   }
 }

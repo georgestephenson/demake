@@ -66,8 +66,28 @@ const DIST = process.argv[2] ?? "packages/web/dist";
  * stops being an acceptable answer — the way out then is to stop shipping every
  * console's emitter to every visitor, which means splitting `core.worker.ts` by
  * family and letting the budget become per-visitor rather than per-site.
+ *
+ * **And the fifth console is here, so this raise is the one the paragraph above
+ * names.** The Super Nintendo is **49.5 KB gzipped** against `main` at 349.4:
+ * 27.6 KB in `core.worker.ts` for the 65816 and SPC700 assemblers and the largest
+ * codegen backend of the five, 14.1 KB in the game section for `@demake/snes` —
+ * a 65816 whose registers change width at run time, a Mode 1 S-PPU, and an SPC700
+ * with its own RAM and timers — and 7.7 KB in `audio.worker.ts` for the S-DSP,
+ * its binding, the waveform bank and the generated SPC700 driver. Two processors,
+ * two assemblers, two chip-adjacent models and a backend, against 21 KB for the
+ * Sega vertical and 4.6 for the NES, which reused a 6502 assembler already here.
+ * Nothing is duplicated across chunks — the SPC700 assembler is in the game
+ * section because `@demake/snes` assembles its own boot ROM with it, which is the
+ * whole reason no core is fetched — and the emulator reaches neither worker.
+ *
+ * **This raise does not discharge the split; it is the last one that should be
+ * taken instead of it.** The work was measured against 306.9 before either Mega
+ * Drive raise landed, so what is recorded here is a merge arriving after the
+ * warning rather than an argument against it. A sixth console must split
+ * `core.worker.ts` by family — the ask has not moved, and this number should not
+ * again.
  */
-const BUDGET_KB = 355;
+const BUDGET_KB = 400;
 
 function walk(dir) {
   const out = [];

@@ -116,15 +116,20 @@ const GAMES = readdirSync(games)
  * sound driver, which `audio.test.ts` records in its own over-budget list. The
  * NES gets `platformer`, which has two backdrops and room.
  *
+ * The Super Nintendo gets `caves` and nothing else, and for a plainer reason: a
+ * picture there is 256×224 fitted into seven sixteen-colour sub-palettes, which
+ * is three times the arithmetic of any other console's screen. One backdrop is
+ * what this file can afford of it, and one backdrop is enough — what varies here
+ * is the executor, not the game.
+ *
  * A colour build is around ten seconds, so the full matrix would put this file
  * minutes over the suite's budget to re-cover ground `rom.test.ts` already holds.
- * What varies here is the executor, not the game.
  */
 const CASES = [
   ...GAMES.map((game) => ({ game, consoleId: "gb" })),
   { game: "shooter.dmt", consoleId: "gbc" },
   { game: "platformer.dmt", consoleId: "nes" },
-  ...["gbc", "nes"].map((consoleId) => ({ game: "caves.dmt", consoleId })),
+  ...["gbc", "nes", "snes"].map((consoleId) => ({ game: "caves.dmt", consoleId })),
 ];
 
 /**

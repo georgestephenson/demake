@@ -7,6 +7,7 @@
  * spec pins Mode 1, the workhorse tiled BG.)
  */
 
+import { snesAudio } from "./audio-specs.js";
 import type { ConsoleSpec } from "./types.js";
 
 export const snes = {
@@ -27,10 +28,12 @@ export const snes = {
     flip: true,
   },
   codegen: { family: "snes", formats: ["bin", "asm", "c", "rom"] },
+  audio: snesAudio,
   docs: {
     sources: [
       "SNESdev Wiki — CGRAM & palettes (RGB555): https://snes.nesdev.org/wiki/CGRAM",
       "SNESdev Wiki — Backgrounds / tilemap (flip bits, Mode 1): https://snes.nesdev.org/wiki/Backgrounds",
+      "SNESdev Wiki — S-DSP: https://snes.nesdev.org/wiki/S-DSP",
     ],
   },
 } satisfies ConsoleSpec;

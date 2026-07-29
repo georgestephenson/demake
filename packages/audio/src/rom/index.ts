@@ -31,6 +31,17 @@ import {
 export { AudioRomError, buildGbAudioRom };
 export type { AudioRomOptions, AudioRomStats, BuiltAudioRom };
 export {
+  buildSpcGameAudio,
+  resolveSpcClock,
+  SPC_CODE_BASE,
+  SPC_IMAGE_BASE,
+  SPC_PORT,
+  STOP as SPC_STOP,
+  type SpcGameAudio,
+  type SpcGameAudioInput,
+  type SpcGameAudioStats,
+} from "./spc-game.js";
+export {
   packScript,
   PackError,
   MAX_WRITES_PER_TICK,
@@ -52,6 +63,9 @@ const DRIVERS: Readonly<Record<string, "gb">> = { "gb-apu": "gb" };
  */
 const GAME_CLOCKS: Readonly<Record<string, "timer" | "frame">> = {
   "gb-apu": "timer",
+  // The Super Nintendo is the one console here whose driver clock is its own: the
+  // sound processor has three timers, and none of them is shared with the game.
+  "s-dsp": "timer",
   "nes-apu": "frame",
   // The Sega 8-bits' other candidate is the VDP's line interrupt, and on paper it
   // is a timer: `psgBinding.fitRate` will hand back rates a long way above the
@@ -83,10 +97,24 @@ const GAME_CLOCKS: Readonly<Record<string, "timer" | "frame">> = {
 export function gameDriverRate(consoleId: string): number {
   const spec = getConsole(consoleId).audio;
   if (spec === undefined) return SFX_RATE_HZ / 2;
-  const clock = GAME_CLOCKS[spec.chips[0] as string] ?? "timer";
+  const chip = spec.chips[0] as string;
+  const exact = GAME_RATES[chip];
+  if (exact !== undefined) return exact;
+  const clock = GAME_CLOCKS[chip] ?? "timer";
   if (clock === "timer") return SFX_RATE_HZ / 2;
   return spec.driver.frameRate.num / spec.driver.frameRate.den;
 }
+
+/**
+ * Consoles whose timer hits a *different* rate exactly.
+ *
+ * The general answer is half the standalone effect rate, and it is right
+ * wherever the timer is fine-grained. The sound processor's timer is an 8 kHz
+ * prescaler over an eight-bit divisor, so 125 Hz is exact and 120 Hz is a third
+ * of a per cent out — and a rate a register can state exactly is worth more here
+ * than one that matches the other consoles, because nothing compares the two.
+ */
+const GAME_RATES: Readonly<Record<string, number>> = { "s-dsp": 125 };
 
 /** Console ids `--format rom` can build an audio cartridge for. */
 export function audioRomConsoles(): string[] {

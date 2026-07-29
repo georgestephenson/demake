@@ -241,3 +241,89 @@ export {
   type SegaHeaderOptions,
   type SegaRegion,
 } from "./asm/sms-cart.js";
+// The 65816's operand constructors overlap the 6502's by name and not by type —
+// `abs` there produces a `Operand`, here an `Operand65816`, and the two address
+// modes are spelled differently ("zp" against "dp") because the CPUs spell them
+// differently. The five that collide are exported under a prefix and aliased back
+// in one place (`codegen/snes/ops.ts` in the Demotic backend), so a call site
+// still reads like assembly and nothing can pass the wrong operand to the wrong
+// assembler.
+export {
+  Asm65816,
+  abs as snesAbs,
+  absInd,
+  absIndLong,
+  absIndX,
+  absX as snesAbsX,
+  absY as snesAbsY,
+  acc65816,
+  at65816,
+  dp,
+  dpInd,
+  dpIndLong,
+  dpIndLongY,
+  dpIndX,
+  dpIndY,
+  dpX,
+  dpY,
+  imm16,
+  imm8,
+  immBank,
+  immHigh as snesImmHigh,
+  immLow as snesImmLow,
+  long,
+  longX,
+  sr,
+  srY,
+  type Imm65816,
+  type Mnemonic65816,
+  type Mode65816,
+  type Operand65816,
+} from "./asm/wdc65816.js";
+// The SPC700's constructors collide with both of the above for the same reason
+// and are prefixed for the same reason: `dp` on this CPU is an operand of a
+// different type, in a different address space, on a different processor. The
+// registers (`A`, `X`, `Y`, `YA`, `SP`, `PSW`, `C`) are operands rather than
+// modes here, so they have no counterpart to collide with and keep their names.
+export {
+  A,
+  Asm700,
+  C,
+  PSW,
+  SP,
+  X,
+  Y,
+  YA,
+  abs as spcAbs,
+  absX as spcAbsX,
+  absY as spcAbsY,
+  dp as spcDp,
+  dpX as spcDpX,
+  dpY as spcDpY,
+  idxIndY as spcIdxIndY,
+  imm as spcImm,
+  indIdxX as spcIndIdxX,
+  indX as spcIndX,
+  indXInc as spcIndXInc,
+  indY as spcIndY,
+  type Branch700,
+  type Implied700,
+  type Mnemonic700,
+  type Spc700Operand,
+  type Spc700Tag,
+} from "./asm/spc700.js";
+export {
+  SNES_BANK_SIZE,
+  SNES_CODE_SIZE,
+  SNES_HEADER_OFFSET,
+  SNES_ORIGIN,
+  SNES_ROM_SIZE,
+  SNES_TILE_BANK,
+  SNES_TILE_BASE,
+  SNES_TILE_CAPACITY,
+  SNES_TILE_OFFSET,
+  SNES_VECTORS,
+  packSnesRom,
+  snesChecksum,
+  type SnesHeaderOptions,
+} from "./asm/snes-cart.js";

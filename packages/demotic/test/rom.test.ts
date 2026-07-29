@@ -36,6 +36,7 @@ import {
   RomRunner,
   romTrace,
   smsTarget,
+  snesTarget,
   type RomTarget,
 } from "./_rom-harness.js";
 
@@ -110,7 +111,11 @@ describe("ROM conformance across the example library", async () => {
   // surface, and the whole point of the shared spine is that neither can. And the
   // Mega Duck, where the claim is the opposite one: that console differs from the
   // Game Boy only in where its registers live, so a divergence here would mean a
-  // *machine description* had leaked into the code the tick runs.
+  // *machine description* had leaked into the code the tick runs. And the Super
+  // Nintendo, because its accumulator is *sixteen* bits: every routine in its
+  // value layer is a different program from the eight-bit one the others share,
+  // so agreement there is agreement about the arithmetic rather than about the
+  // code.
   for (const target of [
     gbTarget,
     gbcTarget,
@@ -118,6 +123,7 @@ describe("ROM conformance across the example library", async () => {
     nesTarget,
     smsTarget,
     ggTarget,
+    snesTarget,
     mdTarget,
   ]) {
     for (const [file, script, levels] of cases) {

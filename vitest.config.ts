@@ -16,6 +16,7 @@ export default defineConfig({
       "@demake/dmg": fileURLToPath(new URL("./packages/dmg/src/index.ts", import.meta.url)),
       "@demake/nes": fileURLToPath(new URL("./packages/nes/src/index.ts", import.meta.url)),
       "@demake/sms": fileURLToPath(new URL("./packages/sms/src/index.ts", import.meta.url)),
+      "@demake/snes": fileURLToPath(new URL("./packages/snes/src/index.ts", import.meta.url)),
       "@demake/md": fileURLToPath(new URL("./packages/md/src/index.ts", import.meta.url)),
       "@demake/chip": fileURLToPath(new URL("./packages/chip/src/index.ts", import.meta.url)),
       "@demake/audio": fileURLToPath(new URL("./packages/audio/src/index.ts", import.meta.url)),

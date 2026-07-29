@@ -21,6 +21,7 @@
     "@demake/md": "workspace:*",
     "@demake/nes": "workspace:*",
     "@demake/sms": "workspace:*",
+    "@demake/snes": "workspace:*",
     "preact": "^10.29.7"
   },
   "devDependencies": {

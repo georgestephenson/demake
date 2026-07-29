@@ -15,12 +15,14 @@ import { gbBackend } from "./gb.js";
 import { mdBackend } from "./md.js";
 import { nesBackend } from "./nes.js";
 import { smsBackend } from "./sms.js";
+import { snesBackend } from "./snes.js";
 
 /** Every backend, in the order a listing shows them. */
 const BACKENDS: readonly AnyBackend[] = [
   anyBackend(gbBackend),
   anyBackend(nesBackend),
   anyBackend(smsBackend),
+  anyBackend(snesBackend),
   anyBackend(mdBackend),
 ];
 
