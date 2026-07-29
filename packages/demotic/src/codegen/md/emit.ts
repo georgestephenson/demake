@@ -1251,8 +1251,15 @@ function emitFullRedraw(
     asm.jsr(needBlitBackdrop(ctx));
   } else {
     // A scene with a level paints from its grid, and one with neither is blank.
-    // The window, and the one row the first scroll step will need before it has
-    // had a chance to paint it — and nothing else.
+    //
+    // The window *plus one cell on each axis*, which is the same invariant the
+    // Sega emitter states and holds for the same reason: a scroll of part of a
+    // cell shows a sliver of the next one, and the walk only paints a strip once
+    // the origin has actually moved. Painting the window alone leaves that sliver
+    // holding whatever the last scene left in the plane — which on this console
+    // is a bug the wide plane hides everywhere except the first sub-cell step of
+    // a scene. The rows had it and the columns did not, which is the asymmetry
+    // that gave it away.
     emitOriginFromScroll(ctx, layout.words + W.mapCol * 2, layout.words + W.mapRow * 2);
     copy16(ctx, layout.words + W.firstCol * 2, layout.words + W.mapCol * 2);
     copy16(ctx, layout.words + W.tileRow * 2, layout.words + W.mapRow * 2);
@@ -1261,8 +1268,9 @@ function emitFullRedraw(
     const colLoop = ctx.unique("fullCol");
     const rows = layout.words + W.firstRow * 2;
     const columns = layout.words + W.lastCol * 2;
-    const height = layout.memory.viewH + (level !== undefined ? 1 : 0);
-    const width = layout.memory.viewW;
+    const spare = level !== undefined ? 1 : 0;
+    const height = layout.memory.viewH + spare;
+    const width = layout.memory.viewW + spare;
     asm.move("w", eaImm(height), at(rows));
     asm.label(rowLoop);
     copy16(ctx, layout.words + W.tileCol * 2, layout.words + W.firstCol * 2);

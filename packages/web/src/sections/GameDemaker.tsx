@@ -399,10 +399,6 @@ export function GameDemaker() {
           ) : null}
         </div>
 
-        <p class="hint">
-          <strong>{example.name}</strong> — {example.covers}
-        </p>
-
         <TouchPad onPress={press} onRelease={release} />
 
         <p class="hint keyboard-hint">

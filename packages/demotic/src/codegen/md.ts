@@ -21,13 +21,15 @@
  *     size assertion the other backends carry is about a game that nearly did
  *     not fit; this one has no such story, which is why the interesting numbers
  *     here are the tile bank's and the palette's.
- *   - **Half the sound hardware is driven, and it is the half that exists in
- *     `@demake/chip`.** An SN76489 sits at `$C00011` — a Master System's chip,
- *     at a Master System's clock — so the music and effects are demade and played
- *     by the same engine the Sega 8-bits use, over a 68000 driver
- *     (`@demake/audio`'s `md-game.ts`). The other half is a Z80 with a YM2612
- *     beside it and this build emits neither (doc 16 §Still to come), which is a
- *     game with four voices rather than a game with none.
+ *   - **Both sound chips are driven, because the board has two.** A YM2612 at
+ *     `$A04000` and an SN76489 at `$C00011` — six four-operator FM voices and
+ *     four tone channels, all ten of them arranged as one instrument by
+ *     `@demake/audio` and played by one 68000 driver (`md-game.ts`). The PSG
+ *     half is a Master System's chip at a Master System's clock, so it is the
+ *     Sega 8-bits' binding rather than a second one. What this build emits no
+ *     code for is the *Z80* that would normally carry the driver; the 68000 owns
+ *     the FM bus outright instead, which is what a 68000-only program does after
+ *     taking that bus.
  */
 
 import { buildMdGameAudio } from "@demake/audio";

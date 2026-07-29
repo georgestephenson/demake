@@ -253,6 +253,104 @@ describe("the plane against the level", async () => {
   });
 });
 
+describe("the edge painter", () => {
+  // Wider and taller than the plane, so both wraps are exercised rather than
+  // just the arithmetic that would compute them.
+  const columns = 80;
+  const rows = 60;
+  // A pattern with a long period on both axes, so a strip painted one cell out
+  // of place is a mismatch rather than a coincidence.
+  const grid = Array.from({ length: rows }, (_, row) =>
+    Array.from({ length: columns }, (_, column) =>
+      (column + row * 3) % 7 === 0 ? "#" : column % 5 === 0 ? "." : " ",
+    ).join(""),
+  ).join("\n");
+  const levels = { "wide.dmtl": ["tile # wall solid", "tile . dot", "map", grid, ""].join("\n") };
+  const source = [
+    "start play",
+    "",
+    "scene play",
+    "level wide from wide.dmtl",
+    "camera follows walker",
+    "",
+    "create object mover (width 1 cell, height 1 cell, speed 30)",
+    // Mid-level on both axes, so the camera is off its clamp in every direction
+    // and a step back is a step the painter has to make rather than a no-op.
+    "create mover walker in play (x 40, y 30)",
+    "",
+    "control walker left (xdirection -1) on hold",
+    "control walker right (xdirection 1) on hold",
+    "control walker up (ydirection -1) on hold",
+    "control walker down (ydirection 1) on hold",
+    "",
+  ].join("\n");
+
+  it("keeps the window and one cell past it painted from the grid", async () => {
+    const program = compile(source, { profile: getProfile("md"), levels });
+    const built = await buildMdRom(program);
+    const { viewW, viewH } = built.layout.memory;
+    const camera = built.layout.camera as number;
+    const machine = boot(built.bytes, built.layout.booted);
+
+    const originOf = (offset: number): number => {
+      const bytes = machine.readMemory(camera + offset, 2);
+      return ((bytes[0] as number) << 8) | (bytes[1] as number);
+    };
+
+    // The plane is bigger than the screen here, so unlike the Sega 8-bits there
+    // is no masked column to skip: every cell the window covers *and* the sliver
+    // past it on each axis is one the hardware really shows during a sub-cell
+    // scroll.
+    const check = (where: string): void => {
+      const originCol = originOf(0);
+      const originRow = originOf(4);
+      for (let row = originRow; row <= originRow + viewH; row += 1) {
+        for (let column = originCol; column <= originCol + viewW; column += 1) {
+          if (column >= columns || row >= rows) continue;
+          const blank = (grid.split("\n")[row] ?? "")[column] === " ";
+          const drawn = (cellAt(machine, column, row) & 0x7ff) !== 0;
+          expect(
+            drawn,
+            `${where}: cell (${column},${row}) with origin ${originCol},${originRow}`,
+          ).toBe(!blank);
+        }
+      }
+    };
+
+    const travel = (down: readonly string[], frames: number): void => {
+      machine.setButtons(down as never);
+      for (let frame = 0; frame < frames; frame += 1) machine.runFrame();
+      // A full redraw runs with interrupts masked and spans a frame, so a scene
+      // is compared once it has settled rather than part-way through the picture
+      // the runtime is still painting.
+      machine.setButtons([] as never);
+      for (let frame = 0; frame < 40; frame += 1) machine.runFrame();
+    };
+
+    travel([], 20);
+    check("at rest");
+    // Out and back on each axis in turn, then both at once: a diagonal step
+    // paints a column and a row in the same tick.
+    for (const [out, home] of [
+      [["right"], ["left"]],
+      [["down"], ["up"]],
+      [
+        ["right", "down"],
+        ["left", "up"],
+      ],
+    ] as const) {
+      travel(out, 40);
+      check(`after ${out.join("+")}`);
+      travel(home, 40);
+      check(`after ${home.join("+")}`);
+    }
+    // The camera really did leave its clamp, or none of the above moved a cell.
+    travel(["right"], 120);
+    expect(originOf(0)).toBeGreaterThan(20);
+    check("far from the start");
+  });
+});
+
 describe("objects", async () => {
   const built = await buildMdRom(build("pong.dmt"));
 

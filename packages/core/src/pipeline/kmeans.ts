@@ -95,7 +95,14 @@ function kmeansppInit(points: Points, k: number, prng: Prng, lWeight: number): n
  * region contains; collapsing keeps flat art flat and saturated. Photos prefer
  * the mean (smoother ramps), so the flag is profile-driven.
  *
- * @returns the fitted palette (deduplicated hardware colors, ≤ k entries).
+ * `frozen` pins index 0 to a color the caller has already decided on — the
+ * shared backdrop of a `sharedIndex0` console. It competes for points like any
+ * other center and is never moved, so the `k - 1` free centers fit *what the
+ * backdrop does not already serve* rather than being fitted over the whole cell
+ * and then having one of them turn out to be the backdrop again.
+ *
+ * @returns the fitted palette: `k` deduplicated hardware colors wherever the
+ * points hold that many distinct ones, `frozen` first when given.
  */
 export function latticeKmeans(
   points: Points,
@@ -105,17 +112,19 @@ export function latticeKmeans(
   iterations: number,
   lWeight: number,
   collapse = false,
+  frozen?: HwColor,
 ): HwColor[] {
   if (points.count === 0) {
-    return [space.snapLinear(0, 0, 0)];
+    return [frozen ?? space.snapLinear(0, 0, 0)];
   }
-  const kk = Math.min(k, points.count);
-  const seedIdx = kmeansppInit(points, kk, prng, lWeight);
-  let centers: HwColor[] = seedIdx.map((i) => {
+  const kk = Math.min(k, points.count + (frozen ? 1 : 0));
+  const seedIdx = kmeansppInit(points, frozen ? kk - 1 : kk, prng, lWeight);
+  const seeded = seedIdx.map((i) => {
     const lab = labAt(points, i);
     const lin = oklabToLinear(lab);
     return space.snapLinear(lin.r, lin.g, lin.b);
   });
+  let centers: HwColor[] = frozen ? [frozen, ...seeded] : seeded;
 
   const assign = new Int32Array(points.count);
   for (let iter = 0; iter < iterations; iter += 1) {
@@ -166,7 +175,11 @@ export function latticeKmeans(
     }
     const next: HwColor[] = [];
     for (let c = 0; c < centers.length; c += 1) {
-      if (sumW[c]! > 0) {
+      // The frozen center is the caller's decision, not this loop's: it takes
+      // the points it is nearest to and stays exactly where it is.
+      if (frozen && c === 0) {
+        next.push(frozen);
+      } else if (sumW[c]! > 0) {
         const lab: Oklab = {
           L: sumL[c]! / sumW[c]!,
           a: sumA[c]! / sumW[c]!,
@@ -190,9 +203,64 @@ export function latticeKmeans(
   }
 
   if (collapse) {
-    centers = collapseToMembers(points, centers, space, lWeight);
+    centers = collapseToMembers(points, centers, space, lWeight, frozen !== undefined);
   }
-  return dedupeColors(centers);
+  return topUp(dedupeColors(centers), points, kk, space, lWeight);
+}
+
+/**
+ * Refill a palette that dedupe left short of `k`.
+ *
+ * Two centers that converged on different Oklab means can snap to the *same*
+ * lattice color, and on a fixed-master console — fifty-odd colors, and a shadow
+ * end so sparse that three tints of one sky land on one entry — that is the
+ * common case rather than the corner. Dropping the duplicate and returning a
+ * shorter palette silently hands back three colors where the caller's hardware
+ * has four, and the caller has no way to notice: a Nintendo palette really can
+ * only hold four. So the slot is refilled from the point the palette serves
+ * worst, which is the same move the loop above makes for an empty cluster.
+ *
+ * Adding a center can only reduce error, because assignment is nearest-center —
+ * so this needs no further iteration, and it stops as soon as the points hold no
+ * color the palette does not already have.
+ */
+function topUp(
+  palette: HwColor[],
+  points: Points,
+  k: number,
+  space: HwColorSpace,
+  lWeight: number,
+): HwColor[] {
+  if (palette.length >= k) return palette;
+  const out = [...palette];
+  const have = new Set(out.map((c) => c.codes.join(",")));
+  while (out.length < k) {
+    let worst = -1;
+    let worstScore = 0;
+    for (let i = 0; i < points.count; i += 1) {
+      const lab = labAt(points, i);
+      let best = Infinity;
+      for (const c of out) {
+        const d = deltaESq(lab, c.lab, lWeight);
+        if (d < best) best = d;
+      }
+      const scored = best * points.weight[i]!;
+      if (scored > worstScore) {
+        worstScore = scored;
+        worst = i;
+      }
+    }
+    if (worst < 0) break;
+    const lin = oklabToLinear(labAt(points, worst));
+    const add = space.snapLinear(lin.r, lin.g, lin.b);
+    const key = add.codes.join(",");
+    // The worst-served point already snaps to a color the palette holds: every
+    // remaining slot would be a duplicate, so there is nothing left to add.
+    if (have.has(key)) break;
+    have.add(key);
+    out.push(add);
+  }
+  return out;
 }
 
 /** Replace each center with its cluster's highest-weight actual member color. */
@@ -201,6 +269,7 @@ function collapseToMembers(
   centers: HwColor[],
   space: HwColorSpace,
   lWeight: number,
+  keepFirst = false,
 ): HwColor[] {
   // Accumulate member weight per (cluster, snapped lattice color).
   const tallies: Map<string, { color: HwColor; weight: number }>[] = centers.map(() => new Map());
@@ -224,6 +293,9 @@ function collapseToMembers(
     else tally.set(key, { color: snapped, weight: points.weight[i]! });
   }
   return centers.map((center, c) => {
+    // A frozen center is not a cluster mean to be replaced by a real member; it
+    // is the color the hardware will display at index 0 whatever this fit says.
+    if (keepFirst && c === 0) return center;
     let bestColor = center;
     let bestWeight = -1;
     let bestKey = "";

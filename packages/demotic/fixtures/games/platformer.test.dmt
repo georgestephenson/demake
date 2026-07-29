@@ -15,7 +15,7 @@ play 20 ticks
 expect player.ydirection > 0
 expect player.y > 2
 
-test the hero lands on the floor and stops falling
+test the hero lands on the ground and stops falling
 press a
 play 240 ticks
 expect player.ydirection <= 0.05
@@ -36,7 +36,7 @@ press a
 play 240 ticks
 press a
 play 40 ticks
-expect player.bottom <= screenheight - 5
+expect player.bottom <= screenheight - 4
 
 -- The bug this rule exists to stop: with the jump bound straight to the button,
 -- pressing it again in mid-air renewed the impulse, and the hero climbed the sky

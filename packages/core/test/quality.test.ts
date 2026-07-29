@@ -157,6 +157,104 @@ describe("rare-but-distinct accent colors survive fitting", () => {
   });
 });
 
+/**
+ * Every slot the hardware has is a slot the fit has to spend.
+ *
+ * A palette short of a colour, or a sub-palette no cell ever chose, is invisible
+ * in every aggregate the tournament reports — the fit is *internally* consistent
+ * and the judge scores what it produced, not what it could have. It shows up
+ * only as a picture in fewer colours than the console can draw, which is what a
+ * Nintendo title screen in six colours of a possible thirteen looked like.
+ */
+describe("the console's colour budget is spent (doc 04 §Stage 4)", () => {
+  /**
+   * A picture built to need every slot the console has, exactly once.
+   *
+   * Each attribute cell is quartered: one shade every cell shares, and three (or
+   * `K-1`) hues belonging to that cell's *group*. With one group per sub-palette
+   * a perfect fit is the identity — group `g`'s cells take palette `g` and hold
+   * its own hues — so anything short of a full palette is the fitter leaving a
+   * colour the hardware has on the table, not the picture asking too much.
+   */
+  const HUES: Rgb[] = [
+    [216, 40, 40],
+    [232, 140, 32],
+    [232, 224, 64],
+    [56, 176, 72],
+    [48, 200, 176],
+    [48, 120, 216],
+    [64, 64, 208],
+    [160, 64, 200],
+    [232, 96, 168],
+    [128, 96, 40],
+    [176, 176, 184],
+    [96, 216, 96],
+    [216, 168, 96],
+    [40, 96, 96],
+    [200, 40, 120],
+    [120, 40, 200],
+    [96, 128, 232],
+    [176, 232, 64],
+    [232, 64, 24],
+    [80, 80, 96],
+    [232, 200, 232],
+    [24, 160, 96],
+    [144, 32, 32],
+    [64, 200, 232],
+    [248, 248, 200],
+    [40, 40, 128],
+    [216, 120, 200],
+    [112, 168, 40],
+    [32, 208, 208],
+    [184, 88, 24],
+    [136, 136, 248],
+    [72, 24, 72],
+  ];
+  const SHARED: Rgb = [16, 16, 24];
+
+  /**
+   * `share` quarters of every cell are one colour the whole picture shares; the
+   * rest are that cell's group's own hues.
+   */
+  const banded = (w: number, h: number, cell: number, groups: number, share: number) =>
+    makeImage(w, h, (x, y) => {
+      const cx = Math.floor(x / cell);
+      const cy = Math.floor(y / cell);
+      const group = (cy * Math.ceil(w / cell) + cx) % groups;
+      const half = cell / 2;
+      const quadrant = (y % cell < half ? 0 : 2) + (x % cell < half ? 0 : 1);
+      if (quadrant < share) return SHARED;
+      return HUES[(group * (4 - share) + quadrant - share) % HUES.length]!;
+    });
+
+  it("fills every sub-palette on a shared-backdrop console", async () => {
+    // Four palettes of four over one universal backdrop: thirteen colours.
+    const result = await prep(banded(128, 112, 16, 4, 1), { console: "nes" });
+    const palettes = result.image.palettes;
+    expect(palettes).toHaveLength(4);
+    // Four of four, not three: the shared backdrop is one of a palette's colours
+    // and must not cost it one.
+    for (const [index, pal] of palettes.entries()) {
+      expect(pal.colors, `palette ${index}`).toHaveLength(4);
+    }
+    // And no palette may sit unused — an unused one holds the backdrop alone and
+    // is a quarter of the budget idle.
+    expect(new Set(result.image.cellPalette).size).toBe(4);
+    const distinct = new Set(palettes.flatMap((pal) => pal.colors.map((c) => c.codes.join(","))));
+    expect(distinct.size).toBeGreaterThanOrEqual(11);
+  });
+
+  it("fills every sub-palette on a per-cell-palette console too", async () => {
+    // Eight palettes of four, no shared slot: thirty-two colours.
+    const result = await prep(banded(160, 144, 8, 8, 0), { console: "gbc" });
+    expect(result.image.palettes).toHaveLength(8);
+    for (const [index, pal] of result.image.palettes.entries()) {
+      expect(pal.colors, `palette ${index}`).toHaveLength(4);
+    }
+    expect(new Set(result.image.cellPalette).size).toBe(8);
+  });
+});
+
 describe("judge metrics (art profile)", () => {
   it("punishes dither speckle on regions the source keeps flat", () => {
     const w = 32;

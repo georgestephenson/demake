@@ -16,12 +16,14 @@
  *     picture horizontally and `R9` vertically, and the name table wraps at 32
  *     columns and 28 rows on its own. So the runtime never chooses which of two
  *     tables a cell belongs to; it paints the leading edge and writes a byte.
- *   - **The name table is exactly as wide as the screen.** Thirty-two columns
- *     against thirty-two, so a scrolling scene has *no* spare column: the cell a
- *     new column is written into is the one straddling the screen's left edge.
- *     Masking that column (`R0` bit 5) is what makes the seam invisible, and it
- *     is turned on only where the level really scrolls sideways — a still
- *     picture with eight pixels blanked would be a bug, not a feature.
+ *   - **The name table is exactly as wide as a Master System's screen, and wider
+ *     than a Game Gear's.** Thirty-two columns against thirty-two leaves a
+ *     scrolling Master System *no* spare column: the cell a new column is written
+ *     into is the one straddling the screen's left edge, and masking that column
+ *     (`R0` bit 5) is what makes the seam invisible. A Game Gear's window is
+ *     twenty of the same thirty-two, so it has twelve spare columns and no seam
+ *     at all — which is why the horizontal edge painter asks
+ *     {@link spareColumn} rather than assuming the wrap.
  *   - **There are two palettes and the background chooses per cell.** Bit 3 of a
  *     name-table entry selects colour bank 0 or 1. Art draws in bank 0; the
  *     font, the level patterns and the placeholder block draw in bank 1, which is
@@ -162,6 +164,24 @@ export const SPRITE_COLORS = 16 - SYSTEM_COLORS;
  */
 function windowOrigin(ctx: SmsCtx): { x: number; y: number } {
   return ctx.gameGear ? { x: 48, y: 24 } : { x: 0, y: 0 };
+}
+
+/**
+ * Whether the name table has a column the window does not show.
+ *
+ * The whole of horizontal scrolling turns on this. A Master System's screen is
+ * all thirty-two columns, so the cell a new column goes into is the one already
+ * straddling the left edge — hence the mask, and hence a leftward step painting
+ * offset one rather than offset zero. A Game Gear shows twenty of the same
+ * thirty-two, so the incoming column has a cell of its own on either side and
+ * both of those workarounds become the bug: the mask blanks nothing the LCD
+ * shows, and offset one skips the column that has just come into view.
+ *
+ * Vertically the answer is always yes — twenty-eight rows against twenty-four or
+ * eighteen — which is why the rows have never needed to ask.
+ */
+function spareColumn(ctx: SmsCtx): boolean {
+  return ctx.layout.memory.viewW < MAP_W;
 }
 
 /**
@@ -1354,11 +1374,12 @@ function emitFullRedraw(
   // and writing it with the display on would tear.
   emitVdpRegister(ctx, 1, 0x20);
 
-  // Column zero is masked only where the level really scrolls sideways. The name
-  // table is exactly as wide as the screen, so a scrolling scene has no spare
-  // column and the seam has to be hidden; a still picture with eight pixels
-  // blanked would be a defect.
-  const wide = level !== undefined && level.file.width > layout.memory.viewW;
+  // Column zero is masked only where a scrolling level has nowhere else to put
+  // its incoming column — a Master System, whose screen is the whole name table.
+  // A Game Gear has twelve columns outside its window, so the seam does not
+  // exist there and blanking eight pixels of a smaller screen would be a defect,
+  // exactly as it would be for a still picture.
+  const wide = level !== undefined && level.file.width > layout.memory.viewW && !spareColumn(ctx);
   emitVdpRegister(ctx, 0, wide ? 0x24 : 0x04);
 
   // Every scene uploads a palette, whether it has one of its own or not. A scene
@@ -1392,8 +1413,15 @@ function emitFullRedraw(
     const colLoop = ctx.unique("fullCol");
     const rows = layout.words + W.firstRow * 2;
     const columns = layout.words + W.lastCol * 2;
+    // One past the window on each axis: a scroll that is not a whole number of
+    // cells shows a sliver of the next column and the next row, and a cell
+    // nothing painted shows whatever the scene before it left there. A Game Gear
+    // has a spare column to put it in; a Master System's thirty-third column
+    // wraps onto the cell straddling the masked left edge, which is where the
+    // scroll expects to find the far sliver anyway — so the count is the same on
+    // both and only the *step back* has to know the difference.
     const height = layout.memory.viewH + (level !== undefined ? 1 : 0);
-    const width = layout.memory.viewW;
+    const width = layout.memory.viewW + (level !== undefined ? 1 : 0);
     asm.ldn("a", height);
     asm.sta(rows);
     asm.label(rowLoop);
@@ -1645,12 +1673,18 @@ function emitScrollUpdate(ctx: SmsCtx, level: LevelData): void {
  * Step one axis of the map origin toward the camera, painting the leading edge
  * as it goes. More than four cells in a tick is a teleport, not a scroll.
  *
- * The forward offset differs by axis and the difference is the hardware's: the
- * name table is thirty-two columns against a thirty-two-column screen, so a new
- * column has to go into the cell straddling the screen's masked left edge —
- * `viewW` cells from the origin, which wraps onto it. Vertically there are four
- * spare rows, so a new row goes one past the bottom of the window and is not
- * seen until it arrives.
+ * The invariant is that the name table holds the window plus one cell past it on
+ * each axis, because a scroll of part of a cell shows a sliver of the next one.
+ * So moving on paints one past the far edge — `viewW` or `viewH` from the new
+ * origin — and moving back paints the new origin itself.
+ *
+ * A Master System's columns are the exception, and the exception is the wrap: its
+ * screen is the whole thirty-two-column name table, so "one past the window" and
+ * "the origin" are the *same cell*, and it has to hold the far sliver rather than
+ * the near one. The mask over column zero is what makes the near half of it
+ * invisible, and it is why moving back paints offset one there — offset zero is
+ * that shared cell, and painting it would put the left-hand column's tiles into
+ * the sliver at the right-hand edge.
  */
 function emitWalkAxis(
   ctx: SmsCtx,
@@ -1685,7 +1719,7 @@ function emitWalkAxis(
   asm.jp(loop);
   asm.label(back);
   dec16(ctx, origin);
-  emitPaintEdge(ctx, level, isColumn, isColumn ? 1 : 0);
+  emitPaintEdge(ctx, level, isColumn, isColumn && !spareColumn(ctx) ? 1 : 0);
   asm.jp(loop);
   asm.label(done);
 }
