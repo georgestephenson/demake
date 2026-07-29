@@ -24,18 +24,22 @@ sound jump.wav on a pressed in play if footing.value > 0
 sound coin.wav on player hits coin
 
 create object hero (width 1 cell, height 2 cells, speed 55vw, sprite hero.svg)
-create object ledge (width 25vw, height 1 cell, sprite ledge.svg)
+-- Absolute, because a ledge is hardware sprites and eight to a scanline is all
+-- any of these machines draws. A share of the playfield would be five of them
+-- on a Game Gear and eight on a Master System, for the same picture.
+create object ledge (width 5 cells, height 1 cell, sprite ledge.svg)
 create object coin (width 1 cell, height 1 cell, sprite coin.svg)
 
 create hero player in play (x 15vw, y 2)
 
-create ledge floor in play (x 10vw, y screenheight - 1, width 55vw)
-create ledge shelf1 in play (x 35vw, y screenheight - 5)
-create ledge shelf2 in play (x 55vw, y screenheight - 9)
+-- The ground is `screenbottom` and the picture behind it; a platform spanning
+-- the screen would be eleven sprites on one line.
+create ledge shelf1 in play (x 35vw, y screenheight - 4)
+create ledge shelf2 in play (x 55vw, y screenheight - 8)
 
 create coin coin1 in play (x 25vw, y screenheight - 2)
-create coin coin2 in play (x 45vw, y screenheight - 6)
-create coin coin3 in play (x 65vw, y screenheight - 10)
+create coin coin2 in play (x 45vw, y screenheight - 5)
+create coin coin3 in play (x 65vw, y screenheight - 9)
 
 -- Whether the hero has ground under it right now:
 -- cleared below, set by the contact, read by the jump.

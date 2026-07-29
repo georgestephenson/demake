@@ -324,6 +324,7 @@ function runOnce(
 
   let palettes = refitPalettes(pre, cellPixels, cellPalette, P, K, space, prng, params, reserved);
 
+  const cellError = new Float64Array(cellCount);
   for (let round = 0; round < params.refineRounds; round += 1) {
     // Assignment step.
     let moved = false;
@@ -343,7 +344,9 @@ function runOnce(
       }
       if (cellPalette[c] !== best) moved = true;
       cellPalette[c] = best;
+      cellError[c] = bestErr;
     }
+    if (seedUnusedPalettes(cellPalette, cellError, P)) moved = true;
     palettes = refitPalettes(pre, cellPixels, cellPalette, P, K, space, prng, params, reserved);
     if (!moved && round > 0) break;
   }
@@ -442,9 +445,6 @@ function refitPalettes(
   reserved: HwColor | null,
 ): HwColor[][] {
   const palettes: HwColor[][] = [];
-  // With a reserved backdrop, k-means fits the other K−1 colors; the backdrop is
-  // forced into index 0, so every palette shares it.
-  const freeK = reserved ? Math.max(1, K - 1) : K;
   for (let p = 0; p < P; p += 1) {
     const members: number[] = [];
     for (let c = 0; c < cellPalette.length; c += 1) {
@@ -457,27 +457,67 @@ function refitPalettes(
       continue;
     }
     const points = pointsFor(pre, Int32Array.from(members), members.length);
-    const fitted = latticeKmeans(
-      points,
-      freeK,
-      space,
-      prng,
-      params.kmeansIters,
-      params.lWeight,
-      params.collapse === true,
+    // With a reserved backdrop the fit asks for all K colors and pins index 0:
+    // the free centers then compete with the backdrop for points, so they cover
+    // what it cannot rather than being fitted over the whole cell and leaving one
+    // of themselves to land back on it. Fitting K−1 free colors and prepending
+    // the backdrop afterwards was how a palette came to hold three colors on
+    // hardware that has four.
+    palettes.push(
+      latticeKmeans(
+        points,
+        K,
+        space,
+        prng,
+        params.kmeansIters,
+        params.lWeight,
+        params.collapse === true,
+        reserved ?? undefined,
+      ),
     );
-    palettes.push(reserved ? withReserved(reserved, fitted, K) : fitted);
   }
   return palettes;
 }
 
-/** Prepend the reserved backdrop at index 0, dedupe, and cap at K colors. */
-function withReserved(reserved: HwColor, fitted: HwColor[], K: number): HwColor[] {
-  const key = reserved.codes.join(",");
-  const out: HwColor[] = [reserved];
-  for (const c of fitted) {
-    if (out.length >= K) break;
-    if (c.codes.join(",") !== key) out.push(c);
+/**
+ * Give every sub-palette something to do.
+ *
+ * A palette no cell chose is a whole share of the color budget doing nothing —
+ * a quarter of it on an NES — and nothing in the alternation recovers one: a
+ * cell only ever moves to the palette that serves it *best*, and an unused
+ * palette holds either nothing or the backdrop alone, so it serves nothing best
+ * and stays unused for the rest of the fit. On a console with four colors to a
+ * palette that is the difference between six colors on screen and thirteen.
+ *
+ * So an unused palette is seeded from the cell its own palette serves worst, and
+ * the refit that follows gives it that cell's colors — the same move
+ * {@link latticeKmeans} makes for an empty cluster, one level up. Cells are
+ * never taken from a palette down to its last one, so filling one empty palette
+ * cannot empty another.
+ *
+ * @returns whether anything moved.
+ */
+function seedUnusedPalettes(cellPalette: Uint16Array, cellError: Float64Array, P: number): boolean {
+  const counts = new Int32Array(P);
+  for (const p of cellPalette) counts[p]! += 1;
+  let moved = false;
+  for (let p = 0; p < P; p += 1) {
+    if (counts[p]! > 0) continue;
+    let worst = -1;
+    let worstError = -1;
+    for (let c = 0; c < cellPalette.length; c += 1) {
+      const from = cellPalette[c]!;
+      if (counts[from]! < 2) continue;
+      if (cellError[c]! > worstError) {
+        worstError = cellError[c]!;
+        worst = c;
+      }
+    }
+    if (worst < 0) continue;
+    counts[cellPalette[worst]!]! -= 1;
+    cellPalette[worst] = p;
+    counts[p]! += 1;
+    moved = true;
   }
-  return out;
+  return moved;
 }
