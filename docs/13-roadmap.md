@@ -717,6 +717,72 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   framing is a *tile budget inspector* that explains what was merged and why,
   rather than a manual editor.
 
+- **Declarative art, music and sound — describing the assets in Demotic too**:
+  the whole game as text, with no binary file in the project at all. A `.dmt`
+  already declares the game and a `.dmtl` declares a level; the missing three are
+  a picture, a track and an effect. It is speculative, post-1.0, and it is worth
+  writing down because the shape of the tool makes it unusually cheap *if* one
+  condition holds — and actively corrosive if it does not.
+
+  **Why it is cheap.** Each of the three has an existing declarative target
+  inside the engine, so a Demotic front end would compile *to* something already
+  proven rather than reaching pixels or samples on its own:
+
+  - **Art → the SVG document model.** `packages/core/src/image/svg/` is our own
+    rasteriser, deterministic and already the path a `.dmt`'s art travels
+    (doc 15 §The conversion path). SVG is declarative to begin with, so a Demotic
+    art file is a *second syntax for the same document*, and `prep` cannot tell
+    the difference. No new code touches a pixel.
+  - **Music → `Score`.** `packages/audio/src/score/` is already the hardware-free
+    representation, with MIDI as one parser into it (doc 16). A declarative track
+    is a second parser into the same `Score`. The arranger, the timbre search and
+    the schedule compiler are untouched.
+  - **Sound → PCM.** `sfx` fits a chip gesture to a *recording* (doc 18), so a
+    declarative effect has to produce samples, and the natural form is a small
+    modular-synth description — oscillators, noise, filters, envelopes — rendered
+    on `core`'s own math kernels. It renders to exactly what the WAV decoder
+    produces, and the class gate and the gesture tournament see a waveform as
+    before. This is the cheapest and most defensible of the three: a knock or a
+    coin pickup is a few lines, and writing one is easier than writing the
+    generator script that currently makes the fixture.
+
+  **The condition, and it is the whole risk.** The format must be a peer of SVG,
+  MIDI and WAV — *not* a peer of the console. It has to be able to say more than
+  the hardware can show, and the demakers must still have real work to do. Two
+  ways that fails, both of which the AGENTS.md authoring rules already warn about
+  in their existing form:
+
+  - **Art authored at the target's resolution.** A hand-typed art format invites
+    four tones and 8×8 shapes, because that is what is quick to write — and then
+    the fit has nothing to quantise and a Mega Drive gains nothing over a Game
+    Boy. The library's SVGs are drawn on a 640×576 canvas with detail down to a
+    quarter of a Game Boy pixel *deliberately*.
+  - **Chip music by the back door.** If the format is easy to write in two voices,
+    it will be written in two voices, and the arranger's central decision — what
+    to do when there are more parts than channels — is hidden rather than made.
+    The library's MIDIs are four-part arrangements for exactly that reason.
+
+  So the test for any proposal here is not "does it produce a nice sprite", it is
+  **does the demaker still have something to demake**. A format that can only
+  express what one console can display is a tile editor with extra steps, which is
+  the previous bullet's argument arriving by a different route.
+
+  **What it would buy**, if that condition is met: a project that is entirely
+  text — readable diffs, no zip, and every asset reviewable in a pull request; one
+  language, one set of diagnostics, one registry pattern (`.dmt`, `.dmtl` and
+  `.test.dmt` already share a lexer and a front end, so a fourth, fifth and sixth
+  file type is a known cost); determinism by construction, since nothing decodes
+  or rasterises outside our own code; and the visual editors of
+  [doc 19](19-projects.md) extending to assets, because a declarative source is
+  exactly what a block or grid editor can be a view over. The agent story
+  (§Agent-driven demaking) benefits least, and it is worth being clear about that:
+  an agent can already emit SVG and generate a MIDI, so the honest argument for
+  this is human authorability and diffability rather than machine writability.
+
+  Order, if it is ever taken up: sound first (smallest, and the demaker's input is
+  the easiest to synthesise honestly), then music, then art — which has the best
+  existing target and the highest chance of quietly undermining the tool's premise.
+
 - **Audio — the music and sound demakers (new domain)**: docs
   [16](16-audio-engine.md), [17](17-music-demaker.md) and
   [18](18-sound-demaker.md). Convert modern music and sound effects into

@@ -716,7 +716,11 @@ Named so the shape stays honest.
   folder, which is a thing the operating system does well.
 - **Editing binary resources.** The page demakes art, music and effects; it does
   not draw, compose or record them. That boundary is doc 01's and this document
-  does not move it.
+  does not move it. Where it might eventually move is
+  [doc 13](13-roadmap.md) §Declarative art, music and sound — if a picture, a
+  track and an effect ever have Demotic source forms, a project becomes entirely
+  text and its assets get editors for the same reason `.dmtl` does. The condition
+  that has to hold first is stated there, and it is a real one.
 - **Tile editing**, for the reason doc 13 gives: a tileset exists because
   hardware forces art to be shared, so a tile editor cuts against the premise.
   The level editor edits a *level*, whose tiles are named art files.
