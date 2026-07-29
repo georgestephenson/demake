@@ -338,3 +338,65 @@ export {
   snesChecksum,
   type SnesHeaderOptions,
 } from "./asm/snes-cart.js";
+// ARM's operand constructors are already prefixed at the source, for the reason
+// the 65816's and the SPC700's are aliased here: `imm` and `at` on this CPU are
+// operands of different types in a different encoding, and nothing should be
+// able to hand one to another assembler. The register *numbers* stay unexported
+// — a backend names them for what they hold (`codegen/gba/regs.ts`), which is
+// more useful at a call site than `R4`, and `SP` is already the SPC700's.
+export {
+  ARM_LR,
+  ARM_PC,
+  ARM_SP,
+  AsmArm,
+  armAsr,
+  armAt,
+  armAtIdx,
+  armAtIdxPost,
+  armAtIdxSub,
+  armAtPost,
+  armAtPre,
+  armImm,
+  armLsl,
+  armLsr,
+  armReg,
+  armRor,
+  armRrx,
+  armShiftBy,
+  encodeArmImm,
+  fitsArmImm,
+  invertCond,
+  type ArmBlockMode,
+  type ArmCond,
+  type ArmMem,
+  type ArmOp2,
+  type ArmShift,
+} from "./asm/arm.js";
+export {
+  GBA_BIOS_IF,
+  GBA_CHECK_END,
+  GBA_CHECK_OFFSET,
+  GBA_CHECK_START,
+  GBA_EWRAM_END,
+  GBA_EWRAM_START,
+  GBA_HEADER_SIZE,
+  GBA_IRQ_VECTOR,
+  GBA_IWRAM_END,
+  GBA_IWRAM_START,
+  GBA_ORIGIN,
+  gbaComplement,
+  packGbaRom,
+  type GbaHeaderOptions,
+} from "./asm/gba-cart.js";
+export {
+  NDS_ARM7_RAM,
+  NDS_ARM7_WRAM_END,
+  NDS_ARM7_WRAM_START,
+  NDS_ARM9_RAM,
+  NDS_HEADER_SIZE,
+  NDS_MAIN_RAM_END,
+  NDS_MAIN_RAM_START,
+  ndsCrc16,
+  packNdsRom,
+  type NdsHeaderOptions,
+} from "./asm/nds-cart.js";
