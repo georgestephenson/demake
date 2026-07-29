@@ -89,12 +89,12 @@ export const CODE_SIZE = SNES_CODE_SIZE;
 /**
  * What this backend's audio binding hands the emitter.
  *
- * Present and silent. There is no driver, so nothing here plays anything — but
- * the bytes a rule writes to *record* what it asked for are set whenever the
- * program names audio, because that is a field of the trace (doc 14
- * §Conformance): a build for this console has to trace identically to one for a
- * console that really plays it, or the conformance suite would be comparing two
- * different games.
+ * `gb.ts`'s, `nes.ts`'s and `sms.ts`'s shape: what the emitter needs to *play*
+ * the audio, and — separately — the bytes a rule writes to ask for it. The second
+ * is set whenever the program *names* audio, driver or no driver, because the
+ * request is a field of the trace (doc 14 §Conformance): a build whose files were
+ * not supplied has to trace identically to one with them in, or the conformance
+ * suite would be comparing two different games.
  */
 interface SnesAudio extends BoundAudioShape {
   /** The emitter options the driver contributes: itself, and where it will sit. */
@@ -115,11 +115,11 @@ export const snesBackend: Backend<SnesEmitOptions, SnesAudio> = {
   /**
    * Language features this backend does not implement.
    *
-   * Empty: levels, tiles, the camera, scrolling and the whole rule vocabulary
-   * compile. Sound is not in the list *deliberately* — a game that names it
-   * builds and traces correctly, and what is missing is a chip model rather than
-   * a language feature, so refusing the build would refuse games this console
-   * plays perfectly well in every respect a trace can see.
+   * Empty: levels, tiles, the camera, scrolling, sound and the whole rule
+   * vocabulary compile. It stayed empty through the period when this console had
+   * no sound, on the rule `unsupported` states — it names language gaps, not
+   * hardware ones, and a game that named music still traced identically to one
+   * that played it.
    */
   unsupported(program: Program): string[] {
     const missing: string[] = [];
@@ -194,11 +194,23 @@ export const snesBackend: Backend<SnesEmitOptions, SnesAudio> = {
       options,
       tracks: driver?.stats.tracks ?? 0,
       effects: driver?.stats.effects ?? 0,
-      code: driver?.stats.code ?? 0,
-      // What the cartridge pays is the whole uploaded block, driver code
-      // included — it is data here, however it reads on the other processor.
-      data: driver === undefined ? 0 : driver.stats.image - driver.stats.code,
-      helpers: driver?.stats.helpers ?? [],
+      // Queries, on `BoundAudioShape`'s rule — though this is the one backend
+      // whose answer is already final when it is bound: the sound processor's
+      // program is assembled *here*, not during `assemble`, because it is a whole
+      // second program rather than a routine emitted into the cartridge's own
+      // code. Written as queries anyway, so the next reader is not asked to work
+      // out which kind of backend they are looking at.
+      get code() {
+        return driver?.stats.code ?? 0;
+      },
+      get data() {
+        // What the cartridge pays is the whole uploaded block, driver code
+        // included — it is data here, however it reads on the other processor.
+        return driver === undefined ? 0 : driver.stats.image - driver.stats.code;
+      },
+      get helpers() {
+        return driver?.stats.helpers ?? [];
+      },
       rateHz: driver ? driver.stats.rate.num / driver.stats.rate.den : 0,
       writesRestricted: driver?.stats.writesRestricted ?? 0,
       ...(names

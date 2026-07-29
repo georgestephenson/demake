@@ -8,28 +8,32 @@
  * borrows a channel from the music and gives it back, and none of that is
  * allowed to change a single register write.
  *
- * **And it runs on three consoles**, which is what makes it a proof of the
- * *contract* rather than of one driver. They share nothing below the packed
+ * **And it runs on four drivers**, which is what makes it a proof of the
+ * *contract* rather than of one emitter. They share nothing below the packed
  * format: an SM83 player on a programmable timer at 120 Hz, a 6502 player on the
- * picture's own interrupt at 60, and a Z80 player on the Sega VDP's frame
- * interrupt writing an I/O port rather than an address. `NR51` merged, `$4015`
- * merged, and — on a Master System — no shared register to merge at all. Four
- * writes to silence a Game Boy channel, one bit to silence an NES's, one
- * attenuation latch to silence a PSG's. And on the third machine the *channel* is
- * not in the register number but in the data byte, latched across writes, so
- * "which voice does this write belong to" is a question with a running answer.
- * What all three share is the only thing doc 16 promises — on tick N the driver
+ * picture's own interrupt at 60, a Z80 player on the Sega VDP's frame interrupt
+ * writing an I/O port rather than an address, and an SPC700 player that is not on
+ * the console's processor at all — a second computer, handed its program at boot
+ * and keeping its own 125 Hz. `NR51` merged, `$4015` merged, `KON` *masked*
+ * because it is a pulse rather than a state, and — on a Master System — no shared
+ * register to merge at all. Four writes to silence a Game Boy channel, one bit to
+ * silence an NES's, one attenuation latch to silence a PSG's, one `GAIN` of zero
+ * to silence an S-DSP voice. And on the Sega the *channel* is not in the register
+ * number but in the data byte, latched across writes, so "which voice does this
+ * write belong to" is a question with a running answer.
+ *
+ * What all four share is the only thing doc 16 promises — on tick N the driver
  * performs exactly the writes `ChipScript.ticks[N]` lists, in order — so the
  * battery below is written once and pointed at each machine in turn.
  *
- * Attribution is by program counter, as it is there: `AudioTick` comes back in
- * the build's symbol table and the core's `apuTap` observes the chip. Nothing is
- * added to the cartridge to make it testable, because the cartridge under test
- * has to be the cartridge that ships.
+ * Attribution is by program counter, as it is there: the tick routine's address
+ * comes out of the build (`Target.tickAddress`) and the core's own tap observes
+ * the chip. Nothing is added to the cartridge to make it testable, because the
+ * cartridge under test has to be the cartridge that ships.
  *
  * It runs with no toolchain and no emulator install — the assemblers are ours
- * and so are `@demake/dmg` and `@demake/nes` — which is what makes an exact
- * audio proof something `pnpm test` can do on every change.
+ * and so are the four cores — which is what makes an exact audio proof something
+ * `pnpm test` can do on every change.
  */
 
 import { readdirSync, readFileSync } from "node:fs";
@@ -57,6 +61,7 @@ import {
   StreamSink,
   type SampleSink,
 } from "@demake/chip";
+import { megaduckRegister } from "@demake/core";
 import { Gameboy } from "@demake/dmg";
 import { Nes } from "@demake/nes";
 import { Sms } from "@demake/sms";
@@ -182,7 +187,7 @@ function levelsIn(dir: string): Record<string, string> {
 }
 
 /**
- * The three consoles, and the whole of what differs between them.
+ * The consoles, and the whole of what differs between them.
  *
  * Rebuilding the driver beside the cartridge rather than reading it out of the
  * build is deliberate: the schedules a test compares against have to come from
@@ -212,6 +217,41 @@ const TARGETS: readonly Target[] = [
     boot(rom) {
       const machine = new Gameboy(rom);
       return wrap(machine);
+    },
+  },
+  {
+    // The Mega Duck's APU *is* the Game Boy's, at a different address — so
+    // everything this battery compares is stated in Game Boy register numbers
+    // and only the cartridge's stores differ. `channelOf` and `mergeReg` are
+    // therefore the Game Boy's unchanged, and the fact that this passes is the
+    // proof that the map is applied where a register becomes an address and
+    // nowhere else: a map that leaked into the schedules would fail here, and a
+    // map that never reached the ROM would fail on the console.
+    id: "megaduck",
+    name: "Mega Duck",
+    clockHz: GB_CLOCK_HZ,
+    mergeReg: 0x25,
+    mergeHelper: "panning-merge",
+    ratio: 1,
+    tag: () => gbChannelOf,
+    tickAddress: cartridgeTick,
+    async build(source, dir) {
+      const program = compile(source, { profile: getProfile("megaduck"), levels: levelsIn(dir) });
+      const assets = assetsIn(dir);
+      const built = await buildGbRom(program, { assets });
+      const bound = await bindAudio(program, assets, {
+        build: (tracks, effects) =>
+          buildGameAudio({
+            tracks,
+            effects: effects as GameEffect[],
+            hram: 0xff8b,
+            port: megaduckRegister,
+          }),
+      });
+      return { built, bound };
+    },
+    boot(rom) {
+      return wrap(new Gameboy(rom, "megaduck"));
     },
   },
   {
@@ -823,6 +863,15 @@ describe("the example library", async () => {
           const { built } = await build(target, readFileSync(join(dir, file), "utf8"), dir);
           expect(built.stats.missingAudio).toEqual([]);
           expect(built.stats.audio?.effects ?? 0).toBeGreaterThan(0);
+          // What the audio cost, and *that* it was measured at all. A driver is
+          // emitted during `assemble`, so a backend that copies its sizes out of
+          // the binding instead of querying them reports the zero they held
+          // beforehand (`backend.ts` §BoundAudioShape) — which every backend did
+          // until recently, and `demake build` said "0 bytes of driver, 0 of
+          // schedule" for every cartridge it made. Nothing caught it, because
+          // nothing asserted the number was real. This is that assertion.
+          expect(built.stats.audio?.code ?? 0).toBeGreaterThan(0);
+          expect(built.stats.audio?.data ?? 0).toBeGreaterThan(0);
           // Headroom, deliberately asserted: a fixture built to the last hundred
           // bytes turns the next code-generator change into a mystery.
           expect(built.stats.free).toBeGreaterThan(HEADROOM[target.id] ?? 1024);

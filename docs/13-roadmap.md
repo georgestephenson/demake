@@ -129,21 +129,124 @@ Tier 1, each reusing an existing edge rather than adding one:
 Both march the shared image battery. The Game Gear shipped with the SMS family
 in Phase 2 and SG-1000 with the TMS9918 path.
 
-What remains of Tier 2 splits by what is blocking it:
+What remains of Tier 2, and of every other console in scope, is costed in
+[§Console rollout](#console-rollout) below rather than listed here — the blockers
+turned out to group by *what kind* of work they are, not by tier, and that
+grouping is what decides the order.
 
-- **WonderSwan (mono)** is blocked on the engine, not the toolchain — its ROM
-  path would be the `wsc` one with 2bpp tiles. The hardware shows four shades
-  per tile through sixteen palettes that pick from an eight-shade pool, itself
-  picked from sixteen LCD levels: a *two-level* mono palette with per-tile
-  selection, which no fit path expresses (the mono path is single-palette;
-  the tiled path fits RGB lattices). Its current `ConsoleSpec` papers over that
-  with one eight-entry palette at 4bpp, which the mono hardware cannot display —
-  so `prep -c ws` is, today, optimistic. Fixing it means a **tiled-mono fitter**
-  and is the next engine increment here, not a backend.
-- **ColecoVision**, **Neo Geo** and **Lynx** are gated on emulators that require
-  copyrighted BIOS images, which the doc-10 loop will not ship.
-- **Atari 7800** needs a display-list layout path that does not exist yet.
-- **NGP/NGPC** has no assembler for the TLCS-900H in any distro archive.
+## Console rollout
+
+The support state at any moment is [`console-support.md`](console-support.md),
+which is generated. This section is the other half: what each remaining console
+*costs*, and therefore what order they are worth doing in.
+
+The useful thing learned from shipping the NES beside the Game Boy is that **the
+CPU is the cheap part**. Three axes decide the cost, and only the second is
+usually the hard one.
+
+### Axis 1 — the instruction set, which amortises
+
+A backend owns its instruction set and nothing else (doc 14 §2,
+`codegen/backend.ts`). demake writes its own encoders in TypeScript — that is
+what lets the browser produce byte-identical cartridges with no toolchain (§D5)
+— so "no distro ships an assembler for this CPU" is a blocker for `gen --format
+rom` and *not* for `demake build`. Encoders pay for more than one console:
+
+| Encoder | State | Consoles it buys |
+|---|---|---|
+| SM83 | built (`core/src/asm/sm83.ts`) | Game Boy, Game Boy Color, **Mega Duck** |
+| 6502 | built (`core/src/asm/mos6502.ts`) | NES, **Atari 7800**; the CMOS additions extend it to Lynx and Supervision |
+| HuC6280 | a 65C02 superset — additive over the above | PC Engine, TurboExpress |
+| Z80 | built (`core/src/asm/z80.ts`) | Master System, Game Gear; the SG-1000 needs no more of it |
+| 68000 | new | Mega Drive, Neo Geo |
+| 65816 | new, but extends the 6502 | SNES |
+| ARM/Thumb | new | GBA, NDS |
+| V30MZ (8086) | new | WonderSwan, WonderSwan Color |
+| TLCS-900/H | new, and the largest of them | Neo Geo Pocket, NGP Color |
+| SPC700 | new, and a *second* CPU on one console | SNES audio only |
+
+Four consoles therefore need no new encoder at all: the Mega Duck, the Atari
+7800, the Lynx and the Supervision. The Mega Duck needs nothing new anywhere,
+which is why it went first.
+
+### Axis 2 — the renderer shape, which does not amortise
+
+Both existing backends are *tilemap + hardware scroll + hardware sprites*
+machines, and everything in `codegen/shape.ts` quietly assumes it: five paths
+write a background cell, the camera is a scroll register, an object is an OAM
+entry. Consoles that do not work that way need new shapes, and this is where the
+real work is.
+
+| Shape | Consoles | What it costs |
+|---|---|---|
+| Tilemap + scroll + sprites | GB, GBC, Mega Duck, NES, SMS, GG, MD, SNES, PCE, TurboExpress, WS, WSC, NGP, NGPC, GBA, NDS | Nothing new — this is what the backend interface is |
+| Tilemap, **no scroll**, 1 KB RAM | SG-1000 | A camera it must refuse; scrolling means rewriting the pattern table |
+| **Sprite-only**, no tilemap | Neo Geo | The background is 512 sprites of vertical tile strips plus an 8×8 fix layer; all five background-cell writers need counterparts |
+| **Display list** | Atari 7800 | MARIA draws from per-zone header lists and steals cycles from the 6502; no tilemap, no ordinary sprites |
+| **Framebuffer + blitter** | Atari Lynx | Suzy blits scaled RLE sprite packets into RAM; background, scroll and tile rendering all become software |
+| **Framebuffer, software everything** | Watara Supervision | 65C02, no tiles, no sprites, no scroll, and the visible bitmap lives *inside* the 8 KB of system RAM |
+
+### Axis 3 — the proof, which gates "supported"
+
+`rom.test.ts` is toolchain-free because the cores are ours (`@demake/dmg`,
+`@demake/nes`). Every new console needs either a self-hosted core or a BIOS-free
+libretro core plus doc 10's scripted input tape. **Neo Geo, Lynx and
+ColecoVision are gated on emulators that require copyrighted BIOS images**, which
+this loop will not ship — so for those three the proof is likely to cost more
+than the backend does, and that fact should drive the schedule rather than be
+discovered in it.
+
+### RAM and cartridge, measured
+
+A fixture game needs **≈700–950 bytes of work RAM** and **10–30 KB of ROM**
+before its art and audio (measured on the NES, the tightest machine with a
+backend). That is the yardstick two consoles fail or nearly fail:
+
+- **SG-1000** has 1 KB of work RAM. Small games fit; nothing else does.
+- **Supervision** has 8 KB, of which 160×160 at 2bpp is 6,400 bytes of visible
+  bitmap.
+
+It also explains why the shooter's NES cartridge is a couple of hundred bytes
+over with its music in it (§D4). The obvious win is the backdrop nametable,
+which is stored raw and would pack to roughly a third — worth about six hundred
+bytes a game, and worth more than it looks, because several consoles below are
+tighter than the NES.
+
+### The order
+
+1. **Mega Duck** — *done*. Same SM83, same tile and map formats, same joypad,
+   same interrupt vectors; a permuted LCD register map, a permuted LCDC, a
+   permuted APU register map, no cartridge header and no boot ROM. A whole
+   console for a machine-description change.
+2. **PC Engine**, and **TurboExpress** free behind it. Highest capability per
+   unit of effort anywhere on this list: the encoder is additive over
+   `mos6502.ts`, and the image codegen, the HuCard ROM edge and a pixel-perfect
+   E2E all exist already (§Phase 5). 8 KB of work RAM against the NROM's 2 KB,
+   hardware scroll, 16 palettes of 16, a 2048-tile budget, and a built-in
+   6-channel wavetable PSG that `@demake/chip` would gain.
+3. **Z80** — *done for the Master System and the Game Gear*, from one encoder,
+   with an SN76489 driver behind them. **SG-1000** is what the encoder has left
+   to buy: the same CPU against a TMS9918 rather than a Mode 4 VDP, so it is a
+   renderer and a 1 KB memory plan rather than an instruction set, and it lands
+   with `unsupported()` naming the camera — which is what that hook is for.
+4. **WonderSwan Color**, then the **tiled-mono fitter**, then **WonderSwan**. The
+   mono machine's blocker is the art path, not the CPU, and the fitter is an
+   engine increment that stands on its own.
+5. **Atari 7800** — the encoder is free, and it buys the display-list layout path
+   the image side wants anyway.
+6. **Neo Geo Pocket / Color** — one large encoder for two consoles, 12 KB of RAM,
+   hardware scroll, and near-free audio: the NGP's T6W28 is an SN76489
+   derivative, which `@demake/chip` already models.
+7. **Supervision**, **Lynx**, **Neo Geo** — each gated on something structural
+   (RAM, a BIOS-free core, a sprite-only renderer). Worth doing once a framebuffer
+   renderer exists for one of them.
+
+68000 (Mega Drive, then Neo Geo), 65816 (SNES, plus the SPC700 for its audio) and
+ARM (GBA, NDS) slot in wherever Tier 1 breadth is wanted ahead of Tier 2 depth;
+they are ordinary tilemap machines and carry no surprises beyond their encoders.
+The ARM pair are, if anything, the *easiest* backends in the set — 16.16 fixed
+point is a native 32-bit register there, so the shift-and-subtract arithmetic the
+SM83 and 6502 pay for every tick collapses to single instructions.
 
 ## Phase 6 — 1.0
 
@@ -157,14 +260,31 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
 - **Tier 3 long tail**: 2600 kernels, Atari 8-bit/5200, Intellivision, Virtual Boy,
   Pokémon Mini, and the remainder — each lands with its harness or ships prep-only
   with a documented "codegen pending toolchain validation" status.
-  - **Mega Duck** is the closest of these: its *data* formats are the DMG's
-    exactly, so it already rides the `gb` codegen family for `bin`/`asm`/`c`.
-    What it does not share is the display program — its LCD registers live at
-    `$FF10`–`$FF1B` instead of `$FF40`–`$FF4B` and LCDC's bits are shuffled — so
-    `rom` is withheld rather than quietly assembling a Game Boy cartridge. The
-    vertical is a `gb`-family harness variant plus the **SameDuck** libretro
-    core (a SameBoy fork, no BIOS files); `Core/gb.h` there is the register map
-    and its `display.c` the LCDC bit meanings.
+  - **Mega Duck** *(games done; the display ROM is what remains)*. Its *data*
+    formats are the DMG's exactly, so it always rode the `gb` codegen family for
+    `bin`/`asm`/`c`. What it does not share is the display program, and the whole
+    of that difference is now written down once in `core/src/asm/megaduck.ts`:
+    the video registers at `$FF10`–`$FF1B` in an order of their own rather than
+    at an offset, the sound registers at `$FF20`–`$FF46` with four pairs
+    swapped, `LCDC`'s bits permuted in a five-bit cycle, and no cartridge header
+    or boot ROM at all — so execution begins at `$0000`.
+
+    That table is what `demake build -c megaduck` needed, and nothing else was:
+    the backend is the Game Boy's, `@demake/dmg` gained a machine argument
+    rather than a second core, and the audio driver applies the map where a
+    register number becomes an address. The whole example library traces
+    identically on it and its schedules diff exactly, in the same two batteries
+    every other console runs. **This is the model for a console that is a
+    variant rather than a machine** — see doc 03 §Support and AGENTS.md §How to
+    add a console.
+
+    Still withheld is `gen --format rom`: a picture-displaying cartridge needs a
+    `gb`-family harness variant of its own, and proving it needs the **SameDuck**
+    libretro core (a SameBoy fork, no BIOS files) wired into the doc-10 loop.
+    The console spec declares no `rom` format until that exists, so `gen` refuses
+    rather than quietly assembling a Game Boy cartridge that shows nothing here.
+    SameDuck's `Core/gb.h` and `Core/display.c` are where the table above came
+    from and are cited in the spec's `docs.sources`.
 - In-browser ROM assembly for more families; WASM-accelerated hot kernels if
   profiling asks; palette-cycling & per-scanline tricks as opt-in "expert" flags;
   sprite/animation mode (the reserved schema slot); home-computer specs if demand
@@ -510,7 +630,9 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     their provisioner, and FLAC.
   - **A2 — `arrange`** *(built for MIDI; the Game Boy boots)*: ingest, analysis,
     the arrangement tournament, absolute-placement timing, the judge and the
-    `.vgm` artifact run on all six consoles. Tempo is preserved outright rather
+    `.vgm` artifact run on all eight consoles with a chip model — and on the one
+    whose chip plays samples the artifact is an `.spc` instead, because a write
+    log without the sound processor's RAM is not a piece of music. Tempo is preserved outright rather
     than approximately, and a test shows the error shrinking with length rather
     than compounding. Outstanding: tracker ingest, `bin`/`asm`/`c` emit, driver
     backends beyond the Game Boy, and the listening sheets the judge weights get
@@ -544,19 +666,25 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     lead, harmony) with confidences, plus the decoders. *Done means*: an MP3
     becomes a playable cartridge, and the parts it found are reported honestly
     enough that a wrong one can be corrected in one flag.
-  - **A5 — breadth** *(`nes`, `sms` and `gg` done, inside a game)*: the 2A03 and
-    the SN76489 each have a chip model, a binding and a generated driver — 6502
-    and Z80 — and `demake build -c nes`/`-c sms`/`-c gg` puts music and effects in
-    the cartridge with doc 16's Level A proof over all of them. What none of them
+  - **A5 — breadth** *(`nes`, `sms`, `gg` and `snes` done, inside a game)*: the
+    2A03, the SN76489 and the S-DSP each have a chip model, a binding and a
+    generated driver — 6502, Z80 and SPC700 — and `demake build -c nes`/`-c sms`/
+    `-c gg`/`-c snes` puts music and effects in the cartridge with doc 16's
+    Level A proof over all of them. What none of them
     has yet is a *standalone* audio cartridge — `demake gen … --format rom` is
     still the Game Boy's alone — because a cartridge whose only job is one track is
-    what the next caller needs and not what a game needed. The SN76489 is also the
+    what the next caller needs and not what a game needed. The Super Nintendo is
+    the near miss: `demake arrange -c snes` writes an `.spc`, which is the same
+    driver and the same schedules in the format that console's own players read,
+    but it is a RAM image rather than a cartridge. The SN76489 is also the
     one that stretched the shared packing layer: its channel is in the data byte
     and latched, so `channelOf` became a factory over a per-schedule latch and a
     schedule that opens a tick with a bare data byte is refused rather than
-    guessed at. Remaining: `md` (FM patch fitting), `snes` (BRR,
-    the SPC700 driver, sample budgeting), `gba`, `nds` — each is a chip model, a
-    driver backend and a Level A/B harness, on the per-console definition of done
+    guessed at. The Super Nintendo is the fourth, and the first
+    whose driver does not run on the console's own processor at all — a chip
+    model, an SPC700 assembler, a generated driver and a boot upload, all of
+    which §D4 records. Remaining: `md` (FM patch fitting), `gba`, `nds` — each is
+    a chip model, a driver backend and a Level A/B harness, on the per-console definition of done
     Phase 2 used for images. Each faces the choice doc 16 §The driver contract
     records: own the CPU's encoder (as the Game Boy does, which buys the browser
     and a toolchain-free proof) or pair generated data with a checked-in driver

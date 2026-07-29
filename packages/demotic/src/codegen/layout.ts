@@ -199,6 +199,17 @@ export const GB_MEMORY: MemoryPlan = {
 export const GBC_MEMORY: MemoryPlan = { ...GB_MEMORY, cellAttributes: true };
 
 /**
+ * And the Mega Duck's, which differs only in what to call it.
+ *
+ * The console clones the Game Boy's memory map exactly — 8 KiB of work RAM at
+ * `$C000`, OAM at `$FE00`, high RAM at `$FF80` — and moves only the I/O page in
+ * between. It is spelled out rather than aliased because `machine` is what a
+ * program is told when it runs out of room, and "this game needs more RAM than
+ * a Game Boy has" is the wrong sentence to show someone building for a Duck.
+ */
+export const MEGADUCK_MEMORY: MemoryPlan = { ...GB_MEMORY, machine: "Mega Duck" };
+
+/**
  * The NES's plan, and every number in it is smaller for a reason.
  *
  * The console has 2 KiB of RAM and an NROM cartridge adds none, so the same games
