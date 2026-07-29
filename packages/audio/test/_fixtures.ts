@@ -126,6 +126,47 @@ export function longBandFixture(bpm = 140): Uint8Array {
   return bandFixture(bpm, 16);
 }
 
+/**
+ * Eight independent parts — more than any 8-bit console in this set has voices.
+ *
+ * The fixture that shows what "spend the whole machine" means: a Game Boy has to
+ * shed four of these and a Mega Drive does not, and the difference should be
+ * visible in what the arranger reports rather than only in the audio.
+ */
+export function octetFixture(bpm = 120, bars = 2): Uint8Array {
+  const events: Event[] = [];
+  // Seven melodic lines, each with its *own* contour rather than the same one
+  // transposed. That matters: the arranger folds parts that double each other in
+  // unison or octaves, and rightly — so a fixture built from one line at seven
+  // octaves would prove nothing about how many voices the console has.
+  const lines: { channel: number; base: number; step: number; contour: number[] }[] = [
+    { channel: 1, base: 36, step: 4, contour: [0, 7] },
+    { channel: 2, base: 43, step: 2, contour: [0, 3, 5, 3] },
+    { channel: 3, base: 55, step: 1, contour: [0, 1, 3, 6, 3, 1, 0, 8] },
+    { channel: 4, base: 60, step: 1, contour: [4, 2, 0, 2, 5, 9, 7, 4] },
+    { channel: 5, base: 67, step: 2, contour: [11, 9, 6, 2] },
+    { channel: 6, base: 72, step: 1, contour: [0, 5, 9, 2, 10, 6, 1, 8] },
+    { channel: 7, base: 79, step: 4, contour: [3, 10] },
+  ];
+  for (let bar = 0; bar < bars; bar += 1) {
+    const start = bar * PPQ * 4;
+    for (const line of lines) {
+      const count = 4 / line.step;
+      for (let i = 0; i < count; i += 1) {
+        const at = start + i * PPQ * line.step;
+        const step = line.contour[(i + bar * count) % line.contour.length] as number;
+        events.push(...note(line.channel, line.base + step, at, PPQ * line.step - 20, 96));
+      }
+    }
+    for (let eighth = 0; eighth < 8; eighth += 1) {
+      events.push(...note(9, 42, start + (eighth * PPQ) / 2, 10, 70));
+      if (eighth % 4 === 0) events.push(...note(9, 36, start + (eighth * PPQ) / 2, 10, 120));
+      if (eighth % 4 === 2) events.push(...note(9, 38, start + (eighth * PPQ) / 2, 10, 110));
+    }
+  }
+  return midiFile(events, bpm);
+}
+
 /** A bassline that lives below the SN76489's ~109 Hz floor. */
 export function deepBassFixture(): Uint8Array {
   const events: Event[] = [];

@@ -326,9 +326,9 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     palettes were chosen for the title screen. Colour costs cartridge — around a
     kilobyte for a game with two demade backdrops — which is a fact the build
     reports rather than hides.
-  - **D4 — breadth** *(`nes` and `sms`/`gg` trace-green)*: `nes`, `sms`/`gg`,
-    `md`, `snes` backends, each trace-green then framebuffer-green. A backend is
-    per-family; the `Program` it compiles is not.
+  - **D4 — breadth** *(`nes`, `sms`/`gg` and `md` trace-green)*: `nes`,
+    `sms`/`gg`, `md`, `snes` backends, each trace-green then framebuffer-green. A
+    backend is per-family; the `Program` it compiles is not.
 
     The NES half is built: `demake build -c nes` produces a real NROM cartridge
     — 6502 machine code written for the game, art demade by the image pipeline
@@ -458,9 +458,11 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     it was in the packer, and it resolved the way it was expected to — the
     SN76489 puts the channel in the *data* byte and latches it across writes, so
     `channelOf(reg)` became a *factory* for a `channelOf(reg, value)` carrying a
-    per-schedule latch, and `buildSmsGameAudio` refuses (`E_PSG_LATCH`) rather
+    per-schedule latch, and the driver refuses (`E_PSG_LATCH`) rather
     than guessing if a schedule ever opens a tick with a data byte and no latch in
-    front of it. That refusal is what makes preemption safe: every run of a PSG
+    front of it. Both of those are `rom/psg.ts`'s now, because they are the
+    *chip's* rather than the Z80's — which is what let the Mega Drive's 68000
+    driver reuse them unchanged. That refusal is what makes preemption safe: every run of a PSG
     stream begins with a latch byte, so a run the music skips takes its own
     channel selection with it.
 
@@ -472,12 +474,90 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     therefore rides the frame at 59.92 Hz, like the NES's and for the same kind of
     reason, and `fitRate` now treats the frame as the candidate every other clock
     has to beat rather than as a fallback for when none is in range.
-  - **D5 — Play ROM in the page** *(done for `gb`, `gbc`, `nes`, `sms` and
-    `gg`)*: the browser
+    **The Mega Drive is the fourth console, and it is the first 16-bit one.**
+    `demake build -c md` produces a real 512 KiB cartridge — 68000 machine code
+    written for the game, vector table, header and word checksum, art demade into
+    a 1408-tile bank across three of the VDP's four sub-palettes — and the whole
+    example library traces identically there, in the same battery, at the same
+    one frame a tick. Nothing moved out of `backend.ts` or `shape.ts` for it
+    either.
+
+    What the wider machine changes is the *shape of the value layer*, and it is
+    the clearest evidence yet that the split is in the right place. A 16.16 value
+    is a **register** here: `move.l`, `add.l`, `sub.l`, `neg.l`, `asr.l` and
+    `cmp.l` each do in one instruction what the Z80 does in four and the 6502 in
+    eight, and `cmp.l` sets a signed condition directly rather than leaving one to
+    be synthesised. So `codegen/md/val.ts` is a quarter the size of the Sega's and
+    an eighth of the NES's, and the only two routines this console pulls in are
+    the ones the machine genuinely lacks — a 32×32 multiply, assembled from four
+    `mulu.w` products into a 64-bit one, and a divide whose fast path for a
+    whole-cell divisor is two `divu.w` instructions rather than a loop. Neither is
+    a bit loop, which is why an object whose *speed* can change is affordable here
+    in a way it is not on the other three.
+
+    The renderer is easier for one reason and one reason only: **the plane is
+    bigger than the screen.** Sixty-four cells by thirty-two against a
+    forty-by-twenty-eight window, so a scrolling scene paints its leading edge
+    twenty-four columns off the right-hand side and has no seam to hide — the
+    whole `R0`-bit-5 mechanism the Master System needs is simply absent. Both
+    wraps are powers of two, so the cell address is two masks rather than a
+    subtraction loop.
+
+    **Three things the trace could not see were wrong, and all three are the
+    68000 rather than the VDP.** A word or long access to an **odd address** is an
+    address error, and the shared RAM allocator packs bytes — so `MemoryPlan`
+    grew an `align`, and the two lists that interleave a count byte with word
+    entries (the tile contacts and the cached cell walk) are read a byte at a
+    time. The **backdrop blit** had the same fault from the other side: a packed
+    cell follows a control *byte*, so half of them are odd-addressed, and reading
+    them as words cost the first cell of every picture. And the trace reader
+    itself had to learn a machine's **byte order**, because this is the first
+    big-endian console in the set and a little-endian read reports every value
+    byte-swapped — which looks like an arithmetic bug three layers from its cause.
+    The fourth was a register convention rather than the hardware: `RngAdvance`
+    builds a 32-bit product out of `d0`–`d3`, so the draw's bound and count live
+    in `d6`/`d7`, and holding them lower produced random numbers that were
+    plausible and wrong.
+
+    Framebuffer-green is what remains here too, behind the same scripted input
+    tape. Until then `md-rom.test.ts` is the rendering oracle — the plane against
+    the level grid, cell by cell, after the camera has travelled — and
+    `md-arith.test.ts` the arithmetic one.
+
+    **Sound is built, and it is all ten voices.** Two chips — a YM2612 at
+    `$A04000` and an SN76489 at `$C00011` — arranged against as one instrument,
+    because that is what they are on the board. The PSG half needed nothing new:
+    the same chip at the same master clock over fifteen, in a frame of 262 lines
+    of 228 chip cycles, so `mdAudio` and `smsAudio` reduce to the same rational.
+    The FM half needed a chip model, a binding, and the first *searched* timbre
+    in the project (§A5, doc 17 §Stage 3).
+
+    Two facts about the driver are worth recording. The packed register byte,
+    which on a one-chip console names a register, here names one of five
+    destinations — the FM chip's four consecutive bus addresses or the PSG — so
+    two chips cost the packed format nothing. And ten voices against a four-bit
+    channel field do not have to fit: preemption only asks whether an *effect*
+    may be using a voice, so only the voices effects were placed on are numbered
+    and the FM half of a track plays straight through a sound effect rather than
+    ducking for it.
+
+    What is still inert in the chip model, each a gap rather than a decision: the
+    LFO's pitch modulation, SSG-EG, and channel 3's per-operator frequency mode.
+
+    The cartridge budget has no story here at all, which is itself the news:
+    512 KiB against 32, and 64 KiB of work RAM against an NROM cartridge's 2. The
+    scarce resources on this machine are the tile bank and the four sub-palettes,
+    which is why the art path is where the interesting decisions are — two
+    sub-palettes for background art, one for objects, one reserved for the font,
+    and the font's ink chosen against the backdrop because colour zero is
+    transparent on *both* layers here.
+  - **D5 — Play ROM in the page** *(done for `gb`, `gbc`, `nes`, `sms`, `gg` and
+    `md`)*: the browser
     compiles the
     game itself, because the assembler is ours and written in TypeScript, and
     demakes its art with our own rasteriser rather than the browser's. It boots
-    the result in `@demake/dmg`, `@demake/nes` or `@demake/sms` — ours, because
+    the result in `@demake/dmg`, `@demake/nes`, `@demake/sms` or `@demake/md` —
+    ours, because
     doc 07 forbids a CDN core and a WASM core we cannot read is the same bargain
     in a different wrapper. The bytes are identical to `demake build`'s, pinned by
     a Playwright spec on *every* console with a backend, and the pane offers them
@@ -590,9 +670,10 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     lead, harmony) with confidences, plus the decoders. *Done means*: an MP3
     becomes a playable cartridge, and the parts it found are reported honestly
     enough that a wrong one can be corrected in one flag.
-  - **A5 — breadth** *(`nes`, `sms` and `gg` done, inside a game)*: the 2A03 and
-    the SN76489 each have a chip model, a binding and a generated driver — 6502
-    and Z80 — and `demake build -c nes`/`-c sms`/`-c gg` puts music and effects in
+  - **A5 — breadth** *(`nes`, `sms`, `gg` and `md` done, inside a game)*: the
+    2A03, the SN76489 and the YM2612 each have a chip model, a binding and a
+    generated driver — 6502, Z80 and 68000 — and
+    `demake build -c nes`/`-c sms`/`-c gg`/`-c md` puts music and effects in
     the cartridge with doc 16's Level A proof over all of them. What none of them
     has yet is a *standalone* audio cartridge — `demake gen … --format rom` is
     still the Game Boy's alone — because a cartridge whose only job is one track is
@@ -600,7 +681,16 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     one that stretched the shared packing layer: its channel is in the data byte
     and latched, so `channelOf` became a factory over a per-schedule latch and a
     schedule that opens a tick with a bare data byte is refused rather than
-    guessed at. Remaining: `md` (FM patch fitting), `snes` (BRR,
+    guessed at. It is also the chip that made the layering pay: the Mega Drive
+    runs the *same* SN76489 at the same clock, so its binding needed no change and
+    its driver needed only the parts a 68000 does differently — everything the
+    chip decides moved into `rom/psg.ts` and is shared with the Z80's driver
+    verbatim. The Mega Drive then went further and became the first *two-chip*
+    console: `BoundWrite.chip` carries which device a write addresses, `render()`
+    filters per write, `mix()` takes per-chip gains from the binding, and the
+    packed register byte names one of five destinations rather than a register.
+    It is also the first console whose timbre is *searched* — see §Stage 3 of doc
+    17, which had been waiting for an FM target. Remaining: `snes` (BRR,
     the SPC700 driver, sample budgeting), `gba`, `nds` — each is a chip model, a
     driver backend and a Level A/B harness, on the per-console definition of done
     Phase 2 used for images. Each faces the choice doc 16 §The driver contract

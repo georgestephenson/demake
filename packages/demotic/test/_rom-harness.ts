@@ -22,11 +22,13 @@
  */
 
 import { Gameboy, type Button as GbButton, type Machine as GbMachine } from "@demake/dmg";
+import { Md, type Button as MdButton } from "@demake/md";
 import { Nes, type Button as NesButton } from "@demake/nes";
 import { Sms, type Button as SmsButton } from "@demake/sms";
 
 import { buildGbRom } from "../src/codegen/gb.js";
 import type { Layout } from "../src/codegen/layout.js";
+import { buildMdRom } from "../src/codegen/md.js";
 import { buildNesRom } from "../src/codegen/nes.js";
 import { buildSmsRom } from "../src/codegen/sms.js";
 import type { BuildOptions, BuiltRom } from "../src/codegen/backend.js";
@@ -116,6 +118,20 @@ export const smsTarget: RomTarget = {
 
 /** The same backend, the same machine code, a smaller window. */
 export const ggTarget: RomTarget = { ...smsTarget, console: "gg" };
+
+export const mdTarget: RomTarget = {
+  console: "md",
+  build: (program, options) => buildMdRom(program, options),
+  boot: (bytes) => {
+    const machine = new Md(bytes);
+    return {
+      readMemory: (address, length) => machine.readMemory(address, length),
+      stepInstruction: () => machine.stepInstruction(),
+      runFrame: () => machine.runFrame(),
+      setButtons: (down) => machine.setButtons(down as MdButton[]),
+    };
+  },
+};
 
 /** A booted ROM, ready to be stepped a tick at a time. */
 export class RomRunner {

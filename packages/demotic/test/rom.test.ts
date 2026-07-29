@@ -30,6 +30,7 @@ import {
   gbTarget,
   gbcTarget,
   ggTarget,
+  mdTarget,
   megaduckTarget,
   nesTarget,
   RomRunner,
@@ -110,7 +111,15 @@ describe("ROM conformance across the example library", async () => {
   // Mega Duck, where the claim is the opposite one: that console differs from the
   // Game Boy only in where its registers live, so a divergence here would mean a
   // *machine description* had leaked into the code the tick runs.
-  for (const target of [gbTarget, gbcTarget, megaduckTarget, nesTarget, smsTarget, ggTarget]) {
+  for (const target of [
+    gbTarget,
+    gbcTarget,
+    megaduckTarget,
+    nesTarget,
+    smsTarget,
+    ggTarget,
+    mdTarget,
+  ]) {
     for (const [file, script, levels] of cases) {
       it(`matches the interpreter for ${file} on ${target.console}`, async () => {
         const program = build(read(file), levels, target.console);

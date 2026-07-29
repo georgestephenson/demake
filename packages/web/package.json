@@ -18,6 +18,7 @@
     "@demake/core": "workspace:*",
     "@demake/demotic": "workspace:*",
     "@demake/dmg": "workspace:*",
+    "@demake/md": "workspace:*",
     "@demake/nes": "workspace:*",
     "@demake/sms": "workspace:*",
     "preact": "^10.29.7"

@@ -11,6 +11,7 @@
 import { consoles, getConsole, type AudioSpec, type ConsoleSpec } from "@demake/core";
 
 import { gbBinding } from "./gb.js";
+import { mdBinding } from "./md.js";
 import { nesBinding } from "./nes.js";
 import { psgBinding } from "./psg.js";
 import type { ChipBinding } from "./types.js";
@@ -34,6 +35,18 @@ export function bindingFor(consoleId: string): ChipBinding {
     throw new UnsupportedConsoleError(
       spec.id,
       `${spec.name} has no audio spec yet — see docs/16-audio-engine.md §The chips for the consoles that do.`,
+    );
+  }
+  // A console with two chips resolves on the pair rather than on the first of
+  // them: a Mega Drive is not "a YM2612 that also has a PSG", it is one
+  // instrument of ten voices, and the binding that encodes it has to see both.
+  if (audio.chips.length > 1) {
+    if (audio.chips[0] === "ym2612" && audio.chips[1] === "sn76489") {
+      return mdBinding(spec.id, audio);
+    }
+    throw new UnsupportedConsoleError(
+      spec.id,
+      `no binding for the chip pair '${audio.chips.join(" + ")}' — a multi-chip console needs one encoder that sees both.`,
     );
   }
   const chip = audio.chips[0];

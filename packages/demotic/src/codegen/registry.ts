@@ -12,6 +12,7 @@ import type { Program } from "../program.js";
 
 import { anyBackend, type AnyBackend, type BuiltRom, type BuildOptions } from "./backend.js";
 import { gbBackend } from "./gb.js";
+import { mdBackend } from "./md.js";
 import { nesBackend } from "./nes.js";
 import { smsBackend } from "./sms.js";
 
@@ -20,6 +21,7 @@ const BACKENDS: readonly AnyBackend[] = [
   anyBackend(gbBackend),
   anyBackend(nesBackend),
   anyBackend(smsBackend),
+  anyBackend(mdBackend),
 ];
 
 /** Console ids a Demotic program can be built for. */

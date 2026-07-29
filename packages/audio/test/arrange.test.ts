@@ -13,19 +13,26 @@ import { getConsole } from "@demake/core";
 
 import { arrangeScore, candidates } from "../src/arrange/index.js";
 import { audioConsoles, bindingFor } from "../src/binding/registry.js";
+import { fitPatch } from "../src/binding/fm-patch.js";
 import { encodeWav } from "../src/encode/wav.js";
 import { inspectScript } from "../src/inspect.js";
 import { parseMidi } from "../src/score/midi.js";
 import { dominantBpm } from "../src/score/types.js";
 import { planTiming, verifyNonAccumulating } from "../src/timing.js";
 import { render } from "../src/render.js";
-import { bandFixture, deepBassFixture, longBandFixture, scaleFixture } from "./_fixtures.js";
+import {
+  bandFixture,
+  deepBassFixture,
+  longBandFixture,
+  octetFixture,
+  scaleFixture,
+} from "./_fixtures.js";
 
 // `megaduck` is here because its sound hardware *is* the Game Boy's — the whole
 // chip, the same clock, the same lattices — so the demakers work on it for free.
 // Where the console's registers live is a fact about the cartridge, applied when
 // a register number becomes an address, and never reaches a schedule.
-const CONSOLES = ["dmg", "gbc", "megaduck", "nes", "sms", "gg", "sg1000"];
+const CONSOLES = ["dmg", "gbc", "megaduck", "nes", "sms", "gg", "sg1000", "md"];
 
 describe("ingest", () => {
   it("reads a Standard MIDI File into a score", () => {
@@ -214,6 +221,50 @@ describe("the render contract", () => {
     const first = dominantFrequency(pcm.channels[0]!, pcm.sampleRate, 0.15, 0.35);
     const last = dominantFrequency(pcm.channels[0]!, pcm.sampleRate, 3.6, 3.8);
     expect(last).toBeGreaterThan(first * 1.8);
+  });
+});
+
+describe("spending the whole machine", () => {
+  // AGENTS.md §Iron rules: a demaker constrains only as far as the hardware
+  // forces it. These are the assertions that would fail if a console's spec
+  // quietly declared less hardware than the machine has.
+  it("gives a Mega Drive all ten of its voices", () => {
+    const spec = getConsole("md").audio!;
+    expect(spec.chips).toEqual(["ym2612", "sn76489"]);
+    expect(spec.channels).toHaveLength(10);
+    expect(spec.channels.filter((channel) => channel.kind === "fm")).toHaveLength(6);
+  });
+
+  it("carries eight parts a four-voice console has to shed", () => {
+    const source = parseMidi(octetFixture());
+    const md = arrangeScore(source, { console: "md" });
+    const gb = arrangeScore(source, { console: "dmg" });
+    const voices = (result: ReturnType<typeof arrangeScore>): number =>
+      new Set(result.script.channels.map((span) => span.channelId)).size;
+    // The Game Boy has four voices for eight parts, so something has to give and
+    // the report says what. The Mega Drive has ten, so nothing does.
+    expect(voices(gb)).toBeLessThanOrEqual(4);
+    expect(voices(md)).toBeGreaterThan(voices(gb));
+    expect(voices(md)).toBeGreaterThanOrEqual(7);
+    const droppedParts = md.dropped.filter((one) => one.kind === "part");
+    expect(droppedParts).toEqual([]);
+  });
+
+  it("fits a different timbre to a bass part than to a lead", () => {
+    // Timbre on this chip is searched rather than selected (doc 17 §Stage 3), so
+    // the thing worth asserting is that the search *discriminates*: a patch
+    // fitted for something dark must measure darker than one fitted for
+    // something brilliant, or the tournament is decorative.
+    const dark = fitPatch({ brightness: 0.1, attack: 0.05, sustain: 0.5 });
+    const bright = fitPatch({ brightness: 0.95, attack: 0.05, sustain: 0.5 });
+    expect(bright.brightnessHz).toBeGreaterThan(dark.brightnessHz * 1.5);
+    expect(dark.candidates).toBeGreaterThan(20);
+  });
+
+  it("holds a patch that was asked to hold and drops one that was not", () => {
+    const held = fitPatch({ brightness: 0.5, attack: 0.05, sustain: 0.95 });
+    const plucked = fitPatch({ brightness: 0.5, attack: 0.05, sustain: 0.05 });
+    expect(held.sustainRatio).toBeGreaterThan(plucked.sustainRatio + 0.2);
   });
 });
 

@@ -77,9 +77,15 @@ export const RUN = {
  * chips the register number says nothing at all: an SN76489 is written through a
  * single port and carries the channel in the top bits of the data byte — and
  * carries it *latched*, so a byte with bit 7 clear continues whatever the byte
- * before it selected.
+ * before it selected. And of the *chip*, because a console may have two.
+ *
+ * What the four bits mean is the console's, exactly as {@link PackOptions.port}
+ * decides what the register byte means. A console with four voices numbers them
+ * one per bit; a Mega Drive has ten and cannot, so its tag returns a bit only for
+ * the channels an effect may actually take and zero — never preempted — for
+ * everything else. Which is the only distinction preemption needs.
  */
-export type ChannelTag = (reg: number, value: number) => number;
+export type ChannelTag = (reg: number, value: number, chip: number) => number;
 
 /** How a stream shares the chip with the other one, when there is another. */
 export interface PackOptions {
@@ -113,13 +119,14 @@ export interface PackOptions {
    * turn it into an address by adding a base (`$FF00` and `$4000`). A Z80 reaches
    * its chip through `out (c), a`, so the SN76489's driver stores the **port** —
    * one byte either way, and a translation the write loop would otherwise pay for
-   * on every write of every tick. Defaults to the register unchanged.
+   * on every write of every tick. A Mega Drive has two chips and five destinations
+   * between them, so it stores which one. Defaults to the register unchanged.
    *
    * It never reaches {@link PackOptions.channelOf} or
    * {@link PackOptions.mergeRegs}: both are asked about the schedule's own
    * register, so a console that renumbers here does not renumber those.
    */
-  port?: (reg: number) => number;
+  port?: (reg: number, chip: number) => number;
   /**
    * Writes performed once, elsewhere, and therefore stripped from tick 0.
    *
@@ -326,7 +333,10 @@ function encodeBlock(
       tick += run;
       continue;
     }
-    if (writes.length > MAX_WRITES_PER_TICK) {
+    if (tag === undefined && writes.length > MAX_WRITES_PER_TICK) {
+      // Only the *flat* format is bounded here: its opcode is a count and a
+      // block terminator, so there is nowhere to put a hundred and twenty-eighth
+      // write. The run format chains with its `more` bit instead — see below.
       throw new PackError(
         "E_TICK_TOO_LARGE",
         `tick ${tick} asks for ${writes.length} register writes and the driver format holds ${MAX_WRITES_PER_TICK}`,
@@ -335,7 +345,9 @@ function encodeBlock(
     }
     if (tag === undefined) {
       out.push(writes.length);
-      for (const write of writes) out.push(port(write.reg) & 0xff, write.value & 0xff);
+      for (const write of writes) {
+        out.push(port(write.reg, write.chip ?? 0) & 0xff, write.value & 0xff);
+      }
     } else if (encodeRuns(out, writes, options, tag)) {
       merges = true;
     }
@@ -364,7 +376,7 @@ function encodeRuns(
   // the tag even when it turns out to belong to no channel: a latching chip
   // updates its selection from writes the run format then never asks about.
   const tags = writes.map((write) => ({
-    channels: channelOf(write.reg, write.value) & RUN.channels,
+    channels: channelOf(write.reg, write.value, write.chip ?? 0) & RUN.channels,
     merge: merge.has(write.reg),
   }));
 
@@ -375,7 +387,12 @@ function encodeRuns(
     if (
       previous === undefined ||
       previous.channels !== tag.channels ||
-      previous.merge !== tag.merge
+      previous.merge !== tag.merge ||
+      // A run's length is seven bits, so a long enough stretch of writes that
+      // agree about everything is still two runs. The `more` bit already says
+      // "another follows in this tick", which is exactly what that is — so a
+      // tick of four hundred writes needs no second format, only more runs.
+      index - (starts[starts.length - 1] as number) >= MAX_WRITES_PER_TICK
     ) {
       starts.push(index);
     }
@@ -392,7 +409,8 @@ function encodeRuns(
     if (tag.merge) merged = true;
     out.push(to - from, flags);
     for (let index = from; index < to; index += 1) {
-      out.push(port(writes[index]!.reg) & 0xff, writes[index]!.value & 0xff);
+      const write = writes[index]!;
+      out.push(port(write.reg, write.chip ?? 0) & 0xff, write.value & 0xff);
     }
   }
   return merged;
@@ -414,7 +432,7 @@ function silenceBlock(
   const off = silenceWrites(script.console);
   const out: number[] = [];
   if (tag === undefined) {
-    out.push(off.length, ...off.flatMap((w) => [port(w.reg), w.value]));
+    out.push(off.length, ...off.flatMap((w) => [port(w.reg, 0), w.value]));
   } else {
     encodeRuns(out, off, options, tag);
   }

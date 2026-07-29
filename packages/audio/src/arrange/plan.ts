@@ -52,8 +52,15 @@ export interface PlanOptions {
 /** Role affinity per channel kind: lower is better. */
 function affinity(role: PartRole, channel: AudioChannelSpec): number {
   const kind = channel.kind;
-  if (role === "percussion") return kind === "noise" ? 0 : 40;
+  // An FM voice can be struck as well as held, so it is a real percussion
+  // option — worse than a noise generator for a snare, far better for a tom.
+  if (role === "percussion") return kind === "noise" ? 0 : kind === "fm" ? 6 : 40;
   if (kind === "noise") return 40;
+  // Four operators and a fitted patch beat every fixed timbre on this list at
+  // every job, which is why the whole `fm` column is zero: the arranger should
+  // spend an FM voice before it spends a square wave, and only the *count* of
+  // them should ration it.
+  if (kind === "fm") return 0;
   switch (role) {
     case "bass":
       // A wavetable or a triangle is a bass voice; a pulse can do it but the

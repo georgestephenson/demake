@@ -28,7 +28,7 @@
  * able to read either machine's entity table with one function.
  */
 
-import { NES_AUDIO_BYTES, SMS_AUDIO_BYTES } from "@demake/audio";
+import { MD_AUDIO_BYTES, NES_AUDIO_BYTES, SMS_AUDIO_BYTES } from "@demake/audio";
 
 import type { Program } from "../program.js";
 
@@ -170,6 +170,33 @@ export interface MemoryPlan {
    * routine and is exactly what a rule body helps itself to.
    */
   loopBytes: number;
+
+  /**
+   * Whether this machine stores a multi-byte value high half first.
+   *
+   * A compile-time fact about the console and nothing else — but it reaches
+   * further than the emitters, because `rom/trace.ts` reads a game's 16.16 state
+   * straight out of work RAM and has to know which way round it is. Three of the
+   * four consoles are little-endian and the 68000 is not; a reader that assumed
+   * one order would report every value byte-swapped, which looks like an
+   * arithmetic bug rather than a byte-order one.
+   */
+  bigEndian?: boolean;
+
+  /**
+   * Bytes a multi-byte allocation is rounded up to.
+   *
+   * One on the three eight-bit consoles, which read a word from any address at
+   * all. The 68000 does not: a word or long access to an odd address is an
+   * *address error*, which on real hardware is a crash and in a forgiving core is
+   * silently the wrong two bytes. So the Mega Drive's plan asks for two, and the
+   * allocator pads before anything wider than a byte.
+   *
+   * Only multi-byte requests are aligned, so a run of flags still packs tightly
+   * and the console that needs none has exactly the map it had before this
+   * existed.
+   */
+  align?: number;
 }
 
 /**
@@ -321,6 +348,63 @@ export const GG_MEMORY: MemoryPlan = {
   machine: "Game Gear",
   viewW: 20,
   viewH: 18,
+};
+
+/**
+ * The Mega Drive's plan, and the one number in it that is an instruction-set
+ * decision rather than a hardware one.
+ *
+ * Sixty-four kilobytes of work RAM at `$FF0000`–`$FFFFFF`, which is eight times
+ * what the roomiest console in the set has and more than any of these games
+ * could spend. What is worth stating is *where* in it the heap starts: the
+ * 68000's short absolute form sign-extends a word, so `$FF8000`–`$FFFFFF` — the
+ * top half — is reachable in two bytes where anything below it takes four. Every
+ * property read in a compiled game is an absolute access, so putting the whole
+ * of a game's state above that line is worth about a fifth of the program's
+ * size, and it costs nothing: the games use a couple of kilobytes.
+ *
+ * The rest is the VDP's:
+ *
+ *   - **Eighty sprite entries of eight bytes**, and the shadow is the sprite
+ *     attribute table's own layout so the upload is one run.
+ *   - **A 40×28 window on a 64×32 plane**, so a scrolling scene has
+ *     twenty-four spare columns and four spare rows and never has to hide a
+ *     seam — the thing the Master System's thirty-two-column table forces.
+ *   - **A queued cell is an address and a cell word**, four bytes, because a
+ *     name-table entry here carries its palette, both flip bits and an
+ *     eleven-bit tile index in one word.
+ */
+export const MD_MEMORY: MemoryPlan = {
+  machine: "Mega Drive",
+  // Past the object shadow, and above the line the short absolute form reaches.
+  heapStart: 0xff8400,
+  heapEnd: 0xffff00,
+  oamShadow: 0xff8000,
+  oamEntries: 80,
+  viewW: 40,
+  viewH: 28,
+  // A vertical blank here is about eighteen thousand CPU cycles and a queued
+  // cell costs a few dozen, so the cap is what a diagonal scroll needs — a
+  // column of twenty-nine and a row of forty-one — rather than what fits.
+  queueMax: 96,
+  plotMax: 48,
+  // The PSG half of this console's sound, which is a Master System's chip at
+  // `$C00011` and is what `demake build` drives. Larger than the Sega 8-bits'
+  // block by ten bytes, because five of the driver's fields are longword
+  // pointers into a half-megabyte cartridge rather than sixteen-bit ones.
+  audioBytes: MD_AUDIO_BYTES,
+  cellAttributes: true,
+  // The frame flag the main loop waits on. Its own byte for the reason the Sega
+  // handlers' is: an interrupt lands in the middle of whatever the game was
+  // doing, and everything in `layout.scratch` is one-routine scratch.
+  interruptBytes: 1,
+  // A four-byte record pointer and a two-byte index. Four rather than the Sega's
+  // two because an address is a long here, and in memory rather than in a
+  // register for the same reason it is there: a rule body fires between one
+  // iteration and the next and uses every register the machine has.
+  loopBytes: 6,
+  bigEndian: true,
+  align: 2,
 };
 
 /** Raised when a game needs more state than the machine has. */
@@ -545,11 +629,18 @@ class Bump {
     private readonly end: number,
     private readonly machine: string,
     private readonly what: string,
+    private readonly align = 1,
   ) {
     this.at = start;
   }
 
   take(bytes: number): number {
+    // Only what is read as a word or a long has to be aligned; a run of single
+    // bytes still packs tightly, which is what keeps every other console's map
+    // exactly what it was.
+    if (bytes > 1 && this.align > 1) {
+      this.at = Math.ceil(this.at / this.align) * this.align;
+    }
     const address = this.at;
     this.at += bytes;
     if (this.at > this.end) {
@@ -599,10 +690,11 @@ function numberContacts(program: Program): { ranges: Map<number, ContactRange>; 
  * order where it does not, which is why adding it changed no Game Boy address.
  */
 export function planLayout(program: Program, analysis: Analysis, memory: MemoryPlan): Layout {
-  const heap = new Bump(memory.heapStart, memory.heapEnd, memory.machine, "work RAM");
+  const align = memory.align ?? 1;
+  const heap = new Bump(memory.heapStart, memory.heapEnd, memory.machine, "work RAM", align);
   const quick =
     memory.fastStart !== undefined && memory.fastEnd !== undefined
-      ? new Bump(memory.fastStart, memory.fastEnd, memory.machine, "page zero")
+      ? new Bump(memory.fastStart, memory.fastEnd, memory.machine, "page zero", align)
       : undefined;
   /** Take from the cheap region if the machine has one, the heap otherwise. */
   const fast = (bytes: number): number => (quick ?? heap).take(bytes);
