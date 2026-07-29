@@ -11,7 +11,7 @@
  * implementation that reorders it diverges within seconds.
  */
 
-import { label } from "@demake/core";
+import { label, lcdcToDuck, megaduckRegister } from "@demake/core";
 
 import type { InstanceDef, RuleDef } from "../program.js";
 
@@ -69,8 +69,53 @@ import {
   TILE_BYTES,
 } from "../rom/graphics.js";
 
-/** Hardware registers this backend touches. */
-const R = {
+/**
+ * Hardware registers this backend touches.
+ *
+ * A record rather than constants because one console in the family moved them.
+ * The Mega Duck is a Game Boy clone whose I/O pins were rewired: same processor,
+ * same tiles, same maps, same OAM and DMA, same joypad, same timer, same
+ * interrupt vectors, and the video registers at `$FF10`–`$FF1B` in an order of
+ * their own. So the machine description is a table, {@link io} picks it from the
+ * context, and the emitters below are shared to the instruction.
+ *
+ * The addresses themselves come from `@demake/core`'s `asm/megaduck.ts`, which
+ * is also what routes a write in `@demake/dmg` and what the audio driver stores
+ * through — one table, because a hardware fact written down three times is one
+ * that disagrees in one entry.
+ */
+interface Io {
+  P1: number;
+  IF: number;
+  LCDC: number;
+  STAT: number;
+  SCY: number;
+  SCX: number;
+  LY: number;
+  DMA: number;
+  BGP: number;
+  OBP0: number;
+  OBP1: number;
+  /** CGB: which VRAM bank `$8000`–`$9FFF` reaches. */
+  VBK: number;
+  /** CGB: background palette index, then its data port. */
+  BCPS: number;
+  BCPD: number;
+  /** CGB: object palette index, then its data port. */
+  OCPS: number;
+  OCPD: number;
+  IE: number;
+  /**
+   * `LCDC` for "LCD on, BG on, OBJ on, tiles at `$8000`, map at `$9800`".
+   *
+   * A value and not a set of flags because the bits are what moved: the Game
+   * Boy's `%10010011` is the Mega Duck's `%11010001`, the same five decisions
+   * through a different permutation (`core`'s `lcdcFromDuck`).
+   */
+  lcdcOn: number;
+}
+
+const GB_IO: Io = {
   P1: 0xff00,
   IF: 0xff0f,
   LCDC: 0xff40,
@@ -82,16 +127,49 @@ const R = {
   BGP: 0xff47,
   OBP0: 0xff48,
   OBP1: 0xff49,
-  /** CGB: which VRAM bank `$8000`–`$9FFF` reaches. */
   VBK: 0xff4f,
-  /** CGB: background palette index, then its data port. */
   BCPS: 0xff68,
   BCPD: 0xff69,
-  /** CGB: object palette index, then its data port. */
   OCPS: 0xff6a,
   OCPD: 0xff6b,
   IE: 0xffff,
-} as const;
+  lcdcOn: 0b10010011,
+};
+
+/** Where a Game Boy register in the I/O page lives on a Mega Duck. */
+const duck = (gbAddress: number): number => 0xff00 | megaduckRegister(gbAddress & 0xff);
+
+/**
+ * The Mega Duck's page, derived rather than restated.
+ *
+ * Every address comes from `core`'s table, so this cannot drift from what the
+ * emulator routes and the audio driver stores through. Three registers keep the
+ * Game Boy's address because they are not in the moved range: `P1` and `IF` did
+ * not move, and `IE` is at `$FFFF`, outside the page entirely — which is why it
+ * is left alone here rather than passed through `duck`.
+ *
+ * The colour registers keep theirs too, because this console has no colour
+ * hardware and never reaches them: `unsupported()` refuses a `gbc` feature
+ * before an emitter could ask.
+ */
+const DUCK_IO: Io = {
+  ...GB_IO,
+  LCDC: duck(GB_IO.LCDC),
+  STAT: duck(GB_IO.STAT),
+  SCY: duck(GB_IO.SCY),
+  SCX: duck(GB_IO.SCX),
+  LY: duck(GB_IO.LY),
+  DMA: duck(GB_IO.DMA),
+  BGP: duck(GB_IO.BGP),
+  OBP0: duck(GB_IO.OBP0),
+  OBP1: duck(GB_IO.OBP1),
+  lcdcOn: lcdcToDuck(GB_IO.lcdcOn),
+};
+
+/** The register page of the machine this build targets. */
+function io(ctx: Ctx): Io {
+  return ctx.duck ? DUCK_IO : GB_IO;
+}
 
 const VRAM_TILES = 0x8000;
 const VRAM_MAP = 0x9800;
@@ -209,6 +287,11 @@ export function emitProgram(ctx: Ctx, options: EmitOptions = {}): void {
   }
 
   // --- cartridge header ------------------------------------------------------
+  // A Mega Duck has no boot ROM and its cartridges carry no header, so the
+  // processor begins at $0000 and the first thing there has to be the jump out
+  // past the interrupt vectors. A Game Boy's boot ROM hands over at $0100
+  // instead, which is why that one takes the entry point below.
+  if (ctx.duck) asm.jp("Entry");
   // The VBlank vector: the main loop uses `halt` to wait for it, so the handler
   // only has to exist and return. With audio there is a second interrupt, and
   // `halt` cannot tell them apart — so VBlank raises a flag the loop waits on,
@@ -230,10 +313,13 @@ export function emitProgram(ctx: Ctx, options: EmitOptions = {}): void {
     asm.pop("hl").pop("de").pop("bc").pop("af");
     asm.reti();
   }
-  asm.padTo(0x0100);
-  asm.nop();
-  asm.jp("Entry");
-  asm.padTo(0x0150);
+  if (!ctx.duck) {
+    asm.padTo(0x0100);
+    asm.nop();
+    asm.jp("Entry");
+    // Past the header, whose bytes `stampGbHeader` writes into the built ROM.
+    asm.padTo(0x0150);
+  }
 
   emitEntry(ctx, scenes, levelFor, options);
   emitMainLoop(ctx, options.audio !== undefined);
@@ -351,6 +437,7 @@ function emitEntry(
   options: EmitOptions,
 ): void {
   const { asm, layout, program } = ctx;
+  const R = io(ctx);
   const tileCount =
     BUILTIN_TILES + (options.extraTiles ? options.extraTiles.length / TILE_BYTES : 0);
 
@@ -480,7 +567,7 @@ function emitEntry(
   }
 
   // LCD on, BG on, OBJ on, tiles at $8000, map at $9800.
-  asm.ldn("a", 0b10010011);
+  asm.ldn("a", R.lcdcOn);
   asm.stha(R.LCDC & 0xff);
   asm.ldn("a", options.audio ? 1 | options.audio.clock.interrupt : 1);
   asm.stha(R.IE & 0xff);
@@ -505,6 +592,7 @@ function emitEntry(
  */
 function emitVramBank(ctx: Ctx, bank: number): void {
   const { asm } = ctx;
+  const R = io(ctx);
   if (bank === 0) asm.alu("xor", "a");
   else asm.ldn("a", bank);
   asm.stha(R.VBK & 0xff);
@@ -591,6 +679,7 @@ function emitClearState(ctx: Ctx): void {
 
 function emitMainLoop(ctx: Ctx, audio: boolean): void {
   const { asm, layout } = ctx;
+  const R = io(ctx);
   asm.label("Main");
   asm.halt();
   asm.nop();
@@ -666,6 +755,7 @@ function emitMainLoop(ctx: Ctx, audio: boolean): void {
  */
 function emitInput(ctx: Ctx): void {
   const { asm, layout } = ctx;
+  const R = io(ctx);
   asm.label("ReadInput");
   asm.ldn("a", 0x20); // select the direction pad
   asm.stha(R.P1 & 0xff);
@@ -1291,6 +1381,7 @@ function emitFullRedraw(
   options: EmitOptions,
 ): void {
   const { asm, layout } = ctx;
+  const R = io(ctx);
   asm.call("LcdOff");
   const backdrop = options.backdrops?.get(scene.def.name);
   if (ctx.color) {
@@ -1325,7 +1416,7 @@ function emitFullRedraw(
       emitVramBank(ctx, 0);
     }
     if (!scrolls(ctx, scene)) emitHud(ctx, scene, "static");
-    asm.ldn("a", 0b10010011);
+    asm.ldn("a", R.lcdcOn);
     asm.stha(R.LCDC & 0xff);
     return;
   }
@@ -1380,7 +1471,7 @@ function emitFullRedraw(
   // draws its whole HUD with sprites instead, so it has none to paint here.
   if (!scrolls(ctx, scene)) emitHud(ctx, scene, "static");
   // The LCD comes back on with the picture already correct.
-  asm.ldn("a", 0b10010011);
+  asm.ldn("a", R.lcdcOn);
   asm.stha(R.LCDC & 0xff);
 }
 
@@ -2117,6 +2208,7 @@ function needHudNumber(ctx: Ctx): string {
 /** Emit the render helpers the scene code calls. */
 export function emitRenderHelpers(ctx: Ctx): void {
   const { asm, layout } = ctx;
+  const R = io(ctx);
 
   // HL = the VRAM address for the cell in words[tileCol]/words[tileRow].
   asm.label("VramFor");

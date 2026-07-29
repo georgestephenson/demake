@@ -28,4 +28,4 @@ export {
   Vdp,
   type Frame,
 } from "./vdp.js";
-export { BUTTONS, FRAME_CYCLES, Md, type Button } from "./machine.js";
+export { BUTTONS, FRAME_CYCLES, Md, PSG_MIX_GAIN, type Button } from "./machine.js";

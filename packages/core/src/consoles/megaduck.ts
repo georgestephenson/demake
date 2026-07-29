@@ -11,6 +11,7 @@
  * console has its own harness and an emulator to prove it against (doc 13
  * §Phase 7+); SameDuck's `Core/gb.h` is the register map to build it from.
  */
+import { gbAudio } from "./audio-specs.js";
 import type { ConsoleSpec, RGB8 } from "./types.js";
 const RAMP: readonly RGB8[] = [
   { r: 232, g: 232, b: 232 },
@@ -36,5 +37,16 @@ export const megaduck = {
     flip: false,
   },
   codegen: { family: "gb", formats: ["bin", "asm", "c"] },
-  docs: { sources: ["Mega Duck technical notes — GB-clone LCD (4 shades)"] },
+  // The Game Boy's APU, unchanged: same four channels, same lattices, same
+  // 4.194304 MHz clock, same timer to drive a driver from. An `AudioSpec`
+  // describes what the hardware can *do* and never where its registers are, so
+  // the console's rewiring (`asm/megaduck.ts`) does not reach this far — it is
+  // applied where a register number becomes an address, and nowhere above.
+  audio: gbAudio,
+  docs: {
+    sources: [
+      "Mega Duck technical notes — GB-clone LCD (4 shades)",
+      "SameDuck (SameBoy fork) — Core/gb.h, Core/display.c: the I/O map and LCDC bits",
+    ],
+  },
 } satisfies ConsoleSpec;

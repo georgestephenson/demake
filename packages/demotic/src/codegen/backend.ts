@@ -139,11 +139,27 @@ export interface BoundAudioShape {
   present: boolean;
   tracks: number;
   effects: number;
-  /** Driver code bytes. Read after `assemble`, never before. */
+  /**
+   * Driver code and packed schedule bytes — **read after {@link buildRom} has
+   * assembled, and never before.**
+   *
+   * A driver is emitted lazily: `@demake/audio` hands back `emitCode`/`emitData`
+   * closures and only learns their sizes once the assembler has run them, which
+   * happens inside `assemble` — a step *after* `bindAudio`. So a backend exposes
+   * these as live queries rather than copying them out of the driver at bind
+   * time, or it reports the zero they held before anything was emitted, which is
+   * what `demake build` did for every cartridge it made until this became a rule.
+   *
+   * `helpers` is the same shape and is a query for the same reason. It would
+   * survive being copied — copying an array copies its reference, and the emitter
+   * pushes rather than replaces — but that is luck, not design, and it is not a
+   * distinction worth asking the next backend to remember.
+   *
+   * Everything above these three is known when the audio is demade.
+   */
   readonly code: number;
-  /** Packed schedule bytes, tables included. Read after `assemble`. */
   readonly data: number;
-  helpers: readonly string[];
+  readonly helpers: readonly string[];
   rateHz: number;
   writesRestricted: number;
 }

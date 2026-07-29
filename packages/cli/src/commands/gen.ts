@@ -29,16 +29,7 @@ import type { CliEnv } from "../env.js";
 import { EXIT, type ExitCode } from "../exit-codes.js";
 import { CliError, resolveInput } from "../io.js";
 import { readChipScript } from "./audio.js";
-import { buildGbRom } from "../rom/gb.js";
-import { buildGbaRom } from "../rom/gba.js";
-import { buildMdRom } from "../rom/md.js";
-import { buildNdsRom } from "../rom/nds.js";
-import { buildNesRom } from "../rom/nes.js";
-import { buildPceRom } from "../rom/pce.js";
-import { buildSg1000Rom } from "../rom/sg1000.js";
-import { buildSmsRom } from "../rom/sms.js";
-import { buildSnesRom } from "../rom/snes.js";
-import { buildWscRom } from "../rom/wsc.js";
+import { romBuilderFor } from "../rom/registry.js";
 
 function str(values: Record<string, ParsedValue>, key: string): string | undefined {
   return typeof values[key] === "string" ? (values[key] as string) : undefined;
@@ -107,8 +98,8 @@ export async function runGen(
   // toolchain the ROM. The GB harness consumes `asm` (with a fixed symbol);
   // every other harness includes the `bin` blobs verbatim.
   const wantRom = format === "rom";
-  const romFamily = wantRom ? getConsole(consoleId).codegen.family : "";
-  const coreFormat: CodegenFormat = wantRom ? (romFamily === "gb" ? "asm" : "bin") : format;
+  const romBuilder = wantRom ? romBuilderFor(getConsole(consoleId)) : undefined;
+  const coreFormat: CodegenFormat = wantRom ? (romBuilder?.format ?? "bin") : format;
   const userSymbol = str(values, "symbol");
   if (wantRom && userSymbol !== undefined && !quiet) {
     env.errOut("demake: warning: --symbol is ignored for --format rom (the harness pins it).\n");
@@ -138,45 +129,15 @@ export async function runGen(
         `${spec.id} does not support --format rom`,
       );
     }
-    if (spec.codegen.family === "gb") {
-      const rom = buildGbRom(env, spec, result.artifacts[0]!.bytes);
-      artifacts = [
-        { suffix: spec.color.model === "rgb" ? ".gbc" : ".gb", kind: "rom", bytes: rom },
-      ];
-    } else if (spec.codegen.family === "nes") {
-      const rom = buildNesRom(env, spec, result);
-      artifacts = [{ suffix: ".nes", kind: "rom", bytes: rom }];
-    } else if (spec.codegen.family === "sms") {
-      const rom = buildSmsRom(env, spec, result);
-      artifacts = [{ suffix: spec.id === "gg" ? ".gg" : ".sms", kind: "rom", bytes: rom }];
-    } else if (spec.codegen.family === "md") {
-      const rom = buildMdRom(env, spec, result);
-      artifacts = [{ suffix: ".md", kind: "rom", bytes: rom }];
-    } else if (spec.codegen.family === "sg1000") {
-      const rom = buildSg1000Rom(env, spec, result);
-      artifacts = [{ suffix: ".sg", kind: "rom", bytes: rom }];
-    } else if (spec.codegen.family === "snes") {
-      const rom = buildSnesRom(env, spec, result);
-      artifacts = [{ suffix: ".sfc", kind: "rom", bytes: rom }];
-    } else if (spec.codegen.family === "gba") {
-      const rom = buildGbaRom(env, spec, result);
-      artifacts = [{ suffix: ".gba", kind: "rom", bytes: rom }];
-    } else if (spec.codegen.family === "nds") {
-      const rom = buildNdsRom(env, spec, result);
-      artifacts = [{ suffix: ".nds", kind: "rom", bytes: rom }];
-    } else if (spec.codegen.family === "pce") {
-      const rom = buildPceRom(env, spec, result);
-      artifacts = [{ suffix: ".pce", kind: "rom", bytes: rom }];
-    } else if (spec.codegen.family === "wsc") {
-      const rom = buildWscRom(env, spec, result);
-      artifacts = [{ suffix: ".wsc", kind: "rom", bytes: rom }];
-    } else {
+    if (!romBuilder) {
       throw new CliError(
         EXIT.UNAVAILABLE,
         "E_TOOLCHAIN_MISSING",
         `rom building for the '${spec.codegen.family}' family is not implemented yet`,
       );
     }
+    const rom = romBuilder.build(env, spec, result);
+    artifacts = [{ suffix: romBuilder.suffix(spec), kind: "rom", bytes: rom }];
   }
 
   const written = writeArtifacts(env, artifacts, output, source, force, json);

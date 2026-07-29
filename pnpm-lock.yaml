@@ -106,7 +106,6 @@ importers:
       '@demake/chip':
         specifier: workspace:*
         version: link:../chip
-    devDependencies:
       '@demake/core':
         specifier: workspace:*
         version: link:../core

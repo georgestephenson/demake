@@ -30,6 +30,7 @@ import {
   FRAME_HEIGHT as MD_HEIGHT,
   FRAME_WIDTH as MD_WIDTH,
   Md,
+  PSG_MIX_GAIN as MD_PSG_MIX_GAIN,
   type Button as MdButton,
 } from "@demake/md";
 import { Nes, SCREEN_HEIGHT as NES_HEIGHT, SCREEN_WIDTH as NES_WIDTH } from "@demake/nes";
@@ -44,7 +45,7 @@ import {
 
 import { demoAssetBytes, demoAudioBytes } from "../lib/demo-game.js";
 import { download } from "../lib/download.js";
-import { audioSupported, RomAudio, type Listenable } from "../lib/rom-audio.js";
+import { audioSupported, RomAudio, type ListenableMachine } from "../lib/rom-audio.js";
 import { createEngine } from "../worker/client.js";
 
 /**
@@ -72,6 +73,7 @@ const FRAME_RATE = 59.7;
 const MACHINE: Readonly<Record<string, string>> = {
   gb: "a Game Boy",
   gbc: "a Game Boy Color",
+  megaduck: "a Mega Duck",
   nes: "an NES",
   sms: "a Master System",
   gg: "a Game Gear",
@@ -96,18 +98,19 @@ const CPU: Readonly<Record<string, string>> = {
  *
  * The pane needs five things of a machine and no more, so this is those five —
  * and the four cores satisfy it without any of them learning about the page or
- * about each other. `chip` is the sound hardware the audio player attaches to,
- * and every console with a backend has one: the Game Boy's APU, the NES's 2A03,
- * and the SN76489 on both Sega machines — each `@demake/chip`'s own model rather
- * than a second copy living in a core. It is nullable because a console whose
- * cartridge had nothing to play would say so here rather than by offering a
- * control that does nothing.
+ * about each other. `chips` is the sound hardware the audio player attaches to,
+ * and every console with a backend has some: the Game Boy's APU, the NES's 2A03,
+ * the SN76489 on both Sega machines, and *two* on a Mega Drive — each
+ * `@demake/chip`'s own model rather than a second copy living in a core. A list
+ * rather than one, because that console's two run on different clocks and a sink
+ * is built against a clock; an empty one would say a cartridge has nothing to
+ * play rather than offering a control that does nothing.
  */
 interface Player {
   readonly width: number;
   readonly height: number;
   readonly framebuffer: Uint8ClampedArray;
-  readonly chip: Listenable | null;
+  readonly chips: ListenableMachine;
   setButtons(down: Button[]): void;
   runFrame(): void;
   readMemory(address: number, length: number): Uint8Array;
@@ -120,26 +123,40 @@ interface Player {
  * consoles have a backend is `codegen/registry.ts`'s one list, and the page
  * reads it through the worker like everything else it knows about the engine.
  */
-function boot(rom: Uint8Array, family: string): Player {
+function boot(rom: Uint8Array, family: string, consoleId: string): Player {
   if (family === "md") {
     const machine = new Md(rom);
     return {
       width: MD_WIDTH,
       height: MD_HEIGHT,
       framebuffer: machine.framebuffer,
-      // Half this console's sound, and the half the cartridge plays: the PSG at
-      // `$C00011`, which is a Master System's chip — so it is adapted exactly as
-      // the Sega 8-bits' is. The FM half is a second processor the build does not
-      // emit for (doc 16 §Still to come), and nothing here pretends to it.
-      chip: {
-        get audioSink() {
-          return machine.audioSink;
+      // The only console here with two chips, and the cartridge plays both: six
+      // four-operator FM voices and four tone generators. They are handed over
+      // separately because they run on different clocks — the master clock over
+      // seven and over fifteen — and the relative level is the *board's* rather
+      // than either chip's, which is why it arrives here rather than being asked
+      // of a model (doc 16 §Packages).
+      chips: [
+        {
+          get audioSink() {
+            return machine.ymSink;
+          },
+          set audioSink(sink) {
+            machine.ymSink = sink;
+          },
+          apu: machine.ym,
         },
-        set audioSink(sink) {
-          machine.audioSink = sink;
+        {
+          get audioSink() {
+            return machine.audioSink;
+          },
+          set audioSink(sink) {
+            machine.audioSink = sink;
+          },
+          apu: machine.psg,
+          gain: MD_PSG_MIX_GAIN,
         },
-        apu: machine.psg,
-      },
+      ],
       setButtons: (down) => machine.setButtons(down as readonly MdButton[]),
       runFrame: () => void machine.runFrame(),
       readMemory: (address, length) => machine.readMemory(address, length),
@@ -159,15 +176,17 @@ function boot(rom: Uint8Array, family: string): Player {
       // than renamed — the core keeps calling it what it is. What it plays is
       // the cartridge's own generated Z80 driver, through the same `StreamSink`
       // the other two consoles use.
-      chip: {
-        get audioSink() {
-          return machine.audioSink;
+      chips: [
+        {
+          get audioSink() {
+            return machine.audioSink;
+          },
+          set audioSink(sink) {
+            machine.audioSink = sink;
+          },
+          apu: machine.psg,
         },
-        set audioSink(sink) {
-          machine.audioSink = sink;
-        },
-        apu: machine.psg,
-      },
+      ],
       // A Sega pad has no Select, so the one button the portable set does not
       // include is dropped rather than mapped onto something else.
       setButtons: (down) => machine.setButtons(down as readonly SmsButton[]),
@@ -184,18 +203,23 @@ function boot(rom: Uint8Array, family: string): Player {
       width: NES_WIDTH,
       height: NES_HEIGHT,
       framebuffer: machine.framebuffer,
-      chip: machine,
+      chips: [machine],
       setButtons: (down) => machine.setButtons(down),
       runFrame: () => void machine.runFrame(),
       readMemory: (address, length) => machine.readMemory(address, length),
     };
   }
-  const machine = new Gameboy(rom);
+  // The one place the console id is needed rather than the family, and the
+  // reason is the absence of a fact rather than a preference: a Mega Duck
+  // cartridge has no header at all, so unlike the two Game Boys (whose CGB flag
+  // decides) and the two Sega machines (whose region nibble does), there is
+  // nothing in these bytes to read it out of.
+  const machine = new Gameboy(rom, consoleId === "megaduck" ? "megaduck" : "gameboy");
   return {
     width: SCREEN_WIDTH,
     height: SCREEN_HEIGHT,
     framebuffer: machine.framebuffer,
-    chip: machine,
+    chips: [machine],
     setButtons: (down) => machine.setButtons(down),
     runFrame: () => void machine.runFrame(),
     readMemory: (address, length) => machine.readMemory(address, length),
@@ -369,9 +393,9 @@ export function RomPane({
       machine.current = null;
       return;
     }
-    const booted = boot(rom, family);
+    const booted = boot(rom, family, consoleId);
     machine.current = booted;
-    if (booted.chip) player.current?.attach(booted.chip);
+    if (booted.chips.length > 0) player.current?.attach(booted.chips);
     const element = canvas.current;
     const context = element?.getContext("2d");
     if (!context) return;
@@ -454,7 +478,7 @@ export function RomPane({
     }
     if (sound) {
       setSound(false);
-      void audio.suspend(machine.current?.chip ?? null).then(() => setPlaying(audio.active));
+      void audio.suspend(machine.current?.chips ?? null).then(() => setPlaying(audio.active));
       return;
     }
     // The click *is* the gesture a browser wants before it will start a
@@ -463,7 +487,7 @@ export function RomPane({
     void audio
       .resume()
       .then(() => {
-        if (machine.current?.chip) audio.attach(machine.current.chip);
+        if (machine.current?.chips.length) audio.attach(machine.current.chips);
         setPlaying(audio.active);
       })
       .catch(() => setPlaying(false));

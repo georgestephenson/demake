@@ -14,6 +14,8 @@
 
 import { describe, expect, it } from "vitest";
 
+import type { SampleSink } from "@demake/chip";
+
 import { RomAudio } from "../src/lib/rom-audio.js";
 
 /** Everything `RomAudio` asks of a browser, and nothing else. */
@@ -62,9 +64,14 @@ class FakeContext {
   async close(): Promise<void> {}
 }
 
-/** A machine to point the stream at: the two things `Listenable` asks for. */
+/**
+ * A machine to point the stream at: the two things `Listenable` asks for.
+ *
+ * A list, because the player takes one — a console may have two chips on two
+ * clocks, and every other console is a list of one.
+ */
 function machine(clockHz: number) {
-  return { audioSink: undefined, apu: { clockHz } };
+  return [{ audioSink: undefined as SampleSink | undefined, apu: { clockHz } }];
 }
 
 function withFakeAudio<T>(body: () => T): T {
@@ -79,7 +86,7 @@ function withFakeAudio<T>(body: () => T): T {
 
 /** Fill the sink with a second of something and hand it to the device. */
 function play(audio: RomAudio, clockHz: number): void {
-  audio.sink.add(0.5, -0.5, clockHz);
+  for (const { sink } of audio.sinks) sink.add(0.5, -0.5, clockHz);
   audio.flush();
 }
 
@@ -115,7 +122,7 @@ describe("the cartridge player's queue", () => {
 
       await audio.suspend(target);
       expect(first.stopped).toBe(true);
-      expect(target.audioSink).toBeUndefined();
+      expect(target[0]!.audioSink).toBeUndefined();
 
       context.state = "running";
       audio.attach(target);

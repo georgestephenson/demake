@@ -35,6 +35,18 @@ import { CYCLES_PER_LINE, FRAME_HEIGHT, FRAME_WIDTH, LINES_PER_FRAME, Vdp } from
 
 export { FRAME_HEIGHT, FRAME_WIDTH };
 
+/**
+ * How loud the PSG sits against the FM chip when the two are summed.
+ *
+ * A fact about the *board* rather than about either chip — the same SN76489 is
+ * the whole output on a Master System — so it is stated by the machine that has
+ * both rather than by a model that must not know which board it is on. The
+ * audio engine states the same number as `MD_CHIP_GAINS` for the same reason and
+ * from the other side; they are two statements of one hardware fact, and neither
+ * package can import the other.
+ */
+export const PSG_MIX_GAIN = 0.5;
+
 /** CPU cycles in one NTSC frame. */
 export const FRAME_CYCLES = LINES_PER_FRAME * CYCLES_PER_LINE;
 

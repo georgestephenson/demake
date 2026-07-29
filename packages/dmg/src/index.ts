@@ -17,10 +17,13 @@
  *     wrapper. This is ~1200 lines of TypeScript, which is the same call the
  *     repository already made for its PNG codec.
  *
- * Its one dependency is `@demake/chip`, and it is a deliberate one: the APU here
- * *is* the model the audio pipeline renders previews with, because a second
- * implementation of a chip is how the preview and the emulator quietly stop
- * agreeing (doc 16 §Packages).
+ * Its two dependencies are deliberate, and for one reason between them: a
+ * hardware fact must exist once. The APU here *is* `@demake/chip`'s model, the
+ * one the audio pipeline renders previews with, because a second implementation
+ * of a chip is how the preview and the emulator quietly stop agreeing (doc 16
+ * §Packages). And the Mega Duck's I/O map is `@demake/core`'s
+ * (`asm/megaduck.ts`), because the audio driver and the game backend emit code
+ * against the same table this routes writes through.
  *
  * Platform-pure on the same terms as `@demake/core`: no `fs`, no DOM, no wall
  * clock. Rendering produces a plain RGBA buffer; where that goes is the caller's
@@ -33,7 +36,9 @@ export {
   DMG_SHADES,
   FRAME_CYCLES,
   Gameboy,
+  MEGADUCK_SHADES,
   SCREEN_HEIGHT,
   SCREEN_WIDTH,
   type Button,
+  type Machine,
 } from "./machine.js";

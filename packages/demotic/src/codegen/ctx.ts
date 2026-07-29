@@ -221,4 +221,18 @@ export class Ctx extends CtxBase<Ctx, Asm> {
   get color(): boolean {
     return this.profile.id === "gbc";
   }
+
+  /**
+   * Whether this build targets the Mega Duck.
+   *
+   * The other fact that changes what the renderer emits, and it changes far
+   * less than colour does: the console is a Game Boy clone whose I/O page was
+   * rewired, so the *addresses* the renderer stores to move and `LCDC`'s bits
+   * are permuted. Not one instruction differs otherwise — no rule, no
+   * collision, no tick — which is why `rom.test.ts` runs the whole example
+   * library here and expects the Game Boy's traces byte for byte.
+   */
+  get duck(): boolean {
+    return this.profile.id === "megaduck";
+  }
 }

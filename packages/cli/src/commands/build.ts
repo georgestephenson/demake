@@ -22,7 +22,6 @@ import {
   BuildError,
   compile,
   describeProgram,
-  familyFor,
   findProfile,
   formatDiagnostics,
   GameLangError,
@@ -50,11 +49,27 @@ function str(values: Record<string, ParsedValue>, key: string): string | undefin
  *
  * Read from the backend registry rather than listed here, so that a console
  * builds exactly when a backend claims it — `gbc` is a real Game Boy Color
- * cartridge demade in colour, and `nes` a real NROM one demade for a fixed master
- * palette and 16×16 attribute cells. Each is the same compiler over a different
- * instruction set, so a game traces identically on all three.
+ * cartridge demade in colour, `nes` a real NROM one demade for a fixed master
+ * palette and 16×16 attribute cells, and `megaduck` a real Mega Duck cartridge:
+ * the Game Boy's machine code through that console's own register page, with no
+ * header, because it has no boot ROM to check one. A game traces identically on
+ * all four.
  */
 const RUNTIME_CONSOLES = runtimeConsoles;
+
+/**
+ * Whether this console's cartridges carry a Nintendo boot logo for hardware to
+ * check.
+ *
+ * The two Game Boys, and not the third machine in their codegen family: a Mega
+ * Duck has no boot ROM and its cartridges have no header, so there is no logo
+ * area — and `rgbfix` would happily stamp a Game Boy header straight over the
+ * game's own code, which begins at $0000 and runs through where $0104-$014F
+ * would be. Asking the family would get this exactly backwards.
+ */
+function checksBootLogo(consoleId: string): boolean {
+  return consoleId === "gb" || consoleId === "gbc";
+}
 
 /** Derive a default output name and cartridge title from the source path. */
 function stemFromSource(source: string): string {
@@ -215,7 +230,7 @@ export async function runBuild(
   // browser produces for the same source — the doc-07 parity contract, restated
   // for games. The logo is Nintendo's, so we never ship it ourselves.
   const wantsLogo = values["boot-logo"] === true;
-  if (wantsLogo && familyFor(profile.id) !== "gb") {
+  if (wantsLogo && !checksBootLogo(profile.id)) {
     throw new CliError(
       EXIT.USAGE,
       "E_BAD_OPTION",
@@ -291,7 +306,7 @@ export async function runBuild(
     if (program.warnings.length > 0) {
       env.errOut(`${formatDiagnostics(program.warnings)}\n`);
     }
-    if (!wantsLogo && format === "rom" && familyFor(profile.id) === "gb") {
+    if (!wantsLogo && format === "rom" && checksBootLogo(profile.id)) {
       env.errOut(
         "note: the boot-logo area is blank, so this runs in emulators that direct boot but " +
           "not on original hardware. Pass --boot-logo (needs RGBDS) for a hardware cartridge.\n",

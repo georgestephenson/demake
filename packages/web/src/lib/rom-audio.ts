@@ -2,10 +2,10 @@
  * Playing a running cartridge's APU (doc 07 §The audio sections).
  *
  * **Web Audio is a playback device here, never a synthesizer.** Every sample
- * comes out of `@demake/chip`'s model of the console's own sound hardware — the
- * Game Boy's APU or the NES's 2A03, whichever cartridge is running, and in both
- * cases the same model the audio pipeline renders WAVs with and the same one the
- * conformance suite diffs register writes against —
+ * comes out of `@demake/chip`'s model of the console's own sound hardware —
+ * whichever cartridge is running, and in every case the same model the audio
+ * pipeline renders WAVs with and the same one the conformance suite diffs
+ * register writes against —
  * box-integrated and DC-blocked by `@demake/chip`'s `StreamSink`,
  * which `packages/chip/test/stream.test.ts` pins as bit-identical to the offline
  * renderer. Nothing in this file computes a sample. Nothing else goes in the
@@ -25,18 +25,36 @@
 import { GB_CLOCK_HZ, StreamSink, type SampleSink } from "@demake/chip";
 
 /**
- * A machine whose chip can be listened to, whichever console it is.
+ * One sound chip, as the player needs it.
  *
- * The player needs exactly two things of a core — somewhere to put a sink, and
- * the rate its chip is clocked at — so that is what it asks for. Neither
- * `@demake/dmg` nor `@demake/nes` learns about the page, and the page does not
- * learn which of them it is holding.
+ * Two things of a core — somewhere to put a sink, and the rate the chip is
+ * clocked at — so that is what is asked for. No core learns about the page, and
+ * the page does not learn which core it is holding.
  */
 export interface Listenable {
   audioSink: SampleSink | undefined;
   /** The chip itself, for its master clock: 4.19 MHz on a Game Boy, 1.79 on an NES. */
   readonly apu: { readonly clockHz: number };
+  /**
+   * How loud this chip is against the others, where a console has more than one.
+   *
+   * A fact about the *board* rather than about the chip, which is why it arrives
+   * with the machine rather than being asked of the model — the same reason
+   * `render()` takes its per-chip gains from the binding (doc 16 §Packages).
+   */
+  readonly gain?: number;
 }
+
+/**
+ * A machine whose sound can be listened to, whichever console it is.
+ *
+ * An array because one console has *two* chips: a Mega Drive's YM2612 and
+ * SN76489 run in different clock domains — the master clock over seven and over
+ * fifteen — so each needs its own sink, and mixing them is this file's job on
+ * exactly the terms `render()` mixes the two halves of a schedule. Every other
+ * console hands over a list of one.
+ */
+export type ListenableMachine = readonly Listenable[];
 
 /** The rate the page asks for; doc 07 §The audio sections says why explicitly. */
 const WANTED_RATE = 48000;
@@ -66,8 +84,12 @@ function openContext(): AudioContext {
 
 export class RomAudio {
   private readonly context: AudioContext;
+  /** One chip's samples, read out and then added into the mix. */
   private readonly scratchLeft: Float32Array;
   private readonly scratchRight: Float32Array;
+  /** The sum handed to the device, which for a one-chip console is a copy. */
+  private readonly mixLeft: Float32Array;
+  private readonly mixRight: Float32Array;
   /** Where the next buffer starts, on the context's clock. */
   private cursor = 0;
   /**
@@ -84,7 +106,13 @@ export class RomAudio {
    */
   private queued = new Set<AudioBufferSourceNode>();
 
-  sink: StreamSink;
+  /**
+   * One sink per chip, in the order the machine handed them over.
+   *
+   * Plural because a console may have two chips on different clocks, and a sink
+   * is built *against* a clock. What the device receives is their sum.
+   */
+  sinks: { sink: StreamSink; gain: number }[] = [];
 
   constructor() {
     // An explicit rate, because a buffer whose rate differs from the context's
@@ -96,9 +124,11 @@ export class RomAudio {
     this.context = openContext();
     // Until a cartridge is attached there is no chip and therefore no clock; the
     // Game Boy's stands in and is replaced the moment one boots.
-    this.sink = this.newSink(GB_CLOCK_HZ);
+    this.sinks = [{ sink: this.newSink(GB_CLOCK_HZ), gain: 1 }];
     this.scratchLeft = new Float32Array(this.context.sampleRate);
     this.scratchRight = new Float32Array(this.context.sampleRate);
+    this.mixLeft = new Float32Array(this.context.sampleRate);
+    this.mixRight = new Float32Array(this.context.sampleRate);
   }
 
   /** The rate the chip is being rendered at — 48 kHz unless the browser refused. */
@@ -122,16 +152,21 @@ export class RomAudio {
   }
 
   /**
-   * Point a machine's chip at this stream. Call again when the ROM changes.
+   * Point a machine's chips at this stream. Call again when the ROM changes.
    *
-   * The sink is rebuilt rather than reused because it is built *against the
-   * chip's clock*, and the two consoles do not share one — a Game Boy sink
-   * fed an NES's clocks would play the game at forty-three percent speed.
+   * Sinks are rebuilt rather than reused because each is built *against a
+   * chip's clock*, and no two consoles share one — a Game Boy sink fed an NES's
+   * clocks would play the game at forty-three percent speed. A console with two
+   * chips gets two, for the same reason one console cannot use one: its own two
+   * clocks differ.
    */
-  attach(machine: Listenable): void {
+  attach(machine: ListenableMachine): void {
     this.silence();
-    this.sink = this.newSink(machine.apu.clockHz);
-    machine.audioSink = this.sink;
+    this.sinks = machine.map((chip) => {
+      const sink = this.newSink(chip.apu.clockHz);
+      chip.audioSink = sink;
+      return { sink, gain: chip.gain ?? 1 };
+    });
     this.cursor = 0;
   }
 
@@ -163,7 +198,7 @@ export class RomAudio {
   async resume(): Promise<void> {
     await this.context.resume();
     this.silence();
-    this.sink.clear();
+    for (const { sink } of this.sinks) sink.clear();
     this.cursor = 0;
   }
 
@@ -181,7 +216,10 @@ export class RomAudio {
   demand(): number {
     if (this.context.state !== "running") return 0;
     const wanted = (TARGET_LEAD - this.lead()) * this.context.sampleRate;
-    return Math.max(0, Math.ceil(wanted) - this.sink.available);
+    // The *least* ready chip decides: handing the device a buffer as long as the
+    // fastest one has produced would mean padding the other with silence, which
+    // is a click at the seam of every flush.
+    return Math.max(0, Math.ceil(wanted) - this.available());
   }
 
   /** Whether the device is far enough ahead that the emulator should pause. */
@@ -189,16 +227,39 @@ export class RomAudio {
     return this.lead() >= MAX_LEAD;
   }
 
-  /** Hand everything the chip has produced to the device, in one buffer. */
+  /** Samples every chip has ready, which is what the slowest of them has. */
+  private available(): number {
+    let least = Number.POSITIVE_INFINITY;
+    for (const { sink } of this.sinks) least = Math.min(least, sink.available);
+    return least === Number.POSITIVE_INFINITY ? 0 : least;
+  }
+
+  /**
+   * Hand everything the chips have produced to the device, in one buffer.
+   *
+   * Summing rather than mixing in the graph: a `GainNode` per chip would be a
+   * second implementation of the output stage arriving through the back door,
+   * and doc 07 is explicit that nothing but an `AudioBufferSourceNode` is ever
+   * constructed. One console reaches the loop below twice; every other reaches
+   * it once and the sum is a copy.
+   */
   flush(): void {
     if (this.context.state !== "running") return;
-    const count = Math.min(this.sink.available, this.scratchLeft.length);
+    const count = Math.min(this.available(), this.mixLeft.length);
     if (count === 0) return;
-    this.sink.read(this.scratchLeft, this.scratchRight, count);
+    this.mixLeft.fill(0, 0, count);
+    this.mixRight.fill(0, 0, count);
+    for (const { sink, gain } of this.sinks) {
+      sink.read(this.scratchLeft, this.scratchRight, count);
+      for (let i = 0; i < count; i += 1) {
+        this.mixLeft[i] = (this.mixLeft[i] as number) + (this.scratchLeft[i] as number) * gain;
+        this.mixRight[i] = (this.mixRight[i] as number) + (this.scratchRight[i] as number) * gain;
+      }
+    }
 
     const buffer = this.context.createBuffer(2, count, this.context.sampleRate);
-    buffer.getChannelData(0).set(this.scratchLeft.subarray(0, count));
-    buffer.getChannelData(1).set(this.scratchRight.subarray(0, count));
+    buffer.getChannelData(0).set(this.mixLeft.subarray(0, count));
+    buffer.getChannelData(1).set(this.mixRight.subarray(0, count));
 
     // A tab that was hidden, or a machine that could not keep up, leaves the
     // cursor in the past; scheduling there would play nothing at all. Starting
@@ -217,10 +278,10 @@ export class RomAudio {
   }
 
   /** Stop playing and let the machine run silently again. */
-  async suspend(machine: Listenable | null): Promise<void> {
-    if (machine) machine.audioSink = undefined;
+  async suspend(machine: ListenableMachine | null): Promise<void> {
+    for (const chip of machine ?? []) chip.audioSink = undefined;
     this.silence();
-    this.sink.clear();
+    for (const { sink } of this.sinks) sink.clear();
     this.cursor = 0;
     if (this.context.state === "running") await this.context.suspend();
   }

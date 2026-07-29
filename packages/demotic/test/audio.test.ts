@@ -59,6 +59,7 @@ import {
   StreamSink,
   type SampleSink,
 } from "@demake/chip";
+import { megaduckRegister } from "@demake/core";
 import { Gameboy } from "@demake/dmg";
 import { Md } from "@demake/md";
 import { Nes } from "@demake/nes";
@@ -184,6 +185,40 @@ const TARGETS: readonly Target[] = [
     boot(rom) {
       const machine = new Gameboy(rom);
       return wrap(machine);
+    },
+  },
+  {
+    // The Mega Duck's APU *is* the Game Boy's, at a different address — so
+    // everything this battery compares is stated in Game Boy register numbers
+    // and only the cartridge's stores differ. `channelOf` and `mergeReg` are
+    // therefore the Game Boy's unchanged, and the fact that this passes is the
+    // proof that the map is applied where a register becomes an address and
+    // nowhere else: a map that leaked into the schedules would fail here, and a
+    // map that never reached the ROM would fail on the console.
+    id: "megaduck",
+    name: "Mega Duck",
+    clockHz: GB_CLOCK_HZ,
+    mergeReg: 0x25,
+    mergeHelper: "panning-merge",
+    ratio: 1,
+    tag: () => gbChannelOf,
+    async build(source, dir) {
+      const program = compile(source, { profile: getProfile("megaduck"), levels: levelsIn(dir) });
+      const assets = assetsIn(dir);
+      const built = await buildGbRom(program, { assets });
+      const bound = await bindAudio(program, assets, {
+        build: (tracks, effects) =>
+          buildGameAudio({
+            tracks,
+            effects: effects as GameEffect[],
+            hram: 0xff8b,
+            port: megaduckRegister,
+          }),
+      });
+      return { built, bound };
+    },
+    boot(rom) {
+      return wrap(new Gameboy(rom, "megaduck"));
     },
   },
   {
@@ -795,6 +830,15 @@ describe("the example library", async () => {
           const { built } = await build(target, readFileSync(join(dir, file), "utf8"), dir);
           expect(built.stats.missingAudio).toEqual([]);
           expect(built.stats.audio?.effects ?? 0).toBeGreaterThan(0);
+          // What the audio cost, and *that* it was measured at all. A driver is
+          // emitted during `assemble`, so a backend that copies its sizes out of
+          // the binding instead of querying them reports the zero they held
+          // beforehand (`backend.ts` §BoundAudioShape) — which every backend did
+          // until recently, and `demake build` said "0 bytes of driver, 0 of
+          // schedule" for every cartridge it made. Nothing caught it, because
+          // nothing asserted the number was real. This is that assertion.
+          expect(built.stats.audio?.code ?? 0).toBeGreaterThan(0);
+          expect(built.stats.audio?.data ?? 0).toBeGreaterThan(0);
           // Headroom, deliberately asserted: a fixture built to the last hundred
           // bytes turns the next code-generator change into a mystery.
           expect(built.stats.free).toBeGreaterThan(HEADROOM[target.id] ?? 1024);

@@ -111,6 +111,24 @@ const PROFILES: readonly ConsoleProfile[] = [
     romPath: true,
   },
   {
+    // A Game Boy clone, and the profile says so by being identical: same
+    // screen, same cell grid, same forty sprites ten to a line, same tick. What
+    // differs about this console is where its registers live, which is a
+    // backend fact and not a game-relevant one — so nothing here changes, and a
+    // `.dmt` that fits a Game Boy fits this by construction.
+    id: "megaduck",
+    name: "Mega Duck",
+    screenWidth: 20,
+    screenHeight: 18,
+    rawWidth: 160,
+    rawHeight: 144,
+    cellSize: 8,
+    fps: 60,
+    sprites: { total: 40, perLine: 10, hFlip: true },
+    startButton: "dedicated",
+    romPath: true,
+  },
+  {
     id: "nes",
     name: "Nintendo Entertainment System",
     // Raw frame is 32×30 cells; the overscan-safe rect in the ConsoleSpec
