@@ -206,7 +206,25 @@ describe("the Sega cartridge header", () => {
     expect(rom[SMS_HEADER_OFFSET + 14]).toBe(0x12);
   });
 
-  it("refuses an image that is not a whole mapper-less cartridge", () => {
-    expect(() => packSegaRom(new Uint8Array(0x4000))).toThrow(/32768 bytes/);
+  it("takes either flat size, and takes the size nibble from the image", () => {
+    // Thirty-two kilobytes is $C and forty-eight is $D. The nibble follows the
+    // length rather than being a caller's option, so a 48 KiB cartridge cannot
+    // describe itself as a 32 KiB one — which a real BIOS would checksum-fail.
+    for (const [bytes, nibble] of [
+      [0x8000, 0x0c],
+      [0xc000, 0x0d],
+    ] as const) {
+      const rom = packSegaRom(new Uint8Array(bytes));
+      expect(rom.length).toBe(bytes);
+      expect((rom[SMS_HEADER_OFFSET + 15] as number) & 0x0f).toBe(nibble);
+    }
+  });
+
+  it("refuses an image that is neither flat size", () => {
+    // Not a policy: 16 KiB is half a bank short of what slot 0 and slot 1 cover,
+    // and anything past 48 KiB runs into work RAM at $C000 unless the program
+    // pages slot 2 — which this builder does not do.
+    expect(() => packSegaRom(new Uint8Array(0x4000))).toThrow(/32 KiB or 48 KiB/);
+    expect(() => packSegaRom(new Uint8Array(0x10000))).toThrow(/32 KiB or 48 KiB/);
   });
 });

@@ -39,7 +39,7 @@
  */
 
 import { AUDIO_STOP, type SmsGameAudio } from "@demake/audio";
-import { label, type Ref } from "@demake/core";
+import { label, SMS_HEADER_OFFSET, SMS_HEADER_SIZE, type Ref } from "@demake/core";
 
 import type { InstanceDef, RuleDef } from "../../program.js";
 import {
@@ -239,6 +239,17 @@ export interface SmsEmitOptions {
   effectIndices?: readonly number[];
   /** Which track each scene plays, as an index into the driver's table. */
   sceneTracks?: readonly number[];
+  /**
+   * Leave the sixteen bytes the cartridge header occupies free.
+   *
+   * The header is *inside* the image at `$7FF0`, not a wrapper around it, so a
+   * 32 KiB build simply stops short of it and needs nothing here. A 48 KiB one
+   * runs straight through, and whatever landed there would be replaced by the
+   * stamp — so the data section is padded across the hole instead. Set by
+   * `sms.ts` on the second pass, once the first has shown the game does not fit
+   * below it; a build that fits is byte-for-byte the build it always was.
+   */
+  reserveHeader?: boolean;
 }
 
 /** Dispatch on the running scene to one of a set of labels. */
@@ -290,6 +301,12 @@ export function emitProgram(ctx: SmsCtx, options: SmsEmitOptions = {}): void {
   ctx.finish();
 
   // --- data ------------------------------------------------------------------
+  // The header hole, skipped here rather than anywhere else: this is the boundary
+  // between the code, which is addressed by every branch in the program, and the
+  // tables, which are addressed by label — so a gap costs nothing but the sixteen
+  // bytes, and no instruction moves relative to another.
+  if (options.reserveHeader) asm.padTo(SMS_HEADER_OFFSET + SMS_HEADER_SIZE);
+
   for (const level of levels) {
     const boundTile = (index: number): number => {
       const art = level.file.tiles[index]?.art;

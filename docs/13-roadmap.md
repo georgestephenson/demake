@@ -815,12 +815,28 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   fixed bank and each scene's tick routine in its own. What that costs, per
   family:
 
-  - **Sega 8-bit** — the cheapest, and worth doing first for a reason that is not
-    this game: the mapper is always in the cartridge and slots 0, 1 and 2 come up
-    as banks 0, 1, 2, so **48 KiB is flat address space with no bank switching at
-    all** (`@demake/sms` already decodes the registers). Beyond that, slot 2 at
-    `$8000`–`$BFFF` is the switchable window, and the size nibble in the `TMR
-    SEGA` header grows with it.
+  - **Sega 8-bit** — ~~the cheapest, and worth doing first~~ **done, as far as
+    flat address space goes.** The mapper is in the cartridge rather than the
+    console and slots 0, 1 and 2 come up holding banks 0, 1, 2, so `$0000`–`$BFFF`
+    is one continuous image and **48 KiB needs no bank switching at all**. The
+    build now takes the smallest flat size that fits, the `TMR SEGA` size nibble
+    follows the image, and `sms-flat48.test.ts` boots a 48 KiB cartridge in
+    `@demake/sms` and diffs it against the interpreter. Every existing cartridge is
+    byte-identical, because a game that fits below `$7FF0` takes the same single
+    pass it always did.
+
+    What this does *not* reach is the thing quest needs, and the shape of the
+    limit is worth writing down. The header is sixteen bytes **inside** the image
+    at `$7FF0`, so a 48 KiB build pads across the hole — which means the data
+    section starts at `$8000` and the gap between the end of the code and `$7FF0`
+    is wasted. So the window is games whose *code* ends just below the header:
+    below that the padding costs more than the extra bank gives, and above it
+    there is nowhere to put the header at all and the build says so
+    (`E_GAME_TOO_LARGE`, naming `$7FF0`). Placing the hole tightly means either
+    checking the running address between data items, or using one of the other
+    header slots the BIOS accepts (`$1FF0`, `$3FF0`) and working out what each does
+    to the checksum range. Neither is hard; both want doing before slot-2 paging,
+    because paging inherits the same hole.
   - **Game Boy** — MBC5: bank 0 fixed at `$0000`–`$3FFF`, a switchable 16 KiB
     window at `$4000`, and the header's type and size bytes. `@demake/dmg` says
     in as many words that it has no MBC and that this is the day it gains one.

@@ -221,6 +221,7 @@ export {
   MD_RAM_END,
   MD_RAM_START,
   MD_ROM_SIZE,
+  MD_ROM_SIZES,
   MD_VINT_VECTOR,
   mdChecksum,
   packMdRom,
@@ -228,6 +229,7 @@ export {
 } from "./asm/md-cart.js";
 export {
   SMS_HEADER_OFFSET,
+  SMS_FLAT_ROM_SIZES,
   SMS_HEADER_SIZE,
   SMS_IRQ_VECTOR,
   SMS_NMI_VECTOR,

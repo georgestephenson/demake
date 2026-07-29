@@ -1145,6 +1145,17 @@ is the game.
   one iteration and the next and helps itself to every register the Z80 has. Not
   `layout.scratch`, which is documented as valid for the length of one routine and
   is exactly what that rule body uses.
+- **Forty-eight kilobytes is flat, and that is the mapper's doing not ours.** The
+  mapper is in the cartridge rather than the console and comes up with its three
+  slots holding banks 0, 1 and 2, so `$0000`–`$BFFF` is one continuous image and a
+  program that never writes a bank register never notices. `SMS_FLAT_ROM_SIZES`
+  is the list; the build assembles the 32 KiB cartridge first and only
+  reassembles when the game does not fit, which is what keeps every existing
+  cartridge byte-identical. The catch is the header: sixteen bytes _inside_ the
+  image at `$7FF0`, so a 48 KiB build pads across the hole and the data section
+  starts at `$8000` — the gap below `$7FF0` is wasted, and a game whose code runs
+  past the header cannot be laid out this way at all and is told so by name. Doc
+  13 §Banked cartridges has the fix and why it comes before slot-2 paging.
 - **The mapper's registers are decoded out of the RAM mirror.** `$FFFC`–`$FFFF`
   is `$DFFC`–`$DFFF` in real RAM, so those four bytes read back as ordinary
   memory and page a ROM bank out from under the program when written. The heap
@@ -1454,6 +1465,12 @@ most of the value layer stops being a problem and three new ones appear.
   half-written state — the Master System's hazard, reached by different hardware.
   The full redraw runs with interrupts masked for exactly that reason; everything
   else runs a few instructions after the interrupt it waited for.
+- **A cartridge is the smallest board that holds the game.** `MD_ROM_SIZES` runs
+  512 KiB to 4 MiB and needs no mapper: the console maps the whole cartridge from
+  `$000000` and the header records where it ends, so growing one is a bigger array
+  and a different number at `$1A4`. Half a megabyte is the floor rather than the
+  only option, which is what keeps every cartridge built before this
+  byte-identical. Past 4 MiB it wants paging through `$A130F1`.
 - **There is no cartridge-budget story here, and that is the news.** 512 KiB
   against 32, and 64 KiB of work RAM against an NROM cartridge's 2. The scarce
   resources are the tile bank and the four sub-palettes, so the art path is where
