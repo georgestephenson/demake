@@ -3,12 +3,29 @@
  * Web bundle budget (doc 07 §Quality bar).
  *
  * Lighthouse covers the rendered-page metrics; this covers the one number a
- * pull request can regress silently — how much JavaScript the site is. It sums
- * *every* script in the built `dist/`, gzipped: the entry chunk, all five lazy
- * sections, and both engine workers. That is deliberately stricter than what any
- * one visitor downloads (the entry chunk plus the section they opened, which is
- * around 210 KB at its worst), because a sum cannot be satisfied by moving code
- * between chunks — only by there being less of it.
+ * pull request can regress silently — how much JavaScript a visitor downloads.
+ *
+ * **It used to be a per-site sum, and the paragraphs below are the history of
+ * that number running out.** A sum could not be satisfied by moving code between
+ * chunks, only by there being less of it, which is exactly the property you want
+ * right up until the site legitimately has to hold five consoles' emitters and
+ * five emulator cores. The standing instruction was that the next thing which
+ * did not fit should split `core.worker.ts` by family and let the budget become
+ * per-visitor. That has happened, so this is the per-visitor figure:
+ *
+ *     everything a visitor loads, plus the one console they play
+ *
+ * Every chunk counts once, except the per-console ones — a Demotic backend and
+ * its assembler in the worker, and an emulator core in the page — of which a
+ * visitor fetches exactly one family's. Those are grouped by the family in their
+ * chunk name and only the largest group is charged, because a visitor who plays
+ * a Mega Drive never asks for the Super Nintendo's.
+ *
+ * It is still not gameable by moving code around: shuffling a module between two
+ * always-loaded chunks changes nothing, and moving something *into* a per-family
+ * chunk only helps if it genuinely belongs to one family, which is the change
+ * that was wanted. A chunk whose name is not a family's counts as always-loaded,
+ * so a split that stops working fails loudly rather than quietly passing.
  *
  * Usage: node tools/ci/check-web-budget.mjs [dist-dir]
  */
@@ -113,20 +130,55 @@ if (scripts.length === 0) {
   process.exit(1);
 }
 
-let total = 0;
+/**
+ * The console families a visitor picks exactly one of.
+ *
+ * `demotic`'s `codegen/registry.ts` and the page's `players/index.ts` both name
+ * their modules after the family, so a chunk called `gb-<hash>.js` is the Game
+ * Boy's whichever of the two graphs it came out of — and both belong to the same
+ * visitor's choice, which is why one list covers them.
+ */
+const FAMILIES = ["gb", "nes", "sms", "snes", "md"];
+
+/** The family a chunk belongs to, or null when everyone loads it. */
+function familyOf(name) {
+  const base = name.slice(name.lastIndexOf("/") + 1).replace(/-[A-Za-z0-9_-]+\.js$/, "");
+  return FAMILIES.includes(base) ? base : null;
+}
+
+let always = 0;
+const perFamily = new Map(FAMILIES.map((f) => [f, 0]));
 const rows = [];
 for (const file of scripts) {
+  const name = file.slice(DIST.length + 1);
   const gz = gzipSync(readFileSync(file), { level: 9 }).length;
-  total += gz;
-  rows.push([file.slice(DIST.length + 1), gz]);
+  const family = familyOf(name);
+  if (family) perFamily.set(family, perFamily.get(family) + gz);
+  else always += gz;
+  rows.push([name, gz, family]);
 }
 
 rows.sort((a, b) => b[1] - a[1]);
-for (const [name, gz] of rows) {
-  console.log(`  ${(gz / 1024).toFixed(1).padStart(7)} KB gz  ${name}`);
+for (const [name, gz, family] of rows) {
+  console.log(
+    `  ${(gz / 1024).toFixed(1).padStart(7)} KB gz  ${name}${family ? `  (${family} only)` : ""}`,
+  );
 }
+
+const heaviest = [...perFamily.entries()].sort((a, b) => b[1] - a[1])[0] ?? ["none", 0];
+const total = always + heaviest[1];
 const totalKb = total / 1024;
-console.log(`  ${totalKb.toFixed(1).padStart(7)} KB gz  TOTAL (budget ${BUDGET_KB} KB)`);
+const siteKb = (always + [...perFamily.values()].reduce((a, b) => a + b, 0)) / 1024;
+
+console.log(`  ${(always / 1024).toFixed(1).padStart(7)} KB gz  every visitor`);
+for (const [family, gz] of [...perFamily.entries()].sort((a, b) => b[1] - a[1])) {
+  console.log(`  ${(gz / 1024).toFixed(1).padStart(7)} KB gz  + ${family}`);
+}
+console.log(
+  `  ${totalKb.toFixed(1).padStart(7)} KB gz  ONE VISITOR (worst family: ${heaviest[0]}) ` +
+    `(budget ${BUDGET_KB} KB)`,
+);
+console.log(`  ${siteKb.toFixed(1).padStart(7)} KB gz  whole site, for reference`);
 
 if (totalKb > BUDGET_KB) {
   console.error(

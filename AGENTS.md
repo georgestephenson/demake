@@ -472,6 +472,11 @@ packages/web/        the site (doc 07): one shell over five sections, all but th
                      instances of core.worker are the pool lanes, which is why
                      they cost nothing to download
   src/sections/      the lazy sections; art's panes live in src/components/
+  src/players/       one module per emulator core, reached through `bootPlayer`'s
+                     `import()`, so a visitor downloads the console they are
+                     playing rather than all five. player.ts is the part that is
+                     safe to import eagerly: an interface and each console's
+                     framebuffer size, pinned against the cores' own constants
   src/lib/           option records ⇄ engine options ⇄ equivalent command line,
                      the bundled demo library, and audio-player.ts (playback only)
 tools/eslint-rules/  custom ESLint rules: platform-purity + determinism
@@ -1964,20 +1969,23 @@ you are writing the wrong one of the two.
   which is why `packages/web/test/sw.test.ts` runs the worker in a fake global
   instead. Changing `CACHE`'s name is what rescues visitors holding a poisoned
   shell, and it costs them one further reload.
-- **The web JS budget is a per-_site_ sum, so the example library is in it.**
-  The page bundles every example's source and every fixture SVG twice — once as
-  raw text, because the ROM build has to rasterise it with `@demake/core` to get
-  the CLI's pixels, and once as a URL for the preview. Adding a game costs about
-  seven kilobytes gzipped for its art alone and fourteen with its sources and
-  levels, and `pnpm check:web-budget` currently reports 399.1 KB of 400. So the
-  next example added to `fixtures/games/` breaks the gate, and
-  `tools/ci/check-web-budget.mjs` says in its own header that the number is not
-  to move again — the way out it names is splitting `core.worker.ts` by console
-  family so the budget becomes per-visitor. De-duplicating the two copies of
-  every asset is the smaller one and is worth about a kilobyte, which is not
-  enough. Measure with a **clean** `dist`: the checker sums every `.js` it finds,
-  and comparing two runs without deleting it in between compares two different
-  builds' chunks added together.
+- **The web JS budget is what one visitor downloads, not what the site is.**
+  `pnpm check:web-budget` charges every chunk once _except_ the per-console ones,
+  of which it charges only the largest family — because a visitor plays one
+  console. The split that makes that true lives in two places and both have to
+  stay split: `demotic`'s `codegen/registry.ts` answers every question about a
+  family from a static description and `import()`s the emitter only when
+  something builds, and the page's `src/players/` does the same for the five
+  emulator cores. Chunks are matched to a family **by name**, so a module that
+  has to be per-family belongs in a file named after it; anything else counts as
+  always-loaded, which fails loud rather than passing quietly. Current figures:
+  335 KB for a visitor against a 400 KB budget, 424 KB for the whole site — and
+  a new example game costs about fourteen of those kilobytes, because the page
+  bundles every fixture SVG twice (raw text for the ROM build, a URL for the
+  preview). Measure with a **clean** `dist`: the checker reads every `.js` it
+  finds, so comparing two runs without deleting it in between compares two
+  builds' chunks added together, which is how a passing gate can look like a
+  failing one.
 - **A one-run Lighthouse audit is a coin toss on a shared runner.** The job asks
   for `numberOfRuns: 3` and asserts against the best of them, which is lhci's
   default `optimistic` aggregation for a `minScore`. Noise only ever makes a page

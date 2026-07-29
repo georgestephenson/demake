@@ -1,0 +1,39 @@
+/**
+ * The screen table is numbers, and this is what stops them drifting.
+ *
+ * `players/player.ts` carries each console's framebuffer size so the ROM pane
+ * can size its canvas before the core has finished loading — importing five
+ * modules to learn ten numbers is exactly what `players/` exists to avoid. That
+ * is only safe while the numbers are the cores' own, and nothing in the type
+ * system checks it. This test imports all five, which a test may and the page
+ * may not.
+ */
+
+import { describe, expect, it } from "vitest";
+
+import { SCREEN_HEIGHT as GB_H, SCREEN_WIDTH as GB_W } from "@demake/dmg";
+import { FRAME_HEIGHT as MD_H, FRAME_WIDTH as MD_W } from "@demake/md";
+import { SCREEN_HEIGHT as NES_H, SCREEN_WIDTH as NES_W } from "@demake/nes";
+import { FRAME_HEIGHT as SMS_H, FRAME_WIDTH as SMS_W, GG_HEIGHT, GG_WIDTH } from "@demake/sms";
+import { SCREEN_HEIGHT as SNES_H, SCREEN_WIDTH as SNES_W } from "@demake/snes";
+
+import { screenFor, SCREENS } from "../src/players/player.js";
+
+describe("the ROM pane's screen table", () => {
+  it("carries each core's own framebuffer size", () => {
+    expect(SCREENS["gb"]).toEqual({ width: GB_W, height: GB_H });
+    expect(SCREENS["nes"]).toEqual({ width: NES_W, height: NES_H });
+    expect(SCREENS["sms"]).toEqual({ width: SMS_W, height: SMS_H });
+    expect(SCREENS["gg"]).toEqual({ width: GG_WIDTH, height: GG_HEIGHT });
+    expect(SCREENS["snes"]).toEqual({ width: SNES_W, height: SNES_H });
+    expect(SCREENS["md"]).toEqual({ width: MD_W, height: MD_H });
+  });
+
+  // A Game Gear renders the frame a Master System does and shows the middle of
+  // it, so it is the one console whose id has to beat its family here.
+  it("prefers a console over its family where the two differ", () => {
+    expect(screenFor("sms", "gg")).toEqual({ width: GG_WIDTH, height: GG_HEIGHT });
+    expect(screenFor("sms", "sms")).toEqual({ width: SMS_W, height: SMS_H });
+    expect(screenFor("gb", "megaduck")).toEqual({ width: GB_W, height: GB_H });
+  });
+});
