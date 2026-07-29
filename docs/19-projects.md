@@ -41,7 +41,7 @@ never a prerequisite.
 
 **Empty folders are absent, not empty.** A game with no music has no `music/`.
 `demake init` creates only the folders a project has something to put in, and the
-site's rail lists only those — a tree of four empty directories is a tree that
+site's explorer lists only those — a tree of four empty directories is a tree that
 teaches nothing about the project.
 
 ## The rule that makes it work: a name's kind decides its folder
@@ -165,63 +165,109 @@ the nested form.
 defaults/<domain>  <  target  <  <domain> <name>  <  <domain> <name>/for <target>
 ```
 
-## The site becomes a project workspace
+## The shell: an explorer, and an editor per file type
 
-Today each section holds one artifact and offers a bundled demo to fill it. With
-a project open, the project *is* the demo, and a section shows the project's
-resources of its kind.
+The site stops being four tools you navigate between and becomes one workspace
+you open files in — the arrangement every code editor has settled on, for the
+reason every code editor settled on it: the project is the constant and the file
+you are looking at is the variable.
 
-**The rail.** A persistent list down the left: the project's name, and each
-non-empty folder with its files. Clicking a file selects it *in the section that
-edits its kind* and navigates there. So the rail is a router and a directory
-listing, and it is the only genuinely new piece of chrome — the sections
-themselves keep doing exactly what they do now, to one file at a time.
+**An explorer down the left**: the project's name, and each non-empty folder with
+its files. Clicking a file opens it. That is the whole of the navigation model,
+and it replaces `#section=` as the thing that decides what is on screen.
 
-| Folder | Section | What changes |
+**Opening a file opens the editor for its type**, and every editor is the same
+shape — *one file, two or three views of it*:
+
+| File | Editor | Views |
 |---|---|---|
-| `src/` | demotic game demaker | the example picker becomes the project's `.dmt` list |
-| `art/` | art demaker | the input pane becomes the project's art list; drop-to-add writes into `art/` |
-| `music/` | music demaker | the bundled-track picker becomes the project's `music/` |
-| `sound/` | sound demaker | the same, for `sound/` |
-| `levels/` | **level editor** (new, §below) | — |
-| `Demakefile` | build view (new) | the file, its resolved plan, and every artifact it produces |
+| `.dmt` | the game editor | **text**, **blocks** (§The block editor), **preview**, and the cartridge |
+| `.dmtl` | the level editor | **text**, **map**, or side by side |
+| `.svg` `.png` | the art demaker | source, options, result — as today |
+| `.mid` | the music demaker | source, options, arrangement, listen — as today |
+| `.wav` | the sound demaker | the same, for effects |
+| `Demakefile` | the build view | the file as text, its resolved plan, and every target |
 
-**Which file a section is showing goes in the hash**, beside what is already
-there: `#section=art&file=ball.svg`. It names a file *within whatever project is
-open* and carries no content, so a link shared with a stranger opens that file of
-the example project or nothing at all — which is the honest behaviour, since the
-alternative is a URL that pretends to carry a project it cannot.
+So the four demakers do not go away and do not change what they do; they become
+what opens when you click a file of the kind they demake. The `#section=` route
+becomes `#file=<path>`, and the section is derived from the extension — one less
+thing that can disagree with itself. The art demaker's option permalink is
+unaffected: it still carries only options (doc 07 §UX), now beside a `file` key.
 
-The art demaker's option permalink is unaffected: it is still the unmarked
-default and still carries only options (doc 07 §UX). A `file=` key is additive.
+**Tabs, and the project is the dirty unit.** Several files open at once, one
+active. Editing any of them marks *the project* dirty — one Save, one export —
+because a project half-written to disk is worse than either state.
 
-**The console picker becomes the project's targets.** The game section currently
-picks any console with a backend; with a Demakefile it picks among the targets
-the project declares, and the build view builds all of them. With no Demakefile
-it is what it is today, because that is what the zero-config path means.
+**The console picker is the project's targets.** The game editor currently offers
+any console with a backend; with a Demakefile it offers the targets the project
+declares, and the build view builds all of them. With no Demakefile it is what it
+is today, which is what the zero-config path means.
 
-**And the equivalent command line becomes an equivalent Demakefile.** Doc 15
-§The equivalence contract already asks for this and gives the three round-trip
-properties that make it true rather than aspirational; the project view is where
-it finally has a place to live. A section still shows its own single-artifact
-command line, because `demake prep ball.svg -c gbc …` is what you would actually
-run to reproduce what that pane is showing.
+## Options edit the Demakefile
 
-**Editing a file marks the project dirty, not the section.** One dirty flag, one
-Save, one export — a project half-written to disk is worse than either state.
+An asset editor's controls are the Demakefile's contents, so changing one writes
+the file. This is doc 15 §The equivalence contract stopping being a promise: the
+preview's settings are *a view of a Demakefile*, and the way to make that true
+rather than aspirational is for there to be no second place the settings live.
+
+**The block you write into is the file you have open.** Changing `dither` while
+looking at `ball.svg` writes an `art ball.svg` block. Never `defaults`, because a
+change made while looking at one asset must not silently retune every other one —
+that is the same refusal the language makes about ambiguous readings, one layer
+up. Applying something to everything is a separate, explicit control, and it
+writes `defaults/art`. With a target selected, a modifier writes `for <target>`.
+
+**An option set back to what it inherits deletes its line.** Otherwise the file
+fills with directives that change nothing, and doc 15's third property —
+`emit(settings(parse(x))) == fmt(x)` — is false the first time anyone nudges a
+slider and nudges it back.
+
+**A project with no Demakefile gets one on the first changed option**, and it is
+byte-identical to what `demake init` writes, plus the block just edited. So the
+file appearing is never a surprise: it is the file the CLI would have written
+anyway, and deleting it restores the defaults it was an escape from.
+
+**Every control shows its resolved value and where the value came from** —
+`dither bayer4 · from defaults/art` — because a four-level cascade you cannot see
+is a cascade you debug by guessing. It is the same data doc 15 promises from
+`demake build --dry-run --json`, which is the point: one resolver, two surfaces.
+
+**The Demakefile is also just a file in the explorer.** Open it as text, edit it,
+and the panes follow; edit a pane and the text follows. Two views of one file,
+the same rule the level editor and the block editor run under — and the reason
+none of the three can become a second configuration model.
+
+## `build/` is the CLI's; the page builds in the tab
+
+`demake build` writes `build/`. The page never does.
+
+The previewer compiles the cartridge in its worker and holds it in memory, which
+is what it already does today and what the parity contract already covers: those
+bytes are pinned byte-identical to `demake build`'s. Writing them into the project
+would therefore add no capability at all — only a directory that can be stale, and
+a second answer to "what is this project's cartridge?"
+
+So `build/` is skipped when a project is opened, excluded from the zip, and absent
+from the explorer. It is generated, and a tree that shows generated output invites
+someone to edit it. Getting an artifact out of the page is what the Download
+buttons in each pane are for; getting a `build/` tree is what the CLI is for, and
+a project saved from the page builds one the moment you run it.
+
+`demake init` writes a `.gitignore` naming `build/` for the same reason.
 
 ## The level editor
 
 `.dmtl` is a text format an LLM can edit, and that was the point (doc 14
-§Levels) — but a person drawing a room wants to draw it. A sixth section, code-split
-like the others.
+§Levels) — but a person drawing a room wants to draw it. Opening a `.dmtl` gives
+you **text, map, or the two side by side**, and neither view is the authoritative
+one: the file is.
 
 **It is a view over the format, never a second one.** The same rule the syntax
 highlighter runs under (doc 07 §The Demotic section): the file the editor writes
 is the file the compiler reads, and a level stays hand-editable whether or not
 the editor ever touched it.
 
-Two panes.
+The map view is two panes.
 
 **Legend** — one row per tile: the character, the name, whether it is `solid`,
 and its art. Art is picked from the project's `art/` folder, which is the first
@@ -274,6 +320,123 @@ build time from the program's seed (doc 14 §Composed levels); the editor edits 
 chunks, which are ordinary `.dmtl` files, and shows the composition read-only with
 the seed the `.dmt` states. An editor that let you paint a composed course would
 be painting something no build will produce.
+
+## The block editor
+
+The third view on a `.dmt`: the program as a list of blocks you drag, drop and
+fill in, instead of lines you type. Optional, and never the only way — the text
+view is right there, and a game stays hand-written whether or not anyone used
+this.
+
+**The language is already the right shape for it, and not by accident.** Demotic
+is one statement per line, never nested, with total per-line error recovery, and
+its entire surface — statements, properties, triggers, units, functions,
+constants, buttons, directions — is a registry in `lang/spec.ts`. Those
+properties were chosen so a model could write the language (doc 13
+§Agent-driven demaking). They are the same properties a block editor needs: a
+flat language needs a *list*, where a nested one would need a tree, a layout and
+a set of decisions about what may contain what.
+
+**It is not a visual programming language.** One block is one line of Demotic,
+and the file is the model. There are no wires, no nesting and no canvas. The
+moment a block can express something no line can, the file has stopped being the
+model and the editor has become a second definition of the language — which is
+the failure doc 07 already forbids for conversion logic and doc 14 for art.
+
+### The model is the file, line by line
+
+Every source line is a row, and there are four kinds:
+
+- **A statement the editor models** — a block, with a field per slot.
+- **A comment line** — kept as its own row and editable as text. `lex()` already
+  records comments as source ranges tagged with their line, so reattaching them
+  costs nothing and needs no second scanner.
+- **A blank line** — kept. Blank lines and `-- title ----` rules are how every
+  game in the example library is sectioned, and an editor that dropped them would
+  hand back a file nobody recognises.
+- **A line that does not parse** — shown as raw text with its diagnostic beside
+  it, and never rewritten. The parser already recovers per line, so a broken line
+  is one broken row rather than a document the editor refuses to open.
+
+**A row nobody touched is emitted byte-identical.** Only edited rows are
+re-rendered from the model. That is stronger than a round-trip property and it is
+what makes the editor safe to open a hand-written file with: it cannot reformat,
+requote, reorder or re-space anything you did not ask it to.
+
+### The palette is generated, and so are the choices
+
+**Every block the palette offers comes from `STATEMENTS`.** The registry already
+carries a `keyword`, a `syntax`, a `summary` and an `example` for each, so the
+palette entry, its tooltip and its inline help are all there — a statement added
+to the registry appears in the palette the day it lands, exactly as a keyword
+added to `KEYWORDS` is coloured the day it lands. **The page keeps no list of
+statements**, which is the same iron rule the highlighter is held to.
+
+**The symbols are the page's.** Grammar in the engine, theme in the stylesheet
+(doc 07): the engine names no colour and it names no icon either. The page keys a
+symbol off each registry keyword, and a `spec.test.ts`-shaped check fails when a
+statement has none — so the registry can grow without the palette going quietly
+blank, and the engine still knows nothing about how it is drawn.
+
+**And every field offers only what exists**, which is what the project model
+unlocks and the reason this editor belongs in this document rather than doc 07:
+
+| Field | Offered from | Shown as |
+|---|---|---|
+| `sprite`, `backdrop` | the project's `art/` | the pictures themselves, rendered |
+| `music` | the project's `music/` | a list you can play |
+| `sound` | the project's `sound/` | a list you can play |
+| `level … from` | the project's `levels/` | the map, drawn |
+| object and scene names | the program's own `create` and `scene` lines | a list |
+| buttons, directions, functions, constants, units | `BUTTONS`, `DIRECTIONS`, `FUNCTIONS`, `CONSTANTS`, `UNITS` | a list, with the registry's summary |
+| properties | `PROPERTIES`, filtered by context | a list |
+
+That last row is where the registry earns its keep twice over: a property already
+declares whether it is `derived` (readable, never assignable) and whether it is
+`createOnly` (settable at creation, not in a rule), so the editor offers exactly
+the right set in each place without knowing a thing about what any of them mean.
+`kind` — `number`, `asset` or `text` — decides which control a field gets.
+
+**It offers; it does not validate.** Diagnostics come from `check()`, the same
+call the text view makes, shown against the same rows. An editor that decided for
+itself what was legal would be a second front end, and it would be wrong the first
+time the language changed.
+
+### The one place it stops: expressions
+
+`when always in play then player.ydirection as min(player.ydirection + 0.04, 0.9)`
+is a nested expression inside a flat line, and it is the only part of Demotic that
+*is* nested. So it is the one part a list of blocks cannot mirror.
+
+The block carries the statement's skeleton — trigger, subject, target property —
+and the expression is a **text field with completion** drawn from the same
+registry, staying one line. Nesting expression blocks inside statement blocks is
+the obvious alternative and it is the thing that turns this into a visual
+programming language: two layout models, two editing gestures, and a canvas. The
+honest boundary is better than the slippery one, and the text view is always
+there for the expression somebody would rather type.
+
+### Dragging is an edit, not a rearrangement
+
+**Reordering `create` statements changes the program.** Entities live in
+declaration order (`sim.entities()`), so that order decides what is drawn over
+what, which sprite the hardware drops first past the per-scanline budget, and the
+order entities appear in a trace — which makes it an output-byte change under the
+doc-09 stability rule, not a tidy-up. Rules are the same: order within a tick
+phase is declaration order.
+
+So the editor treats a drag as an edit like any other, and it **never sorts,
+groups or tidies a file on its own**. Grouping by scene is a *view* filter that
+changes no line. A palette drop inserts at the drop point, which is the main
+gesture the whole thing exists for.
+
+### What it must never carry
+
+**No hardware option ever appears in a block**, because none can appear in a
+`.dmt`. Which console, which dither, which arranger strategy — those are the
+Demakefile's, they are edited by the asset editors (§Options edit the
+Demakefile), and the fact that the two editors cannot reach each other's files is
+doc 14's central split showing up as two panes instead of a paragraph.
 
 ## Opening, saving, and the parity claim
 
@@ -421,17 +584,24 @@ Stated because a change this wide is exactly where invariants get lost:
 ## The JS budget
 
 Doc 07's budget is a sum over the whole site and it is close — the last console
-cost 4.6 KB of it. This document adds a rail, a project resolver, a zip codec and
-a level editor, and the plan for each is stated rather than assumed:
+cost 4.6 KB of it. This document adds an explorer, a project resolver, a zip
+codec, a level editor and a block editor, and the plan for each is stated rather
+than assumed:
 
-- **The level editor is code-split**, like every section but the art demaker.
+- **The level editor and the block editor are code-split**, each behind the file
+  type that opens it. Someone who came to convert an image downloads neither.
 - **The zip codec reuses `@demake/core`'s deflate and inflate**, so its own cost
   is the archive headers.
 - **The project resolver runs in the worker**, where `@demake/demotic` already
   is. A resolver imported by a component is a second copy of the language in the
   bundle, which is the mistake the game section already made once (doc 07
   §Quality bar).
-- **The rail is markup**, and the sections it routes to are the ones that exist.
+- **The explorer is markup**, and the editors it opens are the ones that exist.
+- **The block editor's palette is data the engine already ships.** It reads
+  `lang/spec.ts`, which the game editor has loaded anyway; its own weight is the
+  drag interaction and the symbols. Generating a palette is cheaper than
+  hand-writing one *and* smaller, which is the rare case where the rule that keeps
+  it correct is also the one that keeps it light.
 
 It must be measured with `pnpm check:web-budget` rather than argued about, and if
 it does not fit, doc 07's rule applies unchanged: the next thing that does not fit
@@ -450,11 +620,18 @@ Each step is useful on its own and none of them breaks the one before.
    is what makes step 2 provably right.
 4. **The Demakefile's new surface**: `targets`, the per-domain `defaults`, the
    `music`/`sound` blocks — with doc 15 absorbing them.
-5. **The rail and the sections**: the project opens, each section lists its kind.
+5. **The shell**: the explorer, tabs, and an editor bound to each file type. The
+   four demakers become what opens for their kind and are otherwise untouched.
    Bundled example projects only; no file I/O yet.
-6. **Open and save**: File System Access, the zip, and the determinism property.
-7. **The level editor**: the largest single piece, and the one that most needs
-   the resolver under it, since its legend picks art from the project.
+6. **Options edit the Demakefile**: the write-back, the provenance display, and
+   doc 15's three round-trip properties as tests. This is what makes step 4 a
+   feature rather than a file format.
+7. **Open and save**: File System Access, the zip, and the determinism property.
+8. **The level editor**: wants the resolver under it, since its legend picks art
+   from the project.
+9. **The block editor**: last, because it wants everything above it — the
+   registry-generated palette is free, but a field that offers you the project's
+   sprites as pictures needs the project.
 
 ## Not in v1
 
@@ -463,8 +640,13 @@ Named so the shape stays honest.
 - **Multiple projects open at once.** One project, one tab. Two would need a
   workspace concept above the folder, and nothing yet asks for one.
 - **A file manager.** Rename, move and delete are the filesystem's job, or the
-  zip's. The page adds files (drop one into a section) and edits them; it does not
-  reorganise a folder.
+  zip's. The page adds files (drop one into the explorer or an editor) and edits
+  them; it does not reorganise a folder.
+- **A split editor, or two files side by side.** The side-by-side inside an
+  editor is between two *views of one file*, which is a different thing and the
+  only one this document argues for.
+- **Expression blocks.** §The one place it stops: the nested part of the language
+  stays a text field with completion.
 - **Git, history or undo across files.** Per-editor undo, and nothing above it.
 - **Project templates beyond `demake init`.** "New project from Pong" is copying a
   folder, which is a thing the operating system does well.

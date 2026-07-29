@@ -242,6 +242,16 @@ failing. **One statement per line, no nesting.** Declaration order is irrelevant
 `loop play` may precede `scene play`, and an instance may name a class declared
 later.
 
+**Order-free is about resolution, not about sequence**, and the distinction is
+worth stating because a tool that reordered lines would get it wrong. Nothing has
+to be declared before it is named — but the order `create` statements appear in
+*is* the order entities exist in: an instance's id is its position
+(`compile.ts`), which decides what is drawn over what, which sprite the hardware
+drops first past its per-scanline budget, and the order entities appear in a
+trace. Effects are indexed in first-mention order for the same reason. So moving
+a `create` line is an edit under doc 09's stability rule, not a tidy-up, and
+[doc 19](19-projects.md) §Dragging is an edit is where that lands on a UI.
+
 Flatness is not stylistic. It buys total error recovery: a malformed statement
 fails on its own line and every other statement still parses, so one pass reports
 *every* problem in the file. That is the property that makes the language pleasant

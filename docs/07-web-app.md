@@ -39,19 +39,32 @@ images are only one kind (doc 01 §Scope):
 | **music demaker** | tracks → chip music (docs 16, 17) | live |
 | **sound demaker** | effects → chip sound (docs 16, 18) | live |
 | **level editor** | draw a `.dmtl` room, see it at every console's viewport | planned (doc 19) |
+| **block editor** | a `.dmt` as draggable blocks instead of typed lines | planned (doc 19) |
 
 The route lives in the hash as `#section=<id>`, and the **art demaker is the
 unmarked default** — so every option permalink shared before the site grew
 sections still opens exactly what it used to.
 
-**The sections are becoming views on one project** ([doc 19](19-projects.md)).
-Today each holds a single artifact and offers a bundled demo to fill it; the unit
-the site should operate on is a *folder* — a `.dmt` and its test suite, its art,
-its music, its effects, its levels and a Demakefile — because that is the object
-the CLI already builds. Doc 19 is the design: a rail listing the open project, a
-section per resource kind showing that project's files, opening and saving a real
-directory, and the parity claim restated at the level of a folder. Nothing about
-what a section *does* changes; what changes is where its input comes from.
+**The sections are becoming editors in a project workspace**
+([doc 19](19-projects.md)). Today each holds a single artifact and offers a
+bundled demo to fill it; the unit the site should operate on is a *folder* — a
+`.dmt` and its test suite, its art, its music, its effects, its levels and a
+Demakefile — because that is the object the CLI already builds. Doc 19 is the
+design, and it is the shape a code editor has: **an explorer down the left, and
+opening a file opens the editor for its type.** `#section=` becomes `#file=`,
+because the section is derivable from the extension and one of the two can then
+never disagree with the other.
+
+Three things follow that this document did not previously have room for. **A
+demaker's controls become the Demakefile** — doc 15 §The equivalence contract
+stops being a promise, because there is no second place the settings live.
+**`build/` stays the CLI's**: the previewer compiles in the tab, as it already
+does, and writing those bytes to a directory would add nothing but a way for two
+copies to disagree about which is stale. And a `.dmt` gains a third view beside
+its text and its preview — a **block editor**, generated from the language
+registry, offering the open project's own sprites and tracks as pictures and
+sounds rather than as filenames. Nothing about what a demaker *does* changes; what
+changes is what opens it, and where its options are written down.
 
 ### The Demotic section
 

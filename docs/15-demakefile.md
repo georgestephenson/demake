@@ -335,6 +335,13 @@ settings, the way the image app shows the equivalent CLI command (doc 07). A gam
 build writes many artifacts, so a file is the honest representation; a single
 command line is not.
 
+**And in a project workspace it stops being a display and becomes the storage**
+([doc 19](19-projects.md) §Options edit the Demakefile): changing a demaker's
+option writes the block for the file you have open, setting one back to its
+inherited value deletes the line again, and a project with no Demakefile gets the
+one `demake init` would have written. Property 3 above is what makes that safe,
+and it is why an option that changes nothing must never leave a directive behind.
+
 ## Diagnostics
 
 Same shape as Demotic and the CLI (doc 05 §Agent-friendliness): a stable code, a

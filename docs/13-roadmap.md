@@ -660,11 +660,27 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   operate on: open one, edit any file in it, build every target. It is the same
   object the CLI already builds, so the work is the browser's file handling (File
   System Access API where available, an in-memory tree elsewhere) plus
-  import/export as a zip, not a second configuration model. Doc 19 §Order of work
-  has the seven steps; the first is a pure resolver in `@demake/demotic` that
-  both edges share, and the one open question it leaves is whether a game may be
-  split across several `.dmt` files (§Splitting a game — a language change, and
-  therefore the maintainer's).
+  import/export as a zip, not a second configuration model. The shell is a code
+  editor's: an explorer down the left, and opening a file opens the editor for its
+  type — so the four demakers become what a `.svg`, a `.mid` and a `.wav` open in,
+  and their options are written into the Demakefile rather than held beside it.
+  Doc 19 §Order of work has the nine steps; the first is a pure resolver in
+  `@demake/demotic` that both edges share, and the one open question it leaves is
+  whether a game may be split across several `.dmt` files (§Splitting a game — a
+  language change, and therefore the maintainer's).
+
+- **A block editor for `.dmt`** — **designed, in [doc 19](19-projects.md) §The
+  block editor**: a third view on a game, beside its text and its preview, where a
+  program is a list of blocks you drag rather than lines you type. The palette is
+  generated from `lang/spec.ts` — the same registry the parser, the reference and
+  the highlighter come from — and every field offers what the open project
+  actually has: sprites as pictures, tracks you can play, the program's own object
+  and scene names. It is tractable only because the language is flat, line-oriented
+  and registry-defined, which were choices made so a *model* could write it; the
+  same properties turn out to be what a block editor needs. Two boundaries keep it
+  from becoming a visual programming language: one block is one line, and
+  expressions — the only nested part of the language — stay a text field with
+  completion.
 
 - **Agent-driven demaking**: the workflow doc 01 §Why exists for, closed. Attach
   an agent, describe a game in one prompt, and get back a `.dmt`, its art assets,
