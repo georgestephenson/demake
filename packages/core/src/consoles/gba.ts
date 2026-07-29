@@ -23,6 +23,34 @@ export const gba = {
     tileBudget: 1024,
     flip: true,
   },
+  modes: [
+    /**
+     * The 256-colour tiled mode, which is what a *game* built for this console
+     * uses.
+     *
+     * Not the primary layout, and the difference is worth stating. `prep` fits a
+     * still picture, and for that the 4bpp sixteen-palette layout above is what the
+     * display-ROM harness and the pixel-perfect E2E were built against. A game is
+     * fitted by `demake build`, which asks for this instead — one palette of 256
+     * with no per-cell restriction at all, which is a strictly larger space than
+     * sixteen palettes of sixteen because *any* cell may use *any* colour.
+     *
+     * The cost is the tile budget: a 256-colour tile is 64 bytes rather than 32, so
+     * the same video RAM holds half as many. On a console with 64 KiB of background
+     * character memory that is still 896 tiles against a 600-cell screen, which is
+     * why the trade is not close.
+     */
+    {
+      kind: "tiles",
+      tileW: 8,
+      tileH: 8,
+      bpp: 8,
+      subPalettes: { count: 1, size: 256, sharedIndex0: "transparent" },
+      attribute: { w: 8, h: 8 },
+      tileBudget: 896,
+      flip: true,
+    },
+  ],
   codegen: { family: "gba", formats: ["bin", "asm", "c", "rom"] },
   docs: {
     sources: [
