@@ -67,8 +67,6 @@ function byBasename(found: Record<string, string>): Record<string, string> {
 export interface Example {
   id: string;
   name: string;
-  /** What this one exercises that the others do not. */
-  covers: string;
   source: string;
   tests: string;
 }
@@ -77,49 +75,42 @@ export const EXAMPLES: readonly Example[] = [
   {
     id: "pong",
     name: "Pong",
-    covers: "two movers, a bounce angle, and proportional opponent steering",
     source: pongSource,
     tests: pongTests,
   },
   {
     id: "breakout",
     name: "Breakout",
-    covers: "a grid of objects, removal, and real sprite-budget pressure",
     source: breakoutSource,
     tests: breakoutTests,
   },
   {
     id: "platformer",
     name: "Platformer",
-    covers: "gravity, an impulse jump, and resting contact",
     source: platformerSource,
     tests: platformerTests,
   },
   {
     id: "dodger",
     name: "Dodger",
-    covers: "many objects at staggered speeds, recycled rather than destroyed",
     source: dodgerSource,
     tests: dodgerTests,
   },
   {
     id: "shooter",
     name: "Shooter",
-    covers: "the per-scanline sprite limit's worst case, and a fast projectile",
     source: shooterSource,
     tests: shooterTests,
   },
   {
     id: "caves",
     name: "Caves",
-    covers: "a hand-drawn level bigger than the screen, tiles, and a scrolling camera",
     source: cavesSource,
     tests: cavesTests,
   },
   {
     id: "runner",
     name: "Runner",
-    covers: "a course composed from chunks at build time, and the seeded generator",
     source: runnerSource,
     tests: runnerTests,
   },

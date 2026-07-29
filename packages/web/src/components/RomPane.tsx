@@ -86,19 +86,6 @@ const MACHINE: Readonly<Record<string, string>> = {
 };
 
 /**
- * The CPU the frames-per-tick figure is measured on, per family.
- *
- * Named rather than elided because the number means nothing without it: three
- * frames a tick is a different verdict on a 4 MHz SM83 than on a 1.8 MHz 6502.
- */
-const CPU: Readonly<Record<string, string>> = {
-  gb: "an SM83",
-  nes: "a 6502",
-  sms: "a Z80",
-  snes: "a 65816",
-};
-
-/**
  * A booted cartridge, whichever console it is for.
  *
  * The pane needs five things of a machine and no more, so this is those five —
@@ -551,15 +538,6 @@ export function RomPane({
             : ` · ${cost} frame${cost === 1 ? "" : "s"} per tick (${Math.round(FRAME_RATE / cost)} Hz)`}
         </span>
       </div>
-      <p class="hint">
-        A real cartridge, compiled in the page and byte-identical to <code>demake build</code>
-        &rsquo;s. Your game is machine code here, not a table an interpreter walks: it runs at
-        hardware speed, and the frames-per-tick figure is the measured cost on{" "}
-        {CPU[family] ?? "this console’s CPU"}.
-        {sound
-          ? " The sound is the cartridge's own chip, rendered by the same model the CLI writes WAVs with — the page synthesizes nothing."
-          : ""}
-      </p>
       {sound && !playing ? (
         <p class="hint" data-testid="rom-sound-blocked">
           Your browser has not started audio yet. Click the screen, or check that this tab is
