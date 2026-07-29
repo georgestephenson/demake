@@ -145,7 +145,15 @@ function boot(rom: Uint8Array, family: string, consoleId: string): Player {
         },
       ],
       setButtons: (down) => machine.setButtons(down as readonly MdButton[]),
-      runFrame: () => void machine.runFrame(),
+      // This VDP draws when it is *asked* to, not as the beam passes: `view()`
+      // renders the whole picture out of video RAM and into the buffer handed
+      // over above. So a frame has to end with one, exactly as the Game Gear's
+      // crop does — without it the canvas keeps showing the blank frame boot
+      // rendered, which is a console that plays perfectly and displays nothing.
+      runFrame: () => {
+        machine.runFrame();
+        machine.vdp.view();
+      },
       readMemory: (address, length) => machine.readMemory(address, length),
     };
   }
