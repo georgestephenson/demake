@@ -105,6 +105,15 @@ export {
   type StreamResult,
 } from "./level/stream.js";
 export {
+  extensionOf,
+  extensionsFor,
+  KINDS,
+  kindOf,
+  stemOf,
+  type AssetKind,
+} from "./project/kinds.js";
+export { resolveReference, shortestName, type Resolution } from "./project/resolve.js";
+export {
   boundsOf,
   follow,
   tilesUnder,
