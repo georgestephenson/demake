@@ -23,8 +23,6 @@
  *     backdrop, and the test is that a caption is not the colour it is written on.
  */
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -43,17 +41,14 @@ import { packCells, SYSTEM_PALETTE } from "../src/codegen/nes/emit.js";
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
 import { BUILTIN_TILES, TILE_BYTES, type SelectedBank } from "../src/rom/graphics.js";
+import { gameSource, projectBytes, projectText } from "./_projects.js";
 
-const fixtures = join(import.meta.dirname, "..", "fixtures");
-const read = (name: string) => readFileSync(join(fixtures, name), "utf8");
-const asset = (name: string) => new Uint8Array(readFileSync(join(fixtures, name)));
-
-function build(file: string, levels?: Record<string, string>) {
-  return compile(read(file), { profile: getProfile("nes"), levels });
+function build(project: string, levels?: Record<string, string>) {
+  return compile(gameSource(project), { profile: getProfile("nes"), levels });
 }
 
 describe("the NES cartridge", async () => {
-  const built = await buildNesRom(build("pong.dmt"));
+  const built = await buildNesRom(build("pong"));
 
   it("is an iNES file describing NROM with vertical mirroring", () => {
     expect([...built.bytes.subarray(0, 4)]).toEqual([0x4e, 0x45, 0x53, 0x1a]);
@@ -76,7 +71,7 @@ describe("the NES cartridge", async () => {
   });
 
   it("puts the built-in patterns in both tables, because the bank is fixed anyway", async () => {
-    const bank = (await bindNesArt(build("pong.dmt"), new Map())).options.bank as SelectedBank;
+    const bank = (await bindNesArt(build("pong"), new Map())).options.bank as SelectedBank;
     const background = built.bytes.subarray(NES_CHR_OFFSET, NES_CHR_OFFSET + bank.chr.length);
     const objects = built.bytes.subarray(
       NES_CHR_OFFSET + 0x1000,
@@ -91,7 +86,7 @@ describe("the NES cartridge", async () => {
     // The whole font is 59 glyphs and pong writes about a dozen. On a Game Boy
     // that costs nothing — 384 tiles is more than these games fill — and here it
     // comes out of the 256 a *picture* is fitted into.
-    const bank = (await bindNesArt(build("pong.dmt"), new Map())).options.bank as SelectedBank;
+    const bank = (await bindNesArt(build("pong"), new Map())).options.bank as SelectedBank;
     expect(bank.count).toBeLessThan(BUILTIN_TILES);
     // The blank stays at zero whatever else is in the bank: it is what an empty
     // cell draws, and the runtime writes that number rather than looking it up.
@@ -99,7 +94,7 @@ describe("the NES cartridge", async () => {
     expect(bank.glyph("?")).toBe(0); // not drawn by this game, so it is the blank
     // And what the game does draw is in it, at distinct indices — every character
     // of every caption it writes, taken from the program rather than guessed at.
-    const program = build("pong.dmt");
+    const program = build("pong");
     const captions = program.instances
       .filter((instance) => instance.className === "text")
       .flatMap((instance) => [...(instance.strings["text"] ?? "")])
@@ -125,17 +120,17 @@ const ART_TIMEOUT = 120_000;
 describe("the NES art budget", { timeout: ART_TIMEOUT }, async () => {
   const pongAssets = () =>
     new Map([
-      ["pong.title.svg", asset("pong.title.svg")],
-      ["pong.play.svg", asset("pong.play.svg")],
-      ["ball.svg", asset("ball.svg")],
-      ["paddle.svg", asset("paddle.svg")],
+      ["pong.title.svg", projectBytes("pong", "art/pong.title.svg")],
+      ["pong.play.svg", projectBytes("pong", "art/pong.play.svg")],
+      ["ball.svg", projectBytes("pong", "art/ball.svg")],
+      ["paddle.svg", projectBytes("pong", "art/paddle.svg")],
     ]);
 
   it("gives each picture a pattern table of its own", async () => {
     // The console has two, and `PPUCTRL` bit 4 chooses which one the background
     // reads — so two pictures do not have to share one. Sharing halved what each
     // got, and the fitter spent the difference merging cells.
-    const bound = await bindNesArt(build("pong.dmt"), pongAssets());
+    const bound = await bindNesArt(build("pong"), pongAssets());
     const fits = [...bound.backdropFits.values()];
     expect(fits.length).toBe(2);
     expect(new Set(fits.map((fit) => fit.table)).size).toBe(2);
@@ -143,7 +138,7 @@ describe("the NES art budget", { timeout: ART_TIMEOUT }, async () => {
   });
 
   it("still fits both, with the built-in bank in each table", async () => {
-    const built = await buildNesRom(build("pong.dmt"), { assets: pongAssets() });
+    const built = await buildNesRom(build("pong"), { assets: pongAssets() });
     expect(built.stats.missingArt).toEqual([]);
     expect(built.stats.artTiles).toBeGreaterThan(0);
     expect(built.bytes.length).toBe(16 + 0x8000 + 0x2000);
@@ -176,7 +171,7 @@ describe("the NES art budget", { timeout: ART_TIMEOUT }, async () => {
    * moved.
    */
   it("unpacks a backdrop into exactly the cells the build produced", async () => {
-    const program = build("pong.dmt");
+    const program = build("pong");
     const assets = pongAssets();
     const built = await buildNesRom(program, { assets });
     const bound = await bindNesArt(program, assets);
@@ -206,7 +201,7 @@ describe("the NES art budget", { timeout: ART_TIMEOUT }, async () => {
   });
 
   it("draws exactly what `demake prep -c nes` would, at the budget it was given", async () => {
-    const program = build("pong.dmt");
+    const program = build("pong");
     const bound = await bindNesArt(program, pongAssets());
     const spec = getConsole("nes");
     const backend = backendFor("nes");
@@ -221,7 +216,7 @@ describe("the NES art budget", { timeout: ART_TIMEOUT }, async () => {
       expect(drawn, scene.name).toBeDefined();
 
       const image = (
-        await prep(asset(file), {
+        await prep(projectBytes("pong", `art/${file}`), {
           console: "nes",
           // The game's screen, which is the overscan-safe twenty-eight rows and
           // not the raster's thirty — the picture's edges have to be the ones the
@@ -346,8 +341,8 @@ describe("what the NES actually draws", async () => {
   }
 
   it("paints a level that fits the nametable pair once, and scrolls it with registers", async () => {
-    const program = build(join("games", "caves.dmt"), {
-      "cavern.dmtl": read(join("games", "cavern.dmtl")),
+    const program = build("caves", {
+      "cavern.dmtl": projectText("caves", "levels/cavern.dmtl"),
     });
     const built = await buildNesRom(program);
     const machine = new Nes(built.bytes);
@@ -443,13 +438,14 @@ describe("what the NES actually draws", async () => {
   });
 
   it("writes a caption in an ink the backdrop it sits on is not", async () => {
-    const program = build(join("games", "caves.dmt"), {
-      "cavern.dmtl": read(join("games", "cavern.dmtl")),
+    const program = build("caves", {
+      "cavern.dmtl": projectText("caves", "levels/cavern.dmtl"),
     });
     const assets = new Map(
-      ["hero", "coin", "rock", "rockwall", "spikes", "exit", "ledge", "stone", "air"].map(
-        (name) => [`${name}.svg`, asset(join("games", `${name}.svg`))],
-      ),
+      ["hero", "coin", "rockwall", "spikes", "exit", "stone", "air"].map((name) => [
+        `${name}.svg`,
+        projectBytes("caves", `art/${name}.svg`),
+      ]),
     );
     const built = await buildNesRom(program, { assets });
     const machine = new Nes(built.bytes);

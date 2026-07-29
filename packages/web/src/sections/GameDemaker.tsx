@@ -17,13 +17,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 
 import { RomPane } from "../components/RomPane.js";
 import { SourceEditor } from "../components/SourceEditor.js";
+import { fileHash } from "../lib/route.js";
 import {
-  DEFAULT_EXAMPLE,
-  DEMO_ASSETS,
-  DEMO_LEVELS,
-  EXAMPLES,
-  type Example,
-} from "../lib/demo-game.js";
+  assetBytes,
+  fileUrl,
+  gameFiles,
+  levelSources,
+  projectFiles,
+  readText,
+} from "../lib/project.js";
+import type { EditorProps } from "../site.js";
+import type { Project } from "../lib/project.js";
 import {
   check,
   formatResults,
@@ -92,16 +96,20 @@ const VIEWS: readonly { id: View; label: string }[] = [
   { id: "both", label: "Side by side" },
 ];
 
-export function GameDemaker() {
-  const [example, setExample] = useState<Example>(DEFAULT_EXAMPLE);
+export function GameDemaker({ project, path, onEdit }: EditorProps) {
+  // Which `.dmt` is open. The explorer decides; with nothing named, the project's
+  // own first source, because a game section with no game in it has nothing to
+  // say (doc 19 §The shell).
+  const openPath = path ?? gameFiles(project)[0] ?? "";
+  const initial = readText(project, openPath);
   // Two copies of the text, and the distinction is the whole of the section's
   // responsiveness. `draft` is what the editor shows and changes on every
   // keystroke; `source` is what the *engine* has been given, and only catches up
   // once typing pauses. Everything downstream — the compile, the diagnostics,
   // the interpreter and the cartridge — hangs off `source`, so a keystroke costs
   // a lex for the colours and nothing else.
-  const [draft, setDraft] = useState(DEFAULT_EXAMPLE.source);
-  const [source, setSource] = useState(DEFAULT_EXAMPLE.source);
+  const [draft, setDraft] = useState(initial);
+  const [source, setSource] = useState(initial);
   const typing = draft !== source;
   const [consoleId, setConsoleId] = useState("gb");
   const [constrain, setConstrain] = useState(false);
@@ -144,7 +152,11 @@ export function GameDemaker() {
   // caret is waiting for.
   const { program, diagnostics } = useMemo(() => {
     try {
-      return check(source, { profile: getProfile(consoleId), levels: DEMO_LEVELS });
+      return check(source, {
+        profile: getProfile(consoleId),
+        files: projectFiles(project),
+        levels: levelSources(project),
+      });
     } catch (error) {
       return {
         diagnostics: [
@@ -152,7 +164,7 @@ export function GameDemaker() {
         ] as Diagnostic[],
       };
     }
-  }, [source, consoleId]);
+  }, [source, consoleId, project]);
 
   // --- input ----------------------------------------------------------------
 
@@ -184,8 +196,8 @@ export function GameDemaker() {
   useEffect(() => {
     if (!program) return;
     sim.current = new Sim(program);
-    for (const name of program.assets) loadAsset(assets.current, name);
-  }, [program]);
+    for (const name of program.assets) loadAsset(assets.current, project, name);
+  }, [program, project]);
 
   // The canvas only exists while the preview is on screen, so it is sized when
   // the view brings it back as well as when the console changes under it.
@@ -249,27 +261,37 @@ export function GameDemaker() {
     setRestarts((count) => count + 1);
   }, [program]);
 
-  const loadExample = useCallback((id: string) => {
-    const next = EXAMPLES.find((candidate) => candidate.id === id);
-    if (!next) return;
-    setExample(next);
-    // Both copies, so picking a game takes effect now rather than after the
-    // typing pause. Nobody drums the dropdown.
-    setDraft(next.source);
-    setSource(next.source);
+  // Opening a different `.dmt` sets both copies at once, so picking a game takes
+  // effect now rather than after the typing pause. Nobody drums the dropdown.
+  useEffect(() => {
+    const text = readText(project, openPath);
+    setDraft(text);
+    setSource(text);
     setTestReport(null);
-  }, []);
+    // Keyed on the path alone: reacting to the project itself would undo every
+    // keystroke, since an edit is what replaces the project.
+  }, [openPath]);
+
+  // Typing reaches the project once it has settled, so the explorer, a build and
+  // a save all see the same text the editor shows.
+  useEffect(() => {
+    if (source !== readText(project, openPath)) onEdit(openPath, source);
+  }, [source]);
 
   const runSuite = useCallback(() => {
     // The *draft*, not the settled copy, and it settles it on the way: pressing
     // Run tests within the typing pause has to test what is on screen. Reporting
     // on the version from 300 ms ago would be a failure nobody could reproduce.
     setSource(draft);
-    const file = parseTests(example.tests);
+    const file = parseTests(readText(project, openPath.replace(/\.dmt$/, ".test.dmt")));
     const results = [];
     for (const profile of profiles) {
       try {
-        const compiled = check(draft, { profile, levels: DEMO_LEVELS });
+        const compiled = check(draft, {
+          profile,
+          files: projectFiles(project),
+          levels: levelSources(project),
+        });
         if (compiled.program) results.push(runTests(file, compiled.program));
       } catch {
         /* a console this game cannot target is reported by its own diagnostics */
@@ -280,7 +302,7 @@ export function GameDemaker() {
     setTestReport(
       `${total - failed}/${total} cases passed across ${results.length} consoles\n\n${formatResults(results)}`,
     );
-  }, [draft, example]);
+  }, [draft, project, openPath]);
 
   const errors = diagnostics.filter((d) => d.severity === "error");
 
@@ -293,14 +315,18 @@ export function GameDemaker() {
             <span>Game</span>
             <select
               data-testid="example-select"
-              value={example.id}
-              onChange={(e) => choose(e, loadExample)}
+              value={openPath}
+              onChange={(e) => {
+                location.hash = fileHash((e.currentTarget as HTMLSelectElement).value);
+              }}
             >
-              {EXAMPLES.map((candidate) => (
-                <option key={candidate.id} value={candidate.id}>
-                  {candidate.name}
-                </option>
-              ))}
+              {gameFiles(project)
+                .filter((one) => !one.endsWith(".test.dmt"))
+                .map((one) => (
+                  <option key={one} value={one}>
+                    {one.slice(one.lastIndexOf("/") + 1).replace(/\.dmt$/, "")}
+                  </option>
+                ))}
             </select>
           </label>
           <label class="field inline">
@@ -390,7 +416,8 @@ export function GameDemaker() {
           {showRom ? (
             <RomPane
               program={program}
-              name={example.id}
+              assets={assetBytes(project)}
+              name={openPath.slice(openPath.lastIndexOf("/") + 1).replace(/\.dmt$/, "")}
               held={held}
               latched={romLatched}
               restarts={restarts}
@@ -501,9 +528,16 @@ function isTyping(target: EventTarget | null): boolean {
   return tag === "TEXTAREA" || tag === "INPUT";
 }
 
-function loadAsset(cache: Map<string, Loaded>, name: string): void {
+/**
+ * An `<img>` for one of the project's art files, for the preview to draw.
+ *
+ * The preview draws with the browser's own renderer because it only has to
+ * *look* right; the cartridge gets the same file through `@demake/core`'s fitter
+ * and comes out demade (doc 07 §parity).
+ */
+function loadAsset(cache: Map<string, Loaded>, project: Project, name: string): void {
   if (cache.has(name)) return;
-  const url = DEMO_ASSETS[name];
+  const url = fileUrl(project, name);
   if (!url) return;
   const image = new Image();
   const entry: Loaded = { image, ready: false };

@@ -1262,3 +1262,116 @@ main.audio-layout {
   font-size: 0.8rem;
   color: var(--muted);
 }
+
+/* --- the project workspace (doc 19 §The shell) ---------------------------- */
+
+/*
+ * An explorer down the left and one editor beside it. The editors are unchanged
+ * — they are still the `main` grid above — so this is a column in front of them
+ * rather than a second layout system.
+ */
+.workbench {
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.editor-host {
+  min-width: 0;
+}
+
+.explorer {
+  position: sticky;
+  top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  font-size: 0.85rem;
+}
+
+.explorer-project {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.explorer-label {
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.explorer-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.explorer-folder h3 {
+  margin: 0 0 0.2rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  display: flex;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.explorer-note {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 1;
+  color: var(--muted);
+}
+
+.explorer-folder ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.explorer-file {
+  display: block;
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.8rem;
+  color: var(--ink);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.explorer-file:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.explorer-file.active {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* A file no editor opens is still listed: one you cannot see is one you think
+   you lost. Contrast is an explicit colour, never opacity (doc 07 §Quality). */
+.explorer-file.inert {
+  color: var(--muted);
+  cursor: default;
+}
+
+@media (max-width: 1000px) {
+  .workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .explorer {
+    position: static;
+  }
+}

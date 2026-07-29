@@ -17,6 +17,7 @@ import { fromHash, toHash } from "./lib/permalink.js";
 import { createEngine, EngineError } from "./worker/client.js";
 import type { ConsoleInfo, PrepOptionsUi, PrepPayload } from "./worker/protocol.js";
 import type { StrategyInfo } from "@demake/core";
+import type { EditorProps } from "./site.js";
 
 /** The source image the user dropped, pasted, picked, or loaded as the demo. */
 export interface SourceImage {
@@ -29,7 +30,7 @@ export interface SourceImage {
 
 const DEBOUNCE_MS = 180;
 
-export function App() {
+export function App({ project, path }: Partial<EditorProps> = {}) {
   const engine = useMemo(() => createEngine(), []);
   const [consoleList, setConsoleList] = useState<ConsoleInfo[]>([]);
   const [strategyList, setStrategyList] = useState<StrategyInfo[]>([]);
@@ -96,6 +97,23 @@ export function App() {
     const png = await engine.demo();
     setSource(await describeSource("demo-scene.png", png));
   }, [engine]);
+
+  // The open project file *is* the input (doc 19 §The shell): picking `ball.svg`
+  // in the explorer converts `ball.svg`. Dropping a file still works and still
+  // wins, because a drop is a deliberate act on this pane — it just also lands in
+  // the project, which is what the explorer then lists.
+  useEffect(() => {
+    if (!project || path === undefined) return;
+    const bytes = project.files.get(path)?.bytes;
+    if (!bytes) return;
+    let live = true;
+    void describeSource(path, bytes).then((described) => {
+      if (live) setSource(described);
+    });
+    return () => {
+      live = false;
+    };
+  }, [project, path]);
 
   const activeConsole = consoleList.find((c) => c.id === options.console) ?? null;
 

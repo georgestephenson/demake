@@ -51,7 +51,6 @@ import {
   type Button as SnesButton,
 } from "@demake/snes";
 
-import { demoAssetBytes, demoAudioBytes } from "../lib/demo-game.js";
 import { download } from "../lib/download.js";
 import { audioSupported, RomAudio, type ListenableMachine } from "../lib/rom-audio.js";
 import { createEngine } from "../worker/client.js";
@@ -264,6 +263,7 @@ function boot(rom: Uint8Array, family: string, consoleId: string): Player {
 export function RomPane({
   program,
   name,
+  assets,
   held,
   latched,
   restarts,
@@ -271,6 +271,8 @@ export function RomPane({
 }: {
   program: Program | undefined;
   name: string;
+  /** The project's asset bytes, keyed by the paths the program resolved to. */
+  assets: Map<string, Uint8Array>;
   held: { current: Set<string> };
   latched: { current: Set<string> };
   /**
@@ -304,20 +306,17 @@ export function RomPane({
   // if it were the second is how a button comes to lie in one browser.
   const [sound, setSound] = useState(false);
   const [playing, setPlaying] = useState(false);
-  // The music and the effects are binary and are fetched rather than bundled,
-  // so the build waits for them. It waits rather than building without them
-  // because a cartridge missing its audio would not be the one `demake build`
-  // writes, and that is the one thing this pane promises.
-  const [audio, setAudio] = useState<Map<string, Uint8Array> | undefined>(undefined);
-  useEffect(() => {
-    let live = true;
-    void demoAudioBytes().then((bytes) => {
-      if (live) setAudio(bytes);
-    });
-    return () => {
-      live = false;
-    };
-  }, []);
+  // The project's own art, music and effects, as the *source* bytes the build
+  // takes — the conversion happens inside the build, so the page and the CLI
+  // cannot diverge on it (doc 07 §parity). A project whose binaries are still
+  // arriving has no audio in it yet, and the build waits: a cartridge missing its
+  // soundtrack would not be the one `demake build` writes, and that is the one
+  // thing this pane promises.
+  // Bytes present, not merely *listed*: a project opens with its binaries as
+  // empty placeholders so the explorer can show the whole folder at once
+  // (`examples.ts`), and building from those would hand the demakers a
+  // zero-length WAV rather than waiting for the real one.
+  const ready = [...assets.values()].every((bytes) => bytes.length > 0);
 
   // The build happens in the engine worker, and that is not an optimisation:
   // demaking a *colour* backdrop is the whole `prep` tournament, seconds of
@@ -351,17 +350,13 @@ export function RomPane({
     // never going to start must not leave the pane saying it is demaking, which
     // is how "fix the errors above" came to be unreachable once the badge could
     // outlive its effect.
-    if (!program || !audio) {
+    if (!program || !ready) {
       setBuilt({});
       setDemaking(false);
       return;
     }
     let live = true;
     setDemaking(true);
-    // The bundled art goes in as *source bytes*: the conversion happens inside
-    // the build, so the page and the CLI cannot diverge on it.
-    const assets = demoAssetBytes();
-    for (const [file, bytes] of audio) assets.set(file, bytes);
     void engine
       .buildGame(program, name, assets)
       .then((result) => {
@@ -396,7 +391,7 @@ export function RomPane({
     return () => {
       live = false;
     };
-  }, [engine, program, name, audio]);
+  }, [engine, program, name, assets, ready]);
 
   const { rom, layout } = built;
   // The cartridge's console, not the picker's: they differ for as long as a build
@@ -540,7 +535,7 @@ export function RomPane({
         <h3>The cartridge</h3>
         <p class="hint" data-testid="rom-unavailable">
           {built.error ??
-            (program && !audio
+            (program && !ready
               ? "Demaking this game\u2019s music and effects\u2026"
               : demaking
                 ? "Demaking this game\u2019s art and building the cartridge\u2026"

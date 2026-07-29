@@ -9,8 +9,6 @@
  * (`packages/core/test/sm83.test.ts`).
  */
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { analyze } from "../src/codegen/analyze.js";
@@ -18,9 +16,8 @@ import { GB_MEMORY, planLayout, ENTITY_SIZE } from "../src/codegen/layout.js";
 import { buildGbRom } from "../src/codegen/gb.js";
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
+import { gameSource } from "./_projects.js";
 
-const fixtures = join(import.meta.dirname, "..", "fixtures");
-const read = (name: string) => readFileSync(join(fixtures, name), "utf8");
 const build = (source: string) => compile(source, { profile: getProfile("gb") });
 
 describe("what a program needs", async () => {
@@ -35,20 +32,20 @@ describe("what a program needs", async () => {
     // Pong divides (the opponent's proportional steering), multiplies
     // (direction by speed) and draws (the opponent's wandering aim), so exactly
     // those three arrive.
-    const pong = (await buildGbRom(build(read("pong.dmt")))).stats;
+    const pong = (await buildGbRom(build(gameSource("pong")))).stats;
     expect(pong.helpers).toContain("Div32");
     expect(pong.helpers).toContain("Mul32");
     expect(pong.helpers).toContain("RngPick");
 
     // Breakout does the same arithmetic and never draws, so it ships no
     // generator at all — which is the half of this that is easy to get wrong.
-    const breakout = (await buildGbRom(build(read(join("games", "breakout.dmt"))))).stats;
+    const breakout = (await buildGbRom(build(gameSource("breakout")))).stats;
     expect(breakout.helpers).toContain("Div32");
     expect(breakout.helpers).not.toContain("RngPick");
   });
 
   it("allocates work RAM per object, not per worst case", () => {
-    const program = build(read("pong.dmt"));
+    const program = build(gameSource("pong"));
     const analysis = analyze(program);
     const layout = planLayout(program, analysis, GB_MEMORY);
     expect(layout.entities.length).toBe(program.instances.length);
@@ -61,12 +58,12 @@ describe("what a program needs", async () => {
     expect(layout.camera).toBeNull();
 
     // Breakout draws nothing, and pays for nothing.
-    const plain = build(read(join("games", "breakout.dmt")));
+    const plain = build(gameSource("breakout"));
     expect(planLayout(plain, analyze(plain), GB_MEMORY).rng).toBeNull();
   });
 
   it("knows which properties a rule can actually change", () => {
-    const program = build(read("pong.dmt"));
+    const program = build(gameSource("pong"));
     const analysis = analyze(program);
     const ball = program.instances.find((instance) => instance.name === "ball1");
     const score = program.instances.find((instance) => instance.name === "score1");
@@ -78,7 +75,7 @@ describe("what a program needs", async () => {
   });
 
   it("compiles a whole game into a fraction of the cartridge", async () => {
-    const { stats } = await buildGbRom(build(read("pong.dmt")));
+    const { stats } = await buildGbRom(build(gameSource("pong")));
     expect(stats.bytes).toBeGreaterThan(1024);
     expect(stats.free).toBeGreaterThan(0x4000);
   });

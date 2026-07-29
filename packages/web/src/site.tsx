@@ -1,17 +1,26 @@
 /**
- * The site shell: one wordmark, four demakers, one footer.
+ * The workspace shell: one project, an explorer, and an editor per file type
+ * (doc 19 §The shell).
  *
- * demake demakes *game assets* — images, games, music and sound — so the site is
- * a set of sections over one engine rather than one tool with bolted-on extra
- * pages. The art demaker remains the unmarked default so every permalink shared
- * before the site grew sections still opens what it used to.
+ * The site used to be four tools you navigated between. It is one workspace you
+ * open files in now — the arrangement every code editor settled on, for the
+ * reason every code editor settled on it: the project is the constant and the
+ * file you are looking at is the variable. Clicking a file in the explorer opens
+ * whichever demaker demakes that kind of file, and the demakers themselves are
+ * unchanged in what they do.
+ *
+ * `#section=` still opens a bare section, because every option permalink shared
+ * before the site held projects has one in it.
  */
 
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useMemo, useState } from "preact/hooks";
 import type { ComponentType } from "preact";
 
 import { App } from "./app.js";
-import { LAZY, readSection, SECTION_LABELS, SECTIONS, sectionHash } from "./lib/route.js";
+import { Explorer } from "./components/Explorer.js";
+import { EXAMPLE_NAMES, exampleSkeleton, loadExample } from "./lib/examples.js";
+import { readRoute, SECTION_LABELS, sectionHash } from "./lib/route.js";
+import { writeText, type Project } from "./lib/project.js";
 
 const TAGLINES: Readonly<Record<string, string>> = {
   game: "one declarative game → every console",
@@ -36,15 +45,43 @@ const ENGINES: Readonly<Record<string, string[]>> = {
   sound: ["@demake/audio", "@demake/chip"],
 };
 
+/** What every editor is handed: the project, and which of its files is open. */
+export interface EditorProps {
+  project: Project;
+  path?: string;
+  onEdit: (path: string, text: string) => void;
+}
+
 export function Site() {
-  const [section, setSection] = useState(() => readSection(location.hash));
-  const [lazySections, setLazySections] = useState<Record<string, ComponentType>>({});
+  const [route, setRoute] = useState(() => readRoute(location.hash));
+  const [lazySections, setLazySections] = useState<Record<string, ComponentType<EditorProps>>>({});
+  // The project opens with its text files present and its art and audio still
+  // arriving, so the editor has source to show on the first frame rather than a
+  // spinner. Pong, because that is the example the site has always opened on.
+  const [project, setProject] = useState<Project>(() => exampleSkeleton("pong"));
 
   useEffect(() => {
-    const onHash = () => setSection(readSection(location.hash));
+    const onHash = () => setRoute(readRoute(location.hash));
     addEventListener("hashchange", onHash);
     return () => removeEventListener("hashchange", onHash);
   }, []);
+
+  // The art and the audio, fetched once per project. Binary files are URLs in the
+  // bundle rather than base64, so this is a handful of same-origin requests the
+  // service worker caches like anything else (`examples.ts`).
+  useEffect(() => {
+    let live = true;
+    void loadExample(project.name).then((loaded) => {
+      if (live) setProject((current) => (current.name === loaded.name ? loaded : current));
+    });
+    return () => {
+      live = false;
+    };
+    // Keyed on the *name*: an edit replaces the project object, and refetching
+    // its art on every keystroke would be absurd.
+  }, [project.name]);
+
+  const section = route.section;
 
   // Every section but the art demaker loads on demand. The Demotic pair carry
   // the whole game language — compiler, interpreter, test runner, registry — and
@@ -66,14 +103,27 @@ export function Site() {
               : null;
     if (!load) return;
     void load().then((component) =>
-      setLazySections((previous) => ({ ...previous, [section]: component })),
+      setLazySections((previous) => ({
+        ...previous,
+        [section]: component as ComponentType<EditorProps>,
+      })),
     );
   }, [section, lazySections]);
 
   const Lazy = lazySections[section];
 
+  const props = useMemo<EditorProps>(
+    () => ({
+      project,
+      ...(route.file === undefined ? {} : { path: route.file }),
+      onEdit: (path: string, text: string) =>
+        setProject((current) => writeText(current, path, text)),
+    }),
+    [project, route.file],
+  );
+
   return (
-    <div class="layout">
+    <div class="layout workspace">
       <header class="topbar">
         <h1>
           <span class="wordmark">demake</span>
@@ -81,7 +131,7 @@ export function Site() {
         </h1>
 
         <nav class="sections" aria-label="Demakers">
-          {SECTIONS.map((id) => (
+          {(["game", "art", "music", "sound", "language"] as const).map((id) => (
             <a
               key={id}
               href={sectionHash(id)}
@@ -105,18 +155,35 @@ export function Site() {
         </p>
       </header>
 
-      {section === "art" ? <App /> : null}
-      {LAZY.includes(section) ? (
-        Lazy ? (
-          <Lazy />
-        ) : (
-          <main>
-            <section class="pane">
-              <p class="hint">Loading…</p>
-            </section>
-          </main>
-        )
-      ) : null}
+      <div class="workbench">
+        <Explorer
+          project={project}
+          {...(route.file === undefined ? {} : { open: route.file })}
+          examples={EXAMPLE_NAMES}
+          onOpenExample={(name) => {
+            setProject(exampleSkeleton(name));
+            // The route keeps its *section*, not its file: a path from one
+            // project rarely exists in the next, and landing on "no such file"
+            // after picking a project would read as a fault.
+            location.hash = sectionHash(section).slice(1);
+          }}
+        />
+
+        <div class="editor-host">
+          {section === "art" ? <App {...props} /> : null}
+          {section !== "art" ? (
+            Lazy ? (
+              <Lazy {...props} />
+            ) : (
+              <main>
+                <section class="pane">
+                  <p class="hint">Loading…</p>
+                </section>
+              </main>
+            )
+          ) : null}
+        </div>
+      </div>
 
       <footer>
         <a href="https://github.com/georgestephenson/demake">source</a> ·{" "}

@@ -17,8 +17,12 @@ import type { CliEnv } from "../src/env.js";
 import { EXIT } from "../src/exit-codes.js";
 import { run } from "../src/run.js";
 
-const fixtures = join(import.meta.dirname, "..", "..", "demotic", "fixtures");
-const read = (name: string) => new Uint8Array(readFileSync(join(fixtures, name)));
+// Pong's source out of its project folder (doc 19). The CLI still takes a bare
+// `.dmt` — that is the zero-config path — so this harness hands it one file and
+// no project around it, which is exactly the case where a reference resolves to
+// itself and nothing can be ambiguous.
+const PONG = join(import.meta.dirname, "..", "..", "demotic", "fixtures", "projects", "pong");
+const read = (name: string) => new Uint8Array(readFileSync(join(PONG, name)));
 
 function harness(files: Record<string, Uint8Array> = {}) {
   let out = "";
@@ -57,7 +61,7 @@ function harness(files: Record<string, Uint8Array> = {}) {
 
 describe("demake build", () => {
   it("writes a 32 KiB cartridge with no toolchain installed", async () => {
-    const h = harness({ "pong.dmt": read("pong.dmt") });
+    const h = harness({ "pong.dmt": read("src/pong.dmt") });
     const code = await run(["build", "pong.dmt", "-o", "pong.gb", "--title", "PONG"], h.env);
     expect(code).toBe(EXIT.OK);
     const rom = h.written.get("pong.gb") as Uint8Array;
@@ -67,7 +71,7 @@ describe("demake build", () => {
   });
 
   it("reports what it built as JSON", async () => {
-    const h = harness({ "pong.dmt": read("pong.dmt") });
+    const h = harness({ "pong.dmt": read("src/pong.dmt") });
     expect(await run(["build", "pong.dmt", "-o", "pong.gb", "--json"], h.env)).toBe(EXIT.OK);
     const report = JSON.parse(h.out()) as {
       console: string;
@@ -86,7 +90,7 @@ describe("demake build", () => {
   });
 
   it("emits the symbol map of the code it generated when asked", async () => {
-    const h = harness({ "pong.dmt": read("pong.dmt") });
+    const h = harness({ "pong.dmt": read("src/pong.dmt") });
     expect(await run(["build", "pong.dmt", "--format", "sym", "-o", "p.sym"], h.env)).toBe(EXIT.OK);
     const map = new TextDecoder().decode(h.written.get("p.sym") as Uint8Array);
     // The no-bank RGBDS format, so a profiler can bucket cycles by rule.
@@ -95,9 +99,12 @@ describe("demake build", () => {
   });
 
   it("builds a level game with a camera, which the fixed engine could not", async () => {
+    const caves = join(import.meta.dirname, "..", "..", "demotic", "fixtures", "projects", "caves");
     const h = harness({
-      "caves.dmt": read(join("games", "caves.dmt")),
-      "cavern.dmtl": read(join("games", "cavern.dmtl")),
+      "caves.dmt": new Uint8Array(readFileSync(join(caves, "src", "caves.dmt"))),
+      // Beside the source, because that is where `build` looks for a level given
+      // a bare `.dmt` rather than a project folder.
+      "cavern.dmtl": new Uint8Array(readFileSync(join(caves, "levels", "cavern.dmtl"))),
     });
     expect(await run(["build", "caves.dmt", "-o", "caves.gb"], h.env)).toBe(EXIT.OK);
     expect((h.written.get("caves.gb") as Uint8Array).length).toBe(0x8000);
@@ -121,7 +128,7 @@ describe("demake build", () => {
   });
 
   it("builds a Mega Drive cartridge, vectors and header and all", async () => {
-    const h = harness({ "pong.dmt": read("pong.dmt") });
+    const h = harness({ "pong.dmt": read("src/pong.dmt") });
     expect(await run(["build", "pong.dmt", "-c", "md", "-o", "pong.md"], h.env)).toBe(EXIT.OK);
     const rom = h.written.get("pong.md") as Uint8Array;
     expect(rom.length).toBe(0x80000);
@@ -137,7 +144,7 @@ describe("demake build", () => {
   });
 
   it("needs rgbfix for --boot-logo, and says so", async () => {
-    const h = harness({ "pong.dmt": read("pong.dmt") });
+    const h = harness({ "pong.dmt": read("src/pong.dmt") });
     expect(await run(["build", "pong.dmt", "-o", "pong.gb", "--boot-logo"], h.env)).toBe(
       EXIT.UNAVAILABLE,
     );
