@@ -31,65 +31,118 @@ pong/
 Five authored folders and one generated one. `build/` is the Demakefile's `out`
 default (doc 15) and is listed here only so that nobody puts a source in it.
 
-**A folder with a `.dmt` anywhere in it is a project.** The five folders are the
-canonical arrangement, not a requirement: a directory holding `pong.dmt`,
-`ball.svg` and `rally.mid` flat is a project too, and it is the shape
-`demake build pong.dmt` already builds today. `demake init` writes the canonical
-arrangement; nothing refuses the flat one. That is the same bargain doc 15 makes
-about the Demakefile itself — the structured form is an escape from the defaults,
-never a prerequisite.
+**This is a convention, not a rule.** It is what `demake init` writes and what
+the web app arranges a new project as, and nothing anywhere requires it. A
+directory holding `pong.dmt`, `ball.svg` and `rally.mid` flat is a project; so is
+one with `assets/sprites/`, or a folder per level, or the sources of seven games
+side by side. Nothing resolves a reference by looking in a particular directory
+(§The rule), so the layout is free — which is the strongest form of the bargain
+doc 15 already makes about the Demakefile: the structured form is an escape from
+the defaults, never a prerequisite.
+
+**A folder with a `.dmt` anywhere in it is a project.**
 
 **Empty folders are absent, not empty.** A game with no music has no `music/`.
 `demake init` creates only the folders a project has something to put in, and the
 site's explorer lists only those — a tree of four empty directories is a tree that
 teaches nothing about the project.
 
-## The rule that makes it work: a name's kind decides its folder
+## The rule: the shortest name that identifies the file
 
-This is the load-bearing decision, and it is why the whole layout costs the
-language nothing.
+**Paths and extensions are optional.** Write `ball` and if exactly one art file in
+the project is called that, it is the one you meant. Write more only when *more*
+is what it takes to say which file — and the compiler tells you when that moment
+arrives, rather than guessing and being wrong quietly.
 
+This is the load-bearing decision, and it replaces looking in a particular
+directory with something both simpler and more general: a reference identifies a
+file, and the folder it lives in is nobody's business.
+
+**Kind comes from the statement, and it is what makes an extension optional.**
 Every file reference in Demotic already says what kind of file it is, because the
-statement that names it does:
+statement naming it does — so `sprite ball` never has to consider `music/ball.mid`:
 
-| Written in the source | Kind | Resolved in |
-|---|---|---|
-| `sprite hero.svg` | art | `art/` |
-| `backdrop caves.title.svg` | art | `art/` |
-| `tile # wall solid brick.svg` (a `.dmtl` legend) | art | `art/` |
-| `music hollow.mid` | music | `music/` |
-| `sound jump.wav on …` | sound | `sound/` |
-| `level cavern from cavern.dmtl` | levels | `levels/` |
-| `stream` chunk names | levels | `levels/` |
+| Written in the source | Kind |
+|---|---|
+| `sprite hero`, `backdrop caves.title` | art |
+| `tile # wall solid brick` (a `.dmtl` legend) | art |
+| `music hollow` | music |
+| `sound jump on …` | sound |
+| `level cavern from cavern`, `stream` chunks | level |
 
-So a `.dmt` keeps naming a bare file and never writes a path — which is not a
-convenience, it is doc 14's central split holding. A path is a fact about the
-build; the `.dmt` must not know one. `sprite art/hero.svg` would put the folder
-layout inside the game, and moving a file would then change the program.
+### Matching
 
-**Resolution**, for a name of kind `K`:
+A reference matches a file when, splitting both on `/`:
 
-1. `K`'s folder, walked depth-first in filename order (so `art/enemies/alien.svg`
-   resolves as `alien.svg`).
-2. The project root.
-3. Beside the `.dmt` that named it, which is what the flat layout and today's
-   fixtures rely on.
+- the reference's segments are a **tail** of the file's project-relative path,
+  compared segment by segment — so `ball.png` never matches `pinball.png`, and
+  `foo/ball` matches `art/foo/ball.png` but not `bar/ball.png`;
+- the **final** segment matches the file's name *or* its name with the extension
+  removed, which is the whole of "extensions are optional";
+- the file's kind is the one the statement implies.
 
-Every `assets` root in the Demakefile is searched before all three, in the order
-written (doc 15).
+Then:
 
-**Two files of the same basename are an error, never a pick.** `art/hero.svg` and
-`art/bosses/hero.svg` produce `E_ASSET_AMBIGUOUS`, naming both paths. The
-language already refuses to resolve an ambiguity quietly (doc 14 §The readings the
-language will not guess between) and a resolver that silently preferred one
-directory would be the same failure one layer down: the program would simply not
-be the one in the folder. A miss stays `E_ASSET_MISSING`, listing every path
-searched.
+| Candidates | Result |
+|---|---|
+| exactly one | that file |
+| more than one | `E_ASSET_AMBIGUOUS` — the line, every candidate, and the shortest string that would pick each |
+| none | the reference stands as written: a missing asset, handled as it is today |
 
-**Kinds are disjoint, so nothing collides across them.** `art/` holds what an
-image decoder accepts, `music/` MIDI, `sound/` WAV, `levels/` `.dmtl`. A file in
-the wrong folder is found by rule 2 or 3 and built; it is not an error, because a
-rule that refused would be enforcing tidiness rather than correctness.
+**Adding a leading segment is always enough**, because the whole relative path is
+unique. Where a full path is itself a proper suffix of a longer one — `foo/ball.png`
+beside `art/foo/ball.png` — the **exact whole-path match wins**, so every file in
+a project can always be named. That is specificity, not a quiet tiebreak: naming a
+file completely means that file. The alternative, a leading `/` to root a
+reference, is syntax bought for a case the specificity rule already answers.
+
+So the diagnostic is not "you did not write a path", it is "the name you wrote
+fits two files, and here are the two strings that do not". Ambiguity is reported
+where it exists rather than pre-empted everywhere it might.
+
+### Where it happens, and when it does not
+
+**In the compiler**, because it must be an error with a line number in it — the
+edge that reads bytes has no idea which line asked. `CompileOptions` gains an
+optional `files`: the project's relative paths, sorted. It is names only; the
+compiler still reads nothing, so platform purity (doc 02) is untouched.
+
+**Without that list, nothing is ambiguous.** A `.dmt` on stdin, or one compiled
+with no project around it, resolves every reference to itself and reports
+nothing — which is the point of making the list optional. A diagnostic exists
+exactly where the compiler knows enough to be sure of it, and not one step
+earlier.
+
+**Missing and ambiguous are deliberately asymmetric.** A missing asset stays what
+it is today: reported, with the build falling back to the built-in block or to
+silence, because refusing to produce a playable cartridge over a renamed sprite
+is the worse outcome. An ambiguous one is an error, because there is no safe
+fallback — picking one of two files is exactly the silent wrong-program failure
+the language refuses everywhere else (doc 14 §The readings the language will not
+guess between).
+
+**`Program.assets` becomes resolved paths.** Both edges then stop searching:
+the CLI reads the path the compiler resolved and the page looks it up in the
+tree. The lookup logic that exists in `cli/src/commands/build.ts` and again in
+the page's demo loader is deleted rather than moved, which is most of the point —
+one resolver, in the one place that can report a line.
+
+### The cost, named
+
+**Adding a file can break a reference that used to work.** Drop `ball.svg` beside
+`ball.png` and `sprite ball` becomes ambiguous. That is the accepted price of
+shortest-name resolution and every language with it pays the same one; what makes
+it tolerable is that the error names the exact strings that fix it, arrives at
+compile time with a line number, and can be one click in the block editor.
+
+**A path in a `.dmt` is still not a hardware fact.** An earlier draft of this
+document argued that a `.dmt` must never contain a path at all. That was too
+strong: a relative path inside the project names a *source file*, exactly as a
+bare name does, and doc 14's central split is about hardware, options and built
+artifacts — none of which a path names. What holds is the weaker and truer
+version: the shortest form is idiomatic and is what the tools write, a longer one
+is available when the short one is genuinely ambiguous, and neither says anything
+about a console.
 
 ## The Demakefile, still optional
 
@@ -103,10 +156,10 @@ blocks.
   Several with no `source` directive stays `E_NO_SOURCE`, which is also the
   diagnostic that would name a multi-file mechanism if one existed (§Splitting a
   game).
-- `assets` — the four resource folders, per the table above, then the project
-  root. An `assets` directive *adds* roots ahead of them rather than replacing
-  them, so a Demakefile that names an extra directory does not lose the standard
-  ones.
+- `assets` — every file in the project, `build/` excluded. There is no search
+  path to configure any more (§The rule), so the directive's only remaining job
+  is to bring in files from *outside* the project folder, and a project that
+  keeps its sources inside itself never writes one.
 - `out` — `build/`.
 
 **A shorthand for the common case.** Doc 15's `target` blocks are right when
@@ -270,9 +323,9 @@ the editor ever touched it.
 The map view is two panes.
 
 **Legend** — one row per tile: the character, the name, whether it is `solid`,
-and its art. Art is picked from the project's `art/` folder, which is the first
-thing the project model buys this editor: a dropdown of real files rather than a
-typed filename. Adding a row picks an unused character; deleting one reports how
+and its art. Art is picked from the project's art files, which is the first thing
+the project model buys this editor: a dropdown of real pictures rather than a
+typed filename, written back as the shortest name that identifies the one chosen. Adding a row picks an unused character; deleting one reports how
 many cells in the grid use it before it goes.
 
 **Grid** — the level, drawn with the tile art, painted with the selected legend
@@ -383,13 +436,20 @@ unlocks and the reason this editor belongs in this document rather than doc 07:
 
 | Field | Offered from | Shown as |
 |---|---|---|
-| `sprite`, `backdrop` | the project's `art/` | the pictures themselves, rendered |
-| `music` | the project's `music/` | a list you can play |
-| `sound` | the project's `sound/` | a list you can play |
-| `level … from` | the project's `levels/` | the map, drawn |
+| `sprite`, `backdrop` | the project's art files | the pictures themselves, rendered |
+| `music` | the project's tracks | a list you can play |
+| `sound` | the project's effects | a list you can play |
+| `level … from` | the project's levels | the map, drawn |
 | object and scene names | the program's own `create` and `scene` lines | a list |
 | buttons, directions, functions, constants, units | `BUTTONS`, `DIRECTIONS`, `FUNCTIONS`, `CONSTANTS`, `UNITS` | a list, with the registry's summary |
 | properties | `PROPERTIES`, filtered by context | a list |
+
+**And a picked file is written as the shortest name that identifies it** (§The
+rule) — `ball`, growing to `ball.png` or `art/ball.png` only where the project
+holds something the shorter form would also fit. The editor is the one thing that
+never has to be told this twice: it knows every file, so it can always write the
+shortest form, and it is the natural place to offer the one-click fix when a
+newly-added file makes an existing reference ambiguous.
 
 That last row is where the registry earns its keep twice over: a property already
 declares whether it is `derived` (readable, never assignable) and whether it is
@@ -567,8 +627,9 @@ version of this that stays parity-safe.
 
 Stated because a change this wide is exactly where invariants get lost:
 
-- **A `.dmt` names no hardware and no build path** (doc 14 §The central split).
-  The folder layout is resolution, not syntax.
+- **A `.dmt` names no hardware, no option and no built artifact** (doc 14 §The
+  central split). It names source files, at whatever length it takes to say which
+  one (§The cost, named).
 - **`trace(dmt, console, region)` is byte-identical with and without a
   Demakefile** (doc 15). A project cannot change how a game plays.
 - **The page grows no conversion logic** (doc 07). A project is data; every byte
@@ -577,9 +638,10 @@ Stated because a change this wide is exactly where invariants get lost:
 - **The engine packages stay platform-pure** (doc 02). File System Access, zips
   and `node:fs` are all edge code; what the engine sees is a tree of names and
   `Uint8Array`s.
-- **Determinism.** Directory walks are sorted by filename before anything reads
-  them, because a resolver whose answer depended on readdir order would be a
-  build whose output depended on a filesystem.
+- **Determinism.** The candidate list is the project's paths, sorted, before
+  anything matches against it — a resolver whose answer depended on readdir order
+  would be a build whose output depended on a filesystem, and the two edges
+  enumerate a directory by completely different means.
 
 ## The JS budget
 
@@ -611,9 +673,11 @@ should be made smaller rather than given more room.
 
 Each step is useful on its own and none of them breaks the one before.
 
-1. **The resolver** in `@demake/demotic`: a tree of names and bytes → a resolved
-   project. Kind-directed lookup, the ambiguity error, sorted walks. Pure, and
-   testable with no filesystem at all.
+1. **Reference resolution** in the compiler: `CompileOptions.files`, suffix
+   matching, kind filtering, `E_ASSET_AMBIGUOUS`, and `Program.assets` carrying
+   resolved paths. Pure, testable with no filesystem at all, and it deletes the
+   lookup code in both edges rather than moving it. Absent the file list nothing
+   changes, so every existing caller keeps working while it lands.
 2. **The example projects**: convert the fixtures, repoint every reader. The
    golden traces are the check that nothing moved but paths.
 3. **The CLI**: `build <dir>`, `check <dir>`, `init`. Parity's other half, and it

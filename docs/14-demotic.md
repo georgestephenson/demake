@@ -257,6 +257,19 @@ fails on its own line and every other statement still parses, so one pass report
 *every* problem in the file. That is the property that makes the language pleasant
 to generate and patch programmatically.
 
+**A declaration says as little as possible; the compiler does the work.** That is
+the through-line of every decision in this document, and it is worth naming
+because it is what the language trades away ceremony *for*. `width 1 cell` does
+not say how many pixels, because the console does. `sprite ball` does not say
+which file, because exactly one of the project's art files is called that
+([doc 19](19-projects.md) §The rule) — and where two are, the compiler says so
+with a line number instead of picking. `music theme` names no channel, no
+register and no chip. Nothing in a `.dmt` is written twice, and nothing is written
+that something downstream can work out; where that is genuinely impossible the
+answer is a diagnostic naming the choice, never a guess and never a required
+ceremony imposed on every other line to pre-empt a case that usually does not
+arise.
+
 ### Statements
 
 ```
@@ -690,6 +703,19 @@ Two resolutions remove all quoting ceremony:
   the compiler reads it as the literal string.
 - `(scene) as gameover` — a bare name; because the `scene` target is scene-typed, it
   resolves to a scene rather than an expression.
+
+Asset-typed is also what makes the *file* half of it short. Because the statement
+says which kind of file it wants, the extension carries no information the
+compiler needs — so `sprite ball` is legal, and so is `music theme`. **A reference
+is the shortest name that identifies one file**: a bare stem where that is enough,
+a name with its extension where two art files share a stem, and as much leading
+path as it takes where two directories hold the same name. Two files answering to
+the same reference is `E_ASSET_AMBIGUOUS`, naming both and the strings that
+separate them; one file answering is the file; none is the missing-asset path,
+which reports and falls back rather than refusing to build. Given no list of the
+project's files — a `.dmt` on stdin, or one compiled on its own — a reference is
+simply itself and nothing is ambiguous. [Doc 19](19-projects.md) §The rule has the
+matching rules and the reasoning.
 
 ## The example library
 

@@ -167,7 +167,12 @@ Demakefile selects a profile, it never edits one (doc 14 §The central split).
 
 ### `art <name>`
 
-`<name>` is the asset exactly as the `.dmt` names it in a `sprite` property.
+`<name>` names an asset the same way a `.dmt` does — the shortest string that
+identifies one file, with a path or an extension only where it takes one
+([doc 19](19-projects.md) §The rule). It need not be spelled the way the `.dmt`
+spelled it: both resolve against the same file list, so a block written as
+`art art/ball.png` applies to a `sprite ball`, and an `art` block matching two
+files is `E_ASSET_AMBIGUOUS` exactly as a `sprite` would be.
 
 | Directive | Arity | Meaning |
 |---|---|---|
@@ -224,8 +229,11 @@ Everything resolved is reported by `demake build --dry-run --json`: the source,
 every target, every asset with its final option set, and every path that will be
 written. Nothing about a build should require reading the resolver to predict.
 
-Asset lookup walks each `assets` root in order. A miss is an error listing every
-path searched.
+Asset lookup is the compiler's, not this file's ([doc 19](19-projects.md) §The
+rule): a reference identifies a file among the project's own, and `assets` roots
+only widen that set with directories outside the project. So there is no search
+order to reason about — a reference matches one file, or several and is an error
+naming them, or none and is the missing-asset path.
 
 ### The conversion path
 
@@ -360,7 +368,8 @@ as structured data.
 | `E_UNKNOWN_TARGET` | a `for` naming no declared target |
 | `E_REGION_UNSUPPORTED` | e.g. `region pal` on a Game Boy |
 | `E_NO_SOURCE` | no `.dmt` found, or several with no `source` |
-| `E_ASSET_MISSING` | with every path searched |
+| `E_ASSET_MISSING` | a reference matching no file in the project |
+| `E_ASSET_AMBIGUOUS` | a reference matching several; names each, and the shortest string that picks it |
 | `E_HEADER_INVALID` | with the family's rule for that field |
 
 ## Not in v1
