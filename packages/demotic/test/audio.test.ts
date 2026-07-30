@@ -745,9 +745,13 @@ describe("a Game Gear's stereo latch, which two streams share", async () => {
   /** The stereo latch, as `@demake/chip` and a `ChipScript` number it. */
   const STEREO = 0x06;
 
-  async function buildGg(source: string) {
-    const program = compile(source, { profile: getProfile("gg") });
-    const assets = projectAssets("pong");
+  async function buildGg(source: string, project = "pong") {
+    // The project supplies the file list as well as the bytes, exactly as every
+    // other target's build does: a source that says `music rally.mid` resolves
+    // against the folder, and without the list the reference stands as written
+    // and the binding finds no track at all (doc 19 §The rule).
+    const { files, levels, assets } = exampleProject(project);
+    const program = compile(source, { profile: getProfile("gg"), files, levels });
     const built = await buildSmsRom(program, { assets });
     const state = built.layout.audio as number;
     const bound = await bindAudio(program, assets, {
@@ -762,7 +766,7 @@ describe("a Game Gear's stereo latch, which two streams share", async () => {
     id: "gg",
     name: "Game Gear",
     mergeReg: STEREO,
-    build: (source) => buildGg(source),
+    build: (source, project) => buildGg(source, project),
   };
 
   it("performs the music tick for tick, merge writes and all", async () => {

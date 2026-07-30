@@ -99,7 +99,7 @@ describe("the Sega cartridge", async () => {
 
   it("declares a Master System or a Game Gear from the console it was built for", async () => {
     expect((built.bytes[SMS_HEADER_OFFSET + 15] as number) >> 4).toBe(4); // export SMS
-    const gg = await buildSmsRom(build("pong.dmt", undefined, "gg"));
+    const gg = await buildSmsRom(build("pong", undefined, "gg"));
     expect((gg.bytes[SMS_HEADER_OFFSET + 15] as number) >> 4).toBe(7); // international GG
     expect(new Sms(gg.bytes).gameGear).toBe(true);
     expect(new Sms(built.bytes).gameGear).toBe(false);
@@ -445,8 +445,8 @@ describe("a demade backdrop", async () => {
     ["ball.svg", projectBytes("pong", "art/ball.svg")],
     ["paddle.svg", projectBytes("pong", "art/paddle.svg")],
   ]);
-  const built = await buildSmsRom(build("pong.dmt", undefined, "gg"), { assets });
-  const art = await bindSmsArt(build("pong.dmt", undefined, "gg"), assets, "gg");
+  const built = await buildSmsRom(build("pong", undefined, "gg"), { assets });
+  const art = await bindSmsArt(build("pong", undefined, "gg"), assets, "gg");
   const machine = boot(built.bytes, built.layout.booted);
   for (let frame = 0; frame < 4; frame += 1) machine.runFrame();
 
@@ -515,7 +515,7 @@ describe("a demade backdrop", async () => {
 describe("the two machines", async () => {
   it("compile to the same code, and differ only in the window and the colours", async () => {
     const sms = await buildSmsRom(build("pong"));
-    const gg = await buildSmsRom(build("pong.dmt", undefined, "gg"));
+    const gg = await buildSmsRom(build("pong", undefined, "gg"));
     // Not byte-identical — the window's size reaches the renderer as constants,
     // and the header declares a different machine — but the same size to within
     // the handful of immediates that differ.
