@@ -97,6 +97,7 @@ export {
 } from "./pipeline/sprite.js";
 export { portfolioFor, buildPortfolio } from "./pipeline/portfolio.js";
 export { renderCompliant, encodeCompliantPng } from "./pipeline/encode-image.js";
+export { DITHER_ALGS, EFFORTS, METRICS, PROFILES, SCALE_KERNELS } from "./pipeline/types.js";
 export type {
   PrepOptions,
   PrepResult,

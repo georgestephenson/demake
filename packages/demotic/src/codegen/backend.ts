@@ -37,6 +37,7 @@ import type { Program } from "../program.js";
 import { analyze, type Analysis } from "./analyze.js";
 import { LayoutError, planLayout, type Layout, type MemoryPlan } from "./layout.js";
 import type { SceneCtx, LevelData } from "./shape.js";
+import type { ArtSettings } from "./settings.js";
 
 /** Raised when a game cannot be built for this console. */
 export class BuildError extends Error {
@@ -203,7 +204,21 @@ export interface Backend<Art, Audio extends BoundAudioShape> {
    * threads ran a fit cannot change what the fit produced, and a backend that
    * behaved differently with one would have broken that guarantee.
    */
-  bindArt(program: Program, assets: AssetBytes, executor?: Executor): Promise<BoundAssets<Art>>;
+  /**
+   * Demake the art, through the image pipeline.
+   *
+   * `settings` is the Demakefile's conversion cascade, per asset (doc 15
+   * §Resolution) — already validated, so a backend receives typed `prep` options
+   * and never a string. It is optional, and a build without it is exactly the
+   * build there was before the Demakefile could say anything: what a picture is
+   * fitted *into* stays the backend's arithmetic either way.
+   */
+  bindArt(
+    program: Program,
+    assets: AssetBytes,
+    executor?: Executor,
+    settings?: ArtSettings,
+  ): Promise<BoundAssets<Art>>;
 
   /**
    * Demake the music and effects, through the audio engine.
@@ -295,6 +310,15 @@ export interface BuildOptions {
    * same bytes either way.
    */
   executor?: Executor;
+  /**
+   * What the Demakefile said about each asset (doc 15 §Resolution, doc 19 step 6).
+   *
+   * Per-asset `prep` overrides keyed by resolved path, already validated. Absent —
+   * which is every build with no build file — this changes nothing at all, and
+   * that is the property the whole split depends on: a Demakefile may say *how* a
+   * picture is demade and never what it is demade *into*.
+   */
+  art?: ArtSettings;
 }
 
 /**
@@ -338,7 +362,7 @@ export async function buildRom<Art, Audio extends BoundAudioShape>(
   // depend on which demaker happened to fail first in wall-clock terms. Art is
   // checked first, exactly as it was when the two ran in order.
   const [artResult, audioResult] = await Promise.allSettled([
-    backend.bindArt(program, assets, options.executor),
+    backend.bindArt(program, assets, options.executor, options.art),
     backend.bindAudio(program, assets, layout, options.executor),
   ]);
 

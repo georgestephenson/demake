@@ -31,6 +31,7 @@ import {
   getConsole,
   prep,
   type Executor,
+  type PrepOptions,
   type SpriteBank,
   type SpriteSource,
 } from "@demake/core";
@@ -47,6 +48,8 @@ import {
   SYSTEM_PALETTE,
   type SnesEmitOptions,
 } from "./snes/emit.js";
+import { applyArtOverrides } from "../demakefile/overrides.js";
+import type { ArtSettings } from "./settings.js";
 
 /**
  * Demaking is expensive, deterministic, and asked for over and over.
@@ -210,17 +213,24 @@ async function demakeBackdrop(
   bytes: Uint8Array,
   maxTiles: number,
   executor: Executor | undefined,
+  overrides?: Partial<PrepOptions>,
 ): Promise<Backdrop> {
   const spec = getConsole("snes");
-  const fitted = await prep(bytes, {
-    console: "snes",
-    size: { w: SNES_MEMORY.viewW * 8, h: SNES_MEMORY.viewH * 8 },
-    fit: "cover",
-    // Seven of the eight; the eighth is the font's (see {@link packPalette}).
-    maxSubPalettes: ART_PALETTES,
-    maxTiles,
-    ...(executor === undefined ? {} : { executor }),
-  });
+  const fitted = await prep(
+    bytes,
+    applyArtOverrides(
+      {
+        console: "snes",
+        size: { w: SNES_MEMORY.viewW * 8, h: SNES_MEMORY.viewH * 8 },
+        fit: "cover",
+        // Seven of the eight; the eighth is the font's (see {@link packPalette}).
+        maxSubPalettes: ART_PALETTES,
+        maxTiles,
+        ...(executor === undefined ? {} : { executor }),
+      },
+      overrides,
+    ),
+  );
   const backend = backendFor("snes");
   if (!backend) throw new Error("the snes image backend is missing");
   const artifacts = backend.emitBin(fitted.image, spec, {
@@ -252,6 +262,7 @@ export async function bindSnesArt(
   program: Program,
   assets: AssetBytes,
   executor?: Executor,
+  settings?: ArtSettings,
 ): Promise<BoundSnesArt> {
   const requests = artRequests(program);
   const missing: string[] = [];
@@ -350,13 +361,15 @@ export async function bindSnesArt(
   const pictures = backdropScenes.map(
     (scene) => assets.get(scene.backdrop as string) as Uint8Array,
   );
+  // The paths beside the bytes, so a conversion can find its own settings.
+  const files = backdropScenes.map((scene) => scene.backdrop as string);
   // The budget is part of the key: the same picture fitted into a different
   // number of tiles is a different conversion.
-  const convert = (source: Uint8Array, cap: number): Promise<Backdrop> =>
+  const convert = (source: Uint8Array, cap: number, file: string): Promise<Backdrop> =>
     rememberAsync(
       backdropCache,
-      `snes:${cap}:${digest(source)}`,
-      () => demakeBackdrop(source, cap, executor),
+      `snes:${cap}:${digest(source)}:${JSON.stringify(settings?.[file] ?? {})}`,
+      () => demakeBackdrop(source, cap, executor, settings?.[file]),
       CACHE_LIMIT,
     );
 
@@ -409,7 +422,9 @@ export async function bindSnesArt(
   // fair on those demands, so a cheap picture does not reserve tiles an expensive
   // one is starving for.
   const share = Math.max(1, Math.floor(free / Math.max(1, backdropScenes.length)));
-  let converted = await Promise.all(pictures.map((source) => convert(source, share)));
+  let converted = await Promise.all(
+    pictures.map((source, index) => convert(source, share, files[index]!)),
+  );
   const demands = converted.map((art) => art.demand);
   const shares = fairShares(demands, free);
   // What a fit produces is `min(budget, demand)` tiles, and below the demand the
@@ -419,7 +434,7 @@ export async function bindSnesArt(
     converted.map((art, index) =>
       Math.min(shares[index]!, demands[index]!) === Math.min(share, demands[index]!)
         ? Promise.resolve(art)
-        : convert(pictures[index]!, shares[index]!),
+        : convert(pictures[index]!, shares[index]!, files[index]!),
     ),
   );
   const interned = internAll(converted);

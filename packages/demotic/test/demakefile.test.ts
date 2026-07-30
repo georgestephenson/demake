@@ -10,6 +10,9 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/compile.js";
+import { buildGame } from "../src/codegen/registry.js";
+import { applyArtOverrides, artOverrides } from "../src/demakefile/overrides.js";
+import type { PrepOptions } from "@demake/core";
 import { emitDemakefile } from "../src/demakefile/emit.js";
 import { parseDemakefile } from "../src/demakefile/parse.js";
 import { outputPath, resolveOptions, resolveProject } from "../src/demakefile/resolve.js";
@@ -309,5 +312,124 @@ describe("the gameplay invariant", () => {
       tape("240:,42:right,1:a,18:,26:left,60:"),
     );
     expect(withFile).toBe(bare);
+  });
+});
+
+describe("conversion options reach the fitter", () => {
+  // The half of step 6 that has to be true before the other half is worth
+  // building: a control that wrote an option which did nothing would be worse
+  // than no control at all.
+  const gb = { profile: getProfile("gb") };
+
+  async function build(demakefile: string): Promise<Uint8Array> {
+    const { source, files, levels, assets } = exampleProject("pong");
+    const file = parse(demakefile);
+    const program = compile(source, { ...gb, files, levels });
+    const art: Record<string, Partial<PrepOptions>> = {};
+    for (const path of program.assets) {
+      const resolved = resolveOptions(file, path, "art", "gb", files);
+      const { options, diagnostics } = artOverrides(resolved, 1, "gb");
+      expect(diagnostics, path).toEqual([]);
+      if (Object.keys(options).length > 0) art[path] = options;
+    }
+    return (await buildGame(program, { title: "PONG", assets, art })).bytes;
+  }
+
+  it("changes the cartridge when a backdrop's dither changes", { timeout: 120_000 }, async () => {
+    const plain = await build("targets gb\n");
+    const dithered = await build(
+      // Pong's title screen, named the way the game names it.
+      "targets gb\n\nart pong.title\n  dither bayer8:100\n",
+    );
+    expect(dithered.length).toBe(plain.length);
+    expect([...dithered]).not.toEqual([...plain]);
+  });
+
+  it("leaves the cartridge alone when the file says nothing", { timeout: 120_000 }, async () => {
+    // The property the whole mechanism rests on, restated at the byte level: a
+    // Demakefile with no conversion options in it is the build there was before
+    // conversion options existed.
+    const bare = await build("");
+    const targeted = await build("project pong\ntargets gb\nout build\n");
+    expect([...targeted]).toEqual([...bare]);
+  });
+});
+
+describe("what a build file may and may not set", () => {
+  it("reads every option it accepts", () => {
+    const { options, diagnostics } = artOverrides(
+      {
+        dither: "bayer4:50",
+        scale: "lanczos3",
+        effort: "max",
+        metric: "wrgb",
+        protect: "none",
+      },
+      7,
+    );
+    expect(diagnostics).toEqual([]);
+    expect(options.dither).toEqual({ alg: "bayer4", strength: 50 });
+    expect(options.scale).toBe("lanczos3");
+    expect(options.effort).toBe("max");
+    expect(options.metric).toBe("wrgb");
+    expect(options.protect).toBe(false);
+  });
+
+  it("refuses a value it cannot use, with the line that set it", () => {
+    const found = artOverrides({ dither: "crosshatch" }, 12);
+    expect(found.diagnostics[0]?.code).toBe("E_BAD_OPTION");
+    expect(found.diagnostics[0]?.line).toBe(12);
+    // …and names what would work.
+    expect(found.diagnostics[0]?.hint).toContain("bayer4");
+    expect(artOverrides({ effort: "maximum" }, 1).diagnostics[0]?.code).toBe("E_BAD_OPTION");
+    expect(artOverrides({ dither: "bayer4:900" }, 1).diagnostics[0]?.code).toBe("E_BAD_OPTION");
+  });
+
+  it("refuses an option that is not an art option at all", () => {
+    const found = artOverrides({ size: "256x256" }, 3);
+    expect(found.diagnostics[0]?.code).toBe("E_UNKNOWN_OPTION");
+    expect(found.options).toEqual({});
+  });
+
+  it("cannot reach what the hardware decides, even if something let it through", () => {
+    // Two independent guards, which is deliberate. `size`, `fit`, `maxTiles`,
+    // `maxSubPalettes` and `console` are the build's own arithmetic — what a
+    // window is, what a pattern table holds, what the font already took — so a
+    // file that could set them could hand the fitter a budget the cartridge does
+    // not have. They are not in the whitelist, *and* the build's values go on top.
+    const own: PrepOptions = {
+      console: "gb",
+      size: { w: 160, h: 144 },
+      fit: "cover",
+      maxTiles: 200,
+      maxSubPalettes: 7,
+    };
+    const merged = applyArtOverrides(own, {
+      console: "md",
+      size: { w: 320, h: 224 },
+      fit: "stretch",
+      maxTiles: 2000,
+      maxSubPalettes: 8,
+      dither: { alg: "bayer4" },
+    });
+    expect(merged.console).toBe("gb");
+    expect(merged.size).toEqual({ w: 160, h: 144 });
+    expect(merged.fit).toBe("cover");
+    expect(merged.maxTiles).toBe(200);
+    expect(merged.maxSubPalettes).toBe(7);
+    // …while what it may set survives.
+    expect(merged.dither).toEqual({ alg: "bayer4" });
+  });
+
+  it("treats `strategy auto` as no choice at all", () => {
+    expect(artOverrides({ strategy: "auto" }, 1).options.strategy).toBeUndefined();
+  });
+
+  it("skips `use`, which is the edge's to act on", () => {
+    // Substituting a source file decides which *bytes* are loaded, and by the time
+    // options reach `prep` the bytes have been chosen.
+    const found = artOverrides({ use: "ball-hd.svg" }, 1);
+    expect(found.diagnostics).toEqual([]);
+    expect(found.options).toEqual({});
   });
 });

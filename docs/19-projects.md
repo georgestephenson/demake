@@ -710,9 +710,10 @@ Each step is useful on its own and none of them breaks the one before.
    `defaults` and the `music`/`sound` blocks parse, emit and resolve, with doc 15's
    three round-trip properties as tests and the gameplay invariant beside them.
    `demake build <dir>` honours `source`, `out`, output paths and the header's
-   `title`. What is parsed but not yet applied is the conversion cascade — it wants
-   per-asset options threaded into `bindArt`/`bindAudio` — and the rest of
-   `header`; doc 15 §Status names both.
+   `title`, and **art's conversion options now reach the fitter** on all five
+   backends — a `dither` in a build file changes the cartridge, and a value the
+   engine cannot use stops the build. Audio's options and the rest of `header` are
+   still resolved-but-unapplied; doc 15 §Status names both.
 5. **The shell**: the explorer, tabs, and an editor bound to each file type. The
    four demakers become what opens for their kind and are otherwise untouched.
    Bundled example projects only; no file I/O yet.

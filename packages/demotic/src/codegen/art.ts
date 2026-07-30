@@ -41,6 +41,7 @@ import {
   prep,
   type Executor,
   type PaletteColor,
+  type PrepOptions,
   type SpriteBank,
   type SpriteSource,
 } from "@demake/core";
@@ -50,6 +51,8 @@ import { BUILTIN_TILES, builtinTiles, TILE_BYTES } from "../rom/graphics.js";
 
 import { artKey, ART_PALETTES, PALETTE_BYTES, SYSTEM_PALETTE, type EmitOptions } from "./emit.js";
 import { GB_MEMORY } from "./layout.js";
+import { applyArtOverrides } from "../demakefile/overrides.js";
+import type { ArtSettings } from "./settings.js";
 
 /** Asset bytes by the name a `.dmt` or a `.dmtl` legend wrote. */
 export type AssetBytes = ReadonlyMap<string, Uint8Array>;
@@ -276,12 +279,20 @@ function convertBackdrop(
   bytes: Uint8Array,
   consoleId: string,
   executor: Executor | undefined,
+  overrides?: Partial<PrepOptions>,
 ): Promise<Backdrop> {
   // The executor is deliberately out of the key: which threads ran the
   // tournament is not part of what the tournament produced, and a cache that
   // said otherwise would convert the same picture twice to reach the same bytes.
-  return rememberAsync(backdropCache, `${consoleId}:${digest(bytes)}`, () =>
-    demakeBackdrop(bytes, consoleId, executor),
+  //
+  // The *overrides* are very much in it. They change what the tournament
+  // produces (doc 15 §Resolution), so two pictures with the same bytes and
+  // different `dither` settings are two conversions — a key that ignored them
+  // would hand the second one the first one's pixels.
+  return rememberAsync(
+    backdropCache,
+    `${consoleId}:${digest(bytes)}:${JSON.stringify(overrides ?? {})}`,
+    () => demakeBackdrop(bytes, consoleId, executor, overrides),
   );
 }
 
@@ -289,22 +300,29 @@ async function demakeBackdrop(
   bytes: Uint8Array,
   consoleId: string,
   executor: Executor | undefined,
+  overrides?: Partial<PrepOptions>,
 ): Promise<Backdrop> {
   const spec = getConsole(consoleId);
   const color = spec.color.model === "rgb";
   // Exactly the window the renderer paints, in pixels. Letting `prep` choose
   // would fit the *source's* size, and a title screen has to be a screenful:
   // the map it produces and the loop that draws it are the same rectangle.
-  const fitted = await prep(bytes, {
-    console: consoleId,
-    size: { w: GB_MEMORY.viewW * 8, h: GB_MEMORY.viewH * 8 },
-    fit: "cover",
-    // One palette is the font's, so a picture gets the rest. Reserving it here
-    // rather than taking it back afterwards is what keeps the fit honest: the
-    // tournament optimises against the budget it will actually be shown with.
-    ...(color ? { maxSubPalettes: ART_PALETTES } : {}),
-    ...(executor === undefined ? {} : { executor }),
-  });
+  const fitted = await prep(
+    bytes,
+    applyArtOverrides(
+      {
+        console: consoleId,
+        size: { w: GB_MEMORY.viewW * 8, h: GB_MEMORY.viewH * 8 },
+        fit: "cover",
+        // One palette is the font's, so a picture gets the rest. Reserving it here
+        // rather than taking it back afterwards is what keeps the fit honest: the
+        // tournament optimises against the budget it will actually be shown with.
+        ...(color ? { maxSubPalettes: ART_PALETTES } : {}),
+        ...(executor === undefined ? {} : { executor }),
+      },
+      overrides,
+    ),
+  );
   const palette = fitted.image.palettes[0];
   const backend = backendFor("gb");
   if (!backend) throw new Error("the gb image backend is missing");
@@ -440,6 +458,7 @@ export async function bindArt(
   program: Program,
   assets: AssetBytes,
   executor?: Executor,
+  settings?: ArtSettings,
 ): Promise<BoundArt> {
   // The image engine's path is chosen by the console the *build* targets: a
   // `gb` cartridge is DMG art whichever Game Boy plays it, and a `gbc` one is
@@ -548,7 +567,12 @@ export async function bindArt(
   // numbers depending on which tournament finished first.
   const converted = await Promise.all(
     backdropScenes.map((scene) =>
-      convertBackdrop(assets.get(scene.backdrop as string) as Uint8Array, consoleId, executor),
+      convertBackdrop(
+        assets.get(scene.backdrop as string) as Uint8Array,
+        consoleId,
+        executor,
+        settings?.[scene.backdrop as string],
+      ),
     ),
   );
   for (let index = 0; index < backdropScenes.length; index += 1) {

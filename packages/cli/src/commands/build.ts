@@ -20,10 +20,12 @@ import { join } from "node:path";
 import {
   buildGame,
   BuildError,
+  artOverrides,
   compile,
   describeProgram,
   findProfile,
   formatDiagnostics,
+  resolveOptions,
   GameLangError,
   optionValue,
   outputPath,
@@ -31,8 +33,10 @@ import {
   romExtension,
   runtimeConsoles,
   unsupportedFor,
+  type Diagnostic,
   type Program,
 } from "@demake/demotic";
+import type { PrepOptions } from "@demake/core";
 import type { ParsedValue } from "@demake/cli-spec";
 
 import type { CliEnv } from "../env.js";
@@ -130,6 +134,36 @@ export async function runBuild(
     throw error;
   }
 
+  // What the Demakefile says about each picture (doc 15 §Resolution). Validated
+  // here rather than at the fitter, so a value it cannot read stops the build with
+  // the Demakefile's own line number instead of surfacing as a strange fit.
+  const artSettings: Record<string, Partial<PrepOptions>> = {};
+  {
+    const target = input.plan.targets.find((one) => one.console === profile.id);
+    const badOptions: Diagnostic[] = [];
+    for (const path of program.assets) {
+      const resolvedOptions = resolveOptions(
+        input.build,
+        path,
+        "art",
+        target?.name ?? profile.id,
+        input.files,
+      );
+      if (Object.keys(resolvedOptions).length === 0) continue;
+      const { options: converted, diagnostics } = artOverrides(resolvedOptions, 1, profile.id);
+      badOptions.push(...diagnostics);
+      if (Object.keys(converted).length > 0) artSettings[path] = converted;
+    }
+    if (badOptions.length > 0) {
+      throw new CliError(
+        EXIT.BAD_INPUT,
+        "E_BAD_OPTION",
+        `the Demakefile sets ${String(badOptions.length)} option${badOptions.length === 1 ? "" : "s"} that cannot be used`,
+        formatDiagnostics(badOptions),
+      );
+    }
+  }
+
   const missing = unsupportedFor(program);
   if (missing.length > 0) {
     throw new CliError(
@@ -166,7 +200,12 @@ export async function runBuild(
     // cannot see each other — so they get the machine's cores. The cartridge is
     // the same bytes whatever `--jobs` says (doc 04 §Running the tournament).
     const built = await withPool(parseJobs(str(values, "jobs")), (executor) =>
-      buildGame(program, { title, assets, ...(executor === undefined ? {} : { executor }) }),
+      buildGame(program, {
+        title,
+        assets,
+        ...(Object.keys(artSettings).length === 0 ? {} : { art: artSettings }),
+        ...(executor === undefined ? {} : { executor }),
+      }),
     );
     stats = built.stats;
     symbols = built.symbols;

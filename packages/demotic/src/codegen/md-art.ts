@@ -33,6 +33,7 @@ import {
   getConsole,
   prep,
   type Executor,
+  type PrepOptions,
   type SpriteBank,
   type SpriteSource,
 } from "@demake/core";
@@ -51,6 +52,8 @@ import {
   SYSTEM_PALETTE,
   type MdEmitOptions,
 } from "./md/emit.js";
+import { applyArtOverrides } from "../demakefile/overrides.js";
+import type { ArtSettings } from "./settings.js";
 
 /**
  * Demaking is expensive, deterministic, and asked for over and over.
@@ -184,18 +187,25 @@ async function demakeBackdrop(
   bytes: Uint8Array,
   maxTiles: number,
   executor: Executor | undefined,
+  overrides?: Partial<PrepOptions>,
 ): Promise<Backdrop> {
   const spec = getConsole("md");
-  const fitted = await prep(bytes, {
-    console: "md",
-    size: { w: MD_MEMORY.viewW * 8, h: MD_MEMORY.viewH * 8 },
-    fit: "cover",
-    // Two of the four sub-palettes: one is the objects' and one is the font's,
-    // and a picture told it had all four would take colours a caption needs.
-    maxSubPalettes: ART_PALETTES,
-    maxTiles,
-    ...(executor === undefined ? {} : { executor }),
-  });
+  const fitted = await prep(
+    bytes,
+    applyArtOverrides(
+      {
+        console: "md",
+        size: { w: MD_MEMORY.viewW * 8, h: MD_MEMORY.viewH * 8 },
+        fit: "cover",
+        // Two of the four sub-palettes: one is the objects' and one is the font's,
+        // and a picture told it had all four would take colours a caption needs.
+        maxSubPalettes: ART_PALETTES,
+        maxTiles,
+        ...(executor === undefined ? {} : { executor }),
+      },
+      overrides,
+    ),
+  );
   const backend = backendFor("md");
   if (!backend) throw new Error("the md image backend is missing");
   const artifacts = backend.emitBin(fitted.image, spec, {
@@ -226,6 +236,7 @@ export async function bindMdArt(
   program: Program,
   assets: AssetBytes,
   executor?: Executor,
+  settings?: ArtSettings,
 ): Promise<BoundMdArt> {
   const requests = artRequests(program);
   const missing: string[] = [];
@@ -318,11 +329,13 @@ export async function bindMdArt(
   const pictures = backdropScenes.map(
     (scene) => assets.get(scene.backdrop as string) as Uint8Array,
   );
-  const convert = (source: Uint8Array, cap: number): Promise<Backdrop> =>
+  // The paths beside the bytes, so a conversion can find its own settings.
+  const files = backdropScenes.map((scene) => scene.backdrop as string);
+  const convert = (source: Uint8Array, cap: number, file: string): Promise<Backdrop> =>
     rememberAsync(
       backdropCache,
-      `md:${cap}:${digest(source)}`,
-      () => demakeBackdrop(source, cap, executor),
+      `md:${cap}:${digest(source)}:${JSON.stringify(settings?.[file] ?? {})}`,
+      () => demakeBackdrop(source, cap, executor, settings?.[file]),
       CACHE_LIMIT,
     );
 
@@ -365,7 +378,9 @@ export async function bindMdArt(
   // what it *wanted* as well as what it took. The bank is then shared out
   // max-min fair on those demands.
   const share = Math.max(1, Math.floor(free / Math.max(1, backdropScenes.length)));
-  let converted = await Promise.all(pictures.map((source) => convert(source, share)));
+  let converted = await Promise.all(
+    pictures.map((source, index) => convert(source, share, files[index]!)),
+  );
   const demands = converted.map((art) => art.demand);
   const shares = fairShares(demands, free);
   // What a fit produces is `min(budget, demand)` tiles, and below the demand the
@@ -375,7 +390,7 @@ export async function bindMdArt(
     converted.map((art, index) =>
       Math.min(shares[index]!, demands[index]!) === Math.min(share, demands[index]!)
         ? Promise.resolve(art)
-        : convert(pictures[index]!, shares[index]!),
+        : convert(pictures[index]!, shares[index]!, files[index]!),
     ),
   );
   const interned = internAll(converted);

@@ -35,13 +35,20 @@ is a build nobody can predict.
 Three things are parsed, reported under `--json`, and **not yet applied**, so they
 are gaps rather than decisions:
 
-- **Conversion options** (`dither`, `strategy`, `effort`, `use`, …). The cascade
-  resolves and is tested; what is missing is the plumbing from there into
-  `bindArt`/`bindAudio`, which today take no per-asset options. Until that lands a
-  build uses the demakers' defaults, which keeps the operational rule intact with
-  no work at all — a Demakefile still cannot change how a game plays.
+- ~~**Conversion options.**~~ **Art's are applied.** `dither`, `strategy`,
+  `scale`, `effort`, `metric`, `palette` and `protect` resolve through the cascade,
+  are validated into typed `prep` options, and reach every one of the five
+  backends' art paths — so `art pong.title / dither bayer8:100` produces a
+  different cartridge, which `demakefile.test.ts` asserts at the byte level. A
+  value the engine cannot use stops the build naming what would work. The
+  **audio** domain's are not applied yet: the same cascade resolves them and
+  `bindAudio` takes none.
 - **The rest of `header`** — `mapper`, `mirroring`, `serial`, `region`,
   `licensee` — with the per-family validation this document promises.
+- **`use <file>`**, which substitutes a source file. It is recognised and
+  deliberately ignored by the option converter, because choosing which bytes to
+  load is the *edge's* job and by then the bytes are chosen; what is missing is the
+  edge acting on it.
 - **Multi-target builds.** One invocation still builds one console; `targets`
   decides *where* the artifact lands and which header applies, and `-c` picks
   which of them to build. Building all of them in one command needs `build` to
@@ -201,7 +208,7 @@ files is `E_ASSET_AMBIGUOUS` exactly as a `sprite` would be.
 |---|---|---|
 | `use <file>` | 1 | Substitute a different source file |
 | `transparent <color>` | 1 | Colour key for sprite transparency (default: the alpha channel) |
-| `dither`, `strategy`, `effort`, `scale`, `palette`, `protect`, `metric` | 1 | Passed to `prep`; identical names and values to the doc-05 flags |
+| `dither`, `strategy`, `effort`, `scale`, `palette`, `protect`, `metric` | 1 | Passed to `prep`; identical names and values to the doc-05 flags. **A build file may set only these** — `size`, `fit`, `console` and the tile and palette budgets are the build's own arithmetic, so they are not in the set and the build's values win regardless |
 | `for <target>` | block | Any of the above, for one target only |
 
 **There is no `size` here, deliberately.** A sprite's pixel dimensions are

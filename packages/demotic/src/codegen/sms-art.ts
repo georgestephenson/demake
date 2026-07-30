@@ -32,6 +32,7 @@ import {
   getConsole,
   prep,
   type Executor,
+  type PrepOptions,
   type SpriteBank,
   type SpriteSource,
 } from "@demake/core";
@@ -42,6 +43,8 @@ import { builtinSega, BUILTIN_TILES, SEGA_TILE_BYTES } from "../rom/graphics.js"
 import { artRequests, digest, remember, rememberAsync, TilePool, type AssetBytes } from "./art.js";
 import { GG_MEMORY, SMS_MEMORY } from "./layout.js";
 import { BANK_TILES, SPRITE_COLORS, SYSTEM_INK, type SmsEmitOptions } from "./sms/emit.js";
+import { applyArtOverrides } from "../demakefile/overrides.js";
+import type { ArtSettings } from "./settings.js";
 
 /**
  * Demaking is expensive, deterministic, and asked for over and over.
@@ -241,19 +244,26 @@ async function demakeBackdrop(
   consoleId: string,
   maxTiles: number,
   executor: Executor | undefined,
+  overrides?: Partial<PrepOptions>,
 ): Promise<Backdrop> {
   const memory = plan(consoleId);
   const spec = getConsole(consoleId);
-  const fitted = await prep(bytes, {
-    console: consoleId,
-    size: { w: memory.viewW * 8, h: memory.viewH * 8 },
-    fit: "cover",
-    // A picture here is up to 768 cells against a Game Boy's 360 and the bank is
-    // shared with every object in the game, so a picture that was not told what
-    // it could afford would always overrun.
-    maxTiles,
-    ...(executor === undefined ? {} : { executor }),
-  });
+  const fitted = await prep(
+    bytes,
+    applyArtOverrides(
+      {
+        console: consoleId,
+        size: { w: memory.viewW * 8, h: memory.viewH * 8 },
+        fit: "cover",
+        // A picture here is up to 768 cells against a Game Boy's 360 and the bank is
+        // shared with every object in the game, so a picture that was not told what
+        // it could afford would always overrun.
+        maxTiles,
+        ...(executor === undefined ? {} : { executor }),
+      },
+      overrides,
+    ),
+  );
   const backend = backendFor("sms");
   if (!backend) throw new Error("the sms image backend is missing");
   const artifacts = backend.emitBin(fitted.image, spec, {
@@ -285,6 +295,7 @@ export async function bindSmsArt(
   assets: AssetBytes,
   consoleId: string,
   executor?: Executor,
+  settings?: ArtSettings,
 ): Promise<BoundSmsArt> {
   const gameGear = consoleId === "gg";
   const memory = plan(consoleId);
@@ -381,13 +392,15 @@ export async function bindSmsArt(
   const pictures = backdropScenes.map(
     (scene) => assets.get(scene.backdrop as string) as Uint8Array,
   );
+  // The paths beside the bytes, so a conversion can find its own settings.
+  const files = backdropScenes.map((scene) => scene.backdrop as string);
   // The budget is part of the key: the same picture fitted into a different
   // number of tiles is a different conversion.
-  const convert = (source: Uint8Array, cap: number): Promise<Backdrop> =>
+  const convert = (source: Uint8Array, cap: number, file: string): Promise<Backdrop> =>
     rememberAsync(
       backdropCache,
-      `${consoleId}:${cap}:${digest(source)}`,
-      () => demakeBackdrop(source, consoleId, cap, executor),
+      `${consoleId}:${cap}:${digest(source)}:${JSON.stringify(settings?.[file] ?? {})}`,
+      () => demakeBackdrop(source, consoleId, cap, executor, settings?.[file]),
       CACHE_LIMIT,
     );
 
@@ -449,7 +462,9 @@ export async function bindSmsArt(
   // want more than their share (they keep it) and nothing on a game with one
   // picture (it had the whole bank already).
   const share = Math.max(1, Math.floor(free / backdropScenes.length));
-  let converted = await Promise.all(pictures.map((source) => convert(source, share)));
+  let converted = await Promise.all(
+    pictures.map((source, index) => convert(source, share, files[index]!)),
+  );
   const demands = converted.map((art) => art.demand);
   const shares = fairShares(demands, free);
   // What a fit produces is `min(budget, demand)` tiles, and below the demand the
@@ -459,7 +474,7 @@ export async function bindSmsArt(
     converted.map((art, index) =>
       Math.min(shares[index]!, demands[index]!) === Math.min(share, demands[index]!)
         ? Promise.resolve(art)
-        : convert(pictures[index]!, shares[index]!),
+        : convert(pictures[index]!, shares[index]!, files[index]!),
     ),
   );
   const interned = internAll(converted);

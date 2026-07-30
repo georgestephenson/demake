@@ -33,6 +33,7 @@ import {
   getConsole,
   prep,
   type Executor,
+  type PrepOptions,
   type SpriteBank,
   type SpriteSource,
 } from "@demake/core";
@@ -44,6 +45,8 @@ import { artRequests, TilePool, type AssetBytes } from "./art.js";
 import { artKey, instanceCells } from "./shape.js";
 import { NES_MEMORY } from "./layout.js";
 import { ART_PALETTES, SYSTEM_PALETTE, type NesEmitOptions } from "./nes/emit.js";
+import { applyArtOverrides } from "../demakefile/overrides.js";
+import type { ArtSettings } from "./settings.js";
 
 /** Patterns one table holds; the console has two, and they do not share. */
 export const PATTERNS_PER_TABLE = 256;
@@ -306,22 +309,29 @@ async function demakeBackdrop(
   bytes: Uint8Array,
   maxTiles: number,
   executor: Executor | undefined,
+  overrides?: Partial<PrepOptions>,
 ): Promise<Backdrop> {
   const spec = getConsole("nes");
-  const fitted = await prep(bytes, {
-    console: "nes",
-    size: { w: NES_MEMORY.viewW * 8, h: GAME_ROWS * 8 },
-    fit: "cover",
-    // All four. A picture is not asked to give one up for the font any more: a
-    // caption takes a colour slot the fit left empty, and only compromises where
-    // it left none (see {@link packBackdropPalette}).
-    maxSubPalettes: BACKDROP_PALETTES,
-    // And the same for the bank. A screenful here is 960 cells against a Game
-    // Boy's 360, and the pattern table is the same 256 either way, so a picture
-    // that was not told what it could afford would always overrun.
-    maxTiles,
-    ...(executor === undefined ? {} : { executor }),
-  });
+  const fitted = await prep(
+    bytes,
+    applyArtOverrides(
+      {
+        console: "nes",
+        size: { w: NES_MEMORY.viewW * 8, h: GAME_ROWS * 8 },
+        fit: "cover",
+        // All four. A picture is not asked to give one up for the font any more: a
+        // caption takes a colour slot the fit left empty, and only compromises where
+        // it left none (see {@link packBackdropPalette}).
+        maxSubPalettes: BACKDROP_PALETTES,
+        // And the same for the bank. A screenful here is 960 cells against a Game
+        // Boy's 360, and the pattern table is the same 256 either way, so a picture
+        // that was not told what it could afford would always overrun.
+        maxTiles,
+        ...(executor === undefined ? {} : { executor }),
+      },
+      overrides,
+    ),
+  );
   const backend = backendFor("nes");
   if (!backend) throw new Error("the nes image backend is missing");
   const artifacts = backend.emitBin(fitted.image, spec, {
@@ -388,6 +398,7 @@ export async function bindNesArt(
   program: Program,
   assets: AssetBytes,
   executor?: Executor,
+  settings?: ArtSettings,
 ): Promise<BoundNesArt> {
   const requests = artRequests(program);
   const missing: string[] = [];
@@ -527,6 +538,7 @@ export async function bindNesArt(
       assets.get(scene.backdrop as string) as Uint8Array,
       budget,
       executor,
+      settings?.[scene.backdrop as string],
     );
     const map = new Uint8Array(art.map.length);
     for (let cell = 0; cell < art.map.length; cell += 1) {
