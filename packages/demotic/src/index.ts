@@ -114,6 +114,14 @@ export {
 } from "./project/kinds.js";
 export { resolveReference, shortestName, type Resolution } from "./project/resolve.js";
 export {
+  findEntry,
+  isIgnoredPath,
+  isProject,
+  isSuite,
+  suiteFor,
+  type EntryPoint,
+} from "./project/entry.js";
+export {
   boundsOf,
   follow,
   tilesUnder,

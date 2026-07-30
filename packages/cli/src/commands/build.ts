@@ -22,9 +22,12 @@ import {
   BuildError,
   compile,
   describeProgram,
+  findEntry,
   findProfile,
   formatDiagnostics,
   GameLangError,
+  isIgnoredPath,
+  isProject,
   levelFiles,
   profiles,
   romExtension,
@@ -79,17 +82,98 @@ function stemFromSource(source: string): string {
 }
 
 /**
- * Load the `.dmtl` files a source references, relative to the source.
+ * What a build was pointed at: a project folder, or one loose `.dmt`.
+ *
+ * The folder is the format (doc 19), so `demake build ./pong` and
+ * `demake build pong.dmt` are the same command reaching the same compiler —
+ * they differ only in how much they can find. A project supplies a file list,
+ * which is what lets `sprite ball` resolve to `art/ball.svg` and what makes an
+ * ambiguous reference an error naming both candidates; a loose `.dmt` supplies
+ * none, so every reference stands as written and nothing can be ambiguous. That
+ * is not a degraded mode, it is the zero-config path (doc 15 §You do not need one).
+ */
+interface Input {
+  /** The `.dmt`, as the path a diagnostic should name. */
+  path: string;
+  source: string;
+  /** The project root, when there is one. */
+  root?: string;
+  /** Every file in the project, relative to its root, sorted. */
+  files: readonly string[];
+}
+
+/**
+ * Open whatever the positional named.
+ *
+ * A directory is a project. A file is a file. Nothing given at all is the
+ * working directory *if it looks like a project* — checked with the engine's own
+ * `isProject`, so the CLI and the page ask that question in one place — and
+ * otherwise stdin, exactly as before.
+ */
+function openInput(env: CliEnv, positionals: readonly string[]): Input {
+  const named = positionals[0];
+  const candidate = named === undefined || named === "-" ? "." : named;
+  const listed = named === "-" ? null : env.listFiles(candidate);
+
+  if (listed) {
+    const files = listed.filter((path) => !isIgnoredPath(path));
+    if (named === undefined && !isProject(files)) {
+      // An empty `demake build` in a directory that is not a project falls
+      // through to stdin rather than reporting a project error about a folder
+      // nobody said was one.
+      const { bytes, source } = resolveInput(env, [...positionals]);
+      return { path: source, source: new TextDecoder().decode(bytes), files: [] };
+    }
+    const entry = findEntry(files);
+    if (!entry.path) {
+      throw new CliError(
+        EXIT.NO_INPUT,
+        "E_NO_SOURCE",
+        entry.candidates.length === 0
+          ? `no .dmt file in '${candidate}'`
+          : `'${candidate}' holds ${String(entry.candidates.length)} games: ${entry.candidates.join(", ")}`,
+        entry.candidates.length === 0
+          ? "a project is a folder with a .dmt in it; see docs/19-projects.md."
+          : "name the one to build: `demake build " + (entry.candidates[0] as string) + "`.",
+      );
+    }
+    return {
+      path: join(candidate, entry.path),
+      source: new TextDecoder().decode(env.readFile(join(candidate, entry.path))),
+      root: candidate,
+      files,
+    };
+  }
+
+  const { bytes, source } = resolveInput(env, [...positionals]);
+  return { path: source, source: new TextDecoder().decode(bytes), files: [] };
+}
+
+/**
+ * Load the `.dmtl` files a source references.
  *
  * Reading them here rather than in `@demake/demotic` is the platform-purity
  * rule (doc 02): the compiler takes level *text*, and finding the text is the
- * edge's job.
+ * edge's job. In a project every level goes in, keyed by its own path, because
+ * the compiler resolves a reference to a path and looks it up by that; outside
+ * one, `levelFiles` says which names to look for beside the source.
  */
-function loadLevels(env: CliEnv, source: string, path: string): Record<string, string> {
+function loadLevels(env: CliEnv, input: Input): Record<string, string> {
   const levels: Record<string, string> = {};
-  if (path === "<stdin>") return levels;
-  const root = dirname(path);
-  for (const file of levelFiles(source)) {
+  if (input.path === "<stdin>") return levels;
+  if (input.root !== undefined) {
+    for (const file of input.files) {
+      if (!file.endsWith(".dmtl")) continue;
+      try {
+        levels[file] = new TextDecoder().decode(env.readFile(join(input.root, file)));
+      } catch {
+        // Listed but unreadable; the compiler reports the level it wanted.
+      }
+    }
+    return levels;
+  }
+  const root = dirname(input.path);
+  for (const file of levelFiles(input.source)) {
     try {
       levels[file] = new TextDecoder().decode(env.readFile(join(root, file)));
     } catch {
@@ -101,7 +185,7 @@ function loadLevels(env: CliEnv, source: string, path: string): Record<string, s
 }
 
 /**
- * Load the assets a program names, next to the source that named it.
+ * Load the assets a program names.
  *
  * Art, music and sound effects all arrive the same way, because the build
  * converts all three itself: the edge's only job is to find bytes for a name.
@@ -113,10 +197,12 @@ function loadLevels(env: CliEnv, source: string, path: string): Record<string, s
  * which is why both edges hand the same bytes to the same converters and
  * neither converts anything itself.
  */
-function loadAssets(env: CliEnv, program: Program, path: string): Map<string, Uint8Array> {
+function loadAssets(env: CliEnv, program: Program, input: Input): Map<string, Uint8Array> {
   const assets = new Map<string, Uint8Array>();
-  if (path === "<stdin>") return assets;
-  const root = dirname(path);
+  if (input.path === "<stdin>") return assets;
+  // In a project the names are already resolved paths, relative to its root; for
+  // a loose `.dmt` they are whatever the source wrote, found beside it.
+  const root = input.root ?? dirname(input.path);
   // `program.assets` rather than the art *requests*, because a request is per
   // box and backdrops make none — loading only what `artRequests` names is how
   // the CLI came to build cartridges with no title screen while the page built
@@ -159,14 +245,16 @@ export async function runBuild(
     );
   }
 
-  const { bytes, source: sourcePath } = resolveInput(env, [...positionals]);
-  const source = new TextDecoder().decode(bytes);
+  const input = openInput(env, positionals);
+  const sourcePath = input.path;
+  const source = input.source;
 
   let program: Program;
   try {
     program = compile(source, {
       profile,
-      levels: loadLevels(env, source, sourcePath),
+      files: input.files,
+      levels: loadLevels(env, input),
     });
   } catch (error) {
     if (error instanceof GameLangError) {
@@ -199,7 +287,7 @@ export async function runBuild(
   let stats;
   let symbols: ReadonlyMap<string, number>;
   try {
-    const assets = loadAssets(env, program, sourcePath);
+    const assets = loadAssets(env, program, input);
     // Most of a build is the art and audio tournaments, and their candidates
     // cannot see each other — so they get the machine's cores. The cartridge is
     // the same bytes whatever `--jobs` says (doc 04 §Running the tournament).
@@ -253,6 +341,14 @@ export async function runBuild(
       `${JSON.stringify(
         {
           source: sourcePath,
+          // The project root, when the build was pointed at a folder — and what
+          // its references resolved to. A reference is the shortest name that
+          // identifies a file (doc 19 §The rule), so the resolved paths are the
+          // one thing a reader cannot work out from the source alone.
+          project: input.root ?? null,
+          assets: program.assets,
+          tracks: program.tracks,
+          sounds: program.sounds,
           console: profile.id,
           format,
           output: target ?? "<stdout>",

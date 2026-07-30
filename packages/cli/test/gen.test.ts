@@ -52,6 +52,8 @@ function harness(
     makeTempDir: () => "/tmp/demake-test",
     removeDir: () => {},
     harnessDir: () => null,
+    // No directories in this harness: every path it knows is a file.
+    listFiles: () => null,
   };
   return { env, out: () => out, err: () => err, stdoutBytes: () => stdoutBytes, files };
 }

@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/compile.js";
+import { findEntry, isIgnoredPath, isProject, suiteFor } from "../src/project/entry.js";
 import { kindOf } from "../src/project/kinds.js";
 import { resolveReference, shortestName } from "../src/project/resolve.js";
 import { findProfile } from "../src/profiles.js";
@@ -223,5 +224,52 @@ describe("the compiler resolves a program's references", () => {
       levels: { "levels/cavern.dmtl": grid },
     });
     expect(program.assets).toEqual(["art/brick.png"]);
+  });
+});
+
+describe("findEntry", () => {
+  it("prefers src/, then the project root", () => {
+    expect(findEntry(["src/pong.dmt", "art/ball.svg"]).path).toBe("src/pong.dmt");
+    expect(findEntry(["pong.dmt", "art/ball.svg"]).path).toBe("pong.dmt");
+    // A flat folder is still a project, which is the zero-config path.
+    expect(findEntry(["pong.dmt", "ball.svg", "rally.mid"]).path).toBe("pong.dmt");
+  });
+
+  it("does not count a test suite as a game", () => {
+    // Otherwise every project in the library would be ambiguous, since each ships
+    // its `.test.dmt` beside its source.
+    expect(findEntry(["src/pong.dmt", "src/pong.test.dmt"]).path).toBe("src/pong.dmt");
+  });
+
+  it("names every candidate rather than picking one", () => {
+    const found = findEntry(["src/pong.dmt", "src/other.dmt"]);
+    expect(found.path).toBeUndefined();
+    expect(found.candidates).toEqual(["src/other.dmt", "src/pong.dmt"]);
+  });
+
+  it("finds nothing in a folder with no game", () => {
+    expect(findEntry(["art/ball.svg", "music/rally.mid"]).candidates).toEqual([]);
+    expect(isProject(["art/ball.svg"])).toBe(false);
+    expect(isProject(["src/pong.dmt"])).toBe(true);
+    // A folder holding only a suite is not a project either: there is nothing to
+    // build, and saying so beats compiling a program about a game that is absent.
+    expect(isProject(["src/pong.test.dmt"])).toBe(false);
+  });
+
+  it("ignores what a build writes", () => {
+    // `build/` is generated, so a leftover cartridge source in it must never
+    // become a second candidate — that would make the *second* run of an
+    // ordinary build an ambiguity error.
+    expect(isIgnoredPath("build/pong.gb")).toBe(true);
+    expect(isIgnoredPath("build")).toBe(true);
+    expect(isIgnoredPath(".git/config")).toBe(true);
+    expect(isIgnoredPath("src/pong.dmt")).toBe(false);
+    expect(isIgnoredPath("art/rebuild.svg")).toBe(false);
+  });
+
+  it("finds the suite beside a game, by name", () => {
+    const files = ["src/pong.dmt", "src/pong.test.dmt", "src/other.dmt"];
+    expect(suiteFor("src/pong.dmt", files)).toBe("src/pong.test.dmt");
+    expect(suiteFor("src/other.dmt", files)).toBeUndefined();
   });
 });

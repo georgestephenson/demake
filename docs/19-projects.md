@@ -604,9 +604,14 @@ the property that would make either mechanism safe to add later.
 The parity claim is a two-way one, so the folder is a first-class CLI input.
 Flags land in `packages/cli-spec` first, as always (doc 05).
 
-- `demake build <dir>` builds a project: the Demakefile's targets, or every
-  console with a runtime. With no argument, the working directory when it looks
-  like a project. `demake build <file.dmt>` is unchanged.
+- `demake build <dir>` builds a project — **built**. It finds the game (`src/`
+  first, then the root), hands the compiler the folder's file list so a bare
+  `sprite ball` resolves, loads every level and asset by resolved path, and
+  reports what it resolved under `--json`. With no argument it builds the working
+  directory when it looks like a project, and falls through to stdin when it does
+  not. `demake build <file.dmt>` is unchanged, which is the zero-config path
+  still being the zero-config path. Targets are still one console at a time until
+  the Demakefile lands.
 - `demake init [<dir>]` scaffolds the canonical folders and writes the Demakefile
   that reproduces the defaults — which is what doc 15 already says `init` is for,
   now with somewhere to put the files.
@@ -680,8 +685,10 @@ Each step is useful on its own and none of them breaks the one before.
    changes, so every existing caller keeps working while it lands.
 2. **The example projects**: convert the fixtures, repoint every reader. The
    golden traces are the check that nothing moved but paths.
-3. **The CLI**: `build <dir>`, `check <dir>`, `init`. Parity's other half, and it
-   is what makes step 2 provably right.
+3. **The CLI**: `build <dir>` — **done**; `check <dir>` and `init` still to come.
+   Parity's other half, and it is what makes step 2 provably right: the cartridge
+   `demake build ./caves` writes is byte-identical to the one the engine builds
+   from the same folder, which is what the page is pinned against.
 4. **The Demakefile's new surface**: `targets`, the per-domain `defaults`, the
    `music`/`sound` blocks — with doc 15 absorbing them.
 5. **The shell**: the explorer, tabs, and an editor bound to each file type. The

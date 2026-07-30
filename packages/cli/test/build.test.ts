@@ -7,8 +7,8 @@
  * Everything else here is the usual exit-code surface (doc 05).
  */
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { profiles, runtimeConsoles } from "@demake/demotic";
@@ -23,6 +23,14 @@ import { run } from "../src/run.js";
 // itself and nothing can be ambiguous.
 const PONG = join(import.meta.dirname, "..", "..", "demotic", "fixtures", "projects", "pong");
 const read = (name: string) => new Uint8Array(readFileSync(join(PONG, name)));
+
+/** Every file under a directory, relative and `/`-separated. */
+function listFilesUnder(root: string): string[] {
+  return readdirSync(root, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => relative(root, join(entry.parentPath, entry.name)).split(sep).join("/"))
+    .sort();
+}
 
 function harness(files: Record<string, Uint8Array> = {}) {
   let out = "";
@@ -55,6 +63,16 @@ function harness(files: Record<string, Uint8Array> = {}) {
     makeTempDir: () => "/tmp/demake-test",
     removeDir: () => {},
     harnessDir: () => null,
+    // A directory is any prefix the harness was given files under, which is
+    // enough for `build` to treat it as a project: it asks for a listing and
+    // gets one (doc 19 §The CLI keeps up).
+    listFiles: (path) => {
+      const prefix = path === "." ? "" : path.replace(/\/$/, "") + "/";
+      const found = [...sources.keys(), ...written.keys()]
+        .filter((one) => one.startsWith(prefix) && one.length > prefix.length)
+        .map((one) => one.slice(prefix.length));
+      return found.length > 0 ? found.sort() : null;
+    },
   };
   return { env, out: () => out, err: () => err, written };
 }
@@ -149,5 +167,73 @@ describe("demake build", () => {
       EXIT.UNAVAILABLE,
     );
     expect(h.err()).toContain("rgbfix");
+  });
+});
+
+describe("demake build <dir>", () => {
+  /** Pong's project folder, exactly as it is on disk (doc 19). */
+  function project(prefix = "pong"): Record<string, Uint8Array> {
+    const files: Record<string, Uint8Array> = {};
+    // `.` is the working directory, whose files have no prefix at all — which is
+    // also how `join(".", "src/pong.dmt")` names them.
+    const at = prefix === "." ? "" : `${prefix}/`;
+    for (const one of listFilesUnder(PONG)) {
+      files[`${at}${one}`] = new Uint8Array(readFileSync(join(PONG, one)));
+    }
+    return files;
+  }
+
+  it("builds a project folder, finding its game and its art", async () => {
+    const h = harness(project());
+    expect(await run(["build", "pong", "-o", "pong.gb"], h.env)).toBe(EXIT.OK);
+    const rom = h.written.get("pong.gb") as Uint8Array;
+    expect(rom.length).toBe(0x8000);
+    // Byte-identical to the same project built from its `.dmt` with the assets
+    // beside it would *not* hold — the folder resolves `sprite ball` to
+    // `art/ball.svg`, so the cartridge has art the flat build cannot find. That
+    // is the point of the folder, and this is the cheapest way to see it: a
+    // cartridge with demade art in it is bigger than one without.
+    const flat = harness({ "pong.dmt": read("src/pong.dmt") });
+    expect(await run(["build", "pong.dmt", "-o", "flat.gb"], flat.env)).toBe(EXIT.OK);
+    const without = flat.written.get("flat.gb") as Uint8Array;
+    expect(rom).not.toEqual(without);
+  });
+
+  it("reports what it resolved, with paths rather than bare names", async () => {
+    const h = harness(project());
+    expect(await run(["build", "pong", "-o", "pong.gb", "--json"], h.env)).toBe(EXIT.OK);
+    const report = JSON.parse(h.out()) as { assets?: string[] };
+    expect(report.assets ?? []).toContain("art/ball.svg");
+  });
+
+  it("builds the working directory when given nothing", async () => {
+    const h = harness(project("."));
+    expect(await run(["build", "-o", "pong.gb"], h.env)).toBe(EXIT.OK);
+    expect((h.written.get("pong.gb") as Uint8Array).length).toBe(0x8000);
+  });
+
+  it("refuses a folder with no game rather than compiling nothing", async () => {
+    const h = harness({ "empty/art/ball.svg": read("art/ball.svg") });
+    expect(await run(["build", "empty", "-o", "x.gb"], h.env)).toBe(EXIT.NO_INPUT);
+    expect(h.err()).toContain("no .dmt file");
+  });
+
+  it("names both games rather than picking one", async () => {
+    const h = harness({
+      ...project(),
+      "pong/src/other.dmt": read("src/pong.dmt"),
+    });
+    expect(await run(["build", "pong", "-o", "x.gb"], h.env)).toBe(EXIT.NO_INPUT);
+    expect(h.err()).toContain("holds 2 games");
+    // And it says what to type instead.
+    expect(h.err()).toContain("src/other.dmt");
+  });
+
+  it("does not treat a previous build's output as input", async () => {
+    // `build/` is generated (doc 19 §`build/` is the CLI's), so a stray `.dmt`
+    // in it must not become a second candidate — which would turn the second run
+    // of an ordinary build into an ambiguity error.
+    const h = harness({ ...project(), "pong/build/leftover.dmt": read("src/pong.dmt") });
+    expect(await run(["build", "pong", "-o", "pong.gb"], h.env)).toBe(EXIT.OK);
   });
 });

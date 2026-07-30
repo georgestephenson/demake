@@ -52,6 +52,8 @@ function makeEnv(files: Record<string, Uint8Array>): CliEnv & {
     makeTempDir: () => "/tmp/none",
     removeDir: () => {},
     harnessDir: () => null,
+    // No directories in this harness: every path it knows is a file.
+    listFiles: () => null,
   };
   return env as CliEnv & { stdout: string; stderr: string; written: Record<string, Uint8Array> };
 }

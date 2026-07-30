@@ -520,14 +520,15 @@ export const CLI_SPEC: CliSpec = {
     },
     {
       name: "build",
-      summary: "Build a Demotic game (.dmt) into a playable ROM",
+      summary: "Build a Demotic project or .dmt into a playable ROM",
       positional: {
         name: "input",
-        help: "Demotic source (path, or - for stdin).",
+        help: "Project folder, a .dmt file, or - for stdin. Defaults to the working directory.",
         optional: true,
       },
       flags: BUILD_FLAGS,
       examples: [
+        { cmd: "demake build ./pong", note: "a project folder: src/, art/, music/, sound/" },
         { cmd: "demake build pong.dmt -o pong.gb", note: "a playable Game Boy cartridge" },
         { cmd: "demake build pong.dmt --title PONG --json", note: "report what went in it" },
         {
