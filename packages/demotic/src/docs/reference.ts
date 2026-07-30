@@ -14,6 +14,7 @@ import {
   DIAGNOSTICS,
   DIRECTIONS,
   EDGES_SPEC,
+  SIDES,
   FUNCTIONS,
   KEYWORDS,
   PROPERTIES,
@@ -154,13 +155,21 @@ function inputPage(): ReferencePage {
     "\n",
   );
   const edges = EDGES_SPEC.map((edge) => `| \`${edge.name}\` | ${cell(edge.summary)} |`).join("\n");
+  const sides = SIDES.map((side) => `| \`${side.name}\` | ${cell(side.summary)} |`).join("\n");
   return page(
     "input.md",
-    "Input and edges",
+    "Input, edges and sides",
     "## Buttons\n\nThe portable set — the floor across every target console, which is why " +
       `it is this small.\n\n| Button | Meaning |\n|---|---|\n${buttons}\n\n` +
       "## Screen edges\n\nUsable anywhere an object can be, as a collision target.\n\n" +
-      `| Edge | Meaning |\n|---|---|\n${edges}\n`,
+      `| Edge | Meaning |\n|---|---|\n${edges}\n\n` +
+      "## Collision sides\n\n`from above, left` narrows a `hits` or `touches` rule to " +
+      "contacts resolved on those sides. Each name describes **the subject's** position, " +
+      "which is the reading the sentence has out loud: `when hero touches ledge from above` " +
+      "is the hero above the ledge, and so a landing.\n\nWithout a `from`, a rule fires on " +
+      "any side — which is what every rule written before this existed means. A screen edge " +
+      "has only one side, so it takes no `from`.\n\n" +
+      `| Side | Meaning |\n|---|---|\n${sides}\n`,
   );
 }
 

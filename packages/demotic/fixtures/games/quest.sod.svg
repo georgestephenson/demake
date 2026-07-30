@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- sod — the meadow's floating ledges. Turf's colours, a different edge. -->
+  <rect x="0" y="0" width="64" height="8" fill="#9fe05a"/>
+  <rect x="0" y="8" width="16" height="8" fill="#5fae2f"/>
+  <rect x="16" y="8" width="8" height="8" fill="#9fe05a"/>
+  <rect x="24" y="8" width="16" height="8" fill="#5fae2f"/>
+  <rect x="40" y="8" width="8" height="8" fill="#9fe05a"/>
+  <rect x="48" y="8" width="16" height="8" fill="#5fae2f"/>
+  <rect x="0" y="16" width="64" height="8" fill="#7a5228"/>
+  <rect x="0" y="24" width="8" height="8" fill="#4a3016"/>
+  <rect x="8" y="24" width="24" height="8" fill="#7a5228"/>
+  <rect x="32" y="24" width="8" height="8" fill="#4a3016"/>
+  <rect x="40" y="24" width="16" height="8" fill="#7a5228"/>
+  <rect x="56" y="24" width="8" height="8" fill="#4a3016"/>
+  <rect x="0" y="32" width="64" height="8" fill="#7a5228"/>
+  <rect x="0" y="40" width="64" height="8" fill="#8fd4ff"/>
+  <rect x="0" y="48" width="64" height="8" fill="#8fd4ff"/>
+  <rect x="0" y="56" width="64" height="8" fill="#8fd4ff"/>
+</svg>

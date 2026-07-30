@@ -1,0 +1,389 @@
+-- Quest. Three levels, a boss, and a room behind a pipe.
+--
+-- The one structural idea worth reading first: almost every rule here names the
+-- *class* `hero` rather than one of the four hero objects. A class rule binds
+-- each instance in turn and skips the ones whose scene is not running, so one
+-- line of gravity is gravity in all four levels. Rules that cannot do that are
+-- the ones a button fires, because a button has no collision to bind from.
+--
+-- The other is where the score lives. Entering a scene resets that scene's
+-- objects, so anything that has to survive a level — coins, lives, the power-up
+-- — is declared in `title` and read from everywhere. Reaching `title` is a new
+-- game, and that is the same fact stated once.
+
+start title
+seed 20260729
+
+-- title ---------------------------------------
+
+scene title
+
+backdrop quest.title.svg
+
+create text prompt in title (x centerx - 7, y screenheight - 2, text "press a to play")
+
+-- The game's whole memory, in one place. `visible 0` is what makes a number a
+-- variable: not drawn, not collided with, not moved.
+create number coins in title (value 0, visible 0)
+create number lives in title (value 3, visible 0)
+create number power in title (value 0, visible 0)
+create number tokens in title (value 0, visible 0)
+
+-- Set by a collision, spent by the level rules below, one tick later.
+create number hurt in title (value 0, visible 0)
+-- Ticks of mercy after a hit, so one contact costs one power-up and not two.
+create number guard in title (value 0, visible 0)
+
+-- Ground underfoot, and which way a fireball goes. One hero runs at a time, so
+-- one of each covers all four.
+create number footing in title (value 0, visible 0)
+create number facing in title (value 1, visible 0)
+create number onpipe in title (value 0, visible 0)
+
+when a pressed in title then scene as play1
+
+-- the cast ------------------------------------
+
+create object hero (width 1 cell, height 2 cells, speed 11, sprite hero.svg)
+
+-- Crawlers walk; fliers bounce between the floor and the ceiling. Both die to a
+-- stomp and cost a power-up on contact, which is the only rule pair the game
+-- needs for two very different things to avoid.
+create object crawler (width 1 cell, height 1 cell, speed 5, sprite quest.crawler.svg)
+create object flier (width 1 cell, height 1 cell, speed 7, sprite quest.flier.svg)
+
+create object coin (width 1 cell, height 1 cell, sprite coin.svg)
+-- The vault's coins, which come back. A separate class because that is the one
+-- rule they do not share with the others.
+create object gem (width 1 cell, height 1 cell, sprite quest.gem.svg)
+create object token (width 1 cell, height 1 cell, sprite quest.token.svg)
+
+create object mushroom (width 1 cell, height 1 cell, sprite quest.mushroom.svg)
+create object flower (width 1 cell, height 1 cell, sprite quest.flower.svg)
+create object fireball (width 1 cell, height 1 cell, speed 45, sprite quest.fireball.svg)
+
+create object brick (width 1 cell, height 1 cell, sprite quest.block.svg)
+
+create object warden (width 2 cells, height 2 cells, speed 9, sprite quest.warden.svg)
+create object bolt (width 1 cell, height 1 cell, speed 26, sprite quest.bolt.svg)
+
+-- the meadow ----------------------------------
+
+scene play1
+
+level meadow from meadow.dmtl
+
+music overworld.mid in play1
+camera follows p1
+
+create hero p1 in play1 (x 2, y 22)
+
+create crawler c1 in play1 (x 31, y 23, direction west)
+create crawler c2 in play1 (x 62, y 23, direction west)
+create flier v1 in play1 (x 47, y 14, direction south)
+create flier v2 in play1 (x 76, y 12, direction north)
+
+create coin k1 in play1 (x 10, y 19)
+create coin k2 in play1 (x 37, y 18)
+create coin k3 in play1 (x 55, y 19)
+create coin k6 in play1 (x 87, y 15)
+
+-- Bricks at the height a jump from the ground reaches, which is what makes
+-- them a decision rather than scenery. Breaking one needs the mushroom.
+create brick r1 in play1 (x 30, y 20)
+create brick r2 in play1 (x 31, y 20)
+
+create mushroom m1 in play1 (x 14, y 23)
+create flower w1 in play1 (x 61, y 15)
+create token t1 in play1 (x 17, y 16)
+
+create fireball g1 in play1 (visible 0)
+
+create number sc1 in play1 (value 0, x 1, y 1)
+create number sl1 in play1 (value 3, x screenwidth - 3, y 1)
+
+-- the vault -----------------------------------
+
+scene play2
+
+level vault from vault.dmtl
+
+music vault.mid in play2
+camera follows p2
+
+create hero p2 in play2 (x 3, y 22)
+
+-- Ten gems that come back where the shelves are, which is what makes a hundred
+-- coins a thing a player can actually do rather than a rule nobody sees fire.
+create gem e1 in play2 (x 7, y 23)
+create gem e2 in play2 (x 13, y 23)
+create gem e3 in play2 (x 17, y 19)
+create gem e4 in play2 (x 21, y 19)
+create gem e7 in play2 (x 10, y 15)
+create gem e8 in play2 (x 24, y 15)
+
+create number sc2 in play2 (value 0, x 1, y 1)
+create number sl2 in play2 (value 3, x screenwidth - 3, y 1)
+
+-- the hollow ----------------------------------
+
+scene play3
+
+level hollow from hollow.dmtl
+
+music underworld.mid in play3
+camera follows p3
+
+create hero p3 in play3 (x 2, y 26)
+
+create crawler c3 in play3 (x 7, y 27, direction west)
+create crawler c4 in play3 (x 40, y 27, direction west)
+create flier v3 in play3 (x 28, y 14, direction north)
+
+create coin k7 in play3 (x 6, y 24)
+create coin k8 in play3 (x 11, y 21)
+create coin k9 in play3 (x 22, y 17)
+create coin k11 in play3 (x 24, y 7)
+create coin k12 in play3 (x 42, y 13)
+create coin k14 in play3 (x 57, y 6)
+
+create brick r4 in play3 (x 34, y 9)
+
+create mushroom m2 in play3 (x 5, y 24)
+create token t2 in play3 (x 51, y 10)
+
+create fireball g2 in play3 (visible 0)
+
+create number sc3 in play3 (value 0, x 1, y 1)
+create number sl3 in play3 (value 3, x screenwidth - 3, y 1)
+
+-- the keep -----------------------------------
+
+scene play4
+
+level keep from keep.dmtl
+
+music keep.mid in play4
+camera follows p4
+
+create hero p4 in play4 (x 3, y 22)
+
+create crawler c6 in play4 (x 5, y 23, direction east)
+
+create coin k15 in play4 (x 15, y 19)
+create coin k17 in play4 (x 33, y 20)
+
+-- The flower is in the level, because the fight needs it and a player who
+-- arrived without one would have nothing to do.
+create flower w2 in play4 (x 6, y 22)
+create token t3 in play4 (x 28, y 11)
+
+create fireball g3 in play4 (visible 0)
+
+create warden boss in play4 (x 48, y 22, direction west)
+create bolt z1 in play4 (visible 0, direction west)
+
+create number wardenhp in play4 (value 6, visible 0)
+create number throw in play4 (value 0, visible 0)
+
+create number sc4 in play4 (value 0, x 1, y 1)
+create number sl4 in play4 (value 3, x screenwidth - 3, y 1)
+
+-- sound ---------------------------------------
+
+sound jump.wav on a pressed if footing.value > 0
+sound coin.wav on hero hits coin
+sound coin.wav on hero hits gem
+sound stomp.wav on hero hits crawler
+sound stomp.wav on hero hits flier
+sound powerup.wav on hero hits mushroom
+sound powerup.wav on hero hits flower
+sound smash.wav on hero hits brick
+sound flame.wav on b pressed in play1 if power.value >= 2
+sound token.wav on hero hits token
+sound hurt.wav on hero hits spikes, lava, screenbottom
+
+-- physics -------------------------------------
+-- Every rule from here down names `hero`, `crawler`, `flier`, `fireball` or
+-- `bolt` as a class, so each one is written once and runs in whichever of the
+-- four levels is on screen.
+
+when always then hero.ydirection as min(hero.ydirection + 0.04, 0.9)
+when always then crawler.ydirection as min(crawler.ydirection + 0.04, 0.9)
+when always then footing.value as 0
+when always then onpipe.value as 0
+
+control p1 left (xdirection -1) on hold
+control p1 right (xdirection 1) on hold
+control p2 left (xdirection -1) on hold
+control p2 right (xdirection 1) on hold
+control p3 left (xdirection -1) on hold
+control p3 right (xdirection 1) on hold
+control p4 left (xdirection -1) on hold
+control p4 right (xdirection 1) on hold
+
+-- Which way a fireball leaves, remembered across the release of the button.
+when right pressed then facing.value as 1
+when left pressed then facing.value as -1
+
+when hero hits screenleft, screenright then xdirection as 0
+
+-- Landing and bonking, in one rule. `touches`, not `hits`: resting contact is
+-- not an event, and a hero standing still under `hits` keeps accumulating
+-- gravity into `ydirection` until the next jump fights it.
+--
+-- `> 0` and not `>= 0`, which is the difference between a head-bonk and a
+-- landing. A cell-wide hero under a ledge touches two of its cells in one tick;
+-- the first sets `ydirection` to zero and `>= 0` then reads that back as a
+-- landing on the second — so bonking your head handed you a jump.
+--
+-- And no `else`. A contact does not say which side it happened on, so an `else`
+-- that stops a rise stops it against a platform's *edge* too — which is a jump
+-- cancelled every time you brush the thing you were jumping onto. Stopping a
+-- rise belongs to the tiles that are only ever overhead, below.
+when hero touches ledge, ground, pipe, post if hero.ydirection > 0 then (ydirection, footing.value) as (0, 1)
+
+-- `wall` and `bedrock` are named here and nowhere else, which is what makes them
+-- solid without making them landable: footing from the side of a pit wall is a
+-- pit you can jump back out of. These are the ceilings and the pit faces, so
+-- stopping a rise against one is a head-bonk and not a cancelled jump.
+when hero hits wall, bedrock if hero.ydirection < 0 then ydirection as 0
+
+when crawler touches ledge, ground, post then ydirection as 0
+when crawler hits wall, post then xdirection as flip
+when flier hits screentop, screenbottom, ledge, ground, wall, post then ydirection as flip
+
+-- A jump is a rule and not a `control`, because a control runs at the top of the
+-- tick, before anything has been collided with, and so cannot ask for footing.
+when a pressed in play1 if footing.value > 0 then p1.ydirection as -1.5
+when a pressed in play2 if footing.value > 0 then p2.ydirection as -1.5
+when a pressed in play3 if footing.value > 0 then p3.ydirection as -1.5
+when a pressed in play4 if footing.value > 0 then p4.ydirection as -1.5
+
+-- enemies -------------------------------------
+-- Feet above the middle of the thing you touched is a stomp; anything else is
+-- being walked into. `ydirection` cannot tell them apart: gravity has already
+-- made it positive by the time a grounded hero meets a crawler head on.
+
+when hero hits crawler if hero.bottom < crawler.centery then (crawler.visible, hero.ydirection) as (0, -1.2) else hurt.value as 1
+when hero hits flier if hero.bottom < flier.centery then (flier.visible, hero.ydirection) as (0, -1.2) else hurt.value as 1
+
+-- collecting ----------------------------------
+
+when hero hits coin then (coin.visible, coins.value) as (0, coins.value + 1)
+when hero hits token then (token.visible, tokens.value) as (0, tokens.value + 1)
+when hero hits mushroom then (mushroom.visible, power.value) as (0, max(power.value, 1))
+when hero hits flower then (flower.visible, power.value) as (0, 2)
+
+-- A gem is a coin that comes back on one of the vault's four shelf rows, drawn
+-- from the game's own generator so both implementations agree about where.
+when hero hits gem then (gem.visible, coins.value) as (0, coins.value + 1)
+when gem.visible = 0 in play2 then (visible, x, y) as (1, random(3, 35), random(0, 3) * 4 + 7)
+
+-- Bricks break from underneath, and only with a power-up in hand. Small, you
+-- bonk your head on them, which is the same rule's `else`.
+when hero hits brick if (hero.ydirection < 0) * (power.value > 0) > 0 then (brick.visible, coins.value, hero.ydirection) as (0, coins.value + 1, 0) else hero.ydirection as 0
+when hero touches brick if hero.ydirection > 0 then (ydirection, footing.value) as (0, 1)
+
+-- fire ----------------------------------------
+-- One fireball in flight per level. The spawn has to name an object rather than
+-- the class, because a button press binds nothing to be the subject of.
+
+when b pressed in play1 if (power.value >= 2) * (g1.visible = 0) > 0 then (g1.visible, g1.x, g1.y, g1.xdirection) as (1, p1.x, p1.y, facing.value)
+when b pressed in play3 if (power.value >= 2) * (g2.visible = 0) > 0 then (g2.visible, g2.x, g2.y, g2.xdirection) as (1, p3.x, p3.y, facing.value)
+when b pressed in play4 if (power.value >= 2) * (g3.visible = 0) > 0 then (g3.visible, g3.x, g3.y, g3.xdirection) as (1, p4.x, p4.y, facing.value)
+
+when fireball hits wall, ledge, ground, post, screenleft, screenright then visible as 0
+when fireball hits crawler then (crawler.visible, fireball.visible) as (0, 0)
+when fireball hits flier then (flier.visible, fireball.visible) as (0, 0)
+
+-- damage --------------------------------------
+-- `hurt` is set by a collision in step 5 and spent here in step 3 of the next
+-- tick, which is why one flag serves every way of being hit.
+
+when always if hurt.value * (guard.value = 0) * (power.value > 0) > 0 then (power.value, guard.value) as (0, 120)
+when always in play1 if hurt.value * (guard.value = 0) * (power.value = 0) > 0 then scene as play1
+when always in play2 if hurt.value * (guard.value = 0) * (power.value = 0) > 0 then scene as play2
+when always in play3 if hurt.value * (guard.value = 0) * (power.value = 0) > 0 then scene as play3
+when always in play4 if hurt.value * (guard.value = 0) * (power.value = 0) > 0 then scene as play4
+when always if hurt.value * (guard.value = 0) * (power.value = 0) > 0 then lives.value as lives.value - 1
+when always then hurt.value as 0
+when always then guard.value as max(guard.value - 1, 0)
+
+-- Spikes, lava and the bottom of the level are not survivable whatever you are
+-- carrying, so they cost a life directly rather than going through `hurt`.
+when hero hits spikes, lava, screenbottom then (lives.value, power.value) as (lives.value - 1, 0)
+when hero hits spikes, lava, screenbottom in play1 then scene as play1
+when hero hits spikes, lava, screenbottom in play2 then scene as play2
+when hero hits spikes, lava, screenbottom in play3 then scene as play3
+when hero hits spikes, lava, screenbottom in play4 then scene as play4
+
+-- A hundred coins is a life, and the change is kept. Written as a guarded
+-- `always` rather than `reaches`, because the trigger names no object and so the
+-- rule runs in every scene rather than in whichever one holds the counter.
+when always if coins.value >= 100 then (lives.value, coins.value) as (lives.value + 1, coins.value - 100)
+
+when always if lives.value < 1 then scene as lost
+
+-- the fight -----------------------------------
+
+when always in play4 then throw.value as throw.value + 1
+when boss.x <= 40 in play4 then boss.xdirection as 1
+when boss.x >= 51 in play4 then boss.xdirection as -1
+
+when throw.value reaches 70 in play4 then (z1.visible, z1.x, z1.y) as (1, boss.x, boss.y + 1)
+when throw.value reaches 140 in play4 then (throw.value, z1.visible, z1.x, z1.y) as (0, 1, boss.x, boss.y + 1)
+
+when bolt hits wall, ledge, screenleft then visible as 0
+when hero hits bolt then (bolt.visible, hurt.value) as (0, 1)
+
+when hero hits warden if hero.bottom < warden.centery then (hero.ydirection, wardenhp.value) as (-1.2, wardenhp.value - 1) else hurt.value as 1
+when fireball hits warden then (fireball.visible, wardenhp.value) as (0, wardenhp.value - 1)
+
+when wardenhp.value reaches 0 in play4 then (boss.visible, z1.visible) as (0, 0)
+when always in play4 if boss.visible = 0 then scene as won
+
+-- doors ---------------------------------------
+-- The vault comes out at the hollow, not back at the meadow: coming back would
+-- restart the level, and going on is what makes finding the pipe worth anything.
+
+when hero touches pipe then onpipe.value as 1
+when down pressed in play1 if onpipe.value > 0 then scene as play2
+
+when hero hits exit in play1 then scene as play3
+when hero hits exit in play2 then scene as play3
+when hero hits exit in play3 then scene as play4
+
+-- the hud -------------------------------------
+-- Sprites, because the background layer moves as one piece and a counter drawn
+-- into it slides away with the world. One-letter labels: eight sprites to a
+-- scanline is the limit on half these machines, and the counters are on the
+-- same row.
+
+when always in play1 then (sc1.x, sc1.y, sl1.x, sl1.y) as (camera.x + 1, camera.y + 1, camera.x + screenwidth - 3, camera.y + 1)
+when always in play2 then (sc2.x, sc2.y, sl2.x, sl2.y) as (camera.x + 1, camera.y + 1, camera.x + screenwidth - 3, camera.y + 1)
+when always in play3 then (sc3.x, sc3.y, sl3.x, sl3.y) as (camera.x + 1, camera.y + 1, camera.x + screenwidth - 3, camera.y + 1)
+when always in play4 then (sc4.x, sc4.y, sl4.x, sl4.y) as (camera.x + 1, camera.y + 1, camera.x + screenwidth - 3, camera.y + 1)
+
+when always in play1 then (sc1.value, sl1.value) as (coins.value, lives.value)
+when always in play2 then (sc2.value, sl2.value) as (coins.value, lives.value)
+when always in play3 then (sc3.value, sl3.value) as (coins.value, lives.value)
+when always in play4 then (sc4.value, sl4.value) as (coins.value, lives.value)
+
+-- endings -------------------------------------
+
+scene lost
+
+create text over in lost (x centerx - 5, y centery, text "out of lives")
+
+when a pressed in lost then scene as title
+
+scene won
+
+create text hail in won (x centerx - 7, y centery - 1, text "the keep is won")
+create text tally in won (x centerx - 4, y centery + 1, text "tokens")
+create number shown in won (value 0, x centerx + 3, y centery + 1)
+
+when always in won then shown.value as tokens.value
+
+when a pressed in won then scene as title

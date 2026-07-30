@@ -24,8 +24,14 @@ import cavesSource from "@demake/demotic/fixtures/games/caves.dmt?raw";
 import cavesTests from "@demake/demotic/fixtures/games/caves.test.dmt?raw";
 import runnerSource from "@demake/demotic/fixtures/games/runner.dmt?raw";
 import runnerTests from "@demake/demotic/fixtures/games/runner.test.dmt?raw";
+import questSource from "@demake/demotic/fixtures/games/quest.dmt?raw";
+import questTests from "@demake/demotic/fixtures/games/quest.test.dmt?raw";
 
 import cavernLevel from "@demake/demotic/fixtures/games/cavern.dmtl?raw";
+import meadowLevel from "@demake/demotic/fixtures/games/meadow.dmtl?raw";
+import vaultLevel from "@demake/demotic/fixtures/games/vault.dmtl?raw";
+import hollowLevel from "@demake/demotic/fixtures/games/hollow.dmtl?raw";
+import keepLevel from "@demake/demotic/fixtures/games/keep.dmtl?raw";
 import openLevel from "@demake/demotic/fixtures/games/open.dmtl?raw";
 import lowpipeLevel from "@demake/demotic/fixtures/games/lowpipe.dmtl?raw";
 import highpipeLevel from "@demake/demotic/fixtures/games/highpipe.dmtl?raw";
@@ -114,6 +120,18 @@ export const EXAMPLES: readonly Example[] = [
     source: runnerSource,
     tests: runnerTests,
   },
+  // The biggest one, and the only one whose cartridge does not build on every
+  // console with a backend: three levels, a boss and a room behind a pipe come
+  // to around 122 KiB of SM83 against a mapper-less 32 KiB, so picking a Game
+  // Boy here reports that rather than handing back a ROM (doc 13 §Banked
+  // cartridges). It plays on the Mega Drive; its preview and its suite run
+  // everywhere.
+  {
+    id: "quest",
+    name: "Quest",
+    source: questSource,
+    tests: questTests,
+  },
 ];
 
 /**
@@ -126,6 +144,10 @@ export const EXAMPLES: readonly Example[] = [
  */
 export const DEMO_LEVELS: Readonly<Record<string, string>> = {
   "cavern.dmtl": cavernLevel,
+  "meadow.dmtl": meadowLevel,
+  "vault.dmtl": vaultLevel,
+  "hollow.dmtl": hollowLevel,
+  "keep.dmtl": keepLevel,
   "open.dmtl": openLevel,
   "lowpipe.dmtl": lowpipeLevel,
   "highpipe.dmtl": highpipeLevel,

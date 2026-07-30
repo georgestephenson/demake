@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- mushroom — the first power-up. Bricks become breakable with it in hand. -->
+  <rect x="16" y="0" width="32" height="8" fill="#c8331f"/>
+  <rect x="8" y="8" width="48" height="8" fill="#c8331f"/>
+  <rect x="0" y="16" width="8" height="8" fill="#c8331f"/>
+  <rect x="8" y="16" width="8" height="8" fill="#fff4e2"/>
+  <rect x="16" y="16" width="16" height="8" fill="#c8331f"/>
+  <rect x="32" y="16" width="8" height="8" fill="#fff4e2"/>
+  <rect x="40" y="16" width="24" height="8" fill="#c8331f"/>
+  <rect x="0" y="24" width="8" height="8" fill="#c8331f"/>
+  <rect x="8" y="24" width="16" height="8" fill="#fff4e2"/>
+  <rect x="24" y="24" width="8" height="8" fill="#c8331f"/>
+  <rect x="32" y="24" width="16" height="8" fill="#fff4e2"/>
+  <rect x="48" y="24" width="16" height="8" fill="#c8331f"/>
+  <rect x="0" y="32" width="64" height="8" fill="#c8331f"/>
+  <rect x="8" y="40" width="48" height="8" fill="#e8c79a"/>
+  <rect x="8" y="48" width="8" height="8" fill="#e8c79a"/>
+  <rect x="16" y="48" width="32" height="8" fill="#fff4e2"/>
+  <rect x="48" y="48" width="8" height="8" fill="#e8c79a"/>
+  <rect x="8" y="56" width="48" height="8" fill="#e8c79a"/>
+</svg>

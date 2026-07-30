@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- shelf — the hollow's climb. Bright top edge, because the climb is read. -->
+  <rect x="0" y="0" width="64" height="8" fill="#a89bc4"/>
+  <rect x="0" y="8" width="64" height="8" fill="#6b5f85"/>
+  <rect x="0" y="16" width="8" height="8" fill="#6b5f85"/>
+  <rect x="8" y="16" width="8" height="8" fill="#4a4160"/>
+  <rect x="16" y="16" width="24" height="8" fill="#6b5f85"/>
+  <rect x="40" y="16" width="8" height="8" fill="#4a4160"/>
+  <rect x="48" y="16" width="16" height="8" fill="#6b5f85"/>
+  <rect x="0" y="24" width="64" height="8" fill="#2b2438"/>
+  <rect x="0" y="32" width="64" height="8" fill="#12101a"/>
+  <rect x="0" y="40" width="64" height="8" fill="#12101a"/>
+  <rect x="0" y="48" width="64" height="8" fill="#12101a"/>
+  <rect x="0" y="56" width="64" height="8" fill="#12101a"/>
+</svg>

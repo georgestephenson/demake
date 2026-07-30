@@ -37,7 +37,7 @@ import type { InstanceDef, RuleDef } from "../../program.js";
 import type { SelectedBank } from "../../rom/graphics.js";
 import { isMutable } from "../analyze.js";
 import { emitTickSteps, type TickSteps } from "../backend.js";
-import { ENTITY_SIZE, PROPS, TILE_CONTACT_MAX, W } from "../layout.js";
+import { PROPS, TILE_CONTACT_MAX, W } from "../layout.js";
 import {
   artKey,
   emitInstanceDefaults,
@@ -252,7 +252,7 @@ export function emitProgram(ctx: NesCtx, options: NesEmitOptions = {}): void {
       }
     }
   }
-  emitInstanceDefaults(asm, program, PROPS);
+  emitInstanceDefaults(asm, program, PROPS, ctx.layout.entitySizes);
 
   // One demade nametable per scene that has a backdrop, and one attribute table
   // per scene whatever it draws — see {@link sceneAttributes}.
@@ -362,7 +362,7 @@ function emitReset(ctx: NesCtx, options: NesEmitOptions): void {
       ctx,
       label(`Defaults_${instance.id}`),
       layout.entities[instance.id] as number,
-      ENTITY_SIZE,
+      layout.entitySizes[instance.id] as number,
     );
   }
 
@@ -808,7 +808,12 @@ function emitSceneReset(ctx: NesCtx, scene: SceneCtx): void {
   const { asm, layout } = ctx;
   asm.label(`SceneReset_${scene.index}`);
   for (const id of scene.def.instanceIds) {
-    emitCopyBlock(ctx, label(`Defaults_${id}`), layout.entities[id] as number, ENTITY_SIZE);
+    emitCopyBlock(
+      ctx,
+      label(`Defaults_${id}`),
+      layout.entities[id] as number,
+      layout.entitySizes[id] as number,
+    );
   }
   asm.rts();
 }

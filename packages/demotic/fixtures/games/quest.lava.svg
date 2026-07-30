@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- lava — not solid, so it is fallen into rather than stopped at. -->
+  <rect x="0" y="0" width="64" height="8" fill="#ffd66b"/>
+  <rect x="0" y="8" width="64" height="8" fill="#c73a10"/>
+  <rect x="0" y="16" width="8" height="8" fill="#c73a10"/>
+  <rect x="8" y="16" width="16" height="8" fill="#f26a1b"/>
+  <rect x="24" y="16" width="16" height="8" fill="#c73a10"/>
+  <rect x="40" y="16" width="16" height="8" fill="#f26a1b"/>
+  <rect x="56" y="16" width="8" height="8" fill="#c73a10"/>
+  <rect x="0" y="24" width="64" height="8" fill="#f26a1b"/>
+  <rect x="0" y="32" width="8" height="8" fill="#f26a1b"/>
+  <rect x="8" y="32" width="16" height="8" fill="#fff3c4"/>
+  <rect x="24" y="32" width="16" height="8" fill="#f26a1b"/>
+  <rect x="40" y="32" width="16" height="8" fill="#fff3c4"/>
+  <rect x="56" y="32" width="8" height="8" fill="#f26a1b"/>
+  <rect x="0" y="40" width="64" height="8" fill="#f26a1b"/>
+  <rect x="0" y="48" width="8" height="8" fill="#c73a10"/>
+  <rect x="8" y="48" width="16" height="8" fill="#f26a1b"/>
+  <rect x="24" y="48" width="16" height="8" fill="#c73a10"/>
+  <rect x="40" y="48" width="16" height="8" fill="#f26a1b"/>
+  <rect x="56" y="48" width="8" height="8" fill="#c73a10"/>
+  <rect x="0" y="56" width="64" height="8" fill="#c73a10"/>
+</svg>

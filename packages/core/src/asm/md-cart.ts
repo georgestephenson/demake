@@ -79,8 +79,23 @@ export interface MdHeaderOptions {
   hint?: number;
 }
 
-/** Bytes a Demotic cartridge is padded to. */
+/** Bytes a Demotic cartridge is padded to, at the smallest. */
 export const MD_ROM_SIZE = 0x80000;
+
+/**
+ * Cartridge sizes, smallest first.
+ *
+ * There is no mapper in any of these: a Mega Drive maps the whole cartridge from
+ * `$000000` and the header records where it ends, so growing one is padding a
+ * bigger array and writing a different number at `$1A4`. Powers of two because
+ * that is what the boards were, and because `mdChecksum` sums words to the end of
+ * the image and an odd length would leave a half-word to decide about.
+ *
+ * Four megabytes is where this stops, and it is the flat limit rather than an
+ * arbitrary one: past it a cartridge needs bank switching through `$A130F1`, which
+ * is a different piece of work (doc 13 §Banked cartridges).
+ */
+export const MD_ROM_SIZES: readonly number[] = [0x80000, 0x100000, 0x200000, 0x400000];
 
 /** Pad a field with spaces, or cut it to length — the header's own convention. */
 function field(text: string, length: number): number[] {

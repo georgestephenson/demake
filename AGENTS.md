@@ -472,6 +472,11 @@ packages/web/        the site (doc 07): one shell over five sections, all but th
                      instances of core.worker are the pool lanes, which is why
                      they cost nothing to download
   src/sections/      the lazy sections; art's panes live in src/components/
+  src/players/       one module per emulator core, reached through `bootPlayer`'s
+                     `import()`, so a visitor downloads the console they are
+                     playing rather than all five. player.ts is the part that is
+                     safe to import eagerly: an interface and each console's
+                     framebuffer size, pinned against the cores' own constants
   src/lib/           option records ⇄ engine options ⇄ equivalent command line,
                      the bundled demo library, and audio-player.ts (playback only)
 tools/eslint-rules/  custom ESLint rules: platform-purity + determinism
@@ -580,6 +585,19 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   assembler, which is what lets the browser produce byte-identical ROMs with no
   toolchain (doc 13 §D5). Doc 14 §2 records the reversal and the measurement —
   don't reintroduce a table interpreter without reading it.
+- **An entity record is as long as the object needs.** `codegen/layout.ts`'s
+  `entityBytes` allocates up to the highest slot the program can _observe_ — the
+  collision box always, whatever a rule can write, `value` for a `number`, and
+  the movement trio only for something that can move — because the backend
+  already folds the rest into the instructions that use it. That is why `PROPS`
+  puts `visible` and `value` ahead of `speed`/`xdirection`/`ydirection`: where a
+  property sits decides what a coin costs, and a coin is most of the objects in
+  a game. Three things read `Layout.entitySizes` and none of them may recompute
+  it — the boot restore, each scene's reset, and the `Defaults_` table they copy
+  from — and so does `rom/trace.ts`, which reports the _declared_ value for a
+  property with no storage rather than whatever the next object left there. Any
+  new emitter that reads a property off a record has to ask whether that slot is
+  allocated for that instance; reading past the end is a wrong game, not a crash.
 - **Unused features must leave no trace in the ROM.** Helpers are _pulled_, never
   pushed: `ctx.need(name, body)` is the only way a routine reaches the output, so
   a game that never divides ships no divider. Never add a routine unconditionally
@@ -743,6 +761,40 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   (`packages/demotic/fixtures/games/`). Each example is there for something the
   others do not exercise; `touches`, the `reaches` crossing rule and `visible`'s
   collision meaning were all found by writing one.
+- **A rule that names a class covers every scene that class lives in.** `quest`
+  is written that way — almost every rule names `hero` rather than one of its
+  four hero objects — because a class rule binds each instance in turn and skips
+  the ones whose scene is not running. One line of gravity is gravity in all four
+  levels. What cannot do it is a rule a _button_ fires: an input trigger binds
+  nothing, so `a pressed` has to name an object and is written per scene.
+- **State that outlives a level is declared in the scene the game starts on.**
+  Entering a scene resets that scene's objects, so a counter declared in `play`
+  is a counter that goes back to zero every time the player dies. `quest` keeps
+  coins, lives and the power-up in `title` and reads them from everywhere, which
+  also makes "reaching `title` is a new game" a fact rather than a reset routine.
+- **A landing rule wants `ydirection > 0`, not `>= 0`.** A cell-wide hero under a
+  ledge touches two of its cells in one tick; the first hit sets `ydirection` to
+  zero and `>= 0` reads that back as a landing on the second — so bonking your
+  head hands you a jump, in mid-air, for ever.
+- **A contact says which side it happened on, and `from` is how a rule asks.**
+  `when hero touches ledge from above` fires only where the hero was above the
+  ledge — the subject's side, not the direction of travel — so footing is taken
+  from a landing and not from a platform's edge. The side and the separation are
+  one decision (`level/scene.ts` §contactOf: choosing the shallower axis and a
+  direction _is_ choosing the side), so a rule and the push that follows it
+  cannot disagree. **No backend emits the side test yet**, and `unsupportedFor`
+  names it, so a program using `from` previews and traces but will not build a
+  cartridge; closing that is one routine per backend, splitting the existing pair
+  separation into a part that decides and a part that applies.
+- **Without `from`, a contact still says nothing**, which is what shaped `quest`.
+  An `else` that stops a rise belongs on a rule naming only tiles that are
+  overhead, or it cancels a jump every time the hero brushes the edge of the
+  platform it was aiming for. And footing granted by a landing surface is granted
+  from its _sides_ too, so a solid slab of ground is a slab you can inch up:
+  `quest`'s levels make every landing surface one cell thick with `bedrock`
+  underneath, and its pits six cells wide, because a hero two cells tall catches
+  the far lip of anything narrower instead of falling clear. Those are geometry
+  standing in for a rule, and they can be rules once the backends catch up.
 - **The examples are the shop window: keep them spare** (doc 14 §The example
   library). The web app shows a game's source beside the cartridge it built, and
   the claim is that a whole game is sixty lines — an example whose commentary
@@ -1093,6 +1145,17 @@ is the game.
   one iteration and the next and helps itself to every register the Z80 has. Not
   `layout.scratch`, which is documented as valid for the length of one routine and
   is exactly what that rule body uses.
+- **Forty-eight kilobytes is flat, and that is the mapper's doing not ours.** The
+  mapper is in the cartridge rather than the console and comes up with its three
+  slots holding banks 0, 1 and 2, so `$0000`–`$BFFF` is one continuous image and a
+  program that never writes a bank register never notices. `SMS_FLAT_ROM_SIZES`
+  is the list; the build assembles the 32 KiB cartridge first and only
+  reassembles when the game does not fit, which is what keeps every existing
+  cartridge byte-identical. The catch is the header: sixteen bytes _inside_ the
+  image at `$7FF0`, so a 48 KiB build pads across the hole and the data section
+  starts at `$8000` — the gap below `$7FF0` is wasted, and a game whose code runs
+  past the header cannot be laid out this way at all and is told so by name. Doc
+  13 §Banked cartridges has the fix and why it comes before slot-2 paging.
 - **The mapper's registers are decoded out of the RAM mirror.** `$FFFC`–`$FFFF`
   is `$DFFC`–`$DFFF` in real RAM, so those four bytes read back as ordinary
   memory and page a ROM bank out from under the program when written. The heap
@@ -1402,6 +1465,12 @@ most of the value layer stops being a problem and three new ones appear.
   half-written state — the Master System's hazard, reached by different hardware.
   The full redraw runs with interrupts masked for exactly that reason; everything
   else runs a few instructions after the interrupt it waited for.
+- **A cartridge is the smallest board that holds the game.** `MD_ROM_SIZES` runs
+  512 KiB to 4 MiB and needs no mapper: the console maps the whole cartridge from
+  `$000000` and the header records where it ends, so growing one is a bigger array
+  and a different number at `$1A4`. Half a megabyte is the floor rather than the
+  only option, which is what keeps every cartridge built before this
+  byte-identical. Past 4 MiB it wants paging through `$A130F1`.
 - **There is no cartridge-budget story here, and that is the news.** 512 KiB
   against 32, and 64 KiB of work RAM against an NROM cartridge's 2. The scarce
   resources are the tile bank and the four sub-palettes, so the art path is where
@@ -1928,6 +1997,23 @@ you are writing the wrong one of the two.
   which is why `packages/web/test/sw.test.ts` runs the worker in a fake global
   instead. Changing `CACHE`'s name is what rescues visitors holding a poisoned
   shell, and it costs them one further reload.
+- **The web JS budget is what one visitor downloads, not what the site is.**
+  `pnpm check:web-budget` charges every chunk once _except_ the per-console ones,
+  of which it charges only the largest family — because a visitor plays one
+  console. The split that makes that true lives in two places and both have to
+  stay split: `demotic`'s `codegen/registry.ts` answers every question about a
+  family from a static description and `import()`s the emitter only when
+  something builds, and the page's `src/players/` does the same for the five
+  emulator cores. Chunks are matched to a family **by name**, so a module that
+  has to be per-family belongs in a file named after it; anything else counts as
+  always-loaded, which fails loud rather than passing quietly. Current figures:
+  335 KB for a visitor against a 400 KB budget, 424 KB for the whole site — and
+  a new example game costs about fourteen of those kilobytes, because the page
+  bundles every fixture SVG twice (raw text for the ROM build, a URL for the
+  preview). Measure with a **clean** `dist`: the checker reads every `.js` it
+  finds, so comparing two runs without deleting it in between compares two
+  builds' chunks added together, which is how a passing gate can look like a
+  failing one.
 - **A one-run Lighthouse audit is a coin toss on a shared runner.** The job asks
   for `numberOfRuns: 3` and asserts against the best of them, which is lhci's
   default `optimistic` aggregation for a `minScore`. Noise only ever makes a page

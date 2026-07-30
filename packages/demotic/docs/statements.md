@@ -187,7 +187,7 @@ The words that join a statement's parts. Each is a keyword only where the gramma
 |---|---|
 | `object` | Declares a class rather than an instance, in `create object`. |
 | `in` | Narrows a declaration or a rule to one scene. |
-| `from` | Names the file a level or a stream is built from. |
+| `from` | Names the file a level or a stream is built from, or the sides a collision may have been on. |
 | `follows` | The camera's one verb. |
 | `wide` | Lays a stream's chunks left to right. |
 | `tall` | Lays a stream's chunks top to bottom. |

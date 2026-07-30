@@ -1,0 +1,97 @@
+-- Quest — assertions about the meadow, and about the state that outlives it.
+--
+-- Written in the relative vocabulary wherever the answer depends on the screen
+-- and in absolute cells wherever it depends on the level: the meadow is 96x28
+-- on every console, so "the pit at column 20" means the same thing everywhere,
+-- while where the coin counter sits does not.
+--
+-- Every case opens with `press a`, because every game opens on its title
+-- screen. That is one line of ceremony in exchange for the title screen being
+-- part of what the suite checks rather than something it routes around.
+--
+-- One thing the DSL cannot do is hold a direction *and* press a button, so a
+-- jump here is `press a` on its own with a `hold` either side of it. The hero
+-- keeps the upward velocity across the release, which is what makes that a jump
+-- to the right rather than two separate moves — but it also means the routes
+-- these cases can take are the ones a player would find clumsy. Everything past
+-- the first pit is checked by playing it, not from here.
+
+test the game starts on the title screen and a leads into the meadow
+press a
+play 2 ticks
+expect scene play1
+expect lives.value = 3
+expect coins.value = 0
+expect power.value = 0
+expect tokens.value = 0
+
+test the hero falls onto the meadow floor and stays on it
+press a
+play 120 ticks
+expect footing.value > 0
+expect p1.bottom = 24
+expect p1.ydirection <= 0.05
+
+-- The pits are six cells wide for exactly this reason: a hero is two cells tall
+-- and a landing surface is one, so a narrower gap lets it catch the far lip on
+-- the way past instead of falling clear, and a pit you can hang on is not a pit.
+test running blindly into the first pit costs a life and restarts the level
+press a
+hold right for 200 ticks
+expect lives.value = 2
+expect power.value = 0
+
+test a jump carries the hero over the first pit and keeps the life
+press a
+hold right for 85 ticks
+press a
+hold right for 90 ticks
+expect p1.x > 26
+expect lives.value = 3
+expect p1.bottom = 24
+
+-- The mushroom is on the ground before the first pit, because a power-up that
+-- has to be platformed for is one most players never see.
+test the mushroom is picked up on the way and survives the pit
+press a
+hold right for 85 ticks
+expect power.value = 1
+press a
+hold right for 90 ticks
+expect power.value = 1
+
+-- Coins are objects rather than tiles, because a tile has no `visible` and so
+-- could not be collected, and the counter they feed lives in `title` — which is
+-- what lets it survive a level and makes reaching `title` a new game.
+test a collected coin reaches the counter that outlives the level
+press a
+hold right for 85 ticks
+press a
+hold right for 90 ticks
+press a
+hold right for 45 ticks
+press a
+hold right for 45 ticks
+expect coins.value > 0
+expect sc1.value = coins.value
+
+test the hud counters ride the camera rather than the world
+press a
+hold right for 120 ticks
+expect sc1.x = camera.x + 1
+expect sc1.y = camera.y + 1
+expect sl1.x = camera.x + screenwidth - 3
+expect sl1.y = camera.y + 1
+expect sl1.value = lives.value
+
+-- Three lives and three pits. The last one is what `lost` is for, and the rule
+-- that sends the game there is a guarded `always` rather than a `reaches`,
+-- because the trigger has to name no object to run in every scene.
+test running out of lives ends the game
+press a
+hold right for 200 ticks
+hold right for 200 ticks
+hold right for 200 ticks
+play 10 ticks
+expect scene lost
+expect lives.value < 1

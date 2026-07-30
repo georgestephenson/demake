@@ -1,7 +1,7 @@
 <!-- Generated from packages/demotic/src/lang/spec.ts. Do not edit by hand;
      run `pnpm gen:demotic-docs` after changing the registry. -->
 
-# Input and edges
+# Input, edges and sides
 
 ## Buttons
 
@@ -27,3 +27,16 @@ Usable anywhere an object can be, as a collision target.
 | `screenright` | The right edge. |
 | `screentop` | The top edge. |
 | `screenbottom` | The bottom edge. |
+
+## Collision sides
+
+`from above, left` narrows a `hits` or `touches` rule to contacts resolved on those sides. Each name describes **the subject's** position, which is the reading the sentence has out loud: `when hero touches ledge from above` is the hero above the ledge, and so a landing.
+
+Without a `from`, a rule fires on any side — which is what every rule written before this existed means. A screen edge has only one side, so it takes no `from`.
+
+| Side | Meaning |
+|---|---|
+| `above` | The subject's underside met the other's top. |
+| `below` | The subject's top met the other's underside. |
+| `left` | The subject's right met the other's left. |
+| `right` | The subject's left met the other's right. |

@@ -33,6 +33,8 @@ import {
   regionFor,
   SMS_HEADER_OFFSET,
   SMS_ORIGIN,
+  SMS_FLAT_ROM_SIZES,
+  SMS_HEADER_SIZE,
   SMS_ROM_SIZE,
   type Executor,
 } from "@demake/core";
@@ -59,18 +61,22 @@ import { ART_TILES, bindSmsArt } from "./sms-art.js";
 import { SmsCtx } from "./sms/ctx.js";
 import { emitProgram, BANK_TILES, type SmsEmitOptions } from "./sms/emit.js";
 
-/** Bytes a mapper-less Sega cartridge holds. */
+/** Bytes the smallest flat Sega cartridge holds. */
 export const ROM_SIZE = SMS_ROM_SIZE;
 
 /**
- * Bytes of it a game may use.
+ * Bytes a game may use before the cartridge has to grow.
  *
- * The header is sixteen bytes *inside* the image rather than a wrapper around
- * it, so a program that ran past `$7FF0` would have its code overwritten by the
- * stamp. Subtracting it from the budget here is how that becomes a build error
- * naming the game's size instead of a cartridge that boots into nonsense.
+ * The header is sixteen bytes *inside* the image rather than a wrapper around it,
+ * so a program that ran past `$7FF0` would have its code overwritten by the
+ * stamp. That is what decides the boundary between the two flat sizes: a game
+ * that ends below it is the 32 KiB cartridge it always was, and one that does not
+ * becomes a 48 KiB cartridge with the sixteen bytes padded across.
  */
 export const CODE_SIZE = SMS_HEADER_OFFSET;
+
+/** Bytes the largest flat Sega cartridge holds, header hole included. */
+export const MAX_ROM_SIZE = SMS_FLAT_ROM_SIZES[SMS_FLAT_ROM_SIZES.length - 1] as number;
 
 /**
  * What this backend's audio binding hands the emitter.
@@ -93,7 +99,7 @@ interface SmsAudio extends BoundAudioShape {
 export const smsBackend: Backend<SmsEmitOptions, SmsAudio> = {
   family: "sms",
   consoles: ["sms", "gg"],
-  cartridge: "a mapper-less Sega cartridge",
+  cartridge: "a flat Sega cartridge",
 
   extension(program: Program): string {
     return program.profile.id === "gg" ? "gg" : "sms";
@@ -197,38 +203,89 @@ export const smsBackend: Backend<SmsEmitOptions, SmsAudio> = {
 
   assemble({ program, analysis, layout, art, audio, title }): Assembled {
     void title; // a Sega header carries no title field, only a product code
-    const ctx = new SmsCtx(program, analysis, layout, getProfile(program.profile.id), SMS_ORIGIN);
-    if (audio.hooks) {
-      ctx.audio = {
-        driver: audio.hooks.driver,
-        music: audio.hooks.music,
-        request: audio.hooks.request,
-        trace: layout.sound,
-        effects: audio.hooks.effects,
-      };
-    }
-    let code: Uint8Array;
-    try {
-      emitProgram(ctx, { ...art, ...audio.options });
-      code = ctx.asm.assemble();
-    } catch (error) {
-      if (error instanceof AsmError) {
+    const hooks = audio.hooks
+      ? {
+          driver: audio.hooks.driver,
+          music: audio.hooks.music,
+          request: audio.hooks.request,
+          trace: layout.sound,
+          effects: audio.hooks.effects,
+        }
+      : undefined;
+
+    /**
+     * Assemble once, with or without the header hole reserved.
+     *
+     * A fresh `SmsCtx` each time, because emitting is what pulls a helper into the
+     * output — a context that had already been emitted into would emit them twice.
+     */
+    const assembleWith = (reserveHeader: boolean) => {
+      const inner = new SmsCtx(
+        program,
+        analysis,
+        layout,
+        getProfile(program.profile.id),
+        SMS_ORIGIN,
+      );
+      if (hooks) inner.audio = hooks;
+      try {
+        emitProgram(inner, { ...art, ...audio.options, reserveHeader });
+        return { inner, code: inner.asm.assemble() };
+      } catch (error) {
+        // The one shape the two-size scheme cannot take: the *code* alone runs
+        // past `$7FF0`, so there is nowhere to put the header hole that is not in
+        // the middle of something a branch addresses. Worth its own sentence
+        // rather than an internal error, because the answer is paging slot 2 and
+        // not a smaller game.
+        if (error instanceof AsmError && /cannot pad to/.test(error.message)) {
+          throw new BuildError(
+            "E_GAME_TOO_LARGE",
+            "this game's code reaches past $7FF0, where the cartridge header sits",
+            "the flat cartridge has nowhere to put the header; paging slot 2 is what this " +
+              "needs (doc 13 §Banked cartridges).",
+          );
+        }
+        if (error instanceof AsmError) {
+          throw new BuildError(
+            "E_INTERNAL",
+            `the code generator produced invalid code: ${error.message}`,
+          );
+        }
+        throw error;
+      }
+    };
+
+    // The small cartridge first, and its bytes are exactly what they always were:
+    // below `$7FF0` the header is past the end of the image rather than inside it,
+    // so there is no hole to leave and nothing to pad. Only a game that does not
+    // fit pays for the second pass — and it pays in assembly, which is
+    // milliseconds against the art and audio already demade by now.
+    let { inner, code } = assembleWith(false);
+    let size = SMS_ROM_SIZE;
+    if (code.length > CODE_SIZE) {
+      if (code.length > MAX_ROM_SIZE - SMS_HEADER_SIZE) {
         throw new BuildError(
-          "E_INTERNAL",
-          `the code generator produced invalid code: ${error.message}`,
+          "E_GAME_TOO_LARGE",
+          `this game compiles to ${code.length} bytes and a flat Sega cartridge holds ` +
+            `${MAX_ROM_SIZE - SMS_HEADER_SIZE}`,
+          "fewer objects in one rule, or a smaller level; past 48 KiB the cartridge has to " +
+            "page slot 2 (doc 13 §Banked cartridges).",
         );
       }
-      throw error;
+      ({ inner, code } = assembleWith(true));
+      size = MAX_ROM_SIZE;
     }
 
-    const image = new Uint8Array(SMS_ROM_SIZE);
-    image.set(code.subarray(0, Math.min(code.length, SMS_ROM_SIZE)), 0);
+    const image = new Uint8Array(size);
+    image.set(code.subarray(0, Math.min(code.length, size)), 0);
     return {
       bytes: packSegaRom(image, { region: regionFor(program.profile.id) }),
       code: code.length,
-      capacity: CODE_SIZE,
-      symbols: ctx.asm.symbols(),
-      helpers: ctx.helperNames(),
+      // What is left is the image minus the sixteen bytes the header takes out of
+      // the middle of it, whichever size was chosen.
+      capacity: size - SMS_HEADER_SIZE,
+      symbols: inner.asm.symbols(),
+      helpers: inner.helperNames(),
     };
   },
 };
