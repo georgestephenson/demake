@@ -10,7 +10,7 @@ backends skipped the advance when the bounds met or crossed, so a cartridge and
 the reference ran different games from the tick after a degenerate draw.
 
 The definition now lives in one place. `rng.ts` gains `draw(state, low, high)` —
-the whole of what `random` means, including *when* the state moves — and `sim.ts`
+the whole of what `random` means, including _when_ the state moves — and `sim.ts`
 calls it. Each backend's `emitRngPick` hoists its advance to the top of the
 routine, where nothing is live yet and the call therefore costs no saves; on the
 Game Boy that also turns a `push hl` / `pop bc` pair into two register moves.

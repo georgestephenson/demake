@@ -1135,6 +1135,22 @@ export class AsmArm {
     return this.pool.length;
   }
 
+  /**
+   * How far the *oldest* waiting constant's load is behind the current address,
+   * or −1 when nothing is waiting.
+   *
+   * What a code generator needs to know that no other encoder here makes it
+   * ask: a pooled load reaches 4 KiB ahead of itself, so a routine longer than
+   * that cannot put its whole pool at the end. An emitter watches this and
+   * flushes early — over a branch, since a pool in a reachable stream is
+   * executed — and the alternative is an {@link AsmError} in the middle of a
+   * game that happened to grow.
+   */
+  get poolAge(): number {
+    const oldest = this.pool[0];
+    return oldest === undefined ? -1 : this.pc - (this.origin + oldest.at);
+  }
+
   // --- finishing -------------------------------------------------------------
 
   /**

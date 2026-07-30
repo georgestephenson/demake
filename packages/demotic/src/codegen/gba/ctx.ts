@@ -111,6 +111,28 @@ export class GbaCtx extends CtxBase<GbaCtx, AsmArm> {
     else this.asm.pop([PC], cond);
   }
 
+  /**
+   * Place the literal pool early, if the oldest waiting constant is getting far.
+   *
+   * A pooled load reaches 4 KiB ahead of itself and a rule body can be longer
+   * than that, so a routine cannot always keep its whole pool at the end. This is
+   * what an emitter calls at a safe point — between rules, between objects — to
+   * put the pool down over a branch, which is legal anywhere and costs one
+   * instruction plus the words themselves.
+   *
+   * The margin is generous on purpose: what has to be true is that no load
+   * emitted between here and the *next* safe point falls off the end, and an
+   * emitter cannot know how long that is. A kilobyte of slack is a few hundred
+   * instructions.
+   */
+  poolCheck(limit = 3000): void {
+    if (this.asm.pending === 0 || this.asm.poolAge < limit) return;
+    const over = this.unique("pool");
+    this.asm.b(over);
+    this.asm.ltorg();
+    this.asm.label(over);
+  }
+
   /** Put the work-RAM base in its register; the boot code's first job. */
   loadRamBase(): void {
     this.asm.movImm32(RAM, RAM_BASE);
