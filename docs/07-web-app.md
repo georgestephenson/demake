@@ -57,7 +57,10 @@ never disagree with the other.
 
 Three things follow that this document did not previously have room for. **A
 demaker's controls become the Demakefile** — doc 15 §The equivalence contract
-stops being a promise, because there is no second place the settings live.
+stops being a promise, because there is no second place the settings live. That is
+live for the art demaker: changing a control writes the block for the asset you
+have open, setting it back removes the line again, and the pane says which file
+and which block it is editing rather than doing it silently.
 **`build/` stays the CLI's**: the previewer compiles in the tab, as it already
 does, and writing those bytes to a directory would add nothing but a way for two
 copies to disagree about which is stale. And a `.dmt` gains a third view beside

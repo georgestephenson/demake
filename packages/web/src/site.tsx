@@ -52,6 +52,14 @@ export interface EditorProps {
   project: Project;
   path?: string;
   onEdit: (path: string, text: string) => void;
+  /**
+   * Replace the whole project.
+   *
+   * What an editor uses when its change is not to the file it has open: the art
+   * demaker's controls write the *Demakefile* (doc 19 §Options edit the
+   * Demakefile), which is a different file from the picture on screen.
+   */
+  onProject: (next: Project) => void;
 }
 
 export function Site() {
@@ -129,6 +137,10 @@ export function Site() {
           setDirty(true);
           return writeText(current, path, text);
         });
+      },
+      onProject: (next: Project) => {
+        setDirty(true);
+        setProject(next);
       },
     }),
     [project, route.file],

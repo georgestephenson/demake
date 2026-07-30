@@ -717,9 +717,17 @@ Each step is useful on its own and none of them breaks the one before.
 5. **The shell**: the explorer, tabs, and an editor bound to each file type. The
    four demakers become what opens for their kind and are otherwise untouched.
    Bundled example projects only; no file I/O yet.
-6. **Options edit the Demakefile**: the write-back, the provenance display, and
-   doc 15's three round-trip properties as tests. This is what makes step 4 a
-   feature rather than a file format.
+6. **Options edit the Demakefile** — **done for art**. The art demaker's
+   controls are a view of the file when a project art file is open: they seed from
+   the cascade, a change writes the `art <name>` block for *that* asset, and
+   setting one back to what it inherits removes the line and the block with it. A
+   project with no build file gets the one `demake init` would have written. A
+   hand-authored file keeps its comments, blank lines and order, because the model
+   is comment-preserving and only the changed line is rewritten. The pane says
+   which file and which block it is writing, and what is inherited right now.
+   Music and sound still hold their own settings: their options are resolved but
+   not yet applied (doc 15 §Status), and a control that wrote one would be writing
+   something no build reads.
 7. **Open and save** — **done**: File System Access where the browser has it, a
    zip everywhere else, both over `@demake/core`'s own deflate and CRC. The zip is
    deterministic (every entry takes the DOS epoch, so an export is reproducible),
