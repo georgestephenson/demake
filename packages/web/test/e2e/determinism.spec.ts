@@ -169,7 +169,12 @@ for (const consoleId of ["gb", "nes", "sms", "snes", "md"] as const) {
     const expected = (await buildGame(program, { title: "caves", assets })).bytes;
 
     await page.goto("/#section=game");
-    await page.getByTestId("example-select").selectOption("caves");
+    // The project, from the explorer: a game is a folder now (doc 19), and the
+    // section opens the `.dmt` inside whichever one is open. The cartridge is
+    // not built until every asset has arrived (the pane's own `ready` gate), so
+    // there is no half-loaded project to race with here.
+    await page.getByTestId("project-select").selectOption("caves");
+    await expect(page.getByTestId("example-select")).toHaveValue(/caves\.dmt$/);
     if (consoleId !== "gb") await page.getByTestId("console-select").selectOption(consoleId);
     // Waiting on the *cartridge's* console, not the picker's: demaking a
     // full-screen picture in colour is the whole `prep` tournament, and until it

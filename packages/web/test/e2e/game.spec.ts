@@ -23,6 +23,20 @@ async function showPreview(
   await page.getByTestId("view-select").selectOption(mode);
 }
 
+/**
+ * Open another example.
+ *
+ * A game is a *project* now (doc 19), so switching to one is the explorer's
+ * picker rather than a dropdown inside the section — and the section opens the
+ * project's own `.dmt` because that is what a game section with a project open
+ * shows. The section's own `Game` dropdown still exists; it names the files in
+ * the open project, which is a different question.
+ */
+async function openProject(page: import("@playwright/test").Page, name: string): Promise<void> {
+  await page.getByTestId("project-select").selectOption(name);
+  await expect(page.getByTestId("example-select")).toHaveValue(new RegExp(`${name}\\.dmt$`));
+}
+
 test("loads the game demaker on demand and plays", async ({ page }) => {
   const chunks: string[] = [];
   page.on("response", (r) => {
@@ -86,14 +100,14 @@ test("every bundled example loads, compiles and passes its suite", async ({ page
   await page.goto("/#section=game");
   // The section is code-split, so wait for it to arrive before reading its DOM.
   await expect(page.getByRole("heading", { name: "Play" })).toBeVisible();
-  const picker = page.getByTestId("example-select");
+  const picker = page.getByTestId("project-select");
   const ids = await picker.evaluate((el) =>
     [...(el as HTMLSelectElement).options].map((option) => option.value),
   );
   expect(ids.length).toBeGreaterThanOrEqual(5);
 
   for (const id of ids) {
-    await picker.selectOption(id);
+    await openProject(page, id);
     // Compiling is synchronous, so a clean diagnostics pane means it compiled.
     await expect(page.locator(".diag-error")).toHaveCount(0);
     await page.getByRole("button", { name: "Run tests" }).click();
@@ -107,7 +121,7 @@ test("scrolls a level bigger than the screen, and draws its tiles", async ({ pag
   await page.goto("/#section=game");
   await expect(page.getByRole("heading", { name: "Play" })).toBeVisible();
   await showPreview(page);
-  await page.getByTestId("example-select").selectOption("caves");
+  await openProject(page, "caves");
   await expect(page.locator(".diag-error")).toHaveCount(0);
 
   // Past the title screen — every game opens on one, and a title screen has no
@@ -275,7 +289,7 @@ test("says it is demaking when the game or the console changes", async ({ page }
     );
 
   await watch();
-  await page.getByTestId("example-select").selectOption("caves");
+  await openProject(page, "caves");
   await expect(page.getByTestId("rom-download")).toContainText("caves", { timeout: 60_000 });
   await expect(page.getByTestId("rom-building")).toHaveCount(0, { timeout: 60_000 });
   expect(await sawBadge(), "changing game").toBe(true);
@@ -627,7 +641,7 @@ test("plays the cartridge's own APU through Web Audio", async ({ page }) => {
 
 test("builds a level game with a camera, which the fixed engine could not", async ({ page }) => {
   await page.goto("/#section=game");
-  await page.getByTestId("example-select").selectOption("caves");
+  await openProject(page, "caves");
   // A hand-drawn level, tile collision and a scrolling camera all compile now,
   // and the level's own art is demade into the tile bank on the way.
   await expect(page.getByTestId("rom-canvas")).toBeVisible();

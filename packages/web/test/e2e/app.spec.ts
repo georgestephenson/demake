@@ -81,7 +81,10 @@ test("exports the compliant PNG", async ({ page }) => {
 });
 
 test("shows the engine's own error for an unusable input", async ({ page }) => {
-  await page.setInputFiles('input[type="file"]', {
+  // The art demaker's own input, by its accessible name: the page is a
+  // workspace now and the explorer has a file input of its own (doc 19), so a
+  // bare `input[type=file]` would hand this text file to the zip importer.
+  await page.getByLabel("Choose an image file to convert").setInputFiles({
     name: "not-an-image.txt",
     mimeType: "text/plain",
     buffer: Buffer.from("this is not an image"),

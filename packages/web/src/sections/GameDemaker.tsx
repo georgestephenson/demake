@@ -154,6 +154,13 @@ export function GameDemaker({ project, path, onEdit }: EditorProps) {
     }
   }, [source, consoleId, project]);
 
+  // The cartridge's assets, memoised on the *project* — and that is a
+  // correctness fix rather than a saving. The preview reports its status once a
+  // frame, so with both machines on screen this component re-renders sixty times
+  // a second; a fresh `Map` each time is a fresh prop, and the ROM pane's build
+  // effect would cancel and restart the build every frame and never finish one.
+  const assetSources = useMemo(() => assetBytes(project), [project]);
+
   // --- input ----------------------------------------------------------------
 
   useEffect(() => {
@@ -404,7 +411,7 @@ export function GameDemaker({ project, path, onEdit }: EditorProps) {
           {showRom ? (
             <RomPane
               program={program}
-              assets={assetBytes(project)}
+              assets={assetSources}
               name={openPath.slice(openPath.lastIndexOf("/") + 1).replace(/\.dmt$/, "")}
               held={held}
               latched={romLatched}
