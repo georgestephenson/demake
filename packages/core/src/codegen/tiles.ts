@@ -187,6 +187,20 @@ export function packPacked4Le(grid: Uint8Array, tileW: number, tileH: number): U
 }
 
 /**
+ * Pack a `tileW*tileH` index grid as **one byte a pixel, row-major** — the
+ * 256-colour tile layout of the ARM 2D engines.
+ *
+ * Not a bitplane arrangement and not a nibble one: a 256-colour tile is simply
+ * its pixels, which is why an 8×8 tile is 64 bytes here and 32 in every other
+ * packer in this file.
+ */
+export function packLinear8(grid: Uint8Array, tileW: number, tileH: number): Uint8Array {
+  const out = new Uint8Array(tileW * tileH);
+  for (let i = 0; i < out.length; i += 1) out[i] = grid[i]! & 0xff;
+  return out;
+}
+
+/**
  * Pack an 8×8 grid into the **SNES 4bpp** tile layout: bitplanes 0/1 interleaved
  * per row for the first 16 bytes (`plane0[y], plane1[y]` for each row), then
  * bitplanes 2/3 the same way for the next 16 — the PPU's "two 2bpp tiles stacked"

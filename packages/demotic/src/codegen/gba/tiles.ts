@@ -51,8 +51,11 @@ import {
   clamp32,
   copy32,
   imm,
+  loadHalf,
+  loadHalfSigned,
   mem,
   neg32,
+  storeHalf,
   sub32,
 } from "./val.js";
 
@@ -69,22 +72,22 @@ export {
 
 /** `dst = src`, on a 16-bit word. */
 export function copy16(ctx: GbaCtx, dst: number, src: number): void {
-  ctx.asm.ldrh(A0, mem(ctx, src));
-  ctx.asm.strh(A0, mem(ctx, dst));
+  loadHalf(ctx, A0, src);
+  storeHalf(ctx, A0, dst);
 }
 
 /** `addr += 1`, on a 16-bit word. */
 export function inc16(ctx: GbaCtx, addr: number): void {
-  ctx.asm.ldrh(A0, mem(ctx, addr));
+  loadHalf(ctx, A0, addr);
   ctx.asm.add(A0, A0, armImm(1));
-  ctx.asm.strh(A0, mem(ctx, addr));
+  storeHalf(ctx, A0, addr);
 }
 
 /** `addr -= 1`, on a 16-bit word. */
 export function dec16(ctx: GbaCtx, addr: number): void {
-  ctx.asm.ldrh(A0, mem(ctx, addr));
+  loadHalf(ctx, A0, addr);
   ctx.asm.sub(A0, A0, armImm(1));
-  ctx.asm.strh(A0, mem(ctx, addr));
+  storeHalf(ctx, A0, addr);
 }
 
 /** Look a byte table up by the legend index in `r0`, leaving the entry in `r0`. */
@@ -113,11 +116,11 @@ export function emitTileAt(ctx: GbaCtx, data: LevelData): void {
   // unsigned comparison covers both ends, because a negative halfword read as
   // signed is a very large unsigned one — which is why these are `ldrsh` and the
   // comparison is `cc`.
-  asm.ldrsh(A0, mem(ctx, col));
+  loadHalfSigned(ctx, A0, col);
   asm.movImm32(A2, level.width);
   asm.cmp(A0, armReg(A2));
   ctx.far("cs", outside);
-  asm.ldrsh(A1, mem(ctx, row));
+  loadHalfSigned(ctx, A1, row);
   asm.movImm32(A2, level.height);
   asm.cmp(A1, armReg(A2));
   ctx.far("cs", outside);
@@ -185,18 +188,18 @@ export function emitTilesUnder(ctx: GbaCtx, base: number, data: LevelData, body:
   copy16(ctx, col, firstCol);
   // The cursor is `row × width + firstCol`, computed once for the row and kept
   // as an offset rather than an address; see the file header.
-  asm.ldrsh(A0, mem(ctx, row));
+  loadHalfSigned(ctx, A0, row);
   asm.movImm32(A1, level.width);
   asm.mul(A2, A0, A1);
-  asm.ldrsh(A0, mem(ctx, firstCol));
+  loadHalfSigned(ctx, A0, firstCol);
   asm.add(A0, A0, armReg(A2));
-  asm.strh(A0, mem(ctx, layout.tilePtr));
+  storeHalf(ctx, A0, layout.tilePtr);
   asm.label(colLoop);
   branchLess16(ctx, lastCol, col, colDone);
   // Re-formed rather than kept in a register: `body` is a rule and uses every
   // register there is.
   asm.ldrConst(A1, label(data.gridLabel));
-  asm.ldrh(A0, mem(ctx, layout.tilePtr));
+  loadHalf(ctx, A0, layout.tilePtr);
   asm.ldrb(A0, armAtIdx(A1, A0));
   body();
   // A rule body can be a kilobyte, and the grid's address above it is a pooled
@@ -216,8 +219,8 @@ export function emitTilesUnder(ctx: GbaCtx, base: number, data: LevelData, body:
 /** Jump to `target` when the signed word at `a` is less than the one at `b`. */
 export function branchLess16(ctx: GbaCtx, a: number, b: number, target: string): void {
   const { asm } = ctx;
-  asm.ldrsh(A0, mem(ctx, a));
-  asm.ldrsh(A1, mem(ctx, b));
+  loadHalfSigned(ctx, A0, a);
+  loadHalfSigned(ctx, A1, b);
   asm.cmp(A0, armReg(A1));
   ctx.far("lt", target);
 }
@@ -225,10 +228,10 @@ export function branchLess16(ctx: GbaCtx, a: number, b: number, target: string):
 /** `addr = max(addr, 0)`, on a signed 16-bit cell coordinate. */
 function clampLow16(ctx: GbaCtx, addr: number): void {
   const { asm } = ctx;
-  asm.ldrsh(A0, mem(ctx, addr));
+  loadHalfSigned(ctx, A0, addr);
   asm.cmp(A0, armImm(0));
   asm.mov(A0, armImm(0), "lt");
-  asm.strh(A0, mem(ctx, addr));
+  storeHalf(ctx, A0, addr);
 }
 
 /**
@@ -237,7 +240,7 @@ function clampLow16(ctx: GbaCtx, addr: number): void {
  */
 function clampHigh16(ctx: GbaCtx, addr: number, limit: number): void {
   const { asm } = ctx;
-  asm.ldrsh(A0, mem(ctx, addr));
+  loadHalfSigned(ctx, A0, addr);
   asm.movImm32(A1, limit);
   asm.cmp(A0, armReg(A1));
   // No guard against pulling a *negative* coordinate up, unlike the Mega Drive's
@@ -245,7 +248,7 @@ function clampHigh16(ctx: GbaCtx, addr: number, limit: number): void {
   // zero, so the predicate is the whole test and the branch the other backends
   // need is simply absent.
   asm.mov(A0, armReg(A1), "gt");
-  asm.strh(A0, mem(ctx, addr));
+  storeHalf(ctx, A0, addr);
 }
 
 /**
@@ -260,7 +263,7 @@ function floorCell(ctx: GbaCtx, src: number, dst: number): void {
   const { asm } = ctx;
   asm.ldr(A0, mem(ctx, src));
   asm.mov(A0, armAsr(A0, 16));
-  asm.strh(A0, mem(ctx, dst));
+  storeHalf(ctx, A0, dst);
 }
 
 /**
@@ -275,7 +278,7 @@ function ceilOpen(ctx: GbaCtx, src: number, dst: number): void {
   asm.movs(A1, armLsl(A0, 16));
   asm.mov(A0, armAsr(A0, 16));
   asm.sub(A0, A0, armImm(1), "eq");
-  asm.strh(A0, mem(ctx, dst));
+  storeHalf(ctx, A0, dst);
 }
 
 /**
@@ -340,7 +343,7 @@ export function emitTileSeparate(ctx: GbaCtx, base: number): void {
 /** Widen a signed 16-bit cell coordinate into 16.16. */
 function cellToFixed(ctx: GbaCtx, src: number, dst: number): void {
   const { asm } = ctx;
-  asm.ldrsh(A0, mem(ctx, src));
+  loadHalfSigned(ctx, A0, src);
   asm.mov(A0, armLsl(A0, 16));
   asm.str(A0, mem(ctx, dst));
 }

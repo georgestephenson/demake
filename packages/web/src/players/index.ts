@@ -6,7 +6,7 @@
  * reads it through the worker like everything else it knows about the engine.
  *
  * Every core is behind an `import()`, so a visitor downloads the one machine
- * they are playing rather than all five. That is the same split the engine's
+ * they are playing rather than all six. That is the same split the engine's
  * emitters got and it is worth more here, because a core is a processor, a video
  * chip and at least one sound chip — and the Super Nintendo's is two processors.
  */
@@ -29,6 +29,8 @@ export async function bootPlayer(
       return (await import("./snes.js")).boot(rom);
     case "md":
       return (await import("./md.js")).boot(rom);
+    case "gba":
+      return (await import("./gba.js")).boot(rom);
     default:
       return (await import("./gb.js")).boot(rom, consoleId);
   }

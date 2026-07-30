@@ -323,6 +323,55 @@ export function builtinMd(ink: number): Uint8Array {
   return bank;
 }
 
+/** Bytes per Game Boy Advance 8bpp tile: one byte a pixel, eight rows. */
+export const GBA_TILE_BYTES = 64;
+
+/**
+ * The same bank again, as 256-colour tiles — one byte a pixel, no planes and no
+ * nibbles at all.
+ *
+ * `ink` is where the brightest of the four authored shades lands and the two
+ * below it follow, for the reason it is a parameter in the four functions above:
+ * which colours the runtime art may use is the backend's decision and not the
+ * font's. What is different here is *why* there is a reservation at all — this
+ * console has no sub-palette structure, so a caption cannot be given a palette
+ * of its own and three of the 256 entries are held back instead. Shade zero
+ * stays index zero, which is transparent on both layers.
+ */
+export function builtinGba(ink: number): Uint8Array {
+  return packLinear8(builtinCells(), ink);
+}
+
+/**
+ * The placeholder block alone, for the object bank.
+ *
+ * A Game Boy Advance keeps object character data in its own 32 KiB and object
+ * colours in their own palette, so the one built-in cell an *object* draws is
+ * the only one that belongs there — the font and the level patterns are
+ * background tiles and would be 4 KiB of a bank sprites need.
+ */
+export function objectBlockGba(ink: number): Uint8Array {
+  return packLinear8([OBJECT_BLOCK], ink);
+}
+
+/** Pack 8×8 shade grids as one byte a pixel, mapping the four shades onto `ink`. */
+function packLinear8(cells: readonly (readonly string[])[], ink: number): Uint8Array {
+  const bank = new Uint8Array(cells.length * GBA_TILE_BYTES);
+  const map = [0, ink - 2, ink - 1, ink];
+  let at = 0;
+  for (const cell of cells) {
+    for (let y = 0; y < 8; y += 1) {
+      const row = cell[y] ?? "";
+      for (let x = 0; x < 8; x += 1) {
+        const shade = Number.parseInt(row[x] ?? "0", 10) || 0;
+        bank[at + y * 8 + x] = map[shade] as number;
+      }
+    }
+    at += GBA_TILE_BYTES;
+  }
+  return bank;
+}
+
 /** The cells of the built-in bank, in order, as 8×8 colour-index rows. */
 export function builtinCells(): readonly (readonly string[])[] {
   const cells: (readonly string[])[] = [];

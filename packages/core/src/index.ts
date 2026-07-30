@@ -30,7 +30,7 @@ export { rasterizeSvg, isSvg, type RasterizeOptions } from "./image/svg/index.js
 export type { RgbaImage } from "./image/rgba.js";
 
 // --- consoles ----------------------------------------------------------------
-export { consoles, getConsole, findConsole } from "./consoles/registry.js";
+export { consoles, getConsole, findConsole, withMode } from "./consoles/registry.js";
 export type {
   ConsoleSpec,
   ColorSpec,

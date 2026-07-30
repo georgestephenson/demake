@@ -1,10 +1,10 @@
 /**
- * The registry describes five backends without loading them, and this is what
+ * The registry describes six backends without loading them, and this is what
  * stops the descriptions drifting from the things they describe.
  *
  * `codegen/registry.ts` answers "which consoles build", "what is the cartridge
  * called" and "what can this family not do" from a static table, so that asking
- * does not drag five emitters and their assemblers into whatever asked. That is
+ * does not drag six emitters and their assemblers into whatever asked. That is
  * worth a hundred kilobytes to a browser and nothing at all to the CLI — but it
  * is only safe while the table says what the backends say, and nothing in the
  * type system checks that. This does.
@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 
 import { anyBackend, type AnyBackend } from "../src/codegen/backend.js";
 import { gbBackend } from "../src/codegen/gb.js";
+import { gbaBackend } from "../src/codegen/gba.js";
 import { mdBackend } from "../src/codegen/md.js";
 import { nesBackend } from "../src/codegen/nes.js";
 import { smsBackend } from "../src/codegen/sms.js";
@@ -35,6 +36,7 @@ const LOADED: readonly AnyBackend[] = [
   anyBackend(smsBackend),
   anyBackend(snesBackend),
   anyBackend(mdBackend),
+  anyBackend(gbaBackend),
 ];
 
 /** The smallest program that compiles, so a profile is all that varies. */

@@ -25,6 +25,7 @@ import { tape, trace } from "../src/trace.js";
 import { romReady } from "../src/rom/trace.js";
 
 import {
+  gbaTarget,
   gbTarget,
   gbcTarget,
   ggTarget,
@@ -63,6 +64,7 @@ const TARGETS: readonly RomTarget[] = [
   ggTarget,
   snesTarget,
   mdTarget,
+  gbaTarget,
 ];
 
 describe("gb ROM", async () => {

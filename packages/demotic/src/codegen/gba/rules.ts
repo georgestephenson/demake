@@ -73,10 +73,13 @@ import {
   copy32,
   div32,
   imm,
+  loadHalf,
+  loadHalfSigned,
   mem,
   mul32,
   neg32,
   set32,
+  storeHalf,
   sub32,
   type Val,
 } from "./val.js";
@@ -110,7 +113,7 @@ function storeByte(ctx: GbaCtx, address: number, value: number): void {
 
 /** The whole-cell part of a 16.16 value in work RAM, signed, into `reg`. */
 function cellAt(ctx: GbaCtx, reg: number, address: number): void {
-  ctx.asm.ldrsh(reg, mem(ctx, address + CELL_OFFSET));
+  loadHalfSigned(ctx, reg, address + CELL_OFFSET);
 }
 
 /** Compare a register against a count, whether or not it is an ARM immediate. */
@@ -608,9 +611,9 @@ function emitLoopHead(ctx: GbaCtx, table: string): string {
   const ptr = layout.loop as number;
   const loop = ctx.unique("walkLoop");
   asm.mov(A0, armImm(0));
-  asm.strh(A0, mem(ctx, ptr + 4));
+  storeHalf(ctx, A0, ptr + 4);
   asm.label(loop);
-  asm.ldrh(A0, mem(ctx, ptr + 4));
+  loadHalf(ctx, A0, ptr + 4);
   asm.ldrConst(A1, label(table));
   // A table entry is a word, so the index scales in the addressing mode.
   asm.ldr(A0, armAtIdx(A1, A0, "lsl", 2));
@@ -622,9 +625,9 @@ function emitLoopHead(ctx: GbaCtx, table: string): string {
 function emitLoopNext(ctx: GbaCtx, loop: string, count: number): void {
   const { asm, layout } = ctx;
   const ptr = layout.loop as number;
-  asm.ldrh(A0, mem(ctx, ptr + 4));
+  loadHalf(ctx, A0, ptr + 4);
   asm.add(A0, A0, armImm(1));
-  asm.strh(A0, mem(ctx, ptr + 4));
+  storeHalf(ctx, A0, ptr + 4);
   cmpCount(ctx, A0, count, A1);
   ctx.far("cc", loop);
 }
@@ -649,7 +652,7 @@ function emitEntityTable(ctx: GbaCtx, table: string, bases: readonly number[]): 
 function needContactSlot(ctx: GbaCtx): Ref {
   return ctx.need("ContactSlot", (inner) => {
     const { asm, layout } = inner;
-    asm.ldrh(A0, mem(inner, (layout.loop as number) + 4));
+    loadHalf(inner, A0, (layout.loop as number) + 4);
     asm.ldrb(A3, armAtIdx(A1, A0));
     asm.ldrb(A2, armAtIdx(A2, A0));
     asm.mov(A1, armReg(A3));

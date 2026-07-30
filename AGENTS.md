@@ -267,11 +267,59 @@ contract survives restated: what a driver has to reproduce is the samples
 themselves, byte for byte, against what `GbaPcm` renders. What is still to come
 for these two is in doc 13 §D4.
 
+**And it builds for a Game Boy Advance.** `demake build -c gba` produces a real
+cartridge — ARM machine code written for the game, a 256-colour mode-0 background
+and a second layer that carries nothing but the HUD — and the whole example
+library traces identically there, in the same battery, at the same one frame per
+tick. This is the sixth backend and the first whose console is bigger than the
+language needs in every direction at once, so most of what is new about it is
+machinery the other five have that this one _does not_.
+
+The **HUD gets a layer of its own**, which is the first real use of having four
+backgrounds. On every other console a scrolling scene has to draw its captions
+with hardware sprites, because the background moves as one piece and a cell of it
+cannot be held still; here layer one's scroll registers are written once at boot
+and never again, so a caption's cell is `floor(pos) − floor(camera)` and cannot
+drift by a pixel. The sprite HUD, the second decimal renderer that drives it and
+the whole pinning argument are absent rather than reimplemented.
+
+**A cell has 256 colours and no palette field, and objects have a bank and a
+palette of their own.** A screen entry in this mode is ten bits of tile and two
+flip bits — the hardware ignores the palette nibble — so a picture is fitted into
+one palette of 256 rather than partitioned into sub-palettes at all, and
+`maxSubPalettes` does not apply. The reservation for the font is therefore in
+_colours_: three of 256, against the quarter a Mega Drive gives up. And 48 KiB of
+background character memory sits beside 32 KiB of object character memory, so
+this is the first console here where a full-screen picture cannot starve the
+sprites — `checkTiles` refuses two budgets rather than one.
+
+**The map is bigger than the screen on both axes and is four screen blocks.**
+64×64 cells against 30×20, so a scrolling scene paints its leading edge where
+nobody is looking and none of the Master System's masking exists — but "the cell
+after column 31" is a kilobyte away rather than one halfword, which is the Super
+Nintendo's tilemap hazard with two more blocks in it. `gba-rom.test.ts` computes
+the address the hardware's way and checks every visible cell against the level's
+own grid once the camera has crossed into each block.
+
+Three things are the instruction set's rather than the console's. A collision box
+is one `ldm` and one `stm`; a short conditional is a predicated pair with no
+label at all; and the decimal renderer keeps its whole state in callee-saved
+registers _across_ the call that plots a glyph, which no other backend can do —
+the Mega Drive's keeps its digit and its running value in render words precisely
+because a 68000 helper helps itself to every register there is.
+
+**There is no sound on this console yet**, and that is a gap rather than a
+decision: the hardware has the Game Boy's four channels _and_ two DMA-fed sample
+channels, both modelled, and the ARM driver that would play a demade schedule
+does not exist. A `.dmt` that names music compiles, records the request its rules
+make, and traces identically to a build that played it — which is the same
+position the Super Nintendo was in before its SPC700 driver landed.
+
 Still to come: the remaining Tier 2/3 consoles (each = a codegen backend, a ROM
 harness + toolchain, and a libretro core + DAC calibration), the remaining
-framebuffer/scanline layout paths (Lynx, GBA/NDS bitmap modes, 2600/7800), and
-the rest of the Demotic runtime story (the Mega Drive's 68000 and the speed work
-doc 14 §Runtime model names).
+framebuffer/scanline layout paths (Lynx, GBA/NDS bitmap modes, 2600/7800), the
+ARM audio driver the Game Boy Advance's cartridges are waiting on, and the rest
+of the Demotic runtime story (the speed work doc 14 §Runtime model names).
 
 **The audio spine is built, and two consoles boot** (docs
 [16](docs/16-audio-engine.md), [17](docs/17-music-demaker.md),
@@ -457,6 +505,7 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
     sms.ts, sms-art.ts, sms/              the Z80 backend and its image path
     snes.ts, snes-art.ts, snes/           the 65816 backend and its image path
     md.ts, md-art.ts, md/                 the 68000 backend and its image path
+    gba.ts, gba-art.ts, gba/              the ARM backend and its image path
     audio.ts         the hand-off to @demake/audio, art.ts's twin
   demo/              terminal runner (play.mjs) and test runner (test.mjs)
 packages/chip/       @demake/chip — every sound chip as a register-driven model (doc 16)
@@ -1551,9 +1600,9 @@ most of the value layer stops being a problem and three new ones appear.
 
 ### The ARM half
 
-`core/src/asm/arm.ts` and `@demake/gba` are built; the Demotic backend that
-stands on them is not yet. What is already true about this architecture, and
-what an emitter written against it has to live with:
+`demake build -c gba` builds a playable Game Boy Advance cartridge, and the whole
+example library traces identically on it. What this architecture makes an
+emitter's business:
 
 - **A 32-bit constant does not fit in a 32-bit instruction.** The immediate field
   is an eight-bit value rotated by an even amount, so `movImm32` takes `mov`,
@@ -1564,8 +1613,23 @@ what an emitter written against it has to live with:
   stream is executed.
 - **A halfword transfer reaches ±255 and a word transfer ±4095.** That is not a
   detail: the I/O page is a kilobyte and almost every register on this console is
-  a halfword, so one held base register cannot reach all of it. Emitters hold a
-  base for the region they are working in and materialise the rest.
+  a halfword, so one held base register cannot reach all of it. It is also why
+  `val.ts` has two addressing functions rather than one — `mem` for `ldr`/`str`
+  and the four narrow forms only through `loadHalf`/`storeHalf`/`loadHalfSigned`,
+  which pick the addressing rather than take it. An emitter that used `mem` for a
+  `strh` assembles fine right up until a game grows past the first 256 bytes of
+  its own state.
+- **`r12` may not hold anything across a call into `val.ts`.** That is the
+  converse of the same rule: an address past the base register's reach is
+  materialised into `r12` immediately before the access that uses it, so an
+  emitter that set a hardware base up there and then loaded a value has silently
+  changed where its store lands. It presents as a register that is never written
+  — the scroll registers, in the flesh — rather than as a crash.
+- **A pool has to be placed, and `poolCheck` is where.** A rule body can be
+  longer than the 4 KiB a pooled load reaches, so an emitter calls
+  `ctx.poolCheck()` at a safe point — between rules, between objects, inside a
+  tile walk — and it puts the pool down over a branch. The check happens while
+  the code is being _emitted_, so it costs nothing at run time.
 - **A 16.16 value is a register, and so is its product.** `smull` gives the
   64-bit product a fixed-point multiply needs, and the barrel shifter folds the
   normalising shift into the instruction that consumes it — so the value layer
@@ -1810,8 +1874,8 @@ you are writing the wrong one of the two.
   via the `.claude/` SessionStart hook.
 - The Demotic ROM conformance suite (`packages/demotic/test/rom.test.ts`) builds
   a cartridge from each fixture game **for every console with a backend** — both
-  Game Boys, the Mega Duck, the NES, both Sega 8-bits, the Super Nintendo and the
-  Mega Drive — and runs it in the matching self-hosted core, asserting the trace
+  Game Boys, the Mega Duck, the NES, both Sega 8-bits, the Super Nintendo, the
+  Mega Drive and the Game Boy Advance — and runs it in the matching self-hosted core, asserting the trace
   matches the reference interpreter tick for tick. No toolchain, no emulator
   install, so it runs everywhere `pnpm test` does. Running the same battery on all
   eight is what makes `Backend` a contract rather than a resemblance, and each
@@ -1824,6 +1888,15 @@ you are writing the wrong one of the two.
   8-bit consoles share. It also checks the Duck's cartridge _fails_ on a Game
   Boy — identical traces are also what a register map that had quietly become the
   identity would produce.
+- `packages/demotic/test/gba-arith.test.ts` and `gba-rom.test.ts` are the Game
+  Boy Advance's pair, and the second is where the things a trace cannot see are
+  checked: that _two_ banks arrived in two places, that the map's four screen
+  blocks are all painted once the camera has crossed into them, that the reserved
+  colours survive whatever the art chose, that the object entries a frame did not
+  use are _hidden_ — this hardware has no link field to cut — and that a
+  camera-pinned caption occupies the same HUD cells for forty frames while the
+  picture scrolls under it. That last one is the claim the whole HUD-layer design
+  rests on, and it is the one property none of the other five backends can have.
 - `packages/demotic/test/md-arith.test.ts` and `md-rom.test.ts` are the Mega
   Drive's two oracles, and they are the pair every new backend gets: the first
   assembles each 16.16 operation on its own and compares with `fixed.ts`, the

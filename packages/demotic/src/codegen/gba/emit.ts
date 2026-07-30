@@ -55,6 +55,7 @@ import {
   armLsl,
   armLsr,
   armReg,
+  fitsArmImm,
   GBA_HEADER_SIZE,
   GBA_IRQ_VECTOR,
   GBA_ORIGIN,
@@ -110,7 +111,16 @@ import {
   tileSlot,
   type LevelData,
 } from "./tiles.js";
-import { at, branchZero32, copy32, mem, sub32 } from "./val.js";
+import {
+  at,
+  branchZero32,
+  copy32,
+  loadHalf,
+  loadHalfSigned,
+  mem,
+  storeHalf,
+  sub32,
+} from "./val.js";
 
 /** Where a cartridge is mapped, and therefore where its code is assembled. */
 export const CODE_ORIGIN = GBA_ORIGIN;
@@ -277,6 +287,24 @@ export interface GbaEmitOptions {
 }
 
 // --- small shapes ------------------------------------------------------------
+
+/**
+ * `reg += value`, whether or not the amount is an ARM immediate.
+ *
+ * A whole number of pixels is one for every object a demade game contains and is
+ * not for one wider than thirty-two cells, which the language permits — and an
+ * emitter that assumed the first would refuse to assemble a game rather than run
+ * one slowly.
+ */
+function addConst(ctx: GbaCtx, reg: number, value: number, scratch: number): void {
+  if (value === 0) return;
+  if (fitsArmImm(value)) {
+    ctx.asm.add(reg, reg, armImm(value));
+    return;
+  }
+  ctx.asm.movImm32(scratch, value);
+  ctx.asm.add(reg, reg, armReg(scratch));
+}
 
 /** Write a compile-time halfword to a hardware register. */
 function setIo(ctx: GbaCtx, offset: number, value: number): void {
@@ -551,7 +579,7 @@ function emitReset(ctx: GbaCtx, options: GbaEmitOptions): void {
   }
 
   asm.mov(A0, armImm(0));
-  asm.strh(A0, mem(ctx, layout.tick));
+  storeHalf(ctx, A0, layout.tick);
   for (const address of [
     layout.ready,
     layout.booted,
@@ -802,9 +830,9 @@ function emitTickDispatch(ctx: GbaCtx, scenes: readonly SceneCtx[]): void {
   asm.bl("SceneChange");
   // The tick counter, then the handshake byte the harness watches — in that
   // order, so a reader can never see the counter half-updated.
-  asm.ldrh(A0, mem(ctx, layout.tick));
+  loadHalf(ctx, A0, layout.tick);
   asm.add(A0, A0, armImm(1));
-  asm.strh(A0, mem(ctx, layout.tick));
+  storeHalf(ctx, A0, layout.tick);
   asm.ldrb(A0, mem(ctx, layout.ready));
   asm.add(A0, A0, armImm(1));
   asm.strb(A0, mem(ctx, layout.ready));
@@ -978,9 +1006,9 @@ function emitOverCells(ctx: GbaCtx, subjectId: number, body: () => void): void {
   asm.cmp(A0, armImm(0));
   ctx.far("eq", done);
   asm.mov(A0, armImm(0));
-  asm.strh(A0, mem(ctx, cursor));
+  storeHalf(ctx, A0, cursor);
   asm.label(loop);
-  asm.ldrh(A1, mem(ctx, cursor));
+  loadHalf(ctx, A1, cursor);
   asm.movImm32(A2, list + 1);
   asm.add(A1, A2, armReg(A1));
   asm.ldrb(A2, armAt(A1, 0));
@@ -996,9 +1024,9 @@ function emitOverCells(ctx: GbaCtx, subjectId: number, body: () => void): void {
   ctx.poolCheck();
   // Five bytes on, and stop when the count is reached. The cursor is in memory
   // because a rule body uses every register there is.
-  asm.ldrh(A0, mem(ctx, cursor));
+  loadHalf(ctx, A0, cursor);
   asm.add(A0, A0, armImm(5));
-  asm.strh(A0, mem(ctx, cursor));
+  storeHalf(ctx, A0, cursor);
   asm.ldrb(A1, mem(ctx, list));
   asm.add(A1, A1, armLsl(A1, 2));
   asm.cmp(A0, armReg(A1));
@@ -1158,7 +1186,7 @@ function emitCellId(ctx: GbaCtx): void {
   asm.ldrb(A1, mem(ctx, layout.words + W.tileCol * 2));
   asm.ldrb(A2, mem(ctx, layout.words + W.tileRow * 2));
   asm.orr(A1, A1, armLsl(A2, 8));
-  asm.strh(A1, mem(ctx, layout.words + W.cell * 2));
+  storeHalf(ctx, A1, layout.words + W.cell * 2);
 }
 
 /** Start a pair's list: nothing recorded yet, and the stored count remembered. */
@@ -1167,7 +1195,7 @@ function emitBeginContacts(ctx: GbaCtx, listBase: number): void {
   asm.mov(A0, armImm(0));
   asm.strb(A0, mem(ctx, layout.tileScratch));
   asm.ldrb(A0, mem(ctx, listBase));
-  asm.strh(A0, mem(ctx, layout.words + W.target * 2));
+  storeHalf(ctx, A0, layout.words + W.target * 2);
 }
 
 /** Append the current cell to this tick's list. */
@@ -1179,7 +1207,7 @@ function emitRecordContact(ctx: GbaCtx): void {
   ctx.far("cs", full);
   asm.movImm32(A2, layout.tileScratch + 1);
   asm.add(A2, A2, armLsl(A1, 1));
-  asm.ldrh(A3, mem(ctx, layout.words + W.cell * 2));
+  loadHalf(ctx, A3, layout.words + W.cell * 2);
   // Two byte stores rather than one halfword store: the entries sit after a
   // count byte, so half of them are at odd addresses.
   asm.strb(A3, armAt(A2, 0));
@@ -1225,7 +1253,7 @@ function emitTileContactHelper(ctx: GbaCtx): void {
   const found = ctx.unique("seenFound");
   const missing = ctx.unique("seenMissing");
   asm.label("TileContactSeen");
-  asm.ldrh(A3, mem(ctx, layout.words + W.cell * 2));
+  loadHalf(ctx, A3, layout.words + W.cell * 2);
   asm.cmp(A2, armImm(0));
   ctx.far("eq", missing);
   asm.label(loop);
@@ -1263,8 +1291,8 @@ function emitSceneRender(
       emitPixelsFromFixed(ctx, layout.camera + 4, layout.words + W.camY * 2);
     } else {
       asm.mov(A0, armImm(0));
-      asm.strh(A0, mem(ctx, layout.words + W.camX * 2));
-      asm.strh(A0, mem(ctx, layout.words + W.camY * 2));
+      storeHalf(ctx, A0, layout.words + W.camX * 2);
+      storeHalf(ctx, A0, layout.words + W.camY * 2);
     }
     copy16(ctx, layout.words + W.scrollX * 2, layout.words + W.camX * 2);
     copy16(ctx, layout.words + W.scrollY * 2, layout.words + W.camY * 2);
@@ -1300,7 +1328,7 @@ function emitPixelsFromFixed(ctx: GbaCtx, src: number, dst: number): void {
   const { asm } = ctx;
   asm.ldr(A0, mem(ctx, src));
   asm.mov(A0, armAsr(A0, 13));
-  asm.strh(A0, mem(ctx, dst));
+  storeHalf(ctx, A0, dst);
 }
 
 /** Draw the whole visible window, with the picture forced blank. */
@@ -1356,25 +1384,25 @@ function emitFullRedraw(
     const height = layout.memory.viewH + spare;
     const width = layout.memory.viewW + spare;
     asm.mov(A0, armImm(height));
-    asm.strh(A0, mem(ctx, rows));
+    storeHalf(ctx, A0, rows);
     asm.label(rowLoop);
     copy16(ctx, layout.words + W.tileCol * 2, layout.words + W.firstCol * 2);
     asm.mov(A0, armImm(width));
-    asm.strh(A0, mem(ctx, columns));
+    storeHalf(ctx, A0, columns);
     asm.label(colLoop);
     emitBackgroundTile(ctx, level);
     asm.bl(needCellOffset(ctx));
     asm.movImm32(A2, VRAM);
     asm.strh(A0, armAtIdx(A2, A1));
     inc16(ctx, layout.words + W.tileCol * 2);
-    asm.ldrh(A0, mem(ctx, columns));
+    loadHalf(ctx, A0, columns);
     asm.subs(A0, A0, armImm(1));
-    asm.strh(A0, mem(ctx, columns));
+    storeHalf(ctx, A0, columns);
     ctx.far("ne", colLoop);
     inc16(ctx, layout.words + W.tileRow * 2);
-    asm.ldrh(A0, mem(ctx, rows));
+    loadHalf(ctx, A0, rows);
     asm.subs(A0, A0, armImm(1));
-    asm.strh(A0, mem(ctx, rows));
+    storeHalf(ctx, A0, rows);
     ctx.far("ne", rowLoop);
   }
 
@@ -1536,9 +1564,9 @@ function needLegendToTile(ctx: GbaCtx, level: LevelData): Ref {
 function emitOriginFromScroll(ctx: GbaCtx, dstCol: number, dstRow: number): void {
   const { asm, layout } = ctx;
   const shift = (src: number, dst: number): void => {
-    asm.ldrsh(A0, mem(ctx, src));
+    loadHalfSigned(ctx, A0, src);
     asm.mov(A0, armAsr(A0, 3));
-    asm.strh(A0, mem(ctx, dst));
+    storeHalf(ctx, A0, dst);
   };
   shift(layout.words + W.camX * 2, dstCol);
   shift(layout.words + W.camY * 2, dstRow);
@@ -1596,14 +1624,14 @@ function emitWalkAxis(
   const guard = layout.words + W.count * 2;
 
   asm.mov(A0, armImm(5));
-  asm.strh(A0, mem(ctx, guard));
+  storeHalf(ctx, A0, guard);
   asm.label(loop);
-  asm.ldrh(A0, mem(ctx, guard));
+  loadHalf(ctx, A0, guard);
   asm.subs(A0, A0, armImm(1));
-  asm.strh(A0, mem(ctx, guard));
+  storeHalf(ctx, A0, guard);
   ctx.far("eq", bail);
-  asm.ldrsh(A0, mem(ctx, want));
-  asm.ldrsh(A1, mem(ctx, origin));
+  loadHalfSigned(ctx, A0, want);
+  loadHalfSigned(ctx, A1, origin);
   asm.cmp(A0, armReg(A1));
   ctx.far("eq", done);
   ctx.far("lt", back);
@@ -1632,24 +1660,24 @@ function emitPaintEdge(ctx: GbaCtx, level: LevelData, isColumn: boolean, offset:
 
   copy16(ctx, across, originAcross);
   if (offset !== 0) {
-    asm.ldrh(A0, mem(ctx, across));
+    loadHalf(ctx, A0, across);
     asm.add(A0, A0, armImm(offset));
-    asm.strh(A0, mem(ctx, across));
+    storeHalf(ctx, A0, across);
   }
   copy16(ctx, along, originAlong);
 
   const loop = ctx.unique("paintLoop");
   asm.mov(A0, armImm(count));
-  asm.strh(A0, mem(ctx, remaining));
+  storeHalf(ctx, A0, remaining);
   asm.label(loop);
   emitBackgroundTile(ctx, level);
   asm.bl(needCellOffset(ctx));
-  asm.strh(A1, mem(ctx, layout.words + W.target * 2));
+  storeHalf(ctx, A1, layout.words + W.target * 2);
   asm.bl(needQueueEntry(ctx));
   inc16(ctx, along);
-  asm.ldrh(A0, mem(ctx, remaining));
+  loadHalf(ctx, A0, remaining);
   asm.subs(A0, A0, armImm(1));
-  asm.strh(A0, mem(ctx, remaining));
+  storeHalf(ctx, A0, remaining);
   ctx.far("ne", loop);
 }
 
@@ -1680,24 +1708,24 @@ function emitHudErase(ctx: GbaCtx): void {
   asm.cmp(A0, armImm(0));
   ctx.far("eq", done);
   asm.mov(A0, armImm(0));
-  asm.strh(A0, mem(ctx, cursor));
+  storeHalf(ctx, A0, cursor);
   asm.label(loop);
   // Two bytes an entry: a column and a row, and both fit a byte because the HUD
   // layer's map is thirty-two cells square.
-  asm.ldrh(A1, mem(ctx, cursor));
+  loadHalf(ctx, A1, cursor);
   asm.movImm32(A2, layout.plotPrev);
   asm.add(A1, A2, armLsl(A1, 1));
   asm.ldrb(A2, armAt(A1, 0));
-  asm.strh(A2, mem(ctx, layout.words + W.tileCol * 2));
+  storeHalf(ctx, A2, layout.words + W.tileCol * 2);
   asm.ldrb(A2, armAt(A1, 1));
-  asm.strh(A2, mem(ctx, layout.words + W.tileRow * 2));
+  storeHalf(ctx, A2, layout.words + W.tileRow * 2);
   asm.mov(A0, armImm(BLANK_CELL));
   asm.bl(needHudOffset(ctx));
-  asm.strh(A1, mem(ctx, layout.words + W.target * 2));
+  storeHalf(ctx, A1, layout.words + W.target * 2);
   asm.bl(needQueueEntry(ctx));
-  asm.ldrh(A0, mem(ctx, cursor));
+  loadHalf(ctx, A0, cursor);
   asm.add(A0, A0, armImm(1));
-  asm.strh(A0, mem(ctx, cursor));
+  storeHalf(ctx, A0, cursor);
   asm.ldrb(A1, mem(ctx, layout.plotPrevCount));
   asm.cmp(A0, armReg(A1));
   ctx.far("ne", loop);
@@ -1779,7 +1807,7 @@ function emitHudCell(ctx: GbaCtx, base: number): void {
       asm.mov(A1, armAsr(A1, 16));
       asm.sub(A0, A0, armReg(A1));
     }
-    asm.strh(A0, mem(ctx, dst));
+    storeHalf(ctx, A0, dst);
   };
   axis("x", 0, layout.words + W.tileCol * 2);
   axis("y", 4, layout.words + W.tileRow * 2);
@@ -1840,10 +1868,10 @@ function emitOam(ctx: GbaCtx, scene: SceneCtx, options: GbaEmitOptions): void {
     for (let row = 0; row < height; row += 1) {
       for (let column = 0; column < width; column += 1) {
         const tile = art ? art.tile + row * art.width + column : OBJECT_TILE_GBA;
-        asm.ldrsh(A0, mem(ctx, layout.words + W.count * 2));
-        if (row !== 0) asm.add(A0, A0, armImm(row * 8));
-        asm.ldrsh(A1, mem(ctx, layout.words + W.cell * 2));
-        if (column !== 0) asm.add(A1, A1, armImm(column * 8));
+        loadHalfSigned(ctx, A0, layout.words + W.count * 2);
+        addConst(ctx, A0, row * 8, A2);
+        loadHalfSigned(ctx, A1, layout.words + W.cell * 2);
+        addConst(ctx, A1, column * 8, A2);
         // A 256-colour object's tile number counts thirty-two-byte units, so a
         // sixty-four-byte tile is at twice its index — the one place this
         // console's object format is not simply the background's.
@@ -1876,7 +1904,7 @@ function needOnscreen(ctx: GbaCtx): Ref {
 
     const axis = (offset: number, size: number, span: number): void => {
       asm.ldrsh(A0, armAt(A1, offset + CELL_OFFSET));
-      asm.ldrsh(ADDR, mem(inner, camera + offset + CELL_OFFSET));
+      loadHalfSigned(inner, ADDR, camera + offset + CELL_OFFSET);
       asm.sub(A0, A0, armReg(ADDR));
       // Off the near side: the object's far edge is left of (or above) the view.
       asm.add(ADDR, A0, armReg(size));
@@ -1936,8 +1964,11 @@ function needPushSprite(ctx: GbaCtx): Ref {
     asm.strh(A0, armAt(ADDR, 0));
     // The second: nine bits of X, and a shape and size that mean 8×8 — so the
     // mask is load-bearing, because a negative X is expressed as a wrap and its
-    // sign bits would otherwise land on the flip and size fields.
-    asm.and(A1, A1, armImm(0x1ff));
+    // sign bits would otherwise land on the flip and size fields. Two shifts
+    // rather than an `and`, because `$1FF` is not an ARM immediate: the field is
+    // eight bits rotated by an *even* amount, and nine bits of ones is neither.
+    asm.mov(A1, armLsl(A1, 23));
+    asm.mov(A1, armLsr(A1, 23));
     asm.strh(A1, armAt(ADDR, 2));
     asm.strh(A2, armAt(ADDR, 4));
     asm.add(A3, A3, armImm(1));
@@ -1967,8 +1998,8 @@ export function emitRenderHelpers(ctx: GbaCtx): void {
 function needCellOffset(ctx: GbaCtx): Ref {
   return ctx.need("CellOffset", (inner) => {
     const { asm, layout } = inner;
-    asm.ldrh(A1, mem(inner, layout.words + W.tileRow * 2));
-    asm.ldrh(A2, mem(inner, layout.words + W.tileCol * 2));
+    loadHalf(inner, A1, layout.words + W.tileRow * 2);
+    loadHalf(inner, A2, layout.words + W.tileCol * 2);
     asm.and(A3, A1, armImm(MAP_H / 2));
     asm.mov(A3, armLsl(A3, 7));
     asm.and(ADDR, A2, armImm(MAP_W / 2));
@@ -1988,8 +2019,8 @@ function needCellOffset(ctx: GbaCtx): Ref {
 function needHudOffset(ctx: GbaCtx): Ref {
   return ctx.need("HudOffset", (inner) => {
     const { asm, layout } = inner;
-    asm.ldrh(A1, mem(inner, layout.words + W.tileRow * 2));
-    asm.ldrh(A2, mem(inner, layout.words + W.tileCol * 2));
+    loadHalf(inner, A1, layout.words + W.tileRow * 2);
+    loadHalf(inner, A2, layout.words + W.tileCol * 2);
     asm.and(A1, A1, armImm(HUD_H - 1));
     asm.and(A2, A2, armImm(HUD_W - 1));
     asm.mov(A1, armLsl(A1, 6));
@@ -2020,7 +2051,7 @@ function needQueueEntry(ctx: GbaCtx): Ref {
     asm.label(room);
     asm.movImm32(A2, layout.queue);
     asm.add(A2, A2, armLsl(A1, 2));
-    asm.ldrh(A3, mem(inner, layout.words + W.target * 2));
+    loadHalf(inner, A3, layout.words + W.target * 2);
     asm.strh(A3, armAt(A2, 0));
     asm.strh(A0, armAt(A2, 2));
     asm.add(A1, A1, armImm(1));
@@ -2040,7 +2071,7 @@ function needPlotCell(ctx: GbaCtx): Ref {
     const full = inner.unique("plotFull");
     asm.push([LR]);
     asm.bl(needHudOffset(inner));
-    asm.strh(A1, mem(inner, layout.words + W.target * 2));
+    storeHalf(inner, A1, layout.words + W.target * 2);
     asm.bl(needQueueEntry(inner));
     asm.ldrb(A1, mem(inner, layout.plotCount));
     asm.cmp(A1, armImm(layout.memory.plotMax));
@@ -2176,11 +2207,15 @@ function emitOamUpload(ctx: GbaCtx): void {
  */
 function emitScrollWrite(ctx: GbaCtx): void {
   const { asm, layout } = ctx;
-  asm.movImm32(ADDR, IO + REG.BG0HOFS);
-  asm.ldrh(A0, mem(ctx, layout.words + W.scrollX * 2));
-  asm.strh(A0, armAt(ADDR, 0));
-  asm.ldrh(A0, mem(ctx, layout.words + W.scrollY * 2));
-  asm.strh(A0, armAt(ADDR, 2));
+  // Both values first, then the base — `loadHalf` materialises an address past
+  // the base register's reach into {@link ADDR}, so a base held there is a base
+  // it will overwrite. The symptom is not a crash: the store lands in work RAM
+  // and the picture simply never scrolls.
+  loadHalf(ctx, A0, layout.words + W.scrollX * 2);
+  loadHalf(ctx, A1, layout.words + W.scrollY * 2);
+  asm.movImm32(A2, IO + REG.BG0HOFS);
+  asm.strh(A0, armAt(A2, 0));
+  asm.strh(A1, armAt(A2, 2));
 }
 
 /**

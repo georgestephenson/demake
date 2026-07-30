@@ -18,6 +18,7 @@ export default defineConfig({
       "@demake/sms": fileURLToPath(new URL("./packages/sms/src/index.ts", import.meta.url)),
       "@demake/snes": fileURLToPath(new URL("./packages/snes/src/index.ts", import.meta.url)),
       "@demake/md": fileURLToPath(new URL("./packages/md/src/index.ts", import.meta.url)),
+      "@demake/gba": fileURLToPath(new URL("./packages/gba/src/index.ts", import.meta.url)),
       "@demake/chip": fileURLToPath(new URL("./packages/chip/src/index.ts", import.meta.url)),
       "@demake/audio": fileURLToPath(new URL("./packages/audio/src/index.ts", import.meta.url)),
     },

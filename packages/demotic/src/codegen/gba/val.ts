@@ -87,6 +87,12 @@ export function imm(v: number): Val {
  * this backend goes through this rather than computing an address itself, which
  * is what makes "the whole of internal RAM is addressable" true without every
  * call site carrying the case.
+ *
+ * The converse is the rule an emitter above has to keep: **{@link ADDR} may not
+ * hold anything across a call into this file.** An emitter that sets a hardware
+ * base up there and then loads a value through one of these has silently changed
+ * where its store lands — and the symptom is not a crash but a register that is
+ * never written, which is a picture that never scrolls.
  */
 export function mem(ctx: GbaCtx, addr: number, offset = 0): ReturnType<typeof armAt> {
   const target = addr + offset;
@@ -94,6 +100,53 @@ export function mem(ctx: GbaCtx, addr: number, offset = 0): ReturnType<typeof ar
   if (delta >= 0 && delta < RAM_WINDOW) return armAt(RAM, delta);
   ctx.asm.movImm32(ADDR, target);
   return armAt(ADDR, 0);
+}
+
+/**
+ * The addressing mode a *sixteen-bit* access reaches, which is not the same one.
+ *
+ * `ldrh`, `strh`, `ldrsh` and `ldrsb` predate the ARM7 and were fitted into a
+ * hole in the data-processing space, so their offset field is **eight bits**
+ * where a word or byte transfer's is twelve. A base register therefore reaches
+ * 255 bytes on these and 4095 on the others, and an emitter that used
+ * {@link mem} for one of them assembles fine right up until a game grows past
+ * the first two hundred and fifty-six bytes of its own state.
+ *
+ * So the four narrow forms are *only* reachable through the functions below,
+ * which pick the addressing rather than take it. What they do past the window is
+ * add the high byte of the displacement into {@link ADDR} — one instruction and
+ * no pooled constant, because a value with only bits 8–11 set is always an ARM
+ * immediate — and fall back to a full materialisation past 4 KiB.
+ */
+function memHalf(ctx: GbaCtx, addr: number): ReturnType<typeof armAt> {
+  const delta = addr - RAM_BASE;
+  if (delta >= 0 && delta < 0x100) return armAt(RAM, delta);
+  if (delta >= 0 && delta < RAM_WINDOW) {
+    ctx.asm.add(ADDR, RAM, armImm(delta & 0xf00));
+    return armAt(ADDR, delta & 0xff);
+  }
+  ctx.asm.movImm32(ADDR, addr);
+  return armAt(ADDR, 0);
+}
+
+/** `reg = the halfword at addr`, zero-extended. */
+export function loadHalf(ctx: GbaCtx, reg: number, addr: number): void {
+  ctx.asm.ldrh(reg, memHalf(ctx, addr));
+}
+
+/** `reg = the halfword at addr`, sign-extended. */
+export function loadHalfSigned(ctx: GbaCtx, reg: number, addr: number): void {
+  ctx.asm.ldrsh(reg, memHalf(ctx, addr));
+}
+
+/** `reg = the byte at addr`, sign-extended. */
+export function loadByteSigned(ctx: GbaCtx, reg: number, addr: number): void {
+  ctx.asm.ldrsb(reg, memHalf(ctx, addr));
+}
+
+/** Write a register's low halfword to `addr`. */
+export function storeHalf(ctx: GbaCtx, reg: number, addr: number): void {
+  ctx.asm.strh(reg, memHalf(ctx, addr));
 }
 
 /** Put a value in a register. */

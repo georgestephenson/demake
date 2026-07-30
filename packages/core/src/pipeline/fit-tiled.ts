@@ -44,6 +44,16 @@ export interface FitParams {
    * over a backdrop whose palettes were chosen for the backdrop.
    */
   maxPalettes?: number;
+  /**
+   * Colours the fit may use of each sub-palette, when fewer than it holds.
+   *
+   * `maxPalettes`'s counterpart for a console whose palette is one flat block:
+   * a Game Boy Advance cell may use any of 256 colours, so there is no
+   * sub-palette to reserve and the reservation is expressed in colours. Whatever
+   * is held back is the runtime's — a font that has to stay legible over a
+   * backdrop whose colours were chosen for the backdrop.
+   */
+  maxColors?: number;
 }
 
 /** The fitter's raw output (pre-dither, pre-budget). */
@@ -182,7 +192,7 @@ export function fitTiled(
   const cellsY = Math.floor(img.height / cellH);
   const cellCount = cellsX * cellsY;
   const P = Math.max(1, Math.min(layout.subPalettes.count, params.maxPalettes ?? Infinity));
-  const K = layout.subPalettes.size;
+  const K = Math.max(2, Math.min(layout.subPalettes.size, params.maxColors ?? Infinity));
 
   const pre = precompute(img);
   if (params.denoise) {

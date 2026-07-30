@@ -42,8 +42,8 @@ import { DemakeError } from "../errors.js";
 import { decodeImage } from "../image/decode.js";
 import type { RgbaImage } from "../image/rgba.js";
 import { makePrng, type Prng } from "../math/prng.js";
-import { getConsole } from "../consoles/registry.js";
-import type { ConsoleSpec, LayoutSpec, TileLayout } from "../consoles/types.js";
+import { getConsole, withMode } from "../consoles/registry.js";
+import type { ConsoleSpec, TileLayout } from "../consoles/types.js";
 
 import { makeColorSpace, type HwColor, type HwColorSpace } from "./hwcolor.js";
 import { latticeKmeans, type Points } from "./kmeans.js";
@@ -404,14 +404,6 @@ function packTile(
  * sixteen would produce art that is *valid* and half the picture it asked for,
  * which is the hardest kind of wrong to notice.
  */
-function resolveLayout(spec: ConsoleSpec, mode: number | undefined): LayoutSpec {
-  if (mode === undefined) return spec.layout;
-  const found = spec.modes?.[mode];
-  if (found === undefined) {
-    throw new DemakeError("E_UNSUPPORTED_FAMILY", `${spec.name} has no selectable layout ${mode}`);
-  }
-  return found;
-}
 
 /** The point set one asset contributes to a palette fit. */
 function pointsFor(entry: Decoded): Points {
@@ -596,7 +588,7 @@ export function buildSpriteBank(
   options: SpriteOptions,
 ): SpriteBank {
   const spec = getConsole(options.console);
-  const layout = resolveLayout(spec, options.mode);
+  const layout = withMode(spec, options.mode).layout;
   if (
     layout.kind !== "tiles" ||
     (layout as TileLayout).tileW !== 8 ||

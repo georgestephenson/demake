@@ -668,10 +668,61 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     because the comparison is against the audio rather than against an instruction
     to make it — and it is exact, because the mixing is integer throughout.
 
-    What remains for both consoles: the Demotic backends, the 8bpp/256-colour art
-    path the tiled fitter needs to spend these machines' palettes, the ARM audio
-    drivers and their bindings, and — for the DS — a second core with two
-    processors in it, since its sound registers are the ARM7's alone.
+    **The Game Boy Advance is the sixth console, and it is the first one whose
+    hardware is bigger than the language needs in every direction at once.**
+    `demake build -c gba` produces a real cartridge — ARM machine code written for
+    the game, a 256-colour mode-0 background, a second layer carrying nothing but
+    the HUD, and object art in a bank of its own — and the whole example library
+    traces identically there, in the same battery, at the same one frame a tick.
+    Nothing moved out of `backend.ts` or `shape.ts` for it either.
+
+    Most of what is new about this backend is machinery the other five have that
+    it *does not*. Four independently scrolling backgrounds mean the HUD gets a
+    layer, so the sprite HUD every other console needs for a scrolling scene, the
+    second decimal renderer that drives it and the whole pixel-pinning argument
+    are simply absent: layer one's scroll registers are written once at boot, and
+    a caption's cell is `floor(pos) − floor(camera)` on both axes. A cell has 256
+    colours and no palette field, so a picture is fitted into one flat palette
+    rather than partitioned into sub-palettes and `maxSubPalettes` does not apply
+    — which is why the font's reservation is expressed in *colours* here, three of
+    256 against the quarter a Mega Drive gives up. Backgrounds and objects have
+    separate character memory and separate palettes, so this is the first console
+    where a full-screen picture cannot starve the sprites and `checkTiles` refuses
+    two budgets. And the map is bigger than the screen on both axes, so there is
+    no seam to mask.
+
+    What it charges for instead is *addressing*. A halfword transfer reaches ±255
+    where a word transfer reaches ±4095, so the value layer has two addressing
+    functions and the four narrow forms are only reachable through helpers that
+    pick one — an emitter that used the wide one for a `strh` assembles fine until
+    a game grows past the first 256 bytes of its own state. The converse bit the
+    scroll registers: an address past the base register's reach is materialised
+    into `r12` immediately before the access, so a hardware base held there is a
+    base the next load overwrites, and the symptom is a register that is never
+    written rather than a crash. And a 32-bit constant does not fit in a 32-bit
+    instruction, so a rule body longer than 4 KiB has to place its literal pool
+    early, over a branch, at a point the emitter chooses.
+
+    Three things are the instruction set's rather than the console's: a collision
+    box is one `ldm` and one `stm`, a short conditional is a predicated pair with
+    no label, and the decimal renderer keeps its whole state in callee-saved
+    registers *across* the call that plots a glyph — which no other backend can
+    do, and which is only sound because every routine in this backend keeps
+    `r4`–`r11`.
+
+    The rendering oracle is `gba-rom.test.ts`, and it is where the block layout is
+    settled: a 64×64 map is four 32×32 screen blocks a kilobyte apart rather than
+    a rectangle, so the test computes the address the hardware's way and checks
+    every visible cell against the level's own grid once the camera has crossed
+    into each of them. It also pins the property the HUD-layer design rests on —
+    a camera-pinned caption occupying the same cells for forty frames while the
+    picture scrolls under it.
+
+    What remains for both consoles: the ARM audio drivers and their bindings —
+    the Game Boy Advance's cartridges compile and play silently today, recording
+    what a rule asked for exactly as the Super Nintendo's did before its SPC700
+    driver landed — the Nintendo DS backend, and, for the DS, a second core with
+    two processors in it, since its sound registers are the ARM7's alone.
 
   - **D5 — Play ROM in the page** *(done for `gb`, `gbc`, `nes`, `sms`, `gg` and
     `md`)*: the browser
