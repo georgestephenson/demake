@@ -38,7 +38,7 @@ images are only one kind (doc 01 §Scope):
 | **art demaker** | the image pipeline described below | live |
 | **music demaker** | tracks → chip music (docs 16, 17) | live |
 | **sound demaker** | effects → chip sound (docs 16, 18) | live |
-| **level editor** | draw a `.dmtl` room, see it at every console's viewport | planned (doc 19) |
+| **level editor** | draw a `.dmtl` room, see it at every console's viewport | live (doc 19) |
 | **block editor** | a `.dmt` as draggable blocks instead of typed lines | planned (doc 19) |
 
 The route lives in the hash as `#section=<id>`, and the **art demaker is the
@@ -342,6 +342,35 @@ not download any of it. The engine runs in its own worker
 and it holds each schedule it produces, so the sidecar, a cartridge and a
 re-render at another rate are asked for by token rather than shipped across the
 boundary on every keystroke.
+
+### The level editor *(built)*
+
+Opening a `.dmtl` gives you **text, map, or both**, and neither view is the
+authoritative one: the file is (doc 19 §The level editor). Two panes in the map
+view — **Legend**, one row per tile, with its art chosen from the project's own
+pictures and written back as the shortest name that identifies one; and **Grid**,
+the level drawn with that art, painted with pencil, rectangle, flood, erase and
+pick, resized from the top-left corner, with a console viewport rectangle over it
+(the project's declared targets, or one machine where a project declares none).
+
+**It is a view over the format, never a second one**, and that is structural
+rather than careful: `src/lib/dmtl.ts` splits a file into its legend, its `map`
+line and its rows and rewrites *only the lines an edit changes*, so nothing here
+can reflow a row, drop the blank line that is a row of empty cells, or rewrite a
+file it did not change. Those are `.dmtl`'s three literalness rules and they are
+what an editor built on a parsed model would break first.
+
+**A cell is drawn by the same function the Demotic section draws a scene's tiles
+with** (`src/lib/tiles.ts`). The "no second implementation" rule applies to a
+tile on screen exactly as it applies to one demade into a cartridge — a level
+that looked one way while you drew it and another way in the preview would make
+both untrustworthy.
+
+Diagnostics are the compiler's, shown under the grid, and a character with no
+legend row is drawn as itself on a hatched cell: visible, editable, and not
+quietly deleted. Removing a legend row says how many cells use it and leaves
+those cells alone, because the compiler reporting them is a better answer than an
+editor silently erasing part of a level. Code-split, like the other sections.
 
 ## UX specification
 

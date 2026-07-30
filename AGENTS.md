@@ -463,17 +463,23 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
   src/dsp.ts         deterministic FFT/resampler/pitch, all on core's kernels
   src/manifest.ts    the --emit-manifest sidecar: one shape, two callers (CLI, web)
   src/render.ts      ChipScript → PCM; the only way anything makes sound
-packages/web/        the site (doc 07): one shell over five sections, all but the
-                     art demaker code-split
+packages/web/        the site (doc 07): a project workspace over six editors, all
+                     but the art demaker code-split (doc 19)
   src/worker/        core.worker.ts (images *and* game cartridges) and
                      audio.worker.ts (music + sound): the only places the page
                      touches an engine, and the only places @demake/core is
                      bundled — a second copy is what the JS budget notices. Extra
                      instances of core.worker are the pool lanes, which is why
                      they cost nothing to download
-  src/sections/      the lazy sections; art's panes live in src/components/
+  src/sections/      the lazy sections; art's panes live in src/components/.
+                     LevelEditor.tsx is the one that edits a *file* rather than
+                     demaking one, over lib/dmtl.ts
   src/lib/           option records ⇄ engine options ⇄ equivalent command line,
-                     the bundled demo library, and audio-player.ts (playback only)
+                     the bundled demo library, and audio-player.ts (playback
+                     only). project.ts is the folder the whole page is about;
+                     dmtl.ts edits a level as *text* (never a parsed model, so a
+                     file the editor did not change comes back byte-identical);
+                     tiles.ts draws a tile, for the two panes that draw one
 tools/eslint-rules/  custom ESLint rules: platform-purity + determinism
 tools/ci/            CI guards: E2E prerequisites, web JS budget, and
                      affected.mjs — which gates a change can break, read off the

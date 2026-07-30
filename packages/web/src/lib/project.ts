@@ -81,6 +81,24 @@ export function addFile(project: Project, path: string, bytes: Uint8Array): Proj
 }
 
 /**
+ * The media type a blob URL needs, by extension.
+ *
+ * An `<img>` pointed at a blob URL believes the blob's type and does not sniff
+ * for SVG: with the type left off, every drawing in the project is a broken
+ * image and the preview quietly falls back to flat blocks. Only the kinds
+ * something points a browser at are listed.
+ */
+const MEDIA: Readonly<Record<string, string>> = {
+  svg: "image/svg+xml",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  bmp: "image/bmp",
+};
+
+/**
  * A URL for one file's bytes, made once and kept.
  *
  * Mutates the entry rather than the map: a URL is a cache over immutable bytes,
@@ -90,7 +108,10 @@ export function addFile(project: Project, path: string, bytes: Uint8Array): Proj
 export function fileUrl(project: Project, path: string): string | undefined {
   const file = project.files.get(path);
   if (!file) return undefined;
-  file.url ??= URL.createObjectURL(new Blob([file.bytes as BlobPart]));
+  const type = MEDIA[path.slice(path.lastIndexOf(".") + 1).toLowerCase()];
+  file.url ??= URL.createObjectURL(
+    new Blob([file.bytes as BlobPart], ...(type === undefined ? [] : [{ type }])),
+  );
   return file.url;
 }
 

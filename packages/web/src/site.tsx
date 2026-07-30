@@ -26,6 +26,7 @@ import { download } from "./lib/download.js";
 
 const TAGLINES: Readonly<Record<string, string>> = {
   game: "one declarative game → every console",
+  level: "draw a level, or write it",
   language: "every statement, property and diagnostic",
   art: "any image → hardware-compliant console art",
   music: "any track → chip music",
@@ -41,6 +42,7 @@ const TAGLINES: Readonly<Record<string, string>> = {
  */
 const ENGINES: Readonly<Record<string, string[]>> = {
   game: ["@demake/demotic", "@demake/core"],
+  level: ["@demake/demotic"],
   language: ["@demake/demotic"],
   art: ["@demake/core"],
   music: ["@demake/audio", "@demake/chip"],
@@ -110,13 +112,15 @@ export function Site() {
     const load =
       section === "game"
         ? () => import("./sections/GameDemaker.js").then((m) => m.GameDemaker)
-        : section === "language"
-          ? () => import("./sections/LanguageDocs.js").then((m) => m.LanguageDocs)
-          : section === "music"
-            ? () => import("./sections/MusicDemaker.js").then((m) => m.MusicDemaker)
-            : section === "sound"
-              ? () => import("./sections/SoundDemaker.js").then((m) => m.SoundDemaker)
-              : null;
+        : section === "level"
+          ? () => import("./sections/LevelEditor.js").then((m) => m.LevelEditor)
+          : section === "language"
+            ? () => import("./sections/LanguageDocs.js").then((m) => m.LanguageDocs)
+            : section === "music"
+              ? () => import("./sections/MusicDemaker.js").then((m) => m.MusicDemaker)
+              : section === "sound"
+                ? () => import("./sections/SoundDemaker.js").then((m) => m.SoundDemaker)
+                : null;
     if (!load) return;
     void load().then((component) =>
       setLazySections((previous) => ({

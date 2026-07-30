@@ -694,18 +694,18 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   line-oriented, order-free, with total error recovery and structured
   diagnostics — so most of the work is packaging rather than new capability.
 
-- **A level editor in the web app** — **designed, in [doc 19](19-projects.md)
-  §The level editor**: `.dmtl` is a text format an LLM can edit, and that was the
-  point — but a person drawing a room wants to draw it. The shape is a top-level
-  site section after the four demakers: paint into a grid, name tiles, mark them
-  solid, bind art, and see the result scroll at every console's viewport at once.
-  The file it writes is the same `.dmtl` the compiler already reads, so it is a
-  view over the format rather than a second one, and a game stays hand-editable
-  whether or not the editor was used. It comes last of doc 19's seven steps
-  because its legend picks art out of the project, so it wants the resolver under
-  it — and the three things it must never do to a file all come from `.dmtl`
-  being literal: no reflow, no dropped blank row, and a file it did not change
-  comes back byte-identical.
+- **A level editor in the web app** — **built** (doc 19 §The level editor, doc 07):
+  `.dmtl` is a text format an LLM can edit, and that was the point — but a person
+  drawing a room wants to draw it. Opening one gives text, map, or both: paint
+  into a grid, name tiles, mark them solid, bind art picked from the project's own
+  pictures, and see the console viewports over what you drew. The file it writes
+  is the same `.dmtl` the compiler already reads, so it is a view over the format
+  rather than a second one, and a game stays hand-editable whether or not the
+  editor was used — the three things it must never do to a file all come from
+  `.dmtl` being literal (no reflow, no dropped blank row, a file it did not change
+  comes back byte-identical), and the text-surgical model underneath makes all
+  three impossible rather than merely unlikely. Still to come: showing a `stream`
+  composition read-only, which is doc 19's one deferred piece of this.
 
 - **Tile editing — a question, not a plan**: a tileset exists because hardware
   forces art to be shared, which makes it a *hardware* concern leaking into an

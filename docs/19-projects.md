@@ -372,7 +372,9 @@ on a hatched cell — visible, editable, and not quietly deleted.
 build time from the program's seed (doc 14 §Composed levels); the editor edits the
 chunks, which are ordinary `.dmtl` files, and shows the composition read-only with
 the seed the `.dmt` states. An editor that let you paint a composed course would
-be painting something no build will produce.
+be painting something no build will produce. _The read-only composition view is
+the one part of this section not yet built_; the chunks are ordinary levels and
+edit like any other today.
 
 ## The block editor
 
@@ -736,8 +738,17 @@ Each step is useful on its own and none of them breaks the one before.
    zip the page exports, read by an independent zip implementation, unzips to the
    repository's own project folder with the same file list and every byte
    identical.
-8. **The level editor**: wants the resolver under it, since its legend picks art
-   from the project.
+8. **The level editor** — **done**: text, map, or both, over one text-surgical
+   model (`web/src/lib/dmtl.ts`) that rewrites only the lines it changes, so the
+   three rules `.dmtl`'s literalness imposes hold by construction rather than by
+   care. Legend rows edit in place — name, `solid`, and art picked from the
+   project's own pictures and written as the shortest name that identifies one —
+   and the grid paints with pencil, rectangle, flood, erase and pick, resizes
+   from the top-left corner, and carries the console viewport overlays. Cells are
+   drawn through the same function the game section's preview draws a scene's
+   tiles with (`web/src/lib/tiles.ts`), which is the no-second-implementation
+   rule applied to a tile on screen. A `stream` composition is still not shown;
+   the chunks it draws from are ordinary levels and edit like any other.
 9. **The block editor**: last, because it wants everything above it — the
    registry-generated palette is free, but a field that offers you the project's
    sprites as pictures needs the project.

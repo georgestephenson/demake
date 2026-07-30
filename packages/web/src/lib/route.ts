@@ -14,7 +14,7 @@
 import { kindOf } from "@demake/demotic";
 
 /** The editors, in the order the nav lists them. */
-export const SECTIONS = ["game", "language", "art", "music", "sound"] as const;
+export const SECTIONS = ["game", "level", "language", "art", "music", "sound"] as const;
 
 /** One editor's id. */
 export type Section = (typeof SECTIONS)[number];
@@ -22,6 +22,7 @@ export type Section = (typeof SECTIONS)[number];
 /** Human-readable names, in nav order. */
 export const SECTION_LABELS: Readonly<Record<Section, string>> = {
   game: "demotic game demaker",
+  level: "level editor",
   language: "demotic reference",
   art: "art demaker",
   music: "music demaker",
@@ -36,7 +37,7 @@ export const SECTION_LABELS: Readonly<Record<Section, string>> = {
  * language and the whole audio engine, and someone who came to convert an image
  * should download neither (doc 07 §Quality bar).
  */
-export const LAZY: readonly Section[] = ["game", "language", "music", "sound"];
+export const LAZY: readonly Section[] = ["game", "level", "language", "music", "sound"];
 
 const DEFAULT_SECTION: Section = "art";
 
@@ -57,8 +58,8 @@ export function sectionForFile(path: string): Section | undefined {
       return "music";
     case "sound":
       return "sound";
-    // A `.dmtl` has no editor yet — the level editor is doc 19's step 8 — so the
-    // explorer lists it inert rather than routing to a section that is not there.
+    case "level":
+      return "level";
     default:
       return undefined;
   }

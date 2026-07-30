@@ -18,16 +18,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import { RomPane } from "../components/RomPane.js";
 import { SourceEditor } from "../components/SourceEditor.js";
 import { fileHash } from "../lib/route.js";
-import {
-  assetBytes,
-  fileUrl,
-  gameFiles,
-  levelSources,
-  projectFiles,
-  readText,
-} from "../lib/project.js";
+import { assetBytes, gameFiles, levelSources, projectFiles, readText } from "../lib/project.js";
+import { drawTileCell, loadAsset, type Loaded } from "../lib/tiles.js";
 import type { EditorProps } from "../site.js";
-import type { Project } from "../lib/project.js";
 import {
   check,
   formatResults,
@@ -58,11 +51,6 @@ const KEYS: Readonly<Record<string, string>> = {
 
 /** Colours for objects whose art has not loaded. */
 const FALLBACK = ["#7fd1ff", "#ffd479", "#9dffb0", "#ff9ecb", "#c4b5ff"];
-
-interface Loaded {
-  image: HTMLImageElement;
-  ready: boolean;
-}
 
 /**
  * Take a dropdown's new value, and give the keyboard back to the game.
@@ -529,26 +517,6 @@ function isTyping(target: EventTarget | null): boolean {
 }
 
 /**
- * An `<img>` for one of the project's art files, for the preview to draw.
- *
- * The preview draws with the browser's own renderer because it only has to
- * *look* right; the cartridge gets the same file through `@demake/core`'s fitter
- * and comes out demade (doc 07 §parity).
- */
-function loadAsset(cache: Map<string, Loaded>, project: Project, name: string): void {
-  if (cache.has(name)) return;
-  const url = fileUrl(project, name);
-  if (!url) return;
-  const image = new Image();
-  const entry: Loaded = { image, ready: false };
-  image.addEventListener("load", () => {
-    entry.ready = true;
-  });
-  image.src = url;
-  cache.set(name, entry);
-}
-
-/**
  * The background layer when a scene has a picture rather than a playfield.
  *
  * The page draws it with the browser's own renderer, at the screen's size,
@@ -583,9 +551,10 @@ function drawBackdrop(
  * however long the level is — which is exactly what the hardware does, and the
  * reason a 144-cell course is not 144 cells of work per frame.
  *
- * A tile with no art draws as a flat block. That is deliberate: a legend entry
- * exists to give a *name* to rules, and a game may well want a named tile that
- * is never seen.
+ * One cell is drawn by `drawTileCell`, which the level editor's grid draws
+ * through too — the "no second implementation" rule applies to a tile on screen
+ * exactly as it applies to one demade into a cartridge (doc 19 §The level
+ * editor).
  */
 function drawTiles(
   target: CanvasRenderingContext2D,
@@ -615,13 +584,7 @@ function drawTiles(
         y = Math.floor(y);
       }
 
-      const art = tile.art ? assets.get(tile.art) : undefined;
-      if (art?.ready) {
-        target.drawImage(art.image, x, y, unit, unit);
-      } else {
-        target.fillStyle = tile.solid ? "#3a4459" : "#232b3b";
-        target.fillRect(x, y, unit, unit);
-      }
+      drawTileCell(target, tile, assets, x, y, unit);
     }
   }
 }
