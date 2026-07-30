@@ -64,7 +64,7 @@ import {
 } from "@demake/core";
 
 import type { InstanceDef, RuleDef } from "../../program.js";
-import { glyphTile, patternTile } from "../../rom/graphics.js";
+import { GBA_BLANK_TILE, glyphTile, patternTile } from "../../rom/graphics.js";
 import { isMutable } from "../analyze.js";
 import { emitTickSteps, type TickSteps } from "../backend.js";
 import { PROPS, TILE_CONTACT_MAX, W } from "../layout.js";
@@ -209,20 +209,33 @@ export const PALETTE_COLORS = 256;
 /**
  * Colours a demade picture may use, of the 256 each palette holds.
  *
- * The last three are the runtime's — the font's ink ramp on the background side
- * and the placeholder block's on the object side — reserved for the reason every
- * other backend reserves a sub-palette: a caption drawn in a title screen's own
- * colours is a caption nobody can read. Three rather than sixteen because this
- * console has no sub-palette structure to round up to, so the reservation costs
- * a picture 1.2% of its colours instead of a quarter of them.
+ * The last four are the runtime's, reserved for the reason every other backend
+ * reserves a sub-palette: a caption drawn in a title screen's own colours is a
+ * caption nobody can read. Four rather than sixteen because this console has no
+ * sub-palette structure to round up to, so the reservation costs a picture 1.6%
+ * of its colours instead of a quarter of them.
  */
-export const ART_COLORS = PALETTE_COLORS - 3;
+export const ART_COLORS = PALETTE_COLORS - 4;
 
 /** Where the brightest of the built-in bank's four shades lands. */
 export const SYSTEM_INK = PALETTE_COLORS - 1;
 
+/**
+ * The colour a caption is written *on*.
+ *
+ * The one reserved entry no other console's build needs. A caption here is a
+ * layer over the picture rather than a cell the picture gave up, so a glyph's
+ * shade zero shows whatever the picture put behind it — and ink chosen against
+ * one colour vanishes over another. Giving the font paper is what makes it
+ * legible over any backdrop at all (`rom/graphics.ts` §builtinGba).
+ */
+export const SYSTEM_PAPER = PALETTE_COLORS - 4;
+
 /** The cell a blank HUD square and an empty background cell draw. */
-const BLANK_CELL = 0;
+const BLANK_CELL = GBA_BLANK_TILE;
+
+/** A word of two blank cells, which is what a map is cleared with. */
+const BLANK_PAIR = (BLANK_CELL | (BLANK_CELL << 16)) >>> 0;
 
 /**
  * Which layer is in front of which.
@@ -484,6 +497,8 @@ export function emitProgram(ctx: GbaCtx, options: GbaEmitOptions = {}): void {
   asm.align();
   asm.label("Zero");
   asm.dw(0);
+  asm.label("BlankPair");
+  asm.dw(BLANK_PAIR);
   asm.label("TileBank");
   asm.bytes(options.bank ?? new Uint8Array(0));
   asm.align();
@@ -500,20 +515,21 @@ export function emitProgram(ctx: GbaCtx, options: GbaEmitOptions = {}): void {
 /**
  * The palette a build with no demade art uses.
  *
- * 256 little-endian RGB555 halfwords, of which only the reserved three at the
- * top are anything but black: a rising grey ramp, so a caption and a placeholder
- * block are legible with nothing else uploaded.
+ * 256 little-endian RGB555 halfwords, of which only the reserved four at the top
+ * are anything but black: black paper and a rising grey ramp, so a caption and a
+ * placeholder block are legible with nothing else uploaded.
  */
 function defaultPalette(): Uint8Array {
   const bytes = new Uint8Array(PALETTE_COLORS * 2);
   const ramp = [
+    [0, 0, 0],
     [12, 12, 12],
     [22, 22, 22],
     [31, 31, 31],
   ];
   for (const [index, codes] of ramp.entries()) {
     const word = encodeColour(codes as number[]);
-    const to = (SYSTEM_INK - 2 + index) * 2;
+    const to = (SYSTEM_PAPER + index) * 2;
     bytes[to] = word & 0xff;
     bytes[to + 1] = (word >> 8) & 0xff;
   }
@@ -563,8 +579,10 @@ function emitReset(ctx: GbaCtx, options: GbaEmitOptions): void {
   asm.movImm32(A1, PAL_OBJ);
   asm.bl(needPaletteCopy(ctx));
   // Both maps start blank, so nothing is drawn until the first frame builds it.
-  emitDma(ctx, label("Zero"), VRAM + MAP_BASE, (MAP_W * MAP_H * 2) / 4, true);
-  emitDma(ctx, label("Zero"), VRAM + HUD_BASE, (HUD_W * HUD_H * 2) / 4, true);
+  // The blank is a *tile* rather than zero: tile zero is the space glyph, whose
+  // shade zero is this console's opaque paper.
+  emitDma(ctx, label("BlankPair"), VRAM + MAP_BASE, (MAP_W * MAP_H * 2) / 4, true);
+  emitDma(ctx, label("BlankPair"), VRAM + HUD_BASE, (HUD_W * HUD_H * 2) / 4, true);
 
   // Every entity starts from its declared values, not just the entry scene's: a
   // rule may name an object in a scene the game has not reached.
@@ -1687,7 +1705,7 @@ function needClearHud(ctx: GbaCtx): Ref {
     const { asm } = inner;
     const loop = inner.unique("hudClear");
     asm.movImm32(A0, VRAM + HUD_BASE);
-    asm.mov(A1, armImm(0));
+    asm.movImm32(A1, BLANK_PAIR);
     asm.mov(A2, armImm((HUD_W * HUD_H * 2) / 4));
     asm.label(loop);
     asm.str(A1, armAtPost(A0, 4));

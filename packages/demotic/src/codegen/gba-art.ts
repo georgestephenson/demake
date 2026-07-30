@@ -20,14 +20,16 @@
  *     `maxSubPalettes`, which every other backend here spends most of its
  *     reasoning on, does not apply.
  *   - **The reservation is therefore in colours, not in sub-palettes.** There is
- *     no palette to hold back for the font, so three of the 256 are held back
+ *     no palette to hold back for the font, so four of the 256 are held back
  *     instead — `maxColors`, which exists for this console — and a picture keeps
- *     the other 253. That is 1.2% against the quarter a Mega Drive gives up.
+ *     the other 252. That is 1.6% against the quarter a Mega Drive gives up.
  *
  * Colour zero is still transparent on every background layer, which is what
- * makes it the shared backdrop the spec declares: a picture's index 0 is the
- * colour a caption's paper shows, so the font's ink is chosen against it exactly
- * as the NES and Mega Drive backends choose theirs.
+ * makes it the shared backdrop the spec declares. The fourth reserved entry is
+ * the font's *paper*, and it is the one thing here that no other console's
+ * binding needs: a caption is drawn on a layer over the picture rather than into
+ * a cell the picture gave up, so a transparent glyph would be read against
+ * whatever the backdrop happened to put behind it.
  */
 
 import {
@@ -42,7 +44,7 @@ import {
 } from "@demake/core";
 
 import type { Program } from "../program.js";
-import { builtinGba, BUILTIN_TILES, GBA_TILE_BYTES, objectBlockGba } from "../rom/graphics.js";
+import { builtinGba, GBA_BUILTIN_TILES, GBA_TILE_BYTES, objectBlockGba } from "../rom/graphics.js";
 
 import { artRequests, digest, remember, rememberAsync, TilePool, type AssetBytes } from "./art.js";
 import {
@@ -53,6 +55,7 @@ import {
   PACK_W,
   PALETTE_COLORS,
   SYSTEM_INK,
+  SYSTEM_PAPER,
   type GbaEmitOptions,
 } from "./gba/emit.js";
 import { GBA_MEMORY } from "./layout.js";
@@ -74,7 +77,7 @@ const bankCache = new Map<string, SpriteBank>();
 const GAME_MODE = 0;
 
 /** Tiles left for background art once the built-in bank has its share. */
-export const ART_TILES = BANK_TILES - BUILTIN_TILES;
+export const ART_TILES = BANK_TILES - GBA_BUILTIN_TILES;
 
 /** Tiles left for object art once the placeholder block has its one. */
 export const OBJECT_ART_TILES = OBJ_TILES - 1;
@@ -97,13 +100,15 @@ export interface BoundGbaArt {
 /**
  * One palette: 256 little-endian RGB555 halfwords.
  *
- * The last three are always the runtime's, whatever the art chose — the
- * reservation, stated once, in the one place that writes the bytes. Their ramp
- * is picked against colour zero, because on this console a glyph's shade zero is
- * transparent and shows whatever is behind it: a fixed white-through-black ramp
- * would be invisible over a picture whose colour zero happened to be white.
- * That is the NES's rule for its universal backdrop, reached by different
- * hardware.
+ * The last four are always the runtime's, whatever the art chose — the
+ * reservation, stated once, in the one place that writes the bytes. It is a
+ * *fixed* black-paper-through-white ramp rather than one picked against the
+ * picture, and that is the whole point of the paper: a caption here is a layer
+ * over the backdrop rather than a cell the backdrop gave up, so there is no one
+ * colour behind it to choose against. The Sega build reaches the same answer
+ * because its background layer is opaque outright; the NES and Mega Drive pick
+ * their ink against a shared backdrop because on those machines a caption really
+ * does replace the cell.
  */
 function packPalette(colours: readonly { codes: readonly number[] }[]): Uint8Array {
   const bytes = new Uint8Array(PALETTE_COLORS * 2);
@@ -115,34 +120,17 @@ function packPalette(colours: readonly { codes: readonly number[] }[]): Uint8Arr
   for (let index = 0; index < ART_COLORS; index += 1) {
     put(index, colours[index]?.codes ?? [0, 0, 0]);
   }
-  for (const [index, codes] of systemRamp(colours[0]?.codes ?? [0, 0, 0]).entries()) {
-    put(SYSTEM_INK - 2 + index, codes);
-  }
+  for (const [index, codes] of SYSTEM_RAMP.entries()) put(SYSTEM_PAPER + index, codes);
   return bytes;
 }
 
-/**
- * The runtime's three entries, as a ramp away from what shows through shade
- * zero.
- *
- * Shade three is every glyph's ink and every placeholder block's brightest
- * face, so what matters is that it contrasts with the colour behind it.
- */
-function systemRamp(backdrop: readonly number[]): number[][] {
-  const luminance = ((backdrop[0] ?? 0) * 2 + (backdrop[1] ?? 0) * 5 + (backdrop[2] ?? 0)) / 8;
-  const dark = luminance < 14;
-  return dark
-    ? [
-        [12, 12, 12],
-        [22, 22, 22],
-        [31, 31, 31],
-      ]
-    : [
-        [18, 18, 18],
-        [9, 9, 9],
-        [0, 0, 0],
-      ];
-}
+/** The runtime's four entries: paper, then the three shades a glyph is inked in. */
+const SYSTEM_RAMP: readonly (readonly number[])[] = [
+  [0, 0, 0],
+  [12, 12, 12],
+  [22, 22, 22],
+  [31, 31, 31],
+];
 
 /**
  * Share a bank out among pictures that together want more of it than there is.
@@ -187,7 +175,7 @@ async function demakeBackdrop(
     mode: GAME_MODE,
     size: { w: GBA_MEMORY.viewW * 8, h: GBA_MEMORY.viewH * 8 },
     fit: "cover",
-    // Three of the 256 are the runtime's; there is no sub-palette to reserve on
+    // Four of the 256 are the runtime's; there is no sub-palette to reserve on
     // this console, so the reservation is in colours (see the file header).
     maxColors: ART_COLORS,
     maxTiles,
@@ -295,8 +283,8 @@ export async function bindGbaArt(
   options.objectPalette = packPalette(objectColours);
 
   // --- the background bank: built-ins, level tiles, then the pictures ---------
-  const bankParts: Uint8Array[] = [builtinGba(SYSTEM_INK)];
-  let next = BUILTIN_TILES;
+  const bankParts: Uint8Array[] = [builtinGba(SYSTEM_INK, SYSTEM_PAPER)];
+  let next = GBA_BUILTIN_TILES;
   let backgroundColours: readonly { codes: readonly number[] }[] = [];
 
   if (backgrounds) {
@@ -397,7 +385,7 @@ export async function bindGbaArt(
 
   return {
     options,
-    tiles: bank.length / GBA_TILE_BYTES - BUILTIN_TILES,
+    tiles: bank.length / GBA_TILE_BYTES - GBA_BUILTIN_TILES,
     objectTiles: (options.objectBank?.length ?? 0) / GBA_TILE_BYTES - 1,
     missing,
   };

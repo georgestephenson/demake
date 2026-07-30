@@ -35,9 +35,14 @@ import { Gba } from "@demake/gba";
 
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
-import { builtinGba, BUILTIN_TILES, GBA_TILE_BYTES, objectBlockGba } from "../src/rom/graphics.js";
+import {
+  builtinGba,
+  GBA_BUILTIN_TILES,
+  GBA_TILE_BYTES,
+  objectBlockGba,
+} from "../src/rom/graphics.js";
 import { buildGbaRom } from "../src/codegen/gba.js";
-import { ART_COLORS, BANK_TILES, SYSTEM_INK } from "../src/codegen/gba/emit.js";
+import { ART_COLORS, BANK_TILES, SYSTEM_INK, SYSTEM_PAPER } from "../src/codegen/gba/emit.js";
 
 const fixtures = join(import.meta.dirname, "..", "fixtures");
 const read = (name: string) => readFileSync(join(fixtures, name), "utf8");
@@ -47,6 +52,9 @@ const MAP_BASE = 0xc000;
 const HUD_BASE = 0xe000;
 /** Where object character data starts, inside the same region. */
 const OBJ_VRAM = 0x10000;
+
+/** The tile an empty cell draws: a transparent blank, not the space glyph. */
+const GBA_BLANK = GBA_BUILTIN_TILES - 1;
 
 function build(file: string, levels?: Record<string, string>) {
   return compile(read(file), { profile: getProfile("gba"), levels });
@@ -131,7 +139,7 @@ describe("what boot leaves in the video hardware", async () => {
   const machine = boot(built.bytes, built.layout.booted);
 
   it("uploads the background bank to character block zero", () => {
-    const builtin = builtinGba(SYSTEM_INK);
+    const builtin = builtinGba(SYSTEM_INK, SYSTEM_PAPER);
     expect([...machine.ppu.vram.subarray(0, builtin.length)]).toEqual([...builtin]);
   });
 
@@ -178,11 +186,15 @@ describe("what boot leaves in the video hardware", async () => {
     expect(machine.ppu.bgvofs[1]).toBe(0);
   });
 
-  it("keeps the last three colours of both palettes for the runtime's own ink", () => {
+  it("keeps the last four colours of both palettes for the runtime's own ink", () => {
+    // Paper, then three shades of ink. Four distinct values whatever the art
+    // chose, because a caption on a layer over the picture has no one colour
+    // behind it to be chosen against.
     for (const base of [0, 256]) {
-      const ramp = [0, 1, 2].map((index) => machine.ppu.palette[base + ART_COLORS + index]);
-      expect(new Set(ramp).size).toBe(3);
+      const ramp = [0, 1, 2, 3].map((index) => machine.ppu.palette[base + ART_COLORS + index]);
+      expect(new Set(ramp).size).toBe(4);
     }
+    expect(SYSTEM_PAPER).toBe(ART_COLORS);
   });
 
   it("draws something, rather than a screen of one colour", () => {
@@ -286,9 +298,10 @@ describe("the map against the level", async () => {
         if (column >= level.width || row >= level.height) continue;
         const cell = (level.rows[row] ?? "")[column] ?? " ";
         const tile = cellAt(machine, column, row) & 0x3ff;
-        // An empty cell draws tile zero; a named one draws its legend's pattern.
-        if (cell === " ") expect(tile).toBe(0);
-        else expect(tile).toBeGreaterThan(0);
+        // An empty cell draws the transparent blank; a named one draws its
+        // legend's pattern.
+        if (cell === " ") expect(tile).toBe(GBA_BLANK);
+        else expect(tile).toBeLessThan(GBA_BLANK);
         checked += 1;
       }
     }
@@ -303,8 +316,8 @@ describe("the map against the level", async () => {
     for (let column = 0; column < 64; column += 1) {
       for (let row = 0; row < 64; row += 1) {
         const tile = cellAt(machine, column, row) & 0x3ff;
-        if (tile === 0) continue;
-        expect(tile).toBeLessThan(BUILTIN_TILES);
+        if (tile === GBA_BLANK) continue;
+        expect(tile).toBeLessThan(GBA_BUILTIN_TILES);
         patterns += 1;
       }
     }
@@ -372,24 +385,25 @@ describe("the edge painter", () => {
           if (column < 0 || row < 0 || column >= columns || row >= rows) continue;
           const want = (grid.split("\n")[row] ?? "")[column] ?? " ";
           const tile = cellAt(machine, column, row) & 0x3ff;
-          if (want === " ") expect(tile).toBe(0);
-          else expect(tile).toBeGreaterThan(0);
+          if (want === " ") expect(tile).toBe(GBA_BLANK);
+          else expect(tile).toBeLessThan(GBA_BLANK);
           checked += 1;
         }
       }
       return checked;
     };
 
-    /** Which of the four screen blocks hold anything at all. */
+    /** Which of the four screen blocks the painter has actually drawn into. */
     const blocksUsed = (): number => {
       let used = 0;
       for (let block = 0; block < 4; block += 1) {
         const base = MAP_BASE + block * 0x800;
         for (let at = base; at < base + 0x800; at += 2) {
-          if (
-            (machine.ppu.vram[at] as number) !== 0 ||
-            (machine.ppu.vram[at + 1] as number) !== 0
-          ) {
+          const cell =
+            (machine.ppu.vram[at] as number) | ((machine.ppu.vram[at + 1] as number) << 8);
+          // A cell the painter never touched still holds the blank the boot
+          // filled the map with, so "used" is a cell that is something else.
+          if ((cell & 0x3ff) !== GBA_BLANK) {
             used += 1;
             break;
           }
@@ -440,7 +454,7 @@ describe("the HUD layer", async () => {
       const cells: string[] = [];
       for (let row = 0; row < 8; row += 1) {
         for (let column = 0; column < 32; column += 1) {
-          if ((hudAt(machine, column, row) & 0x3ff) !== 0) cells.push(`${column},${row}`);
+          if ((hudAt(machine, column, row) & 0x3ff) !== GBA_BLANK) cells.push(`${column},${row}`);
         }
       }
       return cells.join(" ");
@@ -464,7 +478,7 @@ describe("the HUD layer", async () => {
     let title = 0;
     for (let column = 0; column < 32; column += 1) {
       for (let row = 0; row < 32; row += 1) {
-        if ((hudAt(machine, column, row) & 0x3ff) !== 0) title += 1;
+        if ((hudAt(machine, column, row) & 0x3ff) !== GBA_BLANK) title += 1;
       }
     }
     expect(title).toBeGreaterThan(0);
@@ -476,7 +490,7 @@ describe("the HUD layer", async () => {
     let occupied = 0;
     for (let column = 0; column < 32; column += 1) {
       for (let row = 0; row < 32; row += 1) {
-        if ((hudAt(machine, column, row) & 0x3ff) !== 0) occupied += 1;
+        if ((hudAt(machine, column, row) & 0x3ff) !== GBA_BLANK) occupied += 1;
       }
     }
     // Fewer cells than the title screen used, and not the same ones: the level's
