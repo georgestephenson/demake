@@ -273,12 +273,20 @@ describe("the console registry", () => {
     expect(audioConsoles().sort()).toEqual([...CONSOLES].sort());
   });
 
-  // The Game Boy Advance, because both sides of this merge had reached for the
-  // other's console here and neither is true any more. It wants a console with a
-  // spec in `@demake/core` and no audio in it, which is what a chip model has not
-  // been written for yet — the handhelds, from here on.
+  // The Nintendo DS, which is now the nearest console with a video spec and no
+  // audio in it — the Game Boy Advance had that job until its own spec landed.
+  // What this wants is a console whose sound hardware has no model yet, and the
+  // remaining handhelds are where those are.
   it("explains a console it cannot demake", () => {
-    expect(() => bindingFor("gba")).toThrow(/no audio spec yet/);
+    expect(() => bindingFor("nds")).toThrow(/no audio spec yet/);
+  });
+
+  // And the Game Boy Advance, which is the other half of the same honesty: its
+  // hardware *is* described now, so the gap moved from "we have not said what
+  // this machine has" to "nothing encodes for it yet". A console that answered
+  // either question quietly would arrange a track it could not play.
+  it("explains a console whose hardware is described and whose encoder is not written", () => {
+    expect(() => bindingFor("gba")).toThrow(/no binding for the chip pair/);
   });
 });
 

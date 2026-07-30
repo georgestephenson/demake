@@ -5,6 +5,7 @@
  * transparent color 0**, with H/V flip. (The bitmap Modes 3/4 are a framebuffer
  * path added separately; this pins the tiled BG.)
  */
+import { gbaAudio } from "./audio-specs.js";
 import type { ConsoleSpec } from "./types.js";
 export const gba = {
   id: "gba",
@@ -52,6 +53,7 @@ export const gba = {
     },
   ],
   codegen: { family: "gba", formats: ["bin", "asm", "c", "rom"] },
+  audio: gbaAudio,
   docs: {
     sources: [
       "GBATEK — LCD I/O BG Control & palette (RGB555): https://problemkaputt.de/gbatek.htm",

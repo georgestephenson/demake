@@ -309,11 +309,21 @@ the Mega Drive's keeps its digit and its running value in render words precisely
 because a 68000 helper helps itself to every register there is.
 
 **There is no sound on this console yet**, and that is a gap rather than a
-decision: the hardware has the Game Boy's four channels _and_ two DMA-fed sample
-channels, both modelled, and the ARM driver that would play a demade schedule
-does not exist. A `.dmt` that names music compiles, records the request its rules
-make, and traces identically to a build that played it — which is the same
-position the Super Nintendo was in before its SPC700 driver landed.
+decision: the hardware is fully described (`gbaAudio` — ten voices, four Game Boy
+channels and six the sample mixer carries) and fully modelled, and what does not
+exist is the ARM driver that would play a demade schedule. A `.dmt` that names
+music compiles, records the request its rules make, and traces identically to a
+build that played it — which is the same position the Super Nintendo was in
+before its SPC700 driver landed.
+
+That gap is also why **the support matrix asks the encoders rather than the
+specs**. "Does this console demake music" is `audioConsoles()` — the binding
+registry — and "does a cartridge play it" is `gameAudioConsoles()`, which is the
+audio driver table AGENTS.md's §Iron rules already counted as one of the four.
+Both used to read `spec.audio`, and the moment this console's hardware was
+described that said yes to both. A driver is a _CPU's_: the same `gb-apu` is
+driven by an SM83 on a Game Boy and would need an ARM7 here, so those tables are
+keyed by console and not by chip.
 
 Still to come: the remaining Tier 2/3 consoles (each = a codegen backend, a ROM
 harness + toolchain, and a libretro core + DAC calibration), the remaining
