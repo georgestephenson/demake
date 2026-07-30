@@ -14,6 +14,7 @@
 
 import { fileHash, sectionForFile } from "../lib/route.js";
 import { filesIn, folders, type Project } from "../lib/project.js";
+import { canOpenFolder } from "../lib/disk.js";
 
 /** How a folder is described when it is not one of the canonical five. */
 const FOLDER_NOTES: Readonly<Record<string, string>> = {
@@ -29,12 +30,29 @@ export function Explorer({
   open,
   examples,
   onOpenExample,
+  onOpenFolder,
+  onImportZip,
+  onSave,
+  onExportZip,
+  dirty,
+  bound,
 }: {
   project: Project;
   /** The path currently open, so it can be marked. */
   open?: string;
   examples: readonly string[];
   onOpenExample: (name: string) => void;
+  /** Open a folder from the machine, where the browser allows one. */
+  onOpenFolder: () => void;
+  /** Read a zip the user picked. */
+  onImportZip: (file: File) => void;
+  /** Write the project back to the folder it came from. */
+  onSave: () => void;
+  /** Download the project as a zip. */
+  onExportZip: () => void;
+  /** Whether the project has unsaved edits, and whether it has a folder to save to. */
+  dirty: boolean;
+  bound: boolean;
 }) {
   return (
     <aside class="explorer" aria-label="Project">
@@ -52,6 +70,36 @@ export function Explorer({
           ))}
         </select>
       </label>
+
+      <div class="explorer-actions">
+        {canOpenFolder() ? (
+          <button type="button" data-testid="open-folder" onClick={onOpenFolder}>
+            Open folder…
+          </button>
+        ) : null}
+        <label class="explorer-import">
+          <span>Import zip…</span>
+          <input
+            type="file"
+            accept=".zip,application/zip"
+            data-testid="import-zip"
+            onChange={(event) => {
+              const input = event.currentTarget as HTMLInputElement;
+              const file = input.files?.[0];
+              if (file) onImportZip(file);
+              input.value = "";
+            }}
+          />
+        </label>
+        {bound ? (
+          <button type="button" data-testid="save-folder" onClick={onSave}>
+            {dirty ? "Save •" : "Save"}
+          </button>
+        ) : null}
+        <button type="button" data-testid="export-zip" onClick={onExportZip}>
+          Download zip
+        </button>
+      </div>
 
       <nav class="explorer-tree" aria-label="Files">
         {folders(project).map((folder) => (

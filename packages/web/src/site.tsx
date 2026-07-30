@@ -21,6 +21,8 @@ import { Explorer } from "./components/Explorer.js";
 import { EXAMPLE_NAMES, exampleSkeleton, loadExample } from "./lib/examples.js";
 import { readRoute, SECTION_LABELS, sectionHash } from "./lib/route.js";
 import { writeText, type Project } from "./lib/project.js";
+import { exportZip, importZip, openFolder, saveToFolder } from "./lib/disk.js";
+import { download } from "./lib/download.js";
 
 const TAGLINES: Readonly<Record<string, string>> = {
   game: "one declarative game → every console",
@@ -59,6 +61,12 @@ export function Site() {
   // arriving, so the editor has source to show on the first frame rather than a
   // spinner. Pong, because that is the example the site has always opened on.
   const [project, setProject] = useState<Project>(() => exampleSkeleton("pong"));
+  // Where a save goes, when the project came from the machine. A bundled example
+  // has nowhere to save *to* — that is what "Download zip" is for — so the button
+  // is absent rather than present and broken.
+  const [folder, setFolder] = useState<unknown>(null);
+  const [dirty, setDirty] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     const onHash = () => setRoute(readRoute(location.hash));
@@ -116,8 +124,12 @@ export function Site() {
     () => ({
       project,
       ...(route.file === undefined ? {} : { path: route.file }),
-      onEdit: (path: string, text: string) =>
-        setProject((current) => writeText(current, path, text)),
+      onEdit: (path: string, text: string) => {
+        setProject((current) => {
+          setDirty(true);
+          return writeText(current, path, text);
+        });
+      },
     }),
     [project, route.file],
   );
@@ -160,8 +172,50 @@ export function Site() {
           project={project}
           {...(route.file === undefined ? {} : { open: route.file })}
           examples={EXAMPLE_NAMES}
+          dirty={dirty}
+          bound={folder !== null}
+          onOpenFolder={() => {
+            void openFolder()
+              .then((opened) => {
+                if (!opened) return;
+                setProject(opened.project);
+                setFolder(opened.handle);
+                setDirty(false);
+                setNotice(null);
+                location.hash = sectionHash(section).slice(1);
+              })
+              .catch((error: unknown) => setNotice(String(error)));
+          }}
+          onImportZip={(file) => {
+            void file
+              .arrayBuffer()
+              .then((bytes) => {
+                setProject(importZip(file.name, new Uint8Array(bytes)));
+                // An imported zip has no folder behind it, so it downloads rather
+                // than saves — the same position a bundled example is in.
+                setFolder(null);
+                setDirty(false);
+                setNotice(null);
+                location.hash = sectionHash(section).slice(1);
+              })
+              .catch((error: unknown) => setNotice(String(error)));
+          }}
+          onSave={() => {
+            if (folder === null) return;
+            void saveToFolder(folder, project)
+              .then(() => {
+                setDirty(false);
+                setNotice(null);
+              })
+              .catch((error: unknown) => setNotice(String(error)));
+          }}
+          onExportZip={() => {
+            download(`${project.name}.zip`, exportZip(project));
+          }}
           onOpenExample={(name) => {
             setProject(exampleSkeleton(name));
+            setFolder(null);
+            setDirty(false);
             // The route keeps its *section*, not its file: a path from one
             // project rarely exists in the next, and landing on "no such file"
             // after picking a project would read as a fault.
@@ -184,6 +238,12 @@ export function Site() {
           ) : null}
         </div>
       </div>
+
+      {notice === null ? null : (
+        <p class="hint" data-testid="project-notice" role="status">
+          {notice}
+        </p>
+      )}
 
       <footer>
         <a href="https://github.com/georgestephenson/demake">source</a> ·{" "}

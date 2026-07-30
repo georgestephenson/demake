@@ -1375,3 +1375,25 @@ main.audio-layout {
     position: static;
   }
 }
+
+.explorer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.explorer-actions button,
+.explorer-import {
+  font: inherit;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.explorer-import input {
+  display: none;
+}

@@ -531,6 +531,13 @@ one property above them:
 > repository, byte for byte — and building an imported folder in the page
 > produces the artifacts `demake build` produces from the same folder on disk.
 
+**The first half holds and is checked.** `packages/web/test/zip.test.ts` takes
+Pong's project folder off disk, exports it, imports it back and compares file for
+file and byte for byte; the same comparison against an independent zip reader is
+what the export was verified with. The second half is the browser-vs-CLI
+comparison `determinism.spec.ts` already makes for a cartridge, now that both
+sides start from a folder.
+
 That is what "feature parity with the CLI" has to mean once the unit is a folder,
 and it belongs in `packages/web/test/e2e/determinism.spec.ts` beside the four
 artifact comparisons already there.
@@ -702,7 +709,14 @@ Each step is useful on its own and none of them breaks the one before.
 6. **Options edit the Demakefile**: the write-back, the provenance display, and
    doc 15's three round-trip properties as tests. This is what makes step 4 a
    feature rather than a file format.
-7. **Open and save**: File System Access, the zip, and the determinism property.
+7. **Open and save** — **done**: File System Access where the browser has it, a
+   zip everywhere else, both over `@demake/core`'s own deflate and CRC. The zip is
+   deterministic (every entry takes the DOS epoch, so an export is reproducible),
+   `build/` is excluded in both directions, and a path climbing out of the archive
+   is skipped rather than trusted. The parity property above is demonstrated: the
+   zip the page exports, read by an independent zip implementation, unzips to the
+   repository's own project folder with the same file list and every byte
+   identical.
 8. **The level editor**: wants the resolver under it, since its legend picks art
    from the project.
 9. **The block editor**: last, because it wants everything above it — the
