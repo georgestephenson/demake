@@ -27,32 +27,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 
 import { romReady, type Layout, type Program } from "@demake/demotic";
-import { Gameboy, SCREEN_HEIGHT, SCREEN_WIDTH, type Button } from "@demake/dmg";
-import {
-  FRAME_HEIGHT as MD_HEIGHT,
-  FRAME_WIDTH as MD_WIDTH,
-  Md,
-  PSG_MIX_GAIN as MD_PSG_MIX_GAIN,
-  type Button as MdButton,
-} from "@demake/md";
-import { Nes, SCREEN_HEIGHT as NES_HEIGHT, SCREEN_WIDTH as NES_WIDTH } from "@demake/nes";
-import {
-  FRAME_HEIGHT as SMS_HEIGHT,
-  FRAME_WIDTH as SMS_WIDTH,
-  GG_HEIGHT,
-  GG_WIDTH,
-  Sms,
-  type Button as SmsButton,
-} from "@demake/sms";
-import {
-  SCREEN_HEIGHT as SNES_HEIGHT,
-  SCREEN_WIDTH as SNES_WIDTH,
-  Snes,
-  type Button as SnesButton,
-} from "@demake/snes";
 
+import { bootPlayer, screenFor, type PadButton, type Player } from "../players/index.js";
 import { download } from "../lib/download.js";
-import { audioSupported, RomAudio, type ListenableMachine } from "../lib/rom-audio.js";
+import { audioSupported, RomAudio } from "../lib/rom-audio.js";
 import { createEngine } from "../worker/client.js";
 
 /**
@@ -63,7 +41,7 @@ import { createEngine } from "../worker/client.js";
  * a Pause key — which is what `start` means there, and the cartridge already
  * knows it.
  */
-const BUTTONS: Readonly<Record<string, Button>> = {
+const BUTTONS: Readonly<Record<string, PadButton>> = {
   left: "left",
   right: "right",
   up: "up",
@@ -87,178 +65,6 @@ const MACHINE: Readonly<Record<string, string>> = {
   snes: "a Super Nintendo",
   md: "a Mega Drive",
 };
-
-/**
- * A booted cartridge, whichever console it is for.
- *
- * The pane needs five things of a machine and no more, so this is those five —
- * and the four cores satisfy it without any of them learning about the page or
- * about each other. `chips` is the sound hardware the audio player attaches to,
- * and every console with a backend has some: the Game Boy's APU, the NES's 2A03,
- * the SN76489 on both Sega machines, the Super Nintendo's S-DSP — which is not on
- * the console's own processor at all — and *two* on a Mega Drive, each
- * `@demake/chip`'s own model rather than a second copy living in a core. A list
- * rather than one, because that console's two run on different clocks and a sink
- * is built against a clock; an empty one would say a cartridge has nothing to
- * play rather than offering a control that does nothing.
- */
-interface Player {
-  readonly width: number;
-  readonly height: number;
-  readonly framebuffer: Uint8ClampedArray;
-  readonly chips: ListenableMachine;
-  setButtons(down: Button[]): void;
-  runFrame(): void;
-  readMemory(address: number, length: number): Uint8Array;
-}
-
-/**
- * Boot a cartridge in the core its console needs.
- *
- * The family comes with the cartridge rather than being looked up here: which
- * consoles have a backend is `codegen/registry.ts`'s one list, and the page
- * reads it through the worker like everything else it knows about the engine.
- */
-function boot(rom: Uint8Array, family: string, consoleId: string): Player {
-  if (family === "snes") {
-    const machine = new Snes(rom);
-    return {
-      width: SNES_WIDTH,
-      height: SNES_HEIGHT,
-      framebuffer: machine.framebuffer,
-      // The sound chip is a second computer's, and the cartridge uploaded its
-      // program at boot — so what plays here is the game's own generated SPC700
-      // driver, through the same `StreamSink` every other console uses.
-      chips: [
-        {
-          get audioSink() {
-            return machine.audioSink;
-          },
-          set audioSink(sink) {
-            machine.audioSink = sink;
-          },
-          apu: machine.smp.dsp,
-        },
-      ],
-      setButtons: (down) =>
-        // This pad's B and Y sit where the NES's A and B sat, which is the
-        // mapping every game on it used and the one the cartridge assumes.
-        machine.setButtons(
-          down.map((name) => (name === "a" ? "b" : name === "b" ? "y" : (name as SnesButton))),
-        ),
-      runFrame: () => void machine.runFrame(),
-      readMemory: (address, length) => machine.readMemory(address, length),
-    };
-  }
-  if (family === "md") {
-    const machine = new Md(rom);
-    return {
-      width: MD_WIDTH,
-      height: MD_HEIGHT,
-      framebuffer: machine.framebuffer,
-      // The only console here with two chips, and the cartridge plays both: six
-      // four-operator FM voices and four tone generators. They are handed over
-      // separately because they run on different clocks — the master clock over
-      // seven and over fifteen — and the relative level is the *board's* rather
-      // than either chip's, which is why it arrives here rather than being asked
-      // of a model (doc 16 §Packages).
-      chips: [
-        {
-          get audioSink() {
-            return machine.ymSink;
-          },
-          set audioSink(sink) {
-            machine.ymSink = sink;
-          },
-          apu: machine.ym,
-        },
-        {
-          get audioSink() {
-            return machine.audioSink;
-          },
-          set audioSink(sink) {
-            machine.audioSink = sink;
-          },
-          apu: machine.psg,
-          gain: MD_PSG_MIX_GAIN,
-        },
-      ],
-      setButtons: (down) => machine.setButtons(down as readonly MdButton[]),
-      // This VDP draws when it is *asked* to, not as the beam passes: `view()`
-      // renders the whole picture out of video RAM and into the buffer handed
-      // over above. So a frame has to end with one, exactly as the Game Gear's
-      // crop does — without it the canvas keeps showing the blank frame boot
-      // rendered, which is a console that plays perfectly and displays nothing.
-      runFrame: () => {
-        machine.runFrame();
-        machine.vdp.view();
-      },
-      readMemory: (address, length) => machine.readMemory(address, length),
-    };
-  }
-  if (family === "sms") {
-    // Which of the two machines it is comes out of the cartridge's own region
-    // nibble, not from `consoleId` — the same rule the Game Boy family runs
-    // under, and the reason the selector changes the build rather than a setting.
-    const machine = new Sms(rom);
-    const view = machine.vdp.view();
-    return {
-      width: view.width,
-      height: view.height,
-      framebuffer: view.pixels,
-      // The Sega's sound chip is a PSG, not an APU, so it is adapted rather
-      // than renamed — the core keeps calling it what it is. What it plays is
-      // the cartridge's own generated Z80 driver, through the same `StreamSink`
-      // the other two consoles use.
-      chips: [
-        {
-          get audioSink() {
-            return machine.audioSink;
-          },
-          set audioSink(sink) {
-            machine.audioSink = sink;
-          },
-          apu: machine.psg,
-        },
-      ],
-      // A Sega pad has no Select, so the one button the portable set does not
-      // include is dropped rather than mapped onto something else.
-      setButtons: (down) => machine.setButtons(down as readonly SmsButton[]),
-      runFrame: () => {
-        machine.runFrame();
-        machine.vdp.view();
-      },
-      readMemory: (address, length) => machine.readMemory(address, length),
-    };
-  }
-  if (family === "nes") {
-    const machine = new Nes(rom);
-    return {
-      width: NES_WIDTH,
-      height: NES_HEIGHT,
-      framebuffer: machine.framebuffer,
-      chips: [machine],
-      setButtons: (down) => machine.setButtons(down),
-      runFrame: () => void machine.runFrame(),
-      readMemory: (address, length) => machine.readMemory(address, length),
-    };
-  }
-  // The one place the console id is needed rather than the family, and the
-  // reason is the absence of a fact rather than a preference: a Mega Duck
-  // cartridge has no header at all, so unlike the two Game Boys (whose CGB flag
-  // decides) and the two Sega machines (whose region nibble does), there is
-  // nothing in these bytes to read it out of.
-  const machine = new Gameboy(rom, consoleId === "megaduck" ? "megaduck" : "gameboy");
-  return {
-    width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT,
-    framebuffer: machine.framebuffer,
-    chips: [machine],
-    setButtons: (down) => machine.setButtons(down),
-    runFrame: () => void machine.runFrame(),
-    readMemory: (address, length) => machine.readMemory(address, length),
-  };
-}
 
 export function RomPane({
   program,
@@ -407,41 +213,35 @@ export function RomPane({
   // The canvas is sized by the console, not by CSS: these are two genuinely
   // different screens (160×144 against 256×240, and not the same aspect), and a
   // buffer put into a canvas of the wrong size is silently cropped.
-  const screen =
-    family === "nes"
-      ? { width: NES_WIDTH, height: NES_HEIGHT }
-      : family === "snes"
-        ? { width: SNES_WIDTH, height: SNES_HEIGHT }
-        : family === "md"
-          ? { width: MD_WIDTH, height: MD_HEIGHT }
-          : family === "sms"
-            ? consoleId === "gg"
-              ? { width: GG_WIDTH, height: GG_HEIGHT }
-              : { width: SMS_WIDTH, height: SMS_HEIGHT }
-            : { width: SCREEN_WIDTH, height: SCREEN_HEIGHT };
+  // From the table rather than from the core, because the canvas has to be
+  // sized before the core has finished arriving (`players/player.ts`).
+  const screen = screenFor(family, consoleId);
 
   useEffect(() => {
     if (!rom || !layout) {
       machine.current = null;
       return;
     }
-    const booted = boot(rom, family, consoleId);
-    machine.current = booted;
-    if (booted.chips.length > 0) player.current?.attach(booted.chips);
     const element = canvas.current;
     const context = element?.getContext("2d");
     if (!context) return;
 
     let raf = 0;
+    // The core is fetched rather than bundled, so between this effect and the
+    // first frame there is an await — and the cartridge can be replaced across
+    // it. `live` is what stops a core that arrived late from booting into a pane
+    // that has already moved on, which would otherwise leave two machines
+    // running and the pad wired to the wrong one.
+    let live = true;
     let last = performance.now();
     let accumulator = 0;
     let sinceTick = 0;
     let lastTick = 0;
-    const image = context.createImageData(booted.width, booted.height);
+    let image = context.createImageData(screen.width, screen.height);
 
     /** One console frame, with the pad and the tick bookkeeping around it. */
     const runFrame = (target: Player) => {
-      const down: Button[] = [];
+      const down: PadButton[] = [];
       for (const action of held.current) if (BUTTONS[action]) down.push(BUTTONS[action]);
       for (const action of latched.current) if (BUTTONS[action]) down.push(BUTTONS[action]);
       target.setButtons(down);
@@ -492,8 +292,18 @@ export function RomPane({
       context.putImageData(image, 0, 0);
     };
 
-    raf = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(raf);
+    void bootPlayer(rom, family, consoleId).then((booted) => {
+      if (!live) return;
+      machine.current = booted;
+      if (booted.chips.length > 0) player.current?.attach(booted.chips);
+      image = context.createImageData(booted.width, booted.height);
+      raf = requestAnimationFrame(frame);
+    });
+
+    return () => {
+      live = false;
+      cancelAnimationFrame(raf);
+    };
   }, [rom, layout, consoleId, family, held, latched, restarts]);
 
   // The context outlives every ROM built in the section, and is closed once.

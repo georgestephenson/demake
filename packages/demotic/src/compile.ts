@@ -36,6 +36,7 @@ import {
   DIRECTION_VECTORS,
   knownPropertyNames,
   NUMBER_DEFAULTS,
+  SIDE_NAMES,
   STRING_PROPS,
 } from "./lang/spec.js";
 import { parse } from "./lang/parse.js";
@@ -60,6 +61,7 @@ import type {
   Program,
   PureBuiltinFn,
   RuleDef,
+  Side,
   SceneDef,
 } from "./program.js";
 import { ACTIONS, EDGES } from "./program.js";
@@ -950,7 +952,16 @@ class Compiler {
           map.set(name, { kind: "other" });
         }
 
-        event = { kind: "hits", subjects, others, edges, tiles, level: statement.event.level };
+        const sides = this.resolveSides(statement.event.sides, edges, line);
+        event = {
+          kind: "hits",
+          subjects,
+          others,
+          edges,
+          tiles,
+          level: statement.event.level,
+          sides,
+        };
         bindings = { map };
         defaultTarget = { kind: "subject" };
         sceneHint = this.sceneOf([...subjects, ...others]);
@@ -1204,6 +1215,53 @@ class Compiler {
       `screen edges are: ${EDGES.join(", ")}`,
     );
     return undefined;
+  }
+
+  /**
+   * Check a `from` clause and turn it into the sides the runtime tests.
+   *
+   * Three ways to get it wrong, and each is its own diagnostic rather than a
+   * shrug: a word that is not one of the four, a side on a screen edge (which
+   * has only one, so the qualifier says nothing and probably meant something
+   * else), and the same side twice — which is the `E_DUPLICATE_PROP` rule
+   * applied to a list rather than a property, because a value written twice is
+   * a sentence somebody did not finish editing.
+   */
+  private resolveSides(
+    names: readonly string[],
+    edges: readonly Edge[],
+    line: number,
+  ): readonly Side[] {
+    if (names.length === 0) return [];
+    if (edges.length > 0) {
+      this.error(
+        line,
+        "E_SIDE_ON_EDGE",
+        "a screen edge has only one side, so `from` cannot narrow it",
+        "drop the `from`, or split the edges into their own rule",
+      );
+      return [];
+    }
+    const seen = new Set<string>();
+    const sides: Side[] = [];
+    for (const name of names) {
+      if (!SIDE_NAMES.has(name)) {
+        this.error(
+          line,
+          "E_UNKNOWN_SIDE",
+          `'${name}' is not a side`,
+          `the four are: ${[...SIDE_NAMES].join(", ")}`,
+        );
+        continue;
+      }
+      if (seen.has(name)) {
+        this.error(line, "E_DUPLICATE_SIDE", `'${name}' is named twice in one \`from\``);
+        continue;
+      }
+      seen.add(name);
+      sides.push(name as Side);
+    }
+    return sides;
   }
 
   private sceneOf(ids: readonly number[]): string | undefined {

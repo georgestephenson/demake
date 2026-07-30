@@ -546,12 +546,12 @@ artifact comparisons already there.
 
 ## The example library becomes example projects
 
-Today the seven games are flat files in two directories and share assets by
+Today the games are flat files in two directories and share assets by
 sitting next to each other. As projects:
 
 ```
 packages/demotic/fixtures/projects/
-  pong/  breakout/  platformer/  dodger/  shooter/  caves/  runner/
+  pong/  breakout/  platformer/  dodger/  shooter/  caves/  runner/  quest/
 ```
 
 Each with `src/`, `art/`, and whichever of `music/`, `sound/` and `levels/` it
@@ -566,7 +566,8 @@ buys the property the whole document rests on.
 
 Everything that reads the fixtures follows: `rom.test.ts`, `audio.test.ts`,
 `games.test.ts`, `parallel.test.ts`, the terminal runners in `demo/`, and the
-page's `demo-game.ts` and `demo-audio.ts`. The golden traces travel with their
+page's example loader — which globs the project folders, so a project added to the
+repository is in the site's library without a list being edited. The golden traces travel with their
 project. This is the largest mechanical change the document asks for and it is
 almost entirely path arithmetic; the games themselves do not change a character,
 which is the check that the conversion was faithful — every trace is a golden.
@@ -577,12 +578,16 @@ The user-facing want is real: one file per scene, or a file of shared object
 definitions. What it costs is a language change, and AGENTS.md reserves those for
 the maintainer, so this section states the options and decides nothing.
 
-**The evidence says it is not yet urgent.** The example library's largest game is
-96 lines (`caves.dmt`), the median is 73, and no fixture has ever been split for
-readability. AGENTS.md §Working on Demotic is explicit that language features come
-from the example library rather than from theory, so the honest position is that
-nothing in the library asks for this today — and that a project big enough to
-need it is exactly what would settle the design.
+**The evidence has moved, and it is worth saying so.** When this section was
+written the library's largest game was 96 lines (`caves.dmt`) against a median of
+73, and the honest position was that nothing in it asked for a split. `quest.dmt`
+is 389 lines — three levels, a boss and a secret room — which is the first fixture
+big enough to have an opinion. It still reads top to bottom, because it is written
+against *classes* rather than named objects and one rule covers four playfields,
+so it argues for a split less strongly than its line count suggests. But it is the
+project the design question should be settled against, and AGENTS.md §Working on
+Demotic is explicit that language features come from the example library rather
+than from theory: the library now has the case.
 
 **Option A — every `.dmt` in `src/` is the game.** No language surface at all:
 the build concatenates them in filename order and compiles one program. Demotic is

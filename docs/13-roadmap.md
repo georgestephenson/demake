@@ -885,6 +885,69 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     plan as a piano roll, the tournament as a strategy picker, and downloads —
     `.vgm`, sidecar, WAV and cartridge — that the determinism suite pins as
     byte-identical to the CLI's. Still to come: the desktop wiring.
+- **Banked cartridges, and the game that needs one**: `quest.dmt` — three
+  levels, a boss, a secret room, four tracks and eight effects — is the first
+  example the mapper-less cartridge cannot hold. It builds and plays on the Mega
+  Drive (96 KiB of a 512 KiB image, 398 KiB free) and on nothing else, and the
+  numbers say what each console is short of rather than by how little:
+
+  | Console | Wall it hits | Needs | Has |
+  | --- | --- | --- | --- |
+  | Game Boy / Color / Mega Duck | cartridge | ~122 KiB | 32 KiB |
+  | Master System / Game Gear | cartridge | ~117 KiB | 32 KiB |
+  | NES | work RAM, then cartridge | 1288 B of heap, ~120 KiB of PRG | 1280 B, 32 KiB |
+  | Super Nintendo | direct page, then cartridge | 239 B, ~100 KiB | 238 B, 64 KiB |
+
+  The RAM half is close on two of them and the cartridge half is not close on
+  any: the code alone is around 100 KiB, because a program is unrolled into the
+  scenes its rules can fire in and this one has four playfields. So *data*
+  banking — art, packed backdrops, audio schedules — is not the answer; the
+  banking has to reach code, and the natural shape is a **bank per scene**, with
+  the boot code, the shared helpers, the entity table and the audio driver in the
+  fixed bank and each scene's tick routine in its own. What that costs, per
+  family:
+
+  - **Sega 8-bit** — ~~the cheapest, and worth doing first~~ **done, as far as
+    flat address space goes.** The mapper is in the cartridge rather than the
+    console and slots 0, 1 and 2 come up holding banks 0, 1, 2, so `$0000`–`$BFFF`
+    is one continuous image and **48 KiB needs no bank switching at all**. The
+    build now takes the smallest flat size that fits, the `TMR SEGA` size nibble
+    follows the image, and `sms-flat48.test.ts` boots a 48 KiB cartridge in
+    `@demake/sms` and diffs it against the interpreter. Every existing cartridge is
+    byte-identical, because a game that fits below `$7FF0` takes the same single
+    pass it always did.
+
+    What this does *not* reach is the thing quest needs, and the shape of the
+    limit is worth writing down. The header is sixteen bytes **inside** the image
+    at `$7FF0`, so a 48 KiB build pads across the hole — which means the data
+    section starts at `$8000` and the gap between the end of the code and `$7FF0`
+    is wasted. So the window is games whose *code* ends just below the header:
+    below that the padding costs more than the extra bank gives, and above it
+    there is nowhere to put the header at all and the build says so
+    (`E_GAME_TOO_LARGE`, naming `$7FF0`). Placing the hole tightly means either
+    checking the running address between data items, or using one of the other
+    header slots the BIOS accepts (`$1FF0`, `$3FF0`) and working out what each does
+    to the checksum range. Neither is hard; both want doing before slot-2 paging,
+    because paging inherits the same hole.
+  - **Game Boy** — MBC5: bank 0 fixed at `$0000`–`$3FFF`, a switchable 16 KiB
+    window at `$4000`, and the header's type and size bytes. `@demake/dmg` says
+    in as many words that it has no MBC and that this is the day it gains one.
+    Cartridge RAM at `$A000` comes with it, which is the work-RAM answer too.
+  - **NES** — the only family that needs a *new* mapper in the core as well:
+    UNROM/MMC1 for PRG, and MMC1's `$6000` work RAM is the only way the console's
+    two kilobytes stop being the binding constraint.
+  - **Super Nintendo** — the cheapest data story (DMA takes its source bank as a
+    byte, so extra data banks cost nothing) and the same code problem as the
+    rest. Its work RAM is a separate opportunity: the plan stops at the 8 KiB
+    mirrored into bank zero, and the other 120 KiB is reachable with long
+    addressing or a data-bank switch.
+  - **Mega Drive** — nothing to do but grow the image; 512 KiB is a constant, not
+    a limit.
+
+  The shape the mechanism wants, in either case, is a `Backend` that declares the
+  sizes its cartridge can be and a build that takes the smallest one that fits —
+  so a console with one size keeps exactly the bytes it has today.
+
 - **3D asset demake (new domain, exploratory)**: apply the same treatment to the
   32/64-bit 3D era — take a common modern 3D asset and emit PS1/N64/Saturn-
   compatible ones: polygon budgets and retopology, texture quantization through

@@ -71,7 +71,21 @@ export type Event =
    * state that contact suppresses (gravity, say) accumulates unseen while the
    * object appears to sit still.
    */
-  | { kind: "hits"; subject: string; others: readonly string[]; level: boolean }
+  | {
+      kind: "hits";
+      subject: string;
+      others: readonly string[];
+      level: boolean;
+      /**
+       * `from above, left` — the sides the subject may have been on.
+       *
+       * Empty means any side, which is what every collision rule written before
+       * this existed means and why the field is a narrowing rather than a
+       * requirement. Each name describes the *subject's* position: `hero touches
+       * ledge from above` is the hero above the ledge, i.e. a landing.
+       */
+      sides: readonly string[];
+    }
   /** `when start pressed` / `when a released` — input edges. */
   | { kind: "input"; action: string; edge: "pressed" | "released" }
   /** `when score1.value reaches 10` — edge-triggered when the test turns true. */

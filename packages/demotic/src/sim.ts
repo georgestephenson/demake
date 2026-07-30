@@ -35,7 +35,15 @@
 
 import { applyBinary, applyBuiltin } from "./compile.js";
 import { type LevelFile } from "./level/parse.js";
-import { type Bounds, type Camera, follow, separateFromTile, tilesUnder } from "./level/scene.js";
+import {
+  type Bounds,
+  type Camera,
+  contactOf,
+  follow,
+  separateFromTile,
+  tileContactSide,
+  tilesUnder,
+} from "./level/scene.js";
 import { clampFixed, type Fixed, fromInt, ONE, toNumber } from "./fixed.js";
 import type {
   Action,
@@ -46,6 +54,7 @@ import type {
   InstanceDef,
   Program,
   RuleDef,
+  Side,
 } from "./program.js";
 import { ACTIONS } from "./program.js";
 import { advance, pick } from "./rng.js";
@@ -449,6 +458,17 @@ export class Sim {
     }
   }
 
+  /**
+   * Whether a rule's `from` clause admits this contact.
+   *
+   * No clause means any side, which is what every rule written before `from`
+   * existed means — so the narrowing is opt-in and nothing silently changed.
+   */
+  private sideAllowed(rule: RuleDef, side: Side): boolean {
+    if (rule.event.kind !== "hits" || rule.event.sides.length === 0) return true;
+    return rule.event.sides.includes(side);
+  }
+
   private ruleActive(rule: RuleDef): boolean {
     return rule.scene === undefined || rule.scene === this.currentScene;
   }
@@ -503,6 +523,7 @@ export class Sim {
         for (const otherId of rule.event.others) {
           if (otherId === subjectId || !this.isActive(otherId) || !this.isSolid(otherId)) continue;
           if (!this.overlapping(subjectId, otherId)) continue;
+          if (!this.sideAllowed(rule, this.contact(subjectId, otherId).side)) continue;
           const key = `${rule.id}:${subjectId}:${otherId}`;
 
           if (rule.event.level || !this.overlaps.has(key)) {
@@ -579,21 +600,31 @@ export class Sim {
    */
   private separateFromEntity(subjectId: number, otherId: number): void {
     const p = this.numbers[subjectId] as Record<string, Fixed>;
+    const { pushX, pushY } = this.contact(subjectId, otherId);
+    if (pushX !== 0) p["x"] = clampFixed((p["x"] ?? 0) + pushX);
+    else p["y"] = clampFixed((p["y"] ?? 0) + pushY);
+  }
+
+  /**
+   * Which side of an overlap the subject sat on, and the push that follows.
+   *
+   * `contactOf`'s, not a second copy: a rule that asks `from above` and the
+   * separation that then moves the subject up have to be the same decision, or a
+   * game would take footing from a contact it was pushed sideways out of.
+   */
+  private contact(subjectId: number, otherId: number) {
+    const p = this.numbers[subjectId] as Record<string, Fixed>;
     const q = this.numbers[otherId] as Record<string, Fixed>;
-
-    const overlapLeft = (p["x"] ?? 0) + (p["width"] ?? 0) - (q["x"] ?? 0);
-    const overlapRight = (q["x"] ?? 0) + (q["width"] ?? 0) - (p["x"] ?? 0);
-    const overlapTop = (p["y"] ?? 0) + (p["height"] ?? 0) - (q["y"] ?? 0);
-    const overlapBottom = (q["y"] ?? 0) + (q["height"] ?? 0) - (p["y"] ?? 0);
-
-    const xPush = overlapLeft < overlapRight ? -overlapLeft : overlapRight;
-    const yPush = overlapTop < overlapBottom ? -overlapTop : overlapBottom;
-
-    if (absFixed(xPush) < absFixed(yPush)) {
-      p["x"] = clampFixed((p["x"] ?? 0) + xPush);
-    } else {
-      p["y"] = clampFixed((p["y"] ?? 0) + yPush);
-    }
+    return contactOf(
+      p["x"] ?? 0,
+      p["y"] ?? 0,
+      p["width"] ?? 0,
+      p["height"] ?? 0,
+      q["x"] ?? 0,
+      q["y"] ?? 0,
+      q["width"] ?? 0,
+      q["height"] ?? 0,
+    );
   }
 
   /**
@@ -626,6 +657,17 @@ export class Sim {
 
         for (const hit of this.tilesUnderEntity(level, subjectId)) {
           if (!rule.event.tiles.includes(hit.name)) continue;
+          if (rule.event.sides.length > 0) {
+            const numbers = this.numbers[subjectId] as Record<string, Fixed>;
+            const side = tileContactSide(
+              hit,
+              numbers["x"] ?? 0,
+              numbers["y"] ?? 0,
+              numbers["width"] ?? 0,
+              numbers["height"] ?? 0,
+            );
+            if (!rule.event.sides.includes(side)) continue;
+          }
           const key = `${rule.id}:${subjectId}:${hit.column},${hit.row}`;
           current.add(key);
           if (rule.event.level || !this.tileOverlaps.has(key)) {
@@ -880,10 +922,6 @@ export class Sim {
 function perTick(direction: Fixed, speed: Fixed, fps: Fixed): Fixed {
   const velocity = Math.floor((direction * speed) / ONE);
   return Math.floor((velocity * ONE) / fps);
-}
-
-function absFixed(value: Fixed): Fixed {
-  return value < 0 ? -value : value;
 }
 
 /** Cells a `number` or `text` object writes on screen; zero for anything else. */

@@ -855,7 +855,14 @@ describe("audio in the trace", async () => {
 });
 
 describe("the example library", async () => {
-  const cases = EXAMPLES;
+  /**
+   * `quest` is not swept here, and the reason is the cartridge rather than the
+   * audio: three levels, a boss and a secret room do not fit a mapper-less 32 KiB
+   * on any 8-bit console in the set (doc 13 §Banked cartridges). The one machine
+   * with the room is the Mega Drive, where `rom.test.ts` runs it — and a game
+   * that cannot be built cannot have its register stream compared.
+   */
+  const cases = EXAMPLES.filter((name) => name !== "quest");
 
   /**
    * The fixtures whose cartridges cannot hold their audio.

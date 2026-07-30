@@ -241,7 +241,11 @@ export interface KeywordSpec {
 export const KEYWORDS: readonly KeywordSpec[] = [
   { name: "object", summary: "Declares a class rather than an instance, in `create object`." },
   { name: "in", summary: "Narrows a declaration or a rule to one scene." },
-  { name: "from", summary: "Names the file a level or a stream is built from." },
+  {
+    name: "from",
+    summary:
+      "Names the file a level or a stream is built from, or the sides a collision may have been on.",
+  },
   { name: "follows", summary: "The camera's one verb." },
   { name: "wide", summary: "Lays a stream's chunks left to right." },
   { name: "tall", summary: "Lays a stream's chunks top to bottom." },
@@ -294,6 +298,36 @@ export const VALUE_WORDS: readonly KeywordSpec[] = [
 /** Assignment targets that belong to the game rather than to an object. */
 export const TARGET_WORDS: readonly KeywordSpec[] = [
   { name: "scene", summary: "`scene as play` switches the running scene." },
+];
+
+/** One side a collision can be resolved on. */
+export interface SideSpec {
+  name: string;
+  /** Which axis it constrains, and which way the subject sat on it. */
+  axis: "x" | "y";
+  sign: -1 | 1;
+  summary: string;
+}
+
+/**
+ * The sides a collision can be qualified by.
+ *
+ * Every one of these describes **the subject's** position, not the direction the
+ * contact travelled: `hero touches ledge from above` is the hero above the
+ * ledge, which is a landing. That reading is the one people give the sentence out
+ * loud, and it is the one the platformer case needs — you approach a ledge from
+ * above in order to land on it.
+ *
+ * The four are exactly what separation already decides. Pushing an overlap apart
+ * means choosing an axis and a direction (`level/scene.ts` §separateFromTile),
+ * and that choice *is* the side; naming it in the language exposes a fact the
+ * runtime had already computed and thrown away.
+ */
+export const SIDES: readonly SideSpec[] = [
+  { name: "above", axis: "y", sign: -1, summary: "The subject's underside met the other's top." },
+  { name: "below", axis: "y", sign: 1, summary: "The subject's top met the other's underside." },
+  { name: "left", axis: "x", sign: -1, summary: "The subject's right met the other's left." },
+  { name: "right", axis: "x", sign: 1, summary: "The subject's left met the other's right." },
 ];
 
 /** A screen edge usable as a collision target. */
@@ -422,17 +456,17 @@ export interface TriggerSpec {
 /** Trigger forms. */
 export const TRIGGERS: readonly TriggerSpec[] = [
   {
-    syntax: "<a> hits <b>, <c>",
+    syntax: "<a> hits <b>, <c> [from <side>, <side>]",
     timing: "edge",
     summary: "On contact, once — not once per tick of contact.",
     example: "when ball hits paddle then ydirection as flip",
-    note: "Bare class names bind to the two objects that collided, and an unqualified property targets the subject.",
+    note: "Bare class names bind to the two objects that collided, and an unqualified property targets the subject. `from above, below, left, right` narrows the rule to contacts resolved on those sides, named from the *subject's* position: `hits wall from below` is a head-bonk. Without it the rule fires on any side. A screen edge has only one, so it takes no `from`.",
   },
   {
-    syntax: "<a> touches <b>, <c>",
+    syntax: "<a> touches <b>, <c> [from <side>, <side>]",
     timing: "level",
     summary: "Every tick two things overlap.",
-    example: "when player touches ledge then ydirection as 0",
+    example: "when player touches ledge from above then ydirection as 0",
     note: "Resting contact is not an event. Under `hits`, a hero standing on a ledge keeps accumulating gravity into `ydirection` while the separation holds it in place — it looks right, then fights the next jump.",
   },
   {
@@ -489,6 +523,21 @@ export const DIAGNOSTICS: readonly DiagnosticSpec[] = [
   },
   { code: "E_DUPLICATE_SCENE", severity: "error", summary: "Two scenes share a name." },
   { code: "E_DUPLICATE_START", severity: "error", summary: "More than one `start` statement." },
+  {
+    code: "E_UNKNOWN_SIDE",
+    severity: "error",
+    summary: "`from` was given something that is not one of the four sides.",
+  },
+  {
+    code: "E_SIDE_ON_EDGE",
+    severity: "error",
+    summary: "A side on a screen edge, which has only one.",
+  },
+  {
+    code: "E_DUPLICATE_SIDE",
+    severity: "error",
+    summary: "One `from` naming the same side twice.",
+  },
   {
     code: "E_ELSE_NOT_ALLOWED",
     severity: "error",
@@ -761,6 +810,13 @@ export const BUTTON_NAMES = BUTTONS.map((b) => b.name) as readonly string[];
 
 /** Screen-edge names. */
 export const EDGE_NAMES = EDGES_SPEC.map((e) => e.name) as readonly string[];
+
+/** Side names, as a set. */
+export const SIDE_NAMES: ReadonlySet<string> = new Set(SIDES.map((side) => side.name));
+
+/** Side name → the axis and sign separation resolves it on. */
+export const SIDE_AXES: Readonly<Record<string, { axis: "x" | "y"; sign: -1 | 1 }>> =
+  Object.fromEntries(SIDES.map((side) => [side.name, { axis: side.axis, sign: side.sign }]));
 
 /** Clause keywords, as a set. */
 export const KEYWORD_NAMES: ReadonlySet<string> = new Set(KEYWORDS.map((k) => k.name));

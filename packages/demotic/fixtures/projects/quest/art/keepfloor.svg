@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- keepfloor — the causeway, and the two shelves the fight is had from. -->
+  <rect x="0" y="0" width="64" height="8" fill="#8f7a86"/>
+  <rect x="0" y="8" width="64" height="8" fill="#5a4652"/>
+  <rect x="0" y="16" width="8" height="8" fill="#5a4652"/>
+  <rect x="8" y="16" width="16" height="8" fill="#402f3a"/>
+  <rect x="24" y="16" width="16" height="8" fill="#5a4652"/>
+  <rect x="40" y="16" width="16" height="8" fill="#402f3a"/>
+  <rect x="56" y="16" width="8" height="8" fill="#5a4652"/>
+  <rect x="0" y="24" width="64" height="8" fill="#241922"/>
+  <rect x="0" y="32" width="64" height="8" fill="#170f14"/>
+  <rect x="0" y="40" width="64" height="8" fill="#170f14"/>
+  <rect x="0" y="48" width="64" height="8" fill="#170f14"/>
+  <rect x="0" y="56" width="64" height="8" fill="#170f14"/>
+</svg>

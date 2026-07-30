@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- cave wall — the checkered rock the CAVES cover is cut through -->
+  <rect x="0" y="0" width="16" height="8" fill="#5d5972"/>
+  <rect x="16" y="0" width="16" height="8" fill="#17161c"/>
+  <rect x="32" y="0" width="8" height="8" fill="#5d5972"/>
+  <rect x="40" y="0" width="8" height="8" fill="#3a3847"/>
+  <rect x="48" y="0" width="16" height="8" fill="#17161c"/>
+  <rect x="0" y="8" width="16" height="8" fill="#5d5972"/>
+  <rect x="16" y="8" width="16" height="8" fill="#17161c"/>
+  <rect x="32" y="8" width="16" height="8" fill="#5d5972"/>
+  <rect x="48" y="8" width="16" height="8" fill="#17161c"/>
+  <rect x="0" y="16" width="8" height="8" fill="#3a3847"/>
+  <rect x="8" y="16" width="8" height="8" fill="#5d5972"/>
+  <rect x="16" y="16" width="16" height="8" fill="#17161c"/>
+  <rect x="32" y="16" width="16" height="8" fill="#5d5972"/>
+  <rect x="48" y="16" width="16" height="8" fill="#17161c"/>
+  <rect x="0" y="24" width="16" height="8" fill="#5d5972"/>
+  <rect x="16" y="24" width="16" height="8" fill="#17161c"/>
+  <rect x="32" y="24" width="8" height="8" fill="#3a3847"/>
+  <rect x="40" y="24" width="8" height="8" fill="#5d5972"/>
+  <rect x="48" y="24" width="16" height="8" fill="#17161c"/>
+  <rect x="0" y="32" width="16" height="8" fill="#17161c"/>
+  <rect x="16" y="32" width="16" height="8" fill="#5d5972"/>
+  <rect x="32" y="32" width="16" height="8" fill="#17161c"/>
+  <rect x="48" y="32" width="8" height="8" fill="#3a3847"/>
+  <rect x="56" y="32" width="8" height="8" fill="#5d5972"/>
+  <rect x="0" y="40" width="16" height="8" fill="#17161c"/>
+  <rect x="16" y="40" width="8" height="8" fill="#3a3847"/>
+  <rect x="24" y="40" width="8" height="8" fill="#5d5972"/>
+  <rect x="32" y="40" width="16" height="8" fill="#17161c"/>
+  <rect x="48" y="40" width="16" height="8" fill="#5d5972"/>
+  <rect x="0" y="48" width="16" height="8" fill="#17161c"/>
+  <rect x="16" y="48" width="16" height="8" fill="#5d5972"/>
+  <rect x="32" y="48" width="16" height="8" fill="#17161c"/>
+  <rect x="48" y="48" width="16" height="8" fill="#5d5972"/>
+  <rect x="0" y="56" width="16" height="8" fill="#17161c"/>
+  <rect x="16" y="56" width="16" height="8" fill="#5d5972"/>
+  <rect x="32" y="56" width="16" height="8" fill="#17161c"/>
+  <rect x="48" y="56" width="8" height="8" fill="#3a3847"/>
+  <rect x="56" y="56" width="8" height="8" fill="#5d5972"/>
+</svg>

@@ -33,7 +33,7 @@
  */
 
 import { buildMdGameAudio } from "@demake/audio";
-import { AsmError, MD_ROM_SIZE, packMdRom, type Executor } from "@demake/core";
+import { AsmError, MD_ROM_SIZE, MD_ROM_SIZES, packMdRom, type Executor } from "@demake/core";
 
 import { getProfile } from "../profiles.js";
 import type { Program } from "../program.js";
@@ -225,13 +225,29 @@ export const mdBackend: Backend<MdEmitOptions, MdAudio> = {
     if (reset === undefined || vint === undefined) {
       throw new BuildError("E_INTERNAL", "the code generator emitted no entry point");
     }
+    // The smallest board that holds it. Half a megabyte is the floor rather than
+    // the only option, so every cartridge built before this is byte-identical and
+    // a game that outgrows it pads to the next power of two instead of failing.
+    // There is no mapper involved: the console maps the whole cartridge from
+    // `$000000` and the header says where it ends.
+    const size = MD_ROM_SIZES.find((bytes) => bytes >= code.length + CODE_ORIGIN);
+    if (size === undefined) {
+      const largest = MD_ROM_SIZES[MD_ROM_SIZES.length - 1] as number;
+      throw new BuildError(
+        "E_GAME_TOO_LARGE",
+        `this game compiles to ${code.length} bytes and a flat Mega Drive cartridge holds ` +
+          `${largest - CODE_ORIGIN}`,
+        "past 4 MiB a cartridge has to page through $A130F1 (doc 13 §Banked cartridges).",
+      );
+    }
     return {
       bytes: packMdRom(code, reset, STACK_TOP, {
         ...(title === undefined ? {} : { title }),
         vint,
+        size,
       }),
       code: code.length,
-      capacity: CODE_SIZE,
+      capacity: size - CODE_ORIGIN,
       symbols,
       helpers: ctx.helperNames(),
     };

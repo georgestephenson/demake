@@ -48,6 +48,7 @@ export const EXAMPLE_NAMES = [
   "shooter",
   "caves",
   "runner",
+  "quest",
 ] as const;
 
 /** One example's name. Pong is what the page opens with. */

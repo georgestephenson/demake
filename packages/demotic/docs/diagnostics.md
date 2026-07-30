@@ -13,6 +13,9 @@ Every one of these is a mistake the cell-and-tick model makes easy to write and 
 | `E_UNKNOWN_SCENE` | A scene was named that is never declared. |
 | `E_DUPLICATE_SCENE` | Two scenes share a name. |
 | `E_DUPLICATE_START` | More than one `start` statement. |
+| `E_UNKNOWN_SIDE` | `from` was given something that is not one of the four sides. |
+| `E_SIDE_ON_EDGE` | A side on a screen edge, which has only one. |
+| `E_DUPLICATE_SIDE` | One `from` naming the same side twice. |
 | `E_ELSE_NOT_ALLOWED` | `else` on a bare edge trigger, where "did not fire" would mean every other tick. |
 | `E_UNKNOWN_LEVEL` | A level file that was never loaded, or could not be found. |
 | `E_LEVEL_SYNTAX` | A `.dmtl` line that is neither a `tile` legend entry nor `map`. |

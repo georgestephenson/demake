@@ -12,7 +12,7 @@
 import { describe, expect, it } from "vitest";
 
 import { analyze } from "../src/codegen/analyze.js";
-import { GB_MEMORY, planLayout, ENTITY_SIZE } from "../src/codegen/layout.js";
+import { BOX_SIZE, GB_MEMORY, planLayout, ENTITY_SIZE } from "../src/codegen/layout.js";
 import { buildGbRom } from "../src/codegen/gb.js";
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
@@ -49,8 +49,19 @@ describe("what a program needs", async () => {
     const analysis = analyze(program);
     const layout = planLayout(program, analysis, GB_MEMORY);
     expect(layout.entities.length).toBe(program.instances.length);
-    // Records are contiguous and sized by the property set, nothing more.
-    expect((layout.entities[1] as number) - (layout.entities[0] as number)).toBe(ENTITY_SIZE);
+    // Records are contiguous, and each is only as long as its own property set.
+    for (let id = 1; id < layout.entities.length; id += 1) {
+      const gap = (layout.entities[id] as number) - (layout.entities[id - 1] as number);
+      expect(gap).toBe(layout.entitySizes[id - 1] as number);
+    }
+    // The ball moves, so it pays for all nine; a caption cannot move, cannot be
+    // hidden and holds no number, so it pays for its box and stops there. A
+    // record that was always the worst case is what this is here to catch.
+    const slot = (name: string): number =>
+      layout.entitySizes[program.instances.findIndex((i) => i.name === name)] as number;
+    expect(slot("ball1")).toBe(ENTITY_SIZE);
+    expect(slot("you")).toBe(BOX_SIZE);
+    expect(slot("score1")).toBeLessThan(ENTITY_SIZE);
     expect(layout.used).toBeLessThan(2048);
     // Pong draws for the opponent's aim, so it has a generator; it has no
     // camera, so it has no camera variables.

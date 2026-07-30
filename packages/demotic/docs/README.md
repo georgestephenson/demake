@@ -9,7 +9,7 @@ The language, generated from `packages/demotic/src/lang/spec.ts`.
 - [Rule triggers](triggers.md)
 - [Properties](properties.md)
 - [Expressions](expressions.md)
-- [Input and edges](input.md)
+- [Input, edges and sides](input.md)
 - [Diagnostics](diagnostics.md)
 
 The design rationale lives in [doc 14](../../../docs/14-demotic.md); this is the surface itself.

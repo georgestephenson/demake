@@ -18,7 +18,7 @@ import { argv, exit, stdout } from "node:process";
 
 const { compile, formatDiagnostics, formatResults, getProfile, parseTests, profiles, runTests } =
   await import("../dist/index.js");
-const { loadLevels } = await import("./levels.mjs");
+const { loadLevels, projectFiles } = await import("./levels.mjs");
 
 const args = argv.slice(2);
 const options = { console: null, verbose: false, game: null, tests: null };
@@ -30,9 +30,11 @@ for (let i = 0; i < args.length; i += 1) {
   else if (arg.endsWith(".dmt")) options.game = arg;
 }
 
-const gamePath = options.game ?? fileURLToPath(new URL("../fixtures/pong.dmt", import.meta.url));
+const gamePath =
+  options.game ?? fileURLToPath(new URL("../fixtures/projects/pong/src/pong.dmt", import.meta.url));
 const testPath =
-  options.tests ?? fileURLToPath(new URL("../fixtures/pong.test.dmt", import.meta.url));
+  options.tests ??
+  fileURLToPath(new URL("../fixtures/projects/pong/src/pong.test.dmt", import.meta.url));
 
 const file = parseTests(readFileSync(testPath, "utf8"));
 if (file.diagnostics.length > 0) {
@@ -41,14 +43,15 @@ if (file.diagnostics.length > 0) {
 }
 
 const source = readFileSync(gamePath, "utf8");
-const levels = loadLevels(gamePath, source);
+const levels = loadLevels(gamePath);
+const files = projectFiles(gamePath);
 const targets = options.console ? [getProfile(options.console)] : profiles;
 const results = [];
 
 for (const profile of targets) {
   let program;
   try {
-    program = compile(source, { profile, levels });
+    program = compile(source, { profile, files, levels });
   } catch (error) {
     stdout.write(`FAIL ${profile.id}: ${error.message}\n`);
     exit(1);

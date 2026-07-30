@@ -7,8 +7,8 @@ A `when` rule fires on an **edge** (once, when something happens) or at a **leve
 
 | Trigger | Timing | Meaning |
 |---|---|---|
-| `<a> hits <b>, <c>` | edge | On contact, once — not once per tick of contact. |
-| `<a> touches <b>, <c>` | level | Every tick two things overlap. |
+| `<a> hits <b>, <c> [from <side>, <side>]` | edge | On contact, once — not once per tick of contact. |
+| `<a> touches <b>, <c> [from <side>, <side>]` | level | Every tick two things overlap. |
 | `<button> pressed \| released` | edge | On the button's edge, once per press. |
 | `<expr> reaches <expr>` | edge | When a value lands on a target or crosses it from either side. |
 | `<class>.<property> <op> <expr>` | level | Every tick, once per object of that class, with it bound as the subject. |
@@ -21,7 +21,7 @@ when ball hits paddle then ydirection as flip
 ```
 
 ```
-when player touches ledge then ydirection as 0
+when player touches ledge from above then ydirection as 0
 ```
 
 ```
@@ -42,9 +42,9 @@ when always in play then paddle2.xdirection as clamp(error / 1.5vw, -1, 1)
 
 ## Notes
 
-**`<a> hits <b>, <c>`** — Bare class names bind to the two objects that collided, and an unqualified property targets the subject.
+**`<a> hits <b>, <c> [from <side>, <side>]`** — Bare class names bind to the two objects that collided, and an unqualified property targets the subject. `from above, below, left, right` narrows the rule to contacts resolved on those sides, named from the *subject's* position: `hits wall from below` is a head-bonk. Without it the rule fires on any side. A screen edge has only one, so it takes no `from`.
 
-**`<a> touches <b>, <c>`** — Resting contact is not an event. Under `hits`, a hero standing on a ledge keeps accumulating gravity into `ydirection` while the separation holds it in place — it looks right, then fights the next jump.
+**`<a> touches <b>, <c> [from <side>, <side>]`** — Resting contact is not an event. Under `hits`, a hero standing on a ledge keeps accumulating gravity into `ydirection` while the separation holds it in place — it looks right, then fights the next jump.
 
 **`<expr> reaches <expr>`** — A crossing detector, not a threshold: `reaches 0` on falling lives and `reaches 10` on a rising score must mean the same thing, and `>=` cannot express both. A value that *starts* on its target has not reached it.
 

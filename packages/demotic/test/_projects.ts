@@ -1,7 +1,7 @@
 /**
  * Reading an example project off disk (doc 19).
  *
- * The example library is seven project folders — `src/`, `art/`, `music/`,
+ * The example library is a project folder per game — `src/`, `art/`, `music/`,
  * `sound/` and, where a game has them, `levels/` — and this is the one place a
  * test says how to walk one. Before the folders existed every reader built its
  * own `join(fixtures, name)`, which is exactly the drift the layout exists to
@@ -30,6 +30,7 @@ export const EXAMPLES = [
   "shooter",
   "caves",
   "runner",
+  "quest",
 ] as const;
 
 /** One example's name. */

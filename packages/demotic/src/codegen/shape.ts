@@ -456,10 +456,23 @@ export function tileSlot(ctx: ProgramShape, ruleId: number, subject: number): nu
   return ctx.layout.tileContacts + index * ctx.layout.tileContactStride;
 }
 
-/** Every entity's declared starting values, four bytes a property. */
-export function emitInstanceDefaults(asm: DataBuffer, program: Program, props: readonly string[]) {
+/**
+ * Every entity's declared starting values, four bytes a property.
+ *
+ * As long as the record and no longer: the boot restore and each scene's reset
+ * copy `sizes[id]` bytes, so a table that ran to the full nine would be paying
+ * cartridge for slots nothing ever reads back. Both lengths come from the same
+ * array for that reason.
+ */
+export function emitInstanceDefaults(
+  asm: DataBuffer,
+  program: Program,
+  props: readonly string[],
+  sizes: readonly number[],
+) {
   for (const instance of program.instances) {
     asm.label(`Defaults_${instance.id}`);
-    for (const prop of props) asm.dd(instance.numbers[prop] ?? 0);
+    const slots = (sizes[instance.id] ?? props.length * 4) / 4;
+    for (const prop of props.slice(0, slots)) asm.dd(instance.numbers[prop] ?? 0);
   }
 }

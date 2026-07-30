@@ -76,7 +76,19 @@ function adversarial(): Executor & { ran: () => number } {
   return Object.assign(executor, { ran: () => count });
 }
 
-const GAMES = EXAMPLES;
+/**
+ * The games the Game Boy sweep below can build.
+ *
+ * `quest` is not one of them, and the exclusion is a fact about the cartridge
+ * rather than about this file: three levels, a boss and a secret room compile to
+ * around 122 KiB of SM83 against a mapper-less 32 KiB (doc 13 §Banked
+ * cartridges). It is covered on the Mega Drive instead, below, which is the one
+ * console with the room — and that is the better case anyway, because it is the
+ * biggest fan-out in the library.
+ */
+const OVER_BUDGET_ON_GB = new Set(["quest"]);
+
+const GAMES = EXAMPLES.filter((name) => !OVER_BUDGET_ON_GB.has(name));
 
 /**
  * Which builds to compare.
@@ -124,7 +136,12 @@ const CASES = [
  * fast case too, and a six-minute limit on a ten-second build is a guard that
  * catches nothing.
  */
-const SLOW = { game: "platformer", consoleId: "md" };
+const SLOW = [
+  { game: "platformer", consoleId: "md" },
+  // And the biggest fan-out there is: four levels, two of them demade against a
+  // shared bank, four tracks and eight effects, all of it settled at once.
+  { game: "quest", consoleId: "md" },
+];
 
 /** One executor for the whole file, so the job count means something at the end. */
 const fanOut = adversarial();
@@ -155,9 +172,9 @@ describe("a fanned-out build", () => {
     120_000,
   );
 
-  it(
-    `builds '${SLOW.game}' for '${SLOW.consoleId}' to the bytes one thread builds`,
-    () => compareBuilds(SLOW.game, SLOW.consoleId),
+  it.each(SLOW)(
+    "builds $game for $consoleId to the bytes one thread builds",
+    ({ game, consoleId }) => compareBuilds(game, consoleId),
     360_000,
   );
 

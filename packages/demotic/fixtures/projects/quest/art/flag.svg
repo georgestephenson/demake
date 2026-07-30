@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- flag — the meadow's exit, drawn as a pole so a column of them is a mast. -->
+  <rect x="0" y="0" width="24" height="8" fill="#8fd4ff"/>
+  <rect x="24" y="0" width="16" height="8" fill="#e8eef5"/>
+  <rect x="40" y="0" width="24" height="8" fill="#8fd4ff"/>
+  <rect x="0" y="8" width="24" height="8" fill="#8fd4ff"/>
+  <rect x="24" y="8" width="16" height="8" fill="#e8eef5"/>
+  <rect x="40" y="8" width="24" height="8" fill="#e03a2f"/>
+  <rect x="0" y="16" width="24" height="8" fill="#8fd4ff"/>
+  <rect x="24" y="16" width="16" height="8" fill="#e8eef5"/>
+  <rect x="40" y="16" width="24" height="8" fill="#e03a2f"/>
+  <rect x="0" y="24" width="24" height="8" fill="#8fd4ff"/>
+  <rect x="24" y="24" width="16" height="8" fill="#e8eef5"/>
+  <rect x="40" y="24" width="24" height="8" fill="#e03a2f"/>
+  <rect x="0" y="32" width="24" height="8" fill="#8fd4ff"/>
+  <rect x="24" y="32" width="16" height="8" fill="#e8eef5"/>
+  <rect x="40" y="32" width="24" height="8" fill="#8fd4ff"/>
+  <rect x="0" y="40" width="24" height="8" fill="#8fd4ff"/>
+  <rect x="24" y="40" width="16" height="8" fill="#e8eef5"/>
+  <rect x="40" y="40" width="24" height="8" fill="#8fd4ff"/>
+  <rect x="0" y="48" width="24" height="8" fill="#8fd4ff"/>
+  <rect x="24" y="48" width="16" height="8" fill="#e8eef5"/>
+  <rect x="40" y="48" width="24" height="8" fill="#8fd4ff"/>
+  <rect x="0" y="56" width="24" height="8" fill="#8fd4ff"/>
+  <rect x="24" y="56" width="16" height="8" fill="#e8eef5"/>
+  <rect x="40" y="56" width="24" height="8" fill="#8fd4ff"/>
+</svg>

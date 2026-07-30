@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- keepstone — under the keep's floor, and the shore of every lava pool. -->
+  <rect x="0" y="0" width="64" height="8" fill="#241922"/>
+  <rect x="0" y="8" width="8" height="8" fill="#241922"/>
+  <rect x="8" y="8" width="16" height="8" fill="#3d2b36"/>
+  <rect x="24" y="8" width="16" height="8" fill="#241922"/>
+  <rect x="40" y="8" width="16" height="8" fill="#3d2b36"/>
+  <rect x="56" y="8" width="8" height="8" fill="#241922"/>
+  <rect x="0" y="16" width="64" height="8" fill="#241922"/>
+  <rect x="0" y="24" width="8" height="8" fill="#3d2b36"/>
+  <rect x="8" y="24" width="16" height="8" fill="#241922"/>
+  <rect x="24" y="24" width="16" height="8" fill="#3d2b36"/>
+  <rect x="40" y="24" width="16" height="8" fill="#241922"/>
+  <rect x="56" y="24" width="8" height="8" fill="#3d2b36"/>
+  <rect x="0" y="32" width="64" height="8" fill="#241922"/>
+  <rect x="0" y="40" width="8" height="8" fill="#241922"/>
+  <rect x="8" y="40" width="16" height="8" fill="#3d2b36"/>
+  <rect x="24" y="40" width="16" height="8" fill="#241922"/>
+  <rect x="40" y="40" width="16" height="8" fill="#3d2b36"/>
+  <rect x="56" y="40" width="8" height="8" fill="#241922"/>
+  <rect x="0" y="48" width="64" height="8" fill="#241922"/>
+  <rect x="0" y="56" width="8" height="8" fill="#3d2b36"/>
+  <rect x="8" y="56" width="16" height="8" fill="#241922"/>
+  <rect x="24" y="56" width="16" height="8" fill="#3d2b36"/>
+  <rect x="40" y="56" width="16" height="8" fill="#241922"/>
+  <rect x="56" y="56" width="8" height="8" fill="#3d2b36"/>
+</svg>

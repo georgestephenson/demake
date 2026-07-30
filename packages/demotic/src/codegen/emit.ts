@@ -31,7 +31,7 @@ import {
   tileCellsCacheable,
   type SpriteArt,
 } from "./shape.js";
-import { ENTITY_SIZE, PROPS, TILE_CONTACT_MAX, W } from "./layout.js";
+import { PROPS, TILE_CONTACT_MAX, W } from "./layout.js";
 import {
   emitAssignments,
   emitCamera,
@@ -373,7 +373,7 @@ export function emitProgram(ctx: Ctx, options: EmitOptions = {}): void {
       }
     }
   }
-  emitInstanceDefaults(asm, program, PROPS);
+  emitInstanceDefaults(asm, program, PROPS, ctx.layout.entitySizes);
 
   // One demade tilemap per scene that has a backdrop: a screenful of bytes,
   // each naming a tile in the bank the conversion filled — followed, on a
@@ -521,7 +521,7 @@ function emitEntry(
   for (const instance of program.instances) {
     asm.ld16("hl", label(`Defaults_${instance.id}`));
     asm.ld16("de", layout.entities[instance.id] as number);
-    asm.ld16("bc", ENTITY_SIZE);
+    asm.ld16("bc", layout.entitySizes[instance.id] as number);
     asm.call("CopyBytes");
   }
 
@@ -936,7 +936,7 @@ function emitSceneReset(ctx: Ctx, scene: SceneCtx): void {
   for (const id of scene.def.instanceIds) {
     asm.ld16("hl", label(`Defaults_${id}`));
     asm.ld16("de", layout.entities[id] as number);
-    asm.ld16("bc", ENTITY_SIZE);
+    asm.ld16("bc", layout.entitySizes[id] as number);
     asm.call("CopyBytes");
   }
   asm.ret();

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- block — the breakable brick. One cell, unlike breakout's two. -->
+  <rect x="0" y="0" width="64" height="8" fill="#a5622a"/>
+  <rect x="0" y="8" width="8" height="8" fill="#a5622a"/>
+  <rect x="8" y="8" width="24" height="8" fill="#e0a266"/>
+  <rect x="32" y="8" width="8" height="8" fill="#a5622a"/>
+  <rect x="40" y="8" width="24" height="8" fill="#e0a266"/>
+  <rect x="0" y="16" width="64" height="8" fill="#a5622a"/>
+  <rect x="0" y="24" width="16" height="8" fill="#e0a266"/>
+  <rect x="16" y="24" width="8" height="8" fill="#a5622a"/>
+  <rect x="24" y="24" width="24" height="8" fill="#e0a266"/>
+  <rect x="48" y="24" width="8" height="8" fill="#a5622a"/>
+  <rect x="56" y="24" width="8" height="8" fill="#e0a266"/>
+  <rect x="0" y="32" width="64" height="8" fill="#a5622a"/>
+  <rect x="0" y="40" width="8" height="8" fill="#a5622a"/>
+  <rect x="8" y="40" width="24" height="8" fill="#e0a266"/>
+  <rect x="32" y="40" width="8" height="8" fill="#a5622a"/>
+  <rect x="40" y="40" width="24" height="8" fill="#e0a266"/>
+  <rect x="0" y="48" width="64" height="8" fill="#a5622a"/>
+  <rect x="0" y="56" width="64" height="8" fill="#4a2408"/>
+</svg>
