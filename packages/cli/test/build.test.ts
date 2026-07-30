@@ -237,3 +237,83 @@ describe("demake build <dir>", () => {
     expect(await run(["build", "pong", "-o", "pong.gb"], h.env)).toBe(EXIT.OK);
   });
 });
+
+describe("demake build with a Demakefile", () => {
+  function project(extra: Record<string, string> = {}): Record<string, Uint8Array> {
+    const files: Record<string, Uint8Array> = {};
+    for (const one of listFilesUnder(PONG)) {
+      files[`pong/${one}`] = new Uint8Array(readFileSync(join(PONG, one)));
+    }
+    for (const [path, text] of Object.entries(extra)) {
+      files[`pong/${path}`] = new TextEncoder().encode(text);
+    }
+    return files;
+  }
+
+  it("takes the entry point from `source`", async () => {
+    // Two games in the folder would be ambiguous; `source` is how a Demakefile
+    // resolves that (doc 15 §Top level).
+    const h = harness(
+      project({
+        "src/other.dmt": "start play\nscene play\n",
+        Demakefile: "source src/pong.dmt\ntargets gb\n",
+      }),
+    );
+    expect(await run(["build", "pong", "-o", "pong.gb"], h.env)).toBe(EXIT.OK);
+    expect((h.written.get("pong.gb") as Uint8Array).length).toBe(0x8000);
+  });
+
+  it("puts the artifact under `out` when -o is absent", async () => {
+    const h = harness(project({ Demakefile: "project pong\ntargets gb\nout artifacts\n" }));
+    expect(await run(["build", "pong"], h.env)).toBe(EXIT.OK);
+    expect(h.written.has("pong/artifacts/gb/pong.gb")).toBe(true);
+  });
+
+  it("honours a target's own output path", async () => {
+    const h = harness(project({ Demakefile: "targets gb\n\ntarget gb\n  output rom cart.gb\n" }));
+    expect(await run(["build", "pong"], h.env)).toBe(EXIT.OK);
+    expect(h.written.has("pong/build/cart.gb")).toBe(true);
+  });
+
+  it("refuses a Demakefile it cannot read, rather than ignoring it", async () => {
+    const h = harness(project({ Demakefile: "frobnicate yes\n" }));
+    expect(await run(["build", "pong", "-o", "x.gb"], h.env)).toBe(EXIT.BAD_INPUT);
+    expect(h.err()).toContain("E_UNKNOWN_DIRECTIVE");
+  });
+
+  it("takes the cartridge title from the header, then from the project", async () => {
+    const withHeader = harness(
+      project({ Demakefile: "targets gb\n\ntarget gb\n  header\n    title HEADER\n" }),
+    );
+    expect(await run(["build", "pong", "-o", "a.gb"], withHeader.env)).toBe(EXIT.OK);
+    const a = withHeader.written.get("a.gb") as Uint8Array;
+    expect(String.fromCharCode(...a.subarray(0x134, 0x13a))).toBe("HEADER");
+
+    const withProject = harness(
+      project({ Demakefile: "project pong\n  title FROMPROJ\ntargets gb\n" }),
+    );
+    expect(await run(["build", "pong", "-o", "b.gb"], withProject.env)).toBe(EXIT.OK);
+    const b = withProject.written.get("b.gb") as Uint8Array;
+    expect(String.fromCharCode(...b.subarray(0x134, 0x13c))).toBe("FROMPROJ");
+
+    // …and the flag still wins over both.
+    const flagged = harness(
+      project({ Demakefile: "project pong\n  title FROMPROJ\ntargets gb\n" }),
+    );
+    expect(await run(["build", "pong", "-o", "c.gb", "--title", "FLAG"], flagged.env)).toBe(
+      EXIT.OK,
+    );
+    const c = flagged.written.get("c.gb") as Uint8Array;
+    expect(String.fromCharCode(...c.subarray(0x134, 0x138))).toBe("FLAG");
+  });
+
+  it("reports the resolved plan under --json", async () => {
+    const h = harness(project({ Demakefile: "project pong\ntargets gb nes\nout artifacts\n" }));
+    expect(await run(["build", "pong", "-o", "x.gb", "--json"], h.env)).toBe(EXIT.OK);
+    const report = JSON.parse(h.out()) as {
+      plan?: { out: string; targets: { console: string }[] };
+    };
+    expect(report.plan?.out).toBe("artifacts");
+    expect(report.plan?.targets.map((one) => one.console)).toEqual(["gb", "nes"]);
+  });
+});

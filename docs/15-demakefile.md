@@ -24,12 +24,30 @@ present, `demake build` targets every console that has a runtime, with default
 conversion settings, writing `build/<console>/<name>.<ext>`. The web preview
 (doc 07) needs no Demakefile at all for the same reason.
 
-**Status.** The zero-config path is what exists today: `demake build game.dmt -o
-game.gb` builds for the one console that has a runtime, with `--console`,
-`--title` and `--format` standing in for the manifest's fields. The file itself,
-its resolver, art binding through `prep`, and `check`/`init`/`fmt` are still to
-come (doc 13 §D2). Everything below is the design they will implement, and the
-flags that exist now are deliberately named after the directives they anticipate.
+**Status.** The file exists and is read. `parseDemakefile`, `emitDemakefile` and
+the resolver live in `packages/demotic/src/demakefile/`, the three round-trip
+properties of §The equivalence contract are tests, and `demake build <dir>` picks
+up a `Demakefile` at a project's root — honouring `source`, `out`, `targets`, a
+`target`'s own `output` path, and `title` from `header` or `project`. Its
+diagnostics stop a build rather than being skipped: a build file nobody can read
+is a build nobody can predict.
+
+Three things are parsed, reported under `--json`, and **not yet applied**, so they
+are gaps rather than decisions:
+
+- **Conversion options** (`dither`, `strategy`, `effort`, `use`, …). The cascade
+  resolves and is tested; what is missing is the plumbing from there into
+  `bindArt`/`bindAudio`, which today take no per-asset options. Until that lands a
+  build uses the demakers' defaults, which keeps the operational rule intact with
+  no work at all — a Demakefile still cannot change how a game plays.
+- **The rest of `header`** — `mapper`, `mirroring`, `serial`, `region`,
+  `licensee` — with the per-family validation this document promises.
+- **Multi-target builds.** One invocation still builds one console; `targets`
+  decides *where* the artifact lands and which header applies, and `-c` picks
+  which of them to build. Building all of them in one command needs `build` to
+  write many artifacts, which is an output-contract change worth doing on its own.
+
+`check`/`init`/`fmt` are still to come (doc 13 §D2).
 
 `demake init` writes the Demakefile that reproduces exactly what the defaults
 already do — so the zero-config path and the file are the same object, one of them
@@ -41,9 +59,12 @@ just implicit. Editing a setting in the web preview is editing that file; see
 Indentation-significant, block-structured, minimal punctuation.
 
 - **Indentation** sets structure. Tabs are accepted; **spaces are canonical** and
-  `demake fmt` always writes two spaces per level. One tab is one level; with
-  spaces, the file's unit is set by its first indented line and must stay
-  consistent. Mixing tabs and spaces *within one file* is an error naming both
+  `demake fmt` always writes two spaces per level — and exactly one space between
+  a directive and its value. Column alignment is not preserved: a formatter with
+  one answer cannot also keep everyone's alignment, so the aligned examples in
+  this document are illustrative of the *format* rather than of `fmt`'s output.
+  One tab is one level; with spaces, the file's unit is set by its first indented
+  line and must stay consistent. Mixing tabs and spaces *within one file* is an error naming both
   offending lines — the Make footgun, disarmed.
 - **Comments** start at `#`, either at line start or preceded by whitespace, so
   `serial GM-00000000#2` keeps its hash.

@@ -13,6 +13,7 @@ import {
   closeSync,
   constants as fsConstants,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   openSync,
   readdirSync,
@@ -88,7 +89,13 @@ export function makeNodeEnv(): CliEnv {
         (err as { code?: string }).code = "EEXIST";
         throw err;
       }
-      const tmp = join(dirname(path) || ".", `.demake-${process.pid}-${basenameSafe(path)}.tmp`);
+      // The directory first: a Demakefile's `out` nests artifacts by console
+      // (doc 15 §`target <name>`), so `build/gb/pong.gb` names two directories
+      // that may not exist yet. The in-memory test harness has no directories at
+      // all, which is exactly why this had to be found by running the real thing.
+      const folder = dirname(path) || ".";
+      mkdirSync(folder, { recursive: true });
+      const tmp = join(folder, `.demake-${process.pid}-${basenameSafe(path)}.tmp`);
       writeFileSync(tmp, bytes);
       try {
         renameSync(tmp, path);

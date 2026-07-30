@@ -21,6 +21,7 @@ import {
   buildGame,
   BuildError,
   compile,
+  EMPTY_DEMAKEFILE,
   describeProgram,
   findEntry,
   findProfile,
@@ -28,12 +29,18 @@ import {
   GameLangError,
   isIgnoredPath,
   isProject,
+  optionValue,
+  outputPath,
+  parseDemakefile,
+  resolveProject,
   levelFiles,
   profiles,
   romExtension,
   runtimeConsoles,
   unsupportedFor,
+  type Demakefile,
   type Program,
+  type ResolvedProject,
 } from "@demake/demotic";
 import type { ParsedValue } from "@demake/cli-spec";
 
@@ -100,6 +107,10 @@ interface Input {
   root?: string;
   /** Every file in the project, relative to its root, sorted. */
   files: readonly string[];
+  /** The project's Demakefile, parsed — empty when it has none (doc 15). */
+  build: Demakefile;
+  /** What the Demakefile and the folder between them decided. */
+  plan: ResolvedProject;
 }
 
 /**
@@ -122,9 +133,20 @@ function openInput(env: CliEnv, positionals: readonly string[]): Input {
       // through to stdin rather than reporting a project error about a folder
       // nobody said was one.
       const { bytes, source } = resolveInput(env, [...positionals]);
-      return { path: source, source: new TextDecoder().decode(bytes), files: [] };
+      return {
+        path: source,
+        source: new TextDecoder().decode(bytes),
+        files: [],
+        build: EMPTY_DEMAKEFILE,
+        plan: resolveProject(EMPTY_DEMAKEFILE, [], []),
+      };
     }
-    const entry = findEntry(files);
+    // The Demakefile, if the folder has one. Its diagnostics are errors here
+    // rather than warnings: a build file nobody can read is a build nobody can
+    // predict, and doc 15's whole point is that the plan is readable off it.
+    const build = readDemakefile(env, candidate, files);
+    const plan = resolveProject(build, files, []);
+    const entry = plan.source ? { path: plan.source, candidates: [plan.source] } : findEntry(files);
     if (!entry.path) {
       throw new CliError(
         EXIT.NO_INPUT,
@@ -142,11 +164,43 @@ function openInput(env: CliEnv, positionals: readonly string[]): Input {
       source: new TextDecoder().decode(env.readFile(join(candidate, entry.path))),
       root: candidate,
       files,
+      build,
+      plan,
     };
   }
 
   const { bytes, source } = resolveInput(env, [...positionals]);
-  return { path: source, source: new TextDecoder().decode(bytes), files: [] };
+  return {
+    path: source,
+    source: new TextDecoder().decode(bytes),
+    files: [],
+    build: EMPTY_DEMAKEFILE,
+    plan: resolveProject(EMPTY_DEMAKEFILE, [], []),
+  };
+}
+
+/**
+ * Read and parse the project's Demakefile, if it has one.
+ *
+ * Its own diagnostics stop the build. Everything else about it — the option
+ * cascade, the targets, the header fields — is resolved by `@demake/demotic`, so
+ * this function's whole job is finding the bytes (doc 02 §platform purity).
+ */
+function readDemakefile(env: CliEnv, root: string, files: readonly string[]): Demakefile {
+  const named = files.find((path) => path === "Demakefile" || path === "demakefile");
+  if (named === undefined) return EMPTY_DEMAKEFILE;
+  const text = new TextDecoder().decode(env.readFile(join(root, named)));
+  const parsed = parseDemakefile(text);
+  const errors = parsed.diagnostics.filter((one) => one.severity === "error");
+  if (errors.length > 0) {
+    throw new CliError(
+      EXIT.BAD_INPUT,
+      "E_BAD_DEMAKEFILE",
+      `${named} has ${String(errors.length)} problem${errors.length === 1 ? "" : "s"}`,
+      formatDiagnostics(errors),
+    );
+  }
+  return parsed;
 }
 
 /**
@@ -280,7 +334,19 @@ export async function runBuild(
   }
 
   const stem = stemFromSource(sourcePath);
-  const title = str(values, "title") ?? stem;
+  // Title precedence, most specific first: the flag, the target's own header, the
+  // project's metadata, then the source's stem. `header` is doc 15's block and
+  // this is the one field of it the cartridge builders already take — the rest
+  // (mapper, mirroring, serial, region) are parsed and reported but not yet
+  // applied, which §Status in doc 15 now says.
+  const planned = input.plan.targets.find((one) => one.console === profile.id);
+  const title =
+    str(values, "title") ??
+    planned?.header["title"] ??
+    (input.root !== undefined
+      ? optionValue(input.build.project?.fields ?? [], "title")
+      : undefined) ??
+    stem;
   const format = str(values, "format") ?? "rom";
 
   let product: Uint8Array;
@@ -306,12 +372,28 @@ export async function runBuild(
 
   const extension = format === "sym" ? "sym" : romExtension(program);
   const output = str(values, "output");
-  const target = output ?? (env.stdoutIsTTY() ? `${stem}.${extension}` : undefined);
+  // `-o` always wins. Without it, a project with a Demakefile writes where that
+  // file says — `{out}/{console}/{project}.{ext}` unless a target stated a path
+  // (doc 15 §`target <name>`) — and a bare `.dmt` keeps the behaviour it had.
+  const generated =
+    input.root !== undefined && input.plan.targets.length > 0
+      ? (() => {
+          const chosen = planned ?? input.plan.targets[0];
+          if (!chosen) return undefined;
+          const stated = chosen.outputs.find((one) => one.format === format)?.path;
+          return join(input.root, outputPath(input.plan, chosen, extension, stated));
+        })()
+      : undefined;
+  const target = output ?? generated ?? (env.stdoutIsTTY() ? `${stem}.${extension}` : undefined);
 
   if (target === undefined) {
     env.writeStdout(product);
   } else {
-    env.writeFileAtomic(target, product, values.force === true);
+    // A path the *Demakefile* chose is regenerable by definition — that is what
+    // `out` and `build/` mean (doc 19 §`build/` is the CLI's) — so it is
+    // overwritten freely. A path the user typed with `-o` keeps the guard, since
+    // clobbering a file somebody named is the mistake the guard exists for.
+    env.writeFileAtomic(target, product, values.force === true || target === generated);
   }
 
   // Stamping is opt-in so the default output is byte-identical to what the
@@ -346,6 +428,7 @@ export async function runBuild(
           // identifies a file (doc 19 §The rule), so the resolved paths are the
           // one thing a reader cannot work out from the source alone.
           project: input.root ?? null,
+          plan: input.root === undefined ? null : input.plan,
           assets: program.assets,
           tracks: program.tracks,
           sounds: program.sounds,
