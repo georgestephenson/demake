@@ -429,6 +429,12 @@ function emitRngPick(ctx: Ctx): void {
   const low = ctx.unique("rngLow");
   const store = ctx.unique("rngStore");
 
+  // The generator advances first, and unconditionally — `rng.ts`'s `draw` is the
+  // definition, and the advance is not conditional on the bounds. It is here at
+  // the top rather than beside the modulo because nothing is live yet, so the
+  // call costs no saves.
+  asm.call(ctx.need("RngAdvance", emitRngAdvance));
+
   // count = floor(hi) - floor(lo) + 1, in whole cells.
   asm.lda(hi + 2);
   asm.ld("c", "a");
@@ -450,10 +456,9 @@ function emitRngPick(ctx: Ctx): void {
   asm.alu("or", "l");
   asm.jr(low, "z");
   asm.inc16("hl");
-  asm.push("de");
-  asm.push("hl");
-  asm.call(ctx.need("RngAdvance", emitRngAdvance));
-  asm.pop("bc"); // the count
+  asm.push("de"); // the low bound, which the modulo clobbers
+  asm.ld("b", "h"); // the count
+  asm.ld("c", "l");
   asm.lda(rng + 2);
   asm.ld("l", "a");
   asm.lda(rng + 3);

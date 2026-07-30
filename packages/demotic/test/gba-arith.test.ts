@@ -57,7 +57,7 @@ import {
 import { GBA_MEMORY, planLayout } from "../src/codegen/layout.js";
 import { compile } from "../src/compile.js";
 import { clampFixed, div, mul, ONE } from "../src/fixed.js";
-import { advance, pick } from "../src/rng.js";
+import { draw } from "../src/rng.js";
 import { getProfile } from "../src/profiles.js";
 
 /** A program with nothing in it: all these tests need from one is a layout. */
@@ -314,7 +314,6 @@ describe("the value layer", () => {
     //
     // The state is seeded here rather than left as the RAM found it, because the
     // boot code that would do it is the part of this backend not yet written.
-    const seeded = advance(SEED);
     for (const [low, high] of [
       [0, 10],
       [13, 16],
@@ -334,15 +333,13 @@ describe("the value layer", () => {
         // distinguishable from one that took it.
         copy32(ctx, OUT + 4, at(ctx.layout.rng as number));
       });
-      // `sim.ts` advances unconditionally; every backend skips the advance when
-      // the bounds cross, so the reference here is the backends' — see the note
-      // on `emitRngPick`.
-      const crossed = high <= low;
-      const expected = crossed ? low * ONE : (low + pick(seeded, high - low + 1)) * ONE;
+      const drawn = draw(SEED, low * ONE, high * ONE);
       expect(`random(${low}, ${high}) = ${read32(machine, OUT)}`).toBe(
-        `random(${low}, ${high}) = ${expected}`,
+        `random(${low}, ${high}) = ${drawn.value}`,
       );
-      expect(read32(machine, OUT + 4) >>> 0).toBe(crossed ? SEED : seeded);
+      // The generator advanced even where the bounds left nothing to choose,
+      // which is the half of `rng.ts`'s `draw` only the *next* draw can see.
+      expect(read32(machine, OUT + 4) >>> 0).toBe(drawn.state);
     }
   });
 

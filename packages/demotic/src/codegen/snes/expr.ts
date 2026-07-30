@@ -398,12 +398,17 @@ function emitRngPick(ctx: SnesCtx): void {
   if (rng === null) throw new Error("random() without a generator allocated");
   const lo = layout.mathA;
   const hi = layout.mathB;
-  // The count and the low bound outlive the call to `RngAdvance`, so they live in
-  // the helper scratch rather than in registers the advance itself wants.
+  // The count and the low bound outlive the call to `Mod16`, so they live in the
+  // helper scratch rather than in registers that routine wants.
   const count = DP.saved;
   const bound = DP.count;
   const low = ctx.unique("rngLow");
   const store = ctx.unique("rngStore");
+
+  // The generator advances first, and unconditionally — `rng.ts`'s `draw` is the
+  // definition, and the advance is not conditional on the bounds. At the top of
+  // the routine nothing is live yet, so the call costs no saves.
+  asm.jsr(ctx.need("RngAdvance", emitRngAdvance));
 
   // count = floor(hi) - floor(lo), in whole cells, then one more for the span.
   asm.lda(mem(lo, 2));
@@ -414,11 +419,11 @@ function emitRngPick(ctx: SnesCtx): void {
   asm.sta(mem(count));
   // A count of zero or less means the bounds met or crossed: the low bound is the
   // answer, and the subtraction's own flags say which without a reload.
+  // Note the advance has already happened; `rng.ts`'s `draw` does it either way.
   ctx.far("mi", low);
   ctx.far("eq", low);
   asm.inc(mem(count));
 
-  asm.jsr(ctx.need("RngAdvance", emitRngAdvance));
   // The draw is the generator's high half, modulo the count.
   asm.lda(mem(rng, 2));
   asm.sta(mem(DP.t2));

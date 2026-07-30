@@ -390,23 +390,27 @@ function emitRngPick(ctx: MdCtx): void {
   const hi = layout.mathB;
   const low = ctx.unique("rngLow");
 
+  // The generator advances first, and unconditionally — `rng.ts`'s `draw` is the
+  // definition, and the advance is not conditional on the bounds. At the top of
+  // the routine nothing is live yet, so the call costs no saves.
+  asm.jsr(ctx.need("RngAdvance", emitRngAdvance));
+
   // The integer parts, which are the high words of the two 16.16 bounds.
   asm.move("l", at(lo), eaD(0));
   asm.swap(0);
   asm.move("l", at(hi), eaD(1));
   asm.swap(1);
   // The bound and the count go in `d6` and `d7`, not in the low registers, and
-  // that is not a preference: `RngAdvance` builds a 32-bit product out of
-  // `d0`–`d3`, so anything held there across the call is gone by the time the
-  // draw needs it. It presents as a game whose random numbers are plausible and
-  // wrong, which is the hardest kind to see.
+  // that is not a preference: `Mod16`'s divide and `RngAdvance`'s product both
+  // work in `d0`–`d5`, so anything held there across either call is gone by the
+  // time the draw needs it. It presents as a game whose random numbers are
+  // plausible and wrong, which is the hardest kind to see.
   asm.move("w", eaD(0), eaD(6)); // the low bound, which is the fallback answer
   asm.move("w", eaD(1), eaD(7));
   asm.sub("w", eaD(0), 7); // count = floor(hi) - floor(lo), signed
   ctx.far("le", low);
   asm.addq("w", 1, eaD(7));
 
-  asm.jsr(ctx.need("RngAdvance", emitRngAdvance));
   asm.move("l", at(rng), eaD(4));
   asm.swap(4); // the generator's high half
   asm.moveq(0, 5);

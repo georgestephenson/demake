@@ -416,14 +416,9 @@ export function emitTest(
  * that disagree about it cannot be compared at all. The low bits of an LCG cycle
  * short, so a draw comes from the high half.
  *
- * **When the bounds meet or cross, the low bound is the answer and the generator
- * is not advanced** — and that matches the other five backends rather than the
- * interpreter, which advances unconditionally (`sim.ts`'s `nextRandom`). The
- * divergence is real, it predates this backend on four consoles, and no fixture
- * reaches it because `random(a, b)` with `b <= a` is a degenerate program. It is
- * recorded here rather than quietly resolved a sixth way: a cartridge that
- * behaved differently from the other five would be the louder bug, and fixing
- * all six is an output-byte change to consoles this work does not touch.
+ * **When the bounds meet or cross the low bound is the answer, and the generator
+ * advances anyway** — `rng.ts`'s `draw` is the definition of both halves, and
+ * *when* a draw happens is behaviour rather than an implementation detail.
  *
  * Exported so `gba-arith.test.ts` can prove the generator against `rng.ts`
  * before the rest of this backend exists — the same reason `sms-arith.test.ts`
@@ -440,6 +435,11 @@ export function emitRngPick(ctx: GbaCtx): void {
   // must preserve everything above them, and this routine is a caller as well as
   // a helper.
   asm.push([4, 5, LR]);
+  // The generator advances first, and unconditionally — `rng.ts`'s `draw` is the
+  // definition, and the advance is not conditional on the bounds. At the top of
+  // the routine nothing is live yet, so the call costs no saves.
+  asm.bl(ctx.need("RngAdvance", emitRngAdvance));
+
   asm.ldr(A0, mem(ctx, layout.mathA));
   asm.ldr(A1, mem(ctx, layout.mathB));
   // The whole-cell parts, arithmetically shifted so a negative bound floors.
@@ -449,7 +449,6 @@ export function emitRngPick(ctx: GbaCtx): void {
   ctx.far("le", low);
   asm.add(5, 5, armImm(1));
 
-  asm.bl(ctx.need("RngAdvance", emitRngAdvance));
   asm.ldr(A0, mem(ctx, rng));
   asm.mov(A0, armLsr(A0, 16));
   asm.mov(A1, armReg(5));

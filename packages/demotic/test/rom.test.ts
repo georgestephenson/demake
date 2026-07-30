@@ -46,6 +46,25 @@ function build(source: string, levels?: Record<string, string>, consoleId = "gb"
   return compile(source, { profile: getProfile(consoleId), levels });
 }
 
+/**
+ * Every console with a backend, over the same batteries.
+ *
+ * One list rather than one per `describe`, because "the same battery on every
+ * machine" is what makes `Backend` a contract rather than a resemblance (doc 14
+ * §Runtime model) — and a second list is a list a new console gets added to
+ * once.
+ */
+const TARGETS: readonly RomTarget[] = [
+  gbTarget,
+  gbcTarget,
+  megaduckTarget,
+  nesTarget,
+  smsTarget,
+  ggTarget,
+  snesTarget,
+  mdTarget,
+];
+
 describe("gb ROM", async () => {
   it("is a valid 32 KiB cartridge with correct checksums", async () => {
     const { bytes } = await buildGbRom(build(gameSource("pong")), { title: "PONG" });
@@ -114,16 +133,7 @@ describe("ROM conformance across the example library", async () => {
   // value layer is a different program from the eight-bit one the others share,
   // so agreement there is agreement about the arithmetic rather than about the
   // code.
-  for (const target of [
-    gbTarget,
-    gbcTarget,
-    megaduckTarget,
-    nesTarget,
-    smsTarget,
-    ggTarget,
-    snesTarget,
-    mdTarget,
-  ]) {
+  for (const target of TARGETS) {
     for (const [file, script, levels] of cases) {
       it(`matches the interpreter for ${file} on ${target.console}`, async () => {
         const program = build(gameSource(file), levels, target.console);
@@ -214,6 +224,42 @@ describe("ROM conformance across the example library", async () => {
  * CI runner is several times slower than a developer's machine.
  */
 const COLOUR_TIMEOUT = 120_000;
+
+describe("the generator, on every console", async () => {
+  /**
+   * Two draws a tick, the first of them degenerate.
+   *
+   * `random(3, 3)` has nothing to choose, so its *value* is fixed on every
+   * implementation — and the generator still advances, which only the draw after
+   * it can see. That is the whole point of the program: a backend that skipped
+   * the advance would agree with the interpreter about `settled` and disagree
+   * about `spread` from the first tick, and about everything afterwards.
+   *
+   * It lives here rather than in `fixtures/games/` because it is not a game: the
+   * example library is the shop window (doc 14 §The example library) and this is
+   * a regression test with a program attached.
+   */
+  const SOURCE = [
+    "start only",
+    "seed 20260726",
+    "",
+    "scene only",
+    "",
+    "create number settled in only (x 1, y 1, value 0, visible 0)",
+    "create number spread in only (x 1, y 2, value 0, visible 0)",
+    "",
+    "when always in only then (settled.value, spread.value) as (random(3, 3), random(0, 100))",
+    "",
+  ].join("\n");
+
+  for (const target of TARGETS) {
+    it(`advances on a degenerate draw, like the interpreter, on ${target.console}`, async () => {
+      const program = build(SOURCE, undefined, target.console);
+      const frames = tape("40:");
+      expect(await romTrace(program, frames, {}, target)).toBe(trace(new Sim(program), frames));
+    });
+  }
+});
 
 describe("the colour cartridge", { timeout: COLOUR_TIMEOUT }, async () => {
   const assets = () =>
