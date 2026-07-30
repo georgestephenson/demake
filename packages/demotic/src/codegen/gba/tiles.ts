@@ -25,7 +25,7 @@
  * walk *means* is `shape.ts`'s and not a machine's.
  */
 
-import { armAsr, armAt, armAtIdx, armImm, armLsl, armLsr, armReg, label } from "@demake/core";
+import { armAsr, armAtIdx, armImm, armLsl, armReg, label } from "@demake/core";
 
 import { fromInt } from "../../fixed.js";
 import { W } from "../layout.js";
@@ -53,7 +53,6 @@ import {
   imm,
   mem,
   neg32,
-  set32,
   sub32,
 } from "./val.js";
 
@@ -345,6 +344,3 @@ function cellToFixed(ctx: GbaCtx, src: number, dst: number): void {
   asm.mov(A0, armLsl(A0, 16));
   asm.str(A0, mem(ctx, dst));
 }
-
-/** Silence the unused-import checker for helpers the emitters reach for. */
-export const TILE_HELPERS = { set32, armAt, armLsr };
