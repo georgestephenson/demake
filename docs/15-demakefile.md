@@ -47,7 +47,9 @@ are gaps rather than decisions:
   which of them to build. Building all of them in one command needs `build` to
   write many artifacts, which is an output-contract change worth doing on its own.
 
-`check`/`init`/`fmt` are still to come (doc 13 §D2).
+`check` and `init` exist. `fmt` does not yet, though the emitter it would be is
+here and its idempotence is already a test — what is missing is only the command
+that writes the file back.
 
 `demake init` writes the Demakefile that reproduces exactly what the defaults
 already do — so the zero-config path and the file are the same object, one of them

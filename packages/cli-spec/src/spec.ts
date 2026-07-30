@@ -292,6 +292,40 @@ const INSPECT_FLAGS: readonly FlagSpec[] = [
   { name: "verbose", short: "v", type: "count", help: "Increase diagnostic detail (repeatable)." },
 ];
 
+/**
+ * `check` reports; it never writes. So it takes the flags that change *what is
+ * reported* and none that change an artifact — there is no `--output` here, and
+ * that absence is the command's whole promise (doc 19 §The CLI keeps up).
+ */
+const CHECK_FLAGS: readonly FlagSpec[] = [
+  {
+    name: "console",
+    short: "c",
+    type: "string",
+    metavar: "<id>",
+    help: "Check against one console; the default checks every target the project declares.",
+  },
+  {
+    name: "json",
+    type: "boolean",
+    help: "Emit the resolved plan and every diagnostic as JSON.",
+  },
+];
+
+const INIT_FLAGS: readonly FlagSpec[] = [
+  {
+    name: "force",
+    short: "f",
+    type: "boolean",
+    help: "Overwrite an existing Demakefile.",
+  },
+  {
+    name: "json",
+    type: "boolean",
+    help: "Report what was written as JSON.",
+  },
+];
+
 const BUILD_FLAGS: readonly FlagSpec[] = [
   ...PARALLEL_FLAGS,
   {
@@ -535,6 +569,35 @@ export const CLI_SPEC: CliSpec = {
           cmd: "demake build pong.dmt --format sym -o pong.sym",
           note: "symbols, for a cycle profile",
         },
+      ],
+    },
+    {
+      name: "check",
+      summary: "Check a project or .dmt: diagnostics, budgets, and the resolved plan",
+      positional: {
+        name: "input",
+        help: "Project folder, a .dmt file, or - for stdin. Defaults to the working directory.",
+        optional: true,
+      },
+      flags: CHECK_FLAGS,
+      examples: [
+        { cmd: "demake check ./pong", note: "every target, asset and artifact path" },
+        { cmd: "demake check ./pong --json", note: "the same plan, machine-readable" },
+        { cmd: "demake check pong.dmt -c nes", note: "one console, one game" },
+      ],
+    },
+    {
+      name: "init",
+      summary: "Scaffold a project folder and the Demakefile that reproduces the defaults",
+      positional: {
+        name: "directory",
+        help: "Where to write it. Defaults to the working directory.",
+        optional: true,
+      },
+      flags: INIT_FLAGS,
+      examples: [
+        { cmd: "demake init", note: "a Demakefile beside the game already here" },
+        { cmd: "demake init ./pong", note: "the canonical folders, in a new project" },
       ],
     },
     {

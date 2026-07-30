@@ -49,21 +49,24 @@ lossless path, and anything else runs `arrange` implicitly unless `--strict`.
 hardware* is the audio domain's central question, applies to artifacts demake did
 not produce, and is what the web and desktop apps call.
 
-**Of that group, `build` exists today**, in the zero-config shape doc 15 §You do
-not need one describes: it takes a `.dmt` and writes a cartridge for the one
-console that has a backend, with `--console`, `--title`, `--format` and
-`--boot-logo` standing in for the Demakefile's directives until the manifest
-lands. It needs no toolchain — the assembler that turns the game into machine
-code is ours, in TypeScript — which is why `--boot-logo`, the one step that does
-need `rgbfix`, is opt-in and reports its absence rather than guessing. It also
-demakes the game's art on the way, through the same image pipeline `prep` uses.
+**Of that group, `build`, `check` and `init` exist today.** `build` takes a `.dmt`
+or a project folder and writes a cartridge for one console, with `--console`,
+`--title`, `--format` and `--boot-logo` alongside whatever the Demakefile says.
+It needs no toolchain — the assembler that turns the game into machine code is
+ours, in TypeScript — which is why `--boot-logo`, the one step that does need
+`rgbfix`, is opt-in and reports its absence rather than guessing. It also demakes
+the game's art on the way, through the same image pipeline `prep` uses. `check`
+answers the same questions and **writes nothing**, which is why it has no
+`--output`. `init` writes the Demakefile that reproduces the defaults, so the
+zero-config path and the file are the same object (doc 15 §You do not need one).
+`run`, `test`, `trace` and `fmt` are still to come.
 
 **That group takes a folder as well as a file** ([doc 19](19-projects.md)). A
 project is a directory with an optional Demakefile at its root and `src/`,
-`art/`, `music/`, `sound/` and `levels/` under it, so `build`, `check` and `fmt`
-each accept one — `demake build ./pong` builds every target the Demakefile
-declares, `demake check ./pong` resolves the whole plan, and `demake init`
-scaffolds the folders it would need. Passing a `.dmt` is unchanged and stays the
+`art/`, `music/`, `sound/` and `levels/` under it, so `build` and `check` each
+accept one — `demake build ./pong` builds it, `demake check ./pong` resolves the
+whole plan and writes nothing, and `demake init` scaffolds the Demakefile that
+reproduces the defaults. Passing a `.dmt` is unchanged and stays the
 zero-config path. The resolver behind it is a pure function from a file tree to a
 resolved plan and lives in `@demake/demotic`, which is what lets the web app
 resolve a project with exactly this code rather than a second implementation of

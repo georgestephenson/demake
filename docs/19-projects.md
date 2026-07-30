@@ -619,12 +619,20 @@ Flags land in `packages/cli-spec` first, as always (doc 05).
   not. `demake build <file.dmt>` is unchanged, which is the zero-config path
   still being the zero-config path. Targets are still one console at a time until
   the Demakefile lands.
-- `demake init [<dir>]` scaffolds the canonical folders and writes the Demakefile
-  that reproduces the defaults — which is what doc 15 already says `init` is for,
-  now with somewhere to put the files.
+- `demake init [<dir>]` writes the Demakefile that reproduces the defaults, plus a
+  `.gitignore` naming `build/` — **built**. It emits through the Demakefile
+  *emitter* rather than a template, so what it writes is already canonical and
+  parsing it gives the defaults back. The project's name is the entry file's
+  *stem*, not the directory's, because that is what the resolver defaults to: a
+  name off the directory changed the cartridge title, which would have made `init`
+  a decision instead of a starting point.
 - `demake check <dir>` resolves the whole project: every source, every asset, every
-  target, every path that will be written. It is `--dry-run --json` with a folder
-  in front of it.
+  target, every path that will be written — **built**, and it writes nothing at
+  all, which is the whole difference from `build` and why it has no `--output`. It
+  checks every target the Demakefile declares, or every console with a backend when
+  there is none, and an error every target reports is printed **once** rather than
+  eight times: an ambiguous reference is a fact about the source, not about a
+  console.
 - `demake fmt <dir>` canonicalizes every `.dmt`, `.test.dmt`, `.dmtl` and
   Demakefile in it.
 
@@ -692,10 +700,12 @@ Each step is useful on its own and none of them breaks the one before.
    changes, so every existing caller keeps working while it lands.
 2. **The example projects**: convert the fixtures, repoint every reader. The
    golden traces are the check that nothing moved but paths.
-3. **The CLI**: `build <dir>` — **done**; `check <dir>` and `init` still to come.
-   Parity's other half, and it is what makes step 2 provably right: the cartridge
+3. **The CLI** — **done**: `build <dir>`, `check <dir>` and `init`. Parity's other
+   half, and it is what makes step 2 provably right: the cartridge
    `demake build ./caves` writes is byte-identical to the one the engine builds
-   from the same folder, which is what the page is pinned against.
+   from the same folder, which is what the page is pinned against — and the
+   cartridge built with `init`'s Demakefile is byte-identical to the zero-config
+   one, which is doc 15's promise about that file made checkable.
 4. **The Demakefile's new surface** — **mostly done**: `targets`, the per-domain
    `defaults` and the `music`/`sound` blocks parse, emit and resolve, with doc 15's
    three round-trip properties as tests and the gameplay invariant beside them.

@@ -1,0 +1,25 @@
+.TH DEMAKE\-INIT 1 "" "" "Scaffold a project folder and the Demakefile that reproduces the defaults"
+.SH NAME
+demake-init \- Scaffold a project folder and the Demakefile that reproduces the defaults
+.SH SYNOPSIS
+\fBdemake init\fR [\fIoptions\fR] [\fIdirectory\fR]
+.SH DESCRIPTION
+Scaffold a project folder and the Demakefile that reproduces the defaults.
+.SH OPTIONS
+.TP
+\fB\-f\fR, \fB\-\-force\fR
+Overwrite an existing Demakefile.
+.TP
+\fB\-\-json\fR
+Report what was written as JSON.
+.SH EXAMPLES
+.PP
+demake init
+.br
+a Demakefile beside the game already here
+.PP
+demake init ./pong
+.br
+the canonical folders, in a new project
+.SH SEE ALSO
+\fBdemake\fR(1)
