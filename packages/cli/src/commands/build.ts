@@ -15,8 +15,6 @@
  * defaults are the ones `demake init` will eventually write out.
  */
 
-import { join } from "node:path";
-
 import {
   buildGame,
   BuildError,
@@ -40,7 +38,7 @@ import type { PrepOptions } from "@demake/core";
 import type { ParsedValue } from "@demake/cli-spec";
 
 import type { CliEnv } from "../env.js";
-import { loadAssets, loadLevels, openInput } from "./project-input.js";
+import { at, loadAssets, loadLevels, openInput } from "./project-input.js";
 import { parseJobs, withPool } from "../parallel/pool.js";
 import { EXIT, type ExitCode } from "../exit-codes.js";
 import { CliError } from "../io.js";
@@ -228,7 +226,7 @@ export async function runBuild(
           const chosen = planned ?? input.plan.targets[0];
           if (!chosen) return undefined;
           const stated = chosen.outputs.find((one) => one.format === format)?.path;
-          return join(input.root, outputPath(input.plan, chosen, extension, stated));
+          return at(input.root, outputPath(input.plan, chosen, extension, stated));
         })()
       : undefined;
   const target = output ?? generated ?? (env.stdoutIsTTY() ? `${stem}.${extension}` : undefined);

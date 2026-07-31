@@ -15,8 +15,6 @@
  * same object.
  */
 
-import { join } from "node:path";
-
 import {
   emitDemakefile,
   EMPTY_DEMAKEFILE,
@@ -31,6 +29,7 @@ import type { ParsedValue } from "@demake/cli-spec";
 import type { CliEnv } from "../env.js";
 import { EXIT, type ExitCode } from "../exit-codes.js";
 import { CliError } from "../io.js";
+import { at } from "./project-input.js";
 
 /** The folders a project keeps its sources in, in the order the docs list them. */
 const FOLDERS = ["src", "art", "music", "sound", "levels"] as const;
@@ -91,7 +90,7 @@ export function runInit(
     throw new CliError(
       EXIT.CANNOT_CREATE,
       "E_EXISTS",
-      `${join(root, existing)} already exists`,
+      `${at(root, existing)} already exists`,
       "pass --force to replace it, or edit it directly — it is a text file.",
     );
   }
@@ -122,11 +121,11 @@ export function runInit(
   const written: string[] = [];
   const encoder = new TextEncoder();
 
-  env.writeFileAtomic(join(root, "Demakefile"), encoder.encode(text), true);
+  env.writeFileAtomic(at(root, "Demakefile"), encoder.encode(text), true);
   written.push("Demakefile");
 
   if (!files.includes(".gitignore")) {
-    env.writeFileAtomic(join(root, ".gitignore"), encoder.encode(GITIGNORE), true);
+    env.writeFileAtomic(at(root, ".gitignore"), encoder.encode(GITIGNORE), true);
     written.push(".gitignore");
   }
 
@@ -148,9 +147,9 @@ export function runInit(
     return EXIT.OK;
   }
 
-  env.errOut(`wrote ${written.map((one) => join(root, one)).join(", ")}\n`);
+  env.errOut(`wrote ${written.map((one) => at(root, one)).join(", ")}\n`);
   if (entry === undefined) {
-    env.errOut(`no .dmt found: put one in ${join(root, "src")}/ and it becomes the game\n`);
+    env.errOut(`no .dmt found: put one in ${at(root, "src")}/ and it becomes the game\n`);
   }
   if (missing.length > 0) {
     env.errOut(`folders this project has not needed yet: ${missing.join(", ")}\n`);

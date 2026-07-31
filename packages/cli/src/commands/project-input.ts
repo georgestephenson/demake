@@ -7,7 +7,7 @@
  * level text and the asset bytes are all found here, once.
  */
 
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 
 import {
   EMPTY_DEMAKEFILE,
@@ -50,6 +50,22 @@ export interface Input {
   build: Demakefile;
   /** What the Demakefile and the folder between them decided. */
   plan: ResolvedProject;
+}
+
+/**
+ * A path inside a project: the root, then a project-relative path.
+ *
+ * Joined with a slash rather than with the platform's separator, because a
+ * project-relative path *is* `/`-separated — that is what `listFiles` promises
+ * and what a `.dmt` reference is written with (doc 19 §The rule). Node's fs takes
+ * forward slashes on Windows too, so one spelling reaches the filesystem, the
+ * diagnostics and the `--json` report alike. Joining with `path.join` instead
+ * spelled the same file two ways depending on the machine, which is how a suite
+ * that passed everywhere else failed on Windows.
+ */
+export function at(root: string, path: string): string {
+  const base = root.replace(/[/\\]+$/, "");
+  return base === "" || base === "." ? path : `${base}/${path}`;
 }
 
 /**
@@ -99,8 +115,8 @@ export function openInput(env: CliEnv, positionals: readonly string[]): Input {
       );
     }
     return {
-      path: join(candidate, entry.path),
-      source: new TextDecoder().decode(env.readFile(join(candidate, entry.path))),
+      path: at(candidate, entry.path),
+      source: new TextDecoder().decode(env.readFile(at(candidate, entry.path))),
       root: candidate,
       files,
       build,
@@ -128,7 +144,7 @@ export function openInput(env: CliEnv, positionals: readonly string[]): Input {
 export function readDemakefile(env: CliEnv, root: string, files: readonly string[]): Demakefile {
   const named = files.find((path) => path === "Demakefile" || path === "demakefile");
   if (named === undefined) return EMPTY_DEMAKEFILE;
-  const text = new TextDecoder().decode(env.readFile(join(root, named)));
+  const text = new TextDecoder().decode(env.readFile(at(root, named)));
   const parsed = parseDemakefile(text);
   const errors = parsed.diagnostics.filter((one) => one.severity === "error");
   if (errors.length > 0) {
@@ -158,7 +174,7 @@ export function loadLevels(env: CliEnv, input: Input): Record<string, string> {
     for (const file of input.files) {
       if (!file.endsWith(".dmtl")) continue;
       try {
-        levels[file] = new TextDecoder().decode(env.readFile(join(input.root, file)));
+        levels[file] = new TextDecoder().decode(env.readFile(at(input.root, file)));
       } catch {
         // Listed but unreadable; the compiler reports the level it wanted.
       }
@@ -168,7 +184,7 @@ export function loadLevels(env: CliEnv, input: Input): Record<string, string> {
   const root = dirname(input.path);
   for (const file of levelFiles(input.source)) {
     try {
-      levels[file] = new TextDecoder().decode(env.readFile(join(root, file)));
+      levels[file] = new TextDecoder().decode(env.readFile(at(root, file)));
     } catch {
       // A missing level is the compiler's diagnostic to report, with the line
       // number and the name — better than a file-not-found from here.
@@ -203,7 +219,7 @@ export function loadAssets(env: CliEnv, program: Program, input: Input): Map<str
   const names = [...program.assets, ...program.tracks, ...program.sounds];
   for (const name of names) {
     try {
-      assets.set(name, env.readFile(join(root, name)));
+      assets.set(name, env.readFile(at(root, name)));
     } catch {
       // Reported by the build, with every missing name at once.
     }
