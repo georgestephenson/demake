@@ -1,14 +1,9 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-
 import { describe, expect, it } from "vitest";
 
 import { levelAssets, parseLevel, tileAt } from "../src/level/parse.js";
+import { projectText } from "./_projects.js";
 
-const CAVERN = readFileSync(
-  fileURLToPath(new URL("../fixtures/games/cavern.dmtl", import.meta.url)),
-  "utf8",
-);
+const CAVERN = projectText("caves", "levels/cavern.dmtl");
 
 function level(...lines: string[]) {
   return parseLevel(lines.join("\n"));

@@ -15,29 +15,33 @@
  * defaults are the ones `demake init` will eventually write out.
  */
 
-import { dirname, join } from "node:path";
-
 import {
   buildGame,
   BuildError,
+  artOverrides,
   compile,
   describeProgram,
   findProfile,
   formatDiagnostics,
+  resolveOptions,
   GameLangError,
-  levelFiles,
+  optionValue,
+  outputPath,
   profiles,
   romExtension,
   runtimeConsoles,
   unsupportedFor,
+  type Diagnostic,
   type Program,
 } from "@demake/demotic";
+import type { PrepOptions } from "@demake/core";
 import type { ParsedValue } from "@demake/cli-spec";
 
 import type { CliEnv } from "../env.js";
+import { at, loadAssets, loadLevels, openInput } from "./project-input.js";
 import { parseJobs, withPool } from "../parallel/pool.js";
 import { EXIT, type ExitCode } from "../exit-codes.js";
-import { CliError, resolveInput } from "../io.js";
+import { CliError } from "../io.js";
 
 function str(values: Record<string, ParsedValue>, key: string): string | undefined {
   return typeof values[key] === "string" ? (values[key] as string) : undefined;
@@ -78,60 +82,6 @@ function stemFromSource(source: string): string {
   return base.length > 0 ? base : "game";
 }
 
-/**
- * Load the `.dmtl` files a source references, relative to the source.
- *
- * Reading them here rather than in `@demake/demotic` is the platform-purity
- * rule (doc 02): the compiler takes level *text*, and finding the text is the
- * edge's job.
- */
-function loadLevels(env: CliEnv, source: string, path: string): Record<string, string> {
-  const levels: Record<string, string> = {};
-  if (path === "<stdin>") return levels;
-  const root = dirname(path);
-  for (const file of levelFiles(source)) {
-    try {
-      levels[file] = new TextDecoder().decode(env.readFile(join(root, file)));
-    } catch {
-      // A missing level is the compiler's diagnostic to report, with the line
-      // number and the name — better than a file-not-found from here.
-    }
-  }
-  return levels;
-}
-
-/**
- * Load the assets a program names, next to the source that named it.
- *
- * Art, music and sound effects all arrive the same way, because the build
- * converts all three itself: the edge's only job is to find bytes for a name.
- *
- * Missing assets are not an error here: the build reports them and falls back —
- * to the built-in block for art, to silence for audio — which is a far better
- * outcome than refusing to produce a playable cartridge because one sprite was
- * renamed. What must never happen is a *different* fallback in the browser,
- * which is why both edges hand the same bytes to the same converters and
- * neither converts anything itself.
- */
-function loadAssets(env: CliEnv, program: Program, path: string): Map<string, Uint8Array> {
-  const assets = new Map<string, Uint8Array>();
-  if (path === "<stdin>") return assets;
-  const root = dirname(path);
-  // `program.assets` rather than the art *requests*, because a request is per
-  // box and backdrops make none — loading only what `artRequests` names is how
-  // the CLI came to build cartridges with no title screen while the page built
-  // them with one, which is exactly the divergence this file exists to prevent.
-  const names = [...program.assets, ...program.tracks, ...program.sounds];
-  for (const name of names) {
-    try {
-      assets.set(name, env.readFile(join(root, name)));
-    } catch {
-      // Reported by the build, with every missing name at once.
-    }
-  }
-  return assets;
-}
-
 export async function runBuild(
   env: CliEnv,
   values: Record<string, ParsedValue>,
@@ -159,14 +109,16 @@ export async function runBuild(
     );
   }
 
-  const { bytes, source: sourcePath } = resolveInput(env, [...positionals]);
-  const source = new TextDecoder().decode(bytes);
+  const input = openInput(env, positionals);
+  const sourcePath = input.path;
+  const source = input.source;
 
   let program: Program;
   try {
     program = compile(source, {
       profile,
-      levels: loadLevels(env, source, sourcePath),
+      files: input.files,
+      levels: loadLevels(env, input),
     });
   } catch (error) {
     if (error instanceof GameLangError) {
@@ -178,6 +130,36 @@ export async function runBuild(
       );
     }
     throw error;
+  }
+
+  // What the Demakefile says about each picture (doc 15 §Resolution). Validated
+  // here rather than at the fitter, so a value it cannot read stops the build with
+  // the Demakefile's own line number instead of surfacing as a strange fit.
+  const artSettings: Record<string, Partial<PrepOptions>> = {};
+  {
+    const target = input.plan.targets.find((one) => one.console === profile.id);
+    const badOptions: Diagnostic[] = [];
+    for (const path of program.assets) {
+      const resolvedOptions = resolveOptions(
+        input.build,
+        path,
+        "art",
+        target?.name ?? profile.id,
+        input.files,
+      );
+      if (Object.keys(resolvedOptions).length === 0) continue;
+      const { options: converted, diagnostics } = artOverrides(resolvedOptions, 1, profile.id);
+      badOptions.push(...diagnostics);
+      if (Object.keys(converted).length > 0) artSettings[path] = converted;
+    }
+    if (badOptions.length > 0) {
+      throw new CliError(
+        EXIT.BAD_INPUT,
+        "E_BAD_OPTION",
+        `the Demakefile sets ${String(badOptions.length)} option${badOptions.length === 1 ? "" : "s"} that cannot be used`,
+        formatDiagnostics(badOptions),
+      );
+    }
   }
 
   const missing = unsupportedFor(program);
@@ -192,19 +174,36 @@ export async function runBuild(
   }
 
   const stem = stemFromSource(sourcePath);
-  const title = str(values, "title") ?? stem;
+  // Title precedence, most specific first: the flag, the target's own header, the
+  // project's metadata, then the source's stem. `header` is doc 15's block and
+  // this is the one field of it the cartridge builders already take — the rest
+  // (mapper, mirroring, serial, region) are parsed and reported but not yet
+  // applied, which §Status in doc 15 now says.
+  const planned = input.plan.targets.find((one) => one.console === profile.id);
+  const title =
+    str(values, "title") ??
+    planned?.header["title"] ??
+    (input.root !== undefined
+      ? optionValue(input.build.project?.fields ?? [], "title")
+      : undefined) ??
+    stem;
   const format = str(values, "format") ?? "rom";
 
   let product: Uint8Array;
   let stats;
   let symbols: ReadonlyMap<string, number>;
   try {
-    const assets = loadAssets(env, program, sourcePath);
+    const assets = loadAssets(env, program, input);
     // Most of a build is the art and audio tournaments, and their candidates
     // cannot see each other — so they get the machine's cores. The cartridge is
     // the same bytes whatever `--jobs` says (doc 04 §Running the tournament).
     const built = await withPool(parseJobs(str(values, "jobs")), (executor) =>
-      buildGame(program, { title, assets, ...(executor === undefined ? {} : { executor }) }),
+      buildGame(program, {
+        title,
+        assets,
+        ...(Object.keys(artSettings).length === 0 ? {} : { art: artSettings }),
+        ...(executor === undefined ? {} : { executor }),
+      }),
     );
     stats = built.stats;
     symbols = built.symbols;
@@ -218,12 +217,28 @@ export async function runBuild(
 
   const extension = format === "sym" ? "sym" : romExtension(program);
   const output = str(values, "output");
-  const target = output ?? (env.stdoutIsTTY() ? `${stem}.${extension}` : undefined);
+  // `-o` always wins. Without it, a project with a Demakefile writes where that
+  // file says — `{out}/{console}/{project}.{ext}` unless a target stated a path
+  // (doc 15 §`target <name>`) — and a bare `.dmt` keeps the behaviour it had.
+  const generated =
+    input.root !== undefined && input.plan.targets.length > 0
+      ? (() => {
+          const chosen = planned ?? input.plan.targets[0];
+          if (!chosen) return undefined;
+          const stated = chosen.outputs.find((one) => one.format === format)?.path;
+          return at(input.root, outputPath(input.plan, chosen, extension, stated));
+        })()
+      : undefined;
+  const target = output ?? generated ?? (env.stdoutIsTTY() ? `${stem}.${extension}` : undefined);
 
   if (target === undefined) {
     env.writeStdout(product);
   } else {
-    env.writeFileAtomic(target, product, values.force === true);
+    // A path the *Demakefile* chose is regenerable by definition — that is what
+    // `out` and `build/` mean (doc 19 §`build/` is the CLI's) — so it is
+    // overwritten freely. A path the user typed with `-o` keeps the guard, since
+    // clobbering a file somebody named is the mistake the guard exists for.
+    env.writeFileAtomic(target, product, values.force === true || target === generated);
   }
 
   // Stamping is opt-in so the default output is byte-identical to what the
@@ -253,6 +268,15 @@ export async function runBuild(
       `${JSON.stringify(
         {
           source: sourcePath,
+          // The project root, when the build was pointed at a folder — and what
+          // its references resolved to. A reference is the shortest name that
+          // identifies a file (doc 19 §The rule), so the resolved paths are the
+          // one thing a reader cannot work out from the source alone.
+          project: input.root ?? null,
+          plan: input.root === undefined ? null : input.plan,
+          assets: program.assets,
+          tracks: program.tracks,
+          sounds: program.sounds,
           console: profile.id,
           format,
           output: target ?? "<stdout>",

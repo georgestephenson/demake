@@ -30,7 +30,7 @@ const {
   tape,
   traceLine,
 } = await import("../dist/index.js");
-const { loadLevels } = await import("./levels.mjs");
+const { loadLevels, projectFiles } = await import("./levels.mjs");
 
 function parseArgs(args) {
   const options = { console: "gb", ticks: 900, frames: false, trace: false, file: null };
@@ -60,9 +60,11 @@ if (options.help) {
   exit(0);
 }
 
-const file = options.file ?? fileURLToPath(new URL("../fixtures/pong.dmt", import.meta.url));
+const file =
+  options.file ?? fileURLToPath(new URL("../fixtures/projects/pong/src/pong.dmt", import.meta.url));
 const source = readFileSync(file, "utf8");
-const levels = loadLevels(file, source);
+const levels = loadLevels(file);
+const files = projectFiles(file);
 
 let profile;
 try {
@@ -72,7 +74,7 @@ try {
   exit(2);
 }
 
-const { program, diagnostics } = check(source, { profile, levels });
+const { program, diagnostics } = check(source, { profile, files, levels });
 if (diagnostics.length > 0) stdout.write(`${formatDiagnostics(diagnostics)}\n`);
 if (!program) exit(1);
 

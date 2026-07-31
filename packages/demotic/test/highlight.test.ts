@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-
 import { describe, expect, it } from "vitest";
 
 import { highlight, type Scope } from "../src/lang/highlight.js";
@@ -14,18 +11,9 @@ import {
   STATEMENTS,
   UNITS,
 } from "../src/lang/spec.js";
+import { EXAMPLES, gameSource } from "./_projects.js";
 
-const FIXTURES = fileURLToPath(new URL("../fixtures/", import.meta.url));
-
-const GAMES = [
-  "pong.dmt",
-  "games/breakout.dmt",
-  "games/platformer.dmt",
-  "games/dodger.dmt",
-  "games/shooter.dmt",
-  "games/caves.dmt",
-  "games/runner.dmt",
-];
+const GAMES = EXAMPLES;
 
 /** The scopes a source produces, in order, ignoring the unscoped whitespace. */
 function scopes(source: string): { text: string; scope: Scope }[] {
@@ -45,7 +33,7 @@ describe("highlight", () => {
     // reproduces the file. A highlighter that drops a character silently edits
     // whatever it is drawn behind.
     for (const game of GAMES) {
-      const source = readFileSync(`${FIXTURES}${game}`, "utf8");
+      const source = gameSource(game);
       expect(
         highlight(source)
           .map((span) => span.text)
@@ -282,7 +270,7 @@ describe("highlight covers the registry", () => {
     // bare `variable.other` is fine (it is someone's name), but nothing may come
     // back with no scope at all except space.
     for (const game of GAMES) {
-      const source = readFileSync(`${FIXTURES}${game}`, "utf8");
+      const source = gameSource(game);
       for (const span of highlight(source)) {
         if (span.scope === null) expect(span.text.trim(), `${game}: ${span.text}`).toBe("");
       }

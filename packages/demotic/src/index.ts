@@ -105,6 +105,53 @@ export {
   type StreamResult,
 } from "./level/stream.js";
 export {
+  extensionOf,
+  extensionsFor,
+  KINDS,
+  kindOf,
+  stemOf,
+  type AssetKind,
+} from "./project/kinds.js";
+export { resolveReference, shortestName, type Resolution } from "./project/resolve.js";
+export { parseDemakefile } from "./demakefile/parse.js";
+export {
+  applyArtOverrides,
+  artOverrides,
+  optionsFor,
+  type ArtOverride,
+} from "./demakefile/overrides.js";
+export type { ArtSettings } from "./codegen/settings.js";
+export { emitDemakefile } from "./demakefile/emit.js";
+export {
+  DEFAULT_OUT,
+  outputPath,
+  resolveOptions,
+  resolveProject,
+  resolveSubstitute,
+  type ResolvedProject,
+  type ResolvedTarget,
+} from "./demakefile/resolve.js";
+export {
+  DOMAINS,
+  EMPTY_DEMAKEFILE,
+  optionValue,
+  type AssetBlock,
+  type Demakefile,
+  type Domain,
+  type Option,
+  type Options,
+  type Output,
+  type Target,
+} from "./demakefile/model.js";
+export {
+  findEntry,
+  isIgnoredPath,
+  isProject,
+  isSuite,
+  suiteFor,
+  type EntryPoint,
+} from "./project/entry.js";
+export {
   boundsOf,
   follow,
   tilesUnder,

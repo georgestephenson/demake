@@ -29,8 +29,6 @@
  *     a Master System one; only the window and the width of a colour differ.
  */
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { SMS_HEADER_OFFSET, SMS_ROM_SIZE, segaChecksum } from "@demake/core";
@@ -42,13 +40,10 @@ import { builtinSega, BUILTIN_TILES, SEGA_TILE_BYTES } from "../src/rom/graphics
 import { bindSmsArt } from "../src/codegen/sms-art.js";
 import { buildSmsRom, CODE_SIZE } from "../src/codegen/sms.js";
 import { packCells, SYSTEM_INK } from "../src/codegen/sms/emit.js";
+import { gameSource, projectBytes, projectText } from "./_projects.js";
 
-const fixtures = join(import.meta.dirname, "..", "fixtures");
-const read = (name: string) => readFileSync(join(fixtures, name), "utf8");
-const asset = (name: string) => new Uint8Array(readFileSync(join(fixtures, name)));
-
-function build(file: string, levels?: Record<string, string>, consoleId = "sms") {
-  return compile(read(file), { profile: getProfile(consoleId), levels });
+function build(project: string, levels?: Record<string, string>, consoleId = "sms") {
+  return compile(gameSource(project), { profile: getProfile(consoleId), levels });
 }
 
 /** Boot a cartridge and run it until the runtime says it has finished booting. */
@@ -71,7 +66,7 @@ function entryAt(machine: Sms, column: number, row: number): { tile: number; att
 }
 
 describe("the Sega cartridge", async () => {
-  const built = await buildSmsRom(build("pong.dmt"));
+  const built = await buildSmsRom(build("pong"));
 
   it("is a 32 KiB image with the header stamped inside it", () => {
     expect(built.bytes.length).toBe(SMS_ROM_SIZE);
@@ -104,7 +99,7 @@ describe("the Sega cartridge", async () => {
 
   it("declares a Master System or a Game Gear from the console it was built for", async () => {
     expect((built.bytes[SMS_HEADER_OFFSET + 15] as number) >> 4).toBe(4); // export SMS
-    const gg = await buildSmsRom(build("pong.dmt", undefined, "gg"));
+    const gg = await buildSmsRom(build("pong", undefined, "gg"));
     expect((gg.bytes[SMS_HEADER_OFFSET + 15] as number) >> 4).toBe(7); // international GG
     expect(new Sms(gg.bytes).gameGear).toBe(true);
     expect(new Sms(built.bytes).gameGear).toBe(false);
@@ -112,7 +107,7 @@ describe("the Sega cartridge", async () => {
 });
 
 describe("what boot leaves in the video hardware", async () => {
-  const built = await buildSmsRom(build("pong.dmt"));
+  const built = await buildSmsRom(build("pong"));
   const machine = boot(built.bytes, built.layout.booted);
 
   it("uploads the built-in bank to the address the registers point at", () => {
@@ -136,10 +131,10 @@ describe("what boot leaves in the video hardware", async () => {
   it("reserves the top of the sprite bank for the font, whatever the art chose", async () => {
     // Objects only: the reservation is the *sprite* fit's, and a backdrop would
     // put the whole `prep` tournament in a unit test for nothing.
-    const art = await buildSmsRom(build("pong.dmt"), {
+    const art = await buildSmsRom(build("pong"), {
       assets: new Map([
-        ["ball.svg", asset("ball.svg")],
-        ["paddle.svg", asset("paddle.svg")],
+        ["ball.svg", projectBytes("pong", "art/ball.svg")],
+        ["paddle.svg", projectBytes("pong", "art/paddle.svg")],
       ]),
     });
     const withArt = boot(art.bytes, art.layout.booted);
@@ -169,8 +164,8 @@ describe("what boot leaves in the video hardware", async () => {
 });
 
 describe("the name table against the level", async () => {
-  const levels = { "cavern.dmtl": read(join("games", "cavern.dmtl")) };
-  const source = read(join("games", "caves.dmt"));
+  const levels = { "cavern.dmtl": projectText("caves", "levels/cavern.dmtl") };
+  const source = gameSource("caves");
   const program = compile(source, { profile: getProfile("sms"), levels });
   const built = await buildSmsRom(program);
 
@@ -190,7 +185,7 @@ describe("the name table against the level", async () => {
     const scrolling = play(["right"], 60);
     expect((scrolling.vdp.registers[0] as number) & 0x20).toBe(0x20);
     // Pong's court is exactly the screen, so nothing is masked there.
-    const still = await buildSmsRom(build("pong.dmt"));
+    const still = await buildSmsRom(build("pong"));
     const stillMachine = boot(still.bytes, still.layout.booted);
     stillMachine.runFrame();
     expect((stillMachine.vdp.registers[0] as number) & 0x20).toBe(0x00);
@@ -403,7 +398,7 @@ describe("the edge painter on both machines", () => {
 });
 
 describe("objects", async () => {
-  const built = await buildSmsRom(build("pong.dmt"));
+  const built = await buildSmsRom(build("pong"));
 
   it("ends the sprite list where the frame stopped filling it", () => {
     const machine = boot(built.bytes, built.layout.booted);
@@ -423,10 +418,10 @@ describe("objects", async () => {
   });
 
   it("puts the art the image engine demade in the bank, not the placeholder block", async () => {
-    const art = await buildSmsRom(build("pong.dmt"), {
+    const art = await buildSmsRom(build("pong"), {
       assets: new Map([
-        ["ball.svg", asset("ball.svg")],
-        ["paddle.svg", asset("paddle.svg")],
+        ["ball.svg", projectBytes("pong", "art/ball.svg")],
+        ["paddle.svg", projectBytes("pong", "art/paddle.svg")],
       ]),
     });
     expect(art.stats.artTiles).toBeGreaterThan(0);
@@ -446,12 +441,12 @@ describe("a demade backdrop", async () => {
   // after a pool, an encoding and an unpacker, and every one of those has been
   // wrong. A Game Gear, because its window is the smaller picture of the two.
   const assets = new Map([
-    ["pong.title.svg", asset("pong.title.svg")],
-    ["ball.svg", asset("ball.svg")],
-    ["paddle.svg", asset("paddle.svg")],
+    ["pong.title.svg", projectBytes("pong", "art/pong.title.svg")],
+    ["ball.svg", projectBytes("pong", "art/ball.svg")],
+    ["paddle.svg", projectBytes("pong", "art/paddle.svg")],
   ]);
-  const built = await buildSmsRom(build("pong.dmt", undefined, "gg"), { assets });
-  const art = await bindSmsArt(build("pong.dmt", undefined, "gg"), assets, "gg");
+  const built = await buildSmsRom(build("pong", undefined, "gg"), { assets });
+  const art = await bindSmsArt(build("pong", undefined, "gg"), assets, "gg");
   const machine = boot(built.bytes, built.layout.booted);
   for (let frame = 0; frame < 4; frame += 1) machine.runFrame();
 
@@ -519,8 +514,8 @@ describe("a demade backdrop", async () => {
 
 describe("the two machines", async () => {
   it("compile to the same code, and differ only in the window and the colours", async () => {
-    const sms = await buildSmsRom(build("pong.dmt"));
-    const gg = await buildSmsRom(build("pong.dmt", undefined, "gg"));
+    const sms = await buildSmsRom(build("pong"));
+    const gg = await buildSmsRom(build("pong", undefined, "gg"));
     // Not byte-identical — the window's size reaches the renderer as constants,
     // and the header declares a different machine — but the same size to within
     // the handful of immediates that differ.

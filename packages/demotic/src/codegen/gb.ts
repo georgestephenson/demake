@@ -53,6 +53,7 @@ import {
 import { Ctx } from "./ctx.js";
 import { emitProgram, type EmitOptions, type SpriteArt } from "./emit.js";
 import { GB_MEMORY, GBC_MEMORY, MEGADUCK_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
+import type { ArtSettings } from "./settings.js";
 
 /**
  * The cartridge wrapper, re-exported from `core`.
@@ -140,8 +141,9 @@ export const gbBackend: Backend<EmitOptions, GbAudio> = {
     program: Program,
     assets: AssetBytes,
     executor?: Executor,
+    settings?: ArtSettings,
   ): Promise<BoundAssets<EmitOptions>> {
-    const art = await bindArt(program, assets, executor);
+    const art = await bindArt(program, assets, executor, settings);
     return { emit: art, tiles: art.tiles8, missing: art.missing };
   },
 

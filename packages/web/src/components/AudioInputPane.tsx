@@ -10,16 +10,17 @@
 import { useCallback, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 
-import { fetchDemoAudio, type DemoAudio } from "../lib/demo-audio.js";
-
 interface Props {
   /** File types the picker accepts, e.g. `.mid,audio/midi`. */
   accept: string;
   prompt: string;
-  demos: readonly DemoAudio[];
+  /** The project's files of this kind, as the picker lists them. */
+  demos: readonly { name: string; note: string }[];
   demoLabel: string;
   sourceName: string | null;
   onSource: (name: string, bytes: Uint8Array) => void;
+  /** Open one of the project's files, by path. */
+  onPick: (path: string) => void;
   children?: ComponentChildren;
 }
 
@@ -30,6 +31,7 @@ export function AudioInputPane({
   demoLabel,
   sourceName,
   onSource,
+  onPick,
   children,
 }: Props) {
   const [dragging, setDragging] = useState(false);
@@ -43,14 +45,10 @@ export function AudioInputPane({
     [onSource],
   );
 
-  const loadDemo = useCallback(
-    async (name: string) => {
-      const entry = demos.find((candidate) => candidate.name === name);
-      if (!entry) return;
-      onSource(entry.name, await fetchDemoAudio(entry));
-    },
-    [demos, onSource],
-  );
+  // Choosing one of the project's files *opens* it rather than loading it here:
+  // the route is what says which file an editor is showing (doc 19 §The shell),
+  // so the picker and the explorer cannot end up disagreeing about it.
+  const loadDemo = useCallback((name: string) => onPick(name), [onPick]);
 
   const chosen = demos.find((candidate) => candidate.name === demo);
 
@@ -107,7 +105,7 @@ export function AudioInputPane({
             ))}
           </select>
         </label>
-        <button type="button" data-testid="load-demo" onClick={() => void loadDemo(demo)}>
+        <button type="button" data-testid="load-demo" onClick={() => loadDemo(demo)}>
           {demoLabel}
         </button>
       </div>

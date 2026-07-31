@@ -566,6 +566,12 @@ export const DIAGNOSTICS: readonly DiagnosticSpec[] = [
     summary: "A backdrop image that was never supplied, or could not be found.",
   },
   {
+    code: "E_ASSET_AMBIGUOUS",
+    severity: "error",
+    summary:
+      "A reference matching more than one file in the project; names each, and the shortest name that picks it.",
+  },
+  {
     code: "E_DUPLICATE_BACKDROP",
     severity: "error",
     summary: "More than one backdrop in a scene; a scene has one background.",

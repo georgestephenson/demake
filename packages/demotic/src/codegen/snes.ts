@@ -72,6 +72,7 @@ import { SNES_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
 import { ART_TILES, bindSnesArt, type BoundSnesArt } from "./snes-art.js";
 import { SnesCtx } from "./snes/ctx.js";
 import { BANK_TILES, emitProgram, type SnesEmitOptions } from "./snes/emit.js";
+import type { ArtSettings } from "./settings.js";
 
 /** Bytes a two-bank LoROM cartridge holds. */
 export const ROM_SIZE = SNES_ROM_SIZE;
@@ -137,8 +138,9 @@ export const snesBackend: Backend<SnesEmitOptions, SnesAudio> = {
     program: Program,
     assets: AssetBytes,
     executor?: Executor,
+    settings?: ArtSettings,
   ): Promise<BoundAssets<SnesEmitOptions>> {
-    const art = await bindSnesArt(program, assets, executor);
+    const art = await bindSnesArt(program, assets, executor, settings);
     banks.set(art.options, art);
     return { emit: art.options, tiles: art.tiles, missing: art.missing };
   },

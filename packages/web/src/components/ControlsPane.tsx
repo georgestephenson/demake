@@ -20,6 +20,14 @@ interface Props {
   onChange: (options: PrepOptionsUi) => void;
   onReset: () => void;
   sourceName: string;
+  /**
+   * Where a changed option is going, when it is going anywhere.
+   *
+   * With a project art file open these controls are a view of the Demakefile
+   * (doc 19 §Options edit the Demakefile), and the pane says so — a control that
+   * silently edited a file would be worse than one that silently did not.
+   */
+  writing?: { file: string; asset: string; inherited: readonly string[] };
 }
 
 const TIER_LABEL: Record<number, string> = {
@@ -47,18 +55,30 @@ export function ControlsPane({
   onChange,
   onReset,
   sourceName,
+  writing,
 }: Props) {
   const [advanced, setAdvanced] = useState(false);
   const set = <K extends keyof PrepOptionsUi>(key: K, value: PrepOptionsUi[K]): void =>
     onChange({ ...options, [key]: value });
 
   const tiers = [1, 2, 3].filter((t) => consoles.some((c) => c.tier === t));
+  const cascade =
+    writing === undefined ? null : (
+      <p class="hint demakefile-note" data-testid="writing-note">
+        These settings are <code>{writing.file}</code>&rsquo;s <code>art {writing.asset}</code>{" "}
+        block. Changing one writes it; setting one back to what it inherits removes the line again.
+        {writing.inherited.length > 0 ? (
+          <> Inherited right now: {writing.inherited.join(", ")}.</>
+        ) : null}
+      </p>
+    );
   const active = consoles.find((c) => c.id === options.console);
   const command = equivalentCommand(options, sourceName);
 
   return (
     <section class="pane controls-pane" aria-labelledby="controls-heading">
       <h2 id="controls-heading">Console &amp; options</h2>
+      {cascade}
 
       <label class="field">
         <span>Console</span>

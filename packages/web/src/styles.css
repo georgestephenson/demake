@@ -1262,3 +1262,272 @@ main.audio-layout {
   font-size: 0.8rem;
   color: var(--muted);
 }
+
+/* --- the project workspace (doc 19 §The shell) ---------------------------- */
+
+/*
+ * An explorer down the left and one editor beside it. The editors are unchanged
+ * — they are still the `main` grid above — so this is a column in front of them
+ * rather than a second layout system.
+ */
+.workbench {
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.editor-host {
+  min-width: 0;
+}
+
+.explorer {
+  position: sticky;
+  top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  font-size: 0.85rem;
+}
+
+.explorer-project {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.explorer-label {
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.explorer-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.explorer-folder h3 {
+  margin: 0 0 0.2rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  display: flex;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.explorer-note {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 1;
+  color: var(--muted);
+}
+
+.explorer-folder ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.explorer-file {
+  display: block;
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.8rem;
+  color: var(--ink);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.explorer-file:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.explorer-file.active {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* A file no editor opens is still listed: one you cannot see is one you think
+   you lost. Contrast is an explicit colour, never opacity (doc 07 §Quality). */
+.explorer-file.inert {
+  color: var(--muted);
+  cursor: default;
+}
+
+@media (max-width: 1000px) {
+  .workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .explorer {
+    position: static;
+  }
+}
+
+.explorer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.explorer-actions button,
+.explorer-import {
+  font: inherit;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.explorer-import input {
+  display: none;
+}
+
+/* --- the level editor (doc 19 §The level editor) --------------------------- */
+
+/*
+ * The grid is a canvas at a fixed 16 px a cell, and the *wrapper* scrolls. A
+ * level is authored in cells and can be sixty of them wide, so scaling it to the
+ * pane would make a cell a smear at one size and the whole point of the console
+ * viewport overlay — is this feature wider than a Game Boy screen? — impossible
+ * to read.
+ */
+.level-grid-wrap {
+  overflow: auto;
+  max-height: 60vh;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #05070c;
+}
+
+.level-grid {
+  display: block;
+  image-rendering: pixelated;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.level-tools {
+  margin-top: 0.75rem;
+}
+
+/* A grid's size is two or three digits, not a text field's worth. */
+.level-tools input[type="number"] {
+  font: inherit;
+  font-size: 0.85rem;
+  width: 4.5rem;
+  padding: 0.15rem 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.level-tool {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.level-tool.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.legend-list {
+  margin: 0 0 0.75rem;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.legend-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.legend-row.selected {
+  border-color: var(--accent);
+}
+
+/* The character, as it is drawn in the grid — monospaced and square, because it
+   is a cell. */
+.legend-char {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.95rem;
+  width: 1.8rem;
+  height: 1.8rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.legend-row.selected .legend-char {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.legend-name {
+  font: inherit;
+  font-size: 0.85rem;
+  width: 7rem;
+  padding: 0.15rem 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.legend-art {
+  font: inherit;
+  font-size: 0.8rem;
+  max-width: 9rem;
+}
+
+.legend-count {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-left: auto;
+}
+
+.legend-remove {
+  font: inherit;
+  line-height: 1;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+}

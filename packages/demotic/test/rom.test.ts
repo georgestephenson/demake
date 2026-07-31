@@ -7,13 +7,11 @@
  * with no toolchain and no emulator install, because the assembler is ours and
  * so is `@demake/dmg`.
  *
- * Every game in `fixtures/games/` is here, levels and camera included. That is
+ * Every game in `fixtures/projects/` is here, levels and camera included. That is
  * the point of the list: a backend that quietly skipped a feature would pass a
  * shorter one.
  */
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { Gameboy } from "@demake/dmg";
@@ -39,9 +37,7 @@ import {
   snesTarget,
   type RomTarget,
 } from "./_rom-harness.js";
-
-const fixtures = join(import.meta.dirname, "..", "fixtures");
-const read = (name: string) => readFileSync(join(fixtures, name), "utf8");
+import { gameSource, projectBytes, projectText } from "./_projects.js";
 
 /** The tape the golden trace was recorded with (see determinism.test.ts). */
 const PONG_TAPE = "1:a,90:,90:left,120:right";
@@ -52,7 +48,7 @@ function build(source: string, levels?: Record<string, string>, consoleId = "gb"
 
 describe("gb ROM", async () => {
   it("is a valid 32 KiB cartridge with correct checksums", async () => {
-    const { bytes } = await buildGbRom(build(read("pong.dmt")), { title: "PONG" });
+    const { bytes } = await buildGbRom(build(gameSource("pong")), { title: "PONG" });
     expect(bytes.length).toBe(ROM_SIZE);
     let header = 0;
     for (let at = 0x0134; at <= 0x014c; at += 1)
@@ -63,12 +59,14 @@ describe("gb ROM", async () => {
   });
 
   it("reproduces the checked-in golden trace tick for tick", async () => {
-    const program = build(read("pong.dmt"));
-    expect(await romTrace(program, tape(PONG_TAPE))).toBe(read("pong.gb.trace").trimEnd());
+    const program = build(gameSource("pong"));
+    expect(await romTrace(program, tape(PONG_TAPE))).toBe(
+      projectText("pong", "pong.gb.trace").trimEnd(),
+    );
   });
 
   it("refuses a console it has no backend for, rather than shipping a different game", async () => {
-    const program = compile(read("pong.dmt"), { profile: getProfile("nes") });
+    const program = compile(gameSource("pong"), { profile: getProfile("nes") });
     expect(unsupportedFeatures(program).length).toBeGreaterThan(0);
     await expect(buildGbRom(program)).rejects.toThrow(/cannot build/);
   });
@@ -76,27 +74,27 @@ describe("gb ROM", async () => {
 
 describe("ROM conformance across the example library", async () => {
   const cases: readonly (readonly [string, string, Record<string, string>?])[] = [
-    ["pong.dmt", "1:a,90:,90:left,120:right"],
-    [join("games", "breakout.dmt"), "30:,20:a,50:,60:left,60:right,80:"],
-    [join("games", "platformer.dmt"), "20:,15:a,40:right,20:a+right,60:right,45:"],
-    [join("games", "dodger.dmt"), "20:,20:a,60:left,60:right,40:"],
-    [join("games", "shooter.dmt"), "20:,20:a,40:left,20:a,60:right,40:"],
+    ["pong", "1:a,90:,90:left,120:right"],
+    ["breakout", "30:,20:a,50:,60:left,60:right,80:"],
+    ["platformer", "20:,15:a,40:right,20:a+right,60:right,45:"],
+    ["dodger", "20:,20:a,60:left,60:right,40:"],
+    ["shooter", "20:,20:a,40:left,20:a,60:right,40:"],
     [
-      join("games", "caves.dmt"),
+      "caves",
       // Climbs onto the first ledge, takes the coin there, then runs right into
       // the spikes: tile rules, tile separation, a vanishing object and a scene
       // change, all in one tape.
       "240:,42:right,1:a,18:,26:left,60:,200:right,40:",
-      { "cavern.dmtl": read(join("games", "cavern.dmtl")) },
+      { "cavern.dmtl": projectText("caves", "levels/cavern.dmtl") },
     ],
     [
-      join("games", "runner.dmt"),
+      "runner",
       "20:,20:a,60:right,30:a+right,60:right,40:",
       {
-        "open.dmtl": read(join("games", "open.dmtl")),
-        "lowpipe.dmtl": read(join("games", "lowpipe.dmtl")),
-        "highpipe.dmtl": read(join("games", "highpipe.dmtl")),
-        "pipemid.dmtl": read(join("games", "pipemid.dmtl")),
+        "open.dmtl": projectText("runner", "levels/open.dmtl"),
+        "lowpipe.dmtl": projectText("runner", "levels/lowpipe.dmtl"),
+        "highpipe.dmtl": projectText("runner", "levels/highpipe.dmtl"),
+        "pipemid.dmtl": projectText("runner", "levels/pipemid.dmtl"),
       },
     ],
   ];
@@ -128,7 +126,7 @@ describe("ROM conformance across the example library", async () => {
   ]) {
     for (const [file, script, levels] of cases) {
       it(`matches the interpreter for ${file} on ${target.console}`, async () => {
-        const program = build(read(file), levels, target.console);
+        const program = build(gameSource(file), levels, target.console);
         const frames = tape(script);
         expect(await romTrace(program, frames, {}, target)).toBe(trace(new Sim(program), frames));
       });
@@ -142,7 +140,7 @@ describe("ROM conformance across the example library", async () => {
     // no header, so nothing in its bytes says which machine to boot it as —
     // which is the whole reason `@demake/dmg` takes that as an argument.
     const body = async (target: RomTarget): Promise<string> =>
-      (await romTrace(build(read("pong.dmt"), undefined, target.console), frames, {}, target))
+      (await romTrace(build(gameSource("pong"), undefined, target.console), frames, {}, target))
         .split("\n")
         .slice(1)
         .join("\n");
@@ -169,10 +167,10 @@ describe("ROM conformance across the example library", async () => {
     const levels = Object.fromEntries(
       ["meadow.dmtl", "vault.dmtl", "hollow.dmtl", "keep.dmtl"].map((name) => [
         name,
-        read(join("games", name)),
+        projectText("quest", `levels/${name}`),
       ]),
     );
-    const program = build(read(join("games", "quest.dmt")), levels, "md");
+    const program = build(gameSource("quest"), levels, "md");
     const frames = tape("2:,1:a,85:right,1:a,90:right,60:right,120:right");
     expect(await romTrace(program, frames, {}, mdTarget)).toBe(trace(new Sim(program), frames));
   }, 120_000);
@@ -184,7 +182,7 @@ describe("ROM conformance across the example library", async () => {
     // boot the Duck's cartridge on the wrong machine and require it to fail —
     // its stores land on registers that do nothing there, so it never leaves
     // the title screen and never reaches the tick the tape asks for.
-    const program = build(read("pong.dmt"), undefined, "megaduck");
+    const program = build(gameSource("pong"), undefined, "megaduck");
     const frames = tape(PONG_TAPE);
     const onDuck = await romTrace(program, frames, {}, megaduckTarget);
     // *How* it fails is not the guarantee and must not be pinned: where its
@@ -222,13 +220,13 @@ describe("the colour cartridge", { timeout: COLOUR_TIMEOUT }, async () => {
     new Map(
       ["ball.svg", "paddle.svg", "pong.title.svg", "pong.play.svg"].map((name) => [
         name,
-        new Uint8Array(readFileSync(join(fixtures, name))),
+        projectBytes("pong", `art/${name}`),
       ]),
     );
 
   it("declares itself a Game Boy Color cartridge, and a gb build does not", async () => {
-    const color = await buildGbRom(build(read("pong.dmt"), undefined, "gbc"), { title: "PONG" });
-    const mono = await buildGbRom(build(read("pong.dmt")), { title: "PONG" });
+    const color = await buildGbRom(build(gameSource("pong"), undefined, "gbc"), { title: "PONG" });
+    const mono = await buildGbRom(build(gameSource("pong")), { title: "PONG" });
     // `$C0` is CGB-only: this build programs palette RAM from its first
     // instruction, so a DMG running it would show the wrong thing.
     expect(color.bytes[HEADER_OFFSETS.cgb]).toBe(0xc0);
@@ -243,7 +241,9 @@ describe("the colour cartridge", { timeout: COLOUR_TIMEOUT }, async () => {
   });
 
   it("boots the machine in colour mode and fills its palette RAM", async () => {
-    const built = await buildGbRom(build(read("pong.dmt"), undefined, "gbc"), { assets: assets() });
+    const built = await buildGbRom(build(gameSource("pong"), undefined, "gbc"), {
+      assets: assets(),
+    });
     const machine = new Gameboy(built.bytes);
     expect(machine.cgb).toBe(true);
     for (let frame = 0; frame < 30; frame += 1) machine.runFrame();
@@ -258,7 +258,9 @@ describe("the colour cartridge", { timeout: COLOUR_TIMEOUT }, async () => {
   });
 
   it("draws the game in more colours than a Game Boy can show", async () => {
-    const built = await buildGbRom(build(read("pong.dmt"), undefined, "gbc"), { assets: assets() });
+    const built = await buildGbRom(build(gameSource("pong"), undefined, "gbc"), {
+      assets: assets(),
+    });
     const machine = new Gameboy(built.bytes);
     for (let frame = 0; frame < 30; frame += 1) machine.runFrame();
     const seen = new Set<string>();
@@ -270,7 +272,9 @@ describe("the colour cartridge", { timeout: COLOUR_TIMEOUT }, async () => {
   });
 
   it("gives every background cell a palette, including the ones it never painted", async () => {
-    const built = await buildGbRom(build(read("pong.dmt"), undefined, "gbc"), { assets: assets() });
+    const built = await buildGbRom(build(gameSource("pong"), undefined, "gbc"), {
+      assets: assets(),
+    });
     const machine = new Gameboy(built.bytes);
     for (let frame = 0; frame < 30; frame += 1) machine.runFrame();
     // Bank 1 at the map's addresses is the attribute map; a cell the game has
@@ -322,12 +326,12 @@ describe("what the generated code costs", async () => {
   // speed multiplier, so it is worth a test: at one frame per tick the game
   // keeps up with the hardware, and the interpreter this replaced never did.
   for (const [file, levels] of [
-    ["pong.dmt", undefined],
-    [join("games", "shooter.dmt"), undefined],
-    [join("games", "caves.dmt"), { "cavern.dmtl": read(join("games", "cavern.dmtl")) }],
+    ["pong", undefined],
+    ["shooter", undefined],
+    ["caves", { "cavern.dmtl": projectText("caves", "levels/cavern.dmtl") }],
   ] as const) {
     it(`fits a tick inside a frame for ${file}`, async () => {
-      expect(await framesPerTick(build(read(file), levels))).toBeLessThan(1.2);
+      expect(await framesPerTick(build(gameSource(file), levels))).toBeLessThan(1.2);
     });
   }
 });

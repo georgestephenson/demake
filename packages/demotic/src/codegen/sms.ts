@@ -60,6 +60,7 @@ import { GG_MEMORY, SMS_MEMORY, type Layout, type MemoryPlan } from "./layout.js
 import { ART_TILES, bindSmsArt } from "./sms-art.js";
 import { SmsCtx } from "./sms/ctx.js";
 import { emitProgram, BANK_TILES, type SmsEmitOptions } from "./sms/emit.js";
+import type { ArtSettings } from "./settings.js";
 
 /** Bytes the smallest flat Sega cartridge holds. */
 export const ROM_SIZE = SMS_ROM_SIZE;
@@ -121,8 +122,9 @@ export const smsBackend: Backend<SmsEmitOptions, SmsAudio> = {
     program: Program,
     assets: AssetBytes,
     executor?: Executor,
+    settings?: ArtSettings,
   ): Promise<BoundAssets<SmsEmitOptions>> {
-    const art = await bindSmsArt(program, assets, program.profile.id, executor);
+    const art = await bindSmsArt(program, assets, program.profile.id, executor, settings);
     return { emit: art.options, tiles: art.tiles, missing: art.missing };
   },
 

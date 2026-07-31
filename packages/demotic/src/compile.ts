@@ -44,6 +44,8 @@ import { levelAssets, type LevelFile, parseLevel } from "./level/parse.js";
 import { boundsOf } from "./level/scene.js";
 import { type StreamChunk, streamLevel } from "./level/stream.js";
 import type { ConsoleProfile } from "./profiles.js";
+import type { AssetKind } from "./project/kinds.js";
+import { resolveReference, shortestName } from "./project/resolve.js";
 import type {
   Action,
   BudgetReport,
@@ -153,9 +155,27 @@ export interface CompileOptions {
    * `.dmtl` sources by filename.
    *
    * The compiler is platform-pure, so it never reads a file; whoever calls it
-   * resolves paths and hands the text in, exactly as art assets work.
+   * resolves paths and hands the text in, exactly as art assets work. Keyed by
+   * the project-relative path where there is a project, or by the reference as
+   * written where there is not; both are looked up.
    */
   levels?: Readonly<Record<string, string>>;
+  /**
+   * Every file in the project, as relative paths — names only, no bytes.
+   *
+   * What a reference is resolved *against* (doc 19 §The rule): with this list a
+   * bare `sprite ball` finds `art/ball.png`, and a reference matching two files
+   * is `E_ASSET_AMBIGUOUS` with the line that asked. **Optional, and its absence
+   * is not a degraded mode** — a `.dmt` on stdin has no project around it, so
+   * every reference resolves to itself and nothing can be ambiguous. That is why
+   * the diagnostic cannot fire before the compiler knows enough to be sure of it.
+   *
+   * Order is irrelevant to the answer, but callers should sort it anyway: two
+   * edges enumerate a directory by entirely different means, and a build whose
+   * output depended on readdir order would be a build that depended on a
+   * filesystem.
+   */
+  files?: readonly string[];
 }
 
 interface ClassInfo {
@@ -199,7 +219,39 @@ class Compiler {
   constructor(
     private readonly profile: ConsoleProfile,
     private readonly levelSources: Readonly<Record<string, string>> = {},
+    private readonly files: readonly string[] = [],
   ) {}
+
+  /**
+   * Turn a reference into the project file it names (doc 19 §The rule).
+   *
+   * Three outcomes, and the asymmetry between the last two is deliberate. One
+   * match is the file. Several is `E_ASSET_AMBIGUOUS`, because picking one would
+   * be the silently-wrong-program failure the language refuses everywhere else.
+   * None leaves the reference exactly as written, so it travels on to the
+   * missing-asset path, which reports and falls back — refusing to build a
+   * cartridge because a sprite was renamed is the worse outcome.
+   *
+   * With no file list there is nothing to be ambiguous *against*, so a `.dmt` on
+   * stdin or one compiled on its own behaves exactly as it did before this
+   * existed. A diagnostic appears where the compiler knows enough to be sure of
+   * it, and not one step earlier.
+   */
+  private resolveAsset(reference: string, kind: AssetKind, line: number): string {
+    if (this.files.length === 0) return reference;
+    const { path, candidates } = resolveReference(reference, kind, this.files);
+    if (path !== undefined) return path;
+    if (candidates.length > 1) {
+      const distinct = candidates.map((file) => shortestName(file, this.files));
+      this.error(
+        line,
+        "E_ASSET_AMBIGUOUS",
+        `'${reference}' matches ${String(candidates.length)} files: ${candidates.join(", ")}`,
+        `name one of them: ${distinct.join(", ")}`,
+      );
+    }
+    return reference;
+  }
 
   /** The program's random seed, which `stream` also composes with. */
   collectSeed(statements: readonly Stmt[]): void {
@@ -248,7 +300,7 @@ class Compiler {
           );
           continue;
         }
-        this.backdropByScene.set(target, statement.file);
+        this.backdropByScene.set(target, this.resolveAsset(statement.file, "art", statement.line));
         continue;
       }
       if (statement.kind === "music") {
@@ -263,7 +315,7 @@ class Compiler {
           );
           continue;
         }
-        this.musicByScene.set(target, statement.file);
+        this.musicByScene.set(target, this.resolveAsset(statement.file, "music", statement.line));
         continue;
       }
       if (statement.kind !== "level" && statement.kind !== "stream") continue;
@@ -324,7 +376,11 @@ class Compiler {
 
   /** Parse one `.dmtl` source, reporting its diagnostics against this line. */
   private loadLevel(file: string, line: number): LevelFile | undefined {
-    const source = this.levelSources[file];
+    // Two keys, because a caller may key its record either way and both are
+    // right: the resolved path is what a project hands over, and the reference
+    // as written is what a flat folder or a single loose `.dmt` hands over.
+    const resolved = this.resolveAsset(file, "level", line);
+    const source = this.levelSources[resolved] ?? this.levelSources[file];
     if (source === undefined) {
       this.error(
         line,
@@ -339,7 +395,17 @@ class Compiler {
     for (const diagnostic of level.diagnostics) {
       this.diagnostics.push({ ...diagnostic, message: `${file}: ${diagnostic.message}` });
     }
-    return level.diagnostics.some((d) => d.severity === "error") ? undefined : level;
+    if (level.diagnostics.some((d) => d.severity === "error")) return undefined;
+    // A legend's art is a reference like any other, so it resolves the same way
+    // and against the same line — the `tile` statement's own.
+    return {
+      ...level,
+      tiles: level.tiles.map((tile) =>
+        tile.art === undefined
+          ? tile
+          : { ...tile, art: this.resolveAsset(tile.art, "art", tile.line) },
+      ),
+    };
   }
 
   /** Resolve each scene's camera target. */
@@ -571,7 +637,10 @@ class Compiler {
 
       if (STRING_PROPS[prop.name] !== undefined) {
         const text = this.literalString(prop.value, prop.line);
-        if (text !== undefined) strings[prop.name] = text;
+        if (text !== undefined) {
+          strings[prop.name] =
+            STRING_PROPS[prop.name] === "asset" ? this.resolveAsset(text, "art", prop.line) : text;
+        }
         continue;
       }
 
@@ -793,7 +862,7 @@ class Compiler {
                 line: statement.line,
               },
               rules.length,
-              this.soundIndex(statement.file),
+              this.soundIndex(this.resolveAsset(statement.file, "sound", statement.line)),
             );
       this.foldScene = undefined;
       if (rule) rules.push(rule);
@@ -1684,7 +1753,7 @@ function spriteCost(numbers: Readonly<Record<string, Fixed>>): number {
  */
 export function compile(source: string, options: CompileOptions): Program {
   const parsed = parse(source);
-  const compiler = new Compiler(options.profile, options.levels ?? {});
+  const compiler = new Compiler(options.profile, options.levels ?? {}, options.files ?? []);
   compiler.diagnostics.push(...parsed.diagnostics);
 
   compiler.collectScenes(parsed.statements);

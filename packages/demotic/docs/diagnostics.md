@@ -23,6 +23,7 @@ Every one of these is a mistake the cell-and-tick model makes easy to write and 
 | `E_UNKNOWN_TILE` | A grid character with no legend entry. |
 | `E_DUPLICATE_TILE` | A legend reusing a character or a name. |
 | `E_UNKNOWN_BACKDROP` | A backdrop image that was never supplied, or could not be found. |
+| `E_ASSET_AMBIGUOUS` | A reference matching more than one file in the project; names each, and the shortest name that picks it. |
 | `E_DUPLICATE_BACKDROP` | More than one backdrop in a scene; a scene has one background. |
 | `E_BACKDROP_WITH_LEVEL` | A scene with both a level and a backdrop; the level is the background. |
 | `E_BACKDROP_TILES` | A backdrop needs more tiles than the console has left after the game's own art. |

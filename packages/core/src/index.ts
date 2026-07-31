@@ -18,6 +18,14 @@ export { DemakeError, type DemakeErrorCode } from "./errors.js";
 export { decodeImage, detectFormat, type ImageFormat } from "./image/decode.js";
 export { encodeIndexedPng, encodeRgbaPng, type IndexedImage } from "./image/png/encode.js";
 export { decodePng, isPng, PngDecodeError } from "./image/png/decode.js";
+// The PNG codec's own primitives, public because an *edge* needs them: a project
+// is saved and opened as a zip (doc 19 §Opening, saving, and the parity claim),
+// and a zip is a header format over exactly this deflate, this inflate and this
+// CRC. Exporting them is what keeps the browser from shipping a second
+// compressor beside the one it already has.
+export { crc32 } from "./image/png/checksums.js";
+export { deflateStored } from "./image/png/deflate.js";
+export { inflateRaw } from "./image/png/inflate.js";
 export { rasterizeSvg, isSvg, type RasterizeOptions } from "./image/svg/index.js";
 export type { RgbaImage } from "./image/rgba.js";
 
@@ -89,6 +97,7 @@ export {
 } from "./pipeline/sprite.js";
 export { portfolioFor, buildPortfolio } from "./pipeline/portfolio.js";
 export { renderCompliant, encodeCompliantPng } from "./pipeline/encode-image.js";
+export { DITHER_ALGS, EFFORTS, METRICS, PROFILES, SCALE_KERNELS } from "./pipeline/types.js";
 export type {
   PrepOptions,
   PrepResult,

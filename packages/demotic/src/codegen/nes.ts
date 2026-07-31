@@ -54,6 +54,7 @@ import { NES_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
 import { bindNesArt, PATTERNS_PER_TABLE, type BoundNesArt } from "./nes-art.js";
 import { NesCtx } from "./nes/ctx.js";
 import { emitProgram, type NesEmitOptions } from "./nes/emit.js";
+import type { ArtSettings } from "./settings.js";
 
 /** Bytes of program an NROM cartridge holds. */
 export const ROM_SIZE = NES_PRG_SIZE;
@@ -122,8 +123,9 @@ export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
     program: Program,
     assets: AssetBytes,
     executor?: Executor,
+    settings?: ArtSettings,
   ): Promise<BoundAssets<NesEmitOptions>> {
-    const art = await bindNesArt(program, assets, executor);
+    const art = await bindNesArt(program, assets, executor, settings);
     // The character bank travels with the options rather than through a second
     // return value, because `assemble` is the only thing that wants it.
     banks.set(art.options, art);

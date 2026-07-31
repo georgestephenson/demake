@@ -30,7 +30,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 
@@ -147,13 +147,15 @@ for (const consoleId of ["gb", "nes", "sms", "snes", "md"] as const) {
     // byte-identity; how long the page took to get there is not the claim, and a
     // tight limit here only ever fails on someone else's busy machine.
     test.slow();
-    const fixtures = dirname(
-      createRequire(import.meta.url).resolve("@demake/demotic/fixtures/pong.dmt"),
-    );
-    const games = join(fixtures, "games");
-    const program = compile(await readFile(join(games, "caves.dmt"), "utf8"), {
+    // Caves' own project folder (doc 19). The page compiles it with the same
+    // file list, so a reference resolves to the same path on both sides — which
+    // is now part of what "byte-identical" is asserting.
+    const caves = join(projectsDir(), "caves");
+    const files = ["src/caves.dmt", "levels/cavern.dmtl", ...(await artOf(caves))];
+    const program = compile(await readFile(join(caves, "src/caves.dmt"), "utf8"), {
       profile: getProfile(consoleId),
-      levels: { "cavern.dmtl": await readFile(join(games, "cavern.dmtl"), "utf8") },
+      files,
+      levels: { "levels/cavern.dmtl": await readFile(join(caves, "levels/cavern.dmtl"), "utf8") },
     });
     // Every asset the program names, rather than a list: the page loads what the
     // game asks for, so a list here would only ever be a way to compare a ROM
@@ -162,12 +164,17 @@ for (const consoleId of ["gb", "nes", "sms", "snes", "md"] as const) {
     // it, and a Node build without one would differ by five kilobytes.
     const assets = new Map<string, Uint8Array>();
     for (const name of [...program.assets, ...program.tracks, ...program.sounds]) {
-      assets.set(name, new Uint8Array(await readFile(join(games, name))));
+      assets.set(name, new Uint8Array(await readFile(join(caves, name))));
     }
     const expected = (await buildGame(program, { title: "caves", assets })).bytes;
 
     await page.goto("/#section=game");
-    await page.getByTestId("example-select").selectOption("caves");
+    // The project, from the explorer: a game is a folder now (doc 19), and the
+    // section opens the `.dmt` inside whichever one is open. The cartridge is
+    // not built until every asset has arrived (the pane's own `ready` gate), so
+    // there is no half-loaded project to race with here.
+    await page.getByTestId("project-select").selectOption("caves");
+    await expect(page.getByTestId("example-select")).toHaveValue(/caves\.dmt$/);
     if (consoleId !== "gb") await page.getByTestId("console-select").selectOption(consoleId);
     // Waiting on the *cartridge's* console, not the picker's: demaking a
     // full-screen picture in colour is the whole `prep` tournament, and until it
@@ -200,9 +207,24 @@ async function save(page: Page, testId: string): Promise<Uint8Array> {
   return new Uint8Array(await readFile(path as string));
 }
 
-/** Where the example library lives on disk. */
-function fixtureDir(): string {
-  return dirname(createRequire(import.meta.url).resolve("@demake/demotic/fixtures/pong.dmt"));
+/** Where the example projects live on disk. */
+function projectsDir(): string {
+  return join(
+    dirname(
+      createRequire(import.meta.url).resolve("@demake/demotic/fixtures/projects/pong/src/pong.dmt"),
+    ),
+    "..",
+    "..",
+  );
+}
+
+/** Every art, music and sound file in a project, as relative paths. */
+async function artOf(root: string): Promise<string[]> {
+  const out: string[] = [];
+  for (const folder of ["art", "music", "sound"]) {
+    for (const name of await readdir(join(root, folder))) out.push(`${folder}/${name}`);
+  }
+  return out.sort();
 }
 
 /**
@@ -218,7 +240,7 @@ function fixtureDir(): string {
 test("the music demaker's artifacts are byte-identical to Node's", async ({ page }) => {
   // 1. Node: the engine, called exactly as the CLI calls it. The subject is the
   //    first bundled track, which is what the section loads on its own.
-  const source = new Uint8Array(await readFile(join(fixtureDir(), "rally.mid")));
+  const source = new Uint8Array(await readFile(join(projectsDir(), "pong/music/rally.mid")));
   const result = arrangeScore(parseMidi(source), toArrangeOptions(DEFAULT_ARRANGE));
   const expected = {
     vgm: result.artifact,
@@ -248,7 +270,7 @@ test("the music demaker's artifacts are byte-identical to Node's", async ({ page
  * here.
  */
 test("the sound demaker's artifacts are byte-identical to Node's", async ({ page }) => {
-  const source = new Uint8Array(await readFile(join(fixtureDir(), "bounce.wav")));
+  const source = new Uint8Array(await readFile(join(projectsDir(), "pong/sound/bounce.wav")));
   const result = await demakeSfx(source, toSfxOptions(DEFAULT_SFX));
   const expected = {
     vgm: result.artifact,

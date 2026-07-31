@@ -653,13 +653,34 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     "follow". Scrolling is also where per-scanline sprite pressure bites, so the
     backends will have opinions.
 
-- **Projects in the web app**: today each section holds one artifact. A *project*
-  is a folder with a Demakefile at its root — a `.dmt`, its `.test.dmt`, and an
-  art directory — and it is the unit the site should actually operate on:
-  open one, edit any file in it, build every target. It is the same object the
-  CLI already builds, so the work is the browser's file handling (File System
-  Access API where available, an in-memory tree elsewhere) plus import/export as
-  a zip, not a second configuration model.
+- **Projects in the web app** — **designed, in [doc 19](19-projects.md)**: today
+  each section holds one artifact. A *project* is a folder with an optional
+  Demakefile at its root and five resource directories — `src/`, `art/`,
+  `music/`, `sound/`, `levels/` — and it is the unit the site should actually
+  operate on: open one, edit any file in it, build every target. It is the same
+  object the CLI already builds, so the work is the browser's file handling (File
+  System Access API where available, an in-memory tree elsewhere) plus
+  import/export as a zip, not a second configuration model. The shell is a code
+  editor's: an explorer down the left, and opening a file opens the editor for its
+  type — so the four demakers become what a `.svg`, a `.mid` and a `.wav` open in,
+  and their options are written into the Demakefile rather than held beside it.
+  Doc 19 §Order of work has the nine steps; the first is a pure resolver in
+  `@demake/demotic` that both edges share, and the one open question it leaves is
+  whether a game may be split across several `.dmt` files (§Splitting a game — a
+  language change, and therefore the maintainer's).
+
+- **A block editor for `.dmt`** — **designed, in [doc 19](19-projects.md) §The
+  block editor**: a third view on a game, beside its text and its preview, where a
+  program is a list of blocks you drag rather than lines you type. The palette is
+  generated from `lang/spec.ts` — the same registry the parser, the reference and
+  the highlighter come from — and every field offers what the open project
+  actually has: sprites as pictures, tracks you can play, the program's own object
+  and scene names. It is tractable only because the language is flat, line-oriented
+  and registry-defined, which were choices made so a *model* could write it; the
+  same properties turn out to be what a block editor needs. Two boundaries keep it
+  from becoming a visual programming language: one block is one line, and
+  expressions — the only nested part of the language — stay a text field with
+  completion.
 
 - **Agent-driven demaking**: the workflow doc 01 §Why exists for, closed. Attach
   an agent, describe a game in one prompt, and get back a `.dmt`, its art assets,
@@ -673,13 +694,18 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   line-oriented, order-free, with total error recovery and structured
   diagnostics — so most of the work is packaging rather than new capability.
 
-- **A level editor in the web app**: `.dmtl` is a text format an LLM can edit,
-  and that was the point — but a person drawing a room wants to draw it. The
-  planned shape is a top-level site section after the four demakers: paint into
-  a grid, name tiles, mark them solid, bind art, and see the result scroll at
-  every console's viewport at once. The file it writes is the same `.dmtl` the
-  compiler already reads, so it is a view over the format rather than a second
-  one, and a game stays hand-editable whether or not the editor was used.
+- **A level editor in the web app** — **built** (doc 19 §The level editor, doc 07):
+  `.dmtl` is a text format an LLM can edit, and that was the point — but a person
+  drawing a room wants to draw it. Opening one gives text, map, or both: paint
+  into a grid, name tiles, mark them solid, bind art picked from the project's own
+  pictures, and see the console viewports over what you drew. The file it writes
+  is the same `.dmtl` the compiler already reads, so it is a view over the format
+  rather than a second one, and a game stays hand-editable whether or not the
+  editor was used — the three things it must never do to a file all come from
+  `.dmtl` being literal (no reflow, no dropped blank row, a file it did not change
+  comes back byte-identical), and the text-surgical model underneath makes all
+  three impossible rather than merely unlikely. Still to come: showing a `stream`
+  composition read-only, which is doc 19's one deferred piece of this.
 
 - **Tile editing — a question, not a plan**: a tileset exists because hardware
   forces art to be shared, which makes it a *hardware* concern leaking into an
@@ -690,6 +716,72 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   games hit a wall the automatic path cannot clear — and if they do, the honest
   framing is a *tile budget inspector* that explains what was merged and why,
   rather than a manual editor.
+
+- **Declarative art, music and sound — describing the assets in Demotic too**:
+  the whole game as text, with no binary file in the project at all. A `.dmt`
+  already declares the game and a `.dmtl` declares a level; the missing three are
+  a picture, a track and an effect. It is speculative, post-1.0, and it is worth
+  writing down because the shape of the tool makes it unusually cheap *if* one
+  condition holds — and actively corrosive if it does not.
+
+  **Why it is cheap.** Each of the three has an existing declarative target
+  inside the engine, so a Demotic front end would compile *to* something already
+  proven rather than reaching pixels or samples on its own:
+
+  - **Art → the SVG document model.** `packages/core/src/image/svg/` is our own
+    rasteriser, deterministic and already the path a `.dmt`'s art travels
+    (doc 15 §The conversion path). SVG is declarative to begin with, so a Demotic
+    art file is a *second syntax for the same document*, and `prep` cannot tell
+    the difference. No new code touches a pixel.
+  - **Music → `Score`.** `packages/audio/src/score/` is already the hardware-free
+    representation, with MIDI as one parser into it (doc 16). A declarative track
+    is a second parser into the same `Score`. The arranger, the timbre search and
+    the schedule compiler are untouched.
+  - **Sound → PCM.** `sfx` fits a chip gesture to a *recording* (doc 18), so a
+    declarative effect has to produce samples, and the natural form is a small
+    modular-synth description — oscillators, noise, filters, envelopes — rendered
+    on `core`'s own math kernels. It renders to exactly what the WAV decoder
+    produces, and the class gate and the gesture tournament see a waveform as
+    before. This is the cheapest and most defensible of the three: a knock or a
+    coin pickup is a few lines, and writing one is easier than writing the
+    generator script that currently makes the fixture.
+
+  **The condition, and it is the whole risk.** The format must be a peer of SVG,
+  MIDI and WAV — *not* a peer of the console. It has to be able to say more than
+  the hardware can show, and the demakers must still have real work to do. Two
+  ways that fails, both of which the AGENTS.md authoring rules already warn about
+  in their existing form:
+
+  - **Art authored at the target's resolution.** A hand-typed art format invites
+    four tones and 8×8 shapes, because that is what is quick to write — and then
+    the fit has nothing to quantise and a Mega Drive gains nothing over a Game
+    Boy. The library's SVGs are drawn on a 640×576 canvas with detail down to a
+    quarter of a Game Boy pixel *deliberately*.
+  - **Chip music by the back door.** If the format is easy to write in two voices,
+    it will be written in two voices, and the arranger's central decision — what
+    to do when there are more parts than channels — is hidden rather than made.
+    The library's MIDIs are four-part arrangements for exactly that reason.
+
+  So the test for any proposal here is not "does it produce a nice sprite", it is
+  **does the demaker still have something to demake**. A format that can only
+  express what one console can display is a tile editor with extra steps, which is
+  the previous bullet's argument arriving by a different route.
+
+  **What it would buy**, if that condition is met: a project that is entirely
+  text — readable diffs, no zip, and every asset reviewable in a pull request; one
+  language, one set of diagnostics, one registry pattern (`.dmt`, `.dmtl` and
+  `.test.dmt` already share a lexer and a front end, so a fourth, fifth and sixth
+  file type is a known cost); determinism by construction, since nothing decodes
+  or rasterises outside our own code; and the visual editors of
+  [doc 19](19-projects.md) extending to assets, because a declarative source is
+  exactly what a block or grid editor can be a view over. The agent story
+  (§Agent-driven demaking) benefits least, and it is worth being clear about that:
+  an agent can already emit SVG and generate a MIDI, so the honest argument for
+  this is human authorability and diffability rather than machine writability.
+
+  Order, if it is ever taken up: sound first (smallest, and the demaker's input is
+  the easiest to synthesise honestly), then music, then art — which has the best
+  existing target and the highest chance of quietly undermining the tool's premise.
 
 - **Audio — the music and sound demakers (new domain)**: docs
   [16](16-audio-engine.md), [17](17-music-demaker.md) and

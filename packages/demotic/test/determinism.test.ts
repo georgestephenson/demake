@@ -1,18 +1,13 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
 import { Sim } from "../src/sim.js";
 import { tape, trace } from "../src/trace.js";
+import { gameSource, projectText } from "./_projects.js";
 
-const PONG = readFileSync(fileURLToPath(new URL("../fixtures/pong.dmt", import.meta.url)), "utf8");
-const GOLDEN = readFileSync(
-  fileURLToPath(new URL("../fixtures/pong.gb.trace", import.meta.url)),
-  "utf8",
-).trimEnd();
+const PONG = gameSource("pong");
+const GOLDEN = projectText("pong", "pong.gb.trace").trimEnd();
 
 /** The tape the golden trace was recorded with. */
 const TAPE = "1:a,90:,90:left,120:right";

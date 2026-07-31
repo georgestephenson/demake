@@ -11,14 +11,14 @@
 -- ground would be a slab it could jump up the side of — and a gap you can climb
 -- out of is not a gap.
 
-tile =  ground   solid  quest.turf.svg
-tile _  bedrock  solid  quest.soil.svg
-tile -  ledge    solid  quest.sod.svg
-tile o  post     solid  quest.stoneblock.svg
+tile =  ground   solid  turf.svg
+tile _  bedrock  solid  soil.svg
+tile -  ledge    solid  sod.svg
+tile o  post     solid  stoneblock.svg
 tile ^  spikes          spikes.svg
 tile P  pipe     solid  pipe.svg
-tile *  exit            quest.flag.svg
-tile .  air             quest.daylight.svg
+tile *  exit            flag.svg
+tile .  air             daylight.svg
 
 map
 ................................................................................................

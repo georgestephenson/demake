@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- spikes — two teeth on a dark bed, stepped rather than pointed -->
+  <rect x="0" y="0" width="8" height="8" fill="#aaa5c0"/>
+  <rect x="8" y="0" width="8" height="8" fill="#f0f3f6"/>
+  <rect x="16" y="0" width="8" height="8" fill="#a2a9b4"/>
+  <rect x="24" y="0" width="16" height="8" fill="#aaa5c0"/>
+  <rect x="40" y="0" width="8" height="8" fill="#f0f3f6"/>
+  <rect x="48" y="0" width="8" height="8" fill="#a2a9b4"/>
+  <rect x="56" y="0" width="8" height="8" fill="#aaa5c0"/>
+  <rect x="0" y="8" width="8" height="8" fill="#aaa5c0"/>
+  <rect x="8" y="8" width="8" height="8" fill="#f0f3f6"/>
+  <rect x="16" y="8" width="8" height="8" fill="#a2a9b4"/>
+  <rect x="24" y="8" width="16" height="8" fill="#aaa5c0"/>
+  <rect x="40" y="8" width="8" height="8" fill="#f0f3f6"/>
+  <rect x="48" y="8" width="8" height="8" fill="#a2a9b4"/>
+  <rect x="56" y="8" width="8" height="8" fill="#aaa5c0"/>
+  <rect x="0" y="16" width="16" height="8" fill="#f0f3f6"/>
+  <rect x="16" y="16" width="8" height="8" fill="#a2a9b4"/>
+  <rect x="24" y="16" width="16" height="8" fill="#f0f3f6"/>
+  <rect x="40" y="16" width="16" height="8" fill="#a2a9b4"/>
+  <rect x="56" y="16" width="8" height="8" fill="#f0f3f6"/>
+  <rect x="0" y="24" width="8" height="8" fill="#f0f3f6"/>
+  <rect x="8" y="24" width="16" height="8" fill="#a2a9b4"/>
+  <rect x="24" y="24" width="16" height="8" fill="#f0f3f6"/>
+  <rect x="40" y="24" width="16" height="8" fill="#a2a9b4"/>
+  <rect x="56" y="24" width="8" height="8" fill="#676c73"/>
+  <rect x="0" y="32" width="8" height="8" fill="#f0f3f6"/>
+  <rect x="8" y="32" width="16" height="8" fill="#a2a9b4"/>
+  <rect x="24" y="32" width="8" height="8" fill="#676c73"/>
+  <rect x="32" y="32" width="8" height="8" fill="#f0f3f6"/>
+  <rect x="40" y="32" width="16" height="8" fill="#a2a9b4"/>
+  <rect x="56" y="32" width="8" height="8" fill="#676c73"/>
+  <rect x="0" y="40" width="64" height="8" fill="#17161c"/>
+  <rect x="0" y="48" width="8" height="8" fill="#17161c"/>
+  <rect x="8" y="48" width="16" height="8" fill="#3a3847"/>
+  <rect x="24" y="48" width="16" height="8" fill="#17161c"/>
+  <rect x="40" y="48" width="16" height="8" fill="#3a3847"/>
+  <rect x="56" y="48" width="8" height="8" fill="#17161c"/>
+  <rect x="0" y="56" width="64" height="8" fill="#17161c"/>
+</svg>

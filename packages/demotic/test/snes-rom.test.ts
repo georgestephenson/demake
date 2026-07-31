@@ -27,8 +27,6 @@
  *     it.
  */
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -46,13 +44,10 @@ import { builtinSnes, BUILTIN_TILES, patternTile, SNES_TILE_BYTES } from "../src
 import { bindSnesArt } from "../src/codegen/snes-art.js";
 import { buildSnesRom, CODE_SIZE } from "../src/codegen/snes.js";
 import { packCells, SYSTEM_INK, SYSTEM_PALETTE } from "../src/codegen/snes/emit.js";
+import { gameSource, projectBytes, projectText } from "./_projects.js";
 
-const fixtures = join(import.meta.dirname, "..", "fixtures");
-const read = (name: string) => readFileSync(join(fixtures, name), "utf8");
-const asset = (name: string) => new Uint8Array(readFileSync(join(fixtures, name)));
-
-function build(file: string, levels?: Record<string, string>) {
-  return compile(read(file), { profile: getProfile("snes"), levels });
+function build(project: string, levels?: Record<string, string>) {
+  return compile(gameSource(project), { profile: getProfile("snes"), levels });
 }
 
 /** Boot a cartridge and run it until the runtime says it has finished booting. */
@@ -78,10 +73,10 @@ async function backdropFor(program: ReturnType<typeof build>, scene: string): Pr
   const art = await bindSnesArt(
     program,
     new Map([
-      ["pong.title.svg", asset("pong.title.svg")],
-      ["pong.play.svg", asset("pong.play.svg")],
-      ["ball.svg", asset("ball.svg")],
-      ["paddle.svg", asset("paddle.svg")],
+      ["pong.title.svg", projectBytes("pong", "art/pong.title.svg")],
+      ["pong.play.svg", projectBytes("pong", "art/pong.play.svg")],
+      ["ball.svg", projectBytes("pong", "art/ball.svg")],
+      ["paddle.svg", projectBytes("pong", "art/paddle.svg")],
     ]),
   );
   const map = art.options.backdrops?.get(scene)?.map;
@@ -96,7 +91,7 @@ function entryAt(machine: Snes, column: number, row: number): number {
 }
 
 describe("the LoROM cartridge", async () => {
-  const built = await buildSnesRom(build("pong.dmt"), { title: "PONG" });
+  const built = await buildSnesRom(build("pong"), { title: "PONG" });
 
   it("is a two-bank image with the header and its checksum stamped inside it", () => {
     expect(built.bytes.length).toBe(SNES_ROM_SIZE);
@@ -143,7 +138,7 @@ describe("the LoROM cartridge", async () => {
 });
 
 describe("what boot leaves in the video hardware", async () => {
-  const built = await buildSnesRom(build("pong.dmt"));
+  const built = await buildSnesRom(build("pong"));
   const machine = boot(built.bytes, built.layout.booted);
 
   it("transfers the built-in bank out of the second cartridge bank into video RAM", () => {
@@ -172,10 +167,10 @@ describe("what boot leaves in the video hardware", async () => {
   it("reserves the last sub-palette of each half for the font, whatever the art chose", async () => {
     // Objects only: the reservation is the *sprite* fit's, and a backdrop would
     // put the whole `prep` tournament in a unit test for nothing.
-    const art = await buildSnesRom(build("pong.dmt"), {
+    const art = await buildSnesRom(build("pong"), {
       assets: new Map([
-        ["ball.svg", asset("ball.svg")],
-        ["paddle.svg", asset("paddle.svg")],
+        ["ball.svg", projectBytes("pong", "art/ball.svg")],
+        ["paddle.svg", projectBytes("pong", "art/paddle.svg")],
       ]),
     });
     const withArt = boot(art.bytes, art.layout.booted);
@@ -202,8 +197,8 @@ describe("what boot leaves in the video hardware", async () => {
 });
 
 describe("the tilemap against the level", async () => {
-  const levels = { "cavern.dmtl": read(join("games", "cavern.dmtl")) };
-  const program = compile(read(join("games", "caves.dmt")), {
+  const levels = { "cavern.dmtl": projectText("caves", "levels/cavern.dmtl") };
+  const program = compile(gameSource("caves"), {
     profile: getProfile("snes"),
     levels,
   });
@@ -321,13 +316,13 @@ describe("the tilemap against the level", async () => {
  * showed, in the flesh, in a browser.
  */
 describe("a backdrop, which is a block copy rather than a walk", async () => {
-  const program = build("pong.dmt");
+  const program = build("pong");
   const built = await buildSnesRom(program, {
     assets: new Map([
-      ["pong.title.svg", asset("pong.title.svg")],
-      ["pong.play.svg", asset("pong.play.svg")],
-      ["ball.svg", asset("ball.svg")],
-      ["paddle.svg", asset("paddle.svg")],
+      ["pong.title.svg", projectBytes("pong", "art/pong.title.svg")],
+      ["pong.play.svg", projectBytes("pong", "art/pong.play.svg")],
+      ["ball.svg", projectBytes("pong", "art/ball.svg")],
+      ["paddle.svg", projectBytes("pong", "art/paddle.svg")],
     ]),
   });
 
@@ -512,7 +507,7 @@ describe("the packed tilemap", () => {
 });
 
 describe("objects", async () => {
-  const built = await buildSnesRom(build("pong.dmt"));
+  const built = await buildSnesRom(build("pong"));
 
   it("parks the entries a frame stopped using, below the visible area", () => {
     const machine = boot(built.bytes, built.layout.booted);
@@ -545,10 +540,10 @@ describe("objects", async () => {
 
 describe("the tile bank", () => {
   it("starts where the built-in one ends, in the bank the transfer reads", async () => {
-    const built = await buildSnesRom(build("pong.dmt"), {
+    const built = await buildSnesRom(build("pong"), {
       assets: new Map([
-        ["ball.svg", asset("ball.svg")],
-        ["paddle.svg", asset("paddle.svg")],
+        ["ball.svg", projectBytes("pong", "art/ball.svg")],
+        ["paddle.svg", projectBytes("pong", "art/paddle.svg")],
       ]),
     });
     const builtin = builtinSnes(SYSTEM_INK);

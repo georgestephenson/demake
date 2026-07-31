@@ -1,0 +1,29 @@
+.TH DEMAKE\-CHECK 1 "" "" "Check a project or .dmt: diagnostics, budgets, and the resolved plan"
+.SH NAME
+demake-check \- Check a project or .dmt: diagnostics, budgets, and the resolved plan
+.SH SYNOPSIS
+\fBdemake check\fR [\fIoptions\fR] [\fIinput\fR]
+.SH DESCRIPTION
+Check a project or .dmt: diagnostics, budgets, and the resolved plan.
+.SH OPTIONS
+.TP
+\fB\-c\fR, \fB\-\-console\fR \fI<id>\fR
+Check against one console; the default checks every target the project declares.
+.TP
+\fB\-\-json\fR
+Emit the resolved plan and every diagnostic as JSON.
+.SH EXAMPLES
+.PP
+demake check ./pong
+.br
+every target, asset and artifact path
+.PP
+demake check ./pong \-\-json
+.br
+the same plan, machine\-readable
+.PP
+demake check pong.dmt \-c nes
+.br
+one console, one game
+.SH SEE ALSO
+\fBdemake\fR(1)

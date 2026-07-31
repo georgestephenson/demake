@@ -1,16 +1,13 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/compile.js";
 import { profiles, getProfile } from "../src/profiles.js";
 import { parseTests } from "../src/testing/parse.js";
 import { runTests } from "../src/testing/run.js";
+import { gameSource, gameTests } from "./_projects.js";
 
-const dir = (name: string) => fileURLToPath(new URL(`../fixtures/${name}`, import.meta.url));
-const PONG = readFileSync(dir("pong.dmt"), "utf8");
-const PONG_TESTS = readFileSync(dir("pong.test.dmt"), "utf8");
+const PONG = gameSource("pong");
+const PONG_TESTS = gameTests("pong");
 
 describe(".test.dmt", () => {
   it("parses the Pong suite cleanly", () => {

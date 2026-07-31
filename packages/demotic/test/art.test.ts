@@ -9,8 +9,6 @@
  * state — which is exactly why it needs a test of its own.
  */
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { Gameboy } from "@demake/dmg";
@@ -21,28 +19,28 @@ import { PALETTE_BYTES, SYSTEM_PALETTE } from "../src/codegen/emit.js";
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
 import { BUILTIN_TILES, TILE_BYTES } from "../src/rom/graphics.js";
+import { exampleProject, projectAssets } from "./_projects.js";
 
-const fixtures = join(import.meta.dirname, "..", "fixtures");
-const text = (name: string) => readFileSync(join(fixtures, name), "utf8");
-const bytes = (name: string) => new Uint8Array(readFileSync(join(fixtures, name)));
-
-const pong = () => compile(text("pong.dmt"), { profile: getProfile("gb") });
-const pongAssets = () =>
-  new Map([
-    ["ball.svg", bytes("ball.svg")],
-    ["paddle.svg", bytes("paddle.svg")],
-    ["pong.title.svg", bytes("pong.title.svg")],
-    ["pong.play.svg", bytes("pong.play.svg")],
-  ]);
+// Each example is a project folder, so a game's art is its own (doc 19). These
+// compile *with* the project's file list, which is what an edge does — so every
+// reference here resolves to a path like `art/ball.svg` and the asset map is
+// keyed the same way.
+const pongProject = exampleProject("pong");
+const pong = () =>
+  compile(pongProject.source, { profile: getProfile("gb"), files: pongProject.files });
+const pongAssets = () => projectAssets("pong");
 
 describe("what art a program needs", () => {
   it("asks for each asset once, at the box the game gives it", () => {
     const requests = artRequests(pong());
     // Backdrops are not in here: a picture is bound per *scene*, at the screen's
     // own size, so it has no box for this list to carry.
-    expect(requests.map((request) => request.name).sort()).toEqual(["ball.svg", "paddle.svg"]);
-    const ball = requests.find((request) => request.name === "ball.svg");
-    const paddle = requests.find((request) => request.name === "paddle.svg");
+    expect(requests.map((request) => request.name).sort()).toEqual([
+      "art/ball.svg",
+      "art/paddle.svg",
+    ]);
+    const ball = requests.find((request) => request.name === "art/ball.svg");
+    const paddle = requests.find((request) => request.name === "art/paddle.svg");
     // One cell for the ball; the paddle is 15% of a 20-cell court, so three.
     expect([ball?.cellsWide, ball?.cellsHigh]).toEqual([1, 1]);
     expect([paddle?.cellsWide, paddle?.cellsHigh]).toEqual([3, 1]);
@@ -50,12 +48,14 @@ describe("what art a program needs", () => {
   });
 
   it("asks for a level's legend art as background tiles", () => {
-    const caves = compile(text(join("games", "caves.dmt")), {
+    const project = exampleProject("caves");
+    const caves = compile(project.source, {
       profile: getProfile("gb"),
-      levels: { "cavern.dmtl": text(join("games", "cavern.dmtl")) },
+      files: project.files,
+      levels: project.levels,
     });
     const requests = artRequests(caves);
-    const wall = requests.find((request) => request.name === "rockwall.svg");
+    const wall = requests.find((request) => request.name === "art/rockwall.svg");
     expect(wall?.kind).toBe("tile");
     // Sprites and tiles are converted separately: an object's index 0 is
     // transparency and a tile's is a colour.
@@ -78,10 +78,10 @@ describe("binding art to a build", async () => {
   it("names art it was not given rather than drawing something else silently", async () => {
     const bound = await bindArt(pong(), new Map());
     expect(bound.missing.sort()).toEqual([
-      "ball.svg",
-      "paddle.svg",
-      "pong.play.svg",
-      "pong.title.svg",
+      "art/ball.svg",
+      "art/paddle.svg",
+      "art/pong.play.svg",
+      "art/pong.title.svg",
     ]);
     expect(bound.sprites).toBeUndefined();
   });
@@ -169,7 +169,8 @@ describe("the art on screen", async () => {
 const COLOUR_TIMEOUT = 120_000;
 
 describe("art demade for colour hardware", { timeout: COLOUR_TIMEOUT }, async () => {
-  const pongColor = () => compile(text("pong.dmt"), { profile: getProfile("gbc") });
+  const pongColor = () =>
+    compile(pongProject.source, { profile: getProfile("gbc"), files: pongProject.files });
 
   it("fits the art into sub-palettes and leaves one for the font", async () => {
     const bound = await bindArt(pongColor(), pongAssets());
@@ -223,7 +224,7 @@ describe("art demade for colour hardware", { timeout: COLOUR_TIMEOUT }, async ()
   it("draws the game in colours the monochrome build cannot show", async () => {
     const shades = async (consoleId: string): Promise<Set<string>> => {
       const built = await buildGbRom(
-        compile(text("pong.dmt"), { profile: getProfile(consoleId) }),
+        compile(pongProject.source, { profile: getProfile(consoleId), files: pongProject.files }),
         {
           assets: pongAssets(),
         },

@@ -25,8 +25,6 @@
  *     table.
  */
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { MD_ROM_SIZE, mdChecksum } from "@demake/core";
@@ -44,17 +42,14 @@ import {
   SYSTEM_INK,
   SYSTEM_PALETTE,
 } from "../src/codegen/md/emit.js";
-
-const fixtures = join(import.meta.dirname, "..", "fixtures");
-const read = (name: string) => readFileSync(join(fixtures, name), "utf8");
-const asset = (name: string) => new Uint8Array(readFileSync(join(fixtures, name)));
+import { gameSource, projectBytes, projectText } from "./_projects.js";
 
 /** Where the emitter puts the VDP's tables. */
 const PLANE_A = 0xc000;
 const SAT = 0xf000;
 
-function build(file: string, levels?: Record<string, string>) {
-  return compile(read(file), { profile: getProfile("md"), levels });
+function build(project: string, levels?: Record<string, string>) {
+  return compile(gameSource(project), { profile: getProfile("md"), levels });
 }
 
 /** Boot a cartridge and run it until the runtime says it has finished booting. */
@@ -74,7 +69,7 @@ function cellAt(machine: Md, column: number, row: number): number {
 }
 
 describe("the Mega Drive cartridge", async () => {
-  const built = await buildMdRom(build("pong.dmt"), { title: "PONG" });
+  const built = await buildMdRom(build("pong"), { title: "PONG" });
 
   it("is a 512 KiB image with a header the boot ROM will accept", () => {
     expect(built.bytes.length).toBe(MD_ROM_SIZE);
@@ -109,7 +104,7 @@ describe("the Mega Drive cartridge", async () => {
 });
 
 describe("what boot leaves in the video hardware", async () => {
-  const built = await buildMdRom(build("pong.dmt"));
+  const built = await buildMdRom(build("pong"));
   const machine = boot(built.bytes, built.layout.booted);
 
   it("uploads the built-in bank to the address the registers point at", () => {
@@ -153,8 +148,8 @@ describe("what boot leaves in the video hardware", async () => {
 });
 
 describe("the plane against the level", async () => {
-  const levels = { "cavern.dmtl": read(join("games", "cavern.dmtl")) };
-  const program = compile(read(join("games", "caves.dmt")), {
+  const levels = { "cavern.dmtl": projectText("caves", "levels/cavern.dmtl") };
+  const program = compile(gameSource("caves"), {
     profile: getProfile("md"),
     levels,
   });
@@ -352,7 +347,7 @@ describe("the edge painter", () => {
 });
 
 describe("objects", async () => {
-  const built = await buildMdRom(build("pong.dmt"));
+  const built = await buildMdRom(build("pong"));
 
   it("ends the sprite list where the frame stopped filling it", () => {
     const machine = boot(built.bytes, built.layout.booted);
@@ -384,10 +379,10 @@ describe("objects", async () => {
   });
 
   it("puts the art the image engine demade in the bank, not the placeholder block", async () => {
-    const art = await buildMdRom(build("pong.dmt"), {
+    const art = await buildMdRom(build("pong"), {
       assets: new Map([
-        ["ball.svg", asset("ball.svg")],
-        ["paddle.svg", asset("paddle.svg")],
+        ["ball.svg", projectBytes("pong", "art/ball.svg")],
+        ["paddle.svg", projectBytes("pong", "art/paddle.svg")],
       ]),
     });
     expect(art.stats.artTiles).toBeGreaterThan(0);
@@ -412,11 +407,11 @@ describe("a demade backdrop", { timeout: 180_000 }, async () => {
   // after a pool, an encoding and an unpacker, and every one of those has been
   // wrong on some console.
   const assets = new Map([
-    ["pong.title.svg", asset("pong.title.svg")],
-    ["ball.svg", asset("ball.svg")],
-    ["paddle.svg", asset("paddle.svg")],
+    ["pong.title.svg", projectBytes("pong", "art/pong.title.svg")],
+    ["ball.svg", projectBytes("pong", "art/ball.svg")],
+    ["paddle.svg", projectBytes("pong", "art/paddle.svg")],
   ]);
-  const program = build("pong.dmt");
+  const program = build("pong");
   const built = await buildMdRom(program, { assets });
   const art = await bindMdArt(program, assets);
   const machine = boot(built.bytes, built.layout.booted);

@@ -20,8 +20,6 @@
  * too slow to cover.
  */
 
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { audioJobKinds } from "@demake/audio";
@@ -30,27 +28,9 @@ import { coreJobKinds, jobHandlers, runJob, type Executor, type JobOutcome } fro
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
 import { buildGame } from "../src/codegen/registry.js";
+import { EXAMPLES, exampleProject } from "./_projects.js";
 
-const fixtures = join(import.meta.dirname, "..", "fixtures");
-const games = join(fixtures, "games");
 const handlers = jobHandlers([...coreJobKinds, ...audioJobKinds]);
-
-function assetsIn(dir: string): Map<string, Uint8Array> {
-  const assets = new Map<string, Uint8Array>();
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (!entry.isFile()) continue;
-    assets.set(entry.name, new Uint8Array(readFileSync(join(dir, entry.name))));
-  }
-  return assets;
-}
-
-function levelsIn(dir: string): Record<string, string> {
-  const levels: Record<string, string> = {};
-  for (const name of readdirSync(dir)) {
-    if (name.endsWith(".dmtl")) levels[name] = readFileSync(join(dir, name), "utf8");
-  }
-  return levels;
-}
 
 /**
  * One queue for every caller, drained from the middle, backwards, a turn at a
@@ -106,12 +86,9 @@ function adversarial(): Executor & { ran: () => number } {
  * console with the room — and that is the better case anyway, because it is the
  * biggest fan-out in the library.
  */
-const OVER_BUDGET_ON_GB = new Set(["quest.dmt"]);
+const OVER_BUDGET_ON_GB = new Set(["quest"]);
 
-const GAMES = readdirSync(games)
-  .filter((name) => name.endsWith(".dmt") && !name.endsWith(".test.dmt"))
-  .filter((name) => !OVER_BUDGET_ON_GB.has(name))
-  .sort();
+const GAMES = EXAMPLES.filter((name) => !OVER_BUDGET_ON_GB.has(name));
 
 /**
  * Which builds to compare.
@@ -140,9 +117,9 @@ const GAMES = readdirSync(games)
  */
 const CASES = [
   ...GAMES.map((game) => ({ game, consoleId: "gb" })),
-  { game: "shooter.dmt", consoleId: "gbc" },
-  { game: "platformer.dmt", consoleId: "nes" },
-  ...["gbc", "nes", "snes"].map((consoleId) => ({ game: "caves.dmt", consoleId })),
+  { game: "shooter", consoleId: "gbc" },
+  { game: "platformer", consoleId: "nes" },
+  ...["gbc", "nes", "snes"].map((consoleId) => ({ game: "caves", consoleId })),
 ];
 
 /**
@@ -160,10 +137,10 @@ const CASES = [
  * catches nothing.
  */
 const SLOW = [
-  { game: "platformer.dmt", consoleId: "md" },
+  { game: "platformer", consoleId: "md" },
   // And the biggest fan-out there is: four levels, two of them demade against a
   // shared bank, four tracks and eight effects, all of it settled at once.
-  { game: "quest.dmt", consoleId: "md" },
+  { game: "quest", consoleId: "md" },
 ];
 
 /** One executor for the whole file, so the job count means something at the end. */
@@ -171,12 +148,8 @@ const fanOut = adversarial();
 
 /** Build one game twice — spread, then alone — and compare everything. */
 async function compareBuilds(game: string, consoleId: string): Promise<void> {
-  const source = readFileSync(join(games, game), "utf8");
-  const program = compile(source, {
-    profile: getProfile(consoleId),
-    levels: levelsIn(games),
-  });
-  const assets = assetsIn(games);
+  const { source, files, levels, assets } = exampleProject(game);
+  const program = compile(source, { profile: getProfile(consoleId), files, levels });
 
   // Spread first, on a cold conversion cache. The other order would let the
   // second build recall every backdrop the first one demade and hand back the

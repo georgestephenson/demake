@@ -49,23 +49,23 @@ create object hero (width 1 cell, height 2 cells, speed 11, sprite hero.svg)
 -- Crawlers walk; fliers bounce between the floor and the ceiling. Both die to a
 -- stomp and cost a power-up on contact, which is the only rule pair the game
 -- needs for two very different things to avoid.
-create object crawler (width 1 cell, height 1 cell, speed 5, sprite quest.crawler.svg)
-create object flier (width 1 cell, height 1 cell, speed 7, sprite quest.flier.svg)
+create object crawler (width 1 cell, height 1 cell, speed 5, sprite crawler.svg)
+create object flier (width 1 cell, height 1 cell, speed 7, sprite flier.svg)
 
 create object coin (width 1 cell, height 1 cell, sprite coin.svg)
 -- The vault's coins, which come back. A separate class because that is the one
 -- rule they do not share with the others.
-create object gem (width 1 cell, height 1 cell, sprite quest.gem.svg)
-create object token (width 1 cell, height 1 cell, sprite quest.token.svg)
+create object gem (width 1 cell, height 1 cell, sprite gem.svg)
+create object token (width 1 cell, height 1 cell, sprite token.svg)
 
-create object mushroom (width 1 cell, height 1 cell, sprite quest.mushroom.svg)
-create object flower (width 1 cell, height 1 cell, sprite quest.flower.svg)
-create object fireball (width 1 cell, height 1 cell, speed 45, sprite quest.fireball.svg)
+create object mushroom (width 1 cell, height 1 cell, sprite mushroom.svg)
+create object flower (width 1 cell, height 1 cell, sprite flower.svg)
+create object fireball (width 1 cell, height 1 cell, speed 45, sprite fireball.svg)
 
-create object brick (width 1 cell, height 1 cell, sprite quest.block.svg)
+create object brick (width 1 cell, height 1 cell, sprite block.svg)
 
-create object warden (width 2 cells, height 2 cells, speed 9, sprite quest.warden.svg)
-create object bolt (width 1 cell, height 1 cell, speed 26, sprite quest.bolt.svg)
+create object warden (width 2 cells, height 2 cells, speed 9, sprite warden.svg)
+create object bolt (width 1 cell, height 1 cell, speed 26, sprite bolt.svg)
 
 -- the meadow ----------------------------------
 

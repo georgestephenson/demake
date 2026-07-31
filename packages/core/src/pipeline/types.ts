@@ -60,21 +60,43 @@ export interface CompliantImage {
   pixelIndex: Uint8Array;
 }
 
+/*
+ * The closed option sets, as runtime lists with the types derived from them.
+ *
+ * Values rather than bare types because two callers have to *check* a string
+ * against them: the CLI parsing a flag, and `@demake/demotic` reading an option
+ * out of a Demakefile (doc 15 §Resolution). Both used to carry their own copy of
+ * the spelling, which is a list that goes stale the first time one is added.
+ */
+
 /** Downscale kernel choices (doc 04 §Stage 2). */
-export type ScaleKernel = "majority" | "lanczos3" | "box" | "nearest" | "auto";
+export const SCALE_KERNELS = ["majority", "lanczos3", "box", "nearest", "auto"] as const;
+export type ScaleKernel = (typeof SCALE_KERNELS)[number];
 
 /** Dither algorithms (doc 04 §Stage 5). */
-export type DitherAlg =
-  "none" | "bayer2" | "bayer4" | "bayer8" | "floyd-steinberg" | "atkinson" | "riemersma" | "ramp";
+export const DITHER_ALGS = [
+  "none",
+  "bayer2",
+  "bayer4",
+  "bayer8",
+  "floyd-steinberg",
+  "atkinson",
+  "riemersma",
+  "ramp",
+] as const;
+export type DitherAlg = (typeof DITHER_ALGS)[number];
 
 /** Source-analysis profile (doc 04 §Stage 1). */
-export type Profile = "art" | "photo" | "auto";
+export const PROFILES = ["art", "photo", "auto"] as const;
+export type Profile = (typeof PROFILES)[number];
 
 /** Optimizer budget (doc 04 §The tournament). */
-export type Effort = "fast" | "default" | "max";
+export const EFFORTS = ["fast", "default", "max"] as const;
+export type Effort = (typeof EFFORTS)[number];
 
 /** Perceptual metric selection (doc 04 §Color distance). */
-export type Metric = "oklab" | "wrgb";
+export const METRICS = ["oklab", "wrgb"] as const;
+export type Metric = (typeof METRICS)[number];
 
 /**
  * Minimal `AbortSignal` shape. Core deliberately does not pull in the DOM/Node

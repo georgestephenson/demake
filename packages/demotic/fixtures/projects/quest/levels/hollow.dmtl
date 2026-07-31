@@ -6,12 +6,12 @@
 -- held right on.
 
 tile #  wall     solid  rockwall.svg
-tile o  post     solid  quest.stoneblock.svg
-tile _  bedrock  solid  quest.bedrock.svg
-tile =  ledge    solid  quest.shelf.svg
+tile o  post     solid  stoneblock.svg
+tile _  bedrock  solid  bedrock.svg
+tile =  ledge    solid  shelf.svg
 tile ^  spikes          spikes.svg
-tile *  exit            quest.gate.svg
-tile .  air             quest.dark.svg
+tile *  exit            gate.svg
+tile .  air             dark.svg
 
 map
 ################################################################

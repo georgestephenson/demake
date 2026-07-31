@@ -6,10 +6,10 @@
 -- level, because entering a scene resets it; going on is what makes finding the
 -- pipe worth something.
 
-tile #  wall    solid  quest.vaultwall.svg
-tile =  ledge   solid  quest.vaultshelf.svg
-tile *  exit           quest.gate.svg
-tile .  air            quest.dark.svg
+tile #  wall    solid  vaultwall.svg
+tile =  ledge   solid  vaultshelf.svg
+tile *  exit           gate.svg
+tile .  air            dark.svg
 
 map
 ########################################

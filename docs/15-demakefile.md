@@ -8,6 +8,12 @@ game and knows nothing about hardware; the Demakefile describes the build and
 knows nothing about gameplay. Neither can do the other's job, and that separation
 is enforced, not merely encouraged:
 
+**Where it sits is [doc 19](19-projects.md)**: at the root of a project folder,
+beside `src/`, `art/`, `music/`, `sound/` and `levels/`. That folder supplies
+three of this document's defaults on its own — `source` is the single `.dmt` in
+`src/`, `assets` is the four resource directories, `out` is `build/` — and it is
+where the `targets` shorthand and the `music`/`sound` blocks below come from.
+
 > **Delete the Demakefile and the game still plays identically.** Only the
 > artifacts change.
 
@@ -18,12 +24,39 @@ present, `demake build` targets every console that has a runtime, with default
 conversion settings, writing `build/<console>/<name>.<ext>`. The web preview
 (doc 07) needs no Demakefile at all for the same reason.
 
-**Status.** The zero-config path is what exists today: `demake build game.dmt -o
-game.gb` builds for the one console that has a runtime, with `--console`,
-`--title` and `--format` standing in for the manifest's fields. The file itself,
-its resolver, art binding through `prep`, and `check`/`init`/`fmt` are still to
-come (doc 13 §D2). Everything below is the design they will implement, and the
-flags that exist now are deliberately named after the directives they anticipate.
+**Status.** The file exists and is read. `parseDemakefile`, `emitDemakefile` and
+the resolver live in `packages/demotic/src/demakefile/`, the three round-trip
+properties of §The equivalence contract are tests, and `demake build <dir>` picks
+up a `Demakefile` at a project's root — honouring `source`, `out`, `targets`, a
+`target`'s own `output` path, and `title` from `header` or `project`. Its
+diagnostics stop a build rather than being skipped: a build file nobody can read
+is a build nobody can predict.
+
+Three things are parsed, reported under `--json`, and **not yet applied**, so they
+are gaps rather than decisions:
+
+- ~~**Conversion options.**~~ **Art's are applied.** `dither`, `strategy`,
+  `scale`, `effort`, `metric`, `palette` and `protect` resolve through the cascade,
+  are validated into typed `prep` options, and reach every one of the five
+  backends' art paths — so `art pong.title / dither bayer8:100` produces a
+  different cartridge, which `demakefile.test.ts` asserts at the byte level. A
+  value the engine cannot use stops the build naming what would work. The
+  **audio** domain's are not applied yet: the same cascade resolves them and
+  `bindAudio` takes none.
+- **The rest of `header`** — `mapper`, `mirroring`, `serial`, `region`,
+  `licensee` — with the per-family validation this document promises.
+- **`use <file>`**, which substitutes a source file. It is recognised and
+  deliberately ignored by the option converter, because choosing which bytes to
+  load is the *edge's* job and by then the bytes are chosen; what is missing is the
+  edge acting on it.
+- **Multi-target builds.** One invocation still builds one console; `targets`
+  decides *where* the artifact lands and which header applies, and `-c` picks
+  which of them to build. Building all of them in one command needs `build` to
+  write many artifacts, which is an output-contract change worth doing on its own.
+
+`check` and `init` exist. `fmt` does not yet, though the emitter it would be is
+here and its idempotence is already a test — what is missing is only the command
+that writes the file back.
 
 `demake init` writes the Demakefile that reproduces exactly what the defaults
 already do — so the zero-config path and the file are the same object, one of them
@@ -35,9 +68,12 @@ just implicit. Editing a setting in the web preview is editing that file; see
 Indentation-significant, block-structured, minimal punctuation.
 
 - **Indentation** sets structure. Tabs are accepted; **spaces are canonical** and
-  `demake fmt` always writes two spaces per level. One tab is one level; with
-  spaces, the file's unit is set by its first indented line and must stay
-  consistent. Mixing tabs and spaces *within one file* is an error naming both
+  `demake fmt` always writes two spaces per level — and exactly one space between
+  a directive and its value. Column alignment is not preserved: a formatter with
+  one answer cannot also keep everyone's alignment, so the aligned examples in
+  this document are illustrative of the *format* rather than of `fmt`'s output.
+  One tab is one level; with spaces, the file's unit is set by its first indented
+  line and must stay consistent. Mixing tabs and spaces *within one file* is an error naming both
   offending lines — the Make footgun, disarmed.
 - **Comments** start at `#`, either at line start or preceded by whitespace, so
   `serial GM-00000000#2` keeps its hash.
@@ -121,12 +157,15 @@ art paddle.svg
 | Directive | Arity | Meaning | Default |
 |---|---|---|---|
 | `project <name>` | block | Metadata block | the source file's basename |
-| `source <path>` | 1 | The `.dmt` entry point | the single `.dmt` beside the Demakefile |
-| `assets <dir>` | 1 | Root for art lookup (repeatable — searched in order) | `art/`, then the project root |
+| `source <path>` | 1 | The `.dmt` entry point | the single `.dmt` in `src/`, then the one beside the Demakefile |
+| `assets <dir>` | 1 | Extra root for asset lookup (repeatable — searched in order, *ahead* of the standard four) | `art/`, `music/`, `sound/`, `levels/`, then the project root (doc 19) |
 | `out <dir>` | 1 | Root for every output path | `build/` |
-| `defaults` | block | Conversion options applied to all art | — |
+| `defaults` | block | Conversion options, per domain | — |
+| `targets <id>…` | n | Shorthand: one default target per console named | every console with a runtime |
 | `target <name>` | block | One build | see below |
-| `art <name>` | block | How one asset is converted | — |
+| `art <name>` | block | How one image asset is converted | — |
+| `music <name>` | block | How one track is demade (doc 19) | — |
+| `sound <name>` | block | How one effect is demade (doc 19) | — |
 
 `project` fields: `title`, `author`, `version`, `license`. They feed ROM headers
 and generated source provenance; none affect gameplay.
@@ -158,13 +197,18 @@ Demakefile selects a profile, it never edits one (doc 14 §The central split).
 
 ### `art <name>`
 
-`<name>` is the asset exactly as the `.dmt` names it in a `sprite` property.
+`<name>` names an asset the same way a `.dmt` does — the shortest string that
+identifies one file, with a path or an extension only where it takes one
+([doc 19](19-projects.md) §The rule). It need not be spelled the way the `.dmt`
+spelled it: both resolve against the same file list, so a block written as
+`art art/ball.png` applies to a `sprite ball`, and an `art` block matching two
+files is `E_ASSET_AMBIGUOUS` exactly as a `sprite` would be.
 
 | Directive | Arity | Meaning |
 |---|---|---|
 | `use <file>` | 1 | Substitute a different source file |
 | `transparent <color>` | 1 | Colour key for sprite transparency (default: the alpha channel) |
-| `dither`, `strategy`, `effort`, `scale`, `palette`, `protect`, `metric` | 1 | Passed to `prep`; identical names and values to the doc-05 flags |
+| `dither`, `strategy`, `effort`, `scale`, `palette`, `protect`, `metric` | 1 | Passed to `prep`; identical names and values to the doc-05 flags. **A build file may set only these** — `size`, `fit`, `console` and the tile and palette budgets are the build's own arithmetic, so they are not in the set and the build's values win regardless |
 | `for <target>` | block | Any of the above, for one target only |
 
 **There is no `size` here, deliberately.** A sprite's pixel dimensions are
@@ -201,18 +245,25 @@ header by omission.
 
 ## Resolution
 
-Conversion options cascade, most specific winning:
+Conversion options cascade, most specific winning, per domain:
 
 ```
-defaults  <  target  <  art  <  art/for <target>
+defaults/<domain>  <  target  <  <domain> <name>  <  <domain> <name>/for <target>
 ```
+
+where `<domain>` is `art`, `music` or `sound`. Options written directly under
+`defaults` are art's, because art was the only domain when this file was written;
+`demake fmt` writes the nested form (doc 19 §The Demakefile, still optional).
 
 Everything resolved is reported by `demake build --dry-run --json`: the source,
 every target, every asset with its final option set, and every path that will be
 written. Nothing about a build should require reading the resolver to predict.
 
-Asset lookup walks each `assets` root in order. A miss is an error listing every
-path searched.
+Asset lookup is the compiler's, not this file's ([doc 19](19-projects.md) §The
+rule): a reference identifies a file among the project's own, and `assets` roots
+only widen that set with directories outside the project. So there is no search
+order to reason about — a reference matches one file, or several and is an error
+naming them, or none and is the missing-asset path.
 
 ### The conversion path
 
@@ -322,6 +373,13 @@ settings, the way the image app shows the equivalent CLI command (doc 07). A gam
 build writes many artifacts, so a file is the honest representation; a single
 command line is not.
 
+**And in a project workspace it stops being a display and becomes the storage**
+([doc 19](19-projects.md) §Options edit the Demakefile): changing a demaker's
+option writes the block for the file you have open, setting one back to its
+inherited value deletes the line again, and a project with no Demakefile gets the
+one `demake init` would have written. Property 3 above is what makes that safe,
+and it is why an option that changes nothing must never leave a directive behind.
+
 ## Diagnostics
 
 Same shape as Demotic and the CLI (doc 05 §Agent-friendliness): a stable code, a
@@ -340,7 +398,8 @@ as structured data.
 | `E_UNKNOWN_TARGET` | a `for` naming no declared target |
 | `E_REGION_UNSUPPORTED` | e.g. `region pal` on a Game Boy |
 | `E_NO_SOURCE` | no `.dmt` found, or several with no `source` |
-| `E_ASSET_MISSING` | with every path searched |
+| `E_ASSET_MISSING` | a reference matching no file in the project |
+| `E_ASSET_AMBIGUOUS` | a reference matching several; names each, and the shortest string that picks it |
 | `E_HEADER_INVALID` | with the family's rule for that field |
 
 ## Not in v1
@@ -353,15 +412,19 @@ Named so the shape stays honest, and roughly in the order they would arrive.
 - **Bank layout and memory control.** Needed once a game exceeds one bank; until
   a real game does, any design would be speculative.
 - **Art that overhangs its collision box**, with the anchoring rules that implies.
-- **Multiple `.dmt` sources**, and `include` in Demotic itself.
-- **Audio settings.** The Demotic side is built — a `.dmt` names its music and
-  its effects, and `demake build` demakes both into the cartridge (doc 14
-  §Sound). What has no build-file surface yet is the *how*: an `[audio]` block
-  saying which arranger strategy, which channels to reserve, which effort level
-  and which cartridge budget — never which notes, exactly as an `[art]` block
-  never says which pixels. Today those are the demakers' defaults, chosen by the
-  game's console rather than by anything a build file said, which keeps the
-  operational rule intact (a Demakefile may not change how a game plays) with no
-  work at all.
+- **Multiple `.dmt` sources**, and `include` in Demotic itself. Doc 19 §Splitting
+  a game states the two shapes it could take and the evidence that it is not yet
+  urgent; it is a language change, so it is the maintainer's call rather than a
+  planning decision.
+- **Audio settings** — *designed in [doc 19](19-projects.md), not yet built.*
+  The Demotic side is built: a `.dmt` names its music and its effects, and
+  `demake build` demakes both into the cartridge (doc 14 §Sound). What has no
+  build-file surface yet is the *how*, and doc 19 gives it the shape this
+  document already uses for art — `music <name>` and `sound <name>` blocks
+  carrying the doc-05 audio flags, and a `defaults` block with a section per
+  domain. Never which notes, exactly as an `art` block never says which pixels.
+  Today those are the demakers' defaults, chosen by the game's console rather than
+  by anything a build file said, which keeps the operational rule intact (a
+  Demakefile may not change how a game plays) with no work at all.
 - **Custom target inheritance** (`target md-pal extends md`). Two nearly-identical
   targets is not yet enough duplication to justify the concept.

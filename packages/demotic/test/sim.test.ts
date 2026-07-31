@@ -1,16 +1,14 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/compile.js";
 import { ONE, toNumber } from "../src/fixed.js";
 import { getProfile } from "../src/profiles.js";
 import { Sim, type InputState } from "../src/sim.js";
+import { gameSource } from "./_projects.js";
 
 const gb = getProfile("gb");
 
-const PONG = readFileSync(fileURLToPath(new URL("../fixtures/pong.dmt", import.meta.url)), "utf8");
+const PONG = gameSource("pong");
 
 /** Build a simulator from source, defaulting to the Game Boy profile. */
 function sim(source: string, profile = gb): Sim {

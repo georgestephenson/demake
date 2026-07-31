@@ -21,6 +21,8 @@ import { CORE_VERSION } from "@demake/core";
 
 import { runArrange, runRender, runSfx } from "./commands/audio.js";
 import { runBuild } from "./commands/build.js";
+import { runCheck } from "./commands/check.js";
+import { runInit } from "./commands/init.js";
 import { runConsoles } from "./commands/consoles.js";
 import { runGen } from "./commands/gen.js";
 import { runInspect } from "./commands/inspect.js";
@@ -99,6 +101,10 @@ export async function run(argv: readonly string[], env: CliEnv): Promise<ExitCod
         return await runGen(env, parsed.values, parsed.positionals);
       case "build":
         return await runBuild(env, parsed.values, parsed.positionals);
+      case "check":
+        return runCheck(env, parsed.values, parsed.positionals);
+      case "init":
+        return runInit(env, parsed.values, parsed.positionals);
       case "arrange":
         return await runArrange(env, parsed.values, parsed.positionals);
       case "sfx":

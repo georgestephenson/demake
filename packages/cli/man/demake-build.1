@@ -1,10 +1,10 @@
-.TH DEMAKE\-BUILD 1 "" "" "Build a Demotic game (.dmt) into a playable ROM"
+.TH DEMAKE\-BUILD 1 "" "" "Build a Demotic project or .dmt into a playable ROM"
 .SH NAME
-demake-build \- Build a Demotic game (.dmt) into a playable ROM
+demake-build \- Build a Demotic project or .dmt into a playable ROM
 .SH SYNOPSIS
 \fBdemake build\fR [\fIoptions\fR] [\fIinput\fR]
 .SH DESCRIPTION
-Build a Demotic game (.dmt) into a playable ROM.
+Build a Demotic project or .dmt into a playable ROM.
 .SH OPTIONS
 .TP
 \fB\-j\fR, \fB\-\-jobs\fR \fI<n>\fR
@@ -37,6 +37,10 @@ Suppress warnings.
 \fB\-f\fR, \fB\-\-force\fR
 Overwrite an existing output file.
 .SH EXAMPLES
+.PP
+demake build ./pong
+.br
+a project folder: src/, art/, music/, sound/
 .PP
 demake build pong.dmt \-o pong.gb
 .br

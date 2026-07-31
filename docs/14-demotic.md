@@ -242,10 +242,33 @@ failing. **One statement per line, no nesting.** Declaration order is irrelevant
 `loop play` may precede `scene play`, and an instance may name a class declared
 later.
 
+**Order-free is about resolution, not about sequence**, and the distinction is
+worth stating because a tool that reordered lines would get it wrong. Nothing has
+to be declared before it is named — but the order `create` statements appear in
+*is* the order entities exist in: an instance's id is its position
+(`compile.ts`), which decides what is drawn over what, which sprite the hardware
+drops first past its per-scanline budget, and the order entities appear in a
+trace. Effects are indexed in first-mention order for the same reason. So moving
+a `create` line is an edit under doc 09's stability rule, not a tidy-up, and
+[doc 19](19-projects.md) §Dragging is an edit is where that lands on a UI.
+
 Flatness is not stylistic. It buys total error recovery: a malformed statement
 fails on its own line and every other statement still parses, so one pass reports
 *every* problem in the file. That is the property that makes the language pleasant
 to generate and patch programmatically.
+
+**A declaration says as little as possible; the compiler does the work.** That is
+the through-line of every decision in this document, and it is worth naming
+because it is what the language trades away ceremony *for*. `width 1 cell` does
+not say how many pixels, because the console does. `sprite ball` does not say
+which file, because exactly one of the project's art files is called that
+([doc 19](19-projects.md) §The rule) — and where two are, the compiler says so
+with a line number instead of picking. `music theme` names no channel, no
+register and no chip. Nothing in a `.dmt` is written twice, and nothing is written
+that something downstream can work out; where that is genuinely impossible the
+answer is a diagnostic naming the choice, never a guess and never a required
+ceremony imposed on every other line to pre-empt a case that usually does not
+arise.
 
 ### Statements
 
@@ -681,6 +704,19 @@ Two resolutions remove all quoting ceremony:
 - `(scene) as gameover` — a bare name; because the `scene` target is scene-typed, it
   resolves to a scene rather than an expression.
 
+Asset-typed is also what makes the *file* half of it short. Because the statement
+says which kind of file it wants, the extension carries no information the
+compiler needs — so `sprite ball` is legal, and so is `music theme`. **A reference
+is the shortest name that identifies one file**: a bare stem where that is enough,
+a name with its extension where two art files share a stem, and as much leading
+path as it takes where two directories hold the same name. Two files answering to
+the same reference is `E_ASSET_AMBIGUOUS`, naming both and the strings that
+separate them; one file answering is the file; none is the missing-asset path,
+which reports and falls back rather than refusing to build. Given no list of the
+project's files — a `.dmt` on stdin, or one compiled on its own — a reference is
+simply itself and nothing is ambiguous. [Doc 19](19-projects.md) §The rule has the
+matching rules and the reasoning.
+
 ## The example library
 
 Pong was never enough evidence: two movers, one collision shape, no removal. The
@@ -1053,12 +1089,18 @@ Named rather than hidden, in rough order of how much they matter.
   no second scroll plane. Enough for the examples; not enough for a game that
   wants the view ahead of the player.
 - **Single file.** No `include`; large games will want one.
+  [Doc 19](19-projects.md) §Splitting a game states the two shapes it could
+  take — every `.dmt` in a project's `src/` concatenated, or an explicit
+  `import` — with the argument that the example library does not yet ask for
+  either (96 lines is the largest game). It is a language change, so it waits on
+  the maintainer rather than on a plan.
 
 ## Where the rest of it lives
 
 | Concern | Document |
 |---|---|
 | The build manifest, art binding, ROM headers | [15 — Demakefile](15-demakefile.md) |
+| The project folder, and how a bare asset name finds its file | [19 — Projects](19-projects.md) |
 | `build` / `run` / `check` / `trace` / `init` / `fmt` | [05 — CLI](05-cli-spec.md) |
 | Runtime artifacts and per-family assembly | [06 — Codegen](06-codegen-spec.md) |
 | The Demotic section of the web app | [07 — Web App](07-web-app.md) |

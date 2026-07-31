@@ -30,7 +30,9 @@ import {
   toRenderOptions,
   wavCommand,
 } from "../lib/audio-options.js";
-import { DEMO_EFFECTS } from "../lib/demo-audio.js";
+import { filesOfKind } from "../lib/project.js";
+import { fileHash } from "../lib/route.js";
+import type { EditorProps } from "../site.js";
 import { toPlayable } from "../lib/audio-player.js";
 import { createAudioEngine } from "../worker/audio-client.js";
 import { EngineError } from "../worker/client.js";
@@ -38,7 +40,7 @@ import type { AudioConsoleInfo, SfxOptionsUi, SfxPayload } from "../worker/audio
 
 const DEBOUNCE_MS = 200;
 
-export function SoundDemaker() {
+export function SoundDemaker({ project, path }: EditorProps) {
   const engine = useMemo(() => createAudioEngine(), []);
   const [consoleList, setConsoleList] = useState<AudioConsoleInfo[]>([]);
   const [options, setOptions] = useState<SfxOptionsUi>(() => ({ ...DEFAULT_SFX }));
@@ -53,13 +55,14 @@ export function SoundDemaker() {
     void engine.consoles().then(setConsoleList);
   }, [engine]);
 
+  // The open project file is the input (doc 19 §The shell), and with none named
+  // the project's first effect — a sound page with nothing in it has nothing to say.
   useEffect(() => {
-    const first = DEMO_EFFECTS[0];
-    if (!first) return;
-    void fetch(first.url)
-      .then((response) => response.arrayBuffer())
-      .then((bytes) => setSource({ name: first.name, bytes: new Uint8Array(bytes) }));
-  }, []);
+    const wanted = path ?? filesOfKind(project, "sound")[0];
+    if (wanted === undefined) return;
+    const bytes = project.files.get(wanted)?.bytes;
+    if (bytes) setSource({ name: wanted, bytes });
+  }, [project, path]);
 
   const convert = useCallback(
     async (input: { name: string; bytes: Uint8Array }, current: SfxOptionsUi) => {
@@ -104,7 +107,10 @@ export function SoundDemaker() {
       <AudioInputPane
         accept=".wav,audio/wav,audio/x-wav"
         prompt="Drop a WAV file here, or pick one."
-        demos={DEMO_EFFECTS}
+        demos={filesOfKind(project, "sound").map((one) => ({ name: one, note: one }))}
+        onPick={(one) => {
+          location.hash = fileHash(one);
+        }}
         demoLabel="Load effect"
         sourceName={source?.name ?? null}
         onSource={(name, bytes) => {

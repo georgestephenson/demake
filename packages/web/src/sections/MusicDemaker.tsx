@@ -30,7 +30,9 @@ import {
   toRenderOptions,
   wavCommand,
 } from "../lib/audio-options.js";
-import { DEMO_TRACKS } from "../lib/demo-audio.js";
+import { filesOfKind } from "../lib/project.js";
+import { fileHash } from "../lib/route.js";
+import type { EditorProps } from "../site.js";
 import { toPlayable } from "../lib/audio-player.js";
 import { createAudioEngine } from "../worker/audio-client.js";
 import { EngineError } from "../worker/client.js";
@@ -53,7 +55,7 @@ const ROLES: readonly PartRole[] = [
   "fx",
 ] as const;
 
-export function MusicDemaker() {
+export function MusicDemaker({ project, path }: EditorProps) {
   const engine = useMemo(() => createAudioEngine(), []);
   const [consoleList, setConsoleList] = useState<AudioConsoleInfo[]>([]);
   const [options, setOptions] = useState<ArrangeOptionsUi>(() => ({ ...DEFAULT_ARRANGE }));
@@ -72,14 +74,14 @@ export function MusicDemaker() {
     void engine.consoles().then(setConsoleList);
   }, [engine]);
 
-  // The section demos itself: an empty music page has nothing to say.
+  // The open project file is the input (doc 19 §The shell), and with none named
+  // the project's first track — a music page with nothing in it has nothing to say.
   useEffect(() => {
-    const first = DEMO_TRACKS[0];
-    if (!first) return;
-    void fetch(first.url)
-      .then((response) => response.arrayBuffer())
-      .then((bytes) => setSource({ name: first.name, bytes: new Uint8Array(bytes) }));
-  }, []);
+    const wanted = path ?? filesOfKind(project, "music")[0];
+    if (wanted === undefined) return;
+    const bytes = project.files.get(wanted)?.bytes;
+    if (bytes) setSource({ name: wanted, bytes });
+  }, [project, path]);
 
   const convert = useCallback(
     async (input: { name: string; bytes: Uint8Array }, current: ArrangeOptionsUi) => {
@@ -137,7 +139,10 @@ export function MusicDemaker() {
       <AudioInputPane
         accept=".mid,.midi,audio/midi"
         prompt="Drop a MIDI file here, or pick one."
-        demos={DEMO_TRACKS}
+        demos={filesOfKind(project, "music").map((one) => ({ name: one, note: one }))}
+        onPick={(one) => {
+          location.hash = fileHash(one);
+        }}
         demoLabel="Load track"
         sourceName={source?.name ?? null}
         onSource={(name, bytes) => setSource({ name, bytes })}

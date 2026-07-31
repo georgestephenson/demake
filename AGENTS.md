@@ -463,22 +463,28 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
   src/dsp.ts         deterministic FFT/resampler/pitch, all on core's kernels
   src/manifest.ts    the --emit-manifest sidecar: one shape, two callers (CLI, web)
   src/render.ts      ChipScript → PCM; the only way anything makes sound
-packages/web/        the site (doc 07): one shell over five sections, all but the
-                     art demaker code-split
+packages/web/        the site (doc 07): a project workspace over six editors, all
+                     but the art demaker code-split (doc 19)
   src/worker/        core.worker.ts (images *and* game cartridges) and
                      audio.worker.ts (music + sound): the only places the page
                      touches an engine, and the only places @demake/core is
                      bundled — a second copy is what the JS budget notices. Extra
                      instances of core.worker are the pool lanes, which is why
                      they cost nothing to download
-  src/sections/      the lazy sections; art's panes live in src/components/
+  src/sections/      the lazy sections; art's panes live in src/components/.
+                     LevelEditor.tsx is the one that edits a *file* rather than
+                     demaking one, over lib/dmtl.ts
   src/players/       one module per emulator core, reached through `bootPlayer`'s
                      `import()`, so a visitor downloads the console they are
                      playing rather than all five. player.ts is the part that is
                      safe to import eagerly: an interface and each console's
                      framebuffer size, pinned against the cores' own constants
   src/lib/           option records ⇄ engine options ⇄ equivalent command line,
-                     the bundled demo library, and audio-player.ts (playback only)
+                     the bundled example projects, and audio-player.ts (playback
+                     only). project.ts is the folder the whole page is about;
+                     dmtl.ts edits a level as *text* (never a parsed model, so a
+                     file the editor did not change comes back byte-identical);
+                     tiles.ts draws a tile, for the two panes that draw one
 tools/eslint-rules/  custom ESLint rules: platform-purity + determinism
 tools/ci/            CI guards: E2E prerequisites, web JS budget, and
                      affected.mjs — which gates a change can break, read off the
@@ -898,7 +904,7 @@ the artefact. What is not obvious the first time:
   own rules — not which part of an interpreter is slow. Every optimisation so far
   came from that histogram and none from intuition.
 - **The conformance suite is the safety net, so use it.** `pnpm test
-packages/demotic/test/rom.test.ts` builds all seven fixture games and diffs raw
+packages/demotic/test/rom.test.ts` builds every fixture game and diffs raw
   16.16 state for hundreds of ticks; a change that alters behaviour fails in
   seconds, naming the tick. `art.test.ts` is its counterpart for the things a
   trace cannot see, because art is not state.

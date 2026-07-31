@@ -5,12 +5,12 @@
 -- `lava` is not solid, so it is fallen into rather than stopped at. That is the
 -- same arrangement `spikes` has, and it is what makes a causeway a causeway.
 
-tile #  wall     solid  quest.keepwall.svg
-tile o  post     solid  quest.stoneblock.svg
-tile _  bedrock  solid  quest.keepstone.svg
-tile =  ledge    solid  quest.keepfloor.svg
-tile ~  lava            quest.lava.svg
-tile .  air             quest.gloom.svg
+tile #  wall     solid  keepwall.svg
+tile o  post     solid  stoneblock.svg
+tile _  bedrock  solid  keepstone.svg
+tile =  ledge    solid  keepfloor.svg
+tile ~  lava            lava.svg
+tile .  air             gloom.svg
 
 map
 ########################################################

@@ -56,6 +56,7 @@ import { MD_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
 import { ART_TILES, bindMdArt } from "./md-art.js";
 import { MdCtx } from "./md/ctx.js";
 import { BANK_TILES, CODE_ORIGIN, emitProgram, STACK_TOP, type MdEmitOptions } from "./md/emit.js";
+import type { ArtSettings } from "./settings.js";
 
 /** Bytes a Demotic Mega Drive cartridge holds. */
 export const ROM_SIZE = MD_ROM_SIZE;
@@ -112,8 +113,9 @@ export const mdBackend: Backend<MdEmitOptions, MdAudio> = {
     program: Program,
     assets: AssetBytes,
     executor?: Executor,
+    settings?: ArtSettings,
   ): Promise<BoundAssets<MdEmitOptions>> {
-    const art = await bindMdArt(program, assets, executor);
+    const art = await bindMdArt(program, assets, executor, settings);
     return { emit: art.options, tiles: art.tiles, missing: art.missing };
   },
 

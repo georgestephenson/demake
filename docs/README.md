@@ -32,6 +32,7 @@ that an engineer (human or agent) can pick up a section and implement it.
 | 16 | [Audio Engine](16-audio-engine.md) | Sound-chip matrix, the `Score`/`ChipScript` representations, chip synthesis, and the render contract: hearing exactly what the hardware will play |
 | 17 | [Music Demaker](17-music-demaker.md) | `arrange`: any track → chip music. Ingest, transcription, arrangement, timbre fitting, tempo, the judge |
 | 18 | [Sound Demaker](18-sound-demaker.md) | `sfx`: any sound → a chip effect, and how effects live alongside music |
+| 19 | [Projects](19-projects.md) | The project folder: how a game's sources, its levels and its Demakefile sit together, and the workspace the web app becomes around them |
 
 ## Provenance
 

@@ -39,8 +39,6 @@
  * `pnpm test` can do on every change.
  */
 
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -86,9 +84,7 @@ import { Sim } from "../src/sim.js";
 import { tape, trace } from "../src/trace.js";
 
 import { romTrace } from "./_rom-harness.js";
-
-const fixtures = join(import.meta.dirname, "..", "fixtures");
-const games = join(fixtures, "games");
+import { EXAMPLES, exampleProject, gameSource, projectAssets } from "./_projects.js";
 
 /** The five things this battery needs of a console, and nothing else. */
 interface Machine {
@@ -121,7 +117,7 @@ interface Target {
   /** The chip's master clock, which the stream sink is rendered against. */
   clockHz: number;
   /** Compile and build the cartridge, and demake its audio again beside it. */
-  build(source: string, dir: string): { built: BuiltRom; bound: BoundAudio<Driver> };
+  build(source: string, project: string): { built: BuiltRom; bound: BoundAudio<Driver> };
   /**
    * Where a driver tick begins, as a program counter.
    *
@@ -176,23 +172,6 @@ function cartridgeTick(built: BuiltRom): number {
 }
 
 /** Every file in a directory, as the bytes a build is handed. */
-function assetsIn(dir: string): Map<string, Uint8Array> {
-  const assets = new Map<string, Uint8Array>();
-  for (const name of readdirSync(dir, { withFileTypes: true })) {
-    if (!name.isFile()) continue;
-    assets.set(name.name, new Uint8Array(readFileSync(join(dir, name.name))));
-  }
-  return assets;
-}
-
-function levelsIn(dir: string): Record<string, string> {
-  const levels: Record<string, string> = {};
-  for (const name of readdirSync(dir)) {
-    if (name.endsWith(".dmtl")) levels[name] = readFileSync(join(dir, name), "utf8");
-  }
-  return levels;
-}
-
 /**
  * The consoles, and the whole of what differs between them.
  *
@@ -211,9 +190,13 @@ const TARGETS: readonly Target[] = [
     ratio: 1,
     tag: () => gbChannelOf,
     tickAddress: cartridgeTick,
-    async build(source, dir) {
-      const program = compile(source, { profile: getProfile("gb"), levels: levelsIn(dir) });
-      const assets = assetsIn(dir);
+    async build(source, project) {
+      const { files, levels, assets } = exampleProject(project);
+      const program = compile(source, {
+        profile: getProfile("gb"),
+        files,
+        levels,
+      });
       const built = await buildGbRom(program, { assets });
       const bound = await bindAudio(program, assets, {
         build: (tracks, effects) =>
@@ -242,9 +225,13 @@ const TARGETS: readonly Target[] = [
     ratio: 1,
     tag: () => gbChannelOf,
     tickAddress: cartridgeTick,
-    async build(source, dir) {
-      const program = compile(source, { profile: getProfile("megaduck"), levels: levelsIn(dir) });
-      const assets = assetsIn(dir);
+    async build(source, project) {
+      const { files, levels, assets } = exampleProject(project);
+      const program = compile(source, {
+        profile: getProfile("megaduck"),
+        files,
+        levels,
+      });
       const built = await buildGbRom(program, { assets });
       const bound = await bindAudio(program, assets, {
         build: (tracks, effects) =>
@@ -270,9 +257,13 @@ const TARGETS: readonly Target[] = [
     ratio: 0.5,
     tag: () => nesChannelOf,
     tickAddress: cartridgeTick,
-    async build(source, dir) {
-      const program = compile(source, { profile: getProfile("nes"), levels: levelsIn(dir) });
-      const assets = assetsIn(dir);
+    async build(source, project) {
+      const { files, levels, assets } = exampleProject(project);
+      const program = compile(source, {
+        profile: getProfile("nes"),
+        files,
+        levels,
+      });
       const built = await buildNesRom(program, { assets });
       // Page zero the allocator set aside, which is the address the cartridge
       // itself was built against — asking the layout is how the two stay one.
@@ -301,9 +292,13 @@ const TARGETS: readonly Target[] = [
     ratio: 0.5,
     tag: psgChannelTag,
     tickAddress: cartridgeTick,
-    async build(source, dir) {
-      const program = compile(source, { profile: getProfile("sms"), levels: levelsIn(dir) });
-      const assets = assetsIn(dir);
+    async build(source, project) {
+      const { files, levels, assets } = exampleProject(project);
+      const program = compile(source, {
+        profile: getProfile("sms"),
+        files,
+        levels,
+      });
       const built = await buildSmsRom(program, { assets });
       // Work RAM the allocator set aside, which is the address the cartridge
       // itself was built against — asking the layout is how the two stay one.
@@ -337,9 +332,13 @@ const TARGETS: readonly Target[] = [
     // The driver is a second program on a second processor, so the label is in
     // *its* symbol table and not in the cartridge's.
     tickAddress: (_built, bound) => (bound.driver as Driver).symbols?.get("AudioTick") as number,
-    async build(source, dir) {
-      const program = compile(source, { profile: getProfile("snes"), levels: levelsIn(dir) });
-      const assets = assetsIn(dir);
+    async build(source, project) {
+      const { files, levels, assets } = exampleProject(project);
+      const program = compile(source, {
+        profile: getProfile("snes"),
+        files,
+        levels,
+      });
       const built = await buildSnesRom(program, { assets });
       const bound = await bindAudio(program, assets, {
         build: (tracks, effects) => buildSpcGameAudio({ tracks, effects: effects as GameEffect[] }),
@@ -375,9 +374,13 @@ const TARGETS: readonly Target[] = [
     // only the stealable ones because its field is four bits, and nothing here
     // is packed — this only has to give one voice one number.
     tag: () => mdChannelTag([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])(),
-    async build(source, dir) {
-      const program = compile(source, { profile: getProfile("md"), levels: levelsIn(dir) });
-      const assets = assetsIn(dir);
+    async build(source, project) {
+      const { files, levels, assets } = exampleProject(project);
+      const program = compile(source, {
+        profile: getProfile("md"),
+        files,
+        levels,
+      });
       const built = await buildMdRom(program, { assets });
       // Work RAM the allocator set aside, which is the address the cartridge
       // itself was built against — asking the layout is how the two stay one.
@@ -443,11 +446,11 @@ function wrap(machine: Gameboy | Nes | Sms | Snes | Md): Machine {
  */
 const builds = new Map<string, ReturnType<Target["build"]>>();
 
-function build(target: Target, source: string, dir = fixtures) {
-  const key = `${target.id}\u0000${dir}\u0000${source}`;
+function build(target: Target, source: string, project = "pong") {
+  const key = `${target.id}\u0000${project}\u0000${source}`;
   const seen = builds.get(key);
   if (seen) return seen;
-  const made = target.build(source, dir);
+  const made = target.build(source, project);
   builds.set(key, made);
   return made;
 }
@@ -742,9 +745,13 @@ describe("a Game Gear's stereo latch, which two streams share", async () => {
   /** The stereo latch, as `@demake/chip` and a `ChipScript` number it. */
   const STEREO = 0x06;
 
-  async function buildGg(source: string) {
-    const program = compile(source, { profile: getProfile("gg") });
-    const assets = assetsIn(fixtures);
+  async function buildGg(source: string, project = "pong") {
+    // The project supplies the file list as well as the bytes, exactly as every
+    // other target's build does: a source that says `music rally.mid` resolves
+    // against the folder, and without the list the reference stands as written
+    // and the binding finds no track at all (doc 19 §The rule).
+    const { files, levels, assets } = exampleProject(project);
+    const program = compile(source, { profile: getProfile("gg"), files, levels });
     const built = await buildSmsRom(program, { assets });
     const state = built.layout.audio as number;
     const bound = await bindAudio(program, assets, {
@@ -759,7 +766,7 @@ describe("a Game Gear's stereo latch, which two streams share", async () => {
     id: "gg",
     name: "Game Gear",
     mergeReg: STEREO,
-    build: (source) => buildGg(source),
+    build: (source, project) => buildGg(source, project),
   };
 
   it("performs the music tick for tick, merge writes and all", async () => {
@@ -832,17 +839,17 @@ describe("audio in the trace", async () => {
     // A build with no audio bytes still records the request, so the conformance
     // suite can run without loading a megabyte of fixtures and still be
     // comparing the same game.
-    const source = readFileSync(join(fixtures, "pong.dmt"), "utf8");
+    const source = gameSource("pong");
     const program = compile(source, { profile: getProfile("gb") });
     const frames = tape("1:a,90:,90:left,120:right");
     const silent = await romTrace(program, frames);
-    const sounding = await romTrace(program, frames, { assets: assetsIn(fixtures) });
+    const sounding = await romTrace(program, frames, { assets: projectAssets("pong") });
     expect(sounding).toBe(silent);
     expect(silent).toBe(trace(new Sim(program), frames));
   });
 
   it("names the track a scene asks for, and -1 for a silent one", () => {
-    const source = readFileSync(join(fixtures, "pong.dmt"), "utf8");
+    const source = gameSource("pong");
     const program = compile(source, { profile: getProfile("gb") });
     const lines = trace(new Sim(program), tape("2:,3:a,3:")).split("\n");
     // The title screen is silent; the play scene asks for track 0.
@@ -852,12 +859,14 @@ describe("audio in the trace", async () => {
 });
 
 describe("the example library", async () => {
-  const cases = [
-    ["pong.dmt", fixtures],
-    ...["breakout", "platformer", "dodger", "shooter", "caves", "runner"].map(
-      (name) => [`${name}.dmt`, games] as const,
-    ),
-  ] as const;
+  /**
+   * `quest` is not swept here, and the reason is the cartridge rather than the
+   * audio: three levels, a boss and a secret room do not fit a mapper-less 32 KiB
+   * on any 8-bit console in the set (doc 13 §Banked cartridges). The one machine
+   * with the room is the Mega Drive, where `rom.test.ts` runs it — and a game
+   * that cannot be built cannot have its register stream compared.
+   */
+  const cases = EXAMPLES.filter((name) => name !== "quest");
 
   /**
    * The fixtures whose cartridges cannot hold their audio.
@@ -944,13 +953,13 @@ describe("the example library", async () => {
   };
 
   for (const target of TARGETS) {
-    for (const [file, dir] of cases) {
+    for (const file of cases) {
       if (OVER_BUDGET[target.id]?.includes(file)) continue;
       if (SWEEP[target.id] !== undefined && !SWEEP[target.id]?.includes(file)) continue;
       it(
         `${file} fits in a ${target.name} cartridge with its music and effects`,
         async () => {
-          const { built } = await build(target, readFileSync(join(dir, file), "utf8"), dir);
+          const { built } = await build(target, gameSource(file), file);
           expect(built.stats.missingAudio).toEqual([]);
           expect(built.stats.audio?.effects ?? 0).toBeGreaterThan(0);
           // What the audio cost, and *that* it was measured at all. A driver is
@@ -974,8 +983,9 @@ describe("the example library", async () => {
       it(
         `${file} does not fit in a ${target.name} cartridge with its music`,
         async () => {
-          const source = readFileSync(join(games, file), "utf8");
-          await expect(build(target, source, games)).rejects.toThrowError(/E_GAME_TOO_LARGE|holds/);
+          await expect(build(target, gameSource(file), file)).rejects.toThrowError(
+            /E_GAME_TOO_LARGE|holds/,
+          );
         },
         TIMEOUT[target.id] ?? BUILD_TIMEOUT,
       );
@@ -1000,9 +1010,9 @@ describe("the example library", async () => {
   // pipeline. The others have four kilobytes and more to spare, and
   // `rom.test.ts` builds every fixture for `gbc` regardless.
   it("the shooter, the tightest cartridge in the library, still fits in colour", async () => {
-    const source = readFileSync(join(games, "shooter.dmt"), "utf8");
-    const program = compile(source, { profile: getProfile("gbc"), levels: levelsIn(games) });
-    const built = await buildGbRom(program, { assets: assetsIn(games) });
+    const { source, files, levels, assets } = exampleProject("shooter");
+    const program = compile(source, { profile: getProfile("gbc"), files, levels });
+    const built = await buildGbRom(program, { assets });
     expect(built.stats.missingAudio).toEqual([]);
     expect(built.stats.free).toBeGreaterThan(512);
   }, 120_000);

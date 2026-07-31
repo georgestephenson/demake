@@ -22,8 +22,6 @@
  * that does not fit needs 118 (doc 13 §Banked cartridges).
  */
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { SMS_HEADER_OFFSET, SMS_HEADER_SIZE } from "@demake/core";
@@ -34,9 +32,8 @@ import { getProfile } from "../src/profiles.js";
 import { Sim } from "../src/sim.js";
 import { tape, trace } from "../src/trace.js";
 
+import { projectBytes } from "./_projects.js";
 import { romTrace, smsTarget } from "./_rom-harness.js";
-
-const fixtures = join(import.meta.dirname, "..", "fixtures", "games");
 
 /**
  * A game whose code ends just below the header and whose data pushes it over.
@@ -50,7 +47,7 @@ function source(rocks: number): string {
     "start play",
     "scene play",
     "create object hero (width 1 cell, height 2 cells, speed 11, sprite hero.svg)",
-    "create object rock (width 1 cell, height 1 cell, speed 7, sprite quest.crawler.svg)",
+    "create object rock (width 1 cell, height 1 cell, speed 7, sprite crawler.svg)",
     "create hero p in play (x 2, y 2)",
     "create number hits in play (value 0, x 1, y 1)",
     "control p left (xdirection -1) on hold",
@@ -66,12 +63,13 @@ function source(rocks: number): string {
   return lines.join("\n");
 }
 
-const assets = new Map<string, Uint8Array>(
-  ["hero.svg", "quest.crawler.svg"].map((name) => [
-    name,
-    new Uint8Array(readFileSync(join(fixtures, name))),
-  ]),
-);
+// Two pictures out of the example projects, named the way the generated source
+// above names them: the art is incidental here, and what is under test is the
+// cartridge the size of this program needs.
+const assets = new Map<string, Uint8Array>([
+  ["hero.svg", projectBytes("caves", "art/hero.svg")],
+  ["crawler.svg", projectBytes("quest", "art/crawler.svg")],
+]);
 
 const SCRIPT = "20:,30:right,40:left,60:right,30:";
 

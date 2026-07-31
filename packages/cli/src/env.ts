@@ -13,8 +13,10 @@ import {
   closeSync,
   constants as fsConstants,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   openSync,
+  readdirSync,
   readFileSync,
   readSync,
   renameSync,
@@ -23,7 +25,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
@@ -61,6 +63,17 @@ export interface CliEnv {
   removeDir(path: string): void;
   /** Absolute path to the repo's `rom-harness/` dir, or `null` if not found. */
   harnessDir(): string | null;
+  /**
+   * Every file under a directory, as `/`-separated paths relative to it — or
+   * `null` when the path is not a directory.
+   *
+   * What makes `demake build <dir>` possible (doc 19 §The CLI keeps up). The walk
+   * is here rather than in `@demake/demotic` because the engine is platform-pure;
+   * what it hands the engine is a list of names. Results are **sorted**, because a
+   * build whose output depended on readdir order would be a build that depended
+   * on a filesystem.
+   */
+  listFiles(path: string): readonly string[] | null;
 }
 
 /** A `CliEnv` backed by Node's fs/process. */
@@ -76,7 +89,13 @@ export function makeNodeEnv(): CliEnv {
         (err as { code?: string }).code = "EEXIST";
         throw err;
       }
-      const tmp = join(dirname(path) || ".", `.demake-${process.pid}-${basenameSafe(path)}.tmp`);
+      // The directory first: a Demakefile's `out` nests artifacts by console
+      // (doc 15 §`target <name>`), so `build/gb/pong.gb` names two directories
+      // that may not exist yet. The in-memory test harness has no directories at
+      // all, which is exactly why this had to be found by running the real thing.
+      const folder = dirname(path) || ".";
+      mkdirSync(folder, { recursive: true });
+      const tmp = join(folder, `.demake-${process.pid}-${basenameSafe(path)}.tmp`);
       writeFileSync(tmp, bytes);
       try {
         renameSync(tmp, path);
@@ -114,6 +133,22 @@ export function makeNodeEnv(): CliEnv {
       }
     },
     harnessDir: () => findHarnessDir(),
+    listFiles: (path) => {
+      let entries;
+      try {
+        entries = readdirSync(path, { withFileTypes: true, recursive: true });
+      } catch {
+        return null;
+      }
+      const found: string[] = [];
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        // `parentPath` is absolute; a project's paths are relative to its root.
+        const from = relative(path, join(entry.parentPath, entry.name));
+        found.push(from.split(sep).join("/"));
+      }
+      return found.sort();
+    },
   };
 }
 

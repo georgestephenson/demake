@@ -64,11 +64,15 @@ export interface LevelFile {
   diagnostics: readonly Diagnostic[];
 }
 
-/** Flags a legend entry may carry. */
+/**
+ * Flags a legend entry may carry.
+ *
+ * A closed set, and it is what separates a flag from art in a legend row: an
+ * extension cannot do that job, because extensions are optional in a reference
+ * (doc 19 §The rule) and `brick` is as good a name for a tile's art as
+ * `brick.svg`.
+ */
 const FLAGS = new Set(["solid"]);
-
-/** Extensions that mark a word as art rather than a flag. */
-const ART = /\.(svg|png|gif|bmp|jpe?g|webp)$/i;
 
 /**
  * The empty cell: no tile, nothing drawn, nothing solid.
@@ -167,14 +171,20 @@ export function parseLevel(source: string): LevelFile {
       const lower = word.toLowerCase();
       if (FLAGS.has(lower)) {
         spec.solid = spec.solid || lower === "solid";
-      } else if (ART.test(word)) {
+      } else if (spec.art === undefined) {
+        // Anything that is not a flag is art. It cannot be an extension test:
+        // extensions are optional in a reference (doc 19 §The rule), so
+        // `brick.svg` and `brick` are the same tile's art. What keeps a
+        // misspelled flag from becoming art silently is the arm below — a
+        // legend row with two art words is the shape `tile # wall soild brick`
+        // has, and it is now an error rather than last-one-wins.
         spec.art = word;
       } else {
         fail(
           line,
           "E_LEVEL_SYNTAX",
-          `'${word}' is not a flag or a piece of art`,
-          `flags are: ${[...FLAGS].join(", ")}`,
+          `tile '${spec.char}' names two pieces of art, '${spec.art}' and '${word}'`,
+          `a tile draws one thing; flags are: ${[...FLAGS].join(", ")}`,
         );
       }
     }
