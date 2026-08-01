@@ -36,6 +36,16 @@ test("a bare URL opens the project's own game", async ({ page }) => {
   await expect(page.locator(".section-link")).toHaveCount(0);
 });
 
+test("a hash with nothing in it is a bare URL too", async ({ page }) => {
+  // `#` rather than no hash at all, which is what a `href="#"` and a stripped
+  // query leave behind — and what a spec building a hash out of only-default
+  // options produces. That is not hypothetical: `determinism.spec.ts` built
+  // exactly this string for its default case and landed on a game where it
+  // wanted the art demaker, and no test said so until CI did.
+  await page.goto("/#");
+  await expect(page.getByTestId("open-game")).toHaveText("pong.dmt");
+});
+
 test("the title bar's tagline follows the file that is open", async ({ page }) => {
   await page.goto("/");
   await page.getByTestId("explorer-file").filter({ hasText: "ball.svg" }).first().click();
@@ -73,6 +83,12 @@ test("the menu bar runs its commands, and its keys do the same thing", async ({ 
 
 test("go to file opens a file by typing at it", async ({ page }) => {
   await page.goto("/");
+  // Wait for the app before pressing a key at it. `goto` resolves on the
+  // document, and the accelerators are bound by an effect after the first
+  // render — so on a loaded CI runner the keystroke arrived first, nothing
+  // listened, and the browser's own print dialog got it instead. Every other
+  // test here starts with a click, which auto-waits and hid this.
+  await expect(page.getByTestId("open-game")).toBeVisible();
   await page.keyboard.press(`${MOD}+p`);
   await expect(page.getByTestId("quick-open")).toBeVisible();
   await page.keyboard.type("rally");
