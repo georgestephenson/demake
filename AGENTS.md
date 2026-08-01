@@ -2057,6 +2057,16 @@ you are writing the wrong one of the two.
   names the two cases the language has no kind for (`.dmt`, and text), and is
   read by the explorer, the router and the lazy-import switch. A component that
   asked "what kind of file is this?" for itself would be the second answer.
+- **A project opens in two halves, so late-arriving bytes must be _merged_.**
+  `exampleSkeleton` gives the explorer every file on the first frame with the
+  binaries empty, and the fetch fills those placeholders in — it must never
+  assign a whole project, which is what it used to do: the arriving bytes came
+  wrapped in a pristine skeleton, so a file created, renamed, deleted or typed
+  into before the art landed was silently discarded. A placeholder is an entry
+  with _no bytes_, and filling only those is what makes the fetch safe to land
+  late. The race is invisible on a fast machine and reliable on a loaded one, so
+  it is pinned in `packages/web/test/files.test.ts` rather than in the browser
+  suite, which passed it four times and failed the fifth.
 - **A blob URL needs a media type or an `<img>` shows nothing.** A browser
   believes a blob's `type` and does not sniff for SVG, so `mediaTypeOf` is one
   table in `lib/project.ts` with two callers — the explorer's pictures and the

@@ -109,22 +109,45 @@ export function exampleBinaryPaths(name: string): readonly string[] {
 }
 
 /**
- * Fetch an example's art and audio into the project.
+ * Fetch an example's art and audio.
  *
  * Every file at once rather than on first use: they are a few hundred kilobytes
  * from the same origin, a build needs most of them anyway, and a project whose
  * files appear one at a time would make the explorer flicker.
+ *
+ * **It returns the bytes, not a project**, and that distinction is the whole of
+ * a bug this had. It used to build a fresh {@link exampleSkeleton} and fill it
+ * in, so the caller replaced the open project with a *pristine* one the moment
+ * the fetch landed — discarding anything typed, created, renamed or deleted in
+ * the second or so before it did. On a fast machine the race is invisible; under
+ * load it is a file that vanishes. {@link fillBinaries} is how they are applied.
  */
-export async function loadExample(name: string): Promise<Project> {
-  let project = exampleSkeleton(name);
+export async function loadExampleBinaries(name: string): Promise<Map<string, Uint8Array>> {
   const binaries = urls.get(name);
-  if (!binaries) return project;
+  if (!binaries) return new Map();
   const fetched = await Promise.all(
     [...binaries].map(async ([path, url]) => {
       const response = await fetch(url);
       return [path, new Uint8Array(await response.arrayBuffer())] as const;
     }),
   );
-  for (const [path, bytes] of fetched) project = addFile(project, path, bytes);
-  return project;
+  return new Map(fetched);
+}
+
+/**
+ * Put fetched bytes into the placeholders the skeleton left, and nothing else.
+ *
+ * A placeholder is an entry with no bytes ({@link exampleSkeleton} creates one
+ * per binary so the explorer lists a project's whole contents from the first
+ * frame). Filling only those is what makes the fetch safe to land late: a file
+ * the user has since deleted stays deleted, one they renamed keeps its new name
+ * and its empty placeholder is not resurrected under the old one, and a file
+ * they replaced keeps their bytes.
+ */
+export function fillBinaries(project: Project, binaries: Map<string, Uint8Array>): Project {
+  let filled = project;
+  for (const [path, bytes] of binaries) {
+    if (project.files.get(path)?.bytes.length === 0) filled = addFile(filled, path, bytes);
+  }
+  return filled;
 }

@@ -49,6 +49,15 @@ coloured the day it is added and a file is never coloured differently from how i
 is read. A file the engine has no grammar for is drawn plain rather than
 approximated with a regular expression in the page.
 
+**And an edit made in the first second of a project no longer vanishes.** A
+project opens with its text present and its art still arriving, and when the art
+landed the page swapped in a freshly built copy of the example — discarding
+anything typed, created, renamed or deleted while the fetch was in flight. The
+bytes are filled into the placeholders the skeleton left now, and only into those,
+so a file you deleted stays deleted and one you replaced keeps your bytes. The
+race is invisible on a fast machine and reliable on a loaded one, which is why it
+is checked where it lives rather than in the browser.
+
 **SVGs display in the art demaker again.** Its source pane built a blob URL with
 no media type, and a browser believes a blob's type and does not sniff for SVG —
 so every drawing in every project was a broken image _beside a demade result that

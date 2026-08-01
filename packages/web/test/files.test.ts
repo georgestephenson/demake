@@ -23,11 +23,13 @@ import {
   projectFiles,
   readText,
   removeFile,
+  writeText,
   type Project,
 } from "../src/lib/project.js";
 import { isBareHash, isTextFile, sectionForFile } from "../src/lib/route.js";
 import { filterPaths, subsequence } from "../src/components/QuickOpen.js";
 import { saveToFolder } from "../src/lib/disk.js";
+import { fillBinaries } from "../src/lib/examples.js";
 
 const encoder = new TextEncoder();
 
@@ -260,5 +262,67 @@ describe("saving to a folder", () => {
     });
     await saveToFolder(handle, project(["src/pong.dmt", "a"]));
     expect([...disk.keys()].sort()).toEqual([".git/HEAD", "build/pong.gb", "src/pong.dmt"]);
+  });
+});
+
+/**
+ * Filling an example's art in after the project is already open.
+ *
+ * Here because the failure it guards against is a *race*, and a race is the one
+ * thing a browser test cannot be trusted to catch: the fetch lands in about a
+ * hundred milliseconds on a developer's machine and rather later on a loaded CI
+ * runner, so the bug passed four browser runs and then ate a file on the fifth.
+ * What went wrong was a whole-project swap — the arriving bytes came wrapped in
+ * a freshly built skeleton, and assigning it discarded everything done in the
+ * meantime.
+ */
+describe("filling in an example's binaries", () => {
+  const BINARIES = new Map([
+    ["art/ball.svg", encoder.encode("<svg>real</svg>")],
+    ["music/rally.mid", encoder.encode("MThd-real")],
+  ]);
+
+  /** A project as it opens: text present, every binary an empty placeholder. */
+  const opened = project(
+    ["src/pong.dmt", "start title\n"],
+    ["art/ball.svg", ""],
+    ["music/rally.mid", ""],
+  );
+
+  it("fills the placeholders", () => {
+    const filled = fillBinaries(opened, BINARIES);
+    expect(readText(filled, "art/ball.svg")).toBe("<svg>real</svg>");
+    expect(readText(filled, "music/rally.mid")).toBe("MThd-real");
+  });
+
+  it("keeps a file created while the fetch was in flight", () => {
+    const busy = addFile(opened, "notes/todo.md", encoder.encode("remember the milk"));
+    const filled = fillBinaries(busy, BINARIES);
+    expect(readText(filled, "notes/todo.md")).toBe("remember the milk");
+    expect(readText(filled, "art/ball.svg")).toBe("<svg>real</svg>");
+  });
+
+  it("keeps a rename, and does not resurrect the old name", () => {
+    const busy = moveFile(opened, "art/ball.svg", "art/sphere.svg");
+    const filled = fillBinaries(busy, BINARIES);
+    expect(projectFiles(filled)).toContain("art/sphere.svg");
+    expect(projectFiles(filled)).not.toContain("art/ball.svg");
+  });
+
+  it("keeps a deletion deleted", () => {
+    const busy = removeFile(opened, "music/rally.mid");
+    expect(projectFiles(fillBinaries(busy, BINARIES))).not.toContain("music/rally.mid");
+  });
+
+  it("never overwrites bytes somebody put there", () => {
+    // A dropped-in replacement is not a placeholder, and the fetch must not win
+    // a race against a deliberate act.
+    const busy = addFile(opened, "art/ball.svg", encoder.encode("<svg>mine</svg>"));
+    expect(readText(fillBinaries(busy, BINARIES), "art/ball.svg")).toBe("<svg>mine</svg>");
+  });
+
+  it("leaves a text edit alone", () => {
+    const busy = writeText(opened, "src/pong.dmt", "start play\n");
+    expect(readText(fillBinaries(busy, BINARIES), "src/pong.dmt")).toBe("start play\n");
   });
 });

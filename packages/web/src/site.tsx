@@ -33,7 +33,12 @@ import { App } from "./app.js";
 import { Explorer } from "./components/Explorer.js";
 import { MenuBar, useMenuKeys, type Menu } from "./components/MenuBar.js";
 import { QuickOpen } from "./components/QuickOpen.js";
-import { EXAMPLE_NAMES, exampleSkeleton, loadExample } from "./lib/examples.js";
+import {
+  EXAMPLE_NAMES,
+  exampleSkeleton,
+  fillBinaries,
+  loadExampleBinaries,
+} from "./lib/examples.js";
 import { fileHash, isBareHash, readRoute, sectionHash, type Section } from "./lib/route.js";
 import {
   addFile,
@@ -128,10 +133,19 @@ export function Site() {
   // The art and the audio, fetched once per project. Binary files are URLs in the
   // bundle rather than base64, so this is a handful of same-origin requests the
   // service worker caches like anything else (`examples.ts`).
+  //
+  // The bytes are *filled into* the project rather than replacing it, and that
+  // is load-bearing rather than tidy. This used to swap in a freshly built
+  // skeleton when the fetch landed, which threw away everything done in the
+  // second before it — a file created, a rename, a line typed into the game.
+  // The race is invisible on a fast machine and reliable on a loaded one, which
+  // is exactly the shape of bug that ships.
   useEffect(() => {
     let live = true;
-    void loadExample(project.name).then((loaded) => {
-      if (live) setProject((current) => (current.name === loaded.name ? loaded : current));
+    const name = project.name;
+    void loadExampleBinaries(name).then((binaries) => {
+      if (!live) return;
+      setProject((current) => (current.name === name ? fillBinaries(current, binaries) : current));
     });
     return () => {
       live = false;
