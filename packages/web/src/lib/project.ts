@@ -81,6 +81,58 @@ export function addFile(project: Project, path: string, bytes: Uint8Array): Proj
 }
 
 /**
+ * Move a file, which is also how one is renamed.
+ *
+ * They are the same operation because a project is a flat map from path to
+ * bytes — there are no directories to move between, only names with slashes in
+ * them (doc 19 §The layout: the folder structure is a convention, and nothing
+ * resolves a reference by looking in one). So the explorer offers one gesture
+ * and `art/ball.svg` → `sprites/ball.svg` is a rename like any other.
+ *
+ * Returns the project unchanged when there is nothing at `from`, and refuses to
+ * land on a path something else already occupies: silently replacing a file is
+ * the one outcome nobody can undo.
+ */
+export function moveFile(project: Project, from: string, to: string): Project {
+  const file = project.files.get(from);
+  if (!file || from === to || to === "" || project.files.has(to)) return project;
+  const files = new Map(project.files);
+  files.delete(from);
+  // The URL is keyed to the bytes, not the name, so it survives the move — but
+  // the entry records its own path and something will read it back.
+  files.set(to, { ...file, path: to });
+  return { ...project, files };
+}
+
+/** Remove a file, returning a new project. */
+export function removeFile(project: Project, path: string): Project {
+  const file = project.files.get(path);
+  if (!file) return project;
+  if (file.url) URL.revokeObjectURL(file.url);
+  const files = new Map(project.files);
+  files.delete(path);
+  return { ...project, files };
+}
+
+/**
+ * Tidy a path the way a person typing one expects.
+ *
+ * Leading and trailing slashes go, `\` becomes `/`, runs collapse, and `.`
+ * segments are dropped. A `..` is refused outright rather than resolved — a
+ * project is a folder and a path that climbs out of it is not a path in the
+ * project, which is the same call `importZip` makes about an archive entry.
+ */
+export function normalisePath(input: string): string | undefined {
+  const parts = input
+    .trim()
+    .replace(/\\/g, "/")
+    .split("/")
+    .filter((part) => part !== "" && part !== ".");
+  if (parts.length === 0 || parts.includes("..")) return undefined;
+  return parts.join("/");
+}
+
+/**
  * The media type a blob URL needs, by extension.
  *
  * An `<img>` pointed at a blob URL believes the blob's type and does not sniff
@@ -99,6 +151,19 @@ const MEDIA: Readonly<Record<string, string>> = {
 };
 
 /**
+ * The media type a blob URL for this path needs, or `undefined` for the rest.
+ *
+ * Exported because two things point a browser at a file's bytes — the explorer's
+ * pictures and the art demaker's own source pane — and a second table is how one
+ * of them comes to show broken images. It did: the art pane built its blob with
+ * no type at all, so every `.svg` in every project was an empty box beside a
+ * demade result that had come out perfectly.
+ */
+export function mediaTypeOf(path: string): string | undefined {
+  return MEDIA[path.slice(path.lastIndexOf(".") + 1).toLowerCase()];
+}
+
+/**
  * A URL for one file's bytes, made once and kept.
  *
  * Mutates the entry rather than the map: a URL is a cache over immutable bytes,
@@ -108,7 +173,7 @@ const MEDIA: Readonly<Record<string, string>> = {
 export function fileUrl(project: Project, path: string): string | undefined {
   const file = project.files.get(path);
   if (!file) return undefined;
-  const type = MEDIA[path.slice(path.lastIndexOf(".") + 1).toLowerCase()];
+  const type = mediaTypeOf(path);
   file.url ??= URL.createObjectURL(
     new Blob([file.bytes as BlobPart], ...(type === undefined ? [] : [{ type }])),
   );

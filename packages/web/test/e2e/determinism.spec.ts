@@ -91,7 +91,13 @@ for (const { name, options } of CASES) {
     const expected = (await prep(source, toPrepOptions(options))).png;
 
     // 2. Browser: the same conversion, driven through the page's own UI.
-    const params = new URLSearchParams();
+    //
+    // The hash names the section as well as the options. It did not have to
+    // before, because an empty hash was the art demaker; a bare URL is the
+    // project's game now (doc 07 §Sections), and the default case's options are
+    // *all* defaults — so it built `#` and landed on a game, which is the one
+    // case of the four that this spec's own construction made invisible.
+    const params = new URLSearchParams({ section: "art" });
     for (const [key, value] of Object.entries(options)) {
       const fallback = DEFAULT_OPTIONS[key as keyof PrepOptionsUi];
       if (value === fallback) continue;
@@ -174,7 +180,7 @@ for (const consoleId of ["gb", "nes", "sms", "snes", "md"] as const) {
     // not built until every asset has arrived (the pane's own `ready` gate), so
     // there is no half-loaded project to race with here.
     await page.getByTestId("project-select").selectOption("caves");
-    await expect(page.getByTestId("example-select")).toHaveValue(/caves\.dmt$/);
+    await expect(page.getByTestId("open-game")).toHaveText("caves.dmt");
     if (consoleId !== "gb") await page.getByTestId("console-select").selectOption(consoleId);
     // Waiting on the *cartridge's* console, not the picker's: demaking a
     // full-screen picture in colour is the whole `prep` tournament, and until it

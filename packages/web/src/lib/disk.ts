@@ -23,6 +23,7 @@ interface DirectoryHandle {
   values(): AsyncIterableIterator<FileSystemHandleLike>;
   getDirectoryHandle(name: string, options?: { create?: boolean }): Promise<DirectoryHandle>;
   getFileHandle(name: string, options?: { create?: boolean }): Promise<FileHandleLike>;
+  removeEntry(name: string, options?: { recursive?: boolean }): Promise<void>;
 }
 interface FileHandleLike {
   kind: "file" | "directory";
@@ -87,6 +88,15 @@ export async function openFolder(): Promise<OpenedFolder | null> {
  * Every file, every time, rather than tracking which changed: a project is a few
  * dozen small files, and a save that wrote only what it *believed* had changed
  * would be a second answer to what the project contains.
+ *
+ * **And a file the project no longer has is removed**, which is what makes the
+ * explorer's delete and its move real (doc 19 §A file manager, after all): a
+ * save that only ever wrote would leave a renamed file behind under both names,
+ * and the next build would resolve `sprite ball` to two files. What it removes
+ * is exactly what {@link walk} would have read and the project does not have —
+ * so `build/` and the dot-directories, which were never read, are never touched
+ * either. Directories are left even when they empty: an empty folder is
+ * harmless, and recursively removing one is the operation with no undo.
  */
 export async function saveToFolder(handle: unknown, project: Project): Promise<void> {
   const root = handle as DirectoryHandle;
@@ -101,6 +111,18 @@ export async function saveToFolder(handle: unknown, project: Project): Promise<v
     const bytes = project.files.get(path)?.bytes ?? new Uint8Array();
     await writable.write(bytes as unknown as BufferSource);
     await writable.close();
+  }
+
+  // Read the folder back rather than remembering what was opened: a save may be
+  // the second of several, and what is on disk now is the only truthful answer.
+  for (const path of (await walk(root)).keys()) {
+    if (project.files.has(path)) continue;
+    const parts = path.split("/");
+    let directory = root;
+    for (const part of parts.slice(0, -1)) {
+      directory = await directory.getDirectoryHandle(part);
+    }
+    await directory.removeEntry(parts[parts.length - 1] as string);
   }
 }
 

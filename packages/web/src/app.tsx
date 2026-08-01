@@ -20,7 +20,7 @@ import type { StrategyInfo } from "@demake/core";
 import { kindOf, shortestName } from "@demake/demotic";
 import { DEMAKEFILE_OPTIONS, settingsFor, uiToDemakefile } from "./lib/art-settings.js";
 import { DEMAKEFILE, resolveOne, setAssetOption } from "./lib/demakefile.js";
-import { projectFiles } from "./lib/project.js";
+import { mediaTypeOf, projectFiles } from "./lib/project.js";
 import type { Project } from "./lib/project.js";
 import type { EditorProps } from "./site.js";
 
@@ -64,9 +64,13 @@ export function App({
   }, [engine, options.console]);
 
   // Options (never the image) live in the URL hash: shareable settings.
+  //
+  // Merged into whatever is already there rather than replacing it, because the
+  // hash is also the *route* now (doc 19 §The shell): writing bare options over
+  // `#file=art/ball.svg` left a reload opening something else, and with the
+  // section tabs gone that is the only record of what you had open.
   useEffect(() => {
-    const hash = toHash(options);
-    history.replaceState(null, "", hash === "" ? location.pathname + location.search : hash);
+    history.replaceState(null, "", mergeHash(location.hash, toHash(options)));
   }, [options]);
 
   // --- the Demakefile (doc 19 §Options edit the Demakefile) -----------------
@@ -218,12 +222,43 @@ export function App({
   );
 }
 
-/** Wrap raw image bytes in the metadata the panes display. */
+/**
+ * Wrap raw image bytes in the metadata the panes display.
+ *
+ * **The blob carries a media type**, and an SVG is why. An `<img>` pointed at a
+ * blob URL believes the blob's `type` and does not sniff for SVG, so a typeless
+ * blob made every drawing in every project a broken image in the source pane —
+ * beside a demade result that had come out perfectly, because the engine reads
+ * the bytes and never the URL. The table is `project.ts`'s, shared with the
+ * explorer's own pictures rather than restated here.
+ */
 export async function describeSource(name: string, bytes: Uint8Array): Promise<SourceImage> {
-  const blob = new Blob([bytes.slice().buffer as ArrayBuffer]);
+  const type = mediaTypeOf(name);
+  const blob = new Blob(
+    [bytes.slice().buffer as ArrayBuffer],
+    ...(type === undefined ? [] : [{ type }]),
+  );
   const url = URL.createObjectURL(blob);
   const { width, height } = await measure(url);
   return { name, bytes, url, width, height };
+}
+
+/**
+ * Put this pane's options into the hash, keeping whatever else is in it.
+ *
+ * The route's keys (`file`, `section`) are the only ones that survive; every
+ * option key is replaced wholesale, which is what makes "an option set back to
+ * its default disappears from the link" still true.
+ */
+function mergeHash(current: string, options: string): string {
+  const kept = new URLSearchParams(current.replace(/^#/, ""));
+  const next = new URLSearchParams(options.replace(/^#/, ""));
+  for (const key of ["file", "section"]) {
+    const value = kept.get(key);
+    if (value !== null && value !== "") next.set(key, value);
+  }
+  const text = next.toString();
+  return text === "" ? location.pathname + location.search : `#${text}`;
 }
 
 function measure(url: string): Promise<{ width: number; height: number }> {

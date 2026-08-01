@@ -18,6 +18,40 @@ export type Domain = "art" | "music" | "sound";
 /** The domains, in the order `fmt` writes them. */
 export const DOMAINS: readonly Domain[] = ["art", "music", "sound"];
 
+/**
+ * Top-level directives that take a single value.
+ *
+ * Here rather than in the parser because two things read them now — the parser
+ * and the highlighter — and a second list is how a directive comes to be
+ * accepted but not coloured. Same rule `lang/spec.ts` is the whole language's
+ * one description under.
+ */
+export const SINGLE_DIRECTIVES: ReadonlySet<string> = new Set(["source", "out", "assets"]);
+
+/** Top-level directives that open a block. */
+export const BLOCK_DIRECTIVES: ReadonlySet<string> = new Set([
+  "project",
+  "defaults",
+  "target",
+  "art",
+  "music",
+  "sound",
+]);
+
+/** The directive that declares a target per console named on its own line. */
+export const TARGETS_DIRECTIVE = "targets";
+
+/** Fields a `target` block understands, which is the other half of the grammar. */
+export const TARGET_FIELDS: ReadonlySet<string> = new Set([
+  "console",
+  "region",
+  "output",
+  "header",
+]);
+
+/** The keyword that opens a per-target override inside an asset block. */
+export const FOR_KEYWORD = "for";
+
 /** An option, as written: the directive name and the rest of the line. */
 export interface Option {
   name: string;

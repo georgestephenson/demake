@@ -26,15 +26,15 @@ async function showPreview(
 /**
  * Open another example.
  *
- * A game is a *project* now (doc 19), so switching to one is the explorer's
- * picker rather than a dropdown inside the section — and the section opens the
- * project's own `.dmt` because that is what a game section with a project open
- * shows. The section's own `Game` dropdown still exists; it names the files in
- * the open project, which is a different question.
+ * A game is a *project* now (doc 19), so switching to one is the status bar's
+ * project picker — and the section opens the project's own `.dmt`, because with
+ * the tabs gone the open file is the only thing that decides what is on screen.
+ * The section has no game dropdown of its own any more; it plays what is open
+ * and says which file that is.
  */
 async function openProject(page: import("@playwright/test").Page, name: string): Promise<void> {
   await page.getByTestId("project-select").selectOption(name);
-  await expect(page.getByTestId("example-select")).toHaveValue(new RegExp(`${name}\\.dmt$`));
+  await expect(page.getByTestId("open-game")).toHaveText(`${name}.dmt`);
 }
 
 test("loads the game demaker on demand and plays", async ({ page }) => {
@@ -43,12 +43,14 @@ test("loads the game demaker on demand and plays", async ({ page }) => {
     if (r.url().endsWith(".js")) chunks.push(r.url());
   });
 
-  await page.goto("/");
-  // The art demaker is the default, and must not have pulled the game chunk in.
+  // The art demaker is what a bare `#section=` lands on, and it must not have
+  // pulled the game chunk in: the split is per file type, not per visit.
+  await page.goto("/#section=art");
   await expect(page.getByTestId("source-dropzone").or(page.locator(".dropzone"))).toBeVisible();
   expect(chunks.some((url) => url.includes("GameDemaker"))).toBe(false);
 
-  await page.getByRole("link", { name: /demotic game demaker/i }).click();
+  // And opening the project's `.dmt` in the explorer is what fetches it.
+  await page.getByTestId("explorer-file").filter({ hasText: "pong.dmt" }).first().click();
   await expect(page.getByRole("heading", { name: "Play" })).toBeVisible();
   expect(chunks.some((url) => url.includes("GameDemaker"))).toBe(true);
 
@@ -337,10 +339,11 @@ test("renders the language reference from the registry", async ({ page }) => {
     if (r.url().endsWith(".js")) chunks.push(r.url());
   });
 
-  await page.goto("/");
+  await page.goto("/#section=art");
   expect(chunks.some((url) => url.includes("LanguageDocs"))).toBe(false);
 
-  await page.getByRole("link", { name: /demotic reference/i }).click();
+  await page.getByTestId("menu-view").click();
+  await page.getByTestId("menu-language").click();
   await expect(page.getByRole("heading", { name: "Statements" })).toBeVisible();
   expect(chunks.some((url) => url.includes("LanguageDocs"))).toBe(true);
 

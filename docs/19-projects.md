@@ -227,7 +227,16 @@ you are looking at is the variable.
 
 **An explorer down the left**: the project's name, and each non-empty folder with
 its files. Clicking a file opens it. That is the whole of the navigation model,
-and it replaces `#section=` as the thing that decides what is on screen.
+and it replaces `#section=` as the thing that decides what is on screen — the
+row of section tabs the site used to carry is **gone**, because a tab and a file
+selection were two answers to one question and the file is the better one. What
+the tabs were also carrying was the commands, and those are the menu bar's now
+(doc 07 §The workbench).
+
+**A bare URL opens the project's game**, chosen by §Defaults the folder now
+supplies. The art demaker was the landing page only because it was the first
+section written, and a visitor arriving at a tool that turns a game into
+cartridges should be looking at the game.
 
 **Opening a file opens the editor for its type**, and every editor is the same
 shape — *one file, two or three views of it*:
@@ -239,7 +248,8 @@ shape — *one file, two or three views of it*:
 | `.svg` `.png` | the art demaker | source, options, result — as today |
 | `.mid` | the music demaker | source, options, arrangement, listen — as today |
 | `.wav` | the sound demaker | the same, for effects |
-| `Demakefile` | the build view | the file as text, its resolved plan, and every target |
+| `Demakefile` | the text editor | the file as text, coloured by the format's own grammar |
+| anything else that is text | the text editor | the file as text, drawn plain |
 
 So the four demakers do not go away and do not change what they do; they become
 what opens when you click a file of the kind they demake. The `#section=` route
@@ -285,10 +295,18 @@ anyway, and deleting it restores the defaults it was an escape from.
 is a cascade you debug by guessing. It is the same data doc 15 promises from
 `demake build --dry-run --json`, which is the point: one resolver, two surfaces.
 
-**The Demakefile is also just a file in the explorer.** Open it as text, edit it,
-and the panes follow; edit a pane and the text follows. Two views of one file,
-the same rule the level editor and the block editor run under — and the reason
-none of the three can become a second configuration model.
+**The Demakefile is also just a file in the explorer** — *built*. Open it as
+text, edit it, and the panes follow; edit a pane and the text follows. Two views
+of one file, the same rule the level editor and the block editor run under — and
+the reason none of the three can become a second configuration model.
+
+It is the **text editor** that opens it (doc 07 §The text editor), which is what
+any file in the project that no demaker demakes now opens in: a `.md`, a golden
+`.trace`, a note somebody left. The Demakefile is the one of those with a
+grammar, and the colours come from `highlightDemakefile()` in `@demake/demotic`,
+built on the parser's own directive lists rather than on a regular expression in
+the page. A resolved-plan view and a per-target view are still to come; what
+exists is the file, editable, saved and zipped with everything else.
 
 ## `build/` is the CLI's; the page builds in the tab
 
@@ -307,6 +325,45 @@ buttons in each pane are for; getting a `build/` tree is what the CLI is for, an
 a project saved from the page builds one the moment you run it.
 
 `demake init` writes a `.gitignore` naming `build/` for the same reason.
+
+## A file manager, after all
+
+This document originally listed one under §Not in v1, on the grounds that
+rename, move and delete are the filesystem's job or the zip's. **That was wrong,
+and it is worth saying why rather than quietly deleting the line.** It was
+written when the page was a viewer with a picker on the side; the moment the
+explorer became the thing that decides what is on screen, a folder you can edit
+but cannot add to is a folder you have to leave the tool to do half the work in
+— and "leave the tool" means File System Access on the browsers that have it and
+a zip round trip on the ones that do not.
+
+What made the answer cheap is the model. A project is a `Map<string,
+Uint8Array>`, so:
+
+- **A move and a rename are one operation.** There are no directories to move
+  between, only names with slashes in them (§The layout: the folder structure is
+  a convention, and nothing resolves a reference by looking in one). Typing
+  `sprites/ball.svg` over `art/ball.svg` moves the file; so does dragging it onto
+  another folder. One gesture, one function, and the explorer's tree is derived
+  from the paths either way.
+- **A new file is an empty entry**, named by typing its path. Naming it into a
+  folder that does not exist yet creates the folder, because the folder was never
+  a thing — it is a prefix.
+- **Nothing is replaced silently.** A rename onto an occupied path is refused and
+  said out loud, and a path that climbs out of the project with `..` is refused
+  outright rather than resolved — the same call `importZip` already makes about
+  an archive entry. Those are the two operations that cannot be undone, and the
+  page has no undo across files (§Not in v1, which that line does still cover).
+
+**The editor follows the file it had open.** A rename re-routes to the new path
+and a delete falls back to the project's game; a pane that silently went blank on
+a rename would be the sort of small wrongness that reads as a crash.
+
+**What this does not add is a second answer to what a project contains.** The
+explorer still derives everything from the map, `build/` is still excluded in
+both directions, and a reference that becomes ambiguous because of a rename is
+reported by the compiler with a line number exactly as §The cost, named says it
+will be.
 
 ## The level editor
 
@@ -764,9 +821,6 @@ Named so the shape stays honest.
 
 - **Multiple projects open at once.** One project, one tab. Two would need a
   workspace concept above the folder, and nothing yet asks for one.
-- **A file manager.** Rename, move and delete are the filesystem's job, or the
-  zip's. The page adds files (drop one into the explorer or an editor) and edits
-  them; it does not reorganise a folder.
 - **A split editor, or two files side by side.** The side-by-side inside an
   editor is between two *views of one file*, which is a different thing and the
   only one this document argues for.

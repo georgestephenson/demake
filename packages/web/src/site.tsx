@@ -1,32 +1,68 @@
 /**
- * The workspace shell: one project, an explorer, and an editor per file type
- * (doc 19 §The shell).
+ * The workbench: one project, an explorer, an editor per file type, and the
+ * chrome around them (doc 19 §The shell, doc 07 §The workbench).
  *
  * The site used to be four tools you navigated between. It is one workspace you
  * open files in now — the arrangement every code editor settled on, for the
  * reason every code editor settled on it: the project is the constant and the
- * file you are looking at is the variable. Clicking a file in the explorer opens
- * whichever demaker demakes that kind of file, and the demakers themselves are
- * unchanged in what they do.
+ * file you are looking at is the variable.
+ *
+ * **The section tabs are gone**, and their going is the point rather than a
+ * tidy-up. A tab and a file selection were two answers to "what is on screen",
+ * and the file is the better one because it is the thing the project actually
+ * contains — clicking `ball.svg` opens the art demaker because a `.svg` *is*
+ * art, not because a nav link was set to a matching value. What the tabs were
+ * also carrying was the commands, and those are what the menu bar is for.
+ *
+ * So the window is a window: a title bar naming what is open, a menu bar under
+ * it, the explorer and the editor filling the viewport, and a status bar. It
+ * uses the whole screen because an editor that leaves a margin around itself is
+ * an editor with less room for the thing you came to look at.
  *
  * `#section=` still opens a bare section, because every option permalink shared
- * before the site held projects has one in it.
+ * before the site held projects has one in it — and a bare URL opens the
+ * project's own game, which is what somebody arriving has come to see.
  */
 
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 import type { ComponentType } from "preact";
+
+import { findEntry } from "@demake/demotic";
 
 import { App } from "./app.js";
 import { Explorer } from "./components/Explorer.js";
-import { EXAMPLE_NAMES, exampleSkeleton, loadExample } from "./lib/examples.js";
-import { readRoute, SECTION_LABELS, sectionHash } from "./lib/route.js";
-import { writeText, type Project } from "./lib/project.js";
-import { exportZip, importZip, openFolder, saveToFolder } from "./lib/disk.js";
+import { MenuBar, useMenuKeys, type Menu } from "./components/MenuBar.js";
+import { QuickOpen } from "./components/QuickOpen.js";
+import {
+  EXAMPLE_NAMES,
+  exampleSkeleton,
+  fillBinaries,
+  loadExampleBinaries,
+} from "./lib/examples.js";
+import { fileHash, isBareHash, readRoute, sectionHash, type Section } from "./lib/route.js";
+import {
+  addFile,
+  moveFile,
+  projectFiles,
+  removeFile,
+  writeText,
+  type Project,
+} from "./lib/project.js";
+import { DEMAKEFILE } from "./lib/demakefile.js";
+import { exportZip, importZip, openFolder, saveToFolder, canOpenFolder } from "./lib/disk.js";
 import { download } from "./lib/download.js";
 
-const TAGLINES: Readonly<Record<string, string>> = {
-  game: "one declarative game → every console",
+/**
+ * What the window is called, per editor.
+ *
+ * The title bar says what this tool *does with the thing you have open*, which
+ * is a different claim per file type and the reason it is worth varying: a `.dmt`
+ * is the whole product thesis in one line, and a `.wav` is one demaker.
+ */
+const TAGLINES: Readonly<Record<Section, string>> = {
+  game: "one source project, ROMs for every game console",
   level: "draw a level, or write it",
+  text: "the project's own files, as text",
   language: "every statement, property and diagnostic",
   art: "any image → hardware-compliant console art",
   music: "any track → chip music",
@@ -40,9 +76,10 @@ const TAGLINES: Readonly<Record<string, string>> = {
  * made is "this is the same code the CLI runs", and it is worth more when it
  * names the package doing the work in front of you.
  */
-const ENGINES: Readonly<Record<string, string[]>> = {
+const ENGINES: Readonly<Record<Section, readonly string[]>> = {
   game: ["@demake/demotic", "@demake/core"],
   level: ["@demake/demotic"],
+  text: ["@demake/demotic"],
   language: ["@demake/demotic"],
   art: ["@demake/core"],
   music: ["@demake/audio", "@demake/chip"],
@@ -64,6 +101,11 @@ export interface EditorProps {
   onProject: (next: Project) => void;
 }
 
+/** Navigate, without leaving a history entry per keystroke of a file name. */
+function go(hash: string): void {
+  location.hash = hash.replace(/^#/, "");
+}
+
 export function Site() {
   const [route, setRoute] = useState(() => readRoute(location.hash));
   const [lazySections, setLazySections] = useState<Record<string, ComponentType<EditorProps>>>({});
@@ -72,11 +114,15 @@ export function Site() {
   // spinner. Pong, because that is the example the site has always opened on.
   const [project, setProject] = useState<Project>(() => exampleSkeleton("pong"));
   // Where a save goes, when the project came from the machine. A bundled example
-  // has nowhere to save *to* — that is what "Download zip" is for — so the button
-  // is absent rather than present and broken.
+  // has nowhere to save *to* — that is what "Download zip" is for — so the entry
+  // is disabled rather than present and broken.
   const [folder, setFolder] = useState<unknown>(null);
   const [dirty, setDirty] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [showExplorer, setShowExplorer] = useState(true);
+  const [quickOpen, setQuickOpen] = useState(false);
+  const [creating, setCreating] = useState<string | undefined>(undefined);
+  const [renaming, setRenaming] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     const onHash = () => setRoute(readRoute(location.hash));
@@ -87,10 +133,19 @@ export function Site() {
   // The art and the audio, fetched once per project. Binary files are URLs in the
   // bundle rather than base64, so this is a handful of same-origin requests the
   // service worker caches like anything else (`examples.ts`).
+  //
+  // The bytes are *filled into* the project rather than replacing it, and that
+  // is load-bearing rather than tidy. This used to swap in a freshly built
+  // skeleton when the fetch landed, which threw away everything done in the
+  // second before it — a file created, a rename, a line typed into the game.
+  // The race is invisible on a fast machine and reliable on a loaded one, which
+  // is exactly the shape of bug that ships.
   useEffect(() => {
     let live = true;
-    void loadExample(project.name).then((loaded) => {
-      if (live) setProject((current) => (current.name === loaded.name ? loaded : current));
+    const name = project.name;
+    void loadExampleBinaries(name).then((binaries) => {
+      if (!live) return;
+      setProject((current) => (current.name === name ? fillBinaries(current, binaries) : current));
     });
     return () => {
       live = false;
@@ -99,9 +154,41 @@ export function Site() {
     // its art on every keystroke would be absurd.
   }, [project.name]);
 
+  /*
+   * Unsaved work is worth a prompt, and there are two things that can take it.
+   *
+   * Closing the tab is the obvious one. The other is the service worker's
+   * update-and-reload (`main.tsx`): a deploy landing while somebody has a folder
+   * open half-edited must not be the thing that discards it, and because that
+   * reload goes through `beforeunload` like any other, one guard covers both.
+   */
+  useEffect(() => {
+    if (!dirty) return;
+    const ask = (event: BeforeUnloadEvent): void => event.preventDefault();
+    addEventListener("beforeunload", ask);
+    return () => removeEventListener("beforeunload", ask);
+  }, [dirty]);
+
+  const paths = useMemo(() => projectFiles(project), [project]);
+  const entry = useMemo(() => findEntry(paths).path, [paths]);
+
+  /**
+   * A bare URL opens the project's game.
+   *
+   * "Nothing in the hash" is somebody arriving at the site, and what they have
+   * come to see is a game — the tabs used to land them on the art demaker, which
+   * was the default only because it was the first section written. A hash with
+   * *anything* in it is a link somebody shared, including an art-option
+   * permalink that names neither a file nor a section, so it is left alone.
+   */
+  useEffect(() => {
+    if (!isBareHash(location.hash) || entry === undefined) return;
+    go(fileHash(entry));
+  }, [entry]);
+
   const section = route.section;
 
-  // Every section but the art demaker loads on demand. The Demotic pair carry
+  // Every section but the art demaker loads on demand. The Demotic trio carry
   // the whole game language — compiler, interpreter, test runner, registry — and
   // the audio pair carry the chip models, the decoders and the analysis DSP;
   // someone who came to convert an image should download none of it. Splitting
@@ -114,13 +201,15 @@ export function Site() {
         ? () => import("./sections/GameDemaker.js").then((m) => m.GameDemaker)
         : section === "level"
           ? () => import("./sections/LevelEditor.js").then((m) => m.LevelEditor)
-          : section === "language"
-            ? () => import("./sections/LanguageDocs.js").then((m) => m.LanguageDocs)
-            : section === "music"
-              ? () => import("./sections/MusicDemaker.js").then((m) => m.MusicDemaker)
-              : section === "sound"
-                ? () => import("./sections/SoundDemaker.js").then((m) => m.SoundDemaker)
-                : null;
+          : section === "text"
+            ? () => import("./sections/TextEditor.js").then((m) => m.TextEditor)
+            : section === "language"
+              ? () => import("./sections/LanguageDocs.js").then((m) => m.LanguageDocs)
+              : section === "music"
+                ? () => import("./sections/MusicDemaker.js").then((m) => m.MusicDemaker)
+                : section === "sound"
+                  ? () => import("./sections/SoundDemaker.js").then((m) => m.SoundDemaker)
+                  : null;
     if (!load) return;
     void load().then((component) =>
       setLazySections((previous) => ({
@@ -131,6 +220,14 @@ export function Site() {
   }, [section, lazySections]);
 
   const Lazy = lazySections[section];
+
+  // The window's own name, which is also the tab's. Kept in sync rather than
+  // written twice: a browser tab that says something different from the title bar
+  // above it is the sort of small wrongness nobody reports and everybody sees.
+  const title = `demake — ${TAGLINES[section]}`;
+  useEffect(() => {
+    document.title = title;
+  }, [title]);
 
   const props = useMemo<EditorProps>(
     () => ({
@@ -150,94 +247,265 @@ export function Site() {
     [project, route.file],
   );
 
+  // --- the project's own commands -------------------------------------------
+
+  const openExample = useCallback((name: string) => {
+    const opened = exampleSkeleton(name);
+    setProject(opened);
+    setFolder(null);
+    setDirty(false);
+    setNotice(null);
+    // Straight to the new project's game. A path from one project rarely exists
+    // in the next, so keeping the old one would land on "no such file".
+    const next = findEntry(projectFiles(opened)).path;
+    go(next === undefined ? sectionHash("art") : fileHash(next));
+  }, []);
+
+  const move = useCallback(
+    (from: string, to: string) => {
+      setProject((current) => moveFile(current, from, to));
+      setDirty(true);
+      setNotice(null);
+      // The editor follows the file it had open. Anything else is a pane that
+      // silently goes blank on a rename.
+      if (route.file === from) go(fileHash(to));
+    },
+    [route.file],
+  );
+
+  const remove = useCallback(
+    (path: string) => {
+      setProject((current) => removeFile(current, path));
+      setDirty(true);
+      setNotice(`Deleted ${path}. It is gone from the project, not from your disk until you save.`);
+      if (route.file === path) go(entry === undefined ? sectionHash("art") : fileHash(entry));
+    },
+    [route.file, entry],
+  );
+
+  /** Both menu requests are one-shot, and this is how they are cleared. */
+  const handled = useCallback(() => {
+    setCreating(undefined);
+    setRenaming(undefined);
+  }, []);
+
+  const create = useCallback((path: string) => {
+    setProject((current) => addFile(current, path, new Uint8Array()));
+    setDirty(true);
+    setNotice(null);
+    go(fileHash(path));
+  }, []);
+
+  const save = useCallback(() => {
+    if (folder === null) return;
+    void saveToFolder(folder, project)
+      .then(() => {
+        setDirty(false);
+        setNotice(null);
+      })
+      .catch((error: unknown) => setNotice(String(error)));
+  }, [folder, project]);
+
+  // --- the menus -------------------------------------------------------------
+
+  const menus = useMemo<Menu[]>(
+    () => [
+      {
+        label: "File",
+        items: [
+          // No accelerator: ⌘N is the browser's new window and cannot be taken.
+          { label: "New File…", run: () => setCreating(""), testId: "menu-new-file" },
+          ...(canOpenFolder()
+            ? [
+                {
+                  label: "Open Folder…",
+                  key: "Mod+O",
+                  testId: "open-folder",
+                  run: () => {
+                    void openFolder()
+                      .then((opened) => {
+                        if (!opened) return;
+                        setProject(opened.project);
+                        setFolder(opened.handle);
+                        setDirty(false);
+                        setNotice(null);
+                        const next = findEntry(projectFiles(opened.project)).path;
+                        go(next === undefined ? sectionHash("art") : fileHash(next));
+                      })
+                      .catch((error: unknown) => setNotice(String(error)));
+                  },
+                },
+              ]
+            : []),
+          {
+            label: "Import Zip…",
+            testId: "import-zip",
+            file: {
+              accept: ".zip,application/zip",
+              onPick: (picked: File) => {
+                void picked
+                  .arrayBuffer()
+                  .then((bytes) => {
+                    const opened = importZip(picked.name, new Uint8Array(bytes));
+                    setProject(opened);
+                    // An imported zip has no folder behind it, so it downloads
+                    // rather than saves — a bundled example's position exactly.
+                    setFolder(null);
+                    setDirty(false);
+                    setNotice(null);
+                    const next = findEntry(projectFiles(opened)).path;
+                    go(next === undefined ? sectionHash("art") : fileHash(next));
+                  })
+                  .catch((error: unknown) => setNotice(String(error)));
+              },
+            },
+          },
+          "separator",
+          {
+            label: "Save",
+            key: "Mod+S",
+            testId: "save-folder",
+            disabled: folder === null,
+            run: save,
+          },
+          {
+            label: "Download Zip",
+            key: "Shift+Mod+S",
+            testId: "export-zip",
+            run: () => download(`${project.name}.zip`, exportZip(project)),
+          },
+        ],
+      },
+      {
+        label: "Edit",
+        items: [
+          { label: "Undo", key: "Mod+Z", native: true, run: () => edit("undo") },
+          { label: "Redo", key: "Shift+Mod+Z", native: true, run: () => edit("redo") },
+          "separator",
+          {
+            label: "Rename File…",
+            key: "F2",
+            disabled: route.file === undefined,
+            run: () => {
+              // The box is the explorer's, so the explorer has to be on screen
+              // for it to exist — F2 with the sidebar hidden brings it back
+              // rather than doing nothing.
+              setShowExplorer(true);
+              setRenaming(route.file);
+            },
+          },
+          {
+            // No accelerator either: ⌘⌫ deletes the previous word in a text box,
+            // and a delete with no undo behind it is the worst thing to hang off
+            // a key somebody presses while typing.
+            label: "Delete File",
+            disabled: route.file === undefined,
+            run: () => {
+              if (route.file !== undefined) remove(route.file);
+            },
+          },
+        ],
+      },
+      {
+        label: "View",
+        items: [
+          {
+            label: "Explorer",
+            key: "Mod+B",
+            checked: showExplorer,
+            run: () => setShowExplorer((on) => !on),
+            testId: "toggle-explorer",
+          },
+          "separator",
+          {
+            label: "Demotic Reference",
+            run: () => go(sectionHash("language")),
+            testId: "menu-language",
+          },
+          { label: "Art Demaker", run: () => go(sectionHash("art")), testId: "menu-art" },
+        ],
+      },
+      {
+        label: "Go",
+        items: [
+          { label: "Go to File…", key: "Mod+P", run: () => setQuickOpen(true) },
+          "separator",
+          {
+            label: "The Game",
+            disabled: entry === undefined,
+            run: () => {
+              if (entry !== undefined) go(fileHash(entry));
+            },
+          },
+          {
+            label: "The Demakefile",
+            disabled: !project.files.has(DEMAKEFILE),
+            run: () => go(fileHash(DEMAKEFILE)),
+          },
+        ],
+      },
+      {
+        label: "Help",
+        items: [
+          { label: "Demotic Reference", run: () => go(sectionHash("language")) },
+          {
+            label: "Design Docs",
+            run: () =>
+              open(
+                "https://github.com/georgestephenson/demake/tree/main/docs",
+                "_blank",
+                "noopener",
+              ),
+          },
+          {
+            label: "Source",
+            run: () => open("https://github.com/georgestephenson/demake", "_blank", "noopener"),
+          },
+        ],
+      },
+    ],
+    [folder, project, route.file, entry, showExplorer, save, remove],
+  );
+
+  useMenuKeys(menus);
+
   return (
-    <div class="layout workspace">
-      <header class="topbar">
-        <h1>
+    <div class="workspace">
+      {/*
+        The title bar: the menus on the left and the window's name in the middle,
+        which is where every desktop puts it and what VS Code's own custom title
+        bar does. One strip rather than two, because a menu bar under a title bar
+        is a row of chrome that says nothing.
+      */}
+      <header class="titlebar">
+        <MenuBar menus={menus} />
+        <h1 class="window-title" data-testid="window-title">
           <span class="wordmark">demake</span>
           <span class="tagline">{TAGLINES[section]}</span>
         </h1>
-
-        <nav class="sections" aria-label="Demakers">
-          {(["game", "art", "music", "sound", "language"] as const).map((id) => (
-            <a
-              key={id}
-              href={sectionHash(id)}
-              class={`section-link${id === section ? " active" : ""}`}
-              aria-current={id === section ? "page" : undefined}
-            >
-              {SECTION_LABELS[id]}
-            </a>
+        <p class="privacy" title="Nothing is uploaded; the engine is the CLI's.">
+          in your browser ·{" "}
+          {(ENGINES[section] ?? []).map((name) => (
+            <code key={name}>{name}</code>
           ))}
-        </nav>
-
-        <p class="privacy">
-          Runs entirely in your browser. Nothing is uploaded — the engine is the same{" "}
-          {(ENGINES[section] ?? ENGINES["art"] ?? []).map((name, index, all) => (
-            <span key={name}>
-              <code>{name}</code>
-              {index < all.length - 2 ? ", " : index === all.length - 2 ? " and " : ""}
-            </span>
-          ))}{" "}
-          the CLI uses.
         </p>
       </header>
 
-      <div class="workbench">
-        <Explorer
-          project={project}
-          {...(route.file === undefined ? {} : { open: route.file })}
-          examples={EXAMPLE_NAMES}
-          dirty={dirty}
-          bound={folder !== null}
-          onOpenFolder={() => {
-            void openFolder()
-              .then((opened) => {
-                if (!opened) return;
-                setProject(opened.project);
-                setFolder(opened.handle);
-                setDirty(false);
-                setNotice(null);
-                location.hash = sectionHash(section).slice(1);
-              })
-              .catch((error: unknown) => setNotice(String(error)));
-          }}
-          onImportZip={(file) => {
-            void file
-              .arrayBuffer()
-              .then((bytes) => {
-                setProject(importZip(file.name, new Uint8Array(bytes)));
-                // An imported zip has no folder behind it, so it downloads rather
-                // than saves — the same position a bundled example is in.
-                setFolder(null);
-                setDirty(false);
-                setNotice(null);
-                location.hash = sectionHash(section).slice(1);
-              })
-              .catch((error: unknown) => setNotice(String(error)));
-          }}
-          onSave={() => {
-            if (folder === null) return;
-            void saveToFolder(folder, project)
-              .then(() => {
-                setDirty(false);
-                setNotice(null);
-              })
-              .catch((error: unknown) => setNotice(String(error)));
-          }}
-          onExportZip={() => {
-            download(`${project.name}.zip`, exportZip(project));
-          }}
-          onOpenExample={(name) => {
-            setProject(exampleSkeleton(name));
-            setFolder(null);
-            setDirty(false);
-            // The route keeps its *section*, not its file: a path from one
-            // project rarely exists in the next, and landing on "no such file"
-            // after picking a project would read as a fault.
-            location.hash = sectionHash(section).slice(1);
-          }}
-        />
+      <div class={`workbench${showExplorer ? "" : " no-explorer"}`}>
+        {showExplorer ? (
+          <Explorer
+            project={project}
+            {...(route.file === undefined ? {} : { open: route.file })}
+            onOpen={(path) => go(fileHash(path))}
+            onMove={move}
+            onDelete={remove}
+            onCreate={create}
+            onNotice={setNotice}
+            {...(creating === undefined ? {} : { creating })}
+            {...(renaming === undefined ? {} : { renaming })}
+            onRequestHandled={handled}
+          />
+        ) : null}
 
         <div class="editor-host">
           {section === "art" ? <App {...props} /> : null}
@@ -255,17 +523,59 @@ export function Site() {
         </div>
       </div>
 
-      {notice === null ? null : (
-        <p class="hint" data-testid="project-notice" role="status">
-          {notice}
-        </p>
-      )}
-
-      <footer>
-        <a href="https://github.com/georgestephenson/demake">source</a> ·{" "}
-        <a href="https://github.com/georgestephenson/demake/tree/main/docs">design docs</a> · the
-        same conversion is available as <code>npx demake</code>
+      <footer class="statusbar">
+        {/*
+          The project picker lives here for the reason an editor's branch picker
+          does: it names the thing everything else on screen is about, and it is
+          not a command.
+        */}
+        <label class="status-project">
+          <span class="visually-hidden">Project</span>
+          <select
+            data-testid="project-select"
+            value={project.name}
+            onChange={(event) => openExample((event.currentTarget as HTMLSelectElement).value)}
+          >
+            {EXAMPLE_NAMES.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span class="status-dirty" data-testid="project-dirty">
+          {dirty ? "unsaved changes" : folder === null ? "bundled example" : "saved"}
+        </span>
+        <span class="status-notice" data-testid="project-notice" role="status">
+          {notice ?? ""}
+        </span>
+        <span class="status-spacer" />
+        <a href="https://github.com/georgestephenson/demake">source</a>
+        <code>npx demake</code>
       </footer>
+
+      {quickOpen ? (
+        <QuickOpen
+          paths={paths}
+          onOpen={(path) => go(fileHash(path))}
+          onClose={() => setQuickOpen(false)}
+        />
+      ) : null}
     </div>
   );
+}
+
+/**
+ * Undo and redo, in whatever editor has focus.
+ *
+ * `execCommand` is deprecated and universally implemented, and it is the only
+ * way to reach a `<textarea>`'s *native* undo stack — which is the one the user
+ * has been filling by typing. A journal of our own kept beside it would be a
+ * second history that disagrees with ⌘Z pressed with the caret in the box, which
+ * is worse than not offering the menu entry at all.
+ */
+function edit(command: "undo" | "redo"): void {
+  const focused = document.activeElement;
+  if (!(focused instanceof HTMLTextAreaElement || focused instanceof HTMLInputElement)) return;
+  document.execCommand(command);
 }
