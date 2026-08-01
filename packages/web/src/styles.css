@@ -55,21 +55,6 @@ code,
   font-size: 0.92em;
 }
 
-.layout {
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 1rem clamp(0.75rem, 2vw, 2rem) 3rem;
-}
-
-.topbar h1 {
-  display: flex;
-  align-items: baseline;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  margin: 0.5rem 0 0.25rem;
-  font-size: 1.5rem;
-}
-
 .wordmark {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   letter-spacing: -0.02em;
@@ -82,16 +67,16 @@ code,
 }
 
 .privacy {
-  margin: 0 0 1rem;
+  margin: 0;
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: 0.8rem;
 }
 
 main {
   display: grid;
-  gap: 1rem;
+  gap: 0;
   grid-template-columns: minmax(240px, 1fr) minmax(280px, 1.1fr) minmax(320px, 1.8fr);
-  align-items: start;
+  align-items: stretch;
 }
 
 @media (max-width: 1000px) {
@@ -100,11 +85,24 @@ main {
   }
 }
 
+/*
+ * A pane is a panel of the window, not a card floating on a page (doc 07 §The
+ * workbench). Flush edges and a single hairline between them: the rounded,
+ * inset blocks the site used to draw spent about a fifth of the viewport on
+ * margins, which on the one screen the whole product is about — a 160×144
+ * console — is room the picture wanted.
+ */
 .pane {
   background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 1rem;
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  padding: 0.8rem 1rem 1.2rem;
+  min-width: 0;
+}
+
+main > .pane:last-child {
+  border-right: 0;
 }
 
 .pane h2 {
@@ -443,12 +441,6 @@ canvas.pixelated {
   margin-top: 0.6rem;
 }
 
-footer {
-  margin-top: 2rem;
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-
 a {
   color: var(--accent);
 }
@@ -472,45 +464,6 @@ a {
     transition: none !important;
     animation: none !important;
   }
-}
-
-/* --- site sections (doc 07) ------------------------------------------------ */
-
-.sections {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  margin: 0.75rem 0 0.5rem;
-}
-
-/*
- * Contrast here is set with an explicit colour, never with opacity: a
- * translucent foreground composites against whatever is behind it, which
- * Lighthouse (correctly) scores as a contrast failure and which is genuinely
- * harder to read. `--muted` is the theme's accessible secondary ink.
- */
-.section-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.35rem 0.7rem;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  font-size: 0.85rem;
-  text-decoration: none;
-  color: var(--muted);
-}
-
-.section-link:hover,
-.section-link:focus-visible {
-  color: var(--ink);
-  border-color: var(--accent);
-}
-
-.section-link.active {
-  color: var(--ink);
-  border-color: currentColor;
-  font-weight: 600;
 }
 
 /* --- the Demotic section --------------------------------------------------- */
@@ -1263,74 +1216,319 @@ main.audio-layout {
   color: var(--muted);
 }
 
-/* --- the project workspace (doc 19 §The shell) ---------------------------- */
+/* --- the workbench (doc 19 §The shell, doc 07 §The workbench) -------------- */
 
 /*
- * An explorer down the left and one editor beside it. The editors are unchanged
- * — they are still the `main` grid above — so this is a column in front of them
- * rather than a second layout system.
+ * The window: a title bar, the workbench, a status bar, and nothing spare.
+ *
+ * `100dvh` rather than `100vh` because a phone's address bar is part of the
+ * viewport until it is not, and a layout measured against the larger figure
+ * hides its status bar behind the chrome. Every scroll happens *inside* a
+ * region — the explorer and the editor each scroll on their own — so the page
+ * itself never does, which is what makes the title bar and the status bar stay
+ * where a window's do.
  */
+.workspace {
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+/*
+ * The title bar carries the menus, so there is one strip rather than two — the
+ * arrangement VS Code's own custom title bar uses, and the reason it can be this
+ * short. The name is centred because that is where every desktop puts a window's
+ * title, and it is absolutely positioned so it stays centred on the *window*
+ * rather than on whatever is left between the menus and the note.
+ */
+.titlebar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 2.1rem;
+  padding: 0 0.5rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.window-title {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.window-title .tagline {
+  font-size: 0.85rem;
+}
+
+.titlebar .privacy {
+  margin-left: auto;
+  display: flex;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+
+/* The label is the first thing to go when the window is too narrow for it: the
+   menus are controls. After the rules it overrides, not before — same
+   specificity, so source order is what decides. */
+@media (max-width: 900px) {
+  .window-title .tagline,
+  .titlebar .privacy {
+    display: none;
+  }
+}
+
+/* And below that the name goes too: it is centred on the *window*, so on a phone
+   it lands on top of the last menu rather than beside it. */
+@media (max-width: 640px) {
+  .window-title {
+    display: none;
+  }
+}
+
+/* --- the menu bar ---------------------------------------------------------- */
+
+.menubar {
+  display: flex;
+  align-items: stretch;
+}
+
+.menu {
+  position: relative;
+}
+
+.menu-title {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.6rem;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.menu-title:hover,
+.menu-title.open {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.menu-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 40;
+  min-width: 15rem;
+  padding: 0.25rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 25%);
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  width: 100%;
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  padding: 0.25rem 0.5rem;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.menu-item:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: transparent;
+}
+
+.menu-item:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.menu-item kbd {
+  color: var(--muted);
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 0.78rem;
+}
+
+.menu-item:hover:not(:disabled) kbd {
+  color: var(--accent-ink);
+}
+
+/* A file-picking entry is an `<input type=file>` wearing a menu row: a click a
+   script synthesises does not open a picker in every browser. */
+.menu-item input[type="file"] {
+  display: none;
+}
+
+.menu-separator {
+  margin: 0.25rem 0.35rem;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+/* --- the workbench body ---------------------------------------------------- */
+
 .workbench {
   display: grid;
-  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
-  gap: 1rem;
-  align-items: start;
+  grid-template-columns: minmax(160px, 240px) minmax(0, 1fr);
+  min-height: 0;
+}
+
+.workbench.no-explorer {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .editor-host {
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
+
+/*
+ * Every editor is a `main` grid of panes, and the panes are what scroll. Stated
+ * once here rather than in each section's own block, because "the editor fills
+ * the window and its columns scroll independently" is a fact about the
+ * workbench and not about any one demaker.
+ */
+.editor-host > main {
+  height: 100%;
+  min-height: 0;
+  /* Each section sets its own columns and its own `align-items: start`, which is
+     right for a page and wrong for a window: a pane that stops where its content
+     does leaves a strip of the background below it. Both are the workbench's to
+     decide, so both are decided here. */
+  align-items: stretch;
+  gap: 0;
+}
+
+.editor-host > main > .pane {
+  overflow: auto;
+  min-height: 0;
+}
+
+@media (max-width: 1000px) {
+  /* The explorer goes above the editor rather than beside it. A 240-pixel column
+     next to a 420-pixel screen is an editor nobody can read, which is what this
+     rule going missing looked like. */
+  .workbench {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .explorer {
+    max-height: 35vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  /* Stacked, and then the *host* is what scrolls: a column of panes that each
+     scrolled would be a page you cannot reach the bottom of. */
+  .editor-host {
+    overflow: auto;
+  }
+
+  .editor-host > main,
+  .editor-host > main > .pane {
+    height: auto;
+    overflow: visible;
+  }
+
+  .pane {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+}
+
+/* --- the explorer ---------------------------------------------------------- */
 
 .explorer {
-  position: sticky;
-  top: 1rem;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  padding: 0.75rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  gap: 0.5rem;
+  padding: 0.5rem 0.35rem 1rem;
+  border-right: 1px solid var(--line);
   background: var(--panel);
   font-size: 0.85rem;
+  min-height: 0;
+  overflow: auto;
 }
 
-.explorer-project {
+.explorer-head {
   display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.35rem;
 }
 
-.explorer-label {
-  font-weight: 600;
-  color: var(--muted);
+.explorer-title {
+  margin: 0;
   font-size: 0.75rem;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.explorer-head .explorer-icon {
+  margin-left: auto;
 }
 
 .explorer-tree {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: 0.5rem;
 }
 
 .explorer-folder h3 {
   margin: 0 0 0.2rem;
-  font-size: 0.75rem;
+  padding: 0 0.35rem;
+  font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted);
   display: flex;
-  justify-content: space-between;
+  align-items: center;
   gap: 0.4rem;
+}
+
+/* The folder a drag is over, so a drop is never a guess about where it landed. */
+.explorer-folder.drop {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-radius: 4px;
 }
 
 .explorer-note {
   font-weight: 400;
   text-transform: none;
   letter-spacing: 0;
-  opacity: 1;
   color: var(--muted);
+}
+
+.explorer-folder h3 .explorer-icon {
+  margin-left: auto;
 }
 
 .explorer-folder ul {
@@ -1339,8 +1537,22 @@ main.audio-layout {
   list-style: none;
 }
 
+/* One row: the file, and the actions that appear when you point at it. */
+.explorer-row {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+  border-radius: 4px;
+}
+
+.explorer-row:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
 .explorer-file {
   display: block;
+  flex: 1;
+  min-width: 0;
   padding: 0.15rem 0.35rem;
   border-radius: 4px;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
@@ -1348,10 +1560,6 @@ main.audio-layout {
   color: var(--ink);
   text-decoration: none;
   overflow-wrap: anywhere;
-}
-
-.explorer-file:hover {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .explorer-file.active {
@@ -1366,36 +1574,203 @@ main.audio-layout {
   cursor: default;
 }
 
-@media (max-width: 1000px) {
-  .workbench {
-    grid-template-columns: 1fr;
-  }
-
-  .explorer {
-    position: static;
-  }
-}
-
-.explorer-actions {
+/*
+ * The row's actions.
+ *
+ * Hidden until the row is pointed at or something in it has focus — never
+ * `display: none`, which would take them out of the tab order and off a screen
+ * reader, and never `visibility` alone, which would leave them clickable. This
+ * is the one place the site trades a little discoverability for a tree that
+ * reads as a list of files rather than a list of buttons.
+ */
+.explorer-row-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
+  gap: 0.1rem;
+  opacity: 0;
 }
 
-.explorer-actions button,
-.explorer-import {
+.explorer-row:hover .explorer-row-actions,
+.explorer-row:focus-within .explorer-row-actions {
+  opacity: 1;
+}
+
+.explorer-icon {
   font: inherit;
-  font-size: 0.75rem;
-  padding: 0.2rem 0.45rem;
-  border: 1px solid var(--line);
+  font-size: 0.8rem;
+  line-height: 1;
+  padding: 0.15rem 0.3rem;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.explorer-icon:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: transparent;
+}
+
+.explorer-rename {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.8rem;
+  padding: 0.1rem 0.3rem;
+  border: 1px solid var(--accent);
   border-radius: 4px;
   background: var(--bg);
+  color: var(--ink);
+}
+
+/* --- go to file ------------------------------------------------------------ */
+
+.quick-open-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  justify-content: center;
+  padding-top: 12vh;
+  background: rgb(0 0 0 / 35%);
+}
+
+.quick-open {
+  width: min(36rem, 92vw);
+  height: fit-content;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 35%);
+  overflow: hidden;
+}
+
+.quick-open-input {
+  font: inherit;
+  padding: 0.55rem 0.7rem;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.quick-open-list {
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  overflow: auto;
+}
+
+.quick-open-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  width: 100%;
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  padding: 0.3rem 0.5rem;
+  border: 0;
+  border-radius: 4px;
+  background: none;
   color: var(--ink);
   cursor: pointer;
 }
 
-.explorer-import input {
-  display: none;
+.quick-open-item.active,
+.quick-open-item:hover {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: transparent;
+}
+
+.quick-open-path {
+  font-size: 0.75rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.quick-open-item.active .quick-open-path,
+.quick-open-item:hover .quick-open-path {
+  color: var(--accent-ink);
+}
+
+.quick-open-empty {
+  padding: 0.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* --- the status bar -------------------------------------------------------- */
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.15rem 0.6rem;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* The project picker sits here for the reason an editor's branch picker does:
+   it names the thing everything else on screen is about, and it is not a
+   command. */
+.status-project select {
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.05rem 0.25rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: var(--ink);
+}
+
+.status-project select:hover {
+  border-color: var(--line);
+}
+
+.status-notice {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-spacer {
+  margin-left: auto;
+}
+
+/* --- the plain text editor ------------------------------------------------- */
+
+main.text-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Its heading is a *path*, so it keeps its own case: every other pane's is a
+   word this stylesheet chose to shout. */
+main.text-layout .pane h2 {
+  text-transform: none;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+/* One file and nothing else on screen, so the box is the pane. */
+main.text-layout .pane {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+main.text-layout .source-editor {
+  flex: 1;
+  min-height: 12rem;
 }
 
 /* --- the level editor (doc 19 §The level editor) --------------------------- */

@@ -114,6 +114,7 @@ export {
 } from "./project/kinds.js";
 export { resolveReference, shortestName, type Resolution } from "./project/resolve.js";
 export { parseDemakefile } from "./demakefile/parse.js";
+export { highlightDemakefile } from "./demakefile/highlight.js";
 export {
   applyArtOverrides,
   artOverrides,

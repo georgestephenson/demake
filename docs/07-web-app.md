@@ -32,42 +32,103 @@ no upload, no accounts, no telemetry. If GitHub Pages is up, the app works.
 The site is one shell over four demakers, because demake demakes game assets and
 images are only one kind (doc 01 §Scope):
 
-| Section | What it does | State |
-|---|---|---|
-| **demotic game demaker** | write a `.dmt`, play it on any console, run its `.test.dmt` suite | live |
-| **art demaker** | the image pipeline described below | live |
-| **music demaker** | tracks → chip music (docs 16, 17) | live |
-| **sound demaker** | effects → chip sound (docs 16, 18) | live |
-| **level editor** | draw a `.dmtl` room, see it at every console's viewport | live (doc 19) |
-| **block editor** | a `.dmt` as draggable blocks instead of typed lines | planned (doc 19) |
+| Section | Opens for | What it does | State |
+|---|---|---|---|
+| **demotic game demaker** | `.dmt` | write a game, play it on any console, run its `.test.dmt` suite | live |
+| **art demaker** | `.svg` `.png` `.jpg` … | the image pipeline described below | live |
+| **music demaker** | `.mid` | tracks → chip music (docs 16, 17) | live |
+| **sound demaker** | `.wav` | effects → chip sound (docs 16, 18) | live |
+| **level editor** | `.dmtl` | draw a room, see it at every console's viewport | live (doc 19) |
+| **text editor** | `Demakefile`, `.md`, `.trace`, … | the project's other files, as text | live |
+| **demotic reference** | — | the language, generated from the registry | live |
+| **block editor** | `.dmt` | a program as draggable blocks instead of typed lines | planned (doc 19) |
 
-The route lives in the hash as `#section=<id>`, and the **art demaker is the
-unmarked default** — so every option permalink shared before the site grew
-sections still opens exactly what it used to.
+**A section is not something you choose; it is what the open file is.** Clicking
+`ball.svg` opens the art demaker because a `.svg` *is* art. The route is
+`#file=<path>` and the section comes off the extension, so the two can never
+disagree — which is why the row of section tabs the site used to carry is gone
+(§The workbench). `#section=<id>` still reads, because every option permalink
+shared before the site held projects has one in it, and an unrecognised hash
+still falls back to the art demaker.
 
-**The sections are becoming editors in a project workspace**
-([doc 19](19-projects.md)). Today each holds a single artifact and offers a
-bundled demo to fill it; the unit the site should operate on is a *folder* — a
-`.dmt` and its test suite, its art, its music, its effects, its levels and a
-Demakefile — because that is the object the CLI already builds. Doc 19 is the
-design, and it is the shape a code editor has: **an explorer down the left, and
-opening a file opens the editor for its type.** `#section=` becomes `#file=`,
-because the section is derivable from the extension and one of the two can then
-never disagree with the other.
+**A bare URL opens the project's game.** Somebody arriving has come to see a
+game, and doc 19's entry-point rule (`src/`, then the root) is what says which
+one. The art demaker was the landing page only because it was the first section
+written.
 
-Three things follow that this document did not previously have room for. **A
+## The workbench
+
+The site is a **window**, not a page: a title bar, a menu bar, an explorer, one
+editor, and a status bar, filling the viewport with nothing spare. The unit it
+operates on is a *folder* — a `.dmt` and its test suite, its art, its music, its
+effects, its levels and a Demakefile — because that is the object the CLI already
+builds ([doc 19](19-projects.md)).
+
+- **The title bar names the window**, `demake — <what this tool does with the
+  thing you have open>`, and the tagline is per editor: a `.dmt` is the whole
+  product thesis in one line and a `.wav` is one demaker. The browser tab says
+  the same thing, from the same string.
+- **The menus carry the commands**, with their accelerators: File (new, open a
+  folder, import a zip, save, download a zip), Edit (undo, redo, rename, delete),
+  View (the explorer, the reference), Go (go to file, the game, the Demakefile),
+  Help. **A menu entry and its keybinding are one declaration** — the same array
+  is what is drawn and what is bound — so a menu cannot advertise a shortcut
+  nothing listens for. Same rule as the CLI's one flag spec (doc 05) and the
+  highlighter's one word list.
+
+  Which is why two commands carry no accelerator and two are marked `native`.
+  ⌘N is the browser's new window and cannot be prevented; ⌘⌫ deletes the previous
+  word in a text box and must not be taken over by a delete with no undo behind
+  it. Undo and redo keep the *browser's* key, because a `<textarea>`'s own ⌘Z
+  drives the native undo stack the user has been filling by typing — a journal of
+  ours beside it would be a second history that disagrees with the key pressed
+  with the caret in the box.
+- **The explorer manages files.** Add, rename, move and delete, with a move and a
+  rename being one gesture because a project is a flat map from path to bytes and
+  a folder is a convention in the names. Doc 19 originally deferred this; §A file
+  manager, after all records why the answer changed.
+- **The status bar holds the project**, the way an editor's holds the branch: the
+  picker for which example is open, whether it has unsaved changes, and whatever
+  the last operation had to say.
+
+Two things follow that this document did not previously have room for. **A
 demaker's controls become the Demakefile** — doc 15 §The equivalence contract
 stops being a promise, because there is no second place the settings live. That is
 live for the art demaker: changing a control writes the block for the asset you
 have open, setting it back removes the line again, and the pane says which file
-and which block it is editing rather than doing it silently.
-**`build/` stays the CLI's**: the previewer compiles in the tab, as it already
-does, and writing those bytes to a directory would add nothing but a way for two
-copies to disagree about which is stale. And a `.dmt` gains a third view beside
-its text and its preview — a **block editor**, generated from the language
-registry, offering the open project's own sprites and tracks as pictures and
-sounds rather than as filenames. Nothing about what a demaker *does* changes; what
-changes is what opens it, and where its options are written down.
+and which block it is editing rather than doing it silently. And **`build/` stays
+the CLI's**: the previewer compiles in the tab, as it already does, and writing
+those bytes to a directory would add nothing but a way for two copies to disagree
+about which is stale.
+
+Still to come: a `.dmt`'s third view beside its text and its preview — a **block
+editor**, generated from the language registry, offering the open project's own
+sprites and tracks as pictures and sounds rather than as filenames. Nothing about
+what a demaker *does* changes; what changes is what opens it, and where its
+options are written down.
+
+### The text editor
+
+What opens for a file in the project that no demaker demakes: the Demakefile, a
+`.md`, a golden `.trace`, a note somebody left. It is the smallest editor here on
+purpose — a textarea over the project's own text — and it exists because doc 19
+promises the build file is "also just a file in the explorer", which was not true
+while nothing opened one.
+
+**The Demakefile gets colours, and they are the engine's.** A `.dmt` has
+`highlight()` and a Demakefile now has `highlightDemakefile()`, both in
+`@demake/demotic` and both driven by the grammar's own word lists — the parser's
+directive sets live in `demakefile/model.ts` and the highlighter imports them, so
+a directive added to the format is coloured the day it is added and a file is
+never coloured differently from how it is read. A page-side lexer for a format
+the engine also parses is this document's forbidden second implementation, one
+file type along from where that rule was first written.
+
+**A file with no grammar is drawn plain rather than approximately.** Guessing at
+Markdown or JSON with a regular expression in the page would be exactly the thing
+the paragraph above refuses, for a smaller prize. And a file the extension says
+is text but whose bytes hold a zero is shown read-only: `route.ts` decides by
+extension, which is right for routing and cannot be right for everything.
 
 ### The Demotic section
 
@@ -409,15 +470,38 @@ bundled track or effect on arrival instead, so every section demos itself.
 
 ## Quality bar
 
-- Works fully offline after first load (PWA manifest + service worker). Hashed
-  assets are cache-first, because a content-hashed name can only ever mean one
-  file. **The shell is network-first**, because `index.html` is the one URL that
-  does not change and it is what names the hashed chunks: served from the cache,
-  it asks for the chunks it already has, and a deploy reaches new visitors only.
-  That shipped once — a console added to the app did not appear in anyone's
-  browser after the deploy that contained it — and
-  `packages/web/test/sw.test.ts` is what now says which requests may be answered
-  from the cache. Offline still works: the shell falls back to the cached copy.
+- Works fully offline after first load (PWA manifest + service worker).
+  **What may be cached for ever is decided by the URL.** Vite writes every
+  content-hashed artifact under `assets/`, so a request inside it can never mean
+  two different files and is cache-first; everything else same-origin —
+  `index.html`, the manifest, the icon — has a stable URL and changing contents,
+  so it is network-first with the cache as the offline fallback. That one rule is
+  the whole policy, and `packages/web/test/sw.test.ts` is what enforces it.
+
+  **The shell is the case that bites**, and it bit twice. `index.html` is the one
+  URL that does not change and it is what names the hashed chunks: served from
+  the cache, it asks for the chunks it already has, and a deploy reaches new
+  visitors only. A console added to the app did not appear in anyone's browser
+  after the deploy that contained it. The second time was subtler and had the
+  same symptom — the shell was fetched from the network and the *browser's* HTTP
+  cache answered, because Pages sends `max-age=600` on it. Network-first over a
+  cached response is not first at all, so the request states `cache: "no-store"`.
+
+  Three things outside the worker finish the job, each of which is a way a
+  visitor gets stuck on an old build: the registration asks for
+  `updateViaCache: "none"` so `sw.js` itself is never served from the HTTP cache
+  (a worker that cannot be re-read is a worker that cannot be replaced); the page
+  checks for an update on load and on becoming visible again, because a browser
+  checks on navigation and this app is one page somebody leaves open for a week;
+  and when a *new* worker takes control of a page an *old* one was running, the
+  page reloads once, so the rescue costs no clicks. Bumping the cache name is
+  still what drops a poisoned cache on activate.
+
+  **That reload is the one thing that could throw away a project**, now that the
+  page holds an editable folder rather than one dropped image — so the workbench
+  registers a `beforeunload` guard whenever the project is dirty. A programmatic
+  reload goes through it like any other navigation, which is why one guard covers
+  both the deploy and the closed tab.
 - Accessible: keyboard operable, labeled controls, honors reduced-motion.
   Contrast is always set with an explicit colour, **never with opacity** — a
   translucent foreground composites against whatever is behind it, which is both

@@ -174,7 +174,7 @@ for (const consoleId of ["gb", "nes", "sms", "snes", "md"] as const) {
     // not built until every asset has arrived (the pane's own `ready` gate), so
     // there is no half-loaded project to race with here.
     await page.getByTestId("project-select").selectOption("caves");
-    await expect(page.getByTestId("example-select")).toHaveValue(/caves\.dmt$/);
+    await expect(page.getByTestId("open-game")).toHaveText("caves.dmt");
     if (consoleId !== "gb") await page.getByTestId("console-select").selectOption(consoleId);
     // Waiting on the *cartridge's* console, not the picker's: demaking a
     // full-screen picture in colour is the whole `prep` tournament, and until it

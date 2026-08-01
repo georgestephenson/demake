@@ -14,7 +14,9 @@
 
 import type { Diagnostic } from "../errors.js";
 import {
+  BLOCK_DIRECTIVES,
   DOMAINS,
+  SINGLE_DIRECTIVES,
   type AssetBlock,
   type Demakefile,
   type Domain,
@@ -35,13 +37,19 @@ interface Line {
   line: number;
 }
 
-/** Top-level directives that take a single value. */
-const SINGLE = new Set(["source", "out", "assets"]);
-/** Top-level directives that open a block. */
-const BLOCKS = new Set(["project", "defaults", "target", "art", "music", "sound"]);
+/** The grammar's own word lists, shared with the highlighter (`model.ts`). */
+const SINGLE = SINGLE_DIRECTIVES;
+const BLOCKS = BLOCK_DIRECTIVES;
 
-/** Strip a trailing comment, honouring doc 15's ` # ` rule. */
-function uncomment(text: string): string {
+/**
+ * Strip a trailing comment, honouring doc 15's ` # ` rule.
+ *
+ * Exported because the highlighter has to make the *same* call about where a
+ * comment starts. A second rule there is a file coloured differently from how it
+ * is read, which is the failure `lang/highlight.ts` running on `lex()` exists to
+ * prevent one format up.
+ */
+export function uncomment(text: string): string {
   if (text.trimStart().startsWith("#")) return "";
   const at = text.indexOf(" #");
   return at < 0 ? text : text.slice(0, at);

@@ -396,7 +396,15 @@ packages/md/         @demake/md — a self-hosted Mega Drive core: a 68000, a VD
 packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs 14, 15)
   src/lang/          lex → parse → flat statement AST (one statement per line, no nesting)
   src/lang/highlight.ts  TextMate scopes for `.dmt` source — the registry's words,
-                     the lexer's boundaries, and no colours (those are the page's)
+                     the lexer's boundaries, and no colours (those are the page's).
+                     Its `Scope` union is the repo's whole scope vocabulary, not
+                     this grammar's: demakefile/highlight.ts emits from the same
+                     one, so a Demakefile and a game share the page's stylesheet
+  src/demakefile/    parse, emit, resolve — and highlight.ts, whose word lists are
+                     model.ts's own (SINGLE_DIRECTIVES, BLOCK_DIRECTIVES,
+                     TARGET_FIELDS) and whose comment rule is parse.ts's own
+                     `uncomment`, so a file is never coloured differently from how
+                     it is read
   src/compile.ts     AST + console profile → resolved Program tables (constants folded)
   src/sim.ts         the reference interpreter — the semantic definition of the language
   src/level/         .dmtl levels: parse, camera + tile collision, `stream` composition
@@ -463,8 +471,9 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
   src/dsp.ts         deterministic FFT/resampler/pitch, all on core's kernels
   src/manifest.ts    the --emit-manifest sidecar: one shape, two callers (CLI, web)
   src/render.ts      ChipScript → PCM; the only way anything makes sound
-packages/web/        the site (doc 07): a project workspace over six editors, all
-                     but the art demaker code-split (doc 19)
+packages/web/        the site (doc 07): a window — title bar, menus, explorer,
+                     one editor, status bar — over seven editors, all but the art
+                     demaker code-split (docs 07 §The workbench, 19)
   src/worker/        core.worker.ts (images *and* game cartridges) and
                      audio.worker.ts (music + sound): the only places the page
                      touches an engine, and the only places @demake/core is
@@ -472,8 +481,17 @@ packages/web/        the site (doc 07): a project workspace over six editors, al
                      instances of core.worker are the pool lanes, which is why
                      they cost nothing to download
   src/sections/      the lazy sections; art's panes live in src/components/.
-                     LevelEditor.tsx is the one that edits a *file* rather than
-                     demaking one, over lib/dmtl.ts
+                     LevelEditor.tsx and TextEditor.tsx are the two that edit a
+                     *file* rather than demaking one — over lib/dmtl.ts and over
+                     nothing at all respectively, since a text editor is a
+                     textarea and whichever of the engine's grammars fits
+  src/components/    the art panes, plus the chrome every section sits inside:
+                     Explorer.tsx (the tree, and the only place a file is created,
+                     renamed, moved or deleted), MenuBar.tsx (the menus *and* the
+                     keybindings, from one array), QuickOpen.tsx (Ctrl+P) and
+                     SourceEditor.tsx (a textarea under a coloured <pre>, handed
+                     spans rather than fetching them — which is what keeps the
+                     language out of the chunks that only need a box to type in)
   src/players/       one module per emulator core, reached through `bootPlayer`'s
                      `import()`, so a visitor downloads the console they are
                      playing rather than all five. player.ts is the part that is
@@ -484,7 +502,9 @@ packages/web/        the site (doc 07): a project workspace over six editors, al
                      only). project.ts is the folder the whole page is about;
                      dmtl.ts edits a level as *text* (never a parsed model, so a
                      file the editor did not change comes back byte-identical);
-                     tiles.ts draws a tile, for the two panes that draw one
+                     tiles.ts draws a tile, for the two panes that draw one;
+                     route.ts is what decides which editor a path opens, and the
+                     only place that question is asked
 tools/eslint-rules/  custom ESLint rules: platform-purity + determinism
 tools/ci/            CI guards: E2E prerequisites, web JS budget, and
                      affected.mjs — which gates a change can break, read off the
@@ -1992,17 +2012,64 @@ you are writing the wrong one of the two.
   touches `@demake/core` belongs anyway. What may stay on the main thread is what
   has no engine under it: the language front end, the interpreter, and the
   emulator cores, because playing a cartridge is what the page does with one.
-- **The service worker may cache anything but the shell.** Every asset is
-  content-hashed, so cache-first is right for all of them — and wrong for
-  `index.html`, the one URL that never changes and the file that names those
-  hashed chunks. Cached, it asks for the chunks it already has, so a returning
+- **What the service worker may cache for ever is decided by the URL.** Vite
+  writes every content-hashed artifact under `assets/`, so a request inside it
+  can never mean two different files and is cache-first; everything else
+  same-origin — `index.html`, the manifest, the icon — has a stable URL and
+  changing contents, so it is network-first with the cache as the offline
+  fallback. `index.html` is the one that matters, because it is what names the
+  hashed chunks: cached, it asks for the chunks it already has, so a returning
   visitor stays on the build they first loaded and a deploy reaches new visitors
-  only. Navigations therefore go to the network first and fall back to the cache
-  (offline still works). No browser test can catch this — a Playwright context
-  always starts with empty storage, so the suite only ever sees a first visit —
-  which is why `packages/web/test/sw.test.ts` runs the worker in a fake global
-  instead. Changing `CACHE`'s name is what rescues visitors holding a poisoned
-  shell, and it costs them one further reload.
+  only.
+- **And "network-first" has to mean past the _browser's_ cache too.** The shell
+  is fetched with `cache: "no-store"`, because Pages sends `max-age=600` on it
+  and a fetch the HTTP cache answers is not a fetch. That is the same bug a
+  second time with a ten-minute window instead of an unbounded one, which is
+  exactly how it survived the first fix.
+- **Three things outside the worker finish the job** (`main.tsx`), each a way a
+  visitor gets stuck: registration asks for `updateViaCache: "none"`, so `sw.js`
+  itself is never HTTP-cached (a worker that cannot be re-read cannot be
+  replaced); the page calls `registration.update()` on load and on becoming
+  visible, because a browser checks on navigation and this app is one page
+  somebody leaves open for a week; and a page an _old_ worker was running
+  reloads once when a _new_ one claims it — guarded on there having been a
+  controller, or every first visit would reload. No browser test can catch any
+  of this — a Playwright context always starts with empty storage, so the suite
+  only ever sees a first visit — which is why `packages/web/test/sw.test.ts`
+  runs the worker in a fake global instead. Changing `CACHE`'s name is still
+  what rescues a visitor holding a poisoned cache.
+- **A menu entry and its keybinding are one declaration.** `MenuBar`'s array is
+  what is drawn _and_ what `useMenuKeys` binds, so a menu cannot advertise a
+  shortcut nothing listens for and a disabled row cannot have a live key. Same
+  rule as `cli-spec` for flags and `lang/spec.ts` for the language: the second
+  list is the one that goes stale. `Mod` is the platform's modifier, decided in
+  that one file and never at a call site.
+- **Which is why two of the commands have no accelerator and two are `native`.**
+  ⌘N is the browser's new window and cannot be prevented; ⌘⌫ deletes the previous
+  word in a text box and must not be taken over by a delete with no undo behind
+  it — so neither is offered. Undo and redo _are_ offered and are marked
+  `native`: the key stays the browser's, because a `<textarea>`'s own ⌘Z drives
+  the native undo stack the user has been filling by typing, and a journal of our
+  own beside it is a second history that disagrees with the key. Before adding a
+  binding, ask which of those three a key is.
+- **A path opens exactly one editor, and `route.ts` is where that is decided.**
+  `sectionForFile` reads the kind `@demake/demotic` already assigns by extension,
+  names the two cases the language has no kind for (`.dmt`, and text), and is
+  read by the explorer, the router and the lazy-import switch. A component that
+  asked "what kind of file is this?" for itself would be the second answer.
+- **A blob URL needs a media type or an `<img>` shows nothing.** A browser
+  believes a blob's `type` and does not sniff for SVG, so `mediaTypeOf` is one
+  table in `lib/project.ts` with two callers — the explorer's pictures and the
+  art demaker's source pane. The second one built its blob without a type for
+  months: every drawing in every project was a broken image _beside a demade
+  result that had come out perfectly_, because the engine reads the bytes and
+  never the URL.
+- **The page never lexes a format the engine parses.** `.dmt` colours come from
+  `highlight()` and a Demakefile's from `highlightDemakefile()`, both in
+  `@demake/demotic`; `SourceEditor` is handed spans and owns no grammar, which is
+  also what keeps the language out of the chunks that only need a box to type in.
+  A file with no grammar is drawn plain rather than approximated with a regular
+  expression — that is the forbidden second implementation for a smaller prize.
 - **The web JS budget is what one visitor downloads, not what the site is.**
   `pnpm check:web-budget` charges every chunk once _except_ the per-console ones,
   of which it charges only the largest family — because a visitor plays one

@@ -50,9 +50,16 @@ import { lex, type Token } from "./lex.js";
  * Kept flat and small on purpose: a theme with a rule per entry is a dozen
  * lines, and prefix matching (`keyword`, `string`, `constant`) collapses it
  * further for anyone who wants fewer colours.
+ *
+ * **It is the repo's scope vocabulary, not this grammar's.** The Demakefile
+ * highlighter (`demakefile/highlight.ts`) emits from the same union, so one
+ * theme colours a game and its build file and neither surface needs a second
+ * stylesheet. Only the comment syntax differs, which is why there are two of
+ * those and one of everything else.
  */
 export type Scope =
   | "comment.line.double-dash"
+  | "comment.line.number-sign"
   | "constant.language"
   | "constant.numeric"
   | "entity.name.section"

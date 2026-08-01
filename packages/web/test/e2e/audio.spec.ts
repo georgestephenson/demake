@@ -58,13 +58,16 @@ test("loads the music demaker on demand and arranges the bundled track", async (
     if (response.url().endsWith(".js")) chunks.push(response.url());
   });
 
-  await page.goto("/");
-  // The art demaker is the default and must not have pulled the audio engine in.
+  // The art demaker is what a bare `#section=` lands on, and it must not have
+  // pulled the audio engine in.
+  await page.goto("/#section=art");
   await expect(page.getByTestId("console-summary")).toBeVisible();
   expect(chunks.some((url) => url.includes("MusicDemaker"))).toBe(false);
   expect(chunks.some((url) => url.includes("audio.worker"))).toBe(false);
 
-  await page.getByRole("link", { name: /music demaker/i }).click();
+  // Opening a track in the explorer is what fetches it — the section tabs are
+  // gone, and a `.mid` opens the music demaker because it is a track (doc 19).
+  await page.getByTestId("explorer-file").filter({ hasText: "rally.mid" }).first().click();
   await expect(page.getByRole("heading", { name: "Arrangement" })).toBeVisible();
   expect(chunks.some((url) => url.includes("MusicDemaker"))).toBe(true);
 

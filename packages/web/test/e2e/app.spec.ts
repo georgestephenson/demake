@@ -10,7 +10,11 @@
 import { expect, test } from "@playwright/test";
 
 test.beforeEach(async ({ page }) => {
-  await page.goto("/");
+  // The art demaker with no file open. A bare URL opens the project's game now
+  // (doc 07 §Sections) — the section tabs are gone, so an art file in the
+  // explorer or a `#section=` is how you get here, and `#section=` is what every
+  // option permalink shared before the site held projects already carries.
+  await page.goto("/#section=art");
 });
 
 test("converts the bundled demo image and shows the result", async ({ page }) => {

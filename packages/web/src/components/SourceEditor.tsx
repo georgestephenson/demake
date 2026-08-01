@@ -20,33 +20,44 @@
  *    a bold keyword in a fallback font is a wider keyword, and the two layers
  *    would drift apart along the line.
  *
- * The grammar comes from `@demake/demotic` (`highlight()`), not from a regular
- * expression here. A second description of the language living in the page is
- * exactly what doc 07 §The web app must never grow conversion logic forbids, and
- * the registry is what makes one description enough.
+ * **The grammar is never this component's.** Spans come in from the caller,
+ * which gets them from `@demake/demotic` — `highlight()` for a game,
+ * `highlightDemakefile()` for a build file, and nothing at all for a file whose
+ * format the engine has no grammar for. A second description of a language
+ * living in the page is exactly what doc 07 §The web app must never grow
+ * conversion logic forbids; passing the spans in is also what keeps the engine
+ * out of the chunks that only need a plain textarea.
  */
 
-import { useMemo } from "preact/hooks";
-
-import { highlight } from "@demake/demotic";
+import type { HighlightSpan } from "@demake/demotic";
 
 export function SourceEditor({
   value,
   onInput,
   label,
+  spans,
+  readOnly,
 }: {
   value: string;
   onInput: (next: string) => void;
   label: string;
+  /**
+   * The colours, from whichever of the engine's grammars fits this file.
+   *
+   * They must tile `value` exactly — every highlighter here guarantees that —
+   * because the `<pre>` is what the `<textarea>` is measured against. Absent,
+   * the text is drawn plain, which is the honest answer for a format nothing
+   * has a grammar for.
+   */
+  spans?: readonly HighlightSpan[];
+  readOnly?: boolean;
 }) {
-  // Colouring is a lex of a few kilobytes — well under a frame, and cheaper than
-  // the compile that already runs on every keystroke beside it.
-  const spans = useMemo(() => highlight(value), [value]);
+  const runs: readonly HighlightSpan[] = spans ?? [{ text: value, scope: null }];
 
   return (
     <div class="source-editor">
       <pre class="source-highlight" aria-hidden="true">
-        {spans.map((span, index) =>
+        {runs.map((span, index) =>
           span.scope ? (
             <span key={index} data-scope={span.scope}>
               {span.text}
@@ -67,6 +78,7 @@ export function SourceEditor({
         autocomplete="off"
         autocorrect="off"
         rows={1}
+        readOnly={readOnly === true}
         value={value}
         onInput={(event) => onInput((event.target as HTMLTextAreaElement).value)}
       />

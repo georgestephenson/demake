@@ -34,6 +34,13 @@ interface FakeRequest {
   mode: string;
 }
 
+/** What the worker asked the network for, and how. */
+interface Ask {
+  url: string;
+  /** The `cache` mode it passed, if any — the shell must bypass the HTTP cache. */
+  cache?: string;
+}
+
 interface FakeEvent {
   request: FakeRequest;
   respondWith(response: Promise<unknown>): void;
@@ -63,6 +70,7 @@ function start(options: { cached?: Record<string, unknown>; offline?: boolean } 
   const store = new Map<string, unknown>(
     Object.entries(options.cached ?? {}).map(([key, value]) => [absolute(key), value]),
   );
+  const asks: Ask[] = [];
   const asked: string[] = [];
   const listeners = new Map<string, Handler>();
 
@@ -88,8 +96,9 @@ function start(options: { cached?: Record<string, unknown>; offline?: boolean } 
     },
     caches,
     location: { origin: "https://example.test" },
-    fetch: (request: FakeRequest) => {
+    fetch: (request: FakeRequest, init?: { cache?: string }) => {
       asked.push(request.url);
+      asks.push({ url: request.url, ...(init?.cache === undefined ? {} : { cache: init.cache }) });
       return options.offline
         ? Promise.reject(new Error("offline"))
         : Promise.resolve(response(`network:${request.url}`));
@@ -116,7 +125,7 @@ function start(options: { cached?: Record<string, unknown>; offline?: boolean } 
     return responded === null ? null : await responded;
   };
 
-  return { request, asked, store };
+  return { request, asked, asks, store };
 }
 
 describe("the service worker", () => {
@@ -141,6 +150,15 @@ describe("the service worker", () => {
     expect((answer as { body: string }).body).toBe("cached:shell");
   });
 
+  it("asks for the shell past the HTTP cache", async () => {
+    // Network-first over a response the *browser* cached is not first at all:
+    // Pages sends `max-age=600` on index.html, so without this the shell can be
+    // ten minutes stale and every hashed chunk it names ten minutes behind.
+    const { request, asks } = start();
+    await request(SCOPE, "navigate");
+    expect(asks).toEqual([{ url: SCOPE, cache: "no-store" }]);
+  });
+
   it("serves a hashed asset from the cache without asking the network", async () => {
     const chunk = `${SCOPE}assets/GameDemaker-abc123.js`;
     const { request, asked } = start({ cached: { [chunk]: response("cached:chunk") } });
@@ -156,6 +174,24 @@ describe("the service worker", () => {
     expect((answer as { body: string }).body).toBe(`network:${chunk}`);
     expect(asked).toEqual([chunk]);
     expect(store.has(chunk)).toBe(true);
+  });
+
+  it("goes to the network for an unhashed file even when it has one cached", async () => {
+    // The icon, the manifest, anything dropped in `public/`: a stable URL with
+    // mutable contents is the shell's problem in miniature, and it gets the
+    // shell's answer. Only `assets/` is content-hashed, so only `assets/` is
+    // safe to pin.
+    const icon = `${SCOPE}icon.svg`;
+    const { request, asked } = start({ cached: { [icon]: response("cached:icon") } });
+    const answer = await request(icon);
+    expect((answer as { body: string }).body).toBe(`network:${icon}`);
+    expect(asked).toEqual([icon]);
+  });
+
+  it("falls back to the cache for an unhashed file when there is no network", async () => {
+    const icon = `${SCOPE}icon.svg`;
+    const { request } = start({ cached: { [icon]: response("cached:icon") }, offline: true });
+    expect(((await request(icon)) as { body: string }).body).toBe("cached:icon");
   });
 
   it("leaves other origins and non-GET requests alone", async () => {

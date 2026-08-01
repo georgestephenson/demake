@@ -22,6 +22,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 
 import {
   EMPTY,
+  highlight,
   parseDemakefile,
   parseLevel,
   profiles,
@@ -396,7 +397,14 @@ export function LevelEditor({ project, path, onEdit }: EditorProps) {
           </>
         ) : null}
 
-        {showText ? <SourceEditor value={draft} onInput={setDraft} label="Level source" /> : null}
+        {showText ? (
+          <SourceEditor
+            value={draft}
+            onInput={setDraft}
+            label="Level source"
+            spans={highlight(draft)}
+          />
+        ) : null}
 
         <div class="game-diagnostics">
           {errors.length === 0 ? (
