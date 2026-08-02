@@ -773,16 +773,18 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   fixture is held above a kilobyte of headroom by the audio battery, because a
   fixture built to the last hundred bytes turns the next codegen change into a
   mystery.
-- **And it costs more on the NES, which is why the shooter does not fit there.**
-  The audio itself is _cheaper_ on that machine — 1742 bytes against the Game
-  Boy's 2076 for the shooter, because the driver ticks at 60 Hz rather than 120 —
-  but the game around it is not: the same program's 6502 code is about 3.8 KiB
-  larger than its SM83 code, and a backdrop is a 960-cell nametable against 360.
-  The shooter's NES cartridge is under two hundred bytes over with its music in it, and
-  the audio battery _asserts_ the overflow rather than skipping the fixture, so a
-  codegen change that wins the bytes back fails the test and someone moves it
-  into the sweep. The obvious place to look for them is the backdrop nametable,
-  which is stored raw.
+- **And it costs differently on the NES.** The audio itself is _cheaper_ on that
+  machine — 1742 bytes against the Game Boy's 2076 for the shooter, because the
+  driver ticks at 60 Hz rather than 120 — but the game around it is not: the same
+  program's 6502 code is about 3.8 KiB larger than its SM83 code, and a backdrop
+  is a 960-cell nametable against 360. The shooter used to be a couple of hundred
+  bytes _over_ there and the battery asserted the overflow; the packed name
+  tables, the looped collision pairs and the grouped integrator won it back, and
+  it now has 13457 bytes free. `OVER_BUDGET` is empty as a result, and the
+  emptiness is the record. The tightest cartridge in the library is the Game
+  Boy's shooter at 2178 bytes free — that is where a budget regression shows
+  first, which is why the Game Boys sweep the whole library and the NES sweeps
+  two.
 - **New language features come from the example library, not from theory**
   (`packages/demotic/fixtures/games/`). Each example is there for something the
   others do not exercise; `touches`, the `reaches` crossing rule and `visible`'s

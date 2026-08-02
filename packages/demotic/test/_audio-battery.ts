@@ -856,19 +856,42 @@ export function audioSweep(target: Target): void {
     /**
      * How much of the library each console sweeps.
      *
-     * All of it, except on the console with nothing to overflow. This sweep exists
-     * to catch a cartridge that no longer fits — that is what the headroom
-     * assertion is — and a Mega Drive game is twenty-odd kilobytes of a
-     * half-megabyte image. Seven whole art-and-audio builds to assert that 487 KiB
-     * is more than one is eight minutes of `pnpm test` buying nothing, so it builds
-     * the shooter alone: the tightest fixture everywhere else, with two demade
-     * backdrops, nine aliens, a theme and four effects. What the other six would
-     * have covered is covered elsewhere — the register-level battery above builds a
-     * real game for this console, `md-rom.test.ts` demakes real art for it, and
-     * `rom.test.ts` traces all seven.
+     * **A budget can only decide a cartridge already near the edge**, so what a
+     * console sweeps is the fixtures a budget could plausibly decide — measured,
+     * not guessed. Bytes free against the 1 KiB floor, tightest first:
      *
-     * The day this console grows a mapper story, or an FM driver with a schedule
-     * ten times the size of a PSG one, this is the entry to delete.
+     * | console | free bytes |
+     * | --- | --- |
+     * | `gb` | shooter 2178, caves 6012, runner 7411, dodger 8372, breakout 10641, pong 12716, platformer 14448 |
+     * | `sms` | caves 3358, runner 4599, shooter 7218, dodger 9027, breakout 9312, pong 11093, platformer 12007 |
+     * | `nes` | caves 10667, runner 11774, shooter 13457, breakout 14285, dodger 14575, pong 14582, platformer 18037 |
+     *
+     * The Game Boys sweep everything because they are the tightest family in the
+     * library *and* the cheapest to build — the whole seven is under a minute
+     * there, against six for the same seven on an NES. That is also what keeps
+     * every game's audio bound somewhere: the sweep is the only place a fixture is
+     * built *with* its music and effects, since `rom.test.ts` traces them with the
+     * assets left out.
+     *
+     * The other four sweep the fixtures that could actually fail. A Master System
+     * is a real budget — the caves land 2.3 KiB above the floor — so it takes the
+     * two tightest. An NES is not: every fixture there is ten to eighteen
+     * kilobytes clear, so no code-generator change short of a catastrophe could
+     * trip one, and the two tightest are kept as a floor guard and to assert the
+     * driver's reported sizes are real rather than the zero they held before
+     * `assemble` (`backend.ts` §BoundAudioShape). Five more builds a piece bought
+     * neither, at ten minutes of `pnpm test`.
+     *
+     * A Mega Drive and a Super Nintendo take the shooter alone, for opposite
+     * reasons: a Mega Drive game is twenty-odd kilobytes of a half-megabyte image
+     * and there is no overflow to catch at all, and a Super Nintendo picture is
+     * thirty seconds of tournament against five. Both build the shooter because it
+     * is the tightest fixture everywhere else — two demade backdrops, nine aliens,
+     * a theme and four effects.
+     *
+     * Re-measure before widening or narrowing this: the numbers above move with
+     * every code-generator change, and the day a console's tightest fixture
+     * approaches the floor is the day it wants more of the library, not less.
      *
      * **These are example names, not file names.** `cases` comes from `EXAMPLES`,
      * which is a project folder per game — `shooter`, not `shooter.dmt`. Written
@@ -878,13 +901,9 @@ export function audioSweep(target: Target): void {
      * error where one console's silence inside a shared one is invisible.
      */
     const SWEEP: Readonly<Record<string, readonly string[]>> = {
+      nes: ["caves", "runner"],
+      sms: ["caves", "runner"],
       md: ["shooter"],
-      // The Super Nintendo, for the same reason arrived at from the other end.
-      // Demaking a 256x224 picture into seven sixteen-colour sub-palettes is
-      // thirty seconds of tournament against five, so seven games' worth would be
-      // most of `pnpm test`. The shooter because it is the tightest in the
-      // library, and a budget can only decide a cartridge already near the edge.
-      // `rom.test.ts` builds every fixture for this console regardless.
       snes: ["shooter"],
     };
 
