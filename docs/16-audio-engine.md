@@ -27,7 +27,7 @@ in `pnpm test`** — the ROM boots in `@demake/dmg`, whose APU is now
 **And there are two more CPUs' drivers**, generated the same way. `demake build -c
 nes` puts a game's music and effects in an NROM cartridge as 6502 machine code;
 `-c sms` and `-c gg` put them in a Sega cartridge as Z80.
-`packages/demotic/test/audio.test.ts` runs the whole Level A battery on all three
+`packages/demotic/test/_audio-battery.ts` runs the whole Level A battery on all three
 — the Game Boy's driver
 on its timer at 120 Hz, the NES's on the picture's own interrupt at 60, the Sega's
 on the VDP's frame interrupt at 59.92 and writing an I/O port rather than an
@@ -730,7 +730,7 @@ justification for the whole ChipScript design.
 **Level A — schedule equality (exact, runs in `pnpm test`).** *Built for the Game
 Boy as a cartridge of its own (`packages/audio/test/rom.test.ts`), and for every
 console with a game backend inside a game — the Game Boy, the NES, the Sega
-8-bits and the Mega Drive (`packages/demotic/test/audio.test.ts`).*
+8-bits and the Mega Drive (`packages/demotic/test/_audio-battery.ts`).*
 Boot the generated ROM in a core we own,
 log every write to the chip with its tick, and diff against the ChipScript.
 `@demake/dmg` grew its APU by consuming `@demake/chip` — which it needed anyway

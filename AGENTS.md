@@ -241,7 +241,7 @@ restated: the clock is the picture's own interrupt, because a 2A03 has no timer 
 driver can have without burning the DMC channel, so a game's audio runs at the
 frame rate and not at 120 Hz; and the shared register is `$4015`, whose four
 enable bits _are_ the four channel bits, so the merge is two `and`s and clearing
-a bit is also how a channel is silenced. `packages/demotic/test/audio.test.ts`
+a bit is also how a channel is silenced. `packages/demotic/test/_audio-battery.ts`
 runs its whole battery on every machine with a driver, tick for tick, with no
 tolerance.
 
@@ -284,7 +284,7 @@ artifact _is_ the schedule.
 
 `demake build` then puts that driver _inside a game_: a track per scene, an
 effect per event, one clock serving both, and the same proof one level up —
-`packages/demotic/test/audio.test.ts` boots a cartridge that is playing a game
+`packages/demotic/test/_audio-battery.ts` boots a cartridge that is playing a game
 and diffs every register write against the schedules the demakers produced.
 It does that on **every** console the game backend builds for, over five drivers
 that share only the packed format and — where the chip is the same — what the
@@ -770,7 +770,7 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
 - **Audio costs cartridge the way a backdrop costs tiles.** A track is a few
   kilobytes of register schedule on a machine with 32 KiB and no mapper, which is
   why the shooter's theme is two bars and the platformer's is eight. Every
-  fixture is held above a kilobyte of headroom by `audio.test.ts`, because a
+  fixture is held above a kilobyte of headroom by the audio battery, because a
   fixture built to the last hundred bytes turns the next codegen change into a
   mystery.
 - **And it costs more on the NES, which is why the shooter does not fit there.**
@@ -779,7 +779,7 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   but the game around it is not: the same program's 6502 code is about 3.8 KiB
   larger than its SM83 code, and a backdrop is a 960-cell nametable against 360.
   The shooter's NES cartridge is under two hundred bytes over with its music in it, and
-  `audio.test.ts` _asserts_ the overflow rather than skipping the fixture, so a
+  the audio battery _asserts_ the overflow rather than skipping the fixture, so a
   codegen change that wins the bytes back fails the test and someone moves it
   into the sweep. The obvious place to look for them is the backdrop nametable,
   which is stored raw.
@@ -959,7 +959,7 @@ packages/demotic/test/rom.test.ts` builds every fixture game and diffs raw
   cell (360 a picture), the palettes each scene uploads, and the extra tiles
   colour art costs — two cells that differ only in tone are one tile on a DMG and
   two here — come to about a kilobyte for a game with two backdrops. The shooter
-  is the tightest fixture; `audio.test.ts` holds the three biggest above 512
+  is the tightest fixture; the audio battery holds the three biggest above 512
   bytes free, against 1 KiB for the monochrome build, and the difference is
   measured rather than a policy.
 - **Demaking a picture in colour is seconds, not milliseconds**, because it is
@@ -976,7 +976,7 @@ packages/demotic/test/rom.test.ts` builds every fixture game and diffs raw
   number is where it landed. The NES converts its backdrops one at a time instead:
   what a picture may spend is what the ones before it left. Both are correct and
   they are correct for different reasons, so neither may be made to look like the
-  other. `packages/demotic/test/parallel.test.ts` builds the library under an
+  other. `packages/demotic/test/_fanout.ts` builds the library under an
   executor that runs jobs backwards and compares cartridges byte for byte — and
   runs the spread build _first_, because the conversion memo would otherwise let a
   second build pass without a candidate ever reaching the executor.
@@ -1584,7 +1584,7 @@ that keep them from being undone. All of them come from doc 16.
   `bindAudio`. A backend that copies them out of the binding reports that zero,
   and `demake build` did exactly that for every cartridge it made until PR #31
   caught it in passing. `BoundAudioShape` states the rule for all three;
-  `demotic/test/audio.test.ts`'s size sweep asserts the numbers are real, which
+  `demotic/test/_audio-battery.ts`'s size sweep asserts the numbers are real, which
   is the part that had been missing — the bug survived because nothing checked.
 - **The driver format is not part of the contract.** The only guarantee is that
   on tick N the driver performs exactly the writes `ChipScript.ticks[N]` lists,
@@ -1689,7 +1689,7 @@ run `pnpm gen:console-docs` when you land one.
 4. **Games** — a `Backend` in `packages/demotic/src/codegen/`, registered in
    `codegen/registry.ts`, plus a profile in `profiles.ts` and a core to prove it
    in. Add it to `rom.test.ts`'s target list and, if it has a driver, to
-   `audio.test.ts`'s: running the whole example library on every machine is what
+   `_audio-battery.ts`'s: running the whole example library on every machine is what
    makes `Backend` a contract rather than a resemblance.
 
 **Check first whether the console is a variant rather than a machine.** Three of
@@ -1703,20 +1703,30 @@ you are writing the wrong one of the two.
 
 ## Testing truths
 
-- `pnpm test` runs the Vitest unit suite locally with no Docker. It is ten to
-  twenty minutes now depending on how many cores it gets, not the two the plan
-  wanted, and one file is most of it:
-  `packages/demotic/test/audio.test.ts` builds every example game _with its art
-  and its audio_ on every console with a driver, and demaking a picture is the
-  whole `prep` tournament. That is the price of the size assertions — they are the
-  only thing that would catch a cartridge overflowing — so before trimming it,
-  check that what you are removing is not the coverage. Two consoles run the whole
-  register-conformance battery but **one fixture** of the size sweep, for opposite
-  reasons that `SWEEP` states in the file: the Mega Drive because a game is
-  twenty-odd kilobytes of a half-megabyte image and there is no overflow for the
-  assertion to catch, and the Super Nintendo because a picture there is thirty
-  seconds of tournament rather than five. Both build the shooter, because a budget
-  can only decide a cartridge already near the edge.
+- `pnpm test` runs the Vitest unit suite locally with no Docker. Most of it is
+  the game-audio battery: `packages/demotic/test/_audio-battery.ts` builds every
+  example game _with its art and its audio_ on every console with a driver, and
+  demaking a picture is the whole `prep` tournament. That is the price of the size
+  assertions — they are the only thing that would catch a cartridge overflowing —
+  so before trimming it, check that what you are removing is not the coverage. Two
+  consoles run the whole register-conformance battery but **one fixture** of the
+  size sweep, for opposite reasons that `SWEEP` states in the file: the Mega Drive
+  because a game is twenty-odd kilobytes of a half-megabyte image and there is no
+  overflow for the assertion to catch, and the Super Nintendo because a picture
+  there is thirty seconds of tournament rather than five. Both build the shooter,
+  because a budget can only decide a cartridge already near the edge.
+- **A test file is the unit Vitest schedules, so a long one pins a core and
+  idles the rest.** That is why the two heavy suites are batteries pointed at one
+  console from a file each — `_audio-battery.ts` behind `audio-<id>.test.ts`, and
+  `_fanout.ts` behind `parallel-<id>.test.ts` — rather than one file looping over
+  the consoles. As one file they were 777 s and 454 s of an 836 s suite, which
+  made the whole of CI as long as the slowest console's sweep; split, the same
+  work fits across the runner's cores and nothing about what is asserted changed.
+  Two rules follow. Split per **console**, never per battery: `builds` is memoized
+  per module, so a machine's register battery and its size sweep have to stay in
+  one file or every build happens twice. And `vitest --shard` is not the fix for
+  this — it distributes files, so it cannot help a suite whose floor is one of
+  them.
 - **`unsupported` names language gaps, not hardware ones**, and every console's
   list is empty. It stayed empty on the Super Nintendo through the period when
   that machine had no sound, because a `.dmt` that says `music theme.mid`
@@ -1728,7 +1738,7 @@ you are writing the wrong one of the two.
   that run jobs backwards and interleave two tournaments (fast, no threads);
   `packages/cli/test/pool.test.ts` does it over real `worker_threads` and is
   therefore run against the _built_ pool, self-skipping without `dist` the way
-  `binary.test.ts` does; `packages/demotic/test/parallel.test.ts` compares whole
+  `binary.test.ts` does; `packages/demotic/test/_fanout.ts` compares whole
   cartridges across the example library; and
   `packages/web/test/e2e/determinism.spec.ts` compares the page's — built over
   real Web Workers — against the CLI's. A change to the seam should keep all four
@@ -1804,7 +1814,7 @@ you are writing the wrong one of the two.
 - `packages/audio/test/spc.test.ts` is the driver proof one layer below the game
   one: it builds an SPC700 driver for an arranged track, performs the upload
   handshake against `@demake/snes`'s S-SMP directly, and diffs every S-DSP write
-  against the schedule. It exists because a failure in `audio.test.ts` on that
+  against the schedule. It exists because a failure in the game-audio battery on that
   console could be the driver, the cartridge's upload or the request protocol, and
   this file can only be the first.
 - The audio ROM conformance suite (`packages/audio/test/rom.test.ts`) is its
@@ -1813,7 +1823,8 @@ you are writing the wrong one of the two.
   and diffs the register writes the APU receives against the `ChipScript`, tick
   for tick. Ticks are attributed by watching the driver's `Tick` symbol, so
   nothing is added to the ROM to make it observable. Also toolchain-free.
-- The game-audio conformance suite (`packages/demotic/test/audio.test.ts`) is
+- The game-audio conformance suite (`packages/demotic/test/_audio-battery.ts`, run
+  from `audio-<id>.test.ts`) is
   doc 16's Level A for a cartridge that is also playing a game, **on every console
   with a driver**: it boots a built `.gb` in `@demake/dmg`, a built `.nes` in
   `@demake/nes`, a built `.sms` in `@demake/sms` and a built `.md` in

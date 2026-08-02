@@ -37,6 +37,21 @@
  * It runs with no toolchain and no emulator install — the assemblers are ours
  * and so are the cores — which is what makes an exact audio proof something
  * `pnpm test` can do on every change.
+ *
+ * **Why this is a battery rather than a test file.** It is pointed at each
+ * machine from a file of its own — `audio-gb.test.ts`, `audio-nes.test.ts` and
+ * the rest — because a test file is the unit Vitest schedules: one file is one
+ * worker, start to finish. Written as a single file it was thirteen minutes of a
+ * fourteen-minute suite and every other core sat idle behind it, which made the
+ * whole of CI as long as the slowest console's sweep (doc 11 §Affected-only
+ * gates). Split per console the same work fits across the runner's four workers.
+ * Split it per console and not per battery: `builds` below is memoized per
+ * module, so a machine's register battery and its size sweep have to stay in one
+ * file or each build happens twice.
+ *
+ * The same shared-battery shape as `packages/cli/test/_emu-battery.ts`, and for
+ * the same reason — running one battery on every machine is what makes `Backend`
+ * a contract rather than a resemblance.
  */
 
 import { describe, expect, it } from "vitest";
@@ -80,14 +95,10 @@ import { buildMdRom } from "../src/codegen/md.js";
 import { buildNesRom } from "../src/codegen/nes.js";
 import { buildSmsRom } from "../src/codegen/sms.js";
 import { buildSnesRom } from "../src/codegen/snes.js";
-import { Sim } from "../src/sim.js";
-import { tape, trace } from "../src/trace.js";
-
-import { romTrace } from "./_rom-harness.js";
-import { EXAMPLES, exampleProject, gameSource, projectAssets } from "./_projects.js";
+import { EXAMPLES, exampleProject, gameSource } from "./_projects.js";
 
 /** The five things this battery needs of a console, and nothing else. */
-interface Machine {
+export interface Machine {
   /** Run one instruction, and say where the program counter ended up. */
   step(): number;
   /** Everything the chips receive, observed rather than intercepted. */
@@ -111,7 +122,7 @@ interface Machine {
 }
 
 /** One console, as everything below addresses it. */
-interface Target {
+export interface Target {
   id: string;
   name: string;
   /** The chip's master clock, which the stream sink is rendered against. */
@@ -160,7 +171,7 @@ interface Target {
 }
 
 /** What every driver agrees to hand back, which is all this file uses. */
-interface Driver {
+export interface Driver {
   performed: { tracks: readonly ChipScript[]; effects: readonly ChipScript[] };
   /** Present only where the driver runs on a processor of its own. */
   symbols?: ReadonlyMap<string, number>;
@@ -180,7 +191,7 @@ function cartridgeTick(built: BuiltRom): number {
  * the demakers, not from anything the backend chose to remember, or the proof
  * would be the ROM agreeing with itself.
  */
-const TARGETS: readonly Target[] = [
+const ALL: readonly Target[] = [
   {
     id: "gb",
     name: "Game Boy",
@@ -446,7 +457,7 @@ function wrap(machine: Gameboy | Nes | Sms | Snes | Md): Machine {
  */
 const builds = new Map<string, ReturnType<Target["build"]>>();
 
-function build(target: Target, source: string, project = "pong") {
+export function build(target: Target, source: string, project = "pong") {
   const key = `${target.id}\u0000${project}\u0000${source}`;
   const seen = builds.get(key);
   if (seen) return seen;
@@ -456,7 +467,7 @@ function build(target: Target, source: string, project = "pong") {
 }
 
 /** One register write a chip received. */
-interface Write {
+export interface Write {
   reg: number;
   value: number;
   /** Which chip, for the one console with two. */
@@ -470,7 +481,7 @@ interface Write {
  * continues past the last tick wanted: the final group would otherwise be
  * reported half-finished.
  */
-function capture(
+export function capture(
   target: Target,
   rom: Uint8Array,
   tickAddress: number,
@@ -503,7 +514,7 @@ function capture(
   return groups.slice(0, ticks);
 }
 
-function show(writes: readonly Write[]): string {
+export function show(writes: readonly Write[]): string {
   return writes
     .map((w) => `${w.chip ? `c${w.chip}:` : ""}$${hex(w.reg)}=$${hex(w.value)}`)
     .join(" ");
@@ -514,7 +525,10 @@ function hex(value: number): string {
 }
 
 /** Where two write streams first differ, named by tick — never a deep-equal dump. */
-function firstDivergence(expected: readonly Write[][], actual: readonly Write[][]): string | null {
+export function firstDivergence(
+  expected: readonly Write[][],
+  actual: readonly Write[][],
+): string | null {
   for (let tick = 0; tick < expected.length; tick += 1) {
     const want = show(expected[tick] as Write[]);
     const got = show((actual[tick] ?? []) as Write[]);
@@ -523,25 +537,60 @@ function firstDivergence(expected: readonly Write[][], actual: readonly Write[][
   return null;
 }
 
-const MUSIC_ONLY = `
+export const MUSIC_ONLY = `
 start play
 scene play
 create number score in play (value 0, x 1, y 1)
 music rally.mid in play
 `;
 
-const WITH_EFFECT = `${MUSIC_ONLY}
+export const WITH_EFFECT = `${MUSIC_ONLY}
 sound bounce.wav on a pressed
 `;
 
-const EFFECT_ONLY = `
+export const EFFECT_ONLY = `
 start play
 scene play
 create number score in play (value 0, x 1, y 1)
 sound bounce.wav on a pressed
 `;
 
-for (const target of TARGETS) {
+/**
+ * The channel an effect took, read out of the schedule it will really perform.
+ *
+ * The first write that names a channel, not the first write: an effect's opening
+ * tick states the chip's shared state first on some machines — the NES's `$4015`
+ * is the whole enable mask and belongs to no single voice — and taking that one
+ * would name "no channel" and make every assertion below vacuous.
+ */
+export function channelOfEffect(target: Target, effect: ChipScript): number {
+  const tag = target.tag();
+  let found = 0;
+  // Every write is offered to the tag, not just the ones before the answer: on a
+  // latching chip an early write is what *gives* a later one its channel.
+  for (const tick of effect.ticks) {
+    for (const write of tick.writes) {
+      const channel = tag(write.reg, write.value, write.chip ?? 0);
+      if (found === 0) found = channel;
+    }
+  }
+  if (found === 0) throw new Error("this effect writes no channel at all");
+  return found;
+}
+
+/** Look a console up by id, so a per-console file names one and gets one. */
+export function target(id: string): Target {
+  const found = ALL.find((one) => one.id === id);
+  if (!found) throw new Error(`no audio target for '${id}'`);
+  return found;
+}
+
+/**
+ * The register-level battery: what every driver must do, on one machine.
+ *
+ * Called once per console, from that console's own file.
+ */
+export function audioBattery(target: Target): void {
   describe(`a game's music, on ${target.name} hardware`, async () => {
     it("performs the schedule tick for tick, with nothing preempting it", async () => {
       const { built, bound } = await build(target, MUSIC_ONLY);
@@ -732,227 +781,106 @@ for (const target of TARGETS) {
 }
 
 /**
- * The Game Gear: the same chip and the same driver, plus one shared register.
+ * The size sweep: every example game, built with its art and its audio.
  *
- * A whole fourth pass over the battery would prove the Z80 player twice, so this
- * is the difference alone — the stereo latch, which is the handheld's `NR51`. One
- * byte carries every channel's left and right enables in the same two-nibble
- * layout, so two streams that stored it would erase each other and the driver
- * merges instead. That path exists on no other Sega machine, and nothing else in
- * this file would run it.
+ * The counterpart of the battery above and the reason this file is minutes
+ * rather than seconds — a build here is the whole `prep` tournament per picture.
  */
-describe("a Game Gear's stereo latch, which two streams share", async () => {
-  /** The stereo latch, as `@demake/chip` and a `ChipScript` number it. */
-  const STEREO = 0x06;
+export function audioSweep(target: Target): void {
+  describe(`the example library, on ${target.name} hardware`, async () => {
+    /**
+     * `quest` is not swept here, and the reason is the cartridge rather than the
+     * audio: three levels, a boss and a secret room do not fit a mapper-less 32 KiB
+     * on any 8-bit console in the set (doc 13 §Banked cartridges). The one machine
+     * with the room is the Mega Drive, where `rom.test.ts` runs it — and a game
+     * that cannot be built cannot have its register stream compared.
+     */
+    const cases = EXAMPLES.filter((name) => name !== "quest");
 
-  async function buildGg(source: string, project = "pong") {
-    // The project supplies the file list as well as the bytes, exactly as every
-    // other target's build does: a source that says `music rally.mid` resolves
-    // against the folder, and without the list the reference stands as written
-    // and the binding finds no track at all (doc 19 §The rule).
-    const { files, levels, assets } = exampleProject(project);
-    const program = compile(source, { profile: getProfile("gg"), files, levels });
-    const built = await buildSmsRom(program, { assets });
-    const state = built.layout.audio as number;
-    const bound = await bindAudio(program, assets, {
-      build: (tracks, effects) =>
-        buildSmsGameAudio({ tracks, effects: effects as GameEffect[], state }),
-    });
-    return { built, bound };
-  }
+    /**
+     * The fixtures whose cartridges cannot hold their audio.
+     *
+     * Empty, and the emptiness is the record: every console with a backend now
+     * builds every example game with its art and its music in it. The Sega 8-bits
+     * were the last entry here — the shooter overflowed a Master System by 1.9 KiB
+     * — and what closed it was the work the NES had already had: the name tables
+     * packed, the collision pairs looped rather than copied, and the integrator
+     * grouped by what it would have compiled to. Not a skip either way: an overflow
+     * is *asserted*, so the day a change makes a listed fixture fit, this test fails
+     * and someone moves it into the sweep above.
+     */
+    const OVER_BUDGET: Readonly<Record<string, readonly string[]>> = {};
 
-  const gg: Target = {
-    ...(TARGETS.find((one) => one.id === "sms") as Target),
-    id: "gg",
-    name: "Game Gear",
-    mergeReg: STEREO,
-    build: (source, project) => buildGg(source, project),
-  };
+    /**
+     * Bytes a build has to have left over: a kilobyte, everywhere.
+     *
+     * The Sega 8-bits carried an exception at 512 while their rule code was still
+     * copied per object, exactly as the NES did before them. Looping the pairs took
+     * nine kilobytes off the shooter's Master System build and the exception went
+     * with it; the tightest fixture is the caves, at 3062 bytes free.
+     */
+    const HEADROOM: Readonly<Record<string, number>> = {};
 
-  it("performs the music tick for tick, merge writes and all", async () => {
-    const { built, bound } = await buildGg(MUSIC_ONLY);
-    const script = bound.driver?.performed.tracks[0] as ChipScript;
-    const address = built.symbols.get("AudioTick") as number;
-    const ticks = 300;
-    const expected = script.ticks.slice(0, ticks).map((tick) => [...tick.writes]);
-    expect(firstDivergence(expected, capture(gg, built.bytes, address, ticks))).toBeNull();
-  });
+    /**
+     * What one of these builds is allowed to take.
+     *
+     * Demaking a game's art for a colour console is the whole `prep` tournament per
+     * picture, which is seconds rather than the fraction of one the mono path costs
+     * — so the sweep states its own budget instead of inheriting one written for a
+     * test that runs a single pipeline.
+     *
+     * The Sega 8-bits are the slow end of it, and knowingly — for the *art* rather
+     * than for the code. A Master System picture is 768 cells against a shared bank
+     * of 256 tiles, so two full-screen pictures routinely want more of it than there
+     * is, and where sharing the bank out changes what a picture may spend, that
+     * picture is demade a second time (`sms-art.ts`). Half again on the worst
+     * fixture, in exchange for a title screen fitted to the tiles it actually needs
+     * rather than to half the bank.
+     */
+    const BUILD_TIMEOUT = 120_000;
 
-  it("leaves the music's own bits alone in the latch they share", async () => {
-    const { built, bound } = await buildGg(WITH_EFFECT);
-    const effect = (bound.driver as Driver).performed.effects[0] as ChipScript;
-    const owned = channelOfEffect(gg, effect);
-    const address = built.symbols.get("AudioTick") as number;
-    const press = Math.round(120 * gg.ratio);
-    const groups = capture(gg, built.bytes, address, Math.round(400 * gg.ratio), press);
+    /**
+     * And the Mega Drive is slower still, for the same reason one layer along.
+     *
+     * A fit's cost is its pixels, and this console has the biggest screen in the
+     * set: 320x224 against a Master System's 256x192 and a Game Boy's 160x144. One
+     * backdrop through the tournament is around twenty-five seconds here — nearly
+     * all of it inside `latticeKmeans`, which is the fit doing its job rather than
+     * a redundant scan — so a two-backdrop game with objects is minutes. The
+     * number is generous rather than tight because what it guards against is a
+     * hang, and a build that got half again slower should be caught by someone
+     * reading a duration rather than by a red test with nothing to say about why.
+     */
+    const TIMEOUT: Readonly<Record<string, number>> = { md: 360_000, snes: 240_000 };
 
-    const shared = groups
-      .slice(press + 10)
-      .flat()
-      .filter((write) => write.reg === STEREO);
-    expect(shared.length).toBeGreaterThan(0);
-    // The byte carries each channel twice, left and right, four bits apart — so
-    // masking with both is what asks whether anything but the effect survived.
-    const musical = (owned | (owned << 4)) ^ 0xff;
-    expect(shared.some((write) => (write.value & musical) !== 0)).toBe(true);
-  });
+    /**
+     * How much of the library each console sweeps.
+     *
+     * All of it, except on the console with nothing to overflow. This sweep exists
+     * to catch a cartridge that no longer fits — that is what the headroom
+     * assertion is — and a Mega Drive game is twenty-odd kilobytes of a
+     * half-megabyte image. Seven whole art-and-audio builds to assert that 487 KiB
+     * is more than one is eight minutes of `pnpm test` buying nothing, so it builds
+     * the shooter alone: the tightest fixture everywhere else, with two demade
+     * backdrops, nine aliens, a theme and four effects. What the other six would
+     * have covered is covered elsewhere — the register-level battery above builds a
+     * real game for this console, `md-rom.test.ts` demakes real art for it, and
+     * `rom.test.ts` traces all seven.
+     *
+     * The day this console grows a mapper story, or an FM driver with a schedule
+     * ten times the size of a PSG one, this is the entry to delete.
+     */
+    const SWEEP: Readonly<Record<string, readonly string[]>> = {
+      md: ["shooter.dmt"],
+      // The Super Nintendo, for the same reason arrived at from the other end.
+      // Demaking a 256x224 picture into seven sixteen-colour sub-palettes is
+      // thirty seconds of tournament against five, so seven games' worth would be
+      // most of `pnpm test`. The shooter because it is the tightest in the
+      // library, and a budget can only decide a cartridge already near the edge.
+      // `rom.test.ts` builds every fixture for this console regardless.
+      snes: ["shooter.dmt"],
+    };
 
-  it("emits the merge on the handheld and not on the Master System", async () => {
-    expect((await buildGg(WITH_EFFECT)).built.stats.audio?.helpers ?? []).toContain("stereo-merge");
-    // A Master System has no register two streams both write, so there is
-    // nothing to fold and no routine to fold it with.
-    const sms = TARGETS.find((one) => one.id === "sms") as Target;
-    const helpers = (await build(sms, WITH_EFFECT)).built.stats.audio?.helpers ?? [];
-    expect(helpers.some((name) => name.includes("merge"))).toBe(false);
-    // The preemption machinery is still there: sharing the chip is what needs it,
-    // and a shared *register* is a separate question the two machines answer
-    // differently.
-    expect(helpers).toContain("music-preemptible-runs");
-  });
-});
-
-/**
- * The channel an effect took, read out of the schedule it will really perform.
- *
- * The first write that names a channel, not the first write: an effect's opening
- * tick states the chip's shared state first on some machines — the NES's `$4015`
- * is the whole enable mask and belongs to no single voice — and taking that one
- * would name "no channel" and make every assertion below vacuous.
- */
-function channelOfEffect(target: Target, effect: ChipScript): number {
-  const tag = target.tag();
-  let found = 0;
-  // Every write is offered to the tag, not just the ones before the answer: on a
-  // latching chip an early write is what *gives* a later one its channel.
-  for (const tick of effect.ticks) {
-    for (const write of tick.writes) {
-      const channel = tag(write.reg, write.value, write.chip ?? 0);
-      if (found === 0) found = channel;
-    }
-  }
-  if (found === 0) throw new Error("this effect writes no channel at all");
-  return found;
-}
-
-describe("audio in the trace", async () => {
-  it("records what the game asked for, with or without the files", async () => {
-    // A build with no audio bytes still records the request, so the conformance
-    // suite can run without loading a megabyte of fixtures and still be
-    // comparing the same game.
-    const source = gameSource("pong");
-    const program = compile(source, { profile: getProfile("gb") });
-    const frames = tape("1:a,90:,90:left,120:right");
-    const silent = await romTrace(program, frames);
-    const sounding = await romTrace(program, frames, { assets: projectAssets("pong") });
-    expect(sounding).toBe(silent);
-    expect(silent).toBe(trace(new Sim(program), frames));
-  });
-
-  it("names the track a scene asks for, and -1 for a silent one", () => {
-    const source = gameSource("pong");
-    const program = compile(source, { profile: getProfile("gb") });
-    const lines = trace(new Sim(program), tape("2:,3:a,3:")).split("\n");
-    // The title screen is silent; the play scene asks for track 0.
-    expect(lines.find((line) => line.includes(" title "))).toContain("audio=-1,-1");
-    expect(lines.find((line) => line.includes(" play "))).toContain("audio=0,-1");
-  });
-});
-
-describe("the example library", async () => {
-  /**
-   * `quest` is not swept here, and the reason is the cartridge rather than the
-   * audio: three levels, a boss and a secret room do not fit a mapper-less 32 KiB
-   * on any 8-bit console in the set (doc 13 §Banked cartridges). The one machine
-   * with the room is the Mega Drive, where `rom.test.ts` runs it — and a game
-   * that cannot be built cannot have its register stream compared.
-   */
-  const cases = EXAMPLES.filter((name) => name !== "quest");
-
-  /**
-   * The fixtures whose cartridges cannot hold their audio.
-   *
-   * Empty, and the emptiness is the record: every console with a backend now
-   * builds every example game with its art and its music in it. The Sega 8-bits
-   * were the last entry here — the shooter overflowed a Master System by 1.9 KiB
-   * — and what closed it was the work the NES had already had: the name tables
-   * packed, the collision pairs looped rather than copied, and the integrator
-   * grouped by what it would have compiled to. Not a skip either way: an overflow
-   * is *asserted*, so the day a change makes a listed fixture fit, this test fails
-   * and someone moves it into the sweep above.
-   */
-  const OVER_BUDGET: Readonly<Record<string, readonly string[]>> = {};
-
-  /**
-   * Bytes a build has to have left over: a kilobyte, everywhere.
-   *
-   * The Sega 8-bits carried an exception at 512 while their rule code was still
-   * copied per object, exactly as the NES did before them. Looping the pairs took
-   * nine kilobytes off the shooter's Master System build and the exception went
-   * with it; the tightest fixture is the caves, at 3062 bytes free.
-   */
-  const HEADROOM: Readonly<Record<string, number>> = {};
-
-  /**
-   * What one of these builds is allowed to take.
-   *
-   * Demaking a game's art for a colour console is the whole `prep` tournament per
-   * picture, which is seconds rather than the fraction of one the mono path costs
-   * — so the sweep states its own budget instead of inheriting one written for a
-   * test that runs a single pipeline.
-   *
-   * The Sega 8-bits are the slow end of it, and knowingly — for the *art* rather
-   * than for the code. A Master System picture is 768 cells against a shared bank
-   * of 256 tiles, so two full-screen pictures routinely want more of it than there
-   * is, and where sharing the bank out changes what a picture may spend, that
-   * picture is demade a second time (`sms-art.ts`). Half again on the worst
-   * fixture, in exchange for a title screen fitted to the tiles it actually needs
-   * rather than to half the bank.
-   */
-  const BUILD_TIMEOUT = 120_000;
-
-  /**
-   * And the Mega Drive is slower still, for the same reason one layer along.
-   *
-   * A fit's cost is its pixels, and this console has the biggest screen in the
-   * set: 320x224 against a Master System's 256x192 and a Game Boy's 160x144. One
-   * backdrop through the tournament is around twenty-five seconds here — nearly
-   * all of it inside `latticeKmeans`, which is the fit doing its job rather than
-   * a redundant scan — so a two-backdrop game with objects is minutes. The
-   * number is generous rather than tight because what it guards against is a
-   * hang, and a build that got half again slower should be caught by someone
-   * reading a duration rather than by a red test with nothing to say about why.
-   */
-  const TIMEOUT: Readonly<Record<string, number>> = { md: 360_000, snes: 240_000 };
-
-  /**
-   * How much of the library each console sweeps.
-   *
-   * All of it, except on the console with nothing to overflow. This sweep exists
-   * to catch a cartridge that no longer fits — that is what the headroom
-   * assertion is — and a Mega Drive game is twenty-odd kilobytes of a
-   * half-megabyte image. Seven whole art-and-audio builds to assert that 487 KiB
-   * is more than one is eight minutes of `pnpm test` buying nothing, so it builds
-   * the shooter alone: the tightest fixture everywhere else, with two demade
-   * backdrops, nine aliens, a theme and four effects. What the other six would
-   * have covered is covered elsewhere — the register-level battery above builds a
-   * real game for this console, `md-rom.test.ts` demakes real art for it, and
-   * `rom.test.ts` traces all seven.
-   *
-   * The day this console grows a mapper story, or an FM driver with a schedule
-   * ten times the size of a PSG one, this is the entry to delete.
-   */
-  const SWEEP: Readonly<Record<string, readonly string[]>> = {
-    md: ["shooter.dmt"],
-    // The Super Nintendo, for the same reason arrived at from the other end.
-    // Demaking a 256x224 picture into seven sixteen-colour sub-palettes is
-    // thirty seconds of tournament against five, so seven games' worth would be
-    // most of `pnpm test`. The shooter because it is the tightest in the
-    // library, and a budget can only decide a cartridge already near the edge.
-    // `rom.test.ts` builds every fixture for this console regardless.
-    snes: ["shooter.dmt"],
-  };
-
-  for (const target of TARGETS) {
     for (const file of cases) {
       if (OVER_BUDGET[target.id]?.includes(file)) continue;
       if (SWEEP[target.id] !== undefined && !SWEEP[target.id]?.includes(file)) continue;
@@ -990,30 +918,37 @@ describe("the example library", async () => {
         TIMEOUT[target.id] ?? BUILD_TIMEOUT,
       );
     }
-  }
+  });
+}
 
-  // Colour costs cartridge, the way audio does. A Game Boy Color build of the
-  // same game carries one attribute byte per backdrop cell (360 a picture), the
-  // palettes it uploads, and the extra tiles colour art costs — two cells that
-  // differ only in tone are one tile on a DMG and two here. That is a bit over
-  // a kilobyte for a game with two demade backdrops, so the floor below is
-  // lower than the monochrome one. Not because the budget matters less: it is a
-  // *measured* fact about the hardware, and asserting it is what makes the next
-  // code-generator change visible rather than a mystery.
-  //
-  // One fixture rather than seven, and the shooter because it is the tightest
-  // in the library — two demade backdrops, nine aliens, a theme and four
-  // effects. A kilobyte can only decide a cartridge that is already near the
-  // edge, and demaking a picture in colour is the whole `prep` tournament:
-  // seconds where the mono path is a fraction of one, and the reason this test
-  // states its own timeout rather than inheriting one written for a single
-  // pipeline. The others have four kilobytes and more to spare, and
-  // `rom.test.ts` builds every fixture for `gbc` regardless.
-  it("the shooter, the tightest cartridge in the library, still fits in colour", async () => {
-    const { source, files, levels, assets } = exampleProject("shooter");
-    const program = compile(source, { profile: getProfile("gbc"), files, levels });
-    const built = await buildGbRom(program, { assets });
-    expect(built.stats.missingAudio).toEqual([]);
-    expect(built.stats.free).toBeGreaterThan(512);
-  }, 120_000);
-});
+/**
+ * The Game Boy Color's own budget, which is the Game Boy's plus what colour costs.
+ */
+export function colourBudget(): void {
+  describe("a Game Boy Color cartridge's budget", async () => {
+    // Colour costs cartridge, the way audio does. A Game Boy Color build of the
+    // same game carries one attribute byte per backdrop cell (360 a picture), the
+    // palettes it uploads, and the extra tiles colour art costs — two cells that
+    // differ only in tone are one tile on a DMG and two here. That is a bit over
+    // a kilobyte for a game with two demade backdrops, so the floor below is
+    // lower than the monochrome one. Not because the budget matters less: it is a
+    // *measured* fact about the hardware, and asserting it is what makes the next
+    // code-generator change visible rather than a mystery.
+    //
+    // One fixture rather than seven, and the shooter because it is the tightest
+    // in the library — two demade backdrops, nine aliens, a theme and four
+    // effects. A kilobyte can only decide a cartridge that is already near the
+    // edge, and demaking a picture in colour is the whole `prep` tournament:
+    // seconds where the mono path is a fraction of one, and the reason this test
+    // states its own timeout rather than inheriting one written for a single
+    // pipeline. The others have four kilobytes and more to spare, and
+    // `rom.test.ts` builds every fixture for `gbc` regardless.
+    it("the shooter, the tightest cartridge in the library, still fits in colour", async () => {
+      const { source, files, levels, assets } = exampleProject("shooter");
+      const program = compile(source, { profile: getProfile("gbc"), files, levels });
+      const built = await buildGbRom(program, { assets });
+      expect(built.stats.missingAudio).toEqual([]);
+      expect(built.stats.free).toBeGreaterThan(512);
+    }, 120_000);
+  });
+}

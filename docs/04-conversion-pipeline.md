@@ -104,7 +104,7 @@ the NES 14.7 s → 7.9 s, art and audio demade concurrently over the same lanes.
 decision and why `--json` does not report it. `packages/core/test/parallel.test.ts`
 pins that with executors that run jobs backwards and interleave two tournaments;
 `packages/cli/test/pool.test.ts` does it over real threads;
-`packages/demotic/test/parallel.test.ts` compares whole cartridges across the
+`packages/demotic/test/_fanout.ts` compares whole cartridges across the
 example library; and `packages/web/test/e2e/determinism.spec.ts` compares the
 page's against the CLI's.
 

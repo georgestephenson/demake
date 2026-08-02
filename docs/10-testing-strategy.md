@@ -254,7 +254,7 @@ identical ticks are identical sound.
 
 Level A runs twice, on the two cartridges that exist. `packages/audio/test/
 rom.test.ts` does it for a cartridge whose only job is one schedule;
-`packages/demotic/test/audio.test.ts` does it for a *game* — where the driver
+`packages/demotic/test/_audio-battery.ts` does it for a *game* — where the driver
 runs on a timer while the game runs on VBlank, and an effect borrows a channel
 from the music mid-track. The second is the harder claim and the same assertion:
 with nothing preempting, the music's register stream is the schedule's, byte for
