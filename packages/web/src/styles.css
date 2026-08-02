@@ -1278,6 +1278,39 @@ main.audio-layout {
   white-space: nowrap;
 }
 
+/*
+ * The explorer's switch, at the left of the title bar — where every editor with
+ * a sidebar puts one, and the one control that must survive every width: below
+ * 1000px the tree opens contracted, so this is the way back to the project's
+ * files. It is a square so it stays a square when the tagline and the name have
+ * both gone.
+ */
+.titlebar-toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.titlebar-toggle:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--ink);
+}
+
+/* Open reads as the pressed state, which is what the filled column in the icon
+   is already saying — the colour is there so the difference survives a glance. */
+.titlebar-toggle[aria-expanded="true"] {
+  color: var(--ink);
+}
+
 /* The label is the first thing to go when the window is too narrow for it: the
    menus are controls. After the rules it overrides, not before — same
    specificity, so source order is what decides. */
@@ -1435,6 +1468,14 @@ main.audio-layout {
   .workbench {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  /* And with the tree contracted — which is how it opens at this width — the
+     editor is the only child, so it takes the whole box rather than the `auto`
+     row a two-row template would put it in. Left in that row it is as tall as
+     its content, which the window then clips with nothing to scroll. */
+  .workbench.no-explorer {
+    grid-template-rows: minmax(0, 1fr);
   }
 
   .explorer {

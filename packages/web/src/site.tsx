@@ -31,7 +31,7 @@ import { findEntry } from "@demake/demotic";
 
 import { App } from "./app.js";
 import { Explorer } from "./components/Explorer.js";
-import { MenuBar, useMenuKeys, type Menu } from "./components/MenuBar.js";
+import { accelerator, MenuBar, useMenuKeys, type Menu } from "./components/MenuBar.js";
 import { QuickOpen } from "./components/QuickOpen.js";
 import {
   EXAMPLE_NAMES,
@@ -86,6 +86,34 @@ const ENGINES: Readonly<Record<Section, readonly string[]>> = {
   sound: ["@demake/audio", "@demake/chip"],
 };
 
+/**
+ * The explorer's accelerator, written once.
+ *
+ * Two things offer the toggle — the View menu and the button in the title bar —
+ * and only the menu can *draw* a key. So the string lives here and both read it:
+ * a button whose tooltip advertised a shortcut the menu had since changed would
+ * be the same failure the one-declaration rule (doc 07 §The workbench) exists to
+ * prevent, arriving through the other door.
+ */
+const EXPLORER_KEY = "Mod+B";
+
+/**
+ * The width at which the workbench stacks the explorer above the editor instead
+ * of putting it beside it — and therefore the width at which it opens
+ * contracted, because a tree taking a third of a phone screen is a third of the
+ * screen the editor does not get.
+ *
+ * It mirrors the `@media` query in `styles.css`, which is the one thing to keep
+ * in step: a value here that disagreed would collapse the tree at a width where
+ * it was still a perfectly good sidebar.
+ */
+const STACKED = "(max-width: 1000px)";
+
+/** Whether the explorer should open contracted, asked once when the page opens. */
+function opensContracted(): boolean {
+  return typeof matchMedia === "function" && matchMedia(STACKED).matches;
+}
+
 /** What every editor is handed: the project, and which of its files is open. */
 export interface EditorProps {
   project: Project;
@@ -119,7 +147,11 @@ export function Site() {
   const [folder, setFolder] = useState<unknown>(null);
   const [dirty, setDirty] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [showExplorer, setShowExplorer] = useState(true);
+  // Beside the editor on a screen with room for both, and out of the way on one
+  // without. Decided when the page opens and never again: a viewport that
+  // changes width mid-session is a rotation or a resized window, and neither is
+  // a reason to overrule the button somebody just pressed.
+  const [showExplorer, setShowExplorer] = useState(() => !opensContracted());
   const [quickOpen, setQuickOpen] = useState(false);
   const [creating, setCreating] = useState<string | undefined>(undefined);
   const [renaming, setRenaming] = useState<string | undefined>(undefined);
@@ -411,7 +443,7 @@ export function Site() {
         items: [
           {
             label: "Explorer",
-            key: "Mod+B",
+            key: EXPLORER_KEY,
             checked: showExplorer,
             run: () => setShowExplorer((on) => !on),
             testId: "toggle-explorer",
@@ -478,6 +510,48 @@ export function Site() {
         is a row of chrome that says nothing.
       */}
       <header class="titlebar">
+        {/*
+          The explorer's own switch, at the left of the title bar where every
+          editor puts one. It was a menu entry and a key and nothing else, which
+          is a control you have to already know about — and on a phone, where the
+          tree now opens contracted, the only way back to the project's files.
+          The menu entry stays: it is where the shortcut is written down.
+        */}
+        <button
+          type="button"
+          class="titlebar-toggle"
+          data-testid="explorer-toggle"
+          aria-expanded={showExplorer}
+          aria-controls="explorer"
+          aria-label={showExplorer ? "Hide the explorer" : "Show the explorer"}
+          title={`${showExplorer ? "Hide" : "Show"} the explorer (${accelerator(EXPLORER_KEY)})`}
+          onClick={() => setShowExplorer((on) => !on)}
+        >
+          {/* A sidebar, filled while there is one. Marked `aria-hidden` because
+              the button already says what it does. */}
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">
+            <rect
+              x="1.75"
+              y="2.75"
+              width="12.5"
+              height="10.5"
+              rx="1.75"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.2"
+            />
+            <path
+              d="M6.25 3v10"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.2"
+              stroke-linecap="round"
+            />
+            {showExplorer ? (
+              <rect x="2.6" y="3.6" width="3" height="8.8" rx="0.9" fill="currentColor" />
+            ) : null}
+          </svg>
+        </button>
         <MenuBar menus={menus} />
         <h1 class="window-title" data-testid="window-title">
           <span class="wordmark">demake</span>

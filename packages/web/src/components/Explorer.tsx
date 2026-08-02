@@ -166,7 +166,10 @@ export function Explorer({
   );
 
   return (
-    <aside class="explorer" aria-label="Project">
+    // `id` so the title bar's toggle can name what it opens and closes; the
+    // element is only in the document while the tree is showing, which is what a
+    // disclosure's `aria-controls` describes.
+    <aside id="explorer" class="explorer" aria-label="Project">
       <div class="explorer-head">
         <h2 class="explorer-title">{project.name}</h2>
         <button

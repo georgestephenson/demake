@@ -2044,6 +2044,22 @@ you are writing the wrong one of the two.
   rule as `cli-spec` for flags and `lang/spec.ts` for the language: the second
   list is the one that goes stale. `Mod` is the platform's modifier, decided in
   that one file and never at a call site.
+- **A command offered twice states its key once.** The explorer's toggle is in
+  the View menu _and_ on the title bar, because a control that lives only in a
+  menu is one you have to already know about — so `EXPLORER_KEY` is a constant in
+  `site.tsx` that the menu entry and the button's tooltip both read, and the
+  tooltip renders it through `MenuBar`'s own `accelerator()`. A second literal is
+  how a button comes to advertise a shortcut the menu has since changed, which is
+  the one-declaration rule arriving through the other door.
+- **The explorer opens contracted below 1000px**, which is the same width the
+  stylesheet stacks it above the editor at — `STACKED` in `site.tsx` mirrors that
+  `@media` query and the two have to move together, or the tree collapses at a
+  width where it was still a perfectly good sidebar. It is the page's _opening_
+  decision and nothing watches the viewport afterwards: a rotation is not a
+  reason to overrule the button somebody just pressed. And the stacked layout
+  needs a one-row template when the tree is off (`.workbench.no-explorer`), or
+  the editor sits in a row sized to its content and the window clips it with
+  nothing to scroll.
 - **Which is why two of the commands have no accelerator and two are `native`.**
   ⌘N is the browser's new window and cannot be prevented; ⌘⌫ deletes the previous
   word in a text box and must not be taken over by a delete with no undo behind
