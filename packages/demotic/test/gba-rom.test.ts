@@ -26,8 +26,6 @@
  *     picture shows through.
  */
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { gbaComplement, GBA_HEADER_SIZE, GBA_ORIGIN } from "@demake/core";
@@ -43,9 +41,7 @@ import {
 } from "../src/rom/graphics.js";
 import { buildGbaRom } from "../src/codegen/gba.js";
 import { ART_COLORS, BANK_TILES, SYSTEM_INK, SYSTEM_PAPER } from "../src/codegen/gba/emit.js";
-
-const fixtures = join(import.meta.dirname, "..", "fixtures");
-const read = (name: string) => readFileSync(join(fixtures, name), "utf8");
+import { gameSource, projectText } from "./_projects.js";
 
 /** Where the emitter puts the two maps, as byte offsets into video RAM. */
 const MAP_BASE = 0xc000;
@@ -56,8 +52,8 @@ const OBJ_VRAM = 0x10000;
 /** The tile an empty cell draws: a transparent blank, not the space glyph. */
 const GBA_BLANK = GBA_BUILTIN_TILES - 1;
 
-function build(file: string, levels?: Record<string, string>) {
-  return compile(read(file), { profile: getProfile("gba"), levels });
+function build(project: string, levels?: Record<string, string>) {
+  return compile(gameSource(project), { profile: getProfile("gba"), levels });
 }
 
 /** Boot a cartridge and run it until the runtime says it has finished booting. */
@@ -92,7 +88,7 @@ function hudAt(machine: Gba, column: number, row: number): number {
 }
 
 describe("the Game Boy Advance cartridge", async () => {
-  const built = await buildGbaRom(build("pong.dmt"), { title: "PONG" });
+  const built = await buildGbaRom(build("pong"), { title: "PONG" });
 
   it("begins with a branch over its own header", () => {
     // Not a vector and not a magic number: this console executes the first word
@@ -135,7 +131,7 @@ describe("the Game Boy Advance cartridge", async () => {
 });
 
 describe("what boot leaves in the video hardware", async () => {
-  const built = await buildGbaRom(build("pong.dmt"));
+  const built = await buildGbaRom(build("pong"));
   const machine = boot(built.bytes, built.layout.booted);
 
   it("uploads the background bank to character block zero", () => {
@@ -211,8 +207,8 @@ describe("what boot leaves in the video hardware", async () => {
 });
 
 describe("the map against the level", async () => {
-  const levels = { "cavern.dmtl": read(join("games", "cavern.dmtl")) };
-  const program = compile(read(join("games", "caves.dmt")), {
+  const levels = { "cavern.dmtl": projectText("caves", "levels/cavern.dmtl") };
+  const program = compile(gameSource("caves"), {
     profile: getProfile("gba"),
     levels,
   });
@@ -433,8 +429,8 @@ describe("the edge painter", () => {
 });
 
 describe("the HUD layer", async () => {
-  const levels = { "cavern.dmtl": read(join("games", "cavern.dmtl")) };
-  const program = compile(read(join("games", "caves.dmt")), {
+  const levels = { "cavern.dmtl": projectText("caves", "levels/cavern.dmtl") };
+  const program = compile(gameSource("caves"), {
     profile: getProfile("gba"),
     levels,
   });
@@ -500,7 +496,7 @@ describe("the HUD layer", async () => {
 });
 
 describe("the object list", async () => {
-  const built = await buildGbaRom(build("pong.dmt"));
+  const built = await buildGbaRom(build("pong"));
 
   it("parks the entries a frame did not use, because there is no link to cut", () => {
     // A Mega Drive ends its sprite list with a link of zero; this hardware has
