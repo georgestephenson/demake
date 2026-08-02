@@ -316,6 +316,19 @@ music compiles, records the request its rules make, and traces identically to a
 build that played it — which is the same position the Super Nintendo was in
 before its SPC700 driver landed.
 
+The _demakers_ do reach it: `demake arrange -c gba`, `sfx` and `render` demake
+this console's ten voices through `binding/gba.ts`, which is the second two-chip
+binding and the first whose chips are different kinds of thing — the Game Boy
+half is `gb.ts` called rather than restated, and the mixer half has no shared
+register to merge because `KON` is a pulse. Two things about it are worth
+knowing before touching either. **Noise is a sample**, because a mixer has no
+noise generator: percussion plays a recording of the Game Boy's own shift
+register out of `binding/gba-bank.ts`, which is why the spec declares one noise
+period rather than sixteen. And **the artifact is a WAV**, because half the
+schedule addresses a register file that is demake's own — a VGM carrying only
+the four Game Boy channels would be a schedule with two thirds of the music
+missing, presented as the schedule.
+
 That gap is also why **the support matrix asks the encoders rather than the
 specs**. "Does this console demake music" is `audioConsoles()` — the binding
 registry — and "does a cartridge play it" is `gameAudioConsoles()`, which is the

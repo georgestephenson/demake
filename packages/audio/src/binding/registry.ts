@@ -11,6 +11,7 @@
 import { consoles, getConsole, type AudioSpec, type ConsoleSpec } from "@demake/core";
 
 import { gbBinding } from "./gb.js";
+import { gbaBinding } from "./gba.js";
 import { mdBinding } from "./md.js";
 import { nesBinding } from "./nes.js";
 import { psgBinding } from "./psg.js";
@@ -44,6 +45,13 @@ export function bindingFor(consoleId: string): ChipBinding {
   if (audio.chips.length > 1) {
     if (audio.chips[0] === "ym2612" && audio.chips[1] === "sn76489") {
       return mdBinding(spec.id, audio);
+    }
+    // And the Game Boy Advance, whose two chips are different *kinds* of thing:
+    // four channels that generate their own waveform, and a mixer that plays
+    // samples. The pair is what a binding has to see for the same reason — ten
+    // voices are one instrument, not two.
+    if (audio.chips[0] === "gb-apu" && audio.chips[1] === "gba-pcm") {
+      return gbaBinding(spec.id, audio);
     }
     throw new UnsupportedConsoleError(
       spec.id,

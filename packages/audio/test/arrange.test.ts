@@ -32,7 +32,7 @@ import {
 // chip, the same clock, the same lattices — so the demakers work on it for free.
 // Where the console's registers live is a fact about the cartridge, applied when
 // a register number becomes an address, and never reaches a schedule.
-const CONSOLES = ["dmg", "gbc", "megaduck", "nes", "sms", "gg", "sg1000", "snes", "md"];
+const CONSOLES = ["dmg", "gbc", "megaduck", "nes", "sms", "gg", "sg1000", "snes", "md", "gba"];
 
 describe("ingest", () => {
   it("reads a Standard MIDI File into a score", () => {
@@ -279,14 +279,6 @@ describe("the console registry", () => {
   // remaining handhelds are where those are.
   it("explains a console it cannot demake", () => {
     expect(() => bindingFor("nds")).toThrow(/no audio spec yet/);
-  });
-
-  // And the Game Boy Advance, which is the other half of the same honesty: its
-  // hardware *is* described now, so the gap moved from "we have not said what
-  // this machine has" to "nothing encodes for it yet". A console that answered
-  // either question quietly would arrange a track it could not play.
-  it("explains a console whose hardware is described and whose encoder is not written", () => {
-    expect(() => bindingFor("gba")).toThrow(/no binding for the chip pair/);
   });
 });
 

@@ -14,6 +14,7 @@
 import { createChip, mix, renderSchedule, type OutputStage, type Pcm } from "@demake/chip";
 
 import { bindingFor } from "./binding/registry.js";
+import { sampleBank } from "./binding/gba-bank.js";
 import { sampleAram } from "./binding/sdsp-bank.js";
 import type { ChipScript } from "./chipscript.js";
 
@@ -37,9 +38,14 @@ export function render(script: ChipScript, options: RenderAudioOptions = {}): Pc
     // bank is the default rather than something every caller has to remember —
     // a schedule may override it, and nothing does yet (doc 16 §The sample bank).
     const ram = script.sampleRam ?? (id === "s-dsp" ? sampleAram() : undefined);
+    // The other sample player takes its waveforms as a *bank* rather than as a
+    // block of RAM, because that is what it plays: the mixer reads cartridge
+    // ROM, so a build hands it the table rather than an address space.
+    const bank = id === "gba-pcm" ? sampleBank() : undefined;
     const chip = createChip(id, {
       stereo: true,
       ...(ram === undefined ? {} : { ram }),
+      ...(bank === undefined ? {} : { bank }),
     });
     // Filtered per *write* rather than per tick: a console with two chips writes
     // both within one driver tick, and a tick-level tag could not say so.

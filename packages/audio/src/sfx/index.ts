@@ -376,7 +376,7 @@ export async function demakeSfx(bytes: Uint8Array, options: SfxOptions): Promise
   const channelIndex = best.gesture.noise ? noiseIndex : pitchedIndex;
   const channel = spec.channels[channelIndex]!;
   const artifact =
-    artifactFormat(best.script.chips[0]) === "spc"
+    artifactFormat(best.script.chips) === "spc"
       ? encodeSpc(best.script, {
           ...(options.title ? { title: options.title } : {}),
           game: consoleSpec.name,
