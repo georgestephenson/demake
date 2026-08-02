@@ -1880,6 +1880,14 @@ you are writing the wrong one of the two.
   compiled, recorded the request its rules made, and traced identically to a build
   that played it. A gap that changed what a _trace_ says is the one that must be
   named.
+- **A 256-colour fit is expensive because K is large, not because the picture
+  is.** A k-means iteration is O(pixels × centroids), so the Game Boy Advance's
+  240×160 against 252 centroids costs minutes where a Mega Drive's 320×224
+  against sixteen costs seconds. That is why this console is in `rom.test.ts`
+  (no art) and in the browser determinism spec (once) but _not_ in
+  `parallel.test.ts`, which would build it twice — the omission is stated in
+  that file rather than left to be discovered, and what it would have covered is
+  `fairShares` and `TilePool`, which the other two consoles run.
 - **The parallel contract is tested at four levels, and they are not redundant.**
   `packages/core/test/parallel.test.ts` pins the ordering rules with executors
   that run jobs backwards and interleave two tournaments (fast, no threads);

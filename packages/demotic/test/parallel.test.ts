@@ -123,30 +123,45 @@ const CASES = [
 ];
 
 /**
- * And the two consoles whose fits are minutes rather than seconds.
+ * And the Mega Drive, which is the same case with a different clock.
  *
- * Both belong in the matrix above for the same reason the NES does — their art
- * paths share the bank out max-min fair on demands read off a first pass, so a
- * build there demakes some pictures twice, and doing that under a spread
- * executor is where an order dependence would show. They are written out
- * separately only for their timeout, and they are slow for opposite reasons: a
- * Mega Drive backdrop is the biggest picture in the set (320x224 against a Game
- * Boy's 160x144), and a Game Boy Advance one is the biggest *palette* — 240x160
- * fitted into 256 colours with no per-cell restriction at all. Either is around
- * half a minute against a handful of seconds anywhere else. Folding that ceiling
- * into `it.each` would raise it for every fast case too, and a six-minute limit
- * on a ten-second build is a guard that catches nothing.
+ * It belongs in the matrix above for the same reason the NES does — its art path
+ * shares the bank out max-min fair on demands read off a first pass, so a build
+ * there demakes some pictures twice, and doing that under a spread executor is
+ * where an order dependence would show. It is written out separately only for
+ * its timeout: a fit's cost is its pixels and this console has the biggest
+ * screen in the set (320x224 against a Game Boy's 160x144), so one backdrop
+ * through the tournament is around twenty-five seconds here against a handful
+ * anywhere else. Folding that ceiling into `it.each` would raise it for every
+ * fast case too, and a six-minute limit on a ten-second build is a guard that
+ * catches nothing.
  */
 const SLOW = [
   { game: "platformer", consoleId: "md" },
   // And the biggest fan-out there is: four levels, two of them demade against a
   // shared bank, four tracks and eight effects, all of it settled at once.
   { game: "quest", consoleId: "md" },
-  // The Game Boy Advance is here for the same reason and is slow for a different
-  // one: its screen is small but a cell may use any of 256 colours, so the fit is
-  // the largest palette in the set rather than the largest picture.
-  { game: "platformer", consoleId: "gba" },
 ];
+
+/**
+ * The Game Boy Advance is *not* here, and the reason is a number rather than a
+ * judgement.
+ *
+ * Its art path shares a bank out max-min fair on demands read off a first pass,
+ * exactly as the Mega Drive's and the NES's do, so on the face of it it belongs
+ * in the matrix above. What it costs is the problem: a fit for this console is
+ * 38,400 pixels against **252 centroids**, and a k-means iteration is O(N·K) —
+ * so one picture is minutes where a Mega Drive's 320×224 into sixteen colours is
+ * seconds, and one case is around eight minutes of a twenty-minute suite.
+ *
+ * What that case would test is covered: the sharing, the interning and the scene
+ * ordering are `fairShares` and `TilePool` in `gba-art.ts`, which are the same
+ * shape the other two run and are exercised by them here — and the *bytes* the
+ * page and the CLI produce for this console are compared by
+ * `packages/web/test/e2e/determinism.spec.ts`, which builds `caves` for every
+ * console with a backend. Adding it here is worth doing the day a 256-colour fit
+ * is cheaper; skipping it silently would not be.
+ */
 
 /** One executor for the whole file, so the job count means something at the end. */
 const fanOut = adversarial();
