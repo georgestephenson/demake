@@ -208,6 +208,33 @@ export function addLegend(level: LevelText, entry: LegendEntry): LevelText {
   return { ...level, head };
 }
 
+/**
+ * Redraw every cell holding one character with another.
+ *
+ * This is the one legend edit that reaches the grid, and it has to: the
+ * character in a `tile` line and the characters in the map are the same name for
+ * the same tile, so changing it in the legend alone would orphan every cell drawn
+ * with it and leave the new entry drawing nothing. That is the opposite of
+ * `removeLegend`, which leaves the cells alone deliberately — a removed tile is a
+ * tile that is gone, and a renamed one is the same tile spelled differently.
+ *
+ * Only the rows change, and only the ones the character appears in; a row
+ * without it comes back the same string. Cells that already held `to` are left
+ * as they are — they were that character before and they are that character now,
+ * which is also the one way this is not reversible by typing the old character
+ * back (a stray cell the legend did not explain gets adopted by the tile).
+ */
+export function remapChar(level: LevelText, from: string, to: string): LevelText {
+  if (from === to || from.length !== 1 || to.length !== 1) return level;
+  let changed = false;
+  const rows = level.rows.map((row) => {
+    if (!row.includes(from)) return row;
+    changed = true;
+    return row.split(from).join(to);
+  });
+  return changed ? { ...level, rows } : level;
+}
+
 /** Remove a legend entry by its source line. Cells drawn with it are left alone. */
 export function removeLegend(level: LevelText, line: number): LevelText {
   const at = line - 1;

@@ -20,6 +20,7 @@ import {
   gridWidth,
   joinLevel,
   legendLine,
+  remapChar,
   removeLegend,
   resizeGrid,
   setCell,
@@ -178,6 +179,34 @@ describe("the legend", () => {
     // The cells drawn with it are left as they were: the compiler reports them,
     // which is a better answer than an editor silently erasing part of a level.
     expect(joinLevel(level)).toContain("#   o    #");
+  });
+
+  it("redraws the grid when a tile's character changes", () => {
+    // The legend's character and the map's characters are one name for one
+    // tile, so a rename that stopped at the legend would orphan every cell.
+    const renamed = setLegend(splitLevel(LEVEL), 2, {
+      char: "W",
+      name: "wall",
+      solid: true,
+      art: "brick",
+    });
+    const level = remapChar(renamed, "#", "W");
+    const parsed = parseLevel(joinLevel(level));
+    expect(parsed.diagnostics).toEqual([]);
+    expect(level.rows[0]).toBe("WWWWWWWWWW");
+    expect(level.rows[1]).toBe("W   o    W");
+    expect(tileAt(parsed, 0, 0)?.name).toBe("wall");
+  });
+
+  it("leaves rows the character never appears in exactly as they were", () => {
+    const level = splitLevel(LEVEL);
+    const remapped = remapChar(level, "o", "$");
+    expect(remapped.rows[0]).toBe(level.rows[0]);
+    expect(remapped.rows[1]).toBe("#   $    #");
+    expect(remapped.head).toBe(level.head);
+    // …and a character the grid does not use changes nothing at all.
+    expect(remapChar(level, "z", "Z")).toBe(level);
+    expect(remapChar(level, "#", "#")).toBe(level);
   });
 
   it("offers only characters the legend has not taken", () => {
