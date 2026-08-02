@@ -28,6 +28,7 @@
     "@demake/dmg": "workspace:*",
     "@demake/gba": "workspace:*",
     "@demake/md": "workspace:*",
+    "@demake/nds": "workspace:*",
     "@demake/nes": "workspace:*",
     "@demake/sms": "workspace:*",
     "@demake/snes": "workspace:*"

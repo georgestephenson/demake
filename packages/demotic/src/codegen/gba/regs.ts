@@ -56,7 +56,10 @@ export const V6 = 10;
 /**
  * The work-RAM base, held for the whole program.
  *
- * `$03000000`. See the file header: nothing borrows it.
+ * *Which* base is the machine's — internal work RAM on a Game Boy Advance and
+ * main RAM on a Nintendo DS — so it is `MemoryPlan.heapStart` rather than a
+ * constant here, and `GbaCtx.loadRamBase` is the one place it is loaded. See the
+ * file header: nothing borrows the register.
  */
 export const RAM = 11;
 
@@ -70,14 +73,11 @@ export const LR = 14;
 /** The program counter. */
 export const PC = 15;
 
-/** First byte of internal work RAM, which is what {@link RAM} holds. */
-export const RAM_BASE = 0x03000000;
-
 /**
  * How far a word load or store reaches from a base register.
  *
- * The reason the memory plan's heap starts exactly at {@link RAM_BASE}: the hot
- * state lands inside this window and costs one instruction, and anything beyond
- * it costs two rather than being unreachable.
+ * The reason {@link RAM} holds the heap's first byte exactly: the hot state
+ * lands inside this window and costs one instruction, and anything beyond it
+ * costs two rather than being unreachable.
  */
 export const RAM_WINDOW = 0x1000;

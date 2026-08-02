@@ -103,6 +103,9 @@ importers:
       '@demake/md':
         specifier: workspace:*
         version: link:../md
+      '@demake/nds':
+        specifier: workspace:*
+        version: link:../nds
       '@demake/nes':
         specifier: workspace:*
         version: link:../nes
@@ -140,6 +143,15 @@ importers:
       '@demake/core':
         specifier: workspace:*
         version: link:../core
+
+  packages/nds:
+    dependencies:
+      '@demake/core':
+        specifier: workspace:*
+        version: link:../core
+      '@demake/gba':
+        specifier: workspace:*
+        version: link:../gba
 
   packages/nes:
     dependencies:
@@ -196,6 +208,9 @@ importers:
       '@demake/md':
         specifier: workspace:*
         version: link:../md
+      '@demake/nds':
+        specifier: workspace:*
+        version: link:../nds
       '@demake/nes':
         specifier: workspace:*
         version: link:../nes

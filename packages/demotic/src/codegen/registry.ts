@@ -77,9 +77,12 @@ const FAMILIES: readonly FamilyDescriptor[] = [
     load: async () => anyBackend((await import("./md.js")).mdBackend),
   },
   {
+    // Two machines, one emitter: a Nintendo DS's 2D engine A is a Game Boy
+    // Advance's, so the second console is a machine description rather than a
+    // seventh backend (`codegen/gba/machine.ts`).
     family: "gba",
-    consoles: ["gba"],
-    extension: () => "gba",
+    consoles: ["gba", "nds"],
+    extension: (id) => (id === "nds" ? "nds" : "gba"),
     load: async () => anyBackend((await import("./gba.js")).gbaBackend),
   },
 ];

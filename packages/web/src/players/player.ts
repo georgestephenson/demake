@@ -43,9 +43,10 @@ export interface Player {
  * `players.test.ts` pins every entry against the core's own constant, so a
  * number that drifted would fail rather than crop a picture.
  *
- * Keyed by family, with the one console that differs from its family's default
+ * Keyed by family, with the two consoles that differ from their family's default
  * spelled out: a Game Gear renders the same 256×192 frame a Master System does
- * and shows the middle 160×144 of it.
+ * and shows the middle 160×144 of it, and a Nintendo DS draws its family's
+ * picture on a screen a third bigger.
  */
 export const SCREENS: Readonly<Record<string, { width: number; height: number }>> = {
   gb: { width: 160, height: 144 },
@@ -55,6 +56,7 @@ export const SCREENS: Readonly<Record<string, { width: number; height: number }>
   snes: { width: 256, height: 224 },
   md: { width: 320, height: 224 },
   gba: { width: 240, height: 160 },
+  nds: { width: 256, height: 192 },
 };
 
 /** The framebuffer a console draws into, by family and — where it differs — id. */

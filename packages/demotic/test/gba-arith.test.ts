@@ -34,6 +34,7 @@ import { describe, expect, it } from "vitest";
 import { analyze } from "../src/codegen/analyze.js";
 import { GbaCtx } from "../src/codegen/gba/ctx.js";
 import { emitRngPick } from "../src/codegen/gba/expr.js";
+import { GBA_MACHINE } from "../src/codegen/gba/machine.js";
 import {
   abs32,
   add32,
@@ -107,7 +108,7 @@ function run(body: (ctx: GbaCtx) => void, program = PROGRAM): Gba {
   const analysis = analyze(program);
   const layout = planLayout(program, analysis, GBA_MEMORY);
   const origin = ROM_BASE + GBA_HEADER_SIZE;
-  const ctx = new GbaCtx(program, analysis, layout, getProfile("gba"), ROM_BASE);
+  const ctx = new GbaCtx(program, analysis, layout, getProfile("gba"), GBA_MACHINE);
   const { asm } = ctx;
 
   asm.b("Start");

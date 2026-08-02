@@ -220,6 +220,27 @@ const PROFILES: readonly ConsoleProfile[] = [
     startButton: "dedicated",
     romPath: true,
   },
+  {
+    // The second screen is not here, and that is the profile saying what the
+    // backend builds rather than what the hardware has: a game is one screen,
+    // and 2D engine B draws the other. The one that is here is bigger than every
+    // other console's in the set — thirty-two cells by twenty-four, with no
+    // overscan to be safe of, because an LCD shows every pixel.
+    id: "nds",
+    name: "Nintendo DS",
+    screenWidth: 32,
+    screenHeight: 24,
+    rawWidth: 256,
+    rawHeight: 192,
+    cellSize: 8,
+    fps: 60,
+    // The Game Boy Advance's reasoning, on the same engine: the per-line limit
+    // is a *cycle* budget rather than a count, so a row of 8×8 sprites runs out
+    // of attribute entries long before it runs out of cycles.
+    sprites: { total: 128, perLine: 128, hFlip: true },
+    startButton: "dedicated",
+    romPath: true,
+  },
 ];
 
 /** Every profile, in a stable order. */

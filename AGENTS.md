@@ -12,12 +12,12 @@ something 8/16-bit-era consoles and handhelds up to the Nintendo DS could
 actually run. Four demakers, sharing one engine and one proof (a real ROM, in a
 real emulator, compared pixel for pixel):
 
-| Demaker               | Docs   | State                                                                       |
-| --------------------- | ------ | --------------------------------------------------------------------------- |
-| art (images)          | 03–06  | working, ten consoles proven on hardware                                    |
-| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on eight consoles |
-| music (`arrange`)     | 16, 17 | MIDI → chip music, nine consoles — and a Game Boy ROM that plays it         |
-| sound (`sfx`)         | 16, 18 | WAV → chip effects, nine consoles — same ROM, same proof                    |
+| Demaker               | Docs   | State                                                                     |
+| --------------------- | ------ | ------------------------------------------------------------------------- |
+| art (images)          | 03–06  | working, ten consoles proven on hardware                                  |
+| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on ten consoles |
+| music (`arrange`)     | 16, 17 | MIDI → chip music, nine consoles — and a Game Boy ROM that plays it       |
+| sound (`sfx`)         | 16, 18 | WAV → chip effects, nine consoles — same ROM, same proof                  |
 
 The four are not four tools that share a repo any more: a `.dmt` says
 `music theme.mid` and `sound bounce.wav on ball hits paddle`, and `demake build`
@@ -220,6 +220,37 @@ per tick. What the second console changed is the shape of the first: compiling a
 Demotic program is now an **interface** (`codegen/backend.ts`) that a console
 implements, and what a program _means_ is shared (`codegen/shape.ts`), so the
 only thing a backend owns is its instruction set.
+
+**And it builds for a Nintendo DS, for the price of a description.**
+`demake build -c nds` produces a real `.nds` cartridge — the _same ARM machine
+code_ as a Game Boy Advance build, on a screen a third bigger — and the whole
+example library traces identically there, in the same battery, at the same one
+frame per tick. It is not a seventh backend: a DS's 2D engine A **is** a Game Boy
+Advance's, at the same register offsets with the same screen entries and the same
+character formats, so this is a _variant_ on the Mega Duck's terms and what it
+added is `codegen/gba/machine.ts` — five entries and not one instruction.
+
+Those five are worth knowing, because each is a way a cartridge can be perfect
+and dark. **The program is copied rather than run**: there is no cartridge in the
+address space at all, so the header is a region in front of the image instead of
+the first 192 bytes of it, and the limit on a build is the megabyte before its
+own heap rather than a bus. **A video RAM bank has to be pointed somewhere**
+before anything is uploaded into it, and background and object characters are two
+banks rather than one array with the objects on top. **`DISPCNT` is a word here**,
+and the field that decides whether the engine's output reaches the screen at all
+is in the half a halfword store never writes. **The window is 32×24**, so a build
+that kept the other machine's would leave two columns and four rows of every
+scene unpainted. And **the loop watches the beam**, because this machine's
+interrupt vector lives inside data TCM and its base is a CP15 setting rather than
+an address — a description this project would have to get exactly right for a
+gain of nothing, since the main loop is what waits either way.
+
+`@demake/nds` is the seventh owned core and the smallest: the processor is
+`@demake/gba`'s and so is the 2D engine, because on everything a demade game
+touches they are the same processor and the same engine. What is there is the
+machine around them. Sound is absent and named: this console's sixteen channels
+are the **ARM7's**, so playing them needs a driver for a second processor, and
+doc 13 §D4 is where that is tracked.
 
 **And one machine cost almost nothing, which is the point.**
 `demake build -c megaduck` produces a real Mega Duck cartridge, and it is not a
@@ -489,6 +520,14 @@ tools/toolchains/    provisioners (cached): RGBDS, cc65, WLA-DX, SameBoy source 
                      GNU m68k + arm-none-eabi binutils and NASM (apt); libretro
                      cores (fceumm, genesis-plus-gx, snes9x, mgba, desmume,
                      mednafen_pce_fast, mednafen_wswan)
+packages/nds/        @demake/nds — a self-hosted Nintendo DS core, and the
+                     smallest of the seven: the processor is @demake/gba's and so
+                     is the 2D engine, because a DS's engine A *is* a Game Boy
+                     Advance's. What is here is the machine around them — 4 MiB a
+                     cartridge is *copied into* rather than run from, nine video
+                     RAM banks of which two are mapped, and a screen a third
+                     bigger. Engine B, the second screen, interrupts and the ARM7
+                     are absent rather than half-implemented, and each raises
 packages/nes/        @demake/nes — a self-hosted NES core, for the two jobs
                      @demake/dmg exists for: the conformance harnesses in Vitest
                      and (later) the page's player. Its APU is @demake/chip's
@@ -568,7 +607,10 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
     sms.ts, sms-art.ts, sms/              the Z80 backend and its image path
     snes.ts, snes-art.ts, snes/           the 65816 backend and its image path
     md.ts, md-art.ts, md/                 the 68000 backend and its image path
-    gba.ts, gba-art.ts, gba/              the ARM backend and its image path
+    gba.ts, gba-art.ts, gba/              the ARM backend and its image path,
+                     which is *two* machines: gba/machine.ts is the description
+                     that makes a Nintendo DS a variant rather than a seventh
+                     backend, on the Mega Duck's terms
     audio.ts         the hand-off to @demake/audio, art.ts's twin
   demo/              terminal runner (play.mjs) and test runner (test.mjs)
 packages/chip/       @demake/chip — every sound chip as a register-driven model (doc 16)
@@ -1714,6 +1756,25 @@ emitter's business:
 - **Every instruction is conditional**, so a short `if` is a predicated pair with
   no branch. That is why `ArmCond` is a parameter on every method rather than a
   property of the branch methods.
+- **This backend builds two machines, and the difference is a description.** A
+  Nintendo DS's 2D engine A is a Game Boy Advance's, so `gba/machine.ts` carries
+  the five places they differ and every emitter reads it: where the program lives,
+  where objects answer, what has to be switched on, `DISPCNT`'s width, and whether
+  the loop waits on a handler or on the beam. Anything that became a `if
+(console === "nds")` in an emitter would break the property `rom.test.ts` rests
+  on — that the _instructions_ are the same on both — which is the Game Boy
+  Color's argument one family along.
+- **`DISPCNT` is a halfword on one machine and a word on the other**, and the
+  field a Nintendo DS needs is in the half a `strh` never writes. A halfword store
+  leaves display mode 0 — the screen blanked — with every other register exactly
+  right, which no trace and no register assertion can see. `setDispcnt` is the one
+  place it is written for that reason.
+- **A video memory the engine allocates is a video memory nobody wrote to.** The
+  DS's banks belong to the _machine_, because a bus routes to them; handing the
+  renderer its own array instead produced a picture uploaded to one place and read
+  from another, with every register correct and the screen black. `PpuOptions`
+  takes both arrays for exactly that reason, and `nds-rom.test.ts`'s "draws
+  something" case is what found it.
 - **Work RAM is two regions and they are not interchangeable.** 32 KiB of
   internal RAM on a 32-bit bus with no wait states, and 256 KiB of external RAM
   on a 16-bit bus with two — so a game's state goes in the internal one and the
@@ -1944,14 +2005,16 @@ run `pnpm gen:console-docs` when you land one.
    `_audio-battery.ts`'s: running the whole example library on every machine is what
    makes `Backend` a contract rather than a resemblance.
 
-**Check first whether the console is a variant rather than a machine.** Three of
+**Check first whether the console is a variant rather than a machine.** Four of
 the consoles that build games are not backends: the Game Boy Color is the Game
 Boy's machine code with a second half on the renderer, the Game Gear is the
-Master System's family with a different crop, and the Mega Duck is a Game Boy
-whose I/O pins moved — a register table, an `LCDC` permutation, an entry point
-and a cartridge with no header (`core/src/asm/megaduck.ts`). A variant costs a
-machine description and no instructions; if you find yourself copying an emitter,
-you are writing the wrong one of the two.
+Master System's family with a different crop, the Mega Duck is a Game Boy whose
+I/O pins moved — a register table, an `LCDC` permutation, an entry point and a
+cartridge with no header (`core/src/asm/megaduck.ts`) — and the Nintendo DS is a
+Game Boy Advance's 2D engine on a bigger screen, which is five entries in
+`codegen/gba/machine.ts` and not one instruction. A variant costs a machine
+description and no instructions; if you find yourself copying an emitter, you are
+writing the wrong one of the two.
 
 ## Testing truths
 
@@ -2041,6 +2104,15 @@ you are writing the wrong one of the two.
   than seconds. What the sweep would still have bought (that a driver's reported
   sizes are real rather than the zero they hold before `assemble`) is asserted on
   an art-free build instead.
+- `packages/demotic/test/nds-rom.test.ts` is the Nintendo DS's oracle, and what it
+  checks is the _machine description_ rather than the code: the two programs a
+  `.nds` names, the two video RAM banks, the power and display-mode registers, the
+  bigger window painted to its last row, and one game tick per frame. Every case
+  is one a Game Boy Advance build would pass while a DS cartridge sat dark. Trace
+  conformance is `rom.test.ts`'s, and on this console it settles something sharper
+  than usual: the instructions are the other machine's, so a trace that matched on
+  one and not the other would mean part of the description had leaked into the
+  code a tick runs.
 - `packages/demotic/test/gba-arith.test.ts` and `gba-rom.test.ts` are the Game
   Boy Advance's pair, and the second is where the things a trace cannot see are
   checked: that _two_ banks arrived in two places, that the map's four screen

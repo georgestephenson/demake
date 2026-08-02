@@ -756,17 +756,46 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     at. Whether an arranger with spare voices should double a part rather than
     leave them idle is doc 17's question, not this backend's, and it is open.
 
-    What remains for the pair: the Nintendo DS backend, and, for the DS, a second
-    core with two processors in it, since its sound registers are the ARM7's
-    alone.
+    **And the Nintendo DS, which cost a description and no instructions.**
+    `demake build -c nds` produces a real `.nds` cartridge carrying the *same ARM
+    machine code* a Game Boy Advance build carries, and the whole example library
+    traces identically there. That is not a seventh backend: a DS's 2D engine A
+    is a Game Boy Advance's at the same register offsets with the same screen
+    entries and the same character formats, so it is a variant on the Mega Duck's
+    terms, and `codegen/gba/machine.ts` is the whole of it.
+
+    Five entries, and each is a way a cartridge can be perfect and dark. The
+    program is **copied into main RAM** rather than run from a bus, so the header
+    is a region in front of the image and the limit on a build is the megabyte
+    before its own heap. **A video RAM bank has to be pointed somewhere** before
+    anything is uploaded into it, and backgrounds and objects are two banks rather
+    than one array. **`DISPCNT` is a word**, and the field that decides whether
+    the engine's output reaches the screen at all sits in the half a halfword
+    store never writes. **The window is 32×24.** And **the loop watches the beam**,
+    because this machine's interrupt vector is inside data TCM and its base is a
+    CP15 setting rather than an address — a description to get exactly right for a
+    gain of nothing, since the main loop is what waits either way.
+
+    `@demake/nds` is the seventh owned core and the smallest, because the
+    processor and the engine are `@demake/gba`'s: what is there is the machine
+    around them. `nds-rom.test.ts` is the oracle for the description itself, and
+    `rom.test.ts` settles the sharper claim — the instructions are the other
+    machine's, so a trace that matched on one and not the other would mean part
+    of the description had leaked into the code a tick runs.
+
+    What remains for the pair: **sound on the DS**, which is a second processor's
+    job in a way no other console's is. Its sixteen channels answer to the ARM7
+    alone, so a driver for them is a program the ARM9 uploads and a core with two
+    processors to prove it in — the Super Nintendo's shape, one architecture along
+    (§A5, doc 16 §The proof).
 
   - **D5 — Play ROM in the page** *(done for `gb`, `gbc`, `nes`, `sms`, `gg`,
-    `md`, `snes` and `gba`)*: the browser
+    `md`, `snes`, `gba` and `nds`)*: the browser
     compiles the
     game itself, because the assembler is ours and written in TypeScript, and
     demakes its art with our own rasteriser rather than the browser's. It boots
     the result in `@demake/dmg`, `@demake/nes`, `@demake/sms`, `@demake/snes`,
-    `@demake/md` or `@demake/gba` —
+    `@demake/md`, `@demake/gba` or `@demake/nds` —
     ours, because
     doc 07 forbids a CDN core and a WASM core we cannot read is the same bargain
     in a different wrapper. The bytes are identical to `demake build`'s, pinned by

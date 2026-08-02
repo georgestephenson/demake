@@ -30,6 +30,9 @@
       "path": "./packages/gba"
     },
     {
+      "path": "./packages/nds"
+    },
+    {
       "path": "./packages/chip"
     },
     {

@@ -23,6 +23,7 @@
 
 import { Gameboy, type Button as GbButton, type Machine as GbMachine } from "@demake/dmg";
 import { Gba, type Button as GbaButton } from "@demake/gba";
+import { Nds, type Button as NdsButton } from "@demake/nds";
 import { Md, type Button as MdButton } from "@demake/md";
 import { Nes, type Button as NesButton } from "@demake/nes";
 import { Sms, type Button as SmsButton } from "@demake/sms";
@@ -172,6 +173,32 @@ export const gbaTarget: RomTarget = {
       stepInstruction: () => machine.stepInstruction(),
       runFrame: () => machine.runFrame(),
       setButtons: (down) => machine.setButtons(down as GbaButton[]),
+    };
+  },
+};
+
+/**
+ * The Nintendo DS, which runs the *same instructions* as the target above it.
+ *
+ * That is the whole reason it is worth running the library twice: a Game Boy
+ * Advance's 2D engine and a DS's engine A are the same engine, so this backend
+ * builds one program for two machines and only the description around it differs
+ * — where it lives, where objects answer, what has to be switched on, and how
+ * the loop waits (`codegen/gba/machine.ts`). A trace that matched on one console
+ * and not the other would mean one of those four had leaked into the code a tick
+ * runs, which is exactly the property the Game Boy Color build rests on one
+ * family over.
+ */
+export const ndsTarget: RomTarget = {
+  console: "nds",
+  build: (program, options) => buildGbaRom(program, options),
+  boot: (bytes) => {
+    const machine = new Nds(bytes);
+    return {
+      readMemory: (address, length) => machine.readMemory(address, length),
+      stepInstruction: () => machine.stepInstruction(),
+      runFrame: () => machine.runFrame(),
+      setButtons: (down) => machine.setButtons(down as NdsButton[]),
     };
   },
 };

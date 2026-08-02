@@ -28,8 +28,19 @@
  *     because a game that overspends it must lose the same sprites the hardware
  *     would.
  *
+ * **And it is the Nintendo DS's 2D engine A as well**, which is why the sizes
+ * below are constructor options rather than constants baked into the loops. That
+ * is not a generalisation invented here: a DS's engine A *is* this engine with
+ * more memory in front of it — the same mode-0 text backgrounds, the same screen
+ * entries, the same 4bpp and 256-colour characters, the same attribute layout,
+ * at the same register offsets — and Nintendo built it that way, which is how one
+ * machine runs the other's cartridges. What differs is the screen it draws on and
+ * where object characters answer, and both of those are a *machine description*
+ * (`@demake/nds`'s `machine.ts`) rather than a second renderer. Writing that
+ * second renderer is how the two consoles would come to disagree about a tile.
+ *
  * Sources: GBATEK — *LCD I/O Display Control*, *LCD I/O BG Control*, *LCD OBJ —
- * OAM Attributes* (https://problemkaputt.de/gbatek.htm).
+ * OAM Attributes*, *DS Video* (https://problemkaputt.de/gbatek.htm).
  */
 
 /** Visible width, in pixels. */
@@ -49,6 +60,33 @@ export const OBJ_VRAM_BASE = 0x10000;
 export const PALETTE_ENTRIES = 512;
 /** Object entries in attribute memory. */
 export const OAM_ENTRIES = 128;
+
+/** What a machine tells the engine about itself. */
+export interface PpuOptions {
+  /** Visible width, in pixels. Defaults to a Game Boy Advance's. */
+  width?: number;
+  /** Visible height. */
+  height?: number;
+  /**
+   * Background character and map memory, where the machine owns it.
+   *
+   * On a Game Boy Advance the engine owns one 96 KiB region with the objects at
+   * the top of it, and nothing has to be passed. On a Nintendo DS the two are
+   * separate address spaces filled by separate video RAM *banks*, which the
+   * machine holds and a bus routes to — so it hands both of them over here
+   * rather than the engine allocating memory the bus would then have to mirror.
+   * Two arrays for one memory is how a picture ends up uploaded to one and read
+   * from the other, which draws a black screen with every register correct.
+   */
+  vram?: Uint8Array;
+  /**
+   * Object character memory, where it is not the top of the same array.
+   *
+   * Absent means "the region at {@link OBJ_VRAM_BASE}", which is the Game Boy
+   * Advance's arrangement and the reason that console needs no options at all.
+   */
+  objVram?: Uint8Array;
+}
 
 /** A rendered frame, as RGBA. */
 export interface Frame {
@@ -102,8 +140,14 @@ interface Layer {
 
 /** The 2D engine, with its own memory. */
 export class Ppu {
-  /** 96 KiB: 64 of background character and map, 32 of object character. */
-  readonly vram = new Uint8Array(VRAM_SIZE);
+  /** Visible width, in pixels — a machine's, not this file's. */
+  readonly width: number;
+  /** Visible height. */
+  readonly height: number;
+  /** Background character and map memory; 96 KiB with the objects on top. */
+  readonly vram: Uint8Array;
+  /** Object character memory, which may be a window into {@link Ppu.vram}. */
+  readonly objVram: Uint8Array;
   /** 512 entries of RGB555 — the backgrounds' 256, then the objects'. */
   readonly palette = new Uint16Array(PALETTE_ENTRIES);
   /** Object attribute memory, as the halfwords the hardware reads. */
@@ -122,10 +166,20 @@ export class Ppu {
   /** Vertical scroll, per layer. */
   readonly bgvofs = new Uint16Array(4);
 
-  private readonly pixels = new Uint8ClampedArray(FRAME_WIDTH * FRAME_HEIGHT * 4);
+  private readonly pixels: Uint8ClampedArray;
   /** One scanline of object output: palette index and priority per pixel. */
-  private readonly objLine = new Int16Array(FRAME_WIDTH);
-  private readonly objPriority = new Uint8Array(FRAME_WIDTH);
+  private readonly objLine: Int16Array;
+  private readonly objPriority: Uint8Array;
+
+  constructor(options: PpuOptions = {}) {
+    this.width = options.width ?? FRAME_WIDTH;
+    this.height = options.height ?? FRAME_HEIGHT;
+    this.vram = options.vram ?? new Uint8Array(VRAM_SIZE);
+    this.objVram = options.objVram ?? this.vram.subarray(OBJ_VRAM_BASE);
+    this.pixels = new Uint8ClampedArray(this.width * this.height * 4);
+    this.objLine = new Int16Array(this.width);
+    this.objPriority = new Uint8Array(this.width);
+  }
 
   /** Read a halfword out of video RAM. */
   private vram16(at: number): number {
@@ -151,10 +205,10 @@ export class Ppu {
       return;
     }
     const backdrop = this.palette[0] as number;
-    for (let y = 0; y < FRAME_HEIGHT; y += 1) {
+    for (let y = 0; y < this.height; y += 1) {
       if ((this.dispcnt & 0x1000) !== 0) this.renderObjects(y);
       else this.objLine.fill(-1);
-      for (let x = 0; x < FRAME_WIDTH; x += 1) {
+      for (let x = 0; x < this.width; x += 1) {
         let colour = backdrop;
         let best = 4;
         // Objects first, so that an object and a background at the same priority
@@ -176,7 +230,7 @@ export class Ppu {
           best = layer.priority;
           colour = this.palette[layer.colour] as number;
         }
-        const at = (y * FRAME_WIDTH + x) * 4;
+        const at = (y * this.width + x) * 4;
         this.pixels[at] = expand(colour);
         this.pixels[at + 1] = expand(colour >> 5);
         this.pixels[at + 2] = expand(colour >> 10);
@@ -282,7 +336,7 @@ export class Ppu {
 
       for (let offset = 0; offset < width; offset += 1) {
         const x = left + offset;
-        if (x < 0 || x >= FRAME_WIDTH) continue;
+        if (x < 0 || x >= this.width) continue;
         const existing = this.objLine[x] as number;
         // Attribute order is the priority among objects: an earlier entry that
         // already painted this pixel keeps it, whatever its layer priority.
@@ -293,11 +347,9 @@ export class Ppu {
         const inTileColumn = sourceColumn & 7;
         let colour: number;
         if (deep) {
-          colour = this.vram[OBJ_VRAM_BASE + unit * 32 + inTileRow * 8 + inTileColumn] as number;
+          colour = this.objVram[unit * 32 + inTileRow * 8 + inTileColumn] as number;
         } else {
-          const byte = this.vram[
-            OBJ_VRAM_BASE + unit * 32 + inTileRow * 4 + (inTileColumn >> 1)
-          ] as number;
+          const byte = this.objVram[unit * 32 + inTileRow * 4 + (inTileColumn >> 1)] as number;
           const nibble = (inTileColumn & 1) !== 0 ? byte >> 4 : byte & 0xf;
           colour = nibble === 0 ? 0 : (bank << 4) | nibble;
         }
@@ -311,6 +363,6 @@ export class Ppu {
   /** The picture, rendered from the registers as they stand. */
   view(): Frame {
     this.render();
-    return { pixels: this.pixels, width: FRAME_WIDTH, height: FRAME_HEIGHT };
+    return { pixels: this.pixels, width: this.width, height: this.height };
   }
 }

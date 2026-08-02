@@ -597,6 +597,41 @@ export const GBA_MEMORY: MemoryPlan = {
   align: 4,
 };
 
+/**
+ * The Nintendo DS's, which is the Game Boy Advance's plan on a bigger machine.
+ *
+ * Three things differ and each is the console's rather than a preference. The
+ * heap is in **main RAM** rather than in a fast internal region, because the
+ * program itself was copied there and there is nothing else — 64 KiB of it,
+ * starting a megabyte past the program so that a build that grew a long way and
+ * a heap that grew a long way would still not meet. The window is **32×24 cells**
+ * against 30×20. And **no interrupt bytes**, because this backend watches the
+ * beam here rather than a handler (`codegen/gba/machine.ts` §frame), so there is
+ * no flag for a handler to raise.
+ *
+ * `audioBytes` is zero, and that is a gap rather than a decision: this console's
+ * sound registers are the ARM7's and there is no driver for it yet, so a game
+ * that names music builds, records what its rules asked for, and plays silently
+ * — exactly the position the Game Boy Advance was in before its ARM driver
+ * landed. Doc 13 §D4 is where it is tracked.
+ */
+export const NDS_MEMORY: MemoryPlan = {
+  machine: "Nintendo DS",
+  heapStart: 0x02100000,
+  heapEnd: 0x02110000,
+  oamShadow: 0x02110000,
+  oamEntries: 128,
+  viewW: 32,
+  viewH: 24,
+  queueMax: 128,
+  plotMax: 96,
+  audioBytes: 0,
+  cellAttributes: true,
+  interruptBytes: 0,
+  loopBytes: 6,
+  align: 4,
+};
+
 /** Raised when a game needs more state than the machine has. */
 export class LayoutError extends Error {
   constructor(

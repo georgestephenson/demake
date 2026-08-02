@@ -30,7 +30,14 @@
  */
 
 import { buildGbaGameAudio } from "@demake/audio";
-import { AsmError, packGbaRom, type Executor } from "@demake/core";
+import {
+  AsmArm,
+  AsmError,
+  NDS_ARM7_RAM,
+  packGbaRom,
+  packNdsRom,
+  type Executor,
+} from "@demake/core";
 
 import { getProfile } from "../profiles.js";
 import type { Program } from "../program.js";
@@ -51,8 +58,9 @@ import {
 } from "./backend.js";
 import { ART_TILES, bindGbaArt, OBJECT_ART_TILES } from "./gba-art.js";
 import { GbaCtx } from "./gba/ctx.js";
-import { BANK_TILES, CODE_ORIGIN, emitProgram, type GbaEmitOptions } from "./gba/emit.js";
-import { GBA_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
+import { machineFor } from "./gba/machine.js";
+import { BANK_TILES, emitProgram, type GbaEmitOptions } from "./gba/emit.js";
+import { GBA_MEMORY, NDS_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
 
 /** The largest image the cartridge bus addresses. */
 export const ROM_LIMIT = 32 * 1024 * 1024;
@@ -84,14 +92,14 @@ interface GbaAudio extends BoundAudioShape {
   hooks?: { driver: boolean; music: number; request: number; effects: readonly number[] };
 }
 
-/** The Game Boy Advance's implementation of the build. */
+/** The Game Boy Advance's implementation of the build — and the Nintendo DS's. */
 export const gbaBackend: Backend<GbaArt, GbaAudio> = {
   family: "gba",
-  consoles: ["gba"],
+  consoles: ["gba", "nds"],
   cartridge: "a Game Boy Advance cartridge",
 
-  extension(): string {
-    return "gba";
+  extension(program: Program): string {
+    return program.profile.id === "nds" ? "nds" : "gba";
   },
 
   unsupported(program: Program): string[] {
@@ -102,8 +110,8 @@ export const gbaBackend: Backend<GbaArt, GbaAudio> = {
     return missing;
   },
 
-  memory(): MemoryPlan {
-    return GBA_MEMORY;
+  memory(program: Program): MemoryPlan {
+    return program.profile.id === "nds" ? NDS_MEMORY : GBA_MEMORY;
   },
 
   async bindArt(
@@ -208,7 +216,11 @@ export const gbaBackend: Backend<GbaArt, GbaAudio> = {
   },
 
   assemble({ program, analysis, layout, art, audio, title }): Assembled {
-    const ctx = new GbaCtx(program, analysis, layout, getProfile(program.profile.id), CODE_ORIGIN);
+    const machine = machineFor(program.profile.id);
+    if (machine === undefined) {
+      throw new BuildError("E_INTERNAL", `this backend does not build for ${program.profile.name}`);
+    }
+    const ctx = new GbaCtx(program, analysis, layout, getProfile(program.profile.id), machine);
     if (audio.hooks) {
       ctx.audio = {
         driver: audio.hooks.driver,
@@ -235,27 +247,51 @@ export const gbaBackend: Backend<GbaArt, GbaAudio> = {
     if (ctx.asm.symbols().get("Reset") === undefined) {
       throw new BuildError("E_INTERNAL", "the code generator emitted no entry point");
     }
-    if (code.length > ROM_LIMIT) {
+    if (code.length > machine.codeLimit) {
       throw new BuildError(
         "E_GAME_TOO_LARGE",
-        `this game compiles to ${code.length} bytes and the cartridge bus reaches ${ROM_LIMIT}`,
+        `this game compiles to ${code.length} bytes and ${machine.id === "nds" ? "the space before its own state" : "the cartridge bus"} holds ${machine.codeLimit}`,
+        machine.id === "nds"
+          ? "a Nintendo DS binary is copied into main RAM, and the heap starts a megabyte along"
+          : undefined,
       );
     }
-    // Rounded up to 32 KiB by the wrapper, which is padding for the sake of a
-    // predictable artifact rather than a hardware requirement: this console has
-    // no size field and no mirroring rule to satisfy.
-    const bytes = packGbaRom(code, {
-      ...(title === undefined ? {} : { title: title.slice(0, 12).toUpperCase() }),
-    });
+    const stamp = title === undefined ? {} : { title: title.slice(0, 12).toUpperCase() };
+    // Rounded up to 32 KiB (or to the next power of two at least 128 KiB) by the
+    // wrapper, which is padding for the sake of a predictable artifact rather
+    // than a hardware requirement: neither console has a size field a game has
+    // to satisfy.
+    const bytes =
+      machine.id === "nds" ? packNdsRom(code, arm7Stub(), stamp) : packGbaRom(code, stamp);
     return {
       bytes,
       code: code.length,
-      capacity: ROM_LIMIT,
+      capacity: machine.codeLimit,
       symbols: ctx.asm.symbols(),
       helpers: ctx.helperNames(),
     };
   },
 };
+
+/**
+ * The ARM7's binary, which is four bytes and a branch to itself.
+ *
+ * A `.nds` carries two programs and the header is the only thing that says which
+ * bytes are whose, so the second one has to exist even when it has nothing to do
+ * — the display-ROM harness's `arm7.s` is the same four bytes for the same
+ * reason. It is *assembled* rather than written down as a word so that the one
+ * encoder emits it, which is the same discipline every other instruction in this
+ * backend is under.
+ *
+ * The day this console gets sound it stops being a stub: its sound registers are
+ * the ARM7's alone, so a driver for them runs here (doc 13 §D4).
+ */
+function arm7Stub(): Uint8Array {
+  const asm = new AsmArm(NDS_ARM7_RAM);
+  asm.label("Arm7Park");
+  asm.b("Arm7Park");
+  return asm.assemble();
+}
 
 /** What to stamp in the cartridge, and what source bytes to demake. */
 export type GbaRomOptions = BuildOptions;
