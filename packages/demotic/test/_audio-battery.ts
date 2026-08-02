@@ -869,16 +869,23 @@ export function audioSweep(target: Target): void {
      *
      * The day this console grows a mapper story, or an FM driver with a schedule
      * ten times the size of a PSG one, this is the entry to delete.
+     *
+     * **These are example names, not file names.** `cases` comes from `EXAMPLES`,
+     * which is a project folder per game — `shooter`, not `shooter.dmt`. Written
+     * with the extension the filter matched nothing and both consoles swept *no*
+     * fixtures at all, which is what this list exists to prevent; splitting the
+     * battery per console is what surfaced it, because an empty `describe` is an
+     * error where one console's silence inside a shared one is invisible.
      */
     const SWEEP: Readonly<Record<string, readonly string[]>> = {
-      md: ["shooter.dmt"],
+      md: ["shooter"],
       // The Super Nintendo, for the same reason arrived at from the other end.
       // Demaking a 256x224 picture into seven sixteen-colour sub-palettes is
       // thirty seconds of tournament against five, so seven games' worth would be
       // most of `pnpm test`. The shooter because it is the tightest in the
       // library, and a budget can only decide a cartridge already near the edge.
       // `rom.test.ts` builds every fixture for this console regardless.
-      snes: ["shooter.dmt"],
+      snes: ["shooter"],
     };
 
     for (const file of cases) {
