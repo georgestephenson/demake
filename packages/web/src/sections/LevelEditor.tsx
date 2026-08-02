@@ -43,6 +43,7 @@ import {
   freeChars,
   gridWidth,
   joinLevel,
+  remapChar,
   removeLegend,
   resizeGrid,
   setCell,
@@ -98,6 +99,13 @@ export function LevelEditor({ project, path, onEdit }: EditorProps) {
   const [pick, setPick] = useState("");
   const [drag, setDrag] = useState<{ from: Cell; to: Cell } | null>(null);
   const [overlay, setOverlay] = useState("targets");
+  // The character a new entry will take, empty while it is the editor's own
+  // suggestion. A default you can overtype is the whole point: picking an unused
+  // character is a courtesy, not a decision the editor gets to keep.
+  const [newChar, setNewChar] = useState("");
+  // Why the last character the legend was offered was refused. One line, because
+  // a refusal nobody explains reads as a control that does not work.
+  const [note, setNote] = useState("");
   // Bumped when a picture finishes loading. The grid paints on demand rather
   // than every frame, so an image arriving afterwards has to say so.
   const [loaded, setLoaded] = useState(0);
@@ -153,6 +161,8 @@ export function LevelEditor({ project, path, onEdit }: EditorProps) {
   useEffect(() => {
     setDraft(readText(project, openPath));
     setPick("");
+    setNewChar("");
+    setNote("");
     // Keyed on the path alone: reacting to the project itself would undo every
     // keystroke, since an edit is what replaces the project.
   }, [openPath]);
@@ -249,20 +259,72 @@ export function LevelEditor({ project, path, onEdit }: EditorProps) {
     [level],
   );
 
-  /** Rewrite one legend entry. `art: null` clears it; leaving it out keeps it. */
+  /**
+   * Rewrite one legend entry. `art: null` clears it; leaving it out keeps it.
+   *
+   * A changed character reaches the grid as well as the legend, because the two
+   * are one document: the character in a `tile` line and the characters in the
+   * map are the same name for the same tile (`remapChar`).
+   */
   const editTile = (
     tile: TileSpec,
-    change: { name?: string; solid?: boolean; art?: string | null },
+    change: { char?: string; name?: string; solid?: boolean; art?: string | null },
   ) => {
     const art = change.art === undefined ? tile.art : (change.art ?? undefined);
+    const next = change.char ?? tile.char;
+    const rewritten = setLegend(level, tile.line, {
+      char: next,
+      name: change.name ?? tile.name,
+      solid: change.solid ?? tile.solid,
+      ...(art === undefined ? {} : { art }),
+    });
+    apply(next === tile.char ? rewritten : remapChar(rewritten, tile.char, next));
+  };
+
+  /**
+   * Take a character typed into a legend row, or put the old one back.
+   *
+   * The field is reverted by hand on a refusal rather than left to re-render:
+   * nothing about the draft changed, so nothing would redraw it, and a box
+   * showing a character the file does not have is worse than the refusal.
+   */
+  const retitle = (tile: TileSpec, field: HTMLInputElement) => {
+    const next = field.value;
+    if (next === tile.char) return;
+    const why = charProblem(next, parsed.tiles);
+    if (why !== "") {
+      field.value = tile.char;
+      setNote(why);
+      return;
+    }
+    setNote("");
+    editTile(tile, { char: next });
+    if (char === tile.char) setPick(next);
+  };
+
+  /** The character the next new entry takes: what was typed, or a free one. */
+  const suggested = freeChars(parsed.tiles)[0];
+  const addTile = () => {
+    const next = newChar === "" ? suggested : newChar;
+    if (next === undefined) {
+      setNote("Every character the editor suggests is taken — type one of your own.");
+      return;
+    }
+    const why = charProblem(next, parsed.tiles);
+    if (why !== "") {
+      setNote(why);
+      return;
+    }
+    setNote("");
     apply(
-      setLegend(level, tile.line, {
-        char: tile.char,
-        name: change.name ?? tile.name,
-        solid: change.solid ?? tile.solid,
-        ...(art === undefined ? {} : { art }),
+      addLegend(level, {
+        char: next,
+        name: `tile${String(parsed.tiles.length + 1)}`,
+        solid: false,
       }),
     );
+    setNewChar("");
+    setPick(next);
   };
 
   const errors = parsed.diagnostics;
@@ -431,17 +493,23 @@ export function LevelEditor({ project, path, onEdit }: EditorProps) {
             <li
               key={tile.line}
               class={`legend-row${tile.char === char ? " selected" : ""}`}
+              aria-current={tile.char === char}
               onClick={() => setPick(tile.char)}
             >
-              <button
-                type="button"
+              {/* The character is the tile's name in the grid, so it is editable
+                  here — and it is also what selecting the tile to paint with
+                  means, which is why focusing it selects. One box, both jobs:
+                  a swatch beside a field for the same character would be two
+                  controls saying one thing. */}
+              <input
                 class="legend-char"
-                aria-pressed={tile.char === char}
-                aria-label={`Paint with ${tile.name}`}
-                onClick={() => setPick(tile.char)}
-              >
-                {tile.char === " " ? "␣" : tile.char}
-              </button>
+                value={tile.char}
+                maxLength={1}
+                aria-label={`Character for ${tile.name}`}
+                title={`The character that draws ${tile.name} in the grid`}
+                onFocus={() => setPick(tile.char)}
+                onChange={(e) => retitle(tile, e.currentTarget as HTMLInputElement)}
+              />
               <input
                 class="legend-name"
                 value={tile.name}
@@ -497,30 +565,56 @@ export function LevelEditor({ project, path, onEdit }: EditorProps) {
             </li>
           ))}
         </ul>
-        <button
-          type="button"
-          onClick={() => {
-            const next = freeChars(parsed.tiles)[0];
-            if (next === undefined) return;
-            apply(
-              addLegend(level, {
-                char: next,
-                name: `tile${String(parsed.tiles.length + 1)}`,
-                solid: false,
-              }),
-            );
-            setPick(next);
-          }}
-        >
-          Add tile
-        </button>
+        <div class="legend-add">
+          <input
+            class="legend-char"
+            data-testid="legend-new-char"
+            value={newChar}
+            maxLength={1}
+            placeholder={suggested ?? ""}
+            aria-label="Character for the new tile"
+            title="The character the new tile is drawn with — blank takes the suggestion"
+            onInput={(e) => setNewChar((e.currentTarget as HTMLInputElement).value)}
+          />
+          <button type="button" onClick={addTile}>
+            Add tile
+          </button>
+        </div>
+        {note === "" ? null : (
+          <p class="hint legend-note" role="status" data-testid="legend-note">
+            {note}
+          </p>
+        )}
         <p class="hint">
-          Removing an entry leaves the cells drawn with it as they were — the compiler reports them,
-          which is a better answer than an editor silently erasing part of a level.
+          Changing a tile&rsquo;s character redraws every cell that used it — it is the same tile,
+          spelled differently. Removing an entry instead leaves those cells as they were, and the
+          compiler reports them: a better answer than an editor silently erasing part of a level.
         </p>
       </section>
     </main>
   );
+}
+
+/**
+ * Why a character cannot draw a tile, or `""` if it can.
+ *
+ * Two refusals, and only the second is a judgement call. **A character the file
+ * cannot express is not a character**: a `tile` line is words separated by
+ * whitespace, so there is no way to write a space as one — which is exactly why
+ * the empty cell can never be redefined (`level/parse.ts` §EMPTY).
+ *
+ * **And a character another entry already uses is refused rather than written.**
+ * A duplicate *name* is left to the compiler to report, because typing it back
+ * undoes it; a duplicate character cannot be treated that way, because the
+ * rename redraws the grid and merging two tiles' cells under one character is
+ * the one edit in this editor that no later edit can pick apart.
+ */
+function charProblem(next: string, tiles: readonly TileSpec[]): string {
+  if (next.length !== 1 || next.trim() === "") {
+    return "A tile is drawn by exactly one character, and a space is the empty cell.";
+  }
+  const taken = tiles.find((one) => one.char === next);
+  return taken === undefined ? "" : `'${next}' already draws ${taken.name}.`;
 }
 
 /**

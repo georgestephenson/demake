@@ -51,8 +51,9 @@ test("painting a cell rewrites that character and nothing else", async ({ page }
   const before = (await text.inputValue()).split("\n");
 
   // Paint with the second legend entry — `ledge`, which the cavern draws with
-  // `=` — into the open air of row 2, column 5.
-  await page.getByTestId("legend").locator("li").nth(1).locator("button").first().click();
+  // `=` — into the open air of row 2, column 5. The character's own field is
+  // what selects it: one box, shown and edited in the same place.
+  await page.getByTestId("legend").locator("li").nth(1).locator(".legend-char").click();
   const grid = page.getByTestId("level-grid");
   const box = await grid.boundingBox();
   if (!box) throw new Error("the grid is not on screen");
@@ -71,4 +72,66 @@ test("painting a cell rewrites that character and nothing else", async ({ page }
   const was = before[changed[0] as number] as string;
   expect(line.length).toBe(was.length);
   expect([...line].filter((one, index) => one !== was[index])).toEqual(["="]);
+});
+
+test("changing a tile's character redraws the cells it drew", async ({ page }) => {
+  await openCaves(page);
+
+  const text = page.getByRole("textbox", { name: "Level source" });
+  const before = await text.inputValue();
+  const drawn = [...before.slice(before.indexOf("\nmap\n"))].filter((one) => one === "#").length;
+  expect(drawn).toBeGreaterThan(0);
+
+  // `wall` is the cavern's first entry, drawn with `#`.
+  const char = page.getByTestId("legend").locator("li").first().locator(".legend-char");
+  await expect(char).toHaveValue("#");
+  await char.fill("W");
+  await char.blur();
+
+  await expect.poll(async () => await text.inputValue()).not.toBe(before);
+  const after = await text.inputValue();
+  const grid = after.slice(after.indexOf("\nmap\n"));
+
+  // The legend says the new character and the grid is drawn with it: one tile,
+  // spelled differently, rather than an entry that draws nothing and a room
+  // full of cells the compiler no longer recognises.
+  expect(after).toContain("tile W wall");
+  expect([...grid].filter((one) => one === "W")).toHaveLength(drawn);
+  expect(grid).not.toContain("#");
+  await expect(page.getByTestId("legend-note")).toBeHidden();
+});
+
+test("refuses a character another tile already draws, and says why", async ({ page }) => {
+  await openCaves(page);
+
+  const text = page.getByRole("textbox", { name: "Level source" });
+  const before = await text.inputValue();
+
+  // `=` is the second entry's. Merging two tiles' cells under one character is
+  // the one edit here no later edit could pick apart, so it is refused rather
+  // than written and left to the compiler to report.
+  const char = page.getByTestId("legend").locator("li").first().locator(".legend-char");
+  await char.fill("=");
+  await char.blur();
+
+  await expect(page.getByTestId("legend-note")).toContainText("already draws ledge");
+  await expect(char).toHaveValue("#");
+  expect(await text.inputValue()).toBe(before);
+});
+
+test("a new tile takes the character you type, not the one suggested", async ({ page }) => {
+  await openCaves(page);
+
+  const text = page.getByRole("textbox", { name: "Level source" });
+  const rows = page.getByTestId("legend").locator("li");
+  await expect(rows).toHaveCount(5);
+
+  // The suggestion is a courtesy, shown as a placeholder — and overtypable.
+  const field = page.getByTestId("legend-new-char");
+  await expect(field).toHaveAttribute("placeholder", /./);
+  await field.fill("Z");
+  await page.getByRole("button", { name: "Add tile" }).click();
+
+  await expect(rows).toHaveCount(6);
+  await expect.poll(async () => await text.inputValue()).toContain("tile Z ");
 });
