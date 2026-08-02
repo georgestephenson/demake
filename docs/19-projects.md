@@ -646,7 +646,7 @@ itself — a folder whose sprites live in a sibling directory is not a project, 
 is a fragment of this repository. The duplication is a few kilobytes of SVG and it
 buys the property the whole document rests on.
 
-Everything that reads the fixtures follows: `rom.test.ts`, `audio.test.ts`,
+Everything that reads the fixtures follows: `rom.test.ts`, `_audio-battery.ts`,
 `games.test.ts`, `parallel.test.ts`, the terminal runners in `demo/`, and the
 page's example loader — which globs the project folders, so a project added to the
 repository is in the site's library without a list being edited. The golden traces travel with their

@@ -358,7 +358,7 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     Sound is built: a generated 6502 driver plays the demade schedules on the
     2A03, on the picture's own interrupt because the NES has no timer a driver
     can have without burning the DMC channel (§A5). The proof is the Game Boy's
-    one console over — `packages/demotic/test/audio.test.ts` now runs its whole
+    one console over — `packages/demotic/test/_audio-battery.ts` now runs its whole
     battery on both machines, booting each cartridge and diffing every register
     write against the schedules the demakers produced. A game whose audio files
     were not supplied still builds, plays silently, and records what a rule asked
@@ -929,7 +929,7 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     builds into a cartridge and is proven by A2.5's Level A suite, and a Demotic
     game is now the bank: every `sound` it names is demade, packed behind one
     index and played under the music by one generated driver, with the same
-    proof one level up (`packages/demotic/test/audio.test.ts`). Outstanding:
+    proof one level up (`packages/demotic/test/_audio-battery.ts`). Outstanding:
     `--variations`, standalone banks outside a game, and restoring the music's
     interrupted note rather than handing the channel back silent (doc 18
     §Stage 4).

@@ -206,7 +206,10 @@ function main() {
   }
 
   const rows = [
-    ["Unit (6-way matrix)", gates.unit],
+    // Two jobs on a pull request (Node 22 and 24 on ubuntu), six on `main`,
+    // where the other two operating systems join them — the workflow decides
+    // that from the event, not from anything here.
+    ["Unit (Node 22/24)", gates.unit],
     ["Browser (3 engines)", gates.browser],
     ["Web budget + Lighthouse", gates.lighthouse],
     ["Pixel-perfect E2E", gates.e2e],

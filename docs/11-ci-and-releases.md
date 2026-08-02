@@ -8,7 +8,7 @@
 |---|---|---|
 | `changes` | which gates this change can break (see §Affected-only gates) | no install, no build; ~10 s |
 | `lint` | eslint (incl. custom rules: no `Math.random`/`Date.now`/platform APIs in core), prettier check, typecheck (project references), `cli-spec` regeneration diff check | fast-fail; **never gated** |
-| `test-unit` | Vitest unit + property + golden suites, coverage upload | matrix: ubuntu/macos/windows × Node 20/22 |
+| `test-unit` | Vitest unit + property + golden suites, coverage upload | Node 22/24 × ubuntu on a PR, × ubuntu/macos/windows on `main` (see §The unit matrix) |
 | `test-browser` | Playwright: web build determinism + functional | **one job per engine**: Chromium/Firefox/WebKit, ubuntu |
 | `web-quality` | the doc-07 JS budget, then Lighthouse over the built site | ubuntu; shares one `build:web` |
 | `test-e2e` | Doc-10 emulator suite over every proven console (`pnpm test:rom-e2e`) | ubuntu, source-built assemblers + libretro cores, cached |
@@ -31,6 +31,30 @@ which re-ran the whole unit suite on the same runner image `test-unit` had
 already run it on. No test outside a `*.e2e.test.ts` behaves differently for
 having an assembler on `PATH`, so the second run proved nothing the first had
 not.
+
+### The unit matrix
+
+**Node 22 and 24, not 20 and 22.** Node 20 reached end-of-life on 2026-04-30, so
+half the matrix was proving an unsupported runtime while the current active LTS
+was untested. The floor in every `engines` field moved to `>=22` in the same
+change, because a matrix that does not test a version is not a version the
+project supports.
+
+**Three operating systems on `main`, one on a pull request.** The same split
+`affected.mjs` already runs on, for the same reason: the PR is what gets fast and
+the branch releases are cut from stays fully proven. What macOS and Windows catch
+is path handling and line endings at the edges — real, and still caught on the
+merge to `main` before anything ships. What they cost on a PR is the whole run,
+because Windows is the slowest runner and this is the longest job on it.
+
+**And the run is only ever as long as the slowest single test file**, which is
+worth knowing before optimising anything else here. Vitest schedules a *file* to
+a worker, so one long file pins one core and idles the rest: `audio.test.ts` was
+777 s of an 836 s suite until it was split per console (`_audio-battery.ts`), and
+`parallel.test.ts` 454 s until the same (`_fanout.ts`). Neither split changed a
+single assertion. If this job is slow again, look for the file that is minutes
+long before reaching for a matrix dimension or a shard count — `--shard`
+distributes files and cannot help a suite whose floor is one of them.
 
 ### Affected-only gates
 

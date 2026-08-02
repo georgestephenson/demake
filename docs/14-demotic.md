@@ -1016,7 +1016,7 @@ column of nothing.
 ```
 
 The chip has its own conformance layer, one level below this one and sharper:
-`packages/demotic/test/audio.test.ts` boots a cartridge and diffs every register
+`packages/demotic/test/_audio-battery.ts` boots a cartridge and diffs every register
 write the APU receives against the schedule the music demaker produced, tick for
 tick (doc 16 §The proof, Level A). A trace proves the game is the same game; that
 proves the sound is the same sound.

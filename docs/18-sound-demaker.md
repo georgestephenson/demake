@@ -240,7 +240,7 @@ the proof loop needs anyway.
 *Built:* a Demotic game is that bank. `demake build` demakes every `sound` the
 `.dmt` names, packs them behind one index, and emits one driver that plays any of
 them under the music (doc 16 §Two streams, one clock); `packages/demotic/test/
-audio.test.ts` fires one from a button press and diffs what the chip received
+_audio-battery.ts` fires one from a button press and diffs what the chip received
 against the effect's own schedule, on every console with a driver. An effect
 fitted for a game is fitted to the game's driver rate rather than to the
 standalone 240 Hz — `SfxOptions.rateHz` — because one interrupt produces one
