@@ -549,20 +549,24 @@ export function emitProgram(ctx: GbaCtx, options: GbaEmitOptions = {}): void {
   asm.label("ObjectPalette");
   asm.bytes(options.objectPalette ?? defaultPalette());
 
-  if (options.audio) {
-    if (program.tracks.length > 0) {
-      asm.align();
-      asm.label("SceneTracks");
-      // One byte per scene: the request value that starts its track, or the one
-      // that stops the music. A table rather than a dispatch because a scene
-      // change already costs a redraw, and this is the cheapest thing in it.
-      for (const scene of scenes) {
-        const track = options.sceneTracks?.[scene.index] ?? -1;
-        asm.db(track < 0 ? GBA_STOP : track + 1);
-      }
+  // The scene table belongs to the *game*, not to the driver, which is the whole
+  // of what the second machine changed here: a Nintendo DS's driver is a program
+  // of its own and emits nothing into this one, but the game still has to know
+  // which track a scene asks for. So the condition is "this game has music"
+  // rather than "this program has a driver in it" — the same condition
+  // `SceneMusic` itself is emitted under.
+  if (options.sceneTracks !== undefined && program.tracks.length > 0) {
+    asm.align();
+    asm.label("SceneTracks");
+    // One byte per scene: the request value that starts its track, or the one
+    // that stops the music. A table rather than a dispatch because a scene
+    // change already costs a redraw, and this is the cheapest thing in it.
+    for (const scene of scenes) {
+      const track = options.sceneTracks[scene.index] ?? -1;
+      asm.db(track < 0 ? GBA_STOP : track + 1);
     }
-    options.audio.emitData(asm);
   }
+  if (options.audio) options.audio.emitData(asm);
 }
 
 /**
@@ -705,10 +709,11 @@ function emitReset(ctx: GbaCtx, options: GbaEmitOptions): void {
   // After the interrupt is live, because `AudioInit` adds its own bit to `IE` and
   // starts the transfers that raise it — and because the entry scene's track is
   // asked for here rather than at the first scene *change*, which never happens.
-  if (options.audio) {
-    asm.bl("AudioInit");
-    if (ctx.program.tracks.length > 0) asm.bl("SceneMusic");
-  }
+  if (options.audio) asm.bl("AudioInit");
+  // And the entry scene's track is asked for whether the driver is in this
+  // program or on the other processor — a scene *change* never happens for the
+  // scene a game starts on, so nothing else would ever ask for it.
+  if (ctx.audio?.driver === true && ctx.program.tracks.length > 0) asm.bl("SceneMusic");
 
   setDispcnt(ctx, dispcnt(ctx));
   asm.mov(A0, armImm(1));

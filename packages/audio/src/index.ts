@@ -168,6 +168,17 @@ export {
 // The sample half's own shape, which the game backend needs to route one
 // interrupt and the conformance harness needs to read the ring.
 export {
+  buildNdsGameAudio,
+  NDS_AUDIO_BYTES,
+  NDS_STOP,
+  type NdsGameAudio,
+  type NdsGameAudioInput,
+  type NdsGameAudioStats,
+} from "./rom/nds-game.js";
+export { NDS_SPU_BASE, NDS_STATE_BASE } from "./rom/nds-driver.js";
+export { ndsChannelTag, ndsPackTag } from "./binding/nds.js";
+export { NDS_BANK_BASE, ndsBank, ndsSampleRam } from "./binding/nds-bank.js";
+export {
   GBA_AUDIO_IRQ,
   GBA_BLOCK_SAMPLES,
   GBA_RING_BLOCKS,

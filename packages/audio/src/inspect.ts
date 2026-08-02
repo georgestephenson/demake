@@ -42,6 +42,10 @@ const REGISTER_LIMIT: Record<string, number> = {
   "gb-apu": 0x3f,
   sn76489: 0x06,
   "nes-apu": 0x17,
+  // Sixteen channels of sixteen bytes fills a byte exactly, and the master
+  // volume sits above them — the one chip here whose map does not fit in one,
+  // which is why the default below is a *default* rather than the rule.
+  "nds-spu": 0x103,
 };
 
 /** Check a script against the console it claims to target. */

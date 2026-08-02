@@ -146,6 +146,9 @@ importers:
 
   packages/nds:
     dependencies:
+      '@demake/chip':
+        specifier: workspace:*
+        version: link:../chip
       '@demake/core':
         specifier: workspace:*
         version: link:../core

@@ -29,7 +29,12 @@
  *     every other console's is a few dozen.
  */
 
-import { buildGbaGameAudio } from "@demake/audio";
+import {
+  buildGbaGameAudio,
+  buildNdsGameAudio,
+  type GbaGameAudio,
+  type NdsGameAudio,
+} from "@demake/audio";
 import {
   AsmArm,
   AsmError,
@@ -88,6 +93,17 @@ interface GbaArt extends GbaEmitOptions {
  */
 interface GbaAudio extends BoundAudioShape {
   options: GbaEmitOptions;
+  /**
+   * The Nintendo DS's driver, which is a *second program* rather than routines
+   * in this one.
+   *
+   * The sound channels on that machine answer the ARM7 alone, so nothing about
+   * the audio is emitted into the game's own code: the cartridge carries an ARM7
+   * binary beside it and the ARM9 posts two request bytes into shared main RAM.
+   * Absent on a Game Boy Advance, where the driver is `options.audio` and runs on
+   * the processor the game does.
+   */
+  arm7?: NdsGameAudio;
   /** The bytes a rule writes to ask for a sound; absent when none can. */
   hooks?: { driver: boolean; music: number; request: number; effects: readonly number[] };
 }
@@ -164,49 +180,72 @@ export const gbaBackend: Backend<GbaArt, GbaAudio> = {
     // only does for a program that names audio — so a game with none reaches
     // here with nowhere to put a driver and does not need one.
     const state = layout.audio;
+    // Which builder is the *machine's* answer and not this file's, and it is the
+    // one place the two diverge below the emitter: a Game Boy Advance's driver is
+    // routines in the game's own program, and a Nintendo DS's is a whole second
+    // program for a processor the game cannot even reach the sound from. The
+    // schedules, the demakers and every byte of the packed data are the same.
+    const second = program.profile.id === "nds";
     const bound =
       state === null
         ? { driver: undefined, missing: [] as readonly string[], notes: [] as readonly string[] }
         : await bindAudio(
             program,
             assets,
-            { build: (tracks, effects) => buildGbaGameAudio({ tracks, effects, state }) },
+            {
+              build: (tracks, effects) =>
+                second
+                  ? buildNdsGameAudio({ tracks, effects, state })
+                  : buildGbaGameAudio({ tracks, effects, state }),
+            },
             executor,
           );
     const names = program.tracks.length > 0 || program.sounds.length > 0;
-    const driver = bound.driver;
-    const options: GbaEmitOptions = driver
-      ? {
-          audio: driver,
-          effectIndices: effectIndices(program, bound),
-          sceneTracks: trackForScene(program, bound),
-        }
-      : {};
+    const built = bound.driver;
+    const arm7 = second ? (built as NdsGameAudio | undefined) : undefined;
+    const driver = second ? undefined : (built as GbaGameAudio | undefined);
+    const options: GbaEmitOptions =
+      driver !== undefined
+        ? {
+            audio: driver,
+            effectIndices: effectIndices(program, bound),
+            sceneTracks: trackForScene(program, bound),
+          }
+        : arm7 !== undefined
+          ? {
+              effectIndices: effectIndices(program, bound),
+              sceneTracks: trackForScene(program, bound),
+            }
+          : {};
     const emit: GbaAudio = {
-      present: driver !== undefined,
+      present: built !== undefined,
       options,
-      tracks: driver?.stats.tracks ?? 0,
-      effects: driver?.stats.effects ?? 0,
-      // Queries, not copies: the driver is emitted during `assemble`, which has
-      // not run yet, so its sizes are still zero here (`backend.ts`
-      // §BoundAudioShape).
+      ...(arm7 === undefined ? {} : { arm7 }),
+      tracks: built?.stats.tracks ?? 0,
+      effects: built?.stats.effects ?? 0,
+      // Queries, not copies on the Game Boy Advance: its driver is emitted during
+      // `assemble`, which has not run yet, so its sizes are still zero here
+      // (`backend.ts` §BoundAudioShape). The Nintendo DS's numbers are real
+      // already — its driver is a whole program, assembled by the time the
+      // builder returned — and they are read through the same getters so the two
+      // machines report the same shape.
       get code(): number {
-        return driver?.stats.code ?? 0;
+        return built?.stats.code ?? 0;
       },
       get data(): number {
-        return driver?.stats.data ?? 0;
+        return built?.stats.data ?? 0;
       },
       get helpers(): readonly string[] {
-        return driver?.stats.helpers ?? [];
+        return built?.stats.helpers ?? [];
       },
-      rateHz: driver ? driver.stats.rate.num / driver.stats.rate.den : 0,
-      writesRestricted: driver?.stats.writesRestricted ?? 0,
+      rateHz: built ? built.stats.rate.num / built.stats.rate.den : 0,
+      writesRestricted: built?.stats.writesRestricted ?? 0,
       ...(names
         ? {
             hooks: {
-              driver: driver !== undefined,
-              music: driver?.request.music ?? 0,
-              request: driver?.request.sfx ?? 0,
+              driver: built !== undefined,
+              music: built?.request.music ?? 0,
+              request: built?.request.sfx ?? 0,
               effects: options.effectIndices ?? program.sounds.map(() => -1),
             },
           }
@@ -262,7 +301,9 @@ export const gbaBackend: Backend<GbaArt, GbaAudio> = {
     // than a hardware requirement: neither console has a size field a game has
     // to satisfy.
     const bytes =
-      machine.id === "nds" ? packNdsRom(code, arm7Stub(), stamp) : packGbaRom(code, stamp);
+      machine.id === "nds"
+        ? packNdsRom(code, audio.arm7?.image ?? arm7Stub(), stamp)
+        : packGbaRom(code, stamp);
     return {
       bytes,
       code: code.length,
@@ -283,8 +324,10 @@ export const gbaBackend: Backend<GbaArt, GbaAudio> = {
  * encoder emits it, which is the same discipline every other instruction in this
  * backend is under.
  *
- * The day this console gets sound it stops being a stub: its sound registers are
- * the ARM7's alone, so a driver for them runs here (doc 13 §D4).
+ * A cartridge *with* sound carries the audio driver here instead
+ * (`audio/rom/nds-game.ts`), because this console's sound registers answer the
+ * second processor alone — so on this machine the stub is what a silent build
+ * ships and nothing more.
  */
 function arm7Stub(): Uint8Array {
   const asm = new AsmArm(NDS_ARM7_RAM);

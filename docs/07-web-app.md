@@ -317,7 +317,10 @@ The ROM pane plays the cartridge's own sound, and every sample of it comes out o
 `@demake/chip`'s model of that console's chip — the Game Boy's APU, the NES's
 2A03, the SN76489 on either Sega machine, or *both* of a Mega Drive's — six
 four-operator FM voices and four tone generators, which is the one console here
-that hands the player two chips on two clocks and has them summed — and in every
+that hands the player two chips on two clocks and has them summed. Two of them
+are not on the processor the game runs on at all: a Super Nintendo's is a second
+computer's and a Nintendo DS's answers the ARM7, so what the pane listens to
+there is the *other* processor's output. In every
 case the
 same model the audio pipeline renders WAVs with and the same one the conformance
 suite diffs register writes against. Which model is playing follows the cartridge

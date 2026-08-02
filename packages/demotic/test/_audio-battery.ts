@@ -63,10 +63,12 @@ import {
   mdChannelTag,
   buildGbaGameAudio,
   buildMdGameAudio,
+  buildNdsGameAudio,
   buildNesGameAudio,
   buildSmsGameAudio,
   buildSpcGameAudio,
   gbChannelOf,
+  ndsChannelTag,
   nesChannelOf,
   psgChannelTag,
   sdspChannelTag,
@@ -76,6 +78,7 @@ import {
 } from "@demake/audio";
 import {
   GB_CLOCK_HZ,
+  NDS_SPU_CLOCK_HZ,
   NES_CLOCK_HZ,
   SDSP_CLOCK_HZ,
   SN76489_CLOCK_HZ,
@@ -86,6 +89,7 @@ import { megaduckRegister } from "@demake/core";
 import { Gameboy } from "@demake/dmg";
 import { Gba, ROM_BASE } from "@demake/gba";
 import { Md } from "@demake/md";
+import { Nds } from "@demake/nds";
 import { Nes } from "@demake/nes";
 import { Sms } from "@demake/sms";
 import { Snes } from "@demake/snes";
@@ -387,6 +391,63 @@ const ALL: readonly Target[] = [
     },
   },
   {
+    id: "nds",
+    name: "Nintendo DS",
+    clockHz: NDS_SPU_CLOCK_HZ,
+    // Nothing shared at all, which no other console in this list can say while
+    // *having* sixteen channels: panning is a byte per channel, enabling is the
+    // channel's own start bit, and there is no key-on pulse. So there is no merge
+    // routine in this driver and no register for one stream to erase the other's
+    // half of.
+    mergeReg: null,
+    mergeHelper: "panning-merge",
+    // The ARM7 has four timers and nothing else to spend them on, so this driver
+    // gets the same 120 Hz the Game Boy's does — from a chained pair it *reads*
+    // rather than an interrupt it catches.
+    ratio: 1,
+    // Every channel numbered, unlike the driver's own tag: the packed run format
+    // numbers only the stealable ones because its field is four bits, and nothing
+    // here is packed — this only has to give one channel one number.
+    tag: () => ndsChannelTag(),
+    // The driver is a second program on a second processor, so the label is in
+    // *its* symbol table and not in the cartridge's — the Super Nintendo's
+    // arrangement, on a machine where the second program is simply the other half
+    // of the cartridge rather than something uploaded.
+    tickAddress: (_built, bound) => (bound.driver as Driver).symbols?.get("AudioTick") as number,
+    async build(source, project) {
+      const { files, levels, assets } = exampleProject(project);
+      const program = compile(source, {
+        profile: getProfile("nds"),
+        files,
+        levels,
+      });
+      const built = await buildGbaRom(program, { assets });
+      // Main RAM the allocator set aside for the two request bytes, which is the
+      // address the cartridge itself was built against.
+      const state = built.layout.audio as number;
+      const bound = await bindAudio(program, assets, {
+        build: (tracks, effects) =>
+          buildNdsGameAudio({ tracks, effects: effects as GameEffect[], state }),
+      });
+      return { built, bound };
+    },
+    boot(rom) {
+      const machine = new Nds(rom);
+      const wrapped = wrap(machine);
+      return {
+        ...wrapped,
+        // The sound processor runs on its own clock, so one step of the game can
+        // advance it by several instructions — the Super Nintendo's reason for
+        // watching an instruction stream rather than sampling a program counter.
+        watch: (address, onEnter) => {
+          machine.arm7.pcTap = (pc) => {
+            if (pc === address) onEnter();
+          };
+        },
+      };
+    },
+  },
+  {
     id: "md",
     name: "Mega Drive",
     clockHz: SN76489_CLOCK_HZ,
@@ -498,13 +559,18 @@ const ALL: readonly Target[] = [
 ];
 
 /** Every core answers the same five questions; this is the adapter, once. */
-function wrap(machine: Gameboy | Nes | Sms | Snes | Md | Gba): Machine {
+function wrap(machine: Gameboy | Nes | Sms | Snes | Md | Gba | Nds): Machine {
   return {
     step: () => {
       machine.stepInstruction();
       // On the Super Nintendo the program counter that matters is the *sound*
       // processor's: the driver runs there, so that is where a tick begins.
-      return machine instanceof Snes ? machine.smp.pc : machine.cpu.pc;
+      // On the two consoles whose driver is a second program, the program
+      // counter that matters is the *other* processor's — that is where a tick
+      // begins, and the game's own is running something else entirely.
+      if (machine instanceof Snes) return machine.smp.pc;
+      if (machine instanceof Nds) return machine.arm7.cpu.pc;
+      return machine.cpu.pc;
     },
     tap: (listener) => {
       // Each core names it after its own chip; the shape is the same, and so is
@@ -518,6 +584,7 @@ function wrap(machine: Gameboy | Nes | Sms | Snes | Md | Gba): Machine {
       }
       if (machine instanceof Sms) machine.psgTap = listener;
       else if (machine instanceof Snes) machine.dspTap = listener;
+      else if (machine instanceof Nds) machine.spuTap = listener;
       else machine.apuTap = listener;
     },
     setButtons: (down) =>

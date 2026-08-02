@@ -17,7 +17,7 @@ real emulator, compared pixel for pixel):
 | art (images)          | 03–06  | working, ten consoles proven on hardware                                  |
 | game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on ten consoles |
 | music (`arrange`)     | 16, 17 | MIDI → chip music, nine consoles — and a Game Boy ROM that plays it       |
-| sound (`sfx`)         | 16, 18 | WAV → chip effects, nine consoles — same ROM, same proof                  |
+| sound (`sfx`)         | 16, 18 | WAV → chip effects, ten consoles — same ROM, same proof                   |
 
 The four are not four tools that share a repo any more: a `.dmt` says
 `music theme.mid` and `sound bounce.wav on ball hits paddle`, and `demake build`
@@ -245,12 +245,37 @@ interrupt vector lives inside data TCM and its base is a CP15 setting rather tha
 an address — a description this project would have to get exactly right for a
 gain of nothing, since the main loop is what waits either way.
 
-`@demake/nds` is the seventh owned core and the smallest: the processor is
-`@demake/gba`'s and so is the 2D engine, because on everything a demade game
-touches they are the same processor and the same engine. What is there is the
-machine around them. Sound is absent and named: this console's sixteen channels
-are the **ARM7's**, so playing them needs a driver for a second processor, and
-doc 13 §D4 is where that is tracked.
+`@demake/nds` is the seventh owned core, and it is the only one that is _two_
+processors: the ARM9 is `@demake/gba`'s `Arm7` and so is the 2D engine, because on
+everything a demade game touches they are the same processor and the same engine,
+and beside them is `arm7.ts` — the second processor's whole world, because this
+console's sound channels answer it alone.
+
+**And it has sound, on the other side of a bus the game cannot cross.**
+`demake build -c nds` emits _two_ programs: ARM for the game, and an ARM7 driver
+(`packages/audio/src/rom/nds-driver.ts`, `nds-game.ts`) that is simply **the
+cartridge's other binary**. A `.nds` names two of them and the loader copies both
+into the four megabytes they share, so unlike the Super Nintendo's there is no
+upload, no handshake and no boot protocol — the driver is running before the
+game's first frame, and asking for a track is one `strb` to ordinary main RAM.
+Three things follow and none is true of any other console here. The **clock is a
+hardware tally**: timer 0 reloads at the driver rate and timer 1 counts its
+overflows, so how many ticks have happened is a register the driver _reads_ rather
+than a flag it must catch, no interrupt is involved anywhere in this cartridge's
+sound, and a tick cannot be lost by a driver that was busy. **Nothing on the chip
+is shared**, so no merge routine is emitted at all — panning is a byte per
+channel, enabling is the channel's own start bit, and there is no key-on pulse;
+the widest palette in the set and the narrowest (a Master System's) reach the same
+answer for opposite reasons. And **sixteen channels against a four-bit run field**
+do not have to fit, on the Mega Drive's terms: only the channels an effect was
+placed on are numbered, so fourteen voices of a track play straight _through_ a
+sound effect.
+
+The ARM stream player moved when the second ARM console arrived, and that is the
+rule rather than a tidy-up: `packages/audio/src/rom/arm-player.ts` is the walk
+over packed data, and it belongs to the **processor** — the third thing in that
+directory that is nobody's console, beside `shared.ts` (nobody's CPU) and `psg.ts`
+(one chip's). What each console still owns is `AudioWrite` and its hardware.
 
 **And one machine cost almost nothing, which is the point.**
 `demake build -c megaduck` produces a real Mega Duck cartridge, and it is not a
@@ -414,9 +439,11 @@ Demotic runtime story (the speed work doc 14 §Runtime model names).
 **The audio spine is built, and two consoles boot** (docs
 [16](docs/16-audio-engine.md), [17](docs/17-music-demaker.md),
 [18](docs/18-sound-demaker.md)): `@demake/chip` models the Game Boy APU, the
-SN76489, the NES 2A03, the YM2612 and the Super Nintendo's S-DSP; `@demake/audio`
+SN76489, the NES 2A03, the YM2612, the Super Nintendo's S-DSP and the Nintendo
+DS's SPU; `@demake/audio`
 holds both demakers; and `demake arrange`, `demake sfx` and `demake render` work
-for `dmg`, `gbc`, `megaduck`, `nes`, `sms`, `gg`, `sg1000`, `snes` and `md`. A
+for `dmg`, `gbc`, `megaduck`, `nes`, `sms`, `gg`, `sg1000`, `snes`, `md`, `gba`
+and `nds`. A
 track becomes a `.vgm` plus a WAV that is exactly what the schedule produces — or,
 on the one console whose chip plays samples rather than generating them, an
 `.spc`, which is a snapshot of the sound processor's RAM and therefore exactly
@@ -520,14 +547,18 @@ tools/toolchains/    provisioners (cached): RGBDS, cc65, WLA-DX, SameBoy source 
                      GNU m68k + arm-none-eabi binutils and NASM (apt); libretro
                      cores (fceumm, genesis-plus-gx, snes9x, mgba, desmume,
                      mednafen_pce_fast, mednafen_wswan)
-packages/nds/        @demake/nds — a self-hosted Nintendo DS core, and the
-                     smallest of the seven: the processor is @demake/gba's and so
-                     is the 2D engine, because a DS's engine A *is* a Game Boy
-                     Advance's. What is here is the machine around them — 4 MiB a
-                     cartridge is *copied into* rather than run from, nine video
-                     RAM banks of which two are mapped, and a screen a third
-                     bigger. Engine B, the second screen, interrupts and the ARM7
-                     are absent rather than half-implemented, and each raises
+packages/nds/        @demake/nds — a self-hosted Nintendo DS core, and the only
+                     one of the seven that is *two* processors: the ARM9 and the
+                     2D engine are @demake/gba's, because a DS's engine A *is* a
+                     Game Boy Advance's, and arm7.ts is the second processor's
+                     world — shared main RAM, its own 64 KiB, four timers and
+                     @demake/chip's NdsSpu — because the sound channels answer it
+                     alone. The rest is the machine around them: 4 MiB a cartridge
+                     is *copied into* rather than run from, nine video RAM banks of
+                     which two are mapped, and a screen a third bigger. Engine B,
+                     the second screen, interrupts (on both processors) and every
+                     ARM7 peripheral that is not the sound are absent rather than
+                     half-implemented, and each raises
 packages/nes/        @demake/nes — a self-hosted NES core, for the two jobs
                      @demake/dmg exists for: the conformance harnesses in Vitest
                      and (later) the page's player. Its APU is @demake/chip's
@@ -628,6 +659,14 @@ packages/chip/       @demake/chip — every sound chip as a register-driven mode
                      pitch that multiplies, and an exact integer mix the ARM
                      driver has to reproduce sample for sample. Its register
                      file is demake's own, deliberately shaped like the S-DSP's
+  src/nds-spu.ts     the Nintendo DS's: sixteen channels that are sample players
+                     first, six of which switch to a duty generator and two to a
+                     noise register — an S-DSP and a Game Boy APU on one die, with
+                     a seven-bit panning *level* per channel and nothing shared
+                     between them at all. Its source register is an absolute
+                     address, so the model is told where the memory it was handed
+                     begins. IMA-ADPCM, the capture units and the 32.7 kHz output
+                     stage are absent rather than half-implemented
   src/mix.ts         exact box-integration render, DC block, the one renderer
   src/stream.ts      the same renderer for a chip that is still running: the
                      ring buffer the web app's ROM pane plays from
@@ -646,9 +685,15 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
                      driver a game embeds (gb-game.ts). 6502: nes-driver.ts and
                      nes-game.ts; Z80: sms-driver.ts and sms-game.ts; 68000:
                      md-driver.ts and md-game.ts; SPC700: spc-driver.ts and
-                     spc-game.ts, and it is the one that does not run on the
+                     spc-game.ts, and it is one of the two that do not run on the
                      console's own processor — what it builds is a block to
-                     *upload*. One caller each so far. shared.ts is what none of
+                     *upload*. ARM is two consoles and therefore three files:
+                     arm-player.ts is the stream walk, which is the *processor's*
+                     and neither machine's, and gba-driver.ts/gba-game.ts and
+                     nds-driver.ts/nds-game.ts are what each adds to it — a mixer
+                     on one, and a whole second binary on the other, because a DS's
+                     sound channels answer the ARM7 alone. One caller each so far.
+                     shared.ts is what none of
                      them owns — the boot strip, the channel restriction, the
                      player's shape — and psg.ts is what the *chip* owns, shared
                      by the two CPUs that drive an SN76489; md-chips.ts is the
@@ -660,6 +705,11 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
   src/binding/gba-bank.ts  the Game Boy Advance mixer's, and nothing like it:
                      signed 8-bit PCM read straight out of cartridge ROM, so the
                      driver lays these same bytes down rather than uploading them
+  src/binding/nds-bank.ts  the Nintendo DS's: thirty-two-sample cycles, because
+                     that chip's pitch is a *divider* and a longer cycle is a finer
+                     lattice. A channel reads an absolute address, so the bank has
+                     to *be* at the one the binding named — a page of main RAM the
+                     driver copies its own bytes into at boot
   src/dsp.ts         deterministic FFT/resampler/pitch, all on core's kernels
   src/manifest.ts    the --emit-manifest sidecar: one shape, two callers (CLI, web)
   src/render.ts      ChipScript → PCM; the only way anything makes sound
@@ -2016,6 +2066,12 @@ Game Boy Advance's 2D engine on a bigger screen, which is five entries in
 description and no instructions; if you find yourself copying an emitter, you are
 writing the wrong one of the two.
 
+**A console can be a variant for step 4 and not for the driver.** The Nintendo DS
+is the case: its game backend is a description, and its _sound_ is a whole ARM7
+program, because the sound registers answer a processor the game cannot reach.
+Ask the four questions separately — the answer to "is this a variant" is per step,
+not per console.
+
 ## Testing truths
 
 - `pnpm test` runs the Vitest unit suite locally with no Docker. Most of it is
@@ -2087,6 +2143,15 @@ writing the wrong one of the two.
   8-bit consoles share. It also checks the Duck's cartridge _fails_ on a Game
   Boy — identical traces are also what a register map that had quietly become the
   identity would produce.
+- `packages/demotic/test/audio-nds.test.ts` is the seventh machine the shared
+  battery is pointed at, and the second whose driver is not on the console's own
+  processor — but for a different reason from the Super Nintendo's, which is the
+  thing it exists to hold. There is no upload: the cartridge carries two programs,
+  the loader copies both into the memory they share, and the game asks for a track
+  by storing a byte the ARM7 reads. It runs no size sweep, for the Game Boy
+  Advance's reason, and asserts instead that the driver's reported sizes are real
+  — which is worth more here, because on this machine those numbers describe a
+  whole second binary rather than routines inside the first.
 - `packages/demotic/test/audio-gba.test.ts` is the one console whose Level A proof
   is in two halves, because its two sound devices are not both chips. The shared
   battery diffs the four Game Boy channels tick for tick, exactly as it does on

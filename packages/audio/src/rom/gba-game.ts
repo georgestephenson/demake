@@ -62,14 +62,13 @@ import type { ChipScript, Rational } from "../chipscript.js";
 import type { DriverData } from "./data.js";
 import { AudioRomError } from "./gb.js";
 import { gbChannelOf, type GameEffect } from "./gb-game.js";
+import { emitStream, emitStreamData, type ArmStreamState } from "./arm-player.js";
 import {
   emitIrq,
   emitMix,
   emitMixWrite,
   emitSoundInit,
   emitSoundWrite,
-  emitStream,
-  emitStreamData,
   emitWrite,
   gbaPort,
   GBA_AUDIO_IRQ,
@@ -77,7 +76,6 @@ import {
   GBA_RING_BLOCKS,
   VOICE,
   VOICE_STRIDE,
-  type GbaStreamState,
 } from "./gba-driver.js";
 import { clampByte, pack, rateHz, restrict, shapeOf, stripBoot } from "./shared.js";
 
@@ -409,8 +407,8 @@ export function resolveGbaClock(script: ChipScript): { rate: Rational; interrupt
 /** Where the driver keeps everything, laid out from the game's first free byte. */
 interface Layout {
   base: number;
-  music: GbaStreamState;
-  sfx: GbaStreamState;
+  music: ArmStreamState;
+  sfx: ArmStreamState;
   /** Channels an effect has taken. */
   steal: number;
   /** Each stream's intended `NR51`, which the merge folds together. */
@@ -466,14 +464,14 @@ function layout(base: number): Layout {
   // A sound effect stops rather than looping, so it needs no loop entry.
   const sfxData = word();
   const sfxOrder = word();
-  const music: GbaStreamState = {
+  const music: ArmStreamState = {
     data: musicData,
     order: musicOrder,
     loop: musicLoop,
     rest: byte(),
     active: byte(),
   };
-  const sfx: GbaStreamState = {
+  const sfx: ArmStreamState = {
     data: sfxData,
     order: sfxOrder,
     rest: byte(),

@@ -14,18 +14,25 @@
  * emulator install, and play one in the page without fetching a core from
  * anywhere.
  *
+ * It is also the only one of the seven that is *two* processors, because on this
+ * console the sound channels answer the ARM7 alone: a cartridge with sound in it
+ * carries a second program, and `arm7.ts` is the world that program lives in —
+ * shared main RAM, its own 64 KiB, its four timers and `@demake/chip`'s `NdsSpu`.
+ *
  * What is deliberately absent, rather than pending: Thumb, because
  * `core/src/asm/arm.ts` emits none; 2D engine B and the second screen, because a
  * game is one screen and a renderer nobody drives is a renderer nobody checks;
- * the affine and bitmap modes, for the same reason; interrupts, because this
- * console's backend waits on the beam; and the ARM7, which exists to drive the
- * sound registers and has no driver yet (doc 13 §D4). Every one of them raises
- * rather than being quietly accepted.
+ * the affine and bitmap modes, for the same reason; interrupts, on both
+ * processors, because the backend waits on the beam and the driver's clock is a
+ * counter it reads; and every ARM7 peripheral that is not the sound — the
+ * touchscreen, the microphone, wireless. Every one of them raises rather than
+ * being quietly accepted.
  *
  * Platform-pure on the same terms as `@demake/core`: no `fs`, no DOM, no wall
  * clock.
  */
 
+export { Arm7Machine, Arm7Error, ARM7_CLOCK_HZ } from "./arm7.js";
 export {
   BUTTONS,
   CLOCK_HZ,

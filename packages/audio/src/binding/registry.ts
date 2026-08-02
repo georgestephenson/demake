@@ -13,6 +13,7 @@ import { consoles, getConsole, type AudioSpec, type ConsoleSpec } from "@demake/
 import { gbBinding } from "./gb.js";
 import { gbaBinding } from "./gba.js";
 import { mdBinding } from "./md.js";
+import { ndsBinding } from "./nds.js";
 import { nesBinding } from "./nes.js";
 import { psgBinding } from "./psg.js";
 import { sdspBinding } from "./sdsp.js";
@@ -68,6 +69,8 @@ export function bindingFor(consoleId: string): ChipBinding {
       return nesBinding(spec.id, audio);
     case "s-dsp":
       return sdspBinding(spec.id, audio);
+    case "nds-spu":
+      return ndsBinding(spec.id, audio);
     default:
       throw new UnsupportedConsoleError(
         spec.id,
