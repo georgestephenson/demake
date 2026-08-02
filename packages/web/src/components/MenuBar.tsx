@@ -138,6 +138,9 @@ export function useMenuKeys(menus: readonly Menu[]): void {
 export function MenuBar({ menus }: { menus: readonly Menu[] }): JSX.Element {
   const [open, setOpen] = useState<string | null>(null);
   const bar = useRef<HTMLDivElement | null>(null);
+  // Which title the pointer *switched* to on its way in, so the click that
+  // follows knows it is not a click on a menu the user themselves opened.
+  const switched = useRef<string | null>(null);
 
   // A menu closes on Escape and on anything outside it, which is the behaviour
   // every menu bar has and the one nobody notices until it is missing.
@@ -174,10 +177,35 @@ export function MenuBar({ menus }: { menus: readonly Menu[] }): JSX.Element {
             aria-haspopup="true"
             aria-expanded={open === menu.label}
             data-testid={`menu-${menu.label.toLowerCase()}`}
-            onClick={() => setOpen((current) => (current === menu.label ? null : menu.label))}
+            onClick={() => {
+              // A click closes the menu it opened, but never the one the
+              // pointer just switched to on its way here: on a touchscreen
+              // that switch and this click are *one tap*, so toggling would
+              // open the menu and close it again in the same gesture — which
+              // is a menu bar that needs tapping twice.
+              const wasSwitch = switched.current === menu.label;
+              switched.current = null;
+              setOpen((current) => (current === menu.label && !wasSwitch ? null : menu.label));
+            }}
             // Once one menu is open, pointing at another switches to it — the
-            // one interaction that makes a menu bar feel like a menu bar.
-            onPointerEnter={() => setOpen((current) => (current === null ? null : menu.label))}
+            // one interaction that makes a menu bar feel like a menu bar. It is
+            // a *mouse* interaction: a finger has no hover, and the enter it
+            // fires is the first half of a tap rather than a movement of its
+            // own.
+            onPointerEnter={(event) => {
+              if (event.pointerType !== "mouse") return;
+              setOpen((current) => {
+                if (current === null || current === menu.label) return current;
+                switched.current = menu.label;
+                return menu.label;
+              });
+            }}
+            // Leaving and coming back is a fresh decision, so a click after it
+            // toggles the way a click on a menu you opened yourself does.
+            onPointerLeave={(event) => {
+              if (event.pointerType !== "mouse") return;
+              if (switched.current === menu.label) switched.current = null;
+            }}
           >
             {menu.label}
           </button>

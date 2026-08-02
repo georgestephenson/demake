@@ -1895,17 +1895,19 @@ main.text-layout .source-editor {
 }
 
 /* The character, as it is drawn in the grid — monospaced and square, because it
-   is a cell. */
+   is a cell. It is a field rather than a swatch: the character is the tile's
+   name in the grid, so it is edited where it is shown. */
 .legend-char {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 0.95rem;
   width: 1.8rem;
   height: 1.8rem;
+  padding: 0;
+  text-align: center;
   border: 1px solid var(--line);
   border-radius: 4px;
   background: var(--bg);
   color: var(--ink);
-  cursor: pointer;
 }
 
 .legend-row.selected .legend-char {
@@ -1946,4 +1948,16 @@ main.text-layout .source-editor {
   background: var(--bg);
   color: var(--muted);
   cursor: pointer;
+}
+
+/* The new entry's character sits against the button that spends it, so the
+   suggestion is visible — as a placeholder — before it is taken. */
+.legend-add {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.legend-note {
+  color: var(--warn);
 }

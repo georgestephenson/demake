@@ -15,9 +15,9 @@
  * no transcendentals or randomness, so "the same input" is itself provable
  * rather than assumed.
  *
- * The same contract is then checked for a *game*, on both consoles the page can
- * build: it compiles a `.dmt` to SM83 or to 6502 and demakes its SVG art with no
- * toolchain and no host rasteriser, so the cartridge it hands you must be
+ * The same contract is then checked for a *game*, on every console the page can
+ * build: it compiles a `.dmt` to whichever instruction set that console needs and
+ * demakes its SVG art with no toolchain and no host rasteriser, so the cartridge it hands you must be
  * byte-identical to the one `demake build` writes. That is the harder half — a
  * cartridge is tens of kilobytes of code, tile bytes and checksums, and every one
  * of those has to agree.
@@ -131,9 +131,10 @@ for (const { name, options } of CASES) {
  * Once per console with a backend, because they share a compiler and share
  * nothing below it: the code is a different instruction set each time, the art
  * goes through a different fitter — mono shades, a fixed master palette, a
- * sixteen-colour bank — and the cartridge is wrapped differently. A page that
- * agreed with the CLI about the Game Boy would say nothing about whether it
- * agreed about the NES, the Master System or the Mega Drive.
+ * sixteen-colour bank, one flat palette of 256 — and the cartridge is wrapped
+ * differently. A page that agreed with the CLI about the Game Boy would say
+ * nothing about whether it agreed about the NES, the Master System, the Mega
+ * Drive or the Game Boy Advance.
  *
  * The Super Nintendo is here for the same reason and costs the most: its picture
  * is 256×224 fitted into seven sixteen-colour sub-palettes, which is around
@@ -145,7 +146,7 @@ for (const { name, options } of CASES) {
  * the page gets them through Vite's `?raw`, which only exists inside a build,
  * and the point of the test is that both sides start from the same file.
  */
-for (const consoleId of ["gb", "nes", "sms", "snes", "md"] as const) {
+for (const consoleId of ["gb", "nes", "sms", "snes", "md", "gba"] as const) {
   test(`the ${consoleId} ROM the page builds is byte-identical to the CLI's`, async ({ page }) => {
     // Demaking a full-screen picture is seconds of real work and the runner is
     // shared, so the budget is the *slowest* thing this can legitimately take

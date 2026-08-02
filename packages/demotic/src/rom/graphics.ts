@@ -323,6 +323,84 @@ export function builtinMd(ink: number): Uint8Array {
   return bank;
 }
 
+/** Bytes per Game Boy Advance 8bpp tile: one byte a pixel, eight rows. */
+export const GBA_TILE_BYTES = 64;
+
+/** Tiles the Game Boy Advance's background bank holds: the bank plus a blank. */
+export const GBA_BUILTIN_TILES = BUILTIN_TILES + 1;
+
+/**
+ * The tile an empty cell draws on either of that console's layers.
+ *
+ * A *separate* tile from the space glyph, which is what every other console
+ * uses for the same job — because here the font's own shade zero is opaque (see
+ * {@link builtinGba}) and an empty cell has to be transparent. One extra tile,
+ * appended so that no glyph or pattern index moves.
+ */
+export const GBA_BLANK_TILE = BUILTIN_TILES;
+
+/**
+ * The same bank again, as 256-colour tiles — one byte a pixel, no planes and no
+ * nibbles at all.
+ *
+ * `ink` is where the brightest of the four authored shades lands and the two
+ * below it follow, for the reason it is a parameter in the four functions above:
+ * which colours the runtime art may use is the backend's decision and not the
+ * font's. What is different here is *why* there is a reservation at all — this
+ * console has no sub-palette structure, so a caption cannot be given a palette
+ * of its own and four of the 256 entries are held back instead.
+ *
+ * And the fourth of those is `paper`, which no other console's bank needs. A
+ * caption here is drawn on a *layer over* the picture rather than into the cell
+ * the picture was going to use, so a glyph's transparent pixels show whatever
+ * the picture put there rather than the shared backdrop — and ink chosen against
+ * one colour is ink that vanishes over some other. So the font's shade zero is
+ * an opaque colour of its own, which is the same answer the Sega and Game Boy
+ * Color builds arrive at because their background layers are opaque outright.
+ *
+ * The level patterns and the object block keep a transparent shade zero: those
+ * are drawn *as* background cells and as sprites, where transparency is what the
+ * hardware means by it.
+ */
+export function builtinGba(ink: number, paper: number): Uint8Array {
+  const cells = builtinCells();
+  const bank = new Uint8Array(GBA_BUILTIN_TILES * GBA_TILE_BYTES);
+  bank.set(packLinear8(cells.slice(0, FONT_COUNT), ink, paper), 0);
+  bank.set(packLinear8(cells.slice(FONT_COUNT), ink), FONT_COUNT * GBA_TILE_BYTES);
+  // The last tile stays zero, which is this console's transparent blank.
+  return bank;
+}
+
+/**
+ * The placeholder block alone, for the object bank.
+ *
+ * A Game Boy Advance keeps object character data in its own 32 KiB and object
+ * colours in their own palette, so the one built-in cell an *object* draws is
+ * the only one that belongs there — the font and the level patterns are
+ * background tiles and would be 4 KiB of a bank sprites need.
+ */
+export function objectBlockGba(ink: number): Uint8Array {
+  return packLinear8([OBJECT_BLOCK], ink);
+}
+
+/** Pack 8×8 shade grids as one byte a pixel, mapping the four shades onto `ink`. */
+function packLinear8(cells: readonly (readonly string[])[], ink: number, paper = 0): Uint8Array {
+  const bank = new Uint8Array(cells.length * GBA_TILE_BYTES);
+  const map = [paper, ink - 2, ink - 1, ink];
+  let at = 0;
+  for (const cell of cells) {
+    for (let y = 0; y < 8; y += 1) {
+      const row = cell[y] ?? "";
+      for (let x = 0; x < 8; x += 1) {
+        const shade = Number.parseInt(row[x] ?? "0", 10) || 0;
+        bank[at + y * 8 + x] = map[shade] as number;
+      }
+    }
+    at += GBA_TILE_BYTES;
+  }
+  return bank;
+}
+
 /** The cells of the built-in bank, in order, as 8×8 colour-index rows. */
 export function builtinCells(): readonly (readonly string[])[] {
   const cells: (readonly string[])[] = [];

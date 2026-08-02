@@ -8,7 +8,7 @@
  * handshake, its own timer, its own program — and the writes compared are the
  * ones the S-DSP receives from it.
  *
- * It is deliberately below `packages/demotic/test/audio.test.ts`, which proves
+ * It is deliberately below `packages/demotic/test/_audio-battery.ts`, which proves
  * the same driver inside a game. A failure here names the driver; a failure there
  * could be the driver, the cartridge's upload, or the game's request protocol.
  */

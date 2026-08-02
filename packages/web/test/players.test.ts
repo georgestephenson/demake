@@ -12,6 +12,7 @@
 import { describe, expect, it } from "vitest";
 
 import { SCREEN_HEIGHT as GB_H, SCREEN_WIDTH as GB_W } from "@demake/dmg";
+import { FRAME_HEIGHT as GBA_H, FRAME_WIDTH as GBA_W } from "@demake/gba";
 import { FRAME_HEIGHT as MD_H, FRAME_WIDTH as MD_W } from "@demake/md";
 import { SCREEN_HEIGHT as NES_H, SCREEN_WIDTH as NES_W } from "@demake/nes";
 import { FRAME_HEIGHT as SMS_H, FRAME_WIDTH as SMS_W, GG_HEIGHT, GG_WIDTH } from "@demake/sms";
@@ -27,6 +28,7 @@ describe("the ROM pane's screen table", () => {
     expect(SCREENS["gg"]).toEqual({ width: GG_WIDTH, height: GG_HEIGHT });
     expect(SCREENS["snes"]).toEqual({ width: SNES_W, height: SNES_H });
     expect(SCREENS["md"]).toEqual({ width: MD_W, height: MD_H });
+    expect(SCREENS["gba"]).toEqual({ width: GBA_W, height: GBA_H });
   });
 
   // A Game Gear renders the frame a Master System does and shows the middle of

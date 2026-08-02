@@ -532,6 +532,65 @@ export const MD_MEMORY: MemoryPlan = {
   align: 2,
 };
 
+/**
+ * The Game Boy Advance's plan: 32 KiB of internal work RAM, and none of the
+ * other 256.
+ *
+ * Three things about this map are the machine's rather than a preference.
+ *
+ * **It is the *internal* RAM, not the big one.** A game's state lives at
+ * `$03000000` on a 32-bit bus with no wait states, not in the 256 KiB at
+ * `$02000000` on a 16-bit bus with two — which would make every property read
+ * three times the price. That is the whole of why this console's plan is 32 KiB
+ * rather than a quarter of a megabyte, and the trade is not close.
+ *
+ * **A load reaches ±4095 from a base register**, so the backend holds one at
+ * `$03000000` and the first four kilobytes of this heap are a single
+ * instruction each. Everything past that costs one more to materialise, which is
+ * why the allocation order matters more here than anywhere else: entity records
+ * come first and the hot state follows them, so a game of any size the language
+ * can express keeps its whole tick inside the window.
+ *
+ * **The top of the RAM is not ours.** The interrupt vector the BIOS dispatcher
+ * reads is at `$03007FFC` and the three stacks it left are below it, so the plan
+ * stops at `$03007000` and puts the object shadow there — out of the base
+ * register's window, which costs nothing because the shadow is walked
+ * sequentially with a base of its own.
+ */
+export const GBA_MEMORY: MemoryPlan = {
+  machine: "Game Boy Advance",
+  heapStart: 0x03000000,
+  heapEnd: 0x03007000,
+  oamShadow: 0x03007000,
+  oamEntries: 128,
+  viewW: 30,
+  viewH: 20,
+  // A vertical blank here is 68 lines of 1232 cycles — some 83,000, against a
+  // Game Boy's 1140 — and a queued cell is one halfword store. So the cap is
+  // what a diagonal scroll needs (a column of 21 and a row of 31) with room to
+  // spare, rather than what fits: nothing on this console is bounded by the
+  // blanking interval.
+  queueMax: 128,
+  plotMax: 96,
+  audioBytes: 0,
+  // A screen entry is a halfword — ten bits of tile, one of each flip, four of
+  // palette — so a queued cell carries its data as two bytes, the same shape the
+  // Game Boy Color's attribute byte and the Sega VDP's second byte have.
+  cellAttributes: true,
+  // The frame flag the main loop waits on. Its own byte for the reason the Sega
+  // handlers' is: a handler writes it in the middle of whatever the game was
+  // doing, and everything in `layout.scratch` is one-routine scratch.
+  interruptBytes: 1,
+  // A four-byte record pointer and a two-byte index, in memory rather than in a
+  // register for the reason the 68000's are: a rule body fires between one
+  // iteration and the next and helps itself to every register there is.
+  loopBytes: 6,
+  // Little-endian, and word accesses want a word boundary — a `ldr` from an
+  // unaligned address *rotates* on this core rather than faulting, which is a
+  // wrong number rather than a crash and therefore worse.
+  align: 4,
+};
+
 /** Raised when a game needs more state than the machine has. */
 export class LayoutError extends Error {
   constructor(

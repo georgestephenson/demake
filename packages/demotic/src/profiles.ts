@@ -197,6 +197,29 @@ const PROFILES: readonly ConsoleProfile[] = [
     startButton: "dedicated",
     romPath: true,
   },
+  {
+    // The first screen in the set with no overscan to be safe of: an LCD shows
+    // every pixel the hardware draws, so the raw frame and the playfield are the
+    // same thirty by twenty cells.
+    id: "gba",
+    name: "Game Boy Advance",
+    screenWidth: 30,
+    screenHeight: 20,
+    rawWidth: 240,
+    rawHeight: 160,
+    cellSize: 8,
+    fps: 60,
+    // **The per-line limit here is a cycle budget, not a count**, and 128 is the
+    // honest number for what a game can reason about. An object costs its width
+    // in pixels on every line it covers, against 1210 cycles a line — so a row of
+    // 8×8 sprites runs out of *attribute entries* long before it runs out of
+    // cycles, which is the opposite of every other console in this table. That is
+    // why a wide object is affordable here and `E_SPRITE_BUDGET`'s per-line
+    // reasoning (AGENTS.md §Working on Demotic) stops biting.
+    sprites: { total: 128, perLine: 128, hFlip: true },
+    startButton: "dedicated",
+    romPath: true,
+  },
 ];
 
 /** Every profile, in a stable order. */

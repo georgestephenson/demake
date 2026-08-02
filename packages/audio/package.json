@@ -28,6 +28,7 @@
   },
   "devDependencies": {
     "@demake/dmg": "workspace:*",
+    "@demake/gba": "workspace:*",
     "@demake/snes": "workspace:*"
   }
 }

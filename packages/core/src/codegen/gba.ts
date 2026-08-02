@@ -16,7 +16,7 @@ import type { ConsoleSpec, TileLayout } from "../consoles/types.js";
 import type { CompliantImage } from "../pipeline/types.js";
 
 import { asciiBytes, hex2 } from "./text.js";
-import { extractTiles, packPacked4Le, type TiledData } from "./tiles.js";
+import { extractTiles, packLinear8, packPacked4Le, type TiledData } from "./tiles.js";
 import type { CodegenBackend, EmitOptions, GenArtifact } from "./types.js";
 
 interface AgbData {
@@ -39,12 +39,22 @@ function buildAgbData(img: CompliantImage, spec: ConsoleSpec, opts: EmitOptions)
   const layout = spec.layout as TileLayout;
   const tiled = extractTiles(img, layout);
 
-  const tileBytes = new Uint8Array(tiled.tiles.length * 32);
+  // A 256-colour tile is 64 bytes of pixels and a 16-colour one is 32 bytes of
+  // packed nibbles — the *only* thing that differs between this console's two
+  // tiled modes, which is why one backend serves both.
+  const deep = layout.bpp === 8;
+  const stride = deep ? 64 : 32;
+  const tileBytes = new Uint8Array(tiled.tiles.length * stride);
   tiled.tiles.forEach((grid, i) => {
-    tileBytes.set(packPacked4Le(grid, tiled.tileW, tiled.tileH), i * 32);
+    const packed = deep
+      ? packLinear8(grid, tiled.tileW, tiled.tileH)
+      : packPacked4Le(grid, tiled.tileW, tiled.tileH);
+    tileBytes.set(packed, i * stride);
   });
 
-  // Screen entry: PPPP V H TTTTTTTTTT.
+  // Screen entry: PPPP V H TTTTTTTTTT. In 256-colour mode the hardware ignores
+  // the palette field, so it goes out as zero rather than as a number that would
+  // read as meaningful and is not.
   const mapBytes = new Uint8Array(tiled.map.length * 2);
   tiled.map.forEach((ref, i) => {
     const tile = (opts.tileBase + ref.tile) & 0x3ff;
@@ -52,7 +62,7 @@ function buildAgbData(img: CompliantImage, spec: ConsoleSpec, opts: EmitOptions)
       tile |
       ((ref.xflip ? 1 : 0) << 10) |
       ((ref.yflip ? 1 : 0) << 11) |
-      ((tiled.cellPalette[i]! & 0xf) << 12);
+      (deep ? 0 : (tiled.cellPalette[i]! & 0xf) << 12);
     mapBytes[i * 2] = word & 0xff;
     mapBytes[i * 2 + 1] = (word >> 8) & 0xff;
   });

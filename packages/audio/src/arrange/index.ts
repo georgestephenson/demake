@@ -18,6 +18,8 @@ import { mdBinding, type MdBindingOptions } from "../binding/md.js";
 import type { ChipScript, Dropped, TimingReport } from "../chipscript.js";
 import { artifactFormat, encodeSpc } from "../encode/spc.js";
 import { encodeVgm } from "../encode/vgm.js";
+import { encodeWav } from "../encode/wav.js";
+import { render } from "../render.js";
 import { inspectScript, type AudioViolation } from "../inspect.js";
 import { judgeArrangement, type JudgeResult } from "../judge.js";
 import { dominantBpm, type PartRole, type Score } from "../score/types.js";
@@ -275,18 +277,11 @@ export function arrangeScore(input: Score, options: ArrangeOptions): ArrangeResu
     );
   }
 
-  // A Super Nintendo schedule is written as an `.spc`, because VGM has no block
-  // for a sample player and could not usefully have one (doc 16 §The artifact).
-  const artifact =
-    artifactFormat(script.chips[0]) === "spc"
-      ? encodeSpc(script, {
-          ...(options.title ? { title: options.title } : {}),
-          game: consoleSpec.name,
-        })
-      : encodeVgm(script, {
-          ...(options.title ? { title: options.title } : {}),
-          system: consoleSpec.name,
-        });
+  // A Super Nintendo schedule is written as an `.spc` and a Game Boy Advance one
+  // as a WAV, because VGM is a write log and neither console's schedule is only
+  // that: one needs its sample RAM to mean anything, and the other addresses a
+  // software mixer no container knows (doc 16 §The artifact).
+  const artifact = encodeArtifact(script, consoleSpec.name, options.title);
   return {
     script,
     artifact,
@@ -341,3 +336,15 @@ function collectDiagnostics(
 }
 
 export { planArrangement, verifyNonAccumulating };
+
+/** The schedule as the file this console's schedules are written in. */
+function encodeArtifact(script: ChipScript, system: string, title: string | undefined): Uint8Array {
+  switch (artifactFormat(script.chips)) {
+    case "spc":
+      return encodeSpc(script, { ...(title ? { title } : {}), game: system });
+    case "wav":
+      return encodeWav(render(script));
+    default:
+      return encodeVgm(script, { ...(title ? { title } : {}), system });
+  }
+}

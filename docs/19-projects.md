@@ -387,8 +387,28 @@ The map view is two panes.
 **Legend** — one row per tile: the character, the name, whether it is `solid`,
 and its art. Art is picked from the project's art files, which is the first thing
 the project model buys this editor: a dropdown of real pictures rather than a
-typed filename, written back as the shortest name that identifies the one chosen. Adding a row picks an unused character; deleting one reports how
-many cells in the grid use it before it goes.
+typed filename, written back as the shortest name that identifies the one chosen. Adding a row suggests an unused character and lets you take
+another; deleting one reports how many cells in the grid use it before it goes.
+
+**Every column of a legend row is editable, the character included** — it is the
+tile's name in the grid, and a name you can only pick once is a name you get
+wrong once. It is edited where it is shown: the character's own box is both the
+field and the swatch that says which tile the grid is painting with, because two
+controls for one character would be two things to keep in step.
+
+**Changing it redraws every cell that used it**, which is the one legend edit
+that reaches the grid — the character in a `tile` line and the characters in the
+map are one name for one tile, so a rename that stopped at the legend would
+orphan a room full of cells and leave the new entry drawing nothing. That is the
+opposite of removing an entry, deliberately: a removed tile is gone and its cells
+are left for the compiler to report, while a renamed one is the same tile spelled
+differently.
+
+**A character another entry already draws is refused**, and it is the only thing
+here that is. A duplicate *name* is written and left to `E_DUPLICATE_TILE`,
+because typing it back undoes it; a duplicate character cannot be treated that
+way, because the rename redraws the grid and cells merged under one character are
+what no later edit can pick apart.
 
 **Grid** — the level, drawn with the tile art, painted with the selected legend
 character. Pencil, rectangle, flood fill and pick, an eraser that paints the

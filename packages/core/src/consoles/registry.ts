@@ -79,6 +79,30 @@ export function findConsole(idOrAlias: string): ConsoleSpec | undefined {
   return BY_KEY.get(idOrAlias.toLowerCase());
 }
 
+/**
+ * The same console, seen through one of its selectable modes.
+ *
+ * A console's `layout` is the mode `prep` fits a still picture into and the mode
+ * every display ROM and pixel-perfect E2E was built against; `modes` are the
+ * others the hardware has. Rather than thread a mode index through every stage,
+ * a caller that wants one asks for a spec whose `layout` *is* that mode — so the
+ * fitter, the budget, the compliance oracle and the codegen backends all see an
+ * ordinary spec and none of them has to know a choice was made.
+ *
+ * `undefined` is the primary layout, which is why nothing that does not ask
+ * changes.
+ */
+export function withMode(spec: ConsoleSpec, mode: number | undefined): ConsoleSpec {
+  if (mode === undefined) return spec;
+  const layout = spec.modes?.[mode];
+  if (layout === undefined) {
+    throw new DemakeError("E_INVALID_OPTION", `${spec.name} has no selectable layout ${mode}`, {
+      hint: `this console declares ${spec.modes?.length ?? 0} selectable modes.`,
+    });
+  }
+  return { ...spec, layout };
+}
+
 /** Look up a console by id or alias, throwing a typed error if unknown. */
 export function getConsole(idOrAlias: string): ConsoleSpec {
   const spec = findConsole(idOrAlias);

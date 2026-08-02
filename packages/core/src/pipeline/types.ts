@@ -114,7 +114,6 @@ export interface PrepOptions {
   strategy?: string;
   size?: { w: number; h: number };
   fit?: "contain" | "cover" | "stretch" | "pad";
-  mode?: string;
   profile?: Profile;
   scale?: ScaleKernel;
   dither?: { alg: DitherAlg; strength?: number };
@@ -149,6 +148,26 @@ export interface PrepOptions {
    * conversion could only drop the last ones it happened to see.
    */
   maxTiles?: number;
+  /**
+   * Fit into at most this many colours of each sub-palette.
+   *
+   * The third reservation, alongside {@link PrepOptions.maxSubPalettes} and
+   * {@link PrepOptions.maxTiles}, and it exists for a console whose palette is
+   * one flat block rather than a set of sub-palettes: on a Game Boy Advance a
+   * cell may use any of 256 colours, so there is no sub-palette to hold back for
+   * the font and the reservation has to be expressed in colours instead.
+   * `demake build` keeps three of the 256 for the runtime's own ink.
+   */
+  maxColors?: number;
+  /**
+   * Which of the console's selectable layouts to fit into.
+   *
+   * Absent is the console's primary layout, which is what `prep` on the command
+   * line uses and what every display ROM and pixel-perfect E2E was built
+   * against. `demake build` asks for another where a *game* is better served by
+   * it — the GBA's 256-colour tiled mode against its sixteen-palette one.
+   */
+  mode?: number;
   /** Force raw lattice-expansion colors in the output (the default for panel-filter consoles). */
   rawColors?: boolean;
   /** Force DAC-simulated display colors in the output (`--dac-colors`). */

@@ -1,7 +1,7 @@
 /**
  * The one thing the SN76489 added to the shared packing layer: a latched channel.
  *
- * `packages/demotic/test/audio.test.ts` proves the driver against real schedules
+ * `packages/demotic/test/_audio-battery.ts` proves the driver against real schedules
  * on real hardware, which is the guarantee that matters — but it can only exercise
  * the schedules `binding/psg.ts` actually produces, and those are well-formed by
  * construction. This file is the layer below: what the tag does with a data byte,

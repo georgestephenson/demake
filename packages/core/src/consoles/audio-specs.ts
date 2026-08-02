@@ -352,6 +352,139 @@ export const snesAudio: AudioSpec = {
   docs: { sources: SNES_SOURCES },
 };
 
+const GBA_SOURCES = [
+  "GBATEK — GBA Sound Controller: https://problemkaputt.de/gbatek.htm#gbasoundcontroller",
+  "GBATEK — GBA Sound Channels 1-4: https://problemkaputt.de/gbatek.htm#gbasoundchannel1sweep",
+  "GBATEK — Timers: https://problemkaputt.de/gbatek.htm#gbatimers",
+];
+
+/** The Game Boy Advance's system clock, which its timers count. */
+const GBA_CLOCK = 16777216;
+
+/** The rate the two sample converters are clocked at, and the mixer's own. */
+const GBA_PCM_RATE = 32768;
+
+/**
+ * A direct-sound voice's pitch lattice, which counts *up* like the S-DSP's.
+ *
+ * A voice plays its waveform at `32768 × step / 65536` samples a second and the
+ * built-in waveforms are one cycle in sixteen samples, so the note is
+ * `32768 × step / (16 × 65536)` — uniform steps of 0.03 Hz, which is finer than
+ * anything else in the set by two orders of magnitude. The step is
+ * twenty-four bits, so the ceiling is not the register's.
+ */
+const GBA_PCM_PITCH = {
+  kind: "multiplier" as const,
+  clockHz: GBA_PCM_RATE,
+  step: 16 * 65536,
+  minDivider: 1,
+  maxDivider: 0xffffff,
+};
+
+/** Eight bits of level, and it is a level rather than an attenuation. */
+const GBA_PCM_VOLUME = { steps: 256, law: "linear" as const };
+
+/** One of the mixer's sample voices. */
+function gbaPcmChannel(id: string, kind: "pulse" | "wave" | "noise"): AudioChannelSpec {
+  return {
+    id,
+    kind,
+    chip: 1,
+    ...(kind === "noise" ? {} : { pitch: GBA_PCM_PITCH }),
+    volume: GBA_PCM_VOLUME,
+    ...(kind === "pulse" ? { duties: [0.125, 0.25, 0.5] } : {}),
+    ...(kind === "wave" ? { waveform: { samples: 16, bits: 8 } } : {}),
+    ...(kind === "noise" ? { noise: { periods: 1, tonalMode: false } } : {}),
+    // Every level a voice can take is a driver write, because the mixing is the
+    // driver's: there is no envelope generator on this half of the hardware.
+    envelope: { kind: "none" as const },
+    panning: "lr-level",
+  };
+}
+
+/**
+ * The Game Boy Advance, which is the only console in the set with *both* kinds
+ * of sound hardware on one board.
+ *
+ * Four Game Boy channels, unchanged from the machine this console is named
+ * after — the same registers under a permuted map, which is why chip 0 is
+ * `gb-apu` and not a second model — and beside them two eight-bit converters
+ * fed by DMA at a timer's rate. What those two carry is a *software mix*, so the
+ * six voices declared for them are the demaker's rather than the hardware's, in
+ * exactly the sense the Super Nintendo's eight are: the machine offers sample
+ * playback and how many voices fit in it is a CPU question, which
+ * `@demake/chip`'s `GbaPcm` answers at six.
+ *
+ * Ten voices, then, and it is the largest palette here — the Mega Drive's ten
+ * being the other, and split differently. Nothing about a demade arrangement on
+ * this console is mostly about what had to go.
+ */
+export const gbaAudio: AudioSpec = {
+  chips: ["gb-apu", "gba-pcm"],
+  channels: [
+    {
+      id: "pulse1",
+      kind: "pulse",
+      chip: 0,
+      pitch: { clockHz: GB_CLOCK, step: 32, minDivider: 1, maxDivider: 2048 },
+      volume: { steps: 16, law: "linear" },
+      duties: [0.125, 0.25, 0.5, 0.75],
+      envelope: { kind: "decay", ratePerSecond: 64 },
+      panning: "lr-enable",
+    },
+    {
+      id: "pulse2",
+      kind: "pulse",
+      chip: 0,
+      pitch: { clockHz: GB_CLOCK, step: 32, minDivider: 1, maxDivider: 2048 },
+      volume: { steps: 16, law: "linear" },
+      duties: [0.125, 0.25, 0.5, 0.75],
+      envelope: { kind: "decay", ratePerSecond: 64 },
+      panning: "lr-enable",
+    },
+    {
+      id: "wave",
+      kind: "wave",
+      chip: 0,
+      pitch: { clockHz: GB_CLOCK, step: 64, minDivider: 1, maxDivider: 2048 },
+      volume: { steps: 4, law: "linear" },
+      waveform: { samples: 32, bits: 4 },
+      envelope: { kind: "none" },
+      panning: "lr-enable",
+    },
+    {
+      id: "noise",
+      kind: "noise",
+      chip: 0,
+      volume: { steps: 16, law: "linear" },
+      noise: { periods: 64, tonalMode: true },
+      envelope: { kind: "decay", ratePerSecond: 64 },
+      panning: "lr-enable",
+    },
+    gbaPcmChannel("sample1", "pulse"),
+    gbaPcmChannel("sample2", "pulse"),
+    gbaPcmChannel("sample3", "wave"),
+    gbaPcmChannel("sample4", "wave"),
+    gbaPcmChannel("sample5", "wave"),
+    gbaPcmChannel("sample6", "noise"),
+  ],
+  driver: {
+    // Four hardware timers, two of which are spoken for by the sample
+    // converters — so a driver has one of its own and does not have to ride the
+    // picture, which is the Game Boy's arrangement rather than the NES's.
+    sources: ["timer", "vblank"],
+    frameRate: { num: GBA_CLOCK, den: 280896 },
+    timerRange: [16, 4096],
+    // The processor runs at four times a Game Boy's and every write is a store
+    // to an ordinary address rather than a port, so the tick's budget is the
+    // packed format's ceiling rather than the CPU's.
+    writesPerTick: 120,
+  },
+  budgets: { romBytes: 65536 },
+  mixing: { channels: 2, linear: true },
+  docs: { sources: GBA_SOURCES },
+};
+
 /** NTSC Master System / SG-1000: 3579545 / (262 × 228) ≈ 59.92 Hz. */
 const SMS_FRAME_RATE = { num: 3579545, den: 59736 };
 

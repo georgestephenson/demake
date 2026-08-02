@@ -392,12 +392,17 @@ function emitRngPick(ctx: NesCtx): void {
   if (rng === null) throw new Error("random() without a generator allocated");
   const lo = layout.mathA;
   const hi = layout.mathB;
-  // The count and the low bound outlive the call to `RngAdvance`, so they live in
-  // the helper scratch rather than in registers this CPU does not have.
+  // The count and the low bound outlive the call to `Mod16`, so they live in the
+  // helper scratch rather than in registers this CPU does not have.
   const count = ZP.saved;
   const bound = ZP.count;
   const low = ctx.unique("rngLow");
   const store = ctx.unique("rngStore");
+
+  // The generator advances first, and unconditionally — `rng.ts`'s `draw` is the
+  // definition, and the advance is not conditional on the bounds. At the top of
+  // the routine nothing is live yet, so the call costs no saves.
+  asm.jsr(ctx.need("RngAdvance", emitRngAdvance));
 
   // count = floor(hi) - floor(lo) + 1, in whole cells.
   asm.lda(mem(lo, 2));
@@ -422,7 +427,6 @@ function emitRngPick(ctx: NesCtx): void {
   asm.inc(mem(count, 1));
   asm.label(noCarry);
 
-  asm.jsr(ctx.need("RngAdvance", emitRngAdvance));
   // The draw is the generator's high half, modulo the count.
   asm.lda(mem(rng, 2));
   asm.sta(mem(ZP.t2));

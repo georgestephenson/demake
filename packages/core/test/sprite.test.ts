@@ -155,6 +155,114 @@ describe("object art", () => {
   });
 });
 
+describe("256-colour object art", () => {
+  /** One 8×8 tile out of a `linear8` bank, which is a byte per pixel. */
+  const bytes = (bank: Uint8Array, tile: number): number[] => [
+    ...bank.subarray(tile * 64, tile * 64 + 64),
+  ];
+
+  it("packs a byte per pixel, in reading order", () => {
+    // The layout the ARM consoles' 2D engines read, and the one that is not a
+    // bitplane arrangement at all — so the test is that a pixel's index is
+    // literally the byte at its own offset.
+    const bank = buildSpriteBank(
+      [
+        {
+          name: "dot.svg",
+          bytes: svg(`<circle cx="32" cy="32" r="24" fill="#3060c0"/>`),
+          cellsWide: 1,
+          cellsHigh: 1,
+        },
+      ],
+      { console: "gba", mode: 0 },
+    );
+    expect(bank.tiles.length).toBe(bank.uniqueTiles * 64);
+    const pixels = bytes(bank.tiles, 0);
+    expect(pixels[0]).toBe(0);
+    expect(pixels[7]).toBe(0);
+    expect(pixels[4 * 8 + 4]).toBeGreaterThan(0);
+  });
+
+  it("fits one palette rather than sixteen, so any cell may use any colour", () => {
+    // The whole reason a game asks for this mode: the 4bpp layout gives a *cell*
+    // sixteen colours chosen from one of sixteen banks, and this gives it 256.
+    // The source is an 8×8 grid of distinct colours over the whole viewBox, so it
+    // survives being sampled down to a 16×16 sprite with sixty-four of them.
+    const cells: string[] = [];
+    for (let row = 0; row < 8; row += 1) {
+      for (let column = 0; column < 8; column += 1) {
+        cells.push(
+          `<rect x="${column * 8}" y="${row * 8}" width="8" height="8" ` +
+            `fill="rgb(${32 + column * 28},${32 + row * 28},${200 - column * 12})"/>`,
+        );
+      }
+    }
+    const bank = buildSpriteBank(
+      [{ name: "grid.svg", bytes: svg(cells.join("")), cellsWide: 2, cellsHigh: 2 }],
+      { console: "gba", mode: 0 },
+    );
+    expect(bank.palettes.length).toBe(1);
+    // Every asset lands in palette zero, because there is only one.
+    expect(bank.art.get("grid.svg")?.palette).toBe(0);
+    // And the fit really used more than a sixteen-colour bank could hold, which
+    // the 4bpp layout on the same source cannot.
+    expect(new Set(bank.tiles).size).toBeGreaterThan(16);
+    const narrow = buildSpriteBank(
+      [{ name: "grid.svg", bytes: svg(cells.join("")), cellsWide: 2, cellsHigh: 2 }],
+      { console: "gba" },
+    );
+    expect(new Set(narrow.tiles).size).toBeLessThanOrEqual(16 * 16);
+    expect(narrow.tiles.length).toBe(narrow.uniqueTiles * 32);
+  });
+
+  it("refuses a bitplane packing for a byte-per-pixel tile", () => {
+    expect(() =>
+      buildSpriteBank(
+        [
+          {
+            name: "a.svg",
+            bytes: svg(`<rect width="64" height="64" fill="#fff"/>`),
+            cellsWide: 1,
+            cellsHigh: 1,
+          },
+        ],
+        { console: "gba", mode: 0, packing: "planar" },
+      ),
+    ).toThrow(/one byte per pixel/);
+  });
+
+  it("refuses a mode the console does not have, rather than falling back", () => {
+    // A caller asking for 256 colours and quietly getting sixteen would produce
+    // art that is valid and half the picture it asked for.
+    expect(() =>
+      buildSpriteBank(
+        [
+          {
+            name: "a.svg",
+            bytes: svg(`<rect width="64" height="64" fill="#fff"/>`),
+            cellsWide: 1,
+            cellsHigh: 1,
+          },
+        ],
+        { console: "gba", mode: 7 },
+      ),
+    ).toThrow(/no selectable layout 7/);
+    expect(() =>
+      buildSpriteBank(
+        [
+          {
+            name: "a.svg",
+            bytes: svg(`<rect width="64" height="64" fill="#fff"/>`),
+            cellsWide: 1,
+            cellsHigh: 1,
+          },
+        ],
+        { console: "dmg", mode: 0 },
+      ),
+    ).toThrow(/no selectable layout 0/);
+  });
+});
+
 describe("background tile art", () => {
   it("uses every shade, because nothing is transparent", () => {
     const bank = buildSpriteBank(

@@ -49,8 +49,14 @@ export {
   type DriverData,
 } from "./data.js";
 
-/** Chips a driver backend exists for, keyed by the chip a console names. */
-const DRIVERS: Readonly<Record<string, "gb">> = { "gb-apu": "gb" };
+/**
+ * Consoles a *standalone* audio cartridge can be built for.
+ *
+ * Keyed by console rather than by chip, and the Game Boy Advance is why: its
+ * four Game Boy channels are the same `gb-apu`, and an SM83 cartridge is no use
+ * to it. A driver is a CPU's, so the machine is what decides.
+ */
+const DRIVERS: Readonly<Record<string, "gb">> = { dmg: "gb", gbc: "gb", gb: "gb" };
 
 /**
  * The clock a *game's* driver rides on each chip that has one.
@@ -116,6 +122,49 @@ export function gameDriverRate(consoleId: string): number {
  */
 const GAME_RATES: Readonly<Record<string, number>> = { "s-dsp": 125 };
 
+/**
+ * Consoles a *game* can embed a driver for — the fourth registry the support
+ * matrix is derived from.
+ *
+ * By console rather than by chip, because a driver is a *CPU's*: the Game Boy
+ * Advance's four Game Boy channels are the same `gb-apu` a Game Boy has, and the
+ * SM83 player that drives them there is no use to an ARM7. So this list names
+ * the machines where both halves exist, and the CPU each one's driver is written
+ * in:
+ *
+ *   - `dmg`, `gbc`, `gb`, `megaduck` — SM83 (`rom/gb-game.ts`)
+ *   - `nes` — 6502 (`rom/nes-game.ts`)
+ *   - `sms`, `gg` — Z80 (`rom/sms-game.ts`)
+ *   - `md` — 68000 (`rom/md-game.ts`)
+ *   - `snes` — SPC700 (`rom/spc-game.ts`), and it is not the console's own CPU
+ *
+ * The Game Boy Advance is absent, which is the point of having the list: its
+ * hardware is fully described and modelled, and the ARM driver that would play a
+ * demade schedule is not written. Deriving the matrix from the *spec* said it
+ * played music.
+ */
+const GAME_DRIVERS: readonly string[] = [
+  "dmg",
+  "gbc",
+  "gb",
+  "megaduck",
+  "nes",
+  "sms",
+  "gg",
+  "snes",
+  "md",
+];
+
+/** Whether a `demake build` cartridge for this console can play its audio. */
+export function hasGameAudio(consoleId: string): boolean {
+  return GAME_DRIVERS.includes(consoleId);
+}
+
+/** Every console whose cartridges can play their own audio. */
+export function gameAudioConsoles(): readonly string[] {
+  return GAME_DRIVERS;
+}
+
 /** Console ids `--format rom` can build an audio cartridge for. */
 export function audioRomConsoles(): string[] {
   const out: string[] = [];
@@ -131,8 +180,7 @@ export function audioRomConsoles(): string[] {
 
 /** The driver family a console's audio hardware resolves to, or `undefined`. */
 function romFamily(consoleId: string): "gb" | undefined {
-  const chip = getConsole(consoleId).audio?.chips[0];
-  return chip === undefined ? undefined : DRIVERS[chip];
+  return getConsole(consoleId).audio === undefined ? undefined : DRIVERS[consoleId];
 }
 
 /**
