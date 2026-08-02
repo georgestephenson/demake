@@ -6,7 +6,9 @@ implementation lands; the authoritative, always-current contributor contract is
 
 ## Setup
 
-- **Node** ≥ 20 (CI tests Node 20 and 22).
+- **Node** ≥ 22 (CI tests Node 22 and 24). Node 20 went end-of-life in April
+  2026 and is no longer tested; 22 is the current maintenance LTS and 24 the
+  active one.
 - **pnpm** — the version is pinned via `packageManager` in `package.json`; run
   `corepack enable` and pnpm will match it automatically.
 

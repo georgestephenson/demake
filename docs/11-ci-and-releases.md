@@ -8,7 +8,7 @@
 |---|---|---|
 | `changes` | which gates this change can break (see §Affected-only gates) | no install, no build; ~10 s |
 | `lint` | eslint (incl. custom rules: no `Math.random`/`Date.now`/platform APIs in core), prettier check, typecheck (project references), `cli-spec` regeneration diff check | fast-fail; **never gated** |
-| `test-unit` | Vitest unit + property + golden suites, coverage upload | Node 20/22 × ubuntu on a PR, × ubuntu/macos/windows on `main` (see §The unit matrix) |
+| `test-unit` | Vitest unit + property + golden suites, coverage upload | Node 22/24 × ubuntu on a PR, × ubuntu/macos/windows on `main` (see §The unit matrix) |
 | `test-browser` | Playwright: web build determinism + functional | **one job per engine**: Chromium/Firefox/WebKit, ubuntu |
 | `web-quality` | the doc-07 JS budget, then Lighthouse over the built site | ubuntu; shares one `build:web` |
 | `test-e2e` | Doc-10 emulator suite over every proven console (`pnpm test:rom-e2e`) | ubuntu, source-built assemblers + libretro cores, cached |
@@ -33,6 +33,12 @@ having an assembler on `PATH`, so the second run proved nothing the first had
 not.
 
 ### The unit matrix
+
+**Node 22 and 24, not 20 and 22.** Node 20 reached end-of-life on 2026-04-30, so
+half the matrix was proving an unsupported runtime while the current active LTS
+was untested. The floor in every `engines` field moved to `>=22` in the same
+change, because a matrix that does not test a version is not a version the
+project supports.
 
 **Three operating systems on `main`, one on a pull request.** The same split
 `affected.mjs` already runs on, for the same reason: the PR is what gets fast and
