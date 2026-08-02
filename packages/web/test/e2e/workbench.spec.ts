@@ -81,6 +81,45 @@ test("the menu bar runs its commands, and its keys do the same thing", async ({ 
   await expect(page.locator(".explorer")).toBeVisible();
 });
 
+test("one tap switches between open menus", async ({ browser }) => {
+  // A finger has no hover, so the `pointerenter` a tap fires is the first half
+  // of that tap and not a movement of its own. Acting on it opened the menu the
+  // tap then closed again — every switch took two taps, and only on a
+  // touchscreen, which is why this test has a context of its own.
+  const context = await browser.newContext({ hasTouch: true });
+  const page = await context.newPage();
+  await page.goto("/");
+
+  await page.getByTestId("menu-file").tap();
+  await expect(page.getByRole("menu", { name: "File" })).toBeVisible();
+  await page.getByTestId("menu-view").tap();
+  await expect(page.getByRole("menu", { name: "View" })).toBeVisible();
+  await expect(page.getByRole("menu", { name: "File" })).toBeHidden();
+
+  // And a tap on the menu that is already open still closes it.
+  await page.getByTestId("menu-view").tap();
+  await expect(page.getByRole("menu", { name: "View" })).toBeHidden();
+  await context.close();
+});
+
+test("a mouse switches menus by pointing, and the click that follows keeps it", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByTestId("menu-file").click();
+  // Pointing at another title switches to it — the interaction that makes a
+  // menu bar feel like a menu bar.
+  await page.getByTestId("menu-view").hover();
+  await expect(page.getByRole("menu", { name: "View" })).toBeVisible();
+  // Clicking the title the pointer just switched to is the same gesture, not a
+  // second one, so it does not close what it opened.
+  await page.getByTestId("menu-view").click();
+  await expect(page.getByRole("menu", { name: "View" })).toBeVisible();
+  // A second click is a second gesture, and closes it.
+  await page.getByTestId("menu-view").click();
+  await expect(page.getByRole("menu", { name: "View" })).toBeHidden();
+});
+
 test("go to file opens a file by typing at it", async ({ page }) => {
   await page.goto("/");
   // Wait for the app before pressing a key at it. `goto` resolves on the

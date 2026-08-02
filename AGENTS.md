@@ -2044,6 +2044,15 @@ you are writing the wrong one of the two.
   rule as `cli-spec` for flags and `lang/spec.ts` for the language: the second
   list is the one that goes stale. `Mod` is the platform's modifier, decided in
   that one file and never at a call site.
+- **A tap's `pointerenter` is the first half of that tap, not a hover.** A finger
+  has no hover, so a handler that treats entering as its own interaction runs
+  twice for one gesture: the menu bar switched to a menu on the enter and toggled
+  it shut on the click, and every switch took two taps on a phone. Hover-switching
+  is guarded on `pointerType === "mouse"`, and a click on the title the pointer
+  just switched to keeps that menu open rather than closing what the same gesture
+  opened. Both halves are pinned in `workbench.spec.ts`, the touch one in a
+  context of its own — the default Playwright context has no touch, so nothing
+  the rest of the suite does can see this.
 - **Which is why two of the commands have no accelerator and two are `native`.**
   ⌘N is the browser's new window and cannot be prevented; ⌘⌫ deletes the previous
   word in a text box and must not be taken over by a delete with no undo behind
