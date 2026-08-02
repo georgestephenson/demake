@@ -31,7 +31,7 @@
  * able to read either machine's entity table with one function.
  */
 
-import { MD_AUDIO_BYTES, NES_AUDIO_BYTES, SMS_AUDIO_BYTES } from "@demake/audio";
+import { GBA_AUDIO_BYTES, MD_AUDIO_BYTES, NES_AUDIO_BYTES, SMS_AUDIO_BYTES } from "@demake/audio";
 
 import type { Program } from "../program.js";
 
@@ -572,7 +572,13 @@ export const GBA_MEMORY: MemoryPlan = {
   // blanking interval.
   queueMax: 128,
   plotMax: 96,
-  audioBytes: 0,
+  // The largest driver state of any console here, and by a factor of a hundred —
+  // because most of it is the **mixing accumulator**, a 32-bit word per side per
+  // sample of one block. This console's second sound device is software, so its
+  // driver has to keep working space the way a chip-driven one never does; two
+  // kilobytes of a twenty-eight-kilobyte heap is what that costs, and it buys the
+  // six voices the hardware would otherwise not have at all.
+  audioBytes: GBA_AUDIO_BYTES,
   // A screen entry is a halfword — ten bits of tile, one of each flip, four of
   // palette — so a queued cell carries its data as two bytes, the same shape the
   // Game Boy Color's attribute byte and the Sega VDP's second byte have.

@@ -30,6 +30,7 @@ import { correlation, resample, resize } from "../dsp.js";
 import { snapPitch } from "../pitch.js";
 import { artifactFormat, encodeSpc } from "../encode/spc.js";
 import { encodeVgm } from "../encode/vgm.js";
+import { encodeWav } from "../encode/wav.js";
 import { inspectScript } from "../inspect.js";
 import { render } from "../render.js";
 import { analyzeSound, limitLength, trim, type SoundClass, type SoundFeatures } from "./analyze.js";
@@ -375,16 +376,7 @@ export async function demakeSfx(bytes: Uint8Array, options: SfxOptions): Promise
 
   const channelIndex = best.gesture.noise ? noiseIndex : pitchedIndex;
   const channel = spec.channels[channelIndex]!;
-  const artifact =
-    artifactFormat(best.script.chips) === "spc"
-      ? encodeSpc(best.script, {
-          ...(options.title ? { title: options.title } : {}),
-          game: consoleSpec.name,
-        })
-      : encodeVgm(best.script, {
-          ...(options.title ? { title: options.title } : {}),
-          system: consoleSpec.name,
-        });
+  const artifact = encodeArtifact(best.script, consoleSpec.name, options.title);
 
   return {
     script: best.script,
@@ -653,6 +645,53 @@ function trend(series: readonly number[]): number {
   return math.log(end / start) / 0.6931471805599453;
 }
 
+/**
+ * The effect as the file this console's schedules are written in.
+ *
+ * `arrange`'s `encodeArtifact` one domain over, and it has the same three cases
+ * for the same reasons (`encode/spc.ts` §artifactFormat). The Game Boy Advance is
+ * the one that is not a register log at all: half of its voices are a *software
+ * mixer*, so a VGM carrying only the four Game Boy channels would be a schedule
+ * with the rest of the sound missing, presented as the schedule.
+ */
+function encodeArtifact(script: ChipScript, system: string, title: string | undefined): Uint8Array {
+  switch (artifactFormat(script.chips)) {
+    case "spc":
+      return encodeSpc(script, { ...(title ? { title } : {}), game: system });
+    case "wav":
+      return encodeWav(render(script));
+    default:
+      return encodeVgm(script, { ...(title ? { title } : {}), system });
+  }
+}
+
+/**
+ * A bound write, narrowed to what a schedule holds — **including which chip**.
+ *
+ * A console may have two, and on one of them they are not even the same kind of
+ * device: the Game Boy Advance's second is a software mixer whose register five
+ * is a voice's right level, where the Game Boy channels' register five is a
+ * frequency byte. So a write that lost its chip is a write to whichever device
+ * the driver guesses, and on the Mega Drive it is a tone write sent to the FM
+ * bus. It was dropped here for as long as this file existed, and it went unseen
+ * because the one console with two chips places its effects on the *first*
+ * pitched channel, which is chip zero — a wrong answer that happens to equal the
+ * right one.
+ */
+function keepChip(write: { reg: number; value: number; chip?: number }): {
+  reg: number;
+  value: number;
+  chip?: number;
+} {
+  return write.chip === undefined
+    ? { reg: write.reg, value: write.value }
+    : {
+        reg: write.reg,
+        value: write.value,
+        chip: write.chip,
+      };
+}
+
 /** Wrap a gesture's frames into a complete, single-channel script. */
 function buildScript(
   gesture: Gesture,
@@ -672,15 +711,13 @@ function buildScript(
     frames[channelIndex] = lane[tick]!;
     const bound = binding.encode(frames, previous);
     const writes = tick === 0 ? [...init, ...bound] : bound;
-    ticks.push({ writes: writes.map(({ reg, value }) => ({ reg, value })) });
+    ticks.push({ writes: writes.map(keepChip) });
     previous = frames;
   }
   // A closing silent tick, so the effect releases rather than stopping dead with
   // the channel still driving a level.
   const off = silentFrames(spec);
-  ticks.push({
-    writes: binding.encode(off, previous).map(({ reg, value }) => ({ reg, value })),
-  });
+  ticks.push({ writes: binding.encode(off, previous).map(keepChip) });
 
   const script: ChipScript = {
     console: binding.console,

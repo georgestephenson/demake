@@ -13,9 +13,11 @@
  * packed format: an SM83 player on a programmable timer at 120 Hz, a 6502 player
  * on the picture's own interrupt at 60, a Z80 player on the Sega VDP's frame
  * interrupt writing an I/O port rather than an address, a 68000 player storing a
- * byte to an address, and an SPC700 player that is not on the console's processor
+ * byte to an address, an SPC700 player that is not on the console's processor
  * at all — a second computer, handed its program at boot and keeping its own
- * 125 Hz. `NR51` merged, `$4015` merged, `KON` *masked* because it is a pulse
+ * 125 Hz — and an ARM player at 128 Hz clocked by its own sample transfer, which
+ * has to *compute* six of its ten voices before it can play them and is
+ * therefore only half provable here (§{@link Target.observed}). `NR51` merged, `$4015` merged, `KON` *masked* because it is a pulse
  * rather than a state, and — on a Master System and a Mega Drive — no shared
  * register to merge at all. Four writes to silence a Game Boy channel, one bit to
  * silence an NES's, one attenuation latch to silence a PSG's, one `GAIN` of zero
@@ -59,6 +61,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildGameAudio,
   mdChannelTag,
+  buildGbaGameAudio,
   buildMdGameAudio,
   buildNesGameAudio,
   buildSmsGameAudio,
@@ -81,6 +84,7 @@ import {
 } from "@demake/chip";
 import { megaduckRegister } from "@demake/core";
 import { Gameboy } from "@demake/dmg";
+import { Gba, ROM_BASE } from "@demake/gba";
 import { Md } from "@demake/md";
 import { Nes } from "@demake/nes";
 import { Sms } from "@demake/sms";
@@ -90,6 +94,7 @@ import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
 import { bindAudio, type BoundAudio } from "../src/codegen/audio.js";
 import type { BuiltRom } from "../src/codegen/backend.js";
+import { buildGbaRom } from "../src/codegen/gba.js";
 import { buildGbRom } from "../src/codegen/gb.js";
 import { buildMdRom } from "../src/codegen/md.js";
 import { buildNesRom } from "../src/codegen/nes.js";
@@ -159,6 +164,18 @@ export interface Target {
   mergeReg: number | null;
   /** The helper name the merge pulls in, which each driver calls its own thing. */
   mergeHelper: string;
+  /**
+   * The writes of a schedule this console's *tap* can see.
+   *
+   * Everywhere but one console that is all of them: a schedule addresses a chip,
+   * and the core reports what the chip received. The Game Boy Advance's second
+   * device is a **software mixer**, so six of its ten voices are written to a
+   * register file in work RAM and cross no bus at all — what those writes have to
+   * produce is *the samples*, which is a sharper claim than a register diff and a
+   * different test (`audio-gba.test.ts`). Filtering them out here is not weakening
+   * the proof; it is putting the two halves where each can be checked.
+   */
+  observed?(writes: readonly Write[]): Write[];
   /**
    * Driver ticks per Game Boy driver tick on this console.
    *
@@ -408,10 +425,80 @@ const ALL: readonly Target[] = [
       return wrap(machine);
     },
   },
+  {
+    id: "gba",
+    name: "Game Boy Advance",
+    // The Game Boy channels' own clock, which is a quarter of this machine's —
+    // the same `GbApu` at the same rate, behind a permuted register map.
+    clockHz: GB_CLOCK_HZ,
+    // `NR51` again, and it is the *only* shared byte on this board: the mixer's
+    // levels are a voice's own two bytes and its `KON` is a pulse, so there is one
+    // merge here rather than two.
+    mergeReg: 0x25,
+    mergeHelper: "panning-merge",
+    // 128 Hz against the Game Boy's 120, because a tick here is a block of mixer
+    // samples and 32768 divides by 256 exactly (`gba-game.ts` §the clock).
+    ratio: 128 / 120,
+    // The four Game Boy channels number themselves and the mixer's six answer
+    // zero — which is what the driver's own packing says, and it is right rather
+    // than a truncation: an effect never borrows a mixer voice, so no music write
+    // to one is ever preempted.
+    tag: () => (reg, _value, chip) => (chip === 0 || chip === undefined ? gbChannelOf(reg) : 0),
+    // Half of a schedule addresses a register file in work RAM rather than a bus,
+    // so half of it is invisible to any tap. `audio-gba.test.ts` proves that half
+    // against the samples themselves, which is the sharper claim.
+    observed: (writes) => writes.filter((write) => (write.chip ?? 0) === 0),
+    tickAddress: cartridgeTick,
+    async build(source, project) {
+      const { files, levels, assets } = exampleProject(project);
+      const program = compile(source, {
+        profile: getProfile("gba"),
+        files,
+        levels,
+      });
+      const built = await buildGbaRom(program, { assets });
+      // Work RAM the allocator set aside, which is the address the cartridge
+      // itself was built against — asking the layout is how the two stay one.
+      const state = built.layout.audio as number;
+      const bound = await bindAudio(program, assets, {
+        build: (tracks, effects) =>
+          buildGbaGameAudio({ tracks, effects: effects as GameEffect[], state }),
+      });
+      return { built, bound };
+    },
+    boot(rom) {
+      const machine = new Gba(rom);
+      const wrapped = wrap(machine);
+      let previous = ROM_BASE;
+      return {
+        ...wrapped,
+        /**
+         * The program counter, unless this step was an interrupt *return*.
+         *
+         * A return lands on the instruction it interrupted, so the driver's entry
+         * address is seen a second time without having been reached a second
+         * time. On every other console that is a curiosity — an NMI lands on the
+         * tick routine's first instruction perhaps once in a long run. Here the
+         * sample transfer interrupts sixteen times a driver tick, so over a few
+         * hundred ticks it is a certainty, and it presents as the ROM performing
+         * a phantom empty tick and everything after it being one tick late.
+         *
+         * A real arrival is always from the cartridge; a return is from the BIOS,
+         * which is the whole test.
+         */
+        step: () => {
+          const pc = wrapped.step();
+          const from = previous;
+          previous = pc;
+          return from >= ROM_BASE ? pc : -1;
+        },
+      };
+    },
+  },
 ];
 
 /** Every core answers the same five questions; this is the adapter, once. */
-function wrap(machine: Gameboy | Nes | Sms | Snes | Md): Machine {
+function wrap(machine: Gameboy | Nes | Sms | Snes | Md | Gba): Machine {
   return {
     step: () => {
       machine.stepInstruction();
@@ -578,6 +665,11 @@ export function channelOfEffect(target: Target, effect: ChipScript): number {
   return found;
 }
 
+/** A schedule's writes, as far as this console's tap reaches. */
+function observed(target: Target, writes: readonly Write[]): Write[] {
+  return target.observed ? target.observed(writes) : [...writes];
+}
+
 /** Look a console up by id, so a per-console file names one and gets one. */
 export function target(id: string): Target {
   const found = ALL.find((one) => one.id === id);
@@ -600,7 +692,9 @@ export function audioBattery(target: Target): void {
       expect(address).toBeDefined();
 
       const ticks = 600;
-      const expected = (script as ChipScript).ticks.slice(0, ticks).map((tick) => [...tick.writes]);
+      const expected = (script as ChipScript).ticks
+        .slice(0, ticks)
+        .map((tick) => observed(target, tick.writes as Write[]));
       const actual = capture(target, built.bytes, address as number, ticks);
       expect(firstDivergence(expected, actual)).toBeNull();
     });
@@ -613,7 +707,9 @@ export function audioBattery(target: Target): void {
       const script = bound.driver?.performed.tracks[0] as ChipScript;
       const address = target.tickAddress(built, bound);
       const ticks = 600;
-      const expected = script.ticks.slice(0, ticks).map((tick) => [...tick.writes]);
+      const expected = script.ticks
+        .slice(0, ticks)
+        .map((tick) => observed(target, tick.writes as Write[]));
       expect(firstDivergence(expected, capture(target, built.bytes, address, ticks))).toBeNull();
     });
 
@@ -622,7 +718,9 @@ export function audioBattery(target: Target): void {
       const address = target.tickAddress(built, bound);
       const first = capture(target, built.bytes, address, 1)[0] as Write[];
       const want = bound.driver?.performed.tracks[0] as ChipScript;
-      expect(show(first)).toBe(show([...(want.ticks[0] as { writes: Write[] }).writes]));
+      expect(show(first)).toBe(
+        show(observed(target, (want.ticks[0] as { writes: Write[] }).writes)),
+      );
     });
   });
 

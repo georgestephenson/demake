@@ -44,6 +44,7 @@
  */
 
 import { GbApu, type SampleSink } from "@demake/chip";
+import { GBA_SOUND_UNMAPPED, gbaSoundRegister } from "@demake/core";
 
 import { Arm7, type Bus } from "./cpu.js";
 import { DirectSound } from "./sound.js";
@@ -556,38 +557,20 @@ export class Gba implements Bus {
    * This console's sound-register address to the Game Boy's own register number.
    *
    * A machine description rather than a second chip, exactly as the Mega Duck's
-   * is (`core/src/asm/megaduck.ts`): the same four channels, the same envelopes,
-   * the same wave RAM, at addresses of their own with gaps where the Game Boy
-   * has none. `undefined` means the address has no APU register behind it, and
-   * such an address must not fall through as identity — the Mega Duck learned
-   * that one twice (AGENTS.md §Gotchas).
+   * is — and, like that one, the table is `@demake/core`'s
+   * (`asm/gba-sound.ts`) rather than this file's, because the ARM audio driver
+   * needs the same fact read the other way round. Two copies of it would cancel
+   * each other's errors out: a cartridge that stored to the wrong address and a
+   * core that routed that address to the wrong register would agree perfectly
+   * and be silent on hardware (AGENTS.md §Gotchas).
+   *
+   * `undefined` means the address has no APU register behind it, and such an
+   * address must not fall through as identity — the Mega Duck learned that one
+   * twice.
    */
   private static apuRegister(at: number): number | undefined {
-    if (at >= 0x090 && at <= 0x09f) return 0x30 + (at - 0x090);
-    const map: Readonly<Record<number, number>> = {
-      0x060: 0x10,
-      0x062: 0x11,
-      0x063: 0x12,
-      0x064: 0x13,
-      0x065: 0x14,
-      0x068: 0x16,
-      0x069: 0x17,
-      0x06c: 0x18,
-      0x06d: 0x19,
-      0x070: 0x1a,
-      0x072: 0x1b,
-      0x073: 0x1c,
-      0x074: 0x1d,
-      0x075: 0x1e,
-      0x078: 0x20,
-      0x079: 0x21,
-      0x07c: 0x22,
-      0x07d: 0x23,
-      0x080: 0x24,
-      0x081: 0x25,
-      0x084: 0x26,
-    };
-    return map[at];
+    const register = gbaSoundRegister(at);
+    return register === GBA_SOUND_UNMAPPED ? undefined : register;
   }
 
   private readSound(at: number): number {

@@ -21,14 +21,15 @@
  *     of two palettes. Every size assertion the 8-bit backends carry is about a
  *     game that nearly did not fit; the interesting decisions here are all in
  *     the art path.
- *   - **There is no sound yet, and that is a gap rather than a decision.** The
- *     hardware has the Game Boy's four channels *and* two sample channels fed by
- *     DMA (`@demake/chip`'s `GbApu` and `GbaPcm` both model it), but the ARM
- *     driver that would play a demade schedule does not exist — so a `.dmt` that
- *     names music compiles, records the request its rules make, and traces
- *     identically to a build that played it. Doc 13 §D4 is where that is tracked.
+ *   - **The sound is two devices and only one of them is a chip.** The Game
+ *     Boy's four channels are stores to a register page; the other six voices
+ *     are a mixer the processor runs, so this is the one backend whose audio
+ *     driver has to be handed *working memory* as well as a place to keep its
+ *     cursors — which is why `GBA_MEMORY.audioBytes` is two kilobytes where
+ *     every other console's is a few dozen.
  */
 
+import { buildGbaGameAudio } from "@demake/audio";
 import { AsmError, packGbaRom, type Executor } from "@demake/core";
 
 import { getProfile } from "../profiles.js";
@@ -37,6 +38,7 @@ import { BUILTIN_TILES } from "../rom/graphics.js";
 
 import { type Analysis } from "./analyze.js";
 import type { AssetBytes } from "./art.js";
+import { bindAudio, effectIndices, trackForScene } from "./audio.js";
 import {
   buildRom,
   BuildError,
@@ -69,13 +71,12 @@ interface GbaArt extends GbaEmitOptions {
 /**
  * What this backend's audio binding hands the emitter.
  *
- * The shape the other five have, with the driver half empty: there is no ARM
- * driver yet, so `present` is always false and nothing is emitted that plays a
- * note. What *is* here is `hooks`, and it matters — a rule with a `sound` still
- * records which effect it asked for, because that byte is a field of the trace
- * (doc 14 §Conformance). A build whose audio cannot be played has to trace
- * identically to one that can, or the conformance suite would be comparing two
- * different games.
+ * The shape the other five have, and it carries the same two things for the same
+ * reason: what the emitter needs to *play* the audio, and — separately — what a
+ * rule needs to record that it asked for a sound. The second survives a build
+ * with the files left out, because that is a field of the trace (doc 14
+ * §Conformance): a silent build has to trace identically to a sounding one, or
+ * the conformance suite would be comparing two different games.
  */
 interface GbaAudio extends BoundAudioShape {
   options: GbaEmitOptions;
@@ -145,30 +146,65 @@ export const gbaBackend: Backend<GbaArt, GbaAudio> = {
     }
   },
 
-  async bindAudio(program: Program): Promise<BoundAssets<GbaAudio>> {
+  async bindAudio(
+    program: Program,
+    assets: AssetBytes,
+    layout: Layout,
+    executor?: Executor,
+  ): Promise<BoundAssets<GbaAudio>> {
+    // The driver's state is work RAM the allocator set aside for it, which it
+    // only does for a program that names audio — so a game with none reaches
+    // here with nowhere to put a driver and does not need one.
+    const state = layout.audio;
+    const bound =
+      state === null
+        ? { driver: undefined, missing: [] as readonly string[], notes: [] as readonly string[] }
+        : await bindAudio(
+            program,
+            assets,
+            { build: (tracks, effects) => buildGbaGameAudio({ tracks, effects, state }) },
+            executor,
+          );
     const names = program.tracks.length > 0 || program.sounds.length > 0;
+    const driver = bound.driver;
+    const options: GbaEmitOptions = driver
+      ? {
+          audio: driver,
+          effectIndices: effectIndices(program, bound),
+          sceneTracks: trackForScene(program, bound),
+        }
+      : {};
     const emit: GbaAudio = {
-      present: false,
-      options: {},
-      tracks: 0,
-      effects: 0,
-      code: 0,
-      data: 0,
-      helpers: [],
-      rateHz: 0,
-      writesRestricted: 0,
+      present: driver !== undefined,
+      options,
+      tracks: driver?.stats.tracks ?? 0,
+      effects: driver?.stats.effects ?? 0,
+      // Queries, not copies: the driver is emitted during `assemble`, which has
+      // not run yet, so its sizes are still zero here (`backend.ts`
+      // §BoundAudioShape).
+      get code(): number {
+        return driver?.stats.code ?? 0;
+      },
+      get data(): number {
+        return driver?.stats.data ?? 0;
+      },
+      get helpers(): readonly string[] {
+        return driver?.stats.helpers ?? [];
+      },
+      rateHz: driver ? driver.stats.rate.num / driver.stats.rate.den : 0,
+      writesRestricted: driver?.stats.writesRestricted ?? 0,
       ...(names
         ? {
             hooks: {
-              driver: false,
-              music: 0,
-              request: 0,
-              effects: program.sounds.map(() => -1),
+              driver: driver !== undefined,
+              music: driver?.request.music ?? 0,
+              request: driver?.request.sfx ?? 0,
+              effects: options.effectIndices ?? program.sounds.map(() => -1),
             },
           }
         : {}),
     };
-    return { emit, tiles: 0, missing: [] };
+    return { emit, tiles: 0, missing: bound.missing, notes: bound.notes };
   },
 
   assemble({ program, analysis, layout, art, audio, title }): Assembled {
@@ -184,7 +220,7 @@ export const gbaBackend: Backend<GbaArt, GbaAudio> = {
     }
     let code: Uint8Array;
     try {
-      emitProgram(ctx, art);
+      emitProgram(ctx, { ...art, ...audio.options });
       code = ctx.asm.assemble();
     } catch (error) {
       if (error instanceof AsmError) {

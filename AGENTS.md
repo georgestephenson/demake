@@ -115,7 +115,7 @@ background demade into 4bpp tiles across seven sixteen-colour sub-palettes, and
 tile art in a _second cartridge bank_ that no instruction ever addresses because
 it reaches video RAM by DMA — and the whole example library traces identically
 there too, in the same battery, at the same one frame per tick. The page plays it
-in `@demake/snes`, one of the five self-hosted cores.
+in `@demake/snes`, one of the six self-hosted cores.
 
 This is the first console that is bigger than the language needs, and what it
 changes is the _size_ of the backend rather than its shape. With `M` clear the
@@ -251,8 +251,10 @@ the art for that machine and boots the result in `@demake/nes` — byte-identica
 to `demake build -c nes`, pinned by `determinism.spec.ts` on every console with a
 backend (doc 07 §Playing the real ROM in the page) — and the sound button plays
 whichever chip the running core has, through the same `StreamSink`. Every console
-with a backend now has one, the Mega Drive included, so the only thing that can
-take the button away is a browser that will not give the page an `AudioContext`.
+with a backend now has one — the Mega Drive included, and the Game Boy Advance,
+whose _second_ device is a pair of converters rather than a chip — so the only
+thing that can take the button away is a browser that will not give the page an
+`AudioContext`.
 
 **And the ARM handhelds are started.** `core/src/asm/arm.ts` is the sixth
 encoder and the first that buys three processors — a Game Boy Advance, and both
@@ -308,15 +310,49 @@ registers _across_ the call that plots a glyph, which no other backend can do �
 the Mega Drive's keeps its digit and its running value in render words precisely
 because a 68000 helper helps itself to every register there is.
 
-**There is no sound on this console yet**, and that is a gap rather than a
-decision: the hardware is fully described (`gbaAudio` — ten voices, four Game Boy
-channels and six the sample mixer carries) and fully modelled, and what does not
-exist is the ARM driver that would play a demade schedule. A `.dmt` that names
-music compiles, records the request its rules make, and traces identically to a
-build that played it — which is the same position the Super Nintendo was in
-before its SPC700 driver landed.
+**And it has sound — ten voices, and the driver has to _compute_ six of them.**
+`demake build -c gba` now puts an ARM driver in the cartridge
+(`packages/audio/src/rom/gba-driver.ts`, `gba-game.ts`), and it is the sixth
+generated player and the first that is not only a player: four of this machine's
+voices are a Game Boy's APU and reach it as stores, and the other six are
+`@demake/chip`'s `GbaPcm` — a _mixer_, whose register file is in work RAM and
+whose output the processor produces. So doc 16's Level A proof arrives here in
+two halves and the second is the sharper one: the register writes are diffed tick
+for tick by the shared battery, and the **samples themselves** are diffed byte for
+byte against what the model renders (`packages/demotic/test/audio-gba.test.ts`).
+The mixing is integer throughout, so "byte for byte" means byte for byte.
 
-The _demakers_ do reach it: `demake arrange -c gba`, `sfx` and `render` demake
+Three things about it are this console's rather than a predecessor's restated.
+**The clock is the transfer, not a timer**: a block of 256 samples is sixteen
+FIFO refills, so the sixteenth refill's interrupt _is_ a block boundary, and
+counting transfers is exact where a timer at the same rate is not — a timer runs
+a fixed number of bytes out of phase with a transfer that reads ahead, and the
+phase depends on how deep the hardware's queue is. It also makes the rate 128 Hz
+exactly, because 32768 ÷ 256 has no remainder. **The mixing is the main loop's**,
+because a mix inside the handler would be twenty thousand cycles with interrupts
+masked, which is two refills the handler would then never see — so the
+frame-clocked consoles' `AudioFrame`/`AudioService` split returns here for a
+reason of this console's own. And **the driver needs working memory**: two
+kilobytes of stereo accumulator, which is why `GBA_MEMORY.audioBytes` is a
+hundred times any other console's and why it is in internal RAM rather than
+beside the ring in external RAM — one cycle an access against six.
+
+**An effect only ever borrows a Game Boy channel**, because that is where the
+sound demaker places one: a pitched gesture on the first pulse, a noise gesture
+on the noise channel. So the whole preemption machinery is the Game Boy's
+unchanged — four channel bits, a steal mask, `NR51` merged and never stored — and
+the mixer's six voices tag no channel at all and play _through_ an effect. An
+effect placed on a mixer voice is refused by name rather than half-handled.
+
+**A four-part MIDI does not fill this machine**, and that is the arranger's
+answer rather than a gap in the driver: each part gets the channel that serves it
+best, and on ten voices four parts take four. Most of the example library
+therefore plays entirely on the Game Boy channels; `runner`'s `updraft.mid` is the
+one whose parts fit the sample voices better, and it is what the mixer proof is
+pointed at — a diff of silence against silence would pass on a driver that did
+nothing.
+
+The _demakers_ reach it too: `demake arrange -c gba`, `sfx` and `render` demake
 this console's ten voices through `binding/gba.ts`, which is the second two-chip
 binding and the first whose chips are different kinds of thing — the Game Boy
 half is `gb.ts` called rather than restated, and the mixer half has no shared
@@ -329,20 +365,20 @@ schedule addresses a register file that is demake's own — a VGM carrying only
 the four Game Boy channels would be a schedule with two thirds of the music
 missing, presented as the schedule.
 
-That gap is also why **the support matrix asks the encoders rather than the
+This console is also why **the support matrix asks the encoders rather than the
 specs**. "Does this console demake music" is `audioConsoles()` — the binding
 registry — and "does a cartridge play it" is `gameAudioConsoles()`, which is the
 audio driver table AGENTS.md's §Iron rules already counted as one of the four.
 Both used to read `spec.audio`, and the moment this console's hardware was
-described that said yes to both. A driver is a _CPU's_: the same `gb-apu` is
-driven by an SM83 on a Game Boy and would need an ARM7 here, so those tables are
-keyed by console and not by chip.
+described that said yes to both — a year before the ARM driver existed. A driver
+is a _CPU's_: the same `gb-apu` is driven by an SM83 on a Game Boy and by an ARM7
+here, so those tables are keyed by console and not by chip.
 
 Still to come: the remaining Tier 2/3 consoles (each = a codegen backend, a ROM
 harness + toolchain, and a libretro core + DAC calibration), the remaining
 framebuffer/scanline layout paths (Lynx, GBA/NDS bitmap modes, 2600/7800), the
-ARM audio driver the Game Boy Advance's cartridges are waiting on, and the rest
-of the Demotic runtime story (the speed work doc 14 §Runtime model names).
+Nintendo DS backend and the two-processor core it needs, and the rest of the
+Demotic runtime story (the speed work doc 14 §Runtime model names).
 
 **The audio spine is built, and two consoles boot** (docs
 [16](docs/16-audio-engine.md), [17](docs/17-music-demaker.md),
@@ -370,12 +406,13 @@ artifact _is_ the schedule.
 effect per event, one clock serving both, and the same proof one level up —
 `packages/demotic/test/_audio-battery.ts` boots a cartridge that is playing a game
 and diffs every register write against the schedules the demakers produced.
-It does that on **every** console the game backend builds for, over five drivers
+It does that on **every** console the game backend builds for, over six drivers
 that share only the packed format and — where the chip is the same — what the
 chip decides: an SM83 player on a programmable timer, a 6502 player on the
 picture's interrupt, a Z80 player writing an I/O port, a 68000 player storing a
-byte to an address, and an SPC700 player that is not on the console's processor
-at all.
+byte to an address, an SPC700 player that is not on the console's processor at
+all, and an ARM player clocked by its own sample transfer that has to _compute_
+six of its ten voices before it can play them.
 
 **And both demakers are on the web** (doc 07 §The audio sections): a music
 section and a sound section over their own worker, carrying the whole
@@ -386,14 +423,14 @@ four pinned byte-identical to the CLI's by
 `packages/web/test/e2e/determinism.spec.ts`.
 
 Still to come for audio: `bin`/`asm`/`c` emit, a _standalone_ audio cartridge for
-anything but the Game Boy (the NES, the Sega 8-bits and the Mega Drive have
-drivers, but only inside a game; the Super Nintendo's driver writes an `.spc`
-rather than a cartridge), driver backends for the remaining consoles (each needs
-a CPU encoder or a checked-in driver source, plus a core to prove it in), Level B
-sample comparison, the remaining chips (the handhelds) and the three parts of the
-YM2612 that are stored and inert (LFO pitch modulation, SSG-EG, channel 3's
-per-operator mode), tracker and lossy-audio input with the transcription front
-end, and FLAC/M4A export. Read doc
+anything but the Game Boy (the NES, the Sega 8-bits, the Mega Drive and the Game
+Boy Advance have drivers, but only inside a game; the Super Nintendo's driver
+writes an `.spc` rather than a cartridge), driver backends for the remaining
+consoles (each needs a CPU encoder or a checked-in driver source, plus a core to
+prove it in), Level B sample comparison, the remaining chips (the handhelds) and
+the three parts of the YM2612 that are stored and inert (LFO pitch modulation,
+SSG-EG, channel 3's per-operator mode), tracker and lossy-audio input with the
+transcription front end, and FLAC/M4A export. Read doc
 16 before touching any of it — several of its decisions are load-bearing and easy
 to undo by accident (§Working on audio).
 
@@ -414,7 +451,10 @@ packages/core/       @demake/core — the engine (zero platform deps; ESM; ships
                      of a DS's processors), and the only one whose *constants*
                      need a mechanism — a 32-bit literal does not fit in a
                      32-bit instruction, so `ldrConst`/`ltorg` are a literal
-                     pool rather than an addressing mode
+                     pool rather than an addressing mode. gba-sound.ts is that
+                     console's sound page, here for megaduck.ts's reason: the
+                     core routes a store by it and the ARM driver emits one from
+                     it, and two copies would cancel each other's errors out
   src/math/          deterministic kernels (exp/log/pow/cbrt/sin) + PCG32 PRNG
   src/parallel/      the executor seam: work described as jobs, run wherever the
                      edge says. `jobs.ts` is the contract and the inline runner
@@ -487,10 +527,10 @@ packages/gba/        @demake/gba — a self-hosted Game Boy Advance core: an
                      ARM7TDMI in ARM state, a mode-0 2D engine with four
                      background layers and 128 objects, DMA, timers, and both
                      halves of the sound. The Game Boy channels are
-                     @demake/chip's GbApu behind a *permuted register map* (the
-                     Mega Duck's arrangement); `sound.ts` is the pair of
-                     converters DMA feeds, which is not the same object as the
-                     mixer that decides what to feed them. Thumb, the affine
+                     @demake/chip's GbApu behind a *permuted register map*, which
+                     is `core`'s `asm/gba-sound.ts` and not this package's;
+                     `sound.ts` is the pair of converters DMA feeds, which is not
+                     the same object as the mixer that decides what to feed them. Thumb, the affine
                      modes and every bitmap mode are absent rather than
                      half-implemented, and the interrupt dispatcher is six
                      instructions of ours rather than Nintendo's BIOS
@@ -575,6 +615,9 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
   src/binding/sdsp-bank.ts  the Super Nintendo's built-in waveforms: single-cycle
                      BRR blocks, one definition read by the binding (which puts
                      one in a voice's SRCN) and the driver (which uploads them)
+  src/binding/gba-bank.ts  the Game Boy Advance mixer's, and nothing like it:
+                     signed 8-bit PCM read straight out of cartridge ROM, so the
+                     driver lays these same bytes down rather than uploading them
   src/dsp.ts         deterministic FFT/resampler/pitch, all on core's kernels
   src/manifest.ts    the --emit-manifest sidecar: one shape, two callers (CLI, web)
   src/render.ts      ChipScript → PCM; the only way anything makes sound
@@ -1655,6 +1698,14 @@ emitter's business:
   `ctx.poolCheck()` at a safe point — between rules, between objects, inside a
   tile walk — and it puts the pool down over a branch. The check happens while
   the code is being _emitted_, so it costs nothing at run time.
+- **`ltorg()` does not branch over what it emits**, so a flush belongs past a
+  return or after an _unconditional_ branch and nowhere else. After a conditional
+  one the not-taken path falls straight into the words — and a pooled address
+  looks like `$030006F4`, which decodes as `mrs r6, cpsr`: a register written
+  that the code after the pool may not even be using. The audio driver had
+  exactly that for an afternoon and every test passed, because the two registers
+  the pool happened to overwrite were dead. Nothing static can catch this; the
+  rule is that a flush follows something that never falls through.
 - **A 16.16 value is a register, and so is its product.** `smull` gives the
   64-bit product a fixed-point multiply needs, and the barrel shifter folds the
   normalising shift into the instruction that consumes it — so the value layer
@@ -1671,7 +1722,20 @@ emitter's business:
 - **The interrupt vector is not a cartridge's to install.** `$00000018` is BIOS
   ROM, so a handler is reached through the pointer at `$03007FFC`, in IRQ mode,
   with `r0`–`r3`, `r12` and `lr` already saved by the dispatcher and everything
-  else the handler's own business.
+  else the handler's own business. **A game with sound has two sources through
+  that one vector**, so the handler becomes a dispatcher: what it takes is what
+  is both raised and enabled, and it acknowledges before either half runs — a
+  refill that lands during the frame's own work is still counted rather than
+  lost.
+- **An interrupt return is not an arrival, and a harness has to know.** The BIOS
+  returns with `subs pc, lr, #4`, which lands on the instruction it interrupted —
+  so a routine's entry address is seen a second time without having been reached
+  a second time. On every other console that is a curiosity; here the sample
+  transfer interrupts sixteen times a driver tick, so a conformance harness that
+  attributes by program counter sees a phantom tick within a few hundred and
+  everything after it is one late. `_audio-battery.ts`'s Game Boy Advance target
+  filters it by where the step came _from_: a real arrival is from the cartridge
+  and a return is from the BIOS.
 
 ## Working on audio
 
@@ -1795,6 +1859,35 @@ that keep them from being undone. All of them come from doc 16.
   per write, and `mix()` takes per-chip gains from the binding — because how loud
   a PSG is against six FM voices is a fact about the _board_, and a chip model
   that knew which board it was on would no longer be one model.
+- **And on such a console a register number identifies nothing.** Anything that
+  asks a question _about a register_ has to ask it about the chip too. `$25` is
+  the Game Boy channels' panning byte on a Game Boy Advance **and** the mixer's
+  fifth voice's right level, so `PackOptions.mergeRegs` needed `mergeChip` beside
+  it — without it a schedule that set that voice's level had the write packed as a
+  merge and the driver folded it into `NR51`, which is the music's stereo image
+  replaced by a volume at the first tick of every build with an effect in it. The
+  same trap is why `sfx/index.ts` keeps `chip` on every write it makes: it used to
+  drop it, and that went unseen for as long as it did because the only two-chip
+  console before this one places its effects on the first _pitched_ channel, which
+  is chip zero — a wrong answer that happens to equal the right one.
+- **A driver whose chip is a mixer reproduces samples, not writes.** Doc 16's
+  contract survives restated one level up and gets _sharper_: the Game Boy
+  Advance's six sample voices are `@demake/chip`'s `GbaPcm`, a register file of
+  demake's own that no bus ever sees, so what the ARM driver owes is the bytes
+  themselves against what the model renders. `emitMix` is written against
+  `GbaPcm.mix` operation for operation for exactly that reason — a 32-bit
+  accumulator per side per sample, voices summed in index order, the model's shift
+  and the model's clamp. The one thing in it that is an optimisation rather than a
+  transcription is the silent-voice path, and it is exact: a level of zero
+  contributes nothing to either side, and the position still advances.
+- **Counting transfers beats riding a timer, where the hardware will let you.**
+  The Game Boy Advance driver's clock is its own FIFO refill interrupt: sixteen
+  refills carry one block, so the sixteenth _is_ a block boundary and re-pointing
+  the transfer there cannot repeat a byte or skip one. A timer at the same rate
+  would be a fixed number of bytes out of phase with a transfer that reads ahead,
+  and the phase depends on how deep the queue is — deterministic, and impossible
+  to state without knowing the hardware's prefetch. It also lands the rate on
+  128 Hz exactly, because 32768 divides by 256 with no remainder.
 - **Timbre on an FM voice is searched, and the search is hardware-in-the-loop.**
   `binding/fm-patch.ts` plays each candidate on `Ym2612` and measures it; it does
   not score a patch by a formula about what it should sound like. Memoise per
@@ -1931,6 +2024,23 @@ you are writing the wrong one of the two.
   8-bit consoles share. It also checks the Duck's cartridge _fails_ on a Game
   Boy — identical traces are also what a register map that had quietly become the
   identity would produce.
+- `packages/demotic/test/audio-gba.test.ts` is the one console whose Level A proof
+  is in two halves, because its two sound devices are not both chips. The shared
+  battery diffs the four Game Boy channels tick for tick, exactly as it does on
+  five other machines; the six mixer voices write a register file in work RAM and
+  cross no bus, so what is compared there is the **samples** the converters
+  received against what `GbaPcm` renders from the same schedule — byte for byte,
+  which is exact because the mixing is integer throughout. Point a mixer proof at
+  a track the arranger put on the _Game Boy_ channels and it compares silence
+  with silence and passes; `runner`'s `updraft.mid` is the one in the library
+  whose parts land on the sample voices, which is why that test names a project
+  the rest of the file does not. It runs no size sweep, and the omission is
+  stated in the file: this cartridge is thirty-two megabytes against a game's
+  twenty-odd kilobytes so there is no budget to catch, and a build with art here
+  is the whole `prep` tournament against a _256-colour_ palette — minutes rather
+  than seconds. What the sweep would still have bought (that a driver's reported
+  sizes are real rather than the zero they hold before `assemble`) is asserted on
+  an art-free build instead.
 - `packages/demotic/test/gba-arith.test.ts` and `gba-rom.test.ts` are the Game
   Boy Advance's pair, and the second is where the things a trace cannot see are
   checked: that _two_ banks arrived in two places, that the map's four screen

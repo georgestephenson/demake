@@ -70,6 +70,19 @@ export {
   type Waveform,
 } from "./binding/sdsp-bank.js";
 export { NOISE_VOICE, SDSP_MERGE_REGS, SDSP_REG, sdspChannelTag } from "./binding/sdsp.js";
+// The Game Boy Advance's mixer bank, under names of its own: this console and
+// the Super Nintendo both have a sample bank and they are nothing alike, so the
+// two must never be reachable under one name (`binding/gba-bank.ts`).
+export {
+  bankBytes as gbaBankBytes,
+  sampleBank as gbaSampleBank,
+  sampleNumber as gbaSampleNumber,
+  NOISE_SAMPLES as GBA_NOISE_SAMPLES,
+  WAVEFORMS as GBA_WAVEFORMS,
+  WAVE_SAMPLES as GBA_WAVE_SAMPLES,
+  type Waveform as GbaWaveform,
+} from "./binding/gba-bank.js";
+export { gbaChannelTag, GBA_APU_CHANNELS, GBA_PSG_GAIN } from "./binding/gba.js";
 export { planTiming, verifyNonAccumulating, type TimingPlan } from "./timing.js";
 export {
   centsToHz,
@@ -143,6 +156,25 @@ export {
   type MdGameAudioInput,
   type MdGameAudioStats,
 } from "./rom/md-game.js";
+export {
+  buildGbaGameAudio,
+  resolveGbaClock,
+  GBA_AUDIO_BYTES,
+  STOP as GBA_STOP,
+  type GbaGameAudio,
+  type GbaGameAudioInput,
+  type GbaGameAudioStats,
+} from "./rom/gba-game.js";
+// The sample half's own shape, which the game backend needs to route one
+// interrupt and the conformance harness needs to read the ring.
+export {
+  GBA_AUDIO_IRQ,
+  GBA_BLOCK_SAMPLES,
+  GBA_RING_BLOCKS,
+  GBA_RING_BYTES,
+  GBA_RING_LEFT,
+  GBA_RING_RIGHT,
+} from "./rom/gba-driver.js";
 // The SN76489's own side of the hand-off, shared by the two processors that
 // drive it: a Z80 on the Sega 8-bits and a 68000 on the Mega Drive.
 export { psgChannelTag, psgAttenuationOff, PSG_STEREO_REG } from "./rom/psg.js";

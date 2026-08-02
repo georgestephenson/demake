@@ -276,8 +276,8 @@ function emitFire(ctx: GbaCtx, rule: RuleDef, bind: Binding, trigger?: Trigger):
 /**
  * Ask for this rule's sound, if it has one.
  *
- * There is no driver on this console yet, so what is emitted is the *record* of
- * the request and nothing else — one byte a trace reads. That is not a stub: a
+ * Two bytes at most and often one: the driver's request, and the byte a trace
+ * reads. The second survives a build whose files were not supplied, because a
  * build whose audio could not be played still has to trace identically to one
  * that could (doc 14 §Conformance), and this is where that is kept true.
  */

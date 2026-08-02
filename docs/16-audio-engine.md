@@ -24,15 +24,18 @@ in `pnpm test`** — the ROM boots in `@demake/dmg`, whose APU is now
 `@demake/chip`'s, and every register write it makes is diffed against the
 `ChipScript` tick for tick.
 
-**And there are two more CPUs' drivers**, generated the same way. `demake build -c
+**And there are five more CPUs' drivers**, generated the same way. `demake build -c
 nes` puts a game's music and effects in an NROM cartridge as 6502 machine code;
-`-c sms` and `-c gg` put them in a Sega cartridge as Z80.
-`packages/demotic/test/_audio-battery.ts` runs the whole Level A battery on all three
-— the Game Boy's driver
+`-c sms` and `-c gg` put them in a Sega cartridge as Z80; `-c md` as 68000; `-c
+snes` as SPC700, on a processor that is not the console's own; and `-c gba` as
+ARM. `packages/demotic/test/_audio-battery.ts` runs the whole Level A battery on
+every one of them — the Game Boy's driver
 on its timer at 120 Hz, the NES's on the picture's own interrupt at 60, the Sega's
 on the VDP's frame interrupt at 59.92 and writing an I/O port rather than an
-address — diffed against the same schedules with the same tolerance, which is
-none. What the extra drivers prove is that the *contract* is the contract rather
+address, the Mega Drive's storing a byte to an address, the Super Nintendo's on a
+timer of the *sound processor's* at 125 Hz, and the Game Boy Advance's on its own
+sample transfer at 128 — diffed against the same schedules with the same
+tolerance, which is none. What the extra drivers prove is that the *contract* is the contract rather
 than a description of one emitter: they share the packed format and nothing below
 it. The third one stretched even that, and the seam is recorded in §Two streams,
 one clock: an SN76489 puts the channel in the data byte and latches it, so
@@ -41,10 +44,29 @@ one clock: an SN76489 puts the channel in the data byte and latches it, so
 The web app's audio sections are live over the same engine, the browser's `.vgm`,
 sidecar, WAV and cartridge are byte-identical to the CLI's (doc 07 §The audio
 sections), and the ROM pane plays whichever chip the running cartridge has. What
-is not built: the remaining chips (YM2612, the handhelds), a *standalone* audio
+is not built: the remaining chips (the handhelds), a *standalone* audio
 cartridge for anything but the Game Boy, driver backends for the remaining
 consoles, `bin`/`asm`/`c` emit, Level B sample comparison, and the lossy
 encoders.
+
+**And a sixth driver, on a console whose second device is not a chip.** `demake
+build -c gba` emits an ARM player, and it is the first one that has to *compute*
+what it plays: four voices are a Game Boy's APU and reach it as stores, and six
+are a software mixer the processor runs. Three of its answers are its own. The
+**clock is the sample transfer** — sixteen FIFO refills carry one block, so the
+sixteenth refill's interrupt is a block boundary, and counting transfers is exact
+where a timer at the same rate is not, because a timer runs a fixed number of
+bytes out of phase with a transfer that reads ahead. The **mixing is the main
+loop's**, because twenty thousand cycles inside the handler are two refills the
+handler then never sees. And the **driver needs working memory**, two kilobytes of
+it, which no chip-driven player does.
+
+That console is also what turned two latent bugs into failures. A register number
+identifies nothing where a board has two devices — `$25` is the Game Boy channels'
+panning byte *and* the mixer's fifth voice's right level — so `PackOptions` grew
+`mergeChip` beside `mergeRegs`; and `sfx/index.ts` had been dropping `chip` from
+every write it made since it was written, which the Mega Drive survived only
+because it places its effects on chip zero.
 
 **And the Super Nintendo, which is a fourth driver and a different shape of
 problem.** Its sound hardware is a second computer: an SPC700 with its own 64 KiB,
@@ -730,7 +752,8 @@ justification for the whole ChipScript design.
 **Level A — schedule equality (exact, runs in `pnpm test`).** *Built for the Game
 Boy as a cartridge of its own (`packages/audio/test/rom.test.ts`), and for every
 console with a game backend inside a game — the Game Boy, the NES, the Sega
-8-bits and the Mega Drive (`packages/demotic/test/_audio-battery.ts`).*
+8-bits, the Mega Drive, the Super Nintendo and the Game Boy Advance
+(`packages/demotic/test/_audio-battery.ts`).*
 Boot the generated ROM in a core we own,
 log every write to the chip with its tick, and diff against the ChipScript.
 `@demake/dmg` grew its APU by consuming `@demake/chip` — which it needed anyway
@@ -746,6 +769,27 @@ make it observable and the ROM under test is the ROM that ships. And the tap
 (`Gameboy.apuTap`) *observes* rather than intercepts — the write still reaches
 the chip — because an oracle that changed what the hardware saw would be testing
 itself.
+
+**Level A, for a console whose chip is a mixer.** The Game Boy Advance is the one
+machine here where "the writes the chip received" does not describe half the
+sound: six of its ten voices are `@demake/chip`'s `GbaPcm`, a register file of
+demake's own that the *processor* reads, so nothing about them crosses a bus and
+there is no register stream to diff. What the driver owes there is **the samples
+themselves**, byte for byte, against what the model renders from the same
+schedule — and that is a sharper claim than a register diff, not a weaker one,
+because the comparison is against the audio rather than against an instruction to
+make it. It is exact because the mixing is integer throughout. The two halves are
+proved in the two places that can prove them: the four Game Boy channels by the
+shared battery, and the six mixer voices by
+`packages/demotic/test/audio-gba.test.ts`, which taps the bytes crossing into the
+converters' queues (`Gba.fifoTap`) and observes rather than intercepts, exactly as
+the register tap does.
+
+One trap is worth stating, because it makes such a test pass while proving
+nothing: the arranger gives each part the channel that serves it best, so a
+four-part MIDI on a ten-voice console uses four voices — and on this one they are
+usually the Game Boy's. A mixer diff pointed at such a track compares silence with
+silence. The proof names a track whose parts land on the sample voices.
 
 **Level B — sample comparison against third-party cores (CI).** The existing
 libretro harness already receives an audio callback and currently discards it;

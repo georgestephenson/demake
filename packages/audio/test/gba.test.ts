@@ -25,6 +25,8 @@ import { GBA_PCM_KON, GBA_PCM_VOICES } from "@demake/chip";
 import { PSG_MIX_GAIN } from "@demake/gba";
 
 import { arrangeScore } from "../src/arrange/index.js";
+import type { ChipScript } from "../src/chipscript.js";
+import { packScript } from "../src/rom/data.js";
 import { bindingFor } from "../src/binding/registry.js";
 import { GBA_APU_CHANNELS, GBA_PSG_GAIN } from "../src/binding/gba.js";
 import { sampleBank, sampleNumber, WAVEFORMS, WAVE_SAMPLES } from "../src/binding/gba-bank.js";
@@ -137,5 +139,56 @@ describe("the artifact", () => {
     // RIFF/WAVE, rather than a VGM with two thirds of the music missing.
     expect(String.fromCharCode(...result.artifact.subarray(0, 4))).toBe("RIFF");
     expect(String.fromCharCode(...result.artifact.subarray(8, 12))).toBe("WAVE");
+  });
+});
+
+describe("packing a schedule for a board with two devices", () => {
+  /** A tick's worth of writes, as `packScript` takes them. */
+  const script = (writes: readonly { reg: number; value: number; chip: number }[]): ChipScript => ({
+    console: "gba",
+    chips: spec.chips,
+    driver: { rate: { num: 128, den: 1 }, source: "timer" },
+    ticks: [{ writes: [...writes] }],
+    loopTick: 0,
+    channels: [],
+    timing: {
+      source: "timer",
+      requestedBpm: 0,
+      achievedBpm: 0,
+      ppmError: 0,
+      rowsPerBeat: 0,
+      maxOnsetDeviationMs: 0,
+      accumulates: false,
+    },
+    budgets: { writes: writes.length, peakWritesPerTick: writes.length, writeBudget: 120 },
+  });
+
+  it("does not fold a mixer voice's level into the Game Boy's panning byte", () => {
+    // `$25` is `NR51` on chip zero and the fifth voice's right level on chip one.
+    // Without `mergeChip` the second was packed as a *merge* run, and the driver
+    // folded it into `NR51` — the music's stereo image replaced by a volume, at
+    // the first tick, on every build with an effect in it. The run header's
+    // merge bit is `$40`.
+    const data = packScript(script([{ reg: 0x25, value: 0x77, chip: 1 }]), {
+      channelOf: () => () => 0,
+      mergeRegs: new Set([0x25]),
+      mergeChip: 0,
+      port: (reg, chip) => (chip === 0 ? reg : 0x40 | reg),
+    });
+    const block = data.blocks[0] as Uint8Array;
+    // count, flags, register, value — and the flags must not claim a merge.
+    expect(block[0]).toBe(1);
+    expect((block[1] as number) & 0x40).toBe(0);
+  });
+
+  it("still merges the register the Game Boy channels really do share", () => {
+    const data = packScript(script([{ reg: 0x25, value: 0x77, chip: 0 }]), {
+      channelOf: () => () => 0,
+      mergeRegs: new Set([0x25]),
+      mergeChip: 0,
+      port: (reg, chip) => (chip === 0 ? reg : 0x40 | reg),
+    });
+    const block = data.blocks[0] as Uint8Array;
+    expect((block[1] as number) & 0x40).toBe(0x40);
   });
 });

@@ -63,6 +63,8 @@ import {
   type Ref,
 } from "@demake/core";
 
+import { GBA_STOP, type GbaGameAudio } from "@demake/audio";
+
 import type { InstanceDef, RuleDef } from "../../program.js";
 import { GBA_BLANK_TILE, glyphTile, patternTile } from "../../rom/graphics.js";
 import { isMutable } from "../analyze.js";
@@ -297,6 +299,18 @@ export interface GbaEmitOptions {
   objectPalette?: Uint8Array;
   /** Per-scene background palettes, where a backdrop chose its own. */
   scenePalettes?: ReadonlyMap<string, Uint8Array>;
+  /**
+   * The game's audio driver, already built from its demade tracks and effects.
+   *
+   * Absent for a game with none, and then everything below is exactly what it was
+   * before this console had sound — no interrupt dispatch, no service call in the
+   * main loop, and no two kilobytes of mixing accumulator in the heap.
+   */
+  audio?: GbaGameAudio;
+  /** Which driver effect each of the program's `sound` files became. */
+  effectIndices?: readonly number[];
+  /** Which track each scene plays, as the index the request byte takes. */
+  sceneTracks?: readonly number[];
 }
 
 // --- small shapes ------------------------------------------------------------
@@ -427,8 +441,8 @@ export function emitProgram(ctx: GbaCtx, options: GbaEmitOptions = {}): void {
   asm.padTo(CODE_ORIGIN + GBA_HEADER_SIZE);
 
   emitReset(ctx, options);
-  emitVblank(ctx);
-  emitMainLoop(ctx);
+  emitVblank(ctx, options);
+  emitMainLoop(ctx, options);
   emitInput(ctx);
   emitTickDispatch(ctx, scenes);
   emitSceneChange(ctx, scenes);
@@ -442,6 +456,7 @@ export function emitProgram(ctx: GbaCtx, options: GbaEmitOptions = {}): void {
 
   emitRenderHelpers(ctx);
   emitTileContactHelper(ctx);
+  if (options.audio) options.audio.emitCode(asm);
   ctx.finish();
 
   // --- data ------------------------------------------------------------------
@@ -510,6 +525,21 @@ export function emitProgram(ctx: GbaCtx, options: GbaEmitOptions = {}): void {
   asm.align();
   asm.label("ObjectPalette");
   asm.bytes(options.objectPalette ?? defaultPalette());
+
+  if (options.audio) {
+    if (program.tracks.length > 0) {
+      asm.align();
+      asm.label("SceneTracks");
+      // One byte per scene: the request value that starts its track, or the one
+      // that stops the music. A table rather than a dispatch because a scene
+      // change already costs a redraw, and this is the cheapest thing in it.
+      for (const scene of scenes) {
+        const track = options.sceneTracks?.[scene.index] ?? -1;
+        asm.db(track < 0 ? GBA_STOP : track + 1);
+      }
+    }
+    options.audio.emitData(asm);
+  }
 }
 
 /**
@@ -641,6 +671,14 @@ function emitReset(ctx: GbaCtx, options: GbaEmitOptions): void {
   setIo(ctx, REG.IE, 0x0001);
   setIo(ctx, REG.IME, 0x0001);
 
+  // After the interrupt is live, because `AudioInit` adds its own bit to `IE` and
+  // starts the transfers that raise it — and because the entry scene's track is
+  // asked for here rather than at the first scene *change*, which never happens.
+  if (options.audio) {
+    asm.bl("AudioInit");
+    if (ctx.program.tracks.length > 0) asm.bl("SceneMusic");
+  }
+
   setIo(ctx, REG.DISPCNT, DISPCNT);
   asm.mov(A0, armImm(1));
   asm.strb(A0, mem(ctx, layout.booted));
@@ -714,22 +752,51 @@ function needPaletteCopy(ctx: GbaCtx): Ref {
  * and returns with `bx lr`; `r11` is untouched and still holds the work-RAM
  * base, which is what lets the frame flag be one store.
  */
-function emitVblank(ctx: GbaCtx): void {
+function emitVblank(ctx: GbaCtx, options: GbaEmitOptions): void {
   const { asm } = ctx;
   asm.label("Vblank");
-  // Acknowledge, in both places: `IF`, and the copy the BIOS keeps for its own
-  // `IntrWait`. A handler that clears one and not the other leaves a program
-  // that ever calls the second waiting for ever.
+  if (options.audio === undefined) {
+    // One source, so nothing to ask: acknowledge in both places — `IF`, and the
+    // copy the BIOS keeps for its own `IntrWait`. A handler that clears one and
+    // not the other leaves a program that ever calls the second waiting for ever.
+    asm.add(A2, A0, armImm(0x200));
+    asm.mov(A1, armImm(1));
+    asm.strh(A1, armAt(A2, 2));
+    asm.movImm32(ADDR, 0x03007ff8);
+    asm.ldrh(A3, armAt(ADDR, 0));
+    asm.orr(A3, A3, armReg(A1));
+    asm.strh(A3, armAt(ADDR, 0));
+
+    asm.strb(A1, mem(ctx, frameFlag(ctx)));
+    asm.bx(LR);
+    asm.ltorg();
+    return;
+  }
+
+  // Two sources now, so this becomes a dispatcher: the picture, and the sample
+  // transfer that is the audio driver's whole clock. What is *taken* is what is
+  // both raised and enabled — a source we never asked for stays in `IF` rather
+  // than being silently cleared here — and it is acknowledged before either
+  // handler runs, so a refill that lands during the frame's own work is still
+  // counted rather than lost.
+  asm.push([V0, LR]);
   asm.add(A2, A0, armImm(0x200));
-  asm.mov(A1, armImm(1));
-  asm.strh(A1, armAt(A2, 2));
+  asm.ldrh(A1, armAt(A2, 2));
+  asm.ldrh(A3, armAt(A2, 0));
+  asm.and(V0, A1, armReg(A3));
+  asm.strh(V0, armAt(A2, 2));
   asm.movImm32(ADDR, 0x03007ff8);
   asm.ldrh(A3, armAt(ADDR, 0));
-  asm.orr(A3, A3, armReg(A1));
+  asm.orr(A3, A3, armReg(V0));
   asm.strh(A3, armAt(ADDR, 0));
 
-  asm.strb(A1, mem(ctx, frameFlag(ctx)));
-  asm.bx(LR);
+  asm.tst(V0, armImm(1));
+  asm.mov(A1, armImm(1), "ne");
+  asm.strb(A1, mem(ctx, frameFlag(ctx)), "ne");
+
+  asm.tst(V0, armImm(options.audio.clock.interrupt));
+  asm.bl(options.audio.routines.irq, "ne");
+  asm.pop([V0, PC]);
   asm.ltorg();
 }
 
@@ -761,7 +828,7 @@ function emitClearState(ctx: GbaCtx): void {
   }
 }
 
-function emitMainLoop(ctx: GbaCtx): void {
+function emitMainLoop(ctx: GbaCtx, options: GbaEmitOptions): void {
   const { asm } = ctx;
   const wait = ctx.unique("waitFrame");
   // The flag is cleared *after* it is seen, not before the wait: a tick that
@@ -776,6 +843,11 @@ function emitMainLoop(ctx: GbaCtx): void {
   asm.bl("UploadFrame");
   asm.bl("ReadInput");
   asm.bl("Tick");
+  // After the tick, so an effect a rule asked for is heard this pass rather than
+  // next; after the upload, so the blanking interval it would have delayed is
+  // nobody's. Every block the transfer counted is performed here, which is a
+  // schedule tick and a mix each.
+  if (options.audio) asm.bl(options.audio.routines.service);
   asm.bl("BuildFrame");
   asm.b("Main");
   asm.ltorg();
@@ -871,6 +943,10 @@ function emitSceneChange(ctx: GbaCtx, scenes: readonly SceneCtx[]): void {
   asm.strb(A0, mem(ctx, layout.scene));
   asm.mov(A0, armImm(0xff));
   asm.strb(A0, mem(ctx, layout.pending));
+  // Music follows the scene, so it starts where the scene does. Asking for it
+  // rather than starting it here is what keeps the request one byte: the driver
+  // is serviced from the loop, and a scene change is not where it happens.
+  if (ctx.audio?.driver === true && ctx.program.tracks.length > 0) asm.bl("SceneMusic");
   asm.bl("ResetScene");
   emitSeedRng(ctx);
   emitClearState(ctx);
@@ -879,6 +955,16 @@ function emitSceneChange(ctx: GbaCtx, scenes: readonly SceneCtx[]): void {
   asm.strb(A0, mem(ctx, layout.redraw));
   asm.pop([PC]);
   asm.ltorg();
+
+  if (ctx.audio?.driver === true && ctx.program.tracks.length > 0) {
+    asm.label("SceneMusic");
+    asm.ldrb(A0, mem(ctx, layout.scene));
+    asm.movImm32(ADDR, label("SceneTracks"));
+    asm.ldrb(A0, armAtIdx(ADDR, A0));
+    asm.strb(A0, mem(ctx, ctx.audio.music));
+    asm.bx(LR);
+    asm.ltorg();
+  }
 
   asm.label("ResetScene");
   asm.push([LR]);

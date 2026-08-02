@@ -389,6 +389,15 @@ export {
   type GbaHeaderOptions,
 } from "./asm/gba-cart.js";
 export {
+  GB_TO_GBA_SOUND,
+  GBA_SOUND_ADDRESS,
+  GBA_SOUND_BASE,
+  GBA_SOUND_TO_GB,
+  GBA_SOUND_UNMAPPED,
+  gbaSoundAddress,
+  gbaSoundRegister,
+} from "./asm/gba-sound.js";
+export {
   NDS_ARM7_RAM,
   NDS_ARM7_WRAM_END,
   NDS_ARM7_WRAM_START,

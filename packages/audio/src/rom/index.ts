@@ -103,6 +103,12 @@ const GAME_CLOCKS: Readonly<Record<string, "timer" | "frame">> = {
 export function gameDriverRate(consoleId: string): number {
   const spec = getConsole(consoleId).audio;
   if (spec === undefined) return SFX_RATE_HZ / 2;
+  // The console before the chip, because on one machine the rate is a fact about
+  // neither: a Game Boy Advance driver's tick *is* a block of mixer samples, so
+  // its rate is the sample rate divided by that block and has nothing to do with
+  // the Game Boy APU its first chip happens to be.
+  const byConsole = CONSOLE_RATES[consoleId];
+  if (byConsole !== undefined) return byConsole;
   const chip = spec.chips[0] as string;
   const exact = GAME_RATES[chip];
   if (exact !== undefined) return exact;
@@ -123,6 +129,17 @@ export function gameDriverRate(consoleId: string): number {
 const GAME_RATES: Readonly<Record<string, number>> = { "s-dsp": 125 };
 
 /**
+ * Consoles whose rate is the *machine's* answer rather than a chip's.
+ *
+ * One so far, and it is the console whose second device is a software mixer: a
+ * driver tick there is one block of samples the processor computes, and a block
+ * is what the sample transfer's own interrupt counts out. 32768 ÷ 256 is 128
+ * exactly — no remainder, no drift, and no timer to programme (`gba-game.ts`
+ * §the clock is the transfer).
+ */
+const CONSOLE_RATES: Readonly<Record<string, number>> = { gba: 32768 / 256 };
+
+/**
  * Consoles a *game* can embed a driver for — the fourth registry the support
  * matrix is derived from.
  *
@@ -137,11 +154,13 @@ const GAME_RATES: Readonly<Record<string, number>> = { "s-dsp": 125 };
  *   - `sms`, `gg` — Z80 (`rom/sms-game.ts`)
  *   - `md` — 68000 (`rom/md-game.ts`)
  *   - `snes` — SPC700 (`rom/spc-game.ts`), and it is not the console's own CPU
+ *   - `gba` — ARM (`rom/gba-game.ts`), and it is the one that has to *compute*
+ *     half of what it plays rather than only describing it
  *
- * The Game Boy Advance is absent, which is the point of having the list: its
- * hardware is fully described and modelled, and the ARM driver that would play a
- * demade schedule is not written. Deriving the matrix from the *spec* said it
- * played music.
+ * Keeping it by console is what let the Game Boy Advance be absent from it for
+ * as long as its ARM driver was: its four Game Boy channels are the same
+ * `gb-apu` a Game Boy has, and deriving the matrix from the *spec* said it
+ * played music the day the hardware was described.
  */
 const GAME_DRIVERS: readonly string[] = [
   "dmg",
@@ -153,6 +172,7 @@ const GAME_DRIVERS: readonly string[] = [
   "gg",
   "snes",
   "md",
+  "gba",
 ];
 
 /** Whether a `demake build` cartridge for this console can play its audio. */
