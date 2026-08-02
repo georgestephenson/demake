@@ -233,6 +233,11 @@ selection were two answers to one question and the file is the better one. What
 the tabs were also carrying was the commands, and those are the menu bar's now
 (doc 07 §The workbench).
 
+**And it folds away, from a button on the title bar** rather than only from a
+menu — on a phone it opens folded, because the tree stacks above the editor at
+that width and a third of the screen spent on a file list is a third the editor
+does not get (doc 07 §The workbench).
+
 **A bare URL opens the project's game**, chosen by §Defaults the folder now
 supplies. The art demaker was the landing page only because it was the first
 section written, and a visitor arriving at a tool that turns a game into
