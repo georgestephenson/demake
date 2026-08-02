@@ -76,6 +76,12 @@ const FAMILIES: readonly FamilyDescriptor[] = [
     extension: () => "md",
     load: async () => anyBackend((await import("./md.js")).mdBackend),
   },
+  {
+    family: "gba",
+    consoles: ["gba"],
+    extension: () => "gba",
+    load: async () => anyBackend((await import("./gba.js")).gbaBackend),
+  },
 ];
 
 function descriptorFor(consoleId: string): FamilyDescriptor | undefined {

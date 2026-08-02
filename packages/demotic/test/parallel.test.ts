@@ -143,6 +143,26 @@ const SLOW = [
   { game: "quest", consoleId: "md" },
 ];
 
+/**
+ * The Game Boy Advance is *not* here, and the reason is a number rather than a
+ * judgement.
+ *
+ * Its art path shares a bank out max-min fair on demands read off a first pass,
+ * exactly as the Mega Drive's and the NES's do, so on the face of it it belongs
+ * in the matrix above. What it costs is the problem: a fit for this console is
+ * 38,400 pixels against **252 centroids**, and a k-means iteration is O(N·K) —
+ * so one picture is minutes where a Mega Drive's 320×224 into sixteen colours is
+ * seconds, and one case is around eight minutes of a twenty-minute suite.
+ *
+ * What that case would test is covered: the sharing, the interning and the scene
+ * ordering are `fairShares` and `TilePool` in `gba-art.ts`, which are the same
+ * shape the other two run and are exercised by them here — and the *bytes* the
+ * page and the CLI produce for this console are compared by
+ * `packages/web/test/e2e/determinism.spec.ts`, which builds `caves` for every
+ * console with a backend. Adding it here is worth doing the day a 256-colour fit
+ * is cheaper; skipping it silently would not be.
+ */
+
 /** One executor for the whole file, so the job count means something at the end. */
 const fanOut = adversarial();
 

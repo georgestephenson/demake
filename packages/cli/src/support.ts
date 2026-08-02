@@ -17,7 +17,7 @@
  */
 
 import { consoles, type ConsoleSpec } from "@demake/core";
-import { gameDriverRate } from "@demake/audio";
+import { audioConsoles, gameDriverRate, hasGameAudio } from "@demake/audio";
 import { familyFor } from "@demake/demotic";
 
 import { romBuilderFor } from "./rom/registry.js";
@@ -86,11 +86,17 @@ function gameFamily(spec: ConsoleSpec): string | undefined {
   return undefined;
 }
 
-/** Whether a console's chip has a driver a *game* can embed. */
+/**
+ * Whether a console's chip has a driver a *game* can embed, and at what rate.
+ *
+ * Two registries have to agree before there is a rate to report, and neither is
+ * the console spec: a backend has to exist for the cartridge to go in, and a
+ * driver has to exist for that machine's CPU. The Game Boy Advance is why this
+ * asks rather than reading `spec.audio` — its sound hardware is fully described
+ * and its ARM driver is not written, so the spec alone would say it plays music.
+ */
 function gameAudio(spec: ConsoleSpec, game: string | undefined): number | undefined {
-  // A driver only reaches a cartridge through a game backend, so a console with
-  // no backend has no rate to report even where the chip is modelled.
-  if (game === undefined || spec.audio === undefined) return undefined;
+  if (game === undefined || !hasGameAudio(spec.id)) return undefined;
   return gameDriverRate(spec.id);
 }
 
@@ -114,7 +120,10 @@ export function consoleSupport(): ConsoleSupport[] {
       ...(builder ? { toolchain: builder.toolchain } : {}),
       ...(EMULATOR_PROVEN[spec.id] ? { emulator: EMULATOR_PROVEN[spec.id]! } : {}),
       ...(game ? { game } : {}),
-      audio: spec.audio !== undefined,
+      // What `arrange`, `sfx` and `render` can actually demake, which is the
+      // binding registry rather than the spec: a console can have its hardware
+      // described before anything encodes for it.
+      audio: audioConsoles().includes(spec.id),
       ...((): { gameAudioHz?: number } => {
         const hz = gameAudio(spec, game);
         return hz === undefined ? {} : { gameAudioHz: hz };

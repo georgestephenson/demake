@@ -158,12 +158,12 @@ rom` and *not* for `demake build`. Encoders pay for more than one console:
 | 6502 | built (`core/src/asm/mos6502.ts`) | NES, **Atari 7800**; the CMOS additions extend it to Lynx and Supervision |
 | HuC6280 | a 65C02 superset — additive over the above | PC Engine, TurboExpress |
 | Z80 | built (`core/src/asm/z80.ts`) | Master System, Game Gear; the SG-1000 needs no more of it |
-| 68000 | new | Mega Drive, Neo Geo |
-| 65816 | new, but extends the 6502 | SNES |
-| ARM/Thumb | new | GBA, NDS |
+| 68000 | built (`core/src/asm/m68k.ts`) | Mega Drive, Neo Geo |
+| 65816 | built (`core/src/asm/wdc65816.ts`) | SNES |
+| ARM | built (`core/src/asm/arm.ts`) | **GBA, NDS** — one encoder for three processors, since a DS has two |
 | V30MZ (8086) | new | WonderSwan, WonderSwan Color |
 | TLCS-900/H | new, and the largest of them | Neo Geo Pocket, NGP Color |
-| SPC700 | new, and a *second* CPU on one console | SNES audio only |
+| SPC700 | built (`core/src/asm/spc700.ts`) | SNES audio only |
 
 Four consoles therefore need no new encoder at all: the Mega Duck, the Atari
 7800, the Lynx and the Supervision. The Mega Duck needs nothing new anywhere,
@@ -625,6 +625,105 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     sub-palettes for background art, one for objects, one reserved for the font,
     and the font's ink chosen against the backdrop because colour zero is
     transparent on *both* layers here.
+
+    **The ARM pair is started, and the spine under them is built.** A Game Boy
+    Advance and a Nintendo DS are one encoder between them —
+    `core/src/asm/arm.ts`, ARMv4T in ARM state — and it is the first in the set
+    with two oracles: hand-read encodings, as every other encoder gets, *and* a
+    differential battery against `arm-none-eabi-as`, which the display-ROM
+    harnesses already provision. That second one earns its place here in a way it
+    would not on an 8-bit CPU: those have an opcode per addressing form, so a
+    wrong byte is a wrong instruction, while ARM packs five operand shapes into
+    twelve bits and a shift written into the wrong nibble still decodes as
+    something.
+
+    The architecture's one genuinely new demand on an emitter is the **literal
+    pool**: a 32-bit constant does not fit in a 32-bit instruction, so a value the
+    rotated immediate cannot express has to be *loaded* from a word within 4 KiB
+    of the load that reads it. `ldrConst` emits the load now and `ltorg` places
+    the word later, which keeps the encoder single-pass; a pool that cannot be
+    reached is an error naming the flush rather than a silent truncation.
+
+    `@demake/gba` is the fifth owned core: an ARM7TDMI, a mode-0 2D engine, DMA,
+    timers, and both halves of the sound. Two of its decisions are the ones that
+    will shape the backend above it. The **four background layers with
+    independent scroll** retire the mechanism every other console here needs — a
+    scrolling scene's HUD is drawn with sprites on a Game Boy because the
+    background moves as one piece, and here it simply gets a layer. And the
+    per-line object budget is measured in **cycles rather than a count of eight**,
+    so a wide object is affordable and `E_SPRITE_BUDGET`'s reasoning changes shape
+    on this machine.
+
+    Sound is where this console is unlike every predecessor, and the design is
+    settled: it has *both* kinds of hardware. Four Game Boy channels sit at
+    `$4000060`–`$4000084` under a permuted register map — `@demake/chip`'s
+    `GbApu` reached through a machine description, the Mega Duck's arrangement
+    exactly — and two direct-sound channels sit beside them being fed eight-bit
+    samples by DMA. The second half is a **software mixer**, which is the first
+    thing in this project that doc 16's "a timed register-write schedule" does not
+    describe, and the contract survives restated one level up: the registers are a
+    mixer's rather than a chip's, and what a driver must reproduce is *the samples
+    themselves*, byte for byte, against what `@demake/chip`'s new `GbaPcm`
+    renders. That is a sharper claim than a register diff, not a weaker one,
+    because the comparison is against the audio rather than against an instruction
+    to make it — and it is exact, because the mixing is integer throughout.
+
+    **The Game Boy Advance is the sixth console, and it is the first one whose
+    hardware is bigger than the language needs in every direction at once.**
+    `demake build -c gba` produces a real cartridge — ARM machine code written for
+    the game, a 256-colour mode-0 background, a second layer carrying nothing but
+    the HUD, and object art in a bank of its own — and the whole example library
+    traces identically there, in the same battery, at the same one frame a tick.
+    Nothing moved out of `backend.ts` or `shape.ts` for it either.
+
+    Most of what is new about this backend is machinery the other five have that
+    it *does not*. Four independently scrolling backgrounds mean the HUD gets a
+    layer, so the sprite HUD every other console needs for a scrolling scene, the
+    second decimal renderer that drives it and the whole pixel-pinning argument
+    are simply absent: layer one's scroll registers are written once at boot, and
+    a caption's cell is `floor(pos) − floor(camera)` on both axes. A cell has 256
+    colours and no palette field, so a picture is fitted into one flat palette
+    rather than partitioned into sub-palettes and `maxSubPalettes` does not apply
+    — which is why the font's reservation is expressed in *colours* here, three of
+    256 against the quarter a Mega Drive gives up. Backgrounds and objects have
+    separate character memory and separate palettes, so this is the first console
+    where a full-screen picture cannot starve the sprites and `checkTiles` refuses
+    two budgets. And the map is bigger than the screen on both axes, so there is
+    no seam to mask.
+
+    What it charges for instead is *addressing*. A halfword transfer reaches ±255
+    where a word transfer reaches ±4095, so the value layer has two addressing
+    functions and the four narrow forms are only reachable through helpers that
+    pick one — an emitter that used the wide one for a `strh` assembles fine until
+    a game grows past the first 256 bytes of its own state. The converse bit the
+    scroll registers: an address past the base register's reach is materialised
+    into `r12` immediately before the access, so a hardware base held there is a
+    base the next load overwrites, and the symptom is a register that is never
+    written rather than a crash. And a 32-bit constant does not fit in a 32-bit
+    instruction, so a rule body longer than 4 KiB has to place its literal pool
+    early, over a branch, at a point the emitter chooses.
+
+    Three things are the instruction set's rather than the console's: a collision
+    box is one `ldm` and one `stm`, a short conditional is a predicated pair with
+    no label, and the decimal renderer keeps its whole state in callee-saved
+    registers *across* the call that plots a glyph — which no other backend can
+    do, and which is only sound because every routine in this backend keeps
+    `r4`–`r11`.
+
+    The rendering oracle is `gba-rom.test.ts`, and it is where the block layout is
+    settled: a 64×64 map is four 32×32 screen blocks a kilobyte apart rather than
+    a rectangle, so the test computes the address the hardware's way and checks
+    every visible cell against the level's own grid once the camera has crossed
+    into each of them. It also pins the property the HUD-layer design rests on —
+    a camera-pinned caption occupying the same cells for forty frames while the
+    picture scrolls under it.
+
+    What remains for both consoles: the ARM audio drivers and their bindings —
+    the Game Boy Advance's cartridges compile and play silently today, recording
+    what a rule asked for exactly as the Super Nintendo's did before its SPC700
+    driver landed — the Nintendo DS backend, and, for the DS, a second core with
+    two processors in it, since its sound registers are the ARM7's alone.
+
   - **D5 — Play ROM in the page** *(done for `gb`, `gbc`, `nes`, `sms`, `gg` and
     `md`)*: the browser
     compiles the

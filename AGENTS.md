@@ -254,11 +254,95 @@ whichever chip the running core has, through the same `StreamSink`. Every consol
 with a backend now has one, the Mega Drive included, so the only thing that can
 take the button away is a browser that will not give the page an `AudioContext`.
 
+**And the ARM handhelds are started.** `core/src/asm/arm.ts` is the sixth
+encoder and the first that buys three processors — a Game Boy Advance, and both
+of a Nintendo DS's — and `@demake/gba` is the fifth owned core: an ARM7TDMI in
+ARM state, a mode-0 2D engine with four independently scrolling background layers
+and a per-line object budget measured in cycles rather than a count of eight, DMA,
+timers, and both halves of this console's sound. The Game Boy channels are
+`@demake/chip`'s `GbApu` behind a permuted register map (the Mega Duck's
+arrangement), and the direct-sound half is a _software mixer_ — the first thing
+here that doc 16's "timed register-write schedule" does not describe, and the
+contract survives restated: what a driver has to reproduce is the samples
+themselves, byte for byte, against what `GbaPcm` renders. What is still to come
+for these two is in doc 13 §D4.
+
+**And it builds for a Game Boy Advance.** `demake build -c gba` produces a real
+cartridge — ARM machine code written for the game, a 256-colour mode-0 background
+and a second layer that carries nothing but the HUD — and the whole example
+library traces identically there, in the same battery, at the same one frame per
+tick. This is the sixth backend and the first whose console is bigger than the
+language needs in every direction at once, so most of what is new about it is
+machinery the other five have that this one _does not_.
+
+The **HUD gets a layer of its own**, which is the first real use of having four
+backgrounds. On every other console a scrolling scene has to draw its captions
+with hardware sprites, because the background moves as one piece and a cell of it
+cannot be held still; here layer one's scroll registers are written once at boot
+and never again, so a caption's cell is `floor(pos) − floor(camera)` and cannot
+drift by a pixel. The sprite HUD, the second decimal renderer that drives it and
+the whole pinning argument are absent rather than reimplemented.
+
+**A cell has 256 colours and no palette field, and objects have a bank and a
+palette of their own.** A screen entry in this mode is ten bits of tile and two
+flip bits — the hardware ignores the palette nibble — so a picture is fitted into
+one palette of 256 rather than partitioned into sub-palettes at all, and
+`maxSubPalettes` does not apply. The reservation for the font is therefore in
+_colours_: three of 256, against the quarter a Mega Drive gives up. And 48 KiB of
+background character memory sits beside 32 KiB of object character memory, so
+this is the first console here where a full-screen picture cannot starve the
+sprites — `checkTiles` refuses two budgets rather than one.
+
+**The map is bigger than the screen on both axes and is four screen blocks.**
+64×64 cells against 30×20, so a scrolling scene paints its leading edge where
+nobody is looking and none of the Master System's masking exists — but "the cell
+after column 31" is a kilobyte away rather than one halfword, which is the Super
+Nintendo's tilemap hazard with two more blocks in it. `gba-rom.test.ts` computes
+the address the hardware's way and checks every visible cell against the level's
+own grid once the camera has crossed into each block.
+
+Three things are the instruction set's rather than the console's. A collision box
+is one `ldm` and one `stm`; a short conditional is a predicated pair with no
+label at all; and the decimal renderer keeps its whole state in callee-saved
+registers _across_ the call that plots a glyph, which no other backend can do —
+the Mega Drive's keeps its digit and its running value in render words precisely
+because a 68000 helper helps itself to every register there is.
+
+**There is no sound on this console yet**, and that is a gap rather than a
+decision: the hardware is fully described (`gbaAudio` — ten voices, four Game Boy
+channels and six the sample mixer carries) and fully modelled, and what does not
+exist is the ARM driver that would play a demade schedule. A `.dmt` that names
+music compiles, records the request its rules make, and traces identically to a
+build that played it — which is the same position the Super Nintendo was in
+before its SPC700 driver landed.
+
+The _demakers_ do reach it: `demake arrange -c gba`, `sfx` and `render` demake
+this console's ten voices through `binding/gba.ts`, which is the second two-chip
+binding and the first whose chips are different kinds of thing — the Game Boy
+half is `gb.ts` called rather than restated, and the mixer half has no shared
+register to merge because `KON` is a pulse. Two things about it are worth
+knowing before touching either. **Noise is a sample**, because a mixer has no
+noise generator: percussion plays a recording of the Game Boy's own shift
+register out of `binding/gba-bank.ts`, which is why the spec declares one noise
+period rather than sixteen. And **the artifact is a WAV**, because half the
+schedule addresses a register file that is demake's own — a VGM carrying only
+the four Game Boy channels would be a schedule with two thirds of the music
+missing, presented as the schedule.
+
+That gap is also why **the support matrix asks the encoders rather than the
+specs**. "Does this console demake music" is `audioConsoles()` — the binding
+registry — and "does a cartridge play it" is `gameAudioConsoles()`, which is the
+audio driver table AGENTS.md's §Iron rules already counted as one of the four.
+Both used to read `spec.audio`, and the moment this console's hardware was
+described that said yes to both. A driver is a _CPU's_: the same `gb-apu` is
+driven by an SM83 on a Game Boy and would need an ARM7 here, so those tables are
+keyed by console and not by chip.
+
 Still to come: the remaining Tier 2/3 consoles (each = a codegen backend, a ROM
 harness + toolchain, and a libretro core + DAC calibration), the remaining
-framebuffer/scanline layout paths (Lynx, GBA/NDS bitmap modes, 2600/7800), and
-the rest of the Demotic runtime story (the Mega Drive's 68000 and the speed work
-doc 14 §Runtime model names).
+framebuffer/scanline layout paths (Lynx, GBA/NDS bitmap modes, 2600/7800), the
+ARM audio driver the Game Boy Advance's cartridges are waiting on, and the rest
+of the Demotic runtime story (the speed work doc 14 §Runtime model names).
 
 **The audio spine is built, and two consoles boot** (docs
 [16](docs/16-audio-engine.md), [17](docs/17-music-demaker.md),
@@ -317,14 +401,20 @@ to undo by accident (§Working on audio).
 
 ```
 packages/core/       @demake/core — the engine (zero platform deps; ESM; ships types)
-  src/asm/           the SM83, 6502, Z80, 65816, SPC700 and 68000 assemblers + the
-                     GB, iNES, Sega, LoROM and Mega Drive cartridge wrappers —
+  src/asm/           the SM83, 6502, Z80, 65816, SPC700, 68000 and ARM assemblers
+                     + the GB, iNES, Sega, LoROM, Mega Drive, GBA and DS
+                     cartridge wrappers —
                      shared by the Demotic game backends and the audio drivers, so
                      no backend owns the encoder for its own CPU. megaduck.ts is
                      the Mega Duck's I/O map, here because three things read it
                      (the core, the audio driver, the game backend). The SPC700 is
                      the odd one out: it is nobody's main processor, and the only
-                     thing written in it is a sound driver
+                     thing written in it is a sound driver. arm.ts is the
+                     opposite: one encoder for three consoles (a GBA, and both
+                     of a DS's processors), and the only one whose *constants*
+                     need a mechanism — a 32-bit literal does not fit in a
+                     32-bit instruction, so `ldrConst`/`ltorg` are a literal
+                     pool rather than an addressing mode
   src/math/          deterministic kernels (exp/log/pow/cbrt/sin) + PCG32 PRNG
   src/parallel/      the executor seam: work described as jobs, run wherever the
                      edge says. `jobs.ts` is the contract and the inline runner
@@ -393,6 +483,17 @@ packages/md/         @demake/md — a self-hosted Mega Drive core: a 68000, a VD
                      YM2612 beside it and `demake build` emits neither, so an FM
                      write reaches a Z80 bus that answers as RAM — which is what
                      the hardware does to a 68000-only program
+packages/gba/        @demake/gba — a self-hosted Game Boy Advance core: an
+                     ARM7TDMI in ARM state, a mode-0 2D engine with four
+                     background layers and 128 objects, DMA, timers, and both
+                     halves of the sound. The Game Boy channels are
+                     @demake/chip's GbApu behind a *permuted register map* (the
+                     Mega Duck's arrangement); `sound.ts` is the pair of
+                     converters DMA feeds, which is not the same object as the
+                     mixer that decides what to feed them. Thumb, the affine
+                     modes and every bitmap mode are absent rather than
+                     half-implemented, and the interrupt dispatcher is six
+                     instructions of ours rather than Nintendo's BIOS
 packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs 14, 15)
   src/lang/          lex → parse → flat statement AST (one statement per line, no nesting)
   src/lang/highlight.ts  TextMate scopes for `.dmt` source — the registry's words,
@@ -427,6 +528,7 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
     sms.ts, sms-art.ts, sms/              the Z80 backend and its image path
     snes.ts, snes-art.ts, snes/           the 65816 backend and its image path
     md.ts, md-art.ts, md/                 the 68000 backend and its image path
+    gba.ts, gba-art.ts, gba/              the ARM backend and its image path
     audio.ts         the hand-off to @demake/audio, art.ts's twin
   demo/              terminal runner (play.mjs) and test runner (test.mjs)
 packages/chip/       @demake/chip — every sound chip as a register-driven model (doc 16)
@@ -439,6 +541,11 @@ packages/chip/       @demake/chip — every sound chip as a register-driven mode
                      decoding, ADSR and GAIN, and a pitch register that
                      *multiplies* where every other chip here divides. Echo and
                      pitch modulation are absent rather than half-implemented
+  src/gba-pcm.ts     the Game Boy Advance's sample half, and the only model here
+                     that is a *mixer* rather than a generator: six voices, a
+                     pitch that multiplies, and an exact integer mix the ARM
+                     driver has to reproduce sample for sample. Its register
+                     file is demake's own, deliberately shaped like the S-DSP's
   src/mix.ts         exact box-integration render, DC block, the one renderer
   src/stream.ts      the same renderer for a chip that is still running: the
                      ring buffer the web app's ROM pane plays from
@@ -1514,6 +1621,56 @@ most of the value layer stops being a problem and three new ones appear.
   call is a `bsr`, because there the distance is a few hundred bytes and visible
   in one file.
 
+### The ARM half
+
+`demake build -c gba` builds a playable Game Boy Advance cartridge, and the whole
+example library traces identically on it. What this architecture makes an
+emitter's business:
+
+- **A 32-bit constant does not fit in a 32-bit instruction.** The immediate field
+  is an eight-bit value rotated by an even amount, so `movImm32` takes `mov`,
+  `mvn` or a _pooled load_ depending on the value — one instruction either way,
+  which is what keeps the assembler single-pass. The pool it loads from has to be
+  within 4 KiB _ahead_ of the load, so `ltorg()` goes after every routine, past
+  the instruction that returns. A pool in the middle of a reachable instruction
+  stream is executed.
+- **A halfword transfer reaches ±255 and a word transfer ±4095.** That is not a
+  detail: the I/O page is a kilobyte and almost every register on this console is
+  a halfword, so one held base register cannot reach all of it. It is also why
+  `val.ts` has two addressing functions rather than one — `mem` for `ldr`/`str`
+  and the four narrow forms only through `loadHalf`/`storeHalf`/`loadHalfSigned`,
+  which pick the addressing rather than take it. An emitter that used `mem` for a
+  `strh` assembles fine right up until a game grows past the first 256 bytes of
+  its own state.
+- **`r12` may not hold anything across a call into `val.ts`.** That is the
+  converse of the same rule: an address past the base register's reach is
+  materialised into `r12` immediately before the access that uses it, so an
+  emitter that set a hardware base up there and then loaded a value has silently
+  changed where its store lands. It presents as a register that is never written
+  — the scroll registers, in the flesh — rather than as a crash.
+- **A pool has to be placed, and `poolCheck` is where.** A rule body can be
+  longer than the 4 KiB a pooled load reaches, so an emitter calls
+  `ctx.poolCheck()` at a safe point — between rules, between objects, inside a
+  tile walk — and it puts the pool down over a branch. The check happens while
+  the code is being _emitted_, so it costs nothing at run time.
+- **A 16.16 value is a register, and so is its product.** `smull` gives the
+  64-bit product a fixed-point multiply needs, and the barrel shifter folds the
+  normalising shift into the instruction that consumes it — so the value layer
+  should be smaller than the Mega Drive's, and this is the first console in the
+  set with _no_ divide instruction at all.
+- **Every instruction is conditional**, so a short `if` is a predicated pair with
+  no branch. That is why `ArmCond` is a parameter on every method rather than a
+  property of the branch methods.
+- **Work RAM is two regions and they are not interchangeable.** 32 KiB of
+  internal RAM on a 32-bit bus with no wait states, and 256 KiB of external RAM
+  on a 16-bit bus with two — so a game's state goes in the internal one and the
+  bus model in `@demake/gba` charges for the difference. `wait()` is where that
+  is stated.
+- **The interrupt vector is not a cartridge's to install.** `$00000018` is BIOS
+  ROM, so a handler is reached through the pointer at `$03007FFC`, in IRQ mode,
+  with `r0`–`r3`, `r12` and `lr` already saved by the dispatcher and everything
+  else the handler's own business.
+
 ## Working on audio
 
 The spine, both demakers and four CPUs' drivers are built; these are the rules
@@ -1723,6 +1880,14 @@ you are writing the wrong one of the two.
   compiled, recorded the request its rules made, and traced identically to a build
   that played it. A gap that changed what a _trace_ says is the one that must be
   named.
+- **A 256-colour fit is expensive because K is large, not because the picture
+  is.** A k-means iteration is O(pixels × centroids), so the Game Boy Advance's
+  240×160 against 252 centroids costs minutes where a Mega Drive's 320×224
+  against sixteen costs seconds. That is why this console is in `rom.test.ts`
+  (no art) and in the browser determinism spec (once) but _not_ in
+  `parallel.test.ts`, which would build it twice — the omission is stated in
+  that file rather than left to be discovered, and what it would have covered is
+  `fairShares` and `TilePool`, which the other two consoles run.
 - **The parallel contract is tested at four levels, and they are not redundant.**
   `packages/core/test/parallel.test.ts` pins the ordering rules with executors
   that run jobs backwards and interleave two tournaments (fast, no threads);
@@ -1740,8 +1905,8 @@ you are writing the wrong one of the two.
   via the `.claude/` SessionStart hook.
 - The Demotic ROM conformance suite (`packages/demotic/test/rom.test.ts`) builds
   a cartridge from each fixture game **for every console with a backend** — both
-  Game Boys, the Mega Duck, the NES, both Sega 8-bits, the Super Nintendo and the
-  Mega Drive — and runs it in the matching self-hosted core, asserting the trace
+  Game Boys, the Mega Duck, the NES, both Sega 8-bits, the Super Nintendo, the
+  Mega Drive and the Game Boy Advance — and runs it in the matching self-hosted core, asserting the trace
   matches the reference interpreter tick for tick. No toolchain, no emulator
   install, so it runs everywhere `pnpm test` does. Running the same battery on all
   eight is what makes `Backend` a contract rather than a resemblance, and each
@@ -1754,6 +1919,15 @@ you are writing the wrong one of the two.
   8-bit consoles share. It also checks the Duck's cartridge _fails_ on a Game
   Boy — identical traces are also what a register map that had quietly become the
   identity would produce.
+- `packages/demotic/test/gba-arith.test.ts` and `gba-rom.test.ts` are the Game
+  Boy Advance's pair, and the second is where the things a trace cannot see are
+  checked: that _two_ banks arrived in two places, that the map's four screen
+  blocks are all painted once the camera has crossed into them, that the reserved
+  colours survive whatever the art chose, that the object entries a frame did not
+  use are _hidden_ — this hardware has no link field to cut — and that a
+  camera-pinned caption occupies the same HUD cells for forty frames while the
+  picture scrolls under it. That last one is the claim the whole HUD-layer design
+  rests on, and it is the one property none of the other five backends can have.
 - `packages/demotic/test/md-arith.test.ts` and `md-rom.test.ts` are the Mega
   Drive's two oracles, and they are the pair every new backend gets: the first
   assembles each 16.16 operation on its own and compares with `fixed.ts`, the
@@ -1834,6 +2008,15 @@ you are writing the wrong one of the two.
   (which needs `pnpm toolchains` first) to exercise it. The capturer is built
   from `emu-harness/gb/capture.c` against `libsameboy`; web sessions get it via
   the `.claude/` SessionStart hook.
+- **The ARM encoder has two oracles, and the second is the reference
+  assembler.** `packages/core/test/arm.test.ts` pins hand-read encodings, which
+  is what every other encoder here gets; `arm-gnu.test.ts` assembles the same
+  battery with `arm-none-eabi-as` — already provisioned for the display-ROM
+  harnesses — and compares word for word, self-skipping without it. That is worth
+  more on this architecture than on the 8-bit ones: those have an opcode per
+  addressing form, so a wrong byte is a wrong instruction and a decoder finds it,
+  while ARM packs five operand shapes into twelve bits and a shift field written
+  into the wrong nibble still decodes as _something_.
 - CLI tests exercise both the pure `run()` function and the spawned built binary;
   the binary test skips when `dist` is absent, so run `pnpm build` first to
   include it (CI always does).

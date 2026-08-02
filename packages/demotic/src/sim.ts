@@ -57,7 +57,7 @@ import type {
   Side,
 } from "./program.js";
 import { ACTIONS } from "./program.js";
-import { advance, pick } from "./rng.js";
+import { draw } from "./rng.js";
 
 /** Which buttons are held this tick. */
 export type InputState = Partial<Record<Action, boolean>>;
@@ -205,10 +205,9 @@ export class Sim {
    * generator has to be specified rather than borrowed from the host.
    */
   private nextRandom(low: Fixed, high: Fixed): Fixed {
-    this.rng = advance(this.rng);
-    const lo = Math.floor(low / ONE);
-    const hi = Math.floor(high / ONE);
-    return hi <= lo ? fromInt(lo) : fromInt(lo + pick(this.rng, hi - lo + 1));
+    const drawn = draw(this.rng, low, high);
+    this.rng = drawn.state;
+    return drawn.value;
   }
 
   /** Ticks elapsed since construction. */

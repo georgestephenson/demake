@@ -403,13 +403,18 @@ function emitRngPick(ctx: SmsCtx): void {
   if (rng === null) throw new Error("random() without a generator allocated");
   const lo = layout.mathA;
   const hi = layout.mathB;
-  // The bound and the count outlive the call to `RngAdvance`, and `Mod16` uses
-  // the other half of the same block — which is why the two are numbered rather
-  // than named after what they hold.
+  // The bound and the count outlive the call to `Mod16`, which uses the other
+  // half of the same block — which is why the two are numbered rather than named
+  // after what they hold.
   const bound = layout.scratch + S.w0;
   const count = layout.scratch + S.w1;
   const low = ctx.unique("rngLow");
   const store = ctx.unique("rngStore");
+
+  // The generator advances first, and unconditionally — `rng.ts`'s `draw` is the
+  // definition, and the advance is not conditional on the bounds. At the top of
+  // the routine nothing is live yet, so the call costs no saves.
+  asm.call(ctx.need("RngAdvance", emitRngAdvance));
 
   // count = floor(hi) - floor(lo), in whole cells, and then one more.
   asm.ld16From("hl", mem(lo, 2));
@@ -419,8 +424,7 @@ function emitRngPick(ctx: SmsCtx): void {
   asm.aluN("or", 0);
   asm.sbcHL("de");
   // A count of zero or less means the bounds met or crossed: the low bound is
-  // the answer, and the generator is not advanced — which is behaviour, because
-  // *when* a draw happens is part of the language.
+  // the answer.
   ctx.far("m", low);
   asm.ld("a", "h");
   asm.alu("or", "l");
@@ -428,7 +432,6 @@ function emitRngPick(ctx: SmsCtx): void {
   asm.inc16("hl");
   asm.st16To(count, "hl");
 
-  asm.call(ctx.need("RngAdvance", emitRngAdvance));
   // The draw is the generator's high half, modulo the count.
   asm.ld16From("hl", mem(rng, 2));
   asm.ld16From("de", count);

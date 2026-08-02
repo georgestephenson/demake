@@ -32,7 +32,7 @@ import {
 // chip, the same clock, the same lattices — so the demakers work on it for free.
 // Where the console's registers live is a fact about the cartridge, applied when
 // a register number becomes an address, and never reaches a schedule.
-const CONSOLES = ["dmg", "gbc", "megaduck", "nes", "sms", "gg", "sg1000", "snes", "md"];
+const CONSOLES = ["dmg", "gbc", "megaduck", "nes", "sms", "gg", "sg1000", "snes", "md", "gba"];
 
 describe("ingest", () => {
   it("reads a Standard MIDI File into a score", () => {
@@ -273,12 +273,12 @@ describe("the console registry", () => {
     expect(audioConsoles().sort()).toEqual([...CONSOLES].sort());
   });
 
-  // The Game Boy Advance, because both sides of this merge had reached for the
-  // other's console here and neither is true any more. It wants a console with a
-  // spec in `@demake/core` and no audio in it, which is what a chip model has not
-  // been written for yet — the handhelds, from here on.
+  // The Nintendo DS, which is now the nearest console with a video spec and no
+  // audio in it — the Game Boy Advance had that job until its own spec landed.
+  // What this wants is a console whose sound hardware has no model yet, and the
+  // remaining handhelds are where those are.
   it("explains a console it cannot demake", () => {
-    expect(() => bindingFor("gba")).toThrow(/no audio spec yet/);
+    expect(() => bindingFor("nds")).toThrow(/no audio spec yet/);
   });
 });
 

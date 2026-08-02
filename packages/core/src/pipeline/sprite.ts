@@ -42,7 +42,7 @@ import { DemakeError } from "../errors.js";
 import { decodeImage } from "../image/decode.js";
 import type { RgbaImage } from "../image/rgba.js";
 import { makePrng, type Prng } from "../math/prng.js";
-import { getConsole } from "../consoles/registry.js";
+import { getConsole, withMode } from "../consoles/registry.js";
 import type { ConsoleSpec, TileLayout } from "../consoles/types.js";
 
 import { makeColorSpace, type HwColor, type HwColorSpace } from "./hwcolor.js";
@@ -151,6 +151,18 @@ export interface SpriteOptions {
    */
   packing?: Packing;
   /**
+   * Which of the console's selectable layouts to fit, by index into
+   * `ConsoleSpec.modes`.
+   *
+   * Omitted, the primary layout is used — which is what `prep` fits and what the
+   * display-ROM harnesses were built against. A caller passes this when the
+   * hardware has a mode the *primary* one is not: `demake build` asks the ARM
+   * consoles for their 256-colour tiled mode, because a game's sprites are better
+   * served by one palette of 256 than by sixteen of sixteen, and the still-image
+   * path's goldens should not move because of it.
+   */
+  mode?: number;
+  /**
    * Colours one palette may use, rather than the console's whole palette.
    *
    * The same reservation `maxPalettes` makes, for a machine that has no spare
@@ -162,8 +174,16 @@ export interface SpriteOptions {
   maxColors?: number;
 }
 
-/** How a tile's bitplanes are arranged in memory. */
-export type Packing = "interleaved" | "grouped" | "planar" | "packed4" | "pairs";
+/**
+ * How a tile's bitplanes are arranged in memory.
+ *
+ * `linear8` is the one that is not a bitplane arrangement at all: a 256-colour
+ * tile is one byte per pixel in reading order, which is what the ARM consoles'
+ * 2D engines take. It is here rather than being a separate path because
+ * everything above it — the fit, the dedup, the asset run — is identical, and
+ * "which byte layout does this hardware read" is the only question that differs.
+ */
+export type Packing = "interleaved" | "grouped" | "planar" | "packed4" | "pairs" | "linear8";
 
 /** A downscaled sprite in linear light, with straight alpha kept separate. */
 interface Sampled {
@@ -335,6 +355,14 @@ function packTile(
   bpp: number,
 ): Uint8Array {
   const bytes = new Uint8Array(8 * bpp);
+  if (packing === "linear8") {
+    for (let row = 0; row < 8; row += 1) {
+      for (let column = 0; column < 8; column += 1) {
+        bytes[row * 8 + column] = indices[(originY + row) * width + originX + column] as number;
+      }
+    }
+    return bytes;
+  }
   if (packing === "packed4") {
     for (let row = 0; row < 8; row += 1) {
       for (let column = 0; column < 8; column += 2) {
@@ -367,6 +395,15 @@ function packTile(
   }
   return bytes;
 }
+
+/**
+ * The layout a caller asked for: the primary one, or one of the selectable modes.
+ *
+ * A mode index that names nothing is an error rather than a silent fall back to
+ * the primary layout — a caller asking for 256 colours and quietly getting
+ * sixteen would produce art that is *valid* and half the picture it asked for,
+ * which is the hardest kind of wrong to notice.
+ */
 
 /** The point set one asset contributes to a palette fit. */
 function pointsFor(entry: Decoded): Points {
@@ -551,7 +588,7 @@ export function buildSpriteBank(
   options: SpriteOptions,
 ): SpriteBank {
   const spec = getConsole(options.console);
-  const layout = spec.layout;
+  const layout = withMode(spec, options.mode).layout;
   if (
     layout.kind !== "tiles" ||
     (layout as TileLayout).tileW !== 8 ||
@@ -563,10 +600,19 @@ export function buildSpriteBank(
     );
   }
   const bpp = (layout as TileLayout).bpp;
-  if (bpp !== 2 && bpp !== 4) {
+  if (bpp !== 2 && bpp !== 4 && bpp !== 8) {
     throw new DemakeError(
       "E_UNSUPPORTED_FAMILY",
-      `the sprite path emits 2bpp and 4bpp tiles and ${spec.name} uses ${bpp}bpp`,
+      `the sprite path emits 2bpp, 4bpp and 8bpp tiles and ${spec.name} uses ${bpp}bpp`,
+    );
+  }
+  // Eight bits a pixel is a byte a pixel, and no bitplane arrangement of one
+  // byte is meaningful — so a caller that asks for a plane packing on a
+  // 256-colour console has confused two consoles rather than chosen a layout.
+  if (bpp === 8 && options.packing !== undefined && options.packing !== "linear8") {
+    throw new DemakeError(
+      "E_UNSUPPORTED_FAMILY",
+      `a 256-colour tile is one byte per pixel; '${options.packing}' is a bitplane layout`,
     );
   }
 
@@ -592,7 +638,7 @@ export function buildSpriteBank(
     ? colorIndices(decoded, spec, tiles, usable, opaque, options)
     : monoIndices(decoded, total, usable, opaque);
 
-  const packing = options.packing ?? "interleaved";
+  const packing = options.packing ?? (bpp === 8 ? "linear8" : "interleaved");
   const bank: Uint8Array[] = [];
   const seen = new Map<string, number>();
   const art = new Map<string, SpriteArt>();

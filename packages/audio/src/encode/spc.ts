@@ -81,9 +81,29 @@ export function encodeSpc(script: ChipScript, options: SpcOptions = {}): Uint8Ar
   return out;
 }
 
-/** The artifact format a console's schedules are written in. */
-export function artifactFormat(chip: string | undefined): "vgm" | "spc" {
-  return chip === "s-dsp" ? "spc" : "vgm";
+/**
+ * The artifact format a console's schedules are written in.
+ *
+ * Three answers, and the third is the interesting one. VGM is a *write log*, so
+ * it is the artifact wherever the schedule is one and a block exists for the
+ * chip. A Super Nintendo schedule is an `.spc` because a write log without the
+ * sample RAM is not a piece of music. And a Game Boy Advance schedule is a
+ * **WAV**, because half of it addresses a *software mixer* — demake's own
+ * register file, which no container knows and none could usefully learn.
+ *
+ * That is not a weaker artifact. Doc 16's contract is that a driver reproduces
+ * what the model does, and on this console's sample half the thing to reproduce
+ * *is* the audio, byte for byte, because the mixing is integer throughout. A
+ * VGM carrying only the four Game Boy channels would be a schedule with a third
+ * of the music missing, presented as the schedule.
+ *
+ * Takes the whole chip list rather than the first of it, because that is the
+ * question: a console is its board.
+ */
+export function artifactFormat(chips: readonly (string | undefined)[]): "vgm" | "spc" | "wav" {
+  if (chips[0] === "s-dsp") return "spc";
+  if (chips.includes("gba-pcm")) return "wav";
+  return "vgm";
 }
 
 function writeAscii(out: Uint8Array, at: number, text: string, length: number): void {

@@ -15,14 +15,25 @@
  */
 
 import { GbApu } from "./gb-apu.js";
+import { GbaPcm } from "./gba-pcm.js";
 import { NesApu } from "./nes-apu.js";
 import { SDsp } from "./s-dsp.js";
 import { Sn76489 } from "./sn76489.js";
 import { Ym2612 } from "./ym2612.js";
 import type { ChipId, ChipModel } from "./types.js";
+import type { GbaSample } from "./gba-pcm.js";
 
 export type { ChipId, ChipModel, Pcm, RegisterWrite, SampleSink } from "./types.js";
 export { GbApu, GB_CLOCK_HZ } from "./gb-apu.js";
+export {
+  GbaPcm,
+  GBA_PCM_KOF,
+  GBA_PCM_KON,
+  GBA_PCM_RATE_HZ,
+  GBA_PCM_REGISTERS,
+  GBA_PCM_VOICES,
+  type GbaSample,
+} from "./gba-pcm.js";
 export { Sn76489, SN76489_CLOCK_HZ } from "./sn76489.js";
 export { NesApu, NES_CLOCK_HZ } from "./nes-apu.js";
 export { Ym2612, YM2612_CLOCK_HZ } from "./ym2612.js";
@@ -51,7 +62,7 @@ export { StreamSink, type StreamOptions } from "./stream.js";
 /** Construct a chip model by id — the one place a chip id becomes an object. */
 export function createChip(
   id: ChipId,
-  options: { stereo?: boolean; ram?: Uint8Array } = {},
+  options: { stereo?: boolean; ram?: Uint8Array; bank?: readonly GbaSample[] } = {},
 ): ChipModel {
   switch (id) {
     case "gb-apu":
@@ -62,6 +73,10 @@ export function createChip(
       return new NesApu();
     case "ym2612":
       return new Ym2612();
+    case "gba-pcm":
+      // A mixer with no waveforms renders silence, for the same reason a sample
+      // player with empty RAM does.
+      return new GbaPcm(options.bank === undefined ? {} : { bank: options.bank });
     case "s-dsp":
       // The only chip here that needs to be *given* something: a sample player
       // with no samples in its RAM renders silence, so whoever holds the

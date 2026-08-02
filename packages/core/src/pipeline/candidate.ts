@@ -25,7 +25,7 @@ import { crc32 } from "../image/png/checksums.js";
 import { authorSpaceUsesRaw } from "../image/dac.js";
 import { decodeImage } from "../image/decode.js";
 import type { RgbaImage } from "../image/rgba.js";
-import { getConsole } from "../consoles/registry.js";
+import { getConsole, withMode } from "../consoles/registry.js";
 import type { ConsoleSpec, TileLayout } from "../consoles/types.js";
 import { makePrng } from "../math/prng.js";
 import { defineJob } from "../parallel/jobs.js";
@@ -219,7 +219,7 @@ export function judgeReference(source: Uint8Array, options: PortablePrepOptions)
 }
 
 function deriveAnalysis(decoded: RgbaImage, options: PortablePrepOptions): SourceAnalysis {
-  const spec = getConsole(options.console);
+  const spec = withMode(getConsole(options.console), options.mode);
   const analysis = analyze(decoded);
   const profile: Profile =
     options.profile && options.profile !== "auto" ? options.profile : analysis.profile;
@@ -300,6 +300,7 @@ function fit(
     denoise: candidate.clean === true,
     collapse: candidate.clean === true,
     ...(options.maxSubPalettes === undefined ? {} : { maxPalettes: options.maxSubPalettes }),
+    ...(options.maxColors === undefined ? {} : { maxColors: options.maxColors }),
   };
   const space = makeColorSpace(spec);
   const layout = spec.layout as TileLayout;

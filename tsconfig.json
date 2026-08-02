@@ -27,6 +27,9 @@
       "path": "./packages/md"
     },
     {
+      "path": "./packages/gba"
+    },
+    {
       "path": "./packages/chip"
     },
     {
