@@ -37,4 +37,8 @@ than the first of it, because that is the question: a console is its board.
 
 Still to come on this machine: the ARM driver that would play any of it from
 inside a cartridge. The support matrix says so — it asks the driver table, not
-the spec.
+the spec. The web app's audio sections also still name every artifact `.vgm`,
+which is right for eight consoles and wrong for two; correcting it means the
+worker handing the page the extension alongside the bytes, because deciding it
+in the page would be a second implementation of `artifactFormat` (doc 07 §The
+web app must never grow conversion logic).
