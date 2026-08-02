@@ -1916,18 +1916,6 @@ main.text-layout .source-editor {
   color: var(--accent-ink);
 }
 
-/* The new entry's character sits against the button that spends it, so the
-   suggestion is visible — as a placeholder — before it is taken. */
-.legend-add {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.legend-note {
-  color: var(--warn);
-}
-
 .legend-name {
   font: inherit;
   font-size: 0.85rem;
@@ -1960,4 +1948,16 @@ main.text-layout .source-editor {
   background: var(--bg);
   color: var(--muted);
   cursor: pointer;
+}
+
+/* The new entry's character sits against the button that spends it, so the
+   suggestion is visible — as a placeholder — before it is taken. */
+.legend-add {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.legend-note {
+  color: var(--warn);
 }
