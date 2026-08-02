@@ -138,6 +138,18 @@ export class Arm7 {
   /** The visible register file; `r[15]` is the program counter. */
   readonly r = new Uint32Array(16);
 
+  /**
+   * Where the next instruction will be fetched from.
+   *
+   * The same name the other five cores' processors give it, so a harness that
+   * asks "which routine is this" reads the same on every machine — the audio
+   * conformance battery attributes a driver tick by program counter and is
+   * written once against all of them.
+   */
+  get pc(): number {
+    return this.r[15] as number;
+  }
+
   /** Negative. */
   n = false;
   /** Zero. */

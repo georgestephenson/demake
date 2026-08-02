@@ -718,18 +718,84 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     a camera-pinned caption occupying the same cells for forty frames while the
     picture scrolls under it.
 
-    What remains for both consoles: the ARM audio drivers and their bindings —
-    the Game Boy Advance's cartridges compile and play silently today, recording
-    what a rule asked for exactly as the Super Nintendo's did before its SPC700
-    driver landed — the Nintendo DS backend, and, for the DS, a second core with
-    two processors in it, since its sound registers are the ARM7's alone.
+    **And it has sound, which on this console means the driver computes half of
+    it.** `demake build -c gba` puts an ARM player in the cartridge
+    (`packages/audio/src/rom/gba-driver.ts`, `gba-game.ts`), and it is the sixth
+    generated driver and the first that is not only a driver: four of the ten
+    voices are a Game Boy's APU and reach it as stores, and the other six are
+    `@demake/chip`'s `GbaPcm` — a mixer whose register file is in work RAM and
+    whose output the processor has to produce, sample by sample, between one
+    block and the next.
 
-  - **D5 — Play ROM in the page** *(done for `gb`, `gbc`, `nes`, `sms`, `gg` and
-    `md`)*: the browser
+    So doc 16's Level A proof arrives in two halves here, and the second is the
+    sharper one. The register writes are diffed tick for tick by the same battery
+    five other machines run; the samples are diffed **byte for byte** against what
+    the model renders from the same schedule, which is a comparison against the
+    audio rather than against an instruction to make it, and which is exact
+    because the mixing is integer throughout.
+
+    Three of its answers are this console's rather than a predecessor's. **The
+    clock is the transfer**: a block of 256 samples is sixteen FIFO refills, so
+    the sixteenth refill's interrupt *is* a block boundary, and counting transfers
+    is exact where a timer at the same rate is not — a timer runs a fixed number
+    of bytes out of phase with a transfer that reads ahead, and the phase depends
+    on how deep the hardware's queue is. It also lands the rate on 128 Hz exactly.
+    **The mixing is the main loop's**, because twenty thousand cycles inside the
+    handler would be two refills the handler then never sees, so the frame-clocked
+    consoles' count-and-service split returns for a reason of this console's own.
+    And **the driver needs working memory** — two kilobytes of stereo accumulator,
+    a hundred times any other console's driver state, in internal RAM because the
+    mix loop touches it four times a sample.
+
+    One thing the driver exposes is not the driver's: **a four-part MIDI does not
+    fill a ten-voice machine.** The arranger gives each part the channel that
+    serves it best, so four parts take four voices — and on this console the four
+    it usually picks are the Game Boy's, which have envelopes and duties the mixer
+    has not. Most of the example library therefore plays entirely on the APU half,
+    and one track (`runner`'s `updraft.mid`) is what the mixer proof is pointed
+    at. Whether an arranger with spare voices should double a part rather than
+    leave them idle is doc 17's question, not this backend's, and it is open.
+
+    **And the Nintendo DS, which cost a description and no instructions.**
+    `demake build -c nds` produces a real `.nds` cartridge carrying the *same ARM
+    machine code* a Game Boy Advance build carries, and the whole example library
+    traces identically there. That is not a seventh backend: a DS's 2D engine A
+    is a Game Boy Advance's at the same register offsets with the same screen
+    entries and the same character formats, so it is a variant on the Mega Duck's
+    terms, and `codegen/gba/machine.ts` is the whole of it.
+
+    Five entries, and each is a way a cartridge can be perfect and dark. The
+    program is **copied into main RAM** rather than run from a bus, so the header
+    is a region in front of the image and the limit on a build is the megabyte
+    before its own heap. **A video RAM bank has to be pointed somewhere** before
+    anything is uploaded into it, and backgrounds and objects are two banks rather
+    than one array. **`DISPCNT` is a word**, and the field that decides whether
+    the engine's output reaches the screen at all sits in the half a halfword
+    store never writes. **The window is 32×24.** And **the loop watches the beam**,
+    because this machine's interrupt vector is inside data TCM and its base is a
+    CP15 setting rather than an address — a description to get exactly right for a
+    gain of nothing, since the main loop is what waits either way.
+
+    `@demake/nds` is the seventh owned core and the smallest, because the
+    processor and the engine are `@demake/gba`'s: what is there is the machine
+    around them. `nds-rom.test.ts` is the oracle for the description itself, and
+    `rom.test.ts` settles the sharper claim — the instructions are the other
+    machine's, so a trace that matched on one and not the other would mean part
+    of the description had leaked into the code a tick runs.
+
+    What remains for the pair: **sound on the DS**, which is a second processor's
+    job in a way no other console's is. Its sixteen channels answer to the ARM7
+    alone, so a driver for them is a program the ARM9 uploads and a core with two
+    processors to prove it in — the Super Nintendo's shape, one architecture along
+    (§A5, doc 16 §The proof).
+
+  - **D5 — Play ROM in the page** *(done for `gb`, `gbc`, `nes`, `sms`, `gg`,
+    `md`, `snes`, `gba` and `nds`)*: the browser
     compiles the
     game itself, because the assembler is ours and written in TypeScript, and
     demakes its art with our own rasteriser rather than the browser's. It boots
-    the result in `@demake/dmg`, `@demake/nes`, `@demake/sms` or `@demake/md` —
+    the result in `@demake/dmg`, `@demake/nes`, `@demake/sms`, `@demake/snes`,
+    `@demake/md`, `@demake/gba` or `@demake/nds` —
     ours, because
     doc 07 forbids a CDN core and a WASM core we cannot read is the same bargain
     in a different wrapper. The bytes are identical to `demake build`'s, pinned by
@@ -743,7 +809,9 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     screen — the machine's name, the canvas shape, the download's extension —
     describes the ROM that is running rather than the picker. Sound follows the
     cartridge too: the sound button plays whichever chip the running core has,
-    through the same `StreamSink` and the same `@demake/chip` models.
+    through the same `StreamSink` and the same `@demake/chip` models — including
+    the Game Boy Advance's *two*, whose second is a pair of converters rather than
+    a chip, and whose relative level is a fact about the board.
   - **D6 — language growth**, driven by fixtures beyond Pong. Levels, tiles, a
     scrolling camera, `stream`-composed courses and a seeded `random` have
     landed (doc 14 §Levels, §Composed levels, §Randomness). What is left:

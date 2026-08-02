@@ -21,15 +21,23 @@
  *     of two palettes. Every size assertion the 8-bit backends carry is about a
  *     game that nearly did not fit; the interesting decisions here are all in
  *     the art path.
- *   - **There is no sound yet, and that is a gap rather than a decision.** The
- *     hardware has the Game Boy's four channels *and* two sample channels fed by
- *     DMA (`@demake/chip`'s `GbApu` and `GbaPcm` both model it), but the ARM
- *     driver that would play a demade schedule does not exist — so a `.dmt` that
- *     names music compiles, records the request its rules make, and traces
- *     identically to a build that played it. Doc 13 §D4 is where that is tracked.
+ *   - **The sound is two devices and only one of them is a chip.** The Game
+ *     Boy's four channels are stores to a register page; the other six voices
+ *     are a mixer the processor runs, so this is the one backend whose audio
+ *     driver has to be handed *working memory* as well as a place to keep its
+ *     cursors — which is why `GBA_MEMORY.audioBytes` is two kilobytes where
+ *     every other console's is a few dozen.
  */
 
-import { AsmError, packGbaRom, type Executor } from "@demake/core";
+import { buildGbaGameAudio } from "@demake/audio";
+import {
+  AsmArm,
+  AsmError,
+  NDS_ARM7_RAM,
+  packGbaRom,
+  packNdsRom,
+  type Executor,
+} from "@demake/core";
 
 import { getProfile } from "../profiles.js";
 import type { Program } from "../program.js";
@@ -37,6 +45,7 @@ import { BUILTIN_TILES } from "../rom/graphics.js";
 
 import { type Analysis } from "./analyze.js";
 import type { AssetBytes } from "./art.js";
+import { bindAudio, effectIndices, trackForScene } from "./audio.js";
 import {
   buildRom,
   BuildError,
@@ -49,8 +58,9 @@ import {
 } from "./backend.js";
 import { ART_TILES, bindGbaArt, OBJECT_ART_TILES } from "./gba-art.js";
 import { GbaCtx } from "./gba/ctx.js";
-import { BANK_TILES, CODE_ORIGIN, emitProgram, type GbaEmitOptions } from "./gba/emit.js";
-import { GBA_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
+import { machineFor } from "./gba/machine.js";
+import { BANK_TILES, emitProgram, type GbaEmitOptions } from "./gba/emit.js";
+import { GBA_MEMORY, NDS_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
 
 /** The largest image the cartridge bus addresses. */
 export const ROM_LIMIT = 32 * 1024 * 1024;
@@ -69,13 +79,12 @@ interface GbaArt extends GbaEmitOptions {
 /**
  * What this backend's audio binding hands the emitter.
  *
- * The shape the other five have, with the driver half empty: there is no ARM
- * driver yet, so `present` is always false and nothing is emitted that plays a
- * note. What *is* here is `hooks`, and it matters — a rule with a `sound` still
- * records which effect it asked for, because that byte is a field of the trace
- * (doc 14 §Conformance). A build whose audio cannot be played has to trace
- * identically to one that can, or the conformance suite would be comparing two
- * different games.
+ * The shape the other five have, and it carries the same two things for the same
+ * reason: what the emitter needs to *play* the audio, and — separately — what a
+ * rule needs to record that it asked for a sound. The second survives a build
+ * with the files left out, because that is a field of the trace (doc 14
+ * §Conformance): a silent build has to trace identically to a sounding one, or
+ * the conformance suite would be comparing two different games.
  */
 interface GbaAudio extends BoundAudioShape {
   options: GbaEmitOptions;
@@ -83,14 +92,14 @@ interface GbaAudio extends BoundAudioShape {
   hooks?: { driver: boolean; music: number; request: number; effects: readonly number[] };
 }
 
-/** The Game Boy Advance's implementation of the build. */
+/** The Game Boy Advance's implementation of the build — and the Nintendo DS's. */
 export const gbaBackend: Backend<GbaArt, GbaAudio> = {
   family: "gba",
-  consoles: ["gba"],
+  consoles: ["gba", "nds"],
   cartridge: "a Game Boy Advance cartridge",
 
-  extension(): string {
-    return "gba";
+  extension(program: Program): string {
+    return program.profile.id === "nds" ? "nds" : "gba";
   },
 
   unsupported(program: Program): string[] {
@@ -101,8 +110,8 @@ export const gbaBackend: Backend<GbaArt, GbaAudio> = {
     return missing;
   },
 
-  memory(): MemoryPlan {
-    return GBA_MEMORY;
+  memory(program: Program): MemoryPlan {
+    return program.profile.id === "nds" ? NDS_MEMORY : GBA_MEMORY;
   },
 
   async bindArt(
@@ -145,34 +154,73 @@ export const gbaBackend: Backend<GbaArt, GbaAudio> = {
     }
   },
 
-  async bindAudio(program: Program): Promise<BoundAssets<GbaAudio>> {
+  async bindAudio(
+    program: Program,
+    assets: AssetBytes,
+    layout: Layout,
+    executor?: Executor,
+  ): Promise<BoundAssets<GbaAudio>> {
+    // The driver's state is work RAM the allocator set aside for it, which it
+    // only does for a program that names audio — so a game with none reaches
+    // here with nowhere to put a driver and does not need one.
+    const state = layout.audio;
+    const bound =
+      state === null
+        ? { driver: undefined, missing: [] as readonly string[], notes: [] as readonly string[] }
+        : await bindAudio(
+            program,
+            assets,
+            { build: (tracks, effects) => buildGbaGameAudio({ tracks, effects, state }) },
+            executor,
+          );
     const names = program.tracks.length > 0 || program.sounds.length > 0;
+    const driver = bound.driver;
+    const options: GbaEmitOptions = driver
+      ? {
+          audio: driver,
+          effectIndices: effectIndices(program, bound),
+          sceneTracks: trackForScene(program, bound),
+        }
+      : {};
     const emit: GbaAudio = {
-      present: false,
-      options: {},
-      tracks: 0,
-      effects: 0,
-      code: 0,
-      data: 0,
-      helpers: [],
-      rateHz: 0,
-      writesRestricted: 0,
+      present: driver !== undefined,
+      options,
+      tracks: driver?.stats.tracks ?? 0,
+      effects: driver?.stats.effects ?? 0,
+      // Queries, not copies: the driver is emitted during `assemble`, which has
+      // not run yet, so its sizes are still zero here (`backend.ts`
+      // §BoundAudioShape).
+      get code(): number {
+        return driver?.stats.code ?? 0;
+      },
+      get data(): number {
+        return driver?.stats.data ?? 0;
+      },
+      get helpers(): readonly string[] {
+        return driver?.stats.helpers ?? [];
+      },
+      rateHz: driver ? driver.stats.rate.num / driver.stats.rate.den : 0,
+      writesRestricted: driver?.stats.writesRestricted ?? 0,
       ...(names
         ? {
             hooks: {
-              driver: false,
-              music: 0,
-              request: 0,
-              effects: program.sounds.map(() => -1),
+              driver: driver !== undefined,
+              music: driver?.request.music ?? 0,
+              request: driver?.request.sfx ?? 0,
+              effects: options.effectIndices ?? program.sounds.map(() => -1),
             },
           }
         : {}),
     };
-    return { emit, tiles: 0, missing: [] };
+    return { emit, tiles: 0, missing: bound.missing, notes: bound.notes };
   },
 
   assemble({ program, analysis, layout, art, audio, title }): Assembled {
-    const ctx = new GbaCtx(program, analysis, layout, getProfile(program.profile.id), CODE_ORIGIN);
+    const machine = machineFor(program.profile.id);
+    if (machine === undefined) {
+      throw new BuildError("E_INTERNAL", `this backend does not build for ${program.profile.name}`);
+    }
+    const ctx = new GbaCtx(program, analysis, layout, getProfile(program.profile.id), machine);
     if (audio.hooks) {
       ctx.audio = {
         driver: audio.hooks.driver,
@@ -184,7 +232,7 @@ export const gbaBackend: Backend<GbaArt, GbaAudio> = {
     }
     let code: Uint8Array;
     try {
-      emitProgram(ctx, art);
+      emitProgram(ctx, { ...art, ...audio.options });
       code = ctx.asm.assemble();
     } catch (error) {
       if (error instanceof AsmError) {
@@ -199,27 +247,51 @@ export const gbaBackend: Backend<GbaArt, GbaAudio> = {
     if (ctx.asm.symbols().get("Reset") === undefined) {
       throw new BuildError("E_INTERNAL", "the code generator emitted no entry point");
     }
-    if (code.length > ROM_LIMIT) {
+    if (code.length > machine.codeLimit) {
       throw new BuildError(
         "E_GAME_TOO_LARGE",
-        `this game compiles to ${code.length} bytes and the cartridge bus reaches ${ROM_LIMIT}`,
+        `this game compiles to ${code.length} bytes and ${machine.id === "nds" ? "the space before its own state" : "the cartridge bus"} holds ${machine.codeLimit}`,
+        machine.id === "nds"
+          ? "a Nintendo DS binary is copied into main RAM, and the heap starts a megabyte along"
+          : undefined,
       );
     }
-    // Rounded up to 32 KiB by the wrapper, which is padding for the sake of a
-    // predictable artifact rather than a hardware requirement: this console has
-    // no size field and no mirroring rule to satisfy.
-    const bytes = packGbaRom(code, {
-      ...(title === undefined ? {} : { title: title.slice(0, 12).toUpperCase() }),
-    });
+    const stamp = title === undefined ? {} : { title: title.slice(0, 12).toUpperCase() };
+    // Rounded up to 32 KiB (or to the next power of two at least 128 KiB) by the
+    // wrapper, which is padding for the sake of a predictable artifact rather
+    // than a hardware requirement: neither console has a size field a game has
+    // to satisfy.
+    const bytes =
+      machine.id === "nds" ? packNdsRom(code, arm7Stub(), stamp) : packGbaRom(code, stamp);
     return {
       bytes,
       code: code.length,
-      capacity: ROM_LIMIT,
+      capacity: machine.codeLimit,
       symbols: ctx.asm.symbols(),
       helpers: ctx.helperNames(),
     };
   },
 };
+
+/**
+ * The ARM7's binary, which is four bytes and a branch to itself.
+ *
+ * A `.nds` carries two programs and the header is the only thing that says which
+ * bytes are whose, so the second one has to exist even when it has nothing to do
+ * — the display-ROM harness's `arm7.s` is the same four bytes for the same
+ * reason. It is *assembled* rather than written down as a word so that the one
+ * encoder emits it, which is the same discipline every other instruction in this
+ * backend is under.
+ *
+ * The day this console gets sound it stops being a stub: its sound registers are
+ * the ARM7's alone, so a driver for them runs here (doc 13 §D4).
+ */
+function arm7Stub(): Uint8Array {
+  const asm = new AsmArm(NDS_ARM7_RAM);
+  asm.label("Arm7Park");
+  asm.b("Arm7Park");
+  return asm.assemble();
+}
 
 /** What to stamp in the cartridge, and what source bytes to demake. */
 export type GbaRomOptions = BuildOptions;

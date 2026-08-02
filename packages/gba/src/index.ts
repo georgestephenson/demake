@@ -53,6 +53,7 @@ export {
   PpuError,
   VRAM_SIZE,
   type Frame,
+  type PpuOptions,
 } from "./ppu.js";
 export { DirectSound, FIFO_REFILL_AT, FIFO_SIZE } from "./sound.js";
 export {

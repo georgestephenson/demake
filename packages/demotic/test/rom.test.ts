@@ -31,6 +31,7 @@ import {
   ggTarget,
   mdTarget,
   megaduckTarget,
+  ndsTarget,
   nesTarget,
   RomRunner,
   romTrace,
@@ -65,6 +66,7 @@ const TARGETS: readonly RomTarget[] = [
   snesTarget,
   mdTarget,
   gbaTarget,
+  ndsTarget,
 ];
 
 describe("gb ROM", async () => {

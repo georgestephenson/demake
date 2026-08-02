@@ -30,7 +30,12 @@ export async function bootPlayer(
     case "md":
       return (await import("./md.js")).boot(rom);
     case "gba":
-      return (await import("./gba.js")).boot(rom);
+      // Two machines behind one family, decided by the console rather than the
+      // family: a Nintendo DS runs the same cartridge code on a bigger screen,
+      // so it is a second *player* and not a second backend.
+      return consoleId === "nds"
+        ? (await import("./nds.js")).boot(rom)
+        : (await import("./gba.js")).boot(rom);
     default:
       return (await import("./gb.js")).boot(rom, consoleId);
   }

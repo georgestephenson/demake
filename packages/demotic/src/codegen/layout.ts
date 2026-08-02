@@ -31,7 +31,7 @@
  * able to read either machine's entity table with one function.
  */
 
-import { MD_AUDIO_BYTES, NES_AUDIO_BYTES, SMS_AUDIO_BYTES } from "@demake/audio";
+import { GBA_AUDIO_BYTES, MD_AUDIO_BYTES, NES_AUDIO_BYTES, SMS_AUDIO_BYTES } from "@demake/audio";
 
 import type { Program } from "../program.js";
 
@@ -572,7 +572,13 @@ export const GBA_MEMORY: MemoryPlan = {
   // blanking interval.
   queueMax: 128,
   plotMax: 96,
-  audioBytes: 0,
+  // The largest driver state of any console here, and by a factor of a hundred —
+  // because most of it is the **mixing accumulator**, a 32-bit word per side per
+  // sample of one block. This console's second sound device is software, so its
+  // driver has to keep working space the way a chip-driven one never does; two
+  // kilobytes of a twenty-eight-kilobyte heap is what that costs, and it buys the
+  // six voices the hardware would otherwise not have at all.
+  audioBytes: GBA_AUDIO_BYTES,
   // A screen entry is a halfword — ten bits of tile, one of each flip, four of
   // palette — so a queued cell carries its data as two bytes, the same shape the
   // Game Boy Color's attribute byte and the Sega VDP's second byte have.
@@ -588,6 +594,41 @@ export const GBA_MEMORY: MemoryPlan = {
   // Little-endian, and word accesses want a word boundary — a `ldr` from an
   // unaligned address *rotates* on this core rather than faulting, which is a
   // wrong number rather than a crash and therefore worse.
+  align: 4,
+};
+
+/**
+ * The Nintendo DS's, which is the Game Boy Advance's plan on a bigger machine.
+ *
+ * Three things differ and each is the console's rather than a preference. The
+ * heap is in **main RAM** rather than in a fast internal region, because the
+ * program itself was copied there and there is nothing else — 64 KiB of it,
+ * starting a megabyte past the program so that a build that grew a long way and
+ * a heap that grew a long way would still not meet. The window is **32×24 cells**
+ * against 30×20. And **no interrupt bytes**, because this backend watches the
+ * beam here rather than a handler (`codegen/gba/machine.ts` §frame), so there is
+ * no flag for a handler to raise.
+ *
+ * `audioBytes` is zero, and that is a gap rather than a decision: this console's
+ * sound registers are the ARM7's and there is no driver for it yet, so a game
+ * that names music builds, records what its rules asked for, and plays silently
+ * — exactly the position the Game Boy Advance was in before its ARM driver
+ * landed. Doc 13 §D4 is where it is tracked.
+ */
+export const NDS_MEMORY: MemoryPlan = {
+  machine: "Nintendo DS",
+  heapStart: 0x02100000,
+  heapEnd: 0x02110000,
+  oamShadow: 0x02110000,
+  oamEntries: 128,
+  viewW: 32,
+  viewH: 24,
+  queueMax: 128,
+  plotMax: 96,
+  audioBytes: 0,
+  cellAttributes: true,
+  interruptBytes: 0,
+  loopBytes: 6,
   align: 4,
 };
 

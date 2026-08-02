@@ -1,5 +1,6 @@
 /**
- * Binding a program's art for the Game Boy Advance.
+ * Binding a program's art for the Game Boy Advance — and for the Nintendo DS,
+ * which is the same 2D engine on a bigger screen.
  *
  * The counterpart of `art.ts`, `nes-art.ts`, `sms-art.ts`, `snes-art.ts` and
  * `md-art.ts`, and it calls the same engine. A second converter here is how the
@@ -58,7 +59,7 @@ import {
   SYSTEM_PAPER,
   type GbaEmitOptions,
 } from "./gba/emit.js";
-import { GBA_MEMORY } from "./layout.js";
+import { GBA_MEMORY, NDS_MEMORY, type MemoryPlan } from "./layout.js";
 
 /**
  * Demaking is expensive, deterministic, and asked for over and over.
@@ -75,6 +76,19 @@ const bankCache = new Map<string, SpriteBank>();
 
 /** Which of the console's selectable layouts a game is fitted into. */
 const GAME_MODE = 0;
+
+/**
+ * The window a picture is fitted to, which is the *machine's* rather than the
+ * family's.
+ *
+ * Both consoles declare the same 256-colour mode and both fit through the same
+ * path; what differs is the screen, and a picture demade at the wrong one is a
+ * picture cropped or letterboxed by exactly the difference. Read off the memory
+ * plan so that the fit's box and the map the renderer walks are one number.
+ */
+function planFor(consoleId: string): MemoryPlan {
+  return consoleId === "nds" ? NDS_MEMORY : GBA_MEMORY;
+}
 
 /** Tiles left for background art once the built-in bank has its share. */
 export const ART_TILES = BANK_TILES - GBA_BUILTIN_TILES;
@@ -165,15 +179,17 @@ interface Backdrop {
 
 /** Demake one scene's backdrop through the image pipeline. */
 async function demakeBackdrop(
+  consoleId: string,
   bytes: Uint8Array,
   maxTiles: number,
   executor: Executor | undefined,
 ): Promise<Backdrop> {
-  const spec = withMode(getConsole("gba"), GAME_MODE);
+  const plan = planFor(consoleId);
+  const spec = withMode(getConsole(consoleId), GAME_MODE);
   const fitted = await prep(bytes, {
-    console: "gba",
+    console: consoleId,
     mode: GAME_MODE,
-    size: { w: GBA_MEMORY.viewW * 8, h: GBA_MEMORY.viewH * 8 },
+    size: { w: plan.viewW * 8, h: plan.viewH * 8 },
     fit: "cover",
     // Four of the 256 are the runtime's; there is no sub-palette to reserve on
     // this console, so the reservation is in colours (see the file header).
@@ -181,8 +197,8 @@ async function demakeBackdrop(
     maxTiles,
     ...(executor === undefined ? {} : { executor }),
   });
-  const backend = backendFor("gba");
-  if (!backend) throw new Error("the gba image backend is missing");
+  const backend = backendFor(consoleId);
+  if (!backend) throw new Error(`the ${consoleId} image backend is missing`);
   const artifacts = backend.emitBin(fitted.image, spec, {
     symbol: "backdrop",
     header: [],
@@ -213,6 +229,8 @@ export async function bindGbaArt(
   assets: AssetBytes,
   executor?: Executor,
 ): Promise<BoundGbaArt> {
+  const consoleId = program.profile.id;
+  const plan = planFor(consoleId);
   const requests = artRequests(program);
   const missing: string[] = [];
   const sources: Record<"sprite" | "tile", SpriteSource[]> = { sprite: [], tile: [] };
@@ -244,13 +262,13 @@ export async function bindGbaArt(
   const demakeBank = (kind: "sprite" | "tile"): SpriteBank | null => {
     const list = sources[kind];
     if (list.length === 0) return null;
-    const key = `gba:${kind}:${list.map((source) => `${source.name}:${digest(source.bytes)}`).join("|")}`;
+    const key = `${consoleId}:${kind}:${list.map((source) => `${source.name}:${digest(source.bytes)}`).join("|")}`;
     return remember(
       bankCache,
       key,
       () =>
         buildSpriteBank(list, {
-          console: "gba",
+          console: consoleId,
           mode: GAME_MODE,
           // One byte a pixel: a 256-colour tile is not a bitplane arrangement at
           // all, and it is the only packing this mode has.
@@ -310,8 +328,8 @@ export async function bindGbaArt(
   const convert = (source: Uint8Array, cap: number): Promise<Backdrop> =>
     rememberAsync(
       backdropCache,
-      `gba:${cap}:${digest(source)}`,
-      () => demakeBackdrop(source, cap, executor),
+      `${consoleId}:${cap}:${digest(source)}`,
+      () => demakeBackdrop(consoleId, source, cap, executor),
       CACHE_LIMIT,
     );
 
@@ -329,10 +347,10 @@ export async function bindGbaArt(
   const internAll = (arts: readonly Backdrop[]): { pool: TilePool; maps: Uint8Array[] } => {
     const pool = new TilePool(known, poolStart, GBA_TILE_BYTES);
     const maps = arts.map((art) => {
-      const map = new Uint8Array(PACK_W * GBA_MEMORY.viewH * 2);
-      for (let row = 0; row < GBA_MEMORY.viewH; row += 1) {
-        for (let column = 0; column < GBA_MEMORY.viewW; column += 1) {
-          const cell = row * GBA_MEMORY.viewW + column;
+      const map = new Uint8Array(PACK_W * plan.viewH * 2);
+      for (let row = 0; row < plan.viewH; row += 1) {
+        for (let column = 0; column < plan.viewW; column += 1) {
+          const cell = row * plan.viewW + column;
           const word = (art.map[cell * 2] as number) | ((art.map[cell * 2 + 1] as number) << 8);
           const local = word & 0x03ff;
           const at = local * GBA_TILE_BYTES;

@@ -45,7 +45,7 @@
 import { armAsr, armAt, armImm, armLsl, armLsr, armReg, fitsArmImm } from "@demake/core";
 
 import type { GbaCtx } from "./ctx.js";
-import { A0, A1, A2, A3, ADDR, RAM, RAM_BASE, RAM_WINDOW } from "./regs.js";
+import { A0, A1, A2, A3, ADDR, RAM, RAM_WINDOW } from "./regs.js";
 
 /** 1.0 in 16.16. */
 export const ONE = 0x10000;
@@ -96,7 +96,7 @@ export function imm(v: number): Val {
  */
 export function mem(ctx: GbaCtx, addr: number, offset = 0): ReturnType<typeof armAt> {
   const target = addr + offset;
-  const delta = target - RAM_BASE;
+  const delta = target - ctx.layout.memory.heapStart;
   if (delta >= 0 && delta < RAM_WINDOW) return armAt(RAM, delta);
   ctx.asm.movImm32(ADDR, target);
   return armAt(ADDR, 0);
@@ -119,7 +119,7 @@ export function mem(ctx: GbaCtx, addr: number, offset = 0): ReturnType<typeof ar
  * immediate — and fall back to a full materialisation past 4 KiB.
  */
 function memHalf(ctx: GbaCtx, addr: number): ReturnType<typeof armAt> {
-  const delta = addr - RAM_BASE;
+  const delta = addr - ctx.layout.memory.heapStart;
   if (delta >= 0 && delta < 0x100) return armAt(RAM, delta);
   if (delta >= 0 && delta < RAM_WINDOW) {
     ctx.asm.add(ADDR, RAM, armImm(delta & 0xf00));

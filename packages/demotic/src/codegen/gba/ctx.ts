@@ -20,10 +20,12 @@
  *     must not sit anywhere the instruction stream can reach — so
  *     {@link GbaCtx.routine} flushes past the return, which is both.
  *
- * There is no per-console question for this backend to answer. The Sega context
- * has `gameGear` and the Game Boy's has `color`, because each builds for two
- * machines; this one builds for one, and the DS is a second backend rather than
- * a flag here, because its sound lives on a processor this one does not have.
+ * The per-console question this backend answers is {@link GbaCtx.machine}, and it
+ * is the Sega context's `gameGear` and the Game Boy's `color` one console along:
+ * a Nintendo DS's 2D engine A is a Game Boy Advance's, so the second machine is
+ * a *description* — where the program lives, where objects answer, what has to
+ * be switched on, how the loop waits — and not a second emitter
+ * (`machine.ts` §the two machines).
  */
 
 import { AsmArm, type ArmCond, type Ref } from "@demake/core";
@@ -34,7 +36,8 @@ import type { Analysis } from "../analyze.js";
 import { CtxBase } from "../ctx.js";
 import type { Layout } from "../layout.js";
 
-import { LR, PC, RAM, RAM_BASE } from "./regs.js";
+import type { GbaMachine } from "./machine.js";
+import { LR, PC, RAM } from "./regs.js";
 
 /** A branch condition, as ARM names them. */
 export type Cond = ArmCond;
@@ -45,16 +48,19 @@ export type GbaHelperBody = (ctx: GbaCtx) => void;
 /** The Game Boy Advance compilation context. */
 export class GbaCtx extends CtxBase<GbaCtx, AsmArm> {
   readonly asm: AsmArm;
+  /** Which of the two machines this build is for. */
+  readonly machine: GbaMachine;
 
   constructor(
     program: Program,
     analysis: Analysis,
     layout: Layout,
     profile: ConsoleProfile,
-    origin = 0,
+    machine: GbaMachine,
   ) {
     super(program, analysis, layout, profile);
-    this.asm = new AsmArm(origin);
+    this.machine = machine;
+    this.asm = new AsmArm(machine.origin);
   }
 
   /**
@@ -133,8 +139,15 @@ export class GbaCtx extends CtxBase<GbaCtx, AsmArm> {
     this.asm.label(over);
   }
 
-  /** Put the work-RAM base in its register; the boot code's first job. */
+  /**
+   * Put the work-RAM base in its register; the boot code's first job.
+   *
+   * The plan's own `heapStart` rather than a constant beside it, because the two
+   * being one number is what makes `mem`'s window arithmetic true: a base
+   * register that pointed anywhere else would put every access one machine's
+   * distance from where the allocator put it.
+   */
   loadRamBase(): void {
-    this.asm.movImm32(RAM, RAM_BASE);
+    this.asm.movImm32(RAM, this.layout.memory.heapStart);
   }
 }

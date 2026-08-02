@@ -56,12 +56,12 @@ import {
   armLsr,
   armReg,
   fitsArmImm,
-  GBA_HEADER_SIZE,
   GBA_IRQ_VECTOR,
-  GBA_ORIGIN,
   label,
   type Ref,
 } from "@demake/core";
+
+import { GBA_STOP, type GbaGameAudio } from "@demake/audio";
 
 import type { InstanceDef, RuleDef } from "../../program.js";
 import { GBA_BLANK_TILE, glyphTile, patternTile } from "../../rom/graphics.js";
@@ -122,9 +122,6 @@ import {
   sub32,
 } from "./val.js";
 
-/** Where a cartridge is mapped, and therefore where its code is assembled. */
-export const CODE_ORIGIN = GBA_ORIGIN;
-
 /** The hardware register page. */
 const IO = 0x04000000;
 
@@ -137,8 +134,16 @@ const PAL_OBJ = 0x05000200;
 /** Video RAM. The first 64 KiB is background character data and maps. */
 const VRAM = 0x06000000;
 
-/** Where object character data starts, inside the same region. */
-const OBJ_VRAM = 0x06010000;
+/**
+ * Where object character data starts.
+ *
+ * The machine's, because it is the one video address the two consoles do not
+ * share: the top of the same 96 KiB on a Game Boy Advance, a second window
+ * filled by a second video RAM bank on a Nintendo DS (`machine.ts`).
+ */
+function objVram(ctx: GbaCtx): number {
+  return ctx.machine.objVram;
+}
 
 /** Object attribute memory. */
 const OAM = 0x07000000;
@@ -256,28 +261,25 @@ const BG0CNT = 0xc000 | ((MAP_BASE / 0x800) << 8) | 0x80 | BG_PRIORITY;
 const BG1CNT = ((HUD_BASE / 0x800) << 8) | 0x80 | HUD_PRIORITY;
 
 /** `DISPCNT`: mode 0, both tilemaps, objects, one-dimensional object mapping. */
-const DISPCNT = 0x0040 | 0x0100 | 0x0200 | 0x1000;
+const DISPCNT_BASE = 0x0040 | 0x0100 | 0x0200 | 0x1000;
+
+/** The same, plus whatever else this machine needs to put it on a screen. */
+function dispcnt(ctx: GbaCtx): number {
+  return DISPCNT_BASE | ctx.machine.dispcntExtra;
+}
 
 /** The same with the forced blank a full redraw runs under. */
-const DISPCNT_BLANK = DISPCNT | 0x0080;
-
-/**
- * `WAITCNT` as the boot leaves it: three cycles for a first cartridge access and
- * one for a sequential, with the prefetch buffer on.
- *
- * A game's instructions are fetched from the cartridge on every cycle it runs,
- * so this register is the single largest thing a build can do about its own
- * speed — the reset default is five and eight, which is roughly twice as slow.
- */
-const WAITCNT = 0x4317;
-
-/** Where the stack is when a cartridge starts, which nothing here moves. */
-const STACK_TOP = 0x03007f00;
+function dispcntBlank(ctx: GbaCtx): number {
+  return dispcnt(ctx) | 0x0080;
+}
 
 /** The byte the frame interrupt raises and the main loop waits on. */
 function frameFlag(ctx: GbaCtx): number {
   return ctx.layout.interrupt as number;
 }
+
+/** `VCOUNT`, which is what a machine with no handler watches instead. */
+const REG_VCOUNT = 0x006;
 
 /** Everything the emitter needs beyond the program itself. */
 export interface GbaEmitOptions {
@@ -297,6 +299,18 @@ export interface GbaEmitOptions {
   objectPalette?: Uint8Array;
   /** Per-scene background palettes, where a backdrop chose its own. */
   scenePalettes?: ReadonlyMap<string, Uint8Array>;
+  /**
+   * The game's audio driver, already built from its demade tracks and effects.
+   *
+   * Absent for a game with none, and then everything below is exactly what it was
+   * before this console had sound — no interrupt dispatch, no service call in the
+   * main loop, and no two kilobytes of mixing accumulator in the heap.
+   */
+  audio?: GbaGameAudio;
+  /** Which driver effect each of the program's `sound` files became. */
+  effectIndices?: readonly number[];
+  /** Which track each scene plays, as the index the request byte takes. */
+  sceneTracks?: readonly number[];
 }
 
 // --- small shapes ------------------------------------------------------------
@@ -325,6 +339,24 @@ function setIo(ctx: GbaCtx, offset: number, value: number): void {
   asm.movImm32(A0, value);
   asm.movImm32(ADDR, IO + offset);
   asm.strh(A0, armAt(ADDR, 0));
+}
+
+/**
+ * Write `DISPCNT`, which is the one register whose *width* differs between the
+ * two machines.
+ *
+ * A halfword on a Game Boy Advance and a word on a Nintendo DS, where the field
+ * that decides whether the engine's output reaches the screen at all lives in
+ * bits 16–17. A halfword store there sets mode 0 — the screen blanked — leaving
+ * a cartridge that draws everything correctly into a display nobody switched on,
+ * which is invisible in every register a trace can see.
+ */
+function setDispcnt(ctx: GbaCtx, value: number): void {
+  const { asm } = ctx;
+  asm.movImm32(A0, value);
+  asm.movImm32(ADDR, IO + REG.DISPCNT);
+  if (ctx.machine.dispcntWide) asm.str(A0, armAt(ADDR, 0));
+  else asm.strh(A0, armAt(ADDR, 0));
 }
 
 /**
@@ -420,15 +452,20 @@ export function emitProgram(ctx: GbaCtx, options: GbaEmitOptions = {}): void {
     if (found) levelFor.set(scene.index, found);
   }
 
-  // The first word of a cartridge is an instruction, not a vector: the console
-  // begins executing at `$08000000` and what has to be there is a branch over
-  // the header that follows it (`core/src/asm/gba-cart.ts`).
-  asm.b("Reset");
-  asm.padTo(CODE_ORIGIN + GBA_HEADER_SIZE);
+  // The first word of a Game Boy Advance cartridge is an instruction, not a
+  // vector: the console begins executing at `$08000000` and what has to be there
+  // is a branch over the 192-byte header that follows it
+  // (`core/src/asm/gba-cart.ts`). A Nintendo DS binary is *copied* into main RAM
+  // with its header left behind in the image, so there is nothing to branch over
+  // and the program starts at its first instruction.
+  if (ctx.machine.headerBytes > 0) {
+    asm.b("Reset");
+    asm.padTo(ctx.machine.origin + ctx.machine.headerBytes);
+  }
 
   emitReset(ctx, options);
-  emitVblank(ctx);
-  emitMainLoop(ctx);
+  if (ctx.machine.frame === "interrupt") emitVblank(ctx, options);
+  emitMainLoop(ctx, options);
   emitInput(ctx);
   emitTickDispatch(ctx, scenes);
   emitSceneChange(ctx, scenes);
@@ -442,6 +479,7 @@ export function emitProgram(ctx: GbaCtx, options: GbaEmitOptions = {}): void {
 
   emitRenderHelpers(ctx);
   emitTileContactHelper(ctx);
+  if (options.audio) options.audio.emitCode(asm);
   ctx.finish();
 
   // --- data ------------------------------------------------------------------
@@ -510,6 +548,21 @@ export function emitProgram(ctx: GbaCtx, options: GbaEmitOptions = {}): void {
   asm.align();
   asm.label("ObjectPalette");
   asm.bytes(options.objectPalette ?? defaultPalette());
+
+  if (options.audio) {
+    if (program.tracks.length > 0) {
+      asm.align();
+      asm.label("SceneTracks");
+      // One byte per scene: the request value that starts its track, or the one
+      // that stops the music. A table rather than a dispatch because a scene
+      // change already costs a redraw, and this is the cheapest thing in it.
+      for (const scene of scenes) {
+        const track = options.sceneTracks?.[scene.index] ?? -1;
+        asm.db(track < 0 ? GBA_STOP : track + 1);
+      }
+    }
+    options.audio.emitData(asm);
+  }
 }
 
 /**
@@ -550,14 +603,20 @@ function emitReset(ctx: GbaCtx, options: GbaEmitOptions): void {
   const { asm, layout, program } = ctx;
 
   asm.label("Reset");
-  // The cartridge is fetched from on every cycle the program runs, so this is
-  // the first thing a build does and the largest thing it can do about speed.
-  setIo(ctx, REG.WAITCNT, WAITCNT);
+  // Whatever this machine needs switched on before it will draw at all: a Game
+  // Boy Advance's cartridge wait states, a Nintendo DS's power control and the
+  // two video RAM banks a picture is uploaded into (`machine.ts` §power).
+  for (const write of ctx.machine.power) {
+    asm.movImm32(ADDR, write.at);
+    asm.movImm32(A0, write.value);
+    if (write.width === 1) asm.strb(A0, armAt(ADDR, 0));
+    else asm.strh(A0, armAt(ADDR, 0));
+  }
   ctx.loadRamBase();
-  asm.movImm32(13, STACK_TOP);
+  asm.movImm32(13, ctx.machine.stackTop);
 
   // Blank the picture before anything is uploaded into it.
-  setIo(ctx, REG.DISPCNT, DISPCNT_BLANK);
+  setDispcnt(ctx, dispcntBlank(ctx));
 
   // Clear the heap and the object shadow, so a game's state starts from zero
   // rather than from whatever powered up. Not the stack, which is above them and
@@ -573,7 +632,7 @@ function emitReset(ctx: GbaCtx, options: GbaEmitOptions): void {
 
   emitVideoInit(ctx);
   emitDma(ctx, label("TileBank"), VRAM + CHAR_BASE, ((options.bank?.length ?? 0) + 3) >> 2);
-  emitDma(ctx, label("ObjectBank"), OBJ_VRAM, ((options.objectBank?.length ?? 0) + 3) >> 2);
+  emitDma(ctx, label("ObjectBank"), objVram(ctx), ((options.objectBank?.length ?? 0) + 3) >> 2);
   emitPaletteUpload(ctx, "Palette");
   asm.movImm32(A0, label("ObjectPalette"));
   asm.movImm32(A1, PAL_OBJ);
@@ -632,16 +691,26 @@ function emitReset(ctx: GbaCtx, options: GbaEmitOptions): void {
   asm.bl("BuildFrame");
   asm.bl("UploadFrame");
 
-  // The interrupt: this console cannot install its own vector — `$00000018` is
-  // BIOS ROM — so the handler is reached through the pointer the BIOS reads.
-  asm.movImm32(A0, label("Vblank"));
-  asm.movImm32(ADDR, GBA_IRQ_VECTOR);
-  asm.str(A0, armAt(ADDR, 0));
-  setIo(ctx, REG_DISPSTAT, 0x0008);
-  setIo(ctx, REG.IE, 0x0001);
-  setIo(ctx, REG.IME, 0x0001);
+  if (ctx.machine.frame === "interrupt") {
+    // The interrupt: this machine cannot install its own vector — `$00000018` is
+    // BIOS ROM — so the handler is reached through the pointer the BIOS reads.
+    asm.movImm32(A0, label("Vblank"));
+    asm.movImm32(ADDR, GBA_IRQ_VECTOR);
+    asm.str(A0, armAt(ADDR, 0));
+    setIo(ctx, REG_DISPSTAT, 0x0008);
+    setIo(ctx, REG.IE, 0x0001);
+    setIo(ctx, REG.IME, 0x0001);
+  }
 
-  setIo(ctx, REG.DISPCNT, DISPCNT);
+  // After the interrupt is live, because `AudioInit` adds its own bit to `IE` and
+  // starts the transfers that raise it — and because the entry scene's track is
+  // asked for here rather than at the first scene *change*, which never happens.
+  if (options.audio) {
+    asm.bl("AudioInit");
+    if (ctx.program.tracks.length > 0) asm.bl("SceneMusic");
+  }
+
+  setDispcnt(ctx, dispcnt(ctx));
   asm.mov(A0, armImm(1));
   asm.strb(A0, mem(ctx, layout.booted));
   asm.b("Main");
@@ -714,22 +783,51 @@ function needPaletteCopy(ctx: GbaCtx): Ref {
  * and returns with `bx lr`; `r11` is untouched and still holds the work-RAM
  * base, which is what lets the frame flag be one store.
  */
-function emitVblank(ctx: GbaCtx): void {
+function emitVblank(ctx: GbaCtx, options: GbaEmitOptions): void {
   const { asm } = ctx;
   asm.label("Vblank");
-  // Acknowledge, in both places: `IF`, and the copy the BIOS keeps for its own
-  // `IntrWait`. A handler that clears one and not the other leaves a program
-  // that ever calls the second waiting for ever.
+  if (options.audio === undefined) {
+    // One source, so nothing to ask: acknowledge in both places — `IF`, and the
+    // copy the BIOS keeps for its own `IntrWait`. A handler that clears one and
+    // not the other leaves a program that ever calls the second waiting for ever.
+    asm.add(A2, A0, armImm(0x200));
+    asm.mov(A1, armImm(1));
+    asm.strh(A1, armAt(A2, 2));
+    asm.movImm32(ADDR, 0x03007ff8);
+    asm.ldrh(A3, armAt(ADDR, 0));
+    asm.orr(A3, A3, armReg(A1));
+    asm.strh(A3, armAt(ADDR, 0));
+
+    asm.strb(A1, mem(ctx, frameFlag(ctx)));
+    asm.bx(LR);
+    asm.ltorg();
+    return;
+  }
+
+  // Two sources now, so this becomes a dispatcher: the picture, and the sample
+  // transfer that is the audio driver's whole clock. What is *taken* is what is
+  // both raised and enabled — a source we never asked for stays in `IF` rather
+  // than being silently cleared here — and it is acknowledged before either
+  // handler runs, so a refill that lands during the frame's own work is still
+  // counted rather than lost.
+  asm.push([V0, LR]);
   asm.add(A2, A0, armImm(0x200));
-  asm.mov(A1, armImm(1));
-  asm.strh(A1, armAt(A2, 2));
+  asm.ldrh(A1, armAt(A2, 2));
+  asm.ldrh(A3, armAt(A2, 0));
+  asm.and(V0, A1, armReg(A3));
+  asm.strh(V0, armAt(A2, 2));
   asm.movImm32(ADDR, 0x03007ff8);
   asm.ldrh(A3, armAt(ADDR, 0));
-  asm.orr(A3, A3, armReg(A1));
+  asm.orr(A3, A3, armReg(V0));
   asm.strh(A3, armAt(ADDR, 0));
 
-  asm.strb(A1, mem(ctx, frameFlag(ctx)));
-  asm.bx(LR);
+  asm.tst(V0, armImm(1));
+  asm.mov(A1, armImm(1), "ne");
+  asm.strb(A1, mem(ctx, frameFlag(ctx)), "ne");
+
+  asm.tst(V0, armImm(options.audio.clock.interrupt));
+  asm.bl(options.audio.routines.irq, "ne");
+  asm.pop([V0, PC]);
   asm.ltorg();
 }
 
@@ -761,24 +859,70 @@ function emitClearState(ctx: GbaCtx): void {
   }
 }
 
-function emitMainLoop(ctx: GbaCtx): void {
+function emitMainLoop(ctx: GbaCtx, options: GbaEmitOptions): void {
   const { asm } = ctx;
-  const wait = ctx.unique("waitFrame");
-  // The flag is cleared *after* it is seen, not before the wait: a tick that
-  // overran its frame would otherwise wait for the next one and run at half rate.
   asm.label("Main");
-  asm.label(wait);
-  asm.ldrb(A0, mem(ctx, frameFlag(ctx)));
-  asm.cmp(A0, armImm(0));
-  ctx.far("eq", wait);
-  asm.mov(A0, armImm(0));
-  asm.strb(A0, mem(ctx, frameFlag(ctx)));
+  if (ctx.machine.frame === "interrupt") {
+    const wait = ctx.unique("waitFrame");
+    // The flag is cleared *after* it is seen, not before the wait: a tick that
+    // overran its frame would otherwise wait for the next one and run at half
+    // rate.
+    asm.label(wait);
+    asm.ldrb(A0, mem(ctx, frameFlag(ctx)));
+    asm.cmp(A0, armImm(0));
+    ctx.far("eq", wait);
+    asm.mov(A0, armImm(0));
+    asm.strb(A0, mem(ctx, frameFlag(ctx)));
+  } else {
+    emitBeamWait(ctx);
+  }
   asm.bl("UploadFrame");
   asm.bl("ReadInput");
   asm.bl("Tick");
+  // After the tick, so an effect a rule asked for is heard this pass rather than
+  // next; after the upload, so the blanking interval it would have delayed is
+  // nobody's. Every block the transfer counted is performed here, which is a
+  // schedule tick and a mix each.
+  if (options.audio) asm.bl(options.audio.routines.service);
   asm.bl("BuildFrame");
+  if (ctx.machine.frame === "beam") emitBeamDrain(ctx);
   asm.b("Main");
   asm.ltorg();
+}
+
+/**
+ * Wait for the picture to reach the blanking interval, by watching the beam.
+ *
+ * The alternative to a handler, on the machine that has no vector a cartridge
+ * can reach without knowing where the BIOS put data TCM (`machine.ts` §frame).
+ * `VCOUNT` counts scanlines, so "the visible lines are done" is one comparison —
+ * and the loop that follows the tick (§{@link emitBeamDrain}) is what makes this
+ * one an *edge* rather than a level: without it a fast tick would come straight
+ * back round and see the same blanking interval it just used.
+ *
+ * A tick that overran a whole frame finds the drain already past and this wait
+ * already satisfied, so it runs on immediately — which is the same behaviour the
+ * flag-based loop has, and the reason neither of them halves its rate.
+ */
+function emitBeamWait(ctx: GbaCtx): void {
+  const { asm } = ctx;
+  const wait = ctx.unique("waitBeam");
+  asm.label(wait);
+  asm.movImm32(ADDR, IO + REG_VCOUNT);
+  asm.ldrh(A0, armAt(ADDR, 0));
+  asm.cmp(A0, armImm(ctx.machine.visibleLines));
+  ctx.far("cc", wait);
+}
+
+/** Let the blanking interval finish, so the next wait sees a new one. */
+function emitBeamDrain(ctx: GbaCtx): void {
+  const { asm } = ctx;
+  const drain = ctx.unique("drainBeam");
+  asm.label(drain);
+  asm.movImm32(ADDR, IO + REG_VCOUNT);
+  asm.ldrh(A0, armAt(ADDR, 0));
+  asm.cmp(A0, armImm(ctx.machine.visibleLines));
+  ctx.far("cs", drain);
 }
 
 /**
@@ -871,6 +1015,10 @@ function emitSceneChange(ctx: GbaCtx, scenes: readonly SceneCtx[]): void {
   asm.strb(A0, mem(ctx, layout.scene));
   asm.mov(A0, armImm(0xff));
   asm.strb(A0, mem(ctx, layout.pending));
+  // Music follows the scene, so it starts where the scene does. Asking for it
+  // rather than starting it here is what keeps the request one byte: the driver
+  // is serviced from the loop, and a scene change is not where it happens.
+  if (ctx.audio?.driver === true && ctx.program.tracks.length > 0) asm.bl("SceneMusic");
   asm.bl("ResetScene");
   emitSeedRng(ctx);
   emitClearState(ctx);
@@ -879,6 +1027,16 @@ function emitSceneChange(ctx: GbaCtx, scenes: readonly SceneCtx[]): void {
   asm.strb(A0, mem(ctx, layout.redraw));
   asm.pop([PC]);
   asm.ltorg();
+
+  if (ctx.audio?.driver === true && ctx.program.tracks.length > 0) {
+    asm.label("SceneMusic");
+    asm.ldrb(A0, mem(ctx, layout.scene));
+    asm.movImm32(ADDR, label("SceneTracks"));
+    asm.ldrb(A0, armAtIdx(ADDR, A0));
+    asm.strb(A0, mem(ctx, ctx.audio.music));
+    asm.bx(LR);
+    asm.ltorg();
+  }
 
   asm.label("ResetScene");
   asm.push([LR]);
@@ -1361,7 +1519,7 @@ function emitFullRedraw(
   // blanking interval, and this runs from the main loop rather than from the
   // interrupt. One frame of white at a scene change, exactly as on the other
   // five consoles, and the alternative is a frame of tearing.
-  setIo(ctx, REG.DISPCNT, DISPCNT_BLANK);
+  setDispcnt(ctx, dispcntBlank(ctx));
 
   // Every scene uploads a palette, whether it has one of its own or not. A scene
   // with a backdrop brings that picture's colours; one without brings the
@@ -1428,7 +1586,7 @@ function emitFullRedraw(
   // picture blank they need neither the write queue nor a place in the erase
   // list, and they are most of the HUD in a small game.
   emitHud(ctx, scene, "static");
-  setIo(ctx, REG.DISPCNT, DISPCNT);
+  setDispcnt(ctx, dispcnt(ctx));
 }
 
 /**

@@ -138,6 +138,19 @@ export interface PackOptions {
    */
   mergeRegs?: ReadonlySet<number>;
   /**
+   * Which chip those registers are on, where a console has two.
+   *
+   * A register number does not identify a register on such a console, and the
+   * Game Boy Advance is where that stopped being a technicality: `$25` is the
+   * Game Boy channels' panning byte *and* the mixer's fifth voice's right level,
+   * so a schedule that set that voice's level had its write packed as a merge and
+   * the driver folded it into `NR51` — which is the music's panning replaced by a
+   * volume, at the first tick, on every build with an effect in it. Leaving this
+   * out means "whichever chip", which is what every single-chip console wants and
+   * what all of them packed before this existed.
+   */
+  mergeChip?: number;
+  /**
    * How a register number is written into the packed data.
    *
    * The Game Boy and the NES store the register itself, because their drivers
@@ -405,9 +418,10 @@ function encodeRuns(
   // Tagged in the order the chip will see them, and every write is offered to
   // the tag even when it turns out to belong to no channel: a latching chip
   // updates its selection from writes the run format then never asks about.
+  const mergeChip = options.mergeChip;
   const tags = writes.map((write) => ({
     channels: channelOf(write.reg, write.value, write.chip ?? 0) & mask,
-    merge: merge.has(write.reg),
+    merge: merge.has(write.reg) && (mergeChip === undefined || (write.chip ?? 0) === mergeChip),
   }));
 
   const starts: number[] = [];
@@ -465,7 +479,7 @@ function silenceBlock(
   const off = silenceWrites(script.console);
   const out: number[] = [];
   if (tag === undefined) {
-    out.push(off.length, ...off.flatMap((w) => [port(w.reg, 0), w.value]));
+    out.push(off.length, ...off.flatMap((w) => [port(w.reg, w.chip ?? 0), w.value]));
   } else {
     encodeRuns(out, off, options, tag);
   }
@@ -482,12 +496,15 @@ function silenceBlock(
  * answer, and it would be the one that quietly grew a wrong entry the first time
  * a console was added.
  */
-function silenceWrites(consoleId: string): { reg: number; value: number }[] {
+function silenceWrites(consoleId: string): RegisterWrite[] {
   const binding = bindingFor(consoleId);
   const sounding = binding.spec.channels.map(() => ({ on: true, hz: 440, level: 1 }));
+  // The chip is carried, because a console may have two and `port` is asked
+  // which one — the same reason `sfx/index.ts` keeps it on every write it makes.
   return binding.encode(silentFrames(binding.spec), sounding).map((write) => ({
     reg: write.reg,
     value: write.value,
+    ...(write.chip === undefined ? {} : { chip: write.chip }),
   }));
 }
 
