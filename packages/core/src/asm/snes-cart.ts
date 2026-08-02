@@ -39,8 +39,19 @@
  * (https://snes.nesdev.org/wiki/Interrupts).
  */
 
-/** Bytes of a two-bank LoROM cartridge. */
-export const SNES_ROM_SIZE = 0x10000;
+/**
+ * Bytes of the LoROM cartridge a demade game ships on: four banks.
+ *
+ * Bank zero is the program, bank one is the tile art, bank two is the sound
+ * processor's image, and the fourth is padding to the next size the header's
+ * capacity field can express. It was two banks while the art and the sound
+ * shared one, and that stopped working the moment the example library's music
+ * had enough parts to fill eight voices: a track's schedule doubled and took the
+ * picture's room with it. A bank each is the arrangement the hardware wants
+ * anyway — this console takes cartridges up to four megabytes, so 64 KiB was a
+ * choice rather than a limit, and the wrong one.
+ */
+export const SNES_ROM_SIZE = 0x20000;
 
 /** Bytes of one LoROM bank, which is what the CPU sees at `$8000`. */
 export const SNES_BANK_SIZE = 0x8000;
@@ -67,11 +78,31 @@ export const SNES_TILE_BANK = 0x01;
 /** Where that bank starts in the CPU's address space. */
 export const SNES_TILE_BASE = 0x8000;
 
-/** Bytes of tile art the second bank holds. */
+/** Bytes of tile art the second bank holds, which is all of it. */
 export const SNES_TILE_CAPACITY = SNES_BANK_SIZE;
 
 /** Where that bank's bytes start in the packed image. */
 export const SNES_TILE_OFFSET = SNES_BANK_SIZE;
+
+/**
+ * The bank the sound processor's image is uploaded from.
+ *
+ * Its own bank rather than the tail of the art's, because the two are sized by
+ * different things and neither can be asked to know how big the other got. The
+ * upload reads it with `long,X` and `X` is sixteen bits, so the image is bounded
+ * by the bank rather than by the addressing — which is also why it starts at the
+ * bank's first byte.
+ */
+export const SNES_SPC_BANK = 0x02;
+
+/** Where that bank starts in the CPU's address space. */
+export const SNES_SPC_BASE = 0x8000;
+
+/** Bytes of it the image may occupy. */
+export const SNES_SPC_CAPACITY = SNES_BANK_SIZE;
+
+/** Where its bytes start in the packed image. */
+export const SNES_SPC_OFFSET = SNES_BANK_SIZE * 2;
 
 /**
  * The native-mode vectors, as offsets into bank zero.
@@ -155,7 +186,7 @@ export function packSnesRom(
   options: SnesHeaderOptions = {},
 ): Uint8Array {
   if (image.length !== SNES_ROM_SIZE) {
-    throw new Error(`a two-bank LoROM cartridge is ${SNES_ROM_SIZE} bytes, not ${image.length}`);
+    throw new Error(`a four-bank LoROM cartridge is ${SNES_ROM_SIZE} bytes, not ${image.length}`);
   }
   const rom = Uint8Array.from(image);
   const at = SNES_HEADER_OFFSET;

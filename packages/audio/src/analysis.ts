@@ -191,8 +191,12 @@ function statistics(part: Part, score: Score): PartStatistics {
  * inversion a loudness-driven arranger gets wrong.
  */
 function scoreSalience(part: Part, parts: readonly Part[]): Note[] {
+  // A lead's floor is below one deliberately: with it *at* one there is no
+  // headroom for the terms below to spend, so every note of every lead scored
+  // exactly 1.0 and two leads were indistinguishable. Leaving a tenth for the
+  // music to argue over is what lets a tune outrank a counter-line.
   const roleWeight: Record<PartRole, number> = {
-    lead: 1,
+    lead: 0.9,
     bass: 0.85,
     percussion: 0.7,
     arp: 0.6,
@@ -222,20 +226,32 @@ function scoreSalience(part: Part, parts: readonly Part[]): Note[] {
       : others.reduce((sum, other) => sum + meanPitchOf(other), 0) / others.length;
 
   return part.notes.map((note, index) => {
-    let value = base;
+    // The terms below are summed as a fraction of *one*, and then spent inside
+    // the headroom the role leaves — rather than added to the role's weight and
+    // clipped at the ceiling, which is what this did until the example library
+    // grew arrangements with several leads in them. Clipped, every lead's every
+    // note scored exactly 1.0: `worth()` in the planner reduced to the role
+    // weight, ties broke on the part's *id*, and a four-channel console filled
+    // up on whichever accompaniment lines sorted first and dropped the bass and
+    // the kit. A metric that saturates is not a metric, and it saturated the
+    // moment more than one part was a lead.
+    let bonus = 0;
     // Downbeats and beat onsets carry structure.
-    if (note.tick % (PPQ * 4) === 0) value += 0.2;
-    else if (note.tick % PPQ === 0) value += 0.1;
+    if (note.tick % (PPQ * 4) === 0) bonus += 0.2;
+    else if (note.tick % PPQ === 0) bonus += 0.1;
     // Longer notes are heard more.
-    value += clamp01(note.durationTicks / (PPQ * 2)) * 0.15;
+    bonus += clamp01(note.durationTicks / (PPQ * 2)) * 0.15;
     // Velocity contributes, but only as a minor term — see the doc comment.
-    value += (note.velocity / 127) * 0.15;
+    bonus += (note.velocity / 127) * 0.15;
     // Register isolation: a part sitting away from everything else is exposed.
-    value += clamp01(Math.abs(note.pitch - meanOtherPitch) / 2400) * 0.1;
+    bonus += clamp01(Math.abs(note.pitch - meanOtherPitch) / 2400) * 0.1;
     // Repetition across the piece.
     const shape = shapeAt(index);
-    if (shape) value += clamp01(((motif.get(shape) ?? 1) - 1) / 8) * 0.25;
-    return { ...note, salience: clamp01(value) };
+    if (shape) bonus += clamp01(((motif.get(shape) ?? 1) - 1) / 8) * 0.25;
+    // The role sets the floor and the terms above reach for the ceiling, so two
+    // parts of the same role are still ordered by everything that distinguishes
+    // them and no part of a lesser role can overtake a greater one.
+    return { ...note, salience: clamp01(base + (1 - base) * clamp01(bonus)) };
   });
 }
 

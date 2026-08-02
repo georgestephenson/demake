@@ -400,13 +400,26 @@ unchanged — four channel bits, a steal mask, `NR51` merged and never stored �
 the mixer's six voices tag no channel at all and play _through_ an effect. An
 effect placed on a mixer voice is refused by name rather than half-handled.
 
-**A four-part MIDI does not fill this machine**, and that is the arranger's
-answer rather than a gap in the driver: each part gets the channel that serves it
-best, and on ten voices four parts take four. Most of the example library
-therefore plays entirely on the Game Boy channels; `runner`'s `updraft.mid` is the
-one whose parts fit the sample voices better, and it is what the mixer proof is
-pointed at — a diff of silence against silence would pass on a driver that did
-nothing.
+**Ten voices are ten parts here**, because the example library is written to fill
+the widest machine in the set rather than the narrowest: each part gets the
+channel that serves it best, and a ten-part arrangement takes the Game Boy
+channels _and_ the mixer's. That is what makes the mixer proof mean something —
+pointed at a track whose parts all landed on the Game Boy half, a diff of silence
+against silence would pass on a driver that did nothing.
+
+**And the mix loop runs from work RAM, not from the cartridge.** On this console
+every instruction fetched over the cartridge bus costs the wait states `WAITCNT`
+names — four cycles a word at the setting the boot writes — and one fetched from
+internal RAM costs none, so an eleven-instruction inner loop run six times a
+sample is five times dearer out there. The driver therefore copies `AudioMix` and
+its literal pool into internal RAM at boot and calls the copy; the routine is
+position-independent by construction, because every constant it loads is
+PC-relative, every branch it takes is its own, and it calls nothing. Measured on
+the shooter with six voices sounding, that is 1.85 frames a game tick against
+1.00 — the difference between a mixer that fits in a frame and one that does not,
+and the reason every real mixer on this machine does the same thing. It was
+invisible for as long as the example library's tracks did not reach the mixer at
+all (§Writing music).
 
 The _demakers_ reach it too: `demake arrange -c gba`, `sfx` and `render` demake
 this console's ten voices through `binding/gba.ts`, which is the second two-chip
@@ -1097,18 +1110,48 @@ Same bargain as the art: hand the demakers what a modern game would have and let
 them do the work. Generators live in the session scratchpad; the `.mid` and
 `.wav` files are the artefact.
 
-- **Do not write chip music.** The MIDIs are four-part arrangements — bass,
-  chords, melody, drum kit — because the arranger's whole job is choosing what to
-  do when there are more parts than channels. A two-voice MIDI proves nothing and
-  hides every interesting decision.
+- **Do not write chip music, and do not write for the smallest machine.** The
+  MIDIs are full arrangements — around ten parts: bass, sub, chords, pad,
+  arpeggio, melody, harmony, counter-line, echo, drum kit — because the demakers
+  are supposed to be handed what a modern game would have. Two things go wrong if
+  they are not. A two-voice MIDI proves nothing and hides every interesting
+  decision on a four-channel console. And a _four_-part MIDI hides every
+  interesting decision on the wide ones: a Mega Drive has ten voices and a
+  Nintendo DS sixteen, so four parts leave twelve channels idle and make a
+  spent machine look identical to a starved one. The fixtures were four-part
+  once and that is exactly what it cost — the rule is the art path's, restated
+  (§Drawing art: never author at the smallest target's resolution).
+- **A part count is a floor, not a target.** The arranger takes as many parts as
+  the console can play and drops the rest by salience, so more parts is strictly
+  more information: the small consoles show it _choosing_ and the wide ones show
+  it spending everything. `demake arrange --json` reports the channels used and
+  the parts dropped; check both when you add a tune.
+- **Give every part the General MIDI programme a real arranger would.** It is not
+  decoration: `analysis.ts` takes a _role prior_ from it, so a programme is how a
+  part says what it is for. A counter-line under a lead patch is classified as a
+  lead, competes with the tune for the channel that suits one, and wins on a tie
+  — which is exactly how a Game Boy came to play two accompaniment lines and no
+  bass. Check the roles the classifier settled on before checking anything else.
+- **A widened arrangement is also a test of the arranger, and it found two
+  faults.** Salience saturated — every lead-role note scored exactly 1.0, so two
+  leads were indistinguishable — and the planner ranked purely by worth, so five
+  melodic parts filled a four-channel console and left no room for the bass or
+  the kit. Both are fixed (`analysis.ts` §scoreSalience, `plan.ts`
+  §byWorthThenBreadth). Neither was reachable with four-part fixtures, which is
+  the argument for widening them in one line.
 - **Do not synthesize square waves for effects either.** The sounds are built
   from harmonics, filtered noise and decay envelopes, so the class gate has
   something to classify and the gesture tournament has something to choose
   between. A source that is already a chip blip makes the sound demaker look
   perfect and tests nothing.
-- **Length is the cost.** Bars are cartridge: eight bars of four parts is around
-  five kilobytes of schedule, and a game with 4 KB free gets two bars. Check the
-  headroom before making a tune longer.
+- **Length is the cost, and density is too.** Bars are cartridge: eight bars is
+  around five kilobytes of schedule on a four-channel console, and a game with
+  4 KB free gets two bars. Adding _parts_ is nearly free there — only four of
+  them are ever played — but adding sixteenth-note lines is not, because whatever
+  channel takes one writes four times a beat. A sixteenth-note arpeggio across
+  eight bars is what put the library over the Game Boy's 16 KiB schedule budget
+  the first time these were widened. Check the headroom before making a tune
+  longer _or_ busier.
 - **The generator must be deterministic** — no `Math.random` for the noise bed —
   or regenerating the fixtures changes the goldens for no reason.
 
@@ -1679,10 +1722,17 @@ hands it to a second processor at boot. Everything here is a consequence of that
   remember — and `demake arrange -c snes` writes an `.spc` rather than a `.vgm`,
   because a write log without the RAM is not a piece of music and an SPC is
   exactly what the cartridge uploads.
-- **The image sits at the top of the second cartridge bank, under the tile art.**
-  Both are sized by what the game contains and only one of them can have the low
-  end without the other having to know how big it got; `E_BACKDROP_TILES` names
-  the sound processor's share when there is one.
+- **The image has a cartridge bank of its own**, and it did not always. It shared
+  the tile art's bank until the example library's music grew enough parts to fill
+  eight voices, at which point a track's schedule doubled and took the picture's
+  room with it — a game refused for having too much art when what it had too much
+  of was music. Bank zero is the program, bank one is the art, bank two is the
+  sound processor's image, and the two are refused separately. A cartridge here is
+  128 KiB rather than 64: this console takes four megabytes, so the old size was a
+  choice and the wrong one. The image is bounded by its bank because the upload
+  indexes it with `long,X` and `X` is sixteen bits — the addressing's limit and
+  the bank's happen to be the same number, which is why it starts at the bank's
+  first byte.
 
 ### The 68000 half
 

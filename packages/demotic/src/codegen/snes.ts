@@ -38,9 +38,10 @@
 import {
   AsmError,
   packSnesRom,
-  SNES_BANK_SIZE,
-  SNES_TILE_BANK,
-  SNES_TILE_BASE,
+  SNES_SPC_BANK,
+  SNES_SPC_BASE,
+  SNES_SPC_CAPACITY,
+  SNES_SPC_OFFSET,
   SNES_CODE_SIZE,
   SNES_ORIGIN,
   SNES_ROM_SIZE,
@@ -186,7 +187,7 @@ export const snesBackend: Backend<SnesEmitOptions, SnesAudio> = {
     const options: SnesEmitOptions = driver
       ? {
           audio: driver,
-          audioAt: (SNES_TILE_BANK << 16) | (SNES_TILE_BASE + SNES_BANK_SIZE - driver.image.length),
+          audioAt: (SNES_SPC_BANK << 16) | SNES_SPC_BASE,
           effectIndices: effectIndices(program, bound),
           sceneTracks: trackForScene(program, bound),
         }
@@ -256,21 +257,29 @@ export const snesBackend: Backend<SnesEmitOptions, SnesAudio> = {
 
     const bank = banks.get(art)?.options.bank ?? new Uint8Array(0);
     const spc = audio.options.audio?.image ?? new Uint8Array(0);
-    const capacity = SNES_TILE_CAPACITY - spc.length;
-    if (bank.length > capacity) {
+    if (bank.length > SNES_TILE_CAPACITY) {
       throw new BuildError(
         "E_BACKDROP_TILES",
-        `this game's tile art is ${bank.length} bytes and the art bank holds ${capacity}`,
-        spc.length > 0
-          ? `the sound processor's program takes ${spc.length} bytes of the same bank; a shorter track leaves more for the picture`
-          : undefined,
+        `this game's tile art is ${bank.length} bytes and the art bank holds ${SNES_TILE_CAPACITY}`,
+      );
+    }
+    // The sound processor's image has a bank of its own, so a long track costs
+    // the picture nothing — and the two are refused separately, because "this
+    // game has too much art" and "this game has too much music" are different
+    // things to be told. The code is the cartridge's rather than a new one: what
+    // did not fit is part of the game.
+    if (spc.length > SNES_SPC_CAPACITY) {
+      throw new BuildError(
+        "E_GAME_TOO_LARGE",
+        `the sound processor's program is ${spc.length} bytes and its bank holds ${SNES_SPC_CAPACITY}`,
+        "shorter tracks, or fewer of them; the upload indexes the bank with a sixteen-bit register, so this is the addressing's limit as well as the bank's.",
       );
     }
 
     const image = new Uint8Array(SNES_ROM_SIZE);
     image.set(code.subarray(0, Math.min(code.length, SNES_ROM_SIZE)), 0);
     image.set(bank, SNES_TILE_OFFSET);
-    image.set(spc, SNES_TILE_OFFSET + SNES_BANK_SIZE - spc.length);
+    image.set(spc, SNES_SPC_OFFSET);
     return {
       bytes: packSnesRom(
         image,

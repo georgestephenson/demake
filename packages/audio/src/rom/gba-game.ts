@@ -66,6 +66,7 @@ import { emitStream, emitStreamData, type ArmStreamState } from "./arm-player.js
 import {
   emitIrq,
   emitMix,
+  emitMixCopy,
   emitMixWrite,
   emitSoundInit,
   emitSoundWrite,
@@ -73,6 +74,7 @@ import {
   gbaPort,
   GBA_AUDIO_IRQ,
   GBA_BLOCK_SAMPLES,
+  GBA_MIX_CODE_BYTES,
   GBA_RING_BLOCKS,
   VOICE,
   VOICE_STRIDE,
@@ -314,13 +316,15 @@ export function buildGbaGameAudio(input: GbaGameAudioInput): GbaGameAudio {
     emitMixWrite(asm, state.voices, "AudioBank", keyOff);
     if (keyOff) helpers.push("mixer-key-off");
     emitMix(asm, { acc: state.acc, voices: state.voices, writeBlock: state.writeBlock });
+    // After the routine, because it measures what it is copying.
+    emitMixCopy(asm, state.mixCode);
     emitIrq(asm, {
       base: state.base,
       refill: state.refill,
       readBlock: state.readBlock,
       pending: state.pending,
     });
-    helpers.push("mixer", "transfer-clock");
+    helpers.push("mixer", "mixer-in-work-ram", "transfer-clock");
     code = asm.pc - start;
   };
 
@@ -430,6 +434,8 @@ interface Layout {
   voices: number;
   /** The 32-bit stereo accumulator one block is summed in. */
   acc: number;
+  /** Where the mix routine is copied to, so it runs out of internal RAM. */
+  mixCode: number;
   /** One past the last byte used. */
   end: number;
 }
@@ -492,6 +498,11 @@ function layout(base: number): Layout {
   at += GBA_PCM_VOICES * VOICE_STRIDE;
   const acc = at;
   at += GBA_BLOCK_SAMPLES * 2 * 4;
+  // The mix routine itself, because on this console an instruction fetched from
+  // the cartridge costs four cycles and one fetched from here costs none
+  // (`gba-driver.ts` §GBA_MIX_CODE_BYTES).
+  const mixCode = at;
+  at += GBA_MIX_CODE_BYTES;
   return {
     base,
     music,
@@ -508,6 +519,7 @@ function layout(base: number): Layout {
     pending,
     voices,
     acc,
+    mixCode,
     end: at,
   };
 }
@@ -577,6 +589,9 @@ function emitInit(
     asm.bl("AudioWrite");
   }
 
+  // The mixer into internal work RAM before anything can call it, which is
+  // before the transfers start below.
+  asm.bl("AudioMixInstall");
   emitSoundInit(asm, {
     base: state.base,
     refill: state.refill,
@@ -609,7 +624,12 @@ function emitService(asm: AsmArm, state: Layout): void {
   asm.sub(0, 0, armImm(1));
   asm.strb(0, armAt(12, off(state, state.pending)));
   asm.bl("AudioTick");
-  asm.bl("AudioMix");
+  // Into the copy in internal work RAM rather than the one in the cartridge:
+  // same instructions, a fifth of the fetch cost. `mov lr, pc` lands the return
+  // on the instruction after the `bx`, which is why the two are adjacent.
+  asm.ldrConst(12, state.mixCode);
+  asm.mov(14, armReg(15));
+  asm.bx(12);
   asm.ldrConst(12, state.base);
   asm.ldrb(0, armAt(12, off(state, state.writeBlock)));
   asm.add(0, 0, armImm(1));

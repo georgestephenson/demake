@@ -817,9 +817,11 @@ the register tap does.
 
 One trap is worth stating, because it makes such a test pass while proving
 nothing: the arranger gives each part the channel that serves it best, so a
-four-part MIDI on a ten-voice console uses four voices — and on this one they are
-usually the Game Boy's. A mixer diff pointed at such a track compares silence with
-silence. The proof names a track whose parts land on the sample voices.
+four-part MIDI on a ten-voice console uses four voices — and on this one they
+would usually be the Game Boy's. A mixer diff pointed at such a track compares
+silence with silence. That is why the example library is written around ten parts
+wide rather than four (AGENTS.md §Writing music), and why the proof still *names*
+the track it is pointed at rather than trusting any track to reach the mixer.
 
 **Level B — sample comparison against third-party cores (CI).** The existing
 libretro harness already receives an audio callback and currently discards it;

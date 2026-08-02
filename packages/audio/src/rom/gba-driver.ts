@@ -56,6 +56,7 @@ import {
   armLsr,
   armReg,
   label,
+  type Ref,
 } from "@demake/core";
 
 import { WAVEFORMS } from "../binding/gba-bank.js";
@@ -161,6 +162,25 @@ const TIMER_CONTROL = 0x0080;
 const DMA_CONTROL = 0x8000 | 0x3000 | 0x0400 | 0x0200 | 0x0040;
 /** The same, plus the interrupt that is the driver's whole clock. */
 const DMA_CONTROL_IRQ = DMA_CONTROL | 0x4000;
+
+/**
+ * Internal work RAM set aside for a copy of the mix routine.
+ *
+ * **The mixer runs from internal RAM, not from the cartridge**, and on this
+ * console that is not a micro-optimisation — it is the difference between a
+ * mixer that fits in a frame and one that does not. Every instruction fetched
+ * from the cartridge bus costs the wait states `WAITCNT` names (four cycles a
+ * word at the setting the boot writes) and every instruction fetched from
+ * internal RAM costs none, so an eleven-instruction inner loop run six times per
+ * sample is five times more expensive out there. Every real mixer on this
+ * machine copies its loop into internal RAM for exactly this reason; measured
+ * here, it took a game tick from 1.85 frames to inside one.
+ *
+ * A fixed reservation rather than the routine's own size, because the memory
+ * plan is a constant and the routine is not assembled until long after it: the
+ * emitter checks the routine fits and says so by name if it ever stops fitting.
+ */
+export const GBA_MIX_CODE_BYTES = 640;
 
 /** How far to shift a voice index to reach its record: thirty-two bytes. */
 const VOICE_SHIFT = 5;
@@ -492,6 +512,44 @@ export function emitMix(asm: AsmArm, state: { acc: number; voices: number; write
   asm.subs(8, 8, armImm(1));
   asm.b("AudioMixPack", "ne");
   asm.pop([4, 5, 6, 7, 8, 9, 10, 11, REG.pc]);
+  // The pool goes *inside* the copied range, which is what makes the copy legal:
+  // every constant this routine loads is PC-relative and every branch it takes is
+  // its own, so moving the code and its pool together as one block leaves both
+  // correct. A `bl` out of here would not survive the move, and there is none.
+  asm.ltorg();
+  asm.label("AudioMixEnd");
+}
+
+/**
+ * Copy the mix routine into internal work RAM, and check it fits.
+ *
+ * Called once at boot. The size is a build-time fact, so a routine that outgrew
+ * its reservation is a build error naming itself rather than a cartridge that
+ * copies half a loop and jumps into it.
+ */
+export function emitMixCopy(asm: AsmArm, dest: number): void {
+  // Emitted *after* the routine it copies, so both ends of the range are known
+  // here; the boot reaches it as an ordinary forward call.
+  const from = asm.addressOf("AudioMix");
+  const to = asm.addressOf("AudioMixEnd");
+  const bytes = to - from;
+  if (bytes > GBA_MIX_CODE_BYTES) {
+    throw new AudioRomError(
+      "E_INTERNAL",
+      `the mix routine is ${bytes} bytes and internal RAM reserves ${GBA_MIX_CODE_BYTES}`,
+      "raise `GBA_MIX_CODE_BYTES`; this is a bug in the ROM builder, not in the track.",
+    );
+  }
+  asm.label("AudioMixInstall");
+  asm.ldrConst(REG.a0, label("AudioMix") as Ref);
+  asm.ldrConst(REG.a1, dest);
+  asm.mov(REG.a2, armImm((bytes + 3) >> 2));
+  asm.label("AudioMixCopy");
+  asm.ldr(REG.a3, armAtPost(REG.a0, 4));
+  asm.str(REG.a3, armAtPost(REG.a1, 4));
+  asm.subs(REG.a2, REG.a2, armImm(1));
+  asm.b("AudioMixCopy", "ne");
+  asm.bx(REG.lr);
   asm.ltorg();
 }
 

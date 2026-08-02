@@ -747,14 +747,26 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     a hundred times any other console's driver state, in internal RAM because the
     mix loop touches it four times a sample.
 
-    One thing the driver exposes is not the driver's: **a four-part MIDI does not
-    fill a ten-voice machine.** The arranger gives each part the channel that
-    serves it best, so four parts take four voices — and on this console the four
-    it usually picks are the Game Boy's, which have envelopes and duties the mixer
-    has not. Most of the example library therefore plays entirely on the APU half,
-    and one track (`runner`'s `updraft.mid`) is what the mixer proof is pointed
-    at. Whether an arranger with spare voices should double a part rather than
-    leave them idle is doc 17's question, not this backend's, and it is open.
+    **The mix loop lives there too**, and that is the difference between a mixer
+    that fits in a frame and one that does not. An instruction fetched over the
+    cartridge bus costs four cycles at the wait states the boot programmes and one
+    fetched from internal RAM costs none, so the driver copies the routine and its
+    literal pool in at boot and calls the copy — 1.85 frames a game tick against
+    1.00, measured with six voices actually sounding. It stayed invisible for as
+    long as the example library had four parts and none of them reached the mixer,
+    which is the second thing widening the fixtures paid for.
+
+    One thing the driver exposed was not the driver's: **the example library was
+    written four parts wide, and a ten-voice machine cannot spend that.** The
+    arranger gives each part the channel that serves it best, so four parts took
+    four voices — usually the Game Boy's, which have envelopes and duties the
+    mixer has not — and the other six sat idle on every track in the library. The
+    fixtures are full arrangements now, around ten parts each, so this console
+    plays the APU half *and* the mixer half; the demakers were always able to
+    spend the machine, and what was missing was material to spend. Whether an
+    arranger with spare voices should double a part rather than leave one idle is
+    still doc 17's question and still open — but it is now a question about
+    genuinely spare voices rather than about a starved input.
 
     **And the Nintendo DS, which cost a description and no instructions.**
     `demake build -c nds` produces a real `.nds` cartridge carrying the *same ARM
@@ -951,7 +963,11 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   - **Chip music by the back door.** If the format is easy to write in two voices,
     it will be written in two voices, and the arranger's central decision — what
     to do when there are more parts than channels — is hidden rather than made.
-    The library's MIDIs are four-part arrangements for exactly that reason.
+    The library's MIDIs are full arrangements for exactly that reason, and *how*
+    full matters at both ends: four parts hides the decision on a four-channel
+    console the other way round, by leaving a sixteen-channel one nothing to
+    spend. Around ten is what makes every console in the set say something
+    different.
 
   So the test for any proposal here is not "does it produce a nice sprite", it is
   **does the demaker still have something to demake**. A format that can only
