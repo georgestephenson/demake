@@ -61,10 +61,17 @@ jobs:
     needs: changes
     if: needs.changes.outputs.unit == 'true'
     runs-on: ${{ matrix.os }}
+    # Three operating systems on `main`, one on a pull request — the same split
+    # `affected.mjs` already states in its own header: the PR is what gets fast,
+    # and the branch releases are cut from stays fully proven. What the other two
+    # catch is path handling and line endings at the edges, which a merge to
+    # `main` still finds before anything ships; what they cost on a PR is the
+    # whole run, because Windows is the slowest runner and this is the longest
+    # job on it. `fromJSON` because a matrix dimension has to be a real list.
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
         node: [20, 22]
     steps:
       - uses: actions/checkout@v5
