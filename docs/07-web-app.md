@@ -87,6 +87,15 @@ builds ([doc 19](19-projects.md)).
   rename being one gesture because a project is a flat map from path to bytes and
   a folder is a convention in the names. Doc 19 originally deferred this; §A file
   manager, after all records why the answer changed.
+- **And it has a switch on the screen**, at the left of the title bar where every
+  editor with a sidebar puts one. It was a menu entry and a key and nothing else,
+  which is a control you have to already know about — and below 1000px, where the
+  tree stacks above the editor and now *opens contracted*, it is the only way
+  back to the project's files. A third of a phone screen is a third the editor
+  does not get, so the width decides how it opens; a resize afterwards does not
+  overrule the button somebody just pressed. The menu entry stays, because that
+  is where the accelerator is written down, and the key itself is one string both
+  of them read.
 - **The status bar holds the project**, the way an editor's holds the branch: the
   picker for which example is open, whether it has unsaved changes, and whatever
   the last operation had to say.

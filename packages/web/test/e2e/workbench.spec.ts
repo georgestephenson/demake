@@ -81,6 +81,53 @@ test("the menu bar runs its commands, and its keys do the same thing", async ({ 
   await expect(page.locator(".explorer")).toBeVisible();
 });
 
+test("the explorer has a switch on the screen, not only in a menu", async ({ page }) => {
+  await page.goto("/");
+  const toggle = page.getByTestId("explorer-toggle");
+  await expect(toggle).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+  await toggle.click();
+  await expect(page.locator(".explorer")).toBeHidden();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+  // And it is still there with the tree gone, which is the whole point of it
+  // being a button rather than an entry in a menu: it is the way back.
+  await expect(toggle).toBeVisible();
+  await toggle.click();
+  await expect(page.locator(".explorer")).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+});
+
+test("a phone-width window opens with the explorer contracted", async ({ page }) => {
+  // At this width the tree stacks above the editor and takes a third of the
+  // screen, so it opens out of the way. Set before `goto`, because the state is
+  // the page's opening decision.
+  await page.setViewportSize({ width: 420, height: 780 });
+  await page.goto("/");
+
+  const toggle = page.getByTestId("explorer-toggle");
+  await expect(toggle).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator(".explorer")).toBeHidden();
+
+  // And the editor is the whole workbench rather than one row of a template
+  // written for two: the stacked layout keeps a row for the tree, and left in it
+  // the editor is as tall as its content — which the window then clips with
+  // nothing to scroll.
+  await expect(page.getByTestId("open-game")).toBeVisible();
+  const share = await page.evaluate(() => {
+    const host = document.querySelector(".editor-host")?.getBoundingClientRect().height ?? 0;
+    const bench = document.querySelector(".workbench")?.getBoundingClientRect().height ?? 1;
+    return host / bench;
+  });
+  expect(share).toBeGreaterThan(0.99);
+  expect(share).toBeLessThan(1.01);
+
+  await toggle.click();
+  await expect(page.locator(".explorer")).toBeVisible();
+});
+
 test("go to file opens a file by typing at it", async ({ page }) => {
   await page.goto("/");
   // Wait for the app before pressing a key at it. `goto` resolves on the
