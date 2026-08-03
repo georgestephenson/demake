@@ -32,7 +32,7 @@ import { describe, expect, it } from "vitest";
 import {
   SNES_CODE_SIZE,
   SNES_HEADER_OFFSET,
-  SNES_ROM_SIZE,
+  SNES_ROM_SIZES,
   SNES_TILE_OFFSET,
   snesChecksum,
 } from "@demake/core";
@@ -94,7 +94,12 @@ describe("the LoROM cartridge", async () => {
   const built = await buildSnesRom(build("pong"), { title: "PONG" });
 
   it("is a two-bank image with the header and its checksum stamped inside it", () => {
-    expect(built.bytes.length).toBe(SNES_ROM_SIZE);
+    // Two banks: a program and the tile art it draws with. This game names music
+    // but the test supplies none, so there is no sound-processor image and no
+    // third bank to carry it — which is the whole of what makes this cartridge
+    // half the size of a sounding one (`backend.ts` §Elastic cartridges).
+    expect(built.bytes.length).toBe(SNES_ROM_SIZES[0]);
+    expect(built.stats.cartridge).toBe(SNES_ROM_SIZES[0]);
     const title = String.fromCharCode(
       ...built.bytes.subarray(SNES_HEADER_OFFSET, SNES_HEADER_OFFSET + 4),
     );

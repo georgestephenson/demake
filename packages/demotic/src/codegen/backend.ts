@@ -28,6 +28,40 @@
  * below return numbers, tables and bytes; the code that implements a step lives
  * in the backend, because a shared instruction layer would be a fake common
  * denominator between a machine with seven registers and one with three.
+ *
+ * ## Elastic cartridges
+ *
+ * A cartridge is as big as the game needs and no bigger. Every console that
+ * shipped its games on more than one board picks the smallest of them that holds
+ * the program — an NROM-128 rather than an NROM-256, a 32 KiB Sega cartridge
+ * rather than a 48, one megabit of Mega Drive rather than four — and grows only
+ * when the game does. Which boards exist is the *console's* answer and lives
+ * beside its header in `core/src/asm/*-cart.ts`, because the sizes a cartridge can
+ * describe itself as are a fact about the hardware; a backend's job is to pick.
+ *
+ * Two things follow and neither is obvious:
+ *
+ *   - **`capacity` is the largest board, always.** It is what
+ *     {@link RomStats.free} is measured against, and a headroom figure that jumped
+ *     upward when a game crossed onto a bigger board would be useless as a
+ *     regression signal. What was actually written is {@link RomStats.cartridge}.
+ *   - **Growing is a second assembly, not an estimate.** A backend that has to
+ *     move its code — the Sega 8-bits pad across a header hole, the NES changes
+ *     origin — emits the program again rather than patching the first attempt.
+ *     Assembly is milliseconds against art and audio that are already demade.
+ *
+ * ## Cutting the music
+ *
+ * When a game does not fit on the biggest board its console has, **the music and
+ * the effects go first** and the build says so ({@link RomStats.cut}). A track is
+ * a few kilobytes of register schedule and the game around it is the game; a
+ * cartridge that plays silently is something somebody can play, and a build error
+ * is not. It is done by binding the audio again with no asset bytes at all, so
+ * what comes out is exactly the cartridge a project with its music left out
+ * already produces — the request bytes a rule writes are still there, so the trace
+ * is unchanged (doc 14 §Conformance) and the only difference is that nothing is
+ * listening. A game that still does not fit is refused, and told that the music
+ * was already gone.
  */
 
 import type { Executor } from "@demake/core";
@@ -67,8 +101,35 @@ export interface BoundAssets<Options> {
 export interface RomStats {
   /** Bytes of code and data emitted, before padding. */
   bytes: number;
-  /** ROM still free. */
+  /**
+   * ROM still free — against the *largest* cartridge this console can build.
+   *
+   * Not against the one that shipped, which is the elastic part (§Elastic
+   * cartridges): a game that grew a hundred bytes and crossed onto the next board
+   * up would otherwise see this number jump by sixteen kilobytes, and a budget
+   * assertion that moves in the wrong direction when a game gets bigger is not a
+   * budget assertion. What it answers is "how much room is left before this game
+   * stops fitting the console at all", which is the question a size regression is
+   * actually about. {@link cartridge} is what was written.
+   */
   free: number;
+  /**
+   * Bytes the cartridge image really is: the artifact's own length.
+   *
+   * A demade game is padded up to the smallest board its console came on that
+   * holds it (§Elastic cartridges), so this is the elasticity as a number — 16 KiB
+   * for an NROM-128 where a bigger game gets 32, 128 KiB for a Mega Drive where a
+   * bigger one gets a megabyte.
+   */
+  cartridge: number;
+  /**
+   * What the build dropped to make the game fit, named.
+   *
+   * Empty in the normal case, which is every build that fit. A game that does not
+   * fit loses its music and effects first and is told so, because a cartridge that
+   * plays silently is a game and a build error is not (§Cutting the music).
+   */
+  cut: readonly string[];
   /** Work RAM in use. */
   ram: number;
   scenes: number;
@@ -379,24 +440,74 @@ export async function buildRom<Art, Audio extends BoundAudioShape>(
   }
   const audio = audioResult.value;
 
-  const built = backend.assemble({
-    program,
-    analysis,
-    layout,
-    art: art.emit,
-    audio: audio.emit,
-    title: options.title,
-  });
+  // Assembling and refusing an overflow are one step, because a backend may find
+  // the overflow itself: the Sega 8-bits and the Mega Drive discover it while
+  // choosing a board, and the Super Nintendo while packing the sound processor's
+  // bank. Every one of those raises `E_GAME_TOO_LARGE`, which is what makes the
+  // fallback below a single `catch` rather than a check per console.
+  const assembleWith = (sound: Audio): Assembled => {
+    const built = backend.assemble({
+      program,
+      analysis,
+      layout,
+      art: art.emit,
+      audio: sound,
+      title: options.title,
+    });
+    if (built.code > built.capacity) {
+      throw new BuildError(
+        "E_GAME_TOO_LARGE",
+        `this game compiles to ${built.code} bytes and ${backend.cartridge} holds ${built.capacity}`,
+        "fewer objects in one rule, or a smaller level; bank switching is doc 15 §Not in v1.",
+      );
+    }
+    return built;
+  };
 
-  if (built.code > built.capacity) {
-    throw new BuildError(
-      "E_GAME_TOO_LARGE",
-      `this game compiles to ${built.code} bytes and ${backend.cartridge} holds ${built.capacity}`,
-      "fewer objects in one rule, or a smaller level; bank switching is doc 15 §Not in v1.",
+  let sound = audio;
+  let built: Assembled;
+  const cut: string[] = [];
+  try {
+    built = assembleWith(audio.emit);
+  } catch (error) {
+    const overflowed =
+      error instanceof BuildError && error.code === "E_GAME_TOO_LARGE" && audio.emit.present;
+    if (!overflowed) throw error;
+
+    // The music goes first. A cartridge that plays the game silently is still the
+    // game; a build error is not, and on a console with no bigger board the
+    // alternative is nothing at all. Rebinding with no asset bytes rather than
+    // subtracting a driver from the emit options is what makes this exactly the
+    // build a project with its music left out already produces — request bytes and
+    // all, so the trace is unchanged (doc 14 §Conformance) and the only difference
+    // is that nobody is listening.
+    const silent = await backend.bindAudio(
+      program,
+      new Map<string, Uint8Array>(),
+      layout,
+      options.executor,
     );
+    try {
+      built = assembleWith(silent.emit);
+    } catch (again) {
+      if (again instanceof BuildError) {
+        throw new BuildError(
+          again.code,
+          again.message,
+          `${again.hint === undefined ? "" : `${again.hint} `}The music and effects were cut ` +
+            "already and it still does not fit.",
+        );
+      }
+      throw again;
+    }
+    cut.push(`${(error as BuildError).message}, so its music and effects were cut`);
+    // The original `missing` rather than the silent build's, which names every
+    // file: what was *not supplied* and what was *dropped to fit* are different
+    // things to be told, and only the second one happened here.
+    sound = { ...silent, missing: audio.missing, notes: [] };
   }
 
-  const sound = audio.emit;
+  const emitted = sound.emit;
   return {
     bytes: built.bytes,
     layout,
@@ -405,6 +516,8 @@ export async function buildRom<Art, Audio extends BoundAudioShape>(
     stats: {
       bytes: built.code,
       free: built.capacity - built.code,
+      cartridge: built.bytes.length,
+      cut,
       ram: layout.used,
       scenes: program.scenes.length,
       instances: program.instances.length,
@@ -412,21 +525,21 @@ export async function buildRom<Art, Audio extends BoundAudioShape>(
       helpers: built.helpers,
       artTiles: art.tiles,
       missingArt: art.missing,
-      ...(sound.present
+      ...(emitted.present
         ? {
             audio: {
-              tracks: sound.tracks,
-              effects: sound.effects,
-              code: sound.code,
-              data: sound.data,
-              helpers: sound.helpers,
-              rateHz: sound.rateHz,
-              writesRestricted: sound.writesRestricted,
-              notes: audio.notes ?? [],
+              tracks: emitted.tracks,
+              effects: emitted.effects,
+              code: emitted.code,
+              data: emitted.data,
+              helpers: emitted.helpers,
+              rateHz: emitted.rateHz,
+              writesRestricted: emitted.writesRestricted,
+              notes: sound.notes ?? [],
             },
           }
         : {}),
-      missingAudio: audio.missing,
+      missingAudio: sound.missing,
     },
   };
 }

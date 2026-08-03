@@ -1042,6 +1042,56 @@ Sprite cost is deliberately pessimistic: an object `w` cells wide is charged
 `ceil(w)` sprites on every scanline it covers, ignoring 8×16 sprite modes that
 would halve it on some targets.
 
+### Elastic cartridges
+
+**A cartridge is as big as the game needs and no bigger.** Every console that
+shipped its games on more than one board picks the smallest that holds the
+program, and grows only when the game does:
+
+| Console                  | Boards                    | What decides it                     |
+| ------------------------ | ------------------------- | ----------------------------------- |
+| Game Boy / Color / Duck  | 32 KiB                    | fixed — see below                   |
+| NES                      | NROM-128, NROM-256        | the program's own length            |
+| Master System / Game Gear| 32 KiB, 48 KiB            | whether the code reaches `$7FF0`    |
+| Super Nintendo           | 64 KiB, 128 KiB           | whether there is a sound image      |
+| Mega Drive               | 128 KiB … 4 MiB           | the program's own length            |
+| Game Boy Advance         | 32 KiB steps              | the program's own length            |
+| Nintendo DS              | 128 KiB … powers of two   | both binaries' length               |
+
+Two of the rows are worth reading for what they say about the hardware.
+**The Game Boy is the one console that cannot shrink or grow**, and that is the
+header rather than a decision: the size field's smallest code *is* 32 KiB and
+every code above it names a cartridge with a memory bank controller in it. And
+**the NES's two boards differ only in where the program is assembled** — an
+NROM-128's image is mapped at `$C000` and mirrored at `$8000`, so its vectors sit
+at the top of its own sixteen kilobytes and everything else about the build is
+unchanged.
+
+Which boards exist is the *console's* answer and lives beside its header in
+`core/src/asm/*-cart.ts`; a backend's job is to pick, and where picking the small
+one means moving the code it emits the program a second time rather than patching
+the first attempt. Never add a size the hardware did not ship — the point is a
+game on the board a game that size shipped on, not the smallest file that boots.
+
+`stats.cartridge` is what was written. `stats.free` is measured against the
+**largest** board the console can build, always: it is the budget-regression
+signal, and a headroom figure that jumped by sixteen kilobytes the moment a game
+grew past a boundary would move in the wrong direction.
+
+### When it does not fit, the music goes first
+
+A game too big for the biggest board its console came on **loses its music and
+its sound effects, and the build says so** (`stats.cut`, a `warning:` line in the
+CLI, a note under the cartridge in the page). A track is a few kilobytes of
+register schedule and the game around it is the game; a cartridge that plays
+silently is something somebody can play, and a build error is not.
+
+It is done by binding the audio again with no asset bytes at all, so what comes
+out is exactly the cartridge a project with its music left out already produces —
+the request bytes a rule writes are still there, so **the trace is unchanged**
+(§Conformance) and the only difference is that nothing is listening. A game that
+still does not fit is refused, and told that the music was already gone.
+
 ## Stability
 
 The language's semantics are **output bytes**, and carry the same guarantees as

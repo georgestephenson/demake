@@ -34,7 +34,7 @@ import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
 import { builtinMd, BUILTIN_TILES, MD_TILE_BYTES } from "../src/rom/graphics.js";
 import { bindMdArt } from "../src/codegen/md-art.js";
-import { buildMdRom, CODE_SIZE } from "../src/codegen/md.js";
+import { buildMdRom, CODE_SIZE, MAX_ROM_SIZE } from "../src/codegen/md.js";
 import {
   ART_PALETTES,
   packCells,
@@ -71,7 +71,7 @@ function cellAt(machine: Md, column: number, row: number): number {
 describe("the Mega Drive cartridge", async () => {
   const built = await buildMdRom(build("pong"), { title: "PONG" });
 
-  it("is a 512 KiB image with a header the boot ROM will accept", () => {
+  it("is a one-megabit image with a header the boot ROM will accept", () => {
     expect(built.bytes.length).toBe(MD_ROM_SIZE);
     expect(String.fromCharCode(...built.bytes.subarray(0x100, 0x110))).toBe("SEGA MEGA DRIVE ");
     expect(String.fromCharCode(...built.bytes.subarray(0x120, 0x124))).toBe("PONG");
@@ -94,12 +94,17 @@ describe("the Mega Drive cartridge", async () => {
     expect(long(0x78)).not.toBe(long(0x04));
   });
 
-  it("has room the other three consoles do not", () => {
+  it("has room the other three consoles do not, on the smallest board it has", () => {
     // Every size assertion in this project is about a game that nearly did not
     // fit. There is no such story here, and the number is worth pinning so that
-    // the day one appears it is a change rather than a discovery.
-    expect(CODE_SIZE).toBe(MD_ROM_SIZE - 0x200);
-    expect(built.stats.free).toBeGreaterThan(MD_ROM_SIZE / 2);
+    // the day one appears it is a change rather than a discovery. `CODE_SIZE` is
+    // the *largest* board, because that is what `free` answers against; what this
+    // game actually got is one megabit, which is the smallest this console came
+    // on and still six times what the game is.
+    expect(CODE_SIZE).toBe(MAX_ROM_SIZE - 0x200);
+    expect(built.stats.free).toBeGreaterThan(MAX_ROM_SIZE / 2);
+    expect(built.stats.cartridge).toBe(MD_ROM_SIZE);
+    expect(built.stats.bytes).toBeLessThan(MD_ROM_SIZE - 0x200);
   });
 });
 

@@ -6,12 +6,20 @@
  * game backend, and the audio driver when its NES half lands — and a sixteen-byte
  * header implemented twice is a header that disagrees in one byte in one of them.
  *
- * **NROM-256**, which is the mapper-less cartridge: 32 KiB of program at
- * `$8000`–`$FFFF` and 8 KiB of character ROM the PPU addresses directly. There
- * is no bank switching and no cartridge RAM, so a game's whole state lives in
- * the console's 2 KiB — which is the constraint the backend's RAM plan is
- * written against, and the reason this is `mapper 0` on purpose rather than for
- * want of a reason to use another.
+ * **NROM**, which is the mapper-less cartridge, and it came on two boards: 32 KiB
+ * of program at `$8000`–`$FFFF` (NROM-256) or 16 KiB mirrored across both halves
+ * of that window (NROM-128). Either way there is 8 KiB of character ROM the PPU
+ * addresses directly, no bank switching and no cartridge RAM — so a game's whole
+ * state lives in the console's 2 KiB, which is the constraint the backend's RAM
+ * plan is written against and the reason this is `mapper 0` on purpose rather
+ * than for want of a reason to use another.
+ *
+ * **The two boards are what makes this cartridge elastic**, and the difference is
+ * the origin rather than the code: a 16 KiB image is mapped at `$C000` *and* at
+ * `$8000`, so a program assembled for the high mirror finds its vectors at the top
+ * of its own image and reads back byte for byte the same as the 32 KiB one would.
+ * A game that fits gets the smaller board, which is half the file and the board a
+ * game this size actually shipped on.
  *
  * Unlike the Game Boy's, this header has no checksums and no logo: nothing about
  * it is copyrighted and nothing about it is computed, so it is data rather than
@@ -27,14 +35,36 @@
 /** Bytes of program in an NROM-256 cartridge, mapped at `$8000`. */
 export const NES_PRG_SIZE = 0x8000;
 
+/**
+ * Program sizes an NROM cartridge came in, smallest first.
+ *
+ * NROM-128 and NROM-256, and nothing between them: the board carries one mask ROM
+ * and the PPU's address decoding mirrors a short one across the window. A builder
+ * picks the first that holds the program, which is how a small game ends up on the
+ * board a small game shipped on.
+ */
+export const NES_PRG_SIZES: readonly number[] = [0x4000, 0x8000];
+
 /** Bytes of character ROM the PPU sees: two 4 KiB pattern tables. */
 export const NES_CHR_SIZE = 0x2000;
 
 /** Bytes of the iNES header that precede the program. */
 export const NES_HEADER_SIZE = 16;
 
-/** Where the program is mapped in the CPU's address space. */
+/** Where an NROM-256 program is mapped in the CPU's address space. */
 export const NES_PRG_ORIGIN = 0x8000;
+
+/**
+ * Where a program of `size` bytes is assembled.
+ *
+ * The image ends at `$FFFF` whichever board it is on, because that is where the
+ * vectors are — so a 16 KiB program is assembled at `$C000` and reached through
+ * the high mirror. Assembling it at `$8000` would put its vectors at `$BFFA`,
+ * which the CPU never reads.
+ */
+export function nesPrgOrigin(size: number): number {
+  return 0x10000 - size;
+}
 
 /**
  * The three vectors at the top of the program, in the order the CPU reads them.
@@ -63,17 +93,23 @@ export interface NesHeaderOptions {
 /**
  * Wrap a program and a character bank into a complete `.nes` file.
  *
- * `prg` must be exactly {@link NES_PRG_SIZE} and `chr` exactly
+ * `prg` must be one of {@link NES_PRG_SIZES} and `chr` exactly
  * {@link NES_CHR_SIZE}: NROM has no short banks, and padding one here rather
  * than in the caller is how the two builders that produce them stay identical.
+ * The board follows from the length — a 16 KiB program is an NROM-128 and the
+ * header's bank count says so — so a builder cannot declare one and ship the
+ * other.
  */
 export function packInesRom(
   prg: Uint8Array,
   chr: Uint8Array,
   options: NesHeaderOptions = {},
 ): Uint8Array {
-  if (prg.length !== NES_PRG_SIZE) {
-    throw new Error(`an NROM program is ${NES_PRG_SIZE} bytes, not ${prg.length}`);
+  if (!NES_PRG_SIZES.includes(prg.length)) {
+    throw new Error(
+      `an NROM program is ${NES_PRG_SIZES.map((n) => n / 1024 + " KiB").join(" or ")}` +
+        `, not ${prg.length} bytes`,
+    );
   }
   if (chr.length !== NES_CHR_SIZE) {
     throw new Error(`an NROM character bank is ${NES_CHR_SIZE} bytes, not ${chr.length}`);
@@ -96,5 +132,14 @@ export function packInesRom(
 /** Where the program's bytes start in a packed `.nes` file. */
 export const NES_PRG_OFFSET = NES_HEADER_SIZE;
 
-/** Where the character bank's bytes start in a packed `.nes` file. */
-export const NES_CHR_OFFSET = NES_HEADER_SIZE + NES_PRG_SIZE;
+/**
+ * Where the character bank's bytes start in a packed `.nes` file.
+ *
+ * A function rather than a constant, because the program in front of it is one
+ * board or the other: the header's own bank count is what says which, so a reader
+ * that asks the cartridge cannot be told the wrong answer by a builder that chose
+ * the small board.
+ */
+export function nesChrOffset(rom: Uint8Array): number {
+  return NES_HEADER_SIZE + (rom[4] as number) * 0x4000;
+}

@@ -30,6 +30,9 @@ import {
   imm16,
   imm8,
   immBank,
+  packSnesRom,
+  snesChecksum,
+  SNES_HEADER_OFFSET,
   label,
   long,
   longX,
@@ -165,5 +168,42 @@ describe("Asm65816", () => {
       ["Nmi", 0x8001],
       ["Ram", 0x0100],
     ]);
+  });
+});
+
+describe("the LoROM cartridge wrapper", () => {
+  const vectors = { reset: 0x8000, nmi: 0x8004 };
+
+  it("takes either bank count and takes the size code from the image", () => {
+    // The code is `log2(kilobytes)`, so 64 KiB is six and 128 KiB is seven. It
+    // follows from the length rather than being a caller's option: a two-bank
+    // cartridge that described itself as a four-bank one would have a checksum
+    // computed over bytes it does not have.
+    for (const [bytes, code] of [
+      [0x10000, 6],
+      [0x20000, 7],
+    ] as const) {
+      const rom = packSnesRom(new Uint8Array(bytes), vectors);
+      expect(rom.length).toBe(bytes);
+      expect(rom[SNES_HEADER_OFFSET + 0x17]).toBe(code);
+      // And the checksum pair still complements over the whole of whichever
+      // image it was, which is the property that makes a short cartridge valid
+      // rather than merely smaller.
+      const sum =
+        (rom[SNES_HEADER_OFFSET + 0x1e] as number) |
+        ((rom[SNES_HEADER_OFFSET + 0x1f] as number) << 8);
+      const complement =
+        (rom[SNES_HEADER_OFFSET + 0x1c] as number) |
+        ((rom[SNES_HEADER_OFFSET + 0x1d] as number) << 8);
+      expect(sum ^ complement).toBe(0xffff);
+      expect(sum).toBe(snesChecksum(rom));
+    }
+  });
+
+  it("refuses an image that is neither bank count", () => {
+    // Not a policy: one bank is the program with nowhere to put the tile art, and
+    // three is not a size the capacity field can express.
+    expect(() => packSnesRom(new Uint8Array(0x8000), vectors)).toThrow(/64 KiB or 128 KiB/);
+    expect(() => packSnesRom(new Uint8Array(0x18000), vectors)).toThrow(/64 KiB or 128 KiB/);
   });
 });

@@ -214,7 +214,12 @@ async function runBuildGame(
   });
   // `slice()` because the ROM is transferred: a cartridge built out of a bank
   // the assembler still holds a view on would be handed away underneath it.
-  return { ...base, rom: built.bytes.slice().buffer, layout: built.layout };
+  return {
+    ...base,
+    rom: built.bytes.slice().buffer,
+    layout: built.layout,
+    cut: [...built.stats.cut],
+  };
 }
 
 function post(message: WorkerResponse, transfer: Transferable[] = []): void {

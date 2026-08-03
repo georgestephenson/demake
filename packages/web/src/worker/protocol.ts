@@ -119,6 +119,15 @@ export interface BuiltRomPayload {
   /** Absent exactly when `unsupported` is non-empty. */
   rom?: ArrayBuffer;
   layout?: Layout;
+  /**
+   * What the build dropped to make the game fit, named.
+   *
+   * Empty in the normal case. A game too big for the biggest board its console
+   * came on loses its music and effects rather than failing to build (doc 14
+   * §Elastic cartridges), and the page has to say so — a cartridge that plays
+   * silently and does not explain itself reads as a bug in the sound.
+   */
+  cut?: string[];
 }
 
 export type WorkerRequest =

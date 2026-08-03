@@ -514,9 +514,11 @@ test("builds and plays a real Mega Drive ROM in the page", async ({ page }) => {
   await page.getByTestId("console-select").selectOption("md");
   await expect(canvas).toHaveAttribute("data-console", "md", { timeout: 150_000 });
 
-  // A fourth cartridge shape: half a megabyte with its header *outside* the
-  // program, on the widest screen in the set.
-  await expect(page.getByTestId("rom-stat")).toContainText("512 KiB");
+  // A fourth cartridge shape: one megabit with its header *outside* the
+  // program, on the widest screen in the set. One megabit because that is the
+  // smallest board this console came on and the game is a fraction of it — the
+  // cartridge is as big as the game needs (doc 14 §Elastic cartridges).
+  await expect(page.getByTestId("rom-stat")).toContainText("128 KiB");
   await expect(page.getByTestId("rom-download")).toContainText(".md");
   await expect(canvas).toHaveAttribute("width", "320");
   await expect(canvas).toHaveAttribute("height", "224");

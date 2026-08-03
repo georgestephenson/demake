@@ -20,7 +20,17 @@
  * Source: Pan Docs — The Cartridge Header: https://gbdev.io/pandocs/The_Cartridge_Header.html
  */
 
-/** Bytes in a mapper-less Game Boy cartridge. */
+/**
+ * Bytes in a mapper-less Game Boy cartridge.
+ *
+ * The one console here whose cartridge is not elastic, and the reason is the
+ * header rather than a decision: the size field's smallest code *is* 32 KiB and
+ * every code above it names a cartridge with a memory bank controller in it, so
+ * a ROM-only Game Boy cartridge is 32 KiB and nothing else. Two banks, both
+ * mapped, `$0000`–`$7FFF`. Shrinking below it would mean a cartridge that
+ * describes a size it does not have; growing past it is doc 13 §Banked
+ * cartridges.
+ */
 export const GB_ROM_SIZE = 0x8000;
 
 /** Header field offsets, for callers that read a built ROM back. */
