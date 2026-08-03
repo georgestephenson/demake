@@ -22,6 +22,9 @@ import {
   eaPost,
   eaPre,
   fitsAbsWord,
+  MD_ROM_SIZE,
+  MD_ROM_SIZES,
+  packMdRom,
 } from "../src/index.js";
 import { AsmError, label } from "../src/asm/m68k.js";
 
@@ -173,5 +176,32 @@ describe("data", () => {
 
   it("pads an odd byte run, because a word access to an odd address faults", () => {
     expect(encode((a) => a.db(1, 2, 3).align().dw(0x4444))).toBe("010203004444");
+  });
+});
+
+describe("the Mega Drive cartridge wrapper", () => {
+  it("takes any of its board sizes and records where each one ends", () => {
+    // The ROM-end field is an *address*, not a size, and it is how the console
+    // learns the board it is holding — so a cartridge grown to the next size up
+    // has to say so or an emulator mirrors it wrongly. One megabit is the floor:
+    // a demade game is twenty-odd kilobytes, and half a megabyte of it used to be
+    // zeros (`md-cart.ts` §MD_ROM_SIZES).
+    for (const size of MD_ROM_SIZES) {
+      const rom = packMdRom(new Uint8Array(64), 0x200, 0xfffe00, { size });
+      expect(rom.length).toBe(size);
+      const end =
+        ((rom[0x1a4] as number) << 24) |
+        ((rom[0x1a5] as number) << 16) |
+        ((rom[0x1a6] as number) << 8) |
+        (rom[0x1a7] as number);
+      expect(end >>> 0).toBe(size - 1);
+    }
+    expect(MD_ROM_SIZES[0]).toBe(MD_ROM_SIZE);
+  });
+
+  it("refuses a program the board it was given cannot hold", () => {
+    expect(() => packMdRom(new Uint8Array(0x30000), 0x200, 0xfffe00, { size: 0x20000 })).toThrow(
+      /cannot hold/,
+    );
   });
 });

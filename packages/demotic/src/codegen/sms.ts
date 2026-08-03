@@ -283,9 +283,13 @@ export const smsBackend: Backend<SmsEmitOptions, SmsAudio> = {
     return {
       bytes: packSegaRom(image, { region: regionFor(program.profile.id) }),
       code: code.length,
-      // What is left is the image minus the sixteen bytes the header takes out of
-      // the middle of it, whichever size was chosen.
-      capacity: size - SMS_HEADER_SIZE,
+      // The *largest* flat cartridge minus the sixteen bytes the header takes out
+      // of the middle of it — not the size chosen. What `free` answers is how much
+      // room is left before the game stops fitting a flat cartridge at all, which
+      // is `backend.ts` §Elastic cartridges' rule: measured against the board that
+      // shipped, a game that grew a byte past `$7FF0` would see its headroom jump
+      // by sixteen kilobytes.
+      capacity: MAX_ROM_SIZE - SMS_HEADER_SIZE,
       symbols: inner.asm.symbols(),
       helpers: inner.helperNames(),
     };

@@ -982,7 +982,16 @@ export function audioSweep(target: Target): void {
      * The Sega 8-bits carried an exception at 512 while their rule code was still
      * copied per object, exactly as the NES did before them. Looping the pairs took
      * nine kilobytes off the shooter's Master System build and the exception went
-     * with it; the tightest fixture is the caves, at 3062 bytes free.
+     * with it.
+     *
+     * **Measured against the largest board the console has**, not the one the
+     * cartridge shipped on (doc 14 §Elastic cartridges) — so on the Sega 8-bits
+     * this is headroom against 48 KiB even though every fixture ships on 32, and
+     * the number it reports is larger than it used to be for that reason alone.
+     * What it still catches is the only thing it ever could: a game that has
+     * stopped fitting the console. The cliff *within* a console — crossing `$7FF0`
+     * and paying for the 48 KiB board — is a bigger file rather than a failure,
+     * and is visible in `stats.cartridge`.
      */
     const HEADROOM: Readonly<Record<string, number>> = {};
 
@@ -1027,9 +1036,9 @@ export function audioSweep(target: Target): void {
      *
      * | console | free bytes |
      * | --- | --- |
-     * | `gb` | shooter 2178, caves 6012, runner 7411, dodger 8372, breakout 10641, pong 12716, platformer 14448 |
-     * | `sms` | caves 3358, runner 4599, shooter 7218, dodger 9027, breakout 9312, pong 11093, platformer 12007 |
-     * | `nes` | caves 10667, runner 11774, shooter 13457, breakout 14285, dodger 14575, pong 14582, platformer 18037 |
+     * | `gb` | shooter 2177, caves 5114, runner 6518, dodger 8738, breakout 10637, pong 12716, platformer 14443 |
+     * | `sms` | caves 19137, runner 20982, shooter 23602, dodger 25301, breakout 25695, pong 27477, platformer 28386 |
+     * | `nes` | caves 9972, runner 11205, shooter 13457, breakout 14285, pong 14582, dodger 14692, platformer 18037 |
      *
      * The Game Boys sweep everything because they are the tightest family in the
      * library *and* the cheapest to build — the whole seven is under a minute
@@ -1039,17 +1048,19 @@ export function audioSweep(target: Target): void {
      * assets left out.
      *
      * The other four sweep the fixtures that could actually fail. A Master System
-     * is a real budget — the caves land 2.3 KiB above the floor — so it takes the
-     * two tightest. An NES is not: every fixture there is ten to eighteen
-     * kilobytes clear, so no code-generator change short of a catastrophe could
-     * trip one, and the two tightest are kept as a floor guard and to assert the
-     * driver's reported sizes are real rather than the zero they held before
+     * used to be a real budget at 32 KiB and is now measured against the 48 KiB
+     * board it grows onto, so its numbers above are the larger ones; it keeps the
+     * two tightest, because the caves are still the fixture nearest whatever the
+     * limit is. An NES is not a budget either: every fixture there is nine to
+     * eighteen kilobytes clear, so no code-generator change short of a catastrophe
+     * could trip one, and the two tightest are kept as a floor guard and to assert
+     * the driver's reported sizes are real rather than the zero they held before
      * `assemble` (`backend.ts` §BoundAudioShape). Five more builds a piece bought
      * neither, at ten minutes of `pnpm test`.
      *
      * A Mega Drive and a Super Nintendo take the shooter alone, for opposite
-     * reasons: a Mega Drive game is twenty-odd kilobytes of a half-megabyte image
-     * and there is no overflow to catch at all, and a Super Nintendo picture is
+     * reasons: a Mega Drive game is twenty-odd kilobytes against four megabytes of
+     * boards and there is no overflow to catch at all, and a Super Nintendo picture is
      * thirty seconds of tournament against five. Both build the shooter because it
      * is the tightest fixture everywhere else — two demade backdrops, nine aliens,
      * a theme and four effects.
@@ -1066,7 +1077,13 @@ export function audioSweep(target: Target): void {
      * error where one console's silence inside a shared one is invisible.
      */
     const SWEEP: Readonly<Record<string, readonly string[]>> = {
-      nes: ["caves", "runner"],
+      // The platformer is the third for a reason that is not its size: it is the
+      // one fixture whose NES build fits an NROM-128, so it is the only place in
+      // the suite a *small-board* cartridge is built with a driver in it (doc 14
+      // §Elastic cartridges). `rom.test.ts` runs NROM-128 cartridges in the core
+      // and proves the origin change is invisible to a tick; those builds have no
+      // audio, and this is the case that does.
+      nes: ["caves", "runner", "platformer"],
       sms: ["caves", "runner"],
       md: ["shooter"],
       snes: ["shooter"],
@@ -1093,6 +1110,12 @@ export function audioSweep(target: Target): void {
           // Headroom, deliberately asserted: a fixture built to the last hundred
           // bytes turns the next code-generator change into a mystery.
           expect(built.stats.free).toBeGreaterThan(HEADROOM[target.id] ?? 1024);
+          // And nothing was dropped to get there. A game that outgrows the biggest
+          // board its console has loses its music rather than failing to build
+          // (doc 14 §When it does not fit, the music goes first), which is the
+          // right answer for somebody's game and the wrong one for a fixture: it
+          // would turn an overflow into a cartridge that quietly plays silently.
+          expect(built.stats.cut).toEqual([]);
         },
         TIMEOUT[target.id] ?? BUILD_TIMEOUT,
       );

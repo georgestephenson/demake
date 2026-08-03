@@ -148,6 +148,8 @@ export function RomPane({
     rom?: Uint8Array;
     layout?: Layout;
     error?: string;
+    /** What the build dropped to make the game fit; empty in the normal case. */
+    cut?: readonly string[];
   }>({});
   const [demaking, setDemaking] = useState(false);
 
@@ -182,7 +184,12 @@ export function RomPane({
           });
           return;
         }
-        setBuilt({ ...where, rom: new Uint8Array(result.rom!), layout: result.layout! });
+        setBuilt({
+          ...where,
+          rom: new Uint8Array(result.rom!),
+          layout: result.layout!,
+          cut: result.cut ?? [],
+        });
       })
       .catch((error: unknown) => {
         if (!live) return;
@@ -399,6 +406,13 @@ export function RomPane({
             : ` · ${cost} frame${cost === 1 ? "" : "s"} per tick (${Math.round(FRAME_RATE / cost)} Hz)`}
         </span>
       </div>
+      {/* A cartridge that plays silently and does not say why reads as a bug in
+          the sound. This is the build telling you what it dropped to fit. */}
+      {(built.cut ?? []).map((note) => (
+        <p class="hint" key={note} data-testid="rom-cut">
+          {note}
+        </p>
+      ))}
       {sound && !playing ? (
         <p class="hint" data-testid="rom-sound-blocked">
           Your browser has not started audio yet. Click the screen, or check that this tab is

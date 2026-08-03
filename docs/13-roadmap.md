@@ -455,7 +455,7 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
 
     **The Super Nintendo is the fourth console, and it is the first one that is
     bigger than the language needs.** `demake build -c snes` produces a real
-    128 KiB LoROM cartridge — 65816 machine code written for the game, a Mode 1
+    LoROM cartridge — 65816 machine code written for the game, a Mode 1
     background demade into 4bpp tiles across seven sixteen-colour sub-palettes,
     and art in a second cartridge bank that reaches video RAM by transfer — and
     the whole example library traces identically there, in the same battery, at
@@ -549,7 +549,7 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     reason, and `fitRate` now treats the frame as the candidate every other clock
     has to beat rather than as a fallback for when none is in range.
     **The Mega Drive is the fifth console, and it is the first 16-bit one.**
-    `demake build -c md` produces a real 512 KiB cartridge — 68000 machine code
+    `demake build -c md` produces a real Mega Drive cartridge — 68000 machine code
     written for the game, vector table, header and word checksum, art demade into
     a 1408-tile bank across three of the VDP's four sub-palettes — and the whole
     example library traces identically there, in the same battery, at the same
@@ -1101,15 +1101,15 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
 - **Banked cartridges, and the game that needs one**: `quest.dmt` — three
   levels, a boss, a secret room, four tracks and eight effects — is the first
   example the mapper-less cartridge cannot hold. It builds and plays on the Mega
-  Drive (96 KiB of a 512 KiB image, 398 KiB free) and on nothing else, and the
-  numbers say what each console is short of rather than by how little:
+  Drive (140 KiB, on the 256 KiB board its size asks for) and on nothing else, and
+  the numbers say what each console is short of rather than by how little:
 
   | Console | Wall it hits | Needs | Has |
   | --- | --- | --- | --- |
   | Game Boy / Color / Mega Duck | cartridge | ~122 KiB | 32 KiB |
-  | Master System / Game Gear | cartridge | ~117 KiB | 32 KiB |
+  | Master System / Game Gear | cartridge | ~117 KiB | 48 KiB |
   | NES | work RAM, then cartridge | 1288 B of heap, ~120 KiB of PRG | 1280 B, 32 KiB |
-  | Super Nintendo | direct page, then cartridge | 239 B, ~100 KiB | 238 B, 64 KiB |
+  | Super Nintendo | direct page, then cartridge | 239 B, ~100 KiB | 238 B, 32 KiB of bank zero |
 
   The RAM half is close on two of them and the cartridge half is not close on
   any: the code alone is around 100 KiB, because a program is unrolled into the
@@ -1154,12 +1154,20 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     rest. Its work RAM is a separate opportunity: the plan stops at the 8 KiB
     mirrored into bank zero, and the other 120 KiB is reachable with long
     addressing or a data-bank switch.
-  - **Mega Drive** — nothing to do but grow the image; 512 KiB is a constant, not
-    a limit.
+  - **Mega Drive** — nothing to do but grow the image, and that is now what
+    happens: `MD_ROM_SIZES` runs 128 KiB to 4 MiB and the build takes the
+    smallest board that holds the game. Past 4 MiB it wants paging through
+    `$A130F1`, and says so.
 
-  The shape the mechanism wants, in either case, is a `Backend` that declares the
-  sizes its cartridge can be and a build that takes the smallest one that fits —
-  so a console with one size keeps exactly the bytes it has today.
+  **The sizing half of that mechanism is built** (doc 14 §Elastic cartridges).
+  Every console's cartridge wrapper declares the boards it came on and every
+  backend takes the smallest that fits, in both directions: the NES gained
+  NROM-128, the Mega Drive dropped its floor from half a megabyte to one megabit,
+  and a silent Super Nintendo cartridge is two banks rather than four. What it
+  does *not* do is make a bigger game fit, because none of those boards needs a
+  mapper — growing past the last one is still the work above. What it does buy is
+  the honest artifact: a game gets the board a game that size shipped on rather
+  than a constant somebody picked once.
 
 - **3D asset demake (new domain, exploratory)**: apply the same treatment to the
   32/64-bit 3D era — take a common modern 3D asset and emit PS1/N64/Saturn-

@@ -71,6 +71,18 @@ const RUNTIME_CONSOLES = runtimeConsoles;
  * game's own code, which begins at $0000 and runs through where $0104-$014F
  * would be. Asking the family would get this exactly backwards.
  */
+/**
+ * A cartridge size, the way a cartridge was sold.
+ *
+ * Kilobytes and megabytes rather than a byte count, because the number this
+ * reports is a *board* — the point of an elastic cartridge is that a small game
+ * ships on a small one, and "16 KiB" says that where "16384" makes the reader do
+ * the division.
+ */
+function cartridgeSize(bytes: number): string {
+  return bytes >= 0x100000 ? `${bytes / 0x100000} MiB` : `${Math.round(bytes / 1024)} KiB`;
+}
+
 function checksBootLogo(consoleId: string): boolean {
   return consoleId === "gb" || consoleId === "gbc";
 }
@@ -296,8 +308,16 @@ export async function runBuild(
   if (!quiet) {
     env.errOut(`${describeProgram(program)}\n`);
     env.errOut(
-      `code ${stats.bytes} bytes (${stats.free} free in ROM), ${stats.ram} bytes of work RAM\n`,
+      // The board this game got, and how much it could still grow — which are
+      // two different numbers now that a cartridge is elastic (doc 14 §Elastic
+      // cartridges): the first is the artifact and the second is the headroom
+      // before it stops fitting the console at all.
+      `code ${stats.bytes} bytes in a ${cartridgeSize(stats.cartridge)} cartridge ` +
+        `(room for ${stats.free} more), ${stats.ram} bytes of work RAM\n`,
     );
+    // Before anything else this build has to say: a cartridge that plays silently
+    // is not the game somebody asked for, even though it is a game.
+    for (const note of stats.cut) env.errOut(`warning: ${note}\n`);
     env.errOut(
       `runtime helpers: ${stats.helpers.length > 0 ? stats.helpers.join(", ") : "none — every one was compiled away"}\n`,
     );

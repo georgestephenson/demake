@@ -10,14 +10,16 @@
  * Three of the answers are worth reading for what they say about the hardware
  * rather than about the code:
  *
- *   - **The cartridge is two banks, and the split is a hardware fact.** Bank zero
+ *   - **The cartridge is banks, and the split is a hardware fact.** Bank zero
  *     is the program, reached by ordinary sixteen-bit absolutes with the data
  *     bank left at zero — which is also where the console's first eight
  *     kilobytes of work RAM are mirrored, so one bank holds everything an
  *     instruction touches. Bank one is the tile art, which never passes through
  *     an instruction at all: it reaches video RAM by a transfer that takes its
  *     source bank as *data*. Sixteen kilobytes of art therefore costs the program
- *     nothing.
+ *     nothing. Bank two is the sound processor's image, and a silent game has no
+ *     such thing — so the cartridge is two banks or four, decided by whether there
+ *     is any music to upload (`backend.ts` §Elastic cartridges).
  *   - **The tile budget is one budget and it is large.** Five hundred and twelve
  *     tiles shared between the background and the objects, because an object's
  *     tile number is eight bits plus the ninth its attribute byte carries, and the
@@ -30,9 +32,8 @@
  *     waveforms they play. `Reset` hands the whole block over four mailbox bytes
  *     at a time and then never calls a driver again; asking for a track or an
  *     effect is three bytes of work RAM and one routine in the main loop. The
- *     block sits at the *top* of bank one, under the tile art, because both are
- *     sized by what the game contains and only one of them can have the low end
- *     without the other having to know how big it got.
+ *     block has a bank of its own, because it and the tile art are sized by
+ *     different things and neither can be asked to know how big the other got.
  */
 
 import {
@@ -45,6 +46,7 @@ import {
   SNES_CODE_SIZE,
   SNES_ORIGIN,
   SNES_ROM_SIZE,
+  SNES_ROM_SIZES,
   SNES_TILE_CAPACITY,
   SNES_TILE_OFFSET,
   type Executor,
@@ -75,7 +77,7 @@ import { SnesCtx } from "./snes/ctx.js";
 import { BANK_TILES, emitProgram, type SnesEmitOptions } from "./snes/emit.js";
 import type { ArtSettings } from "./settings.js";
 
-/** Bytes a four-bank LoROM cartridge holds. */
+/** Bytes the largest LoROM cartridge this backend builds holds. */
 export const ROM_SIZE = SNES_ROM_SIZE;
 
 /**
@@ -108,7 +110,7 @@ interface SnesAudio extends BoundAudioShape {
 export const snesBackend: Backend<SnesEmitOptions, SnesAudio> = {
   family: "snes",
   consoles: ["snes"],
-  cartridge: "a four-bank LoROM cartridge",
+  cartridge: "a LoROM cartridge's program bank",
 
   extension(): string {
     return "sfc";
@@ -180,10 +182,10 @@ export const snesBackend: Backend<SnesEmitOptions, SnesAudio> = {
           );
     const names = program.tracks.length > 0 || program.sounds.length > 0;
     const driver: SpcGameAudio | undefined = bound.driver;
-    // The image sits at the *top* of the second cartridge bank, under the tile
-    // art rather than over it: the art's size is decided by the picture and this
-    // one's by the music, and only one of them can be given the low end without
-    // the other having to know how big it got.
+    // The image has a cartridge bank of its own: the art's size is decided by the
+    // picture and this one's by the music, and neither can be asked to know how
+    // big the other got. It is also the bank whose *absence* makes a silent
+    // cartridge half the size, which is why `assemble` asks whether there is one.
     const options: SnesEmitOptions = driver
       ? {
           audio: driver,
@@ -276,8 +278,15 @@ export const snesBackend: Backend<SnesEmitOptions, SnesAudio> = {
       );
     }
 
-    const image = new Uint8Array(SNES_ROM_SIZE);
-    image.set(code.subarray(0, Math.min(code.length, SNES_ROM_SIZE)), 0);
+    // Two banks or four, and the sound processor is what decides (`backend.ts`
+    // §Elastic cartridges). Bank zero and bank one are always spoken for — a
+    // program, and the tile art it draws with — so a game with nothing to play
+    // needs neither bank two nor the padding behind it, and ships on a cartridge
+    // half the size. There is no three-bank option: the capacity field is a power
+    // of two and so was every mask ROM.
+    const size = spc.length > 0 ? SNES_ROM_SIZE : (SNES_ROM_SIZES[0] as number);
+    const image = new Uint8Array(size);
+    image.set(code.subarray(0, Math.min(code.length, size)), 0);
     image.set(bank, SNES_TILE_OFFSET);
     image.set(spc, SNES_SPC_OFFSET);
     return {

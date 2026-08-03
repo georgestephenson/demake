@@ -149,8 +149,14 @@ describe("demake build", () => {
     const h = harness({ "pong.dmt": read("src/pong.dmt") });
     expect(await run(["build", "pong.dmt", "-c", "md", "-o", "pong.md"], h.env)).toBe(EXIT.OK);
     const rom = h.written.get("pong.md") as Uint8Array;
-    expect(rom.length).toBe(0x80000);
+    // One megabit, which is the smallest board this console came on: a demade
+    // game is twenty-odd kilobytes, so the half-megabyte image this used to be
+    // was four hundred and eighty kilobytes of zeros. The ROM-end field is an
+    // *address*, so it says one less than the length.
+    expect(rom.length).toBe(0x20000);
+    expect([...rom.subarray(0x1a4, 0x1a8)]).toEqual([0x00, 0x01, 0xff, 0xff]);
     expect(String.fromCharCode(...rom.subarray(0x100, 0x110))).toBe("SEGA MEGA DRIVE ");
+    expect(h.err()).toContain("128 KiB cartridge");
   });
 
   it("reports every compile diagnostic instead of the first", async () => {

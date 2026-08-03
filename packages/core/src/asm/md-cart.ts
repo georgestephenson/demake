@@ -65,7 +65,7 @@ export const MD_HINT_VECTOR = 0x0070;
 export interface MdHeaderOptions {
   /** The domestic and overseas names, padded or truncated to 48 characters. */
   title?: string;
-  /** Bytes the cartridge holds. Must be a power of two, at least 128 KiB. */
+  /** Bytes the cartridge holds — one of {@link MD_ROM_SIZES}. */
   size?: number;
   /**
    * Where the vertical interrupt goes.
@@ -80,7 +80,7 @@ export interface MdHeaderOptions {
 }
 
 /** Bytes a Demotic cartridge is padded to, at the smallest. */
-export const MD_ROM_SIZE = 0x80000;
+export const MD_ROM_SIZE = 0x20000;
 
 /**
  * Cartridge sizes, smallest first.
@@ -91,11 +91,19 @@ export const MD_ROM_SIZE = 0x80000;
  * that is what the boards were, and because `mdChecksum` sums words to the end of
  * the image and an odd length would leave a half-word to decide about.
  *
+ * **One megabit is the floor and it is the boards' rather than ours.** A demade
+ * game is twenty-odd kilobytes of 68000 with its art beside it, so half a megabyte
+ * was four hundred and eighty kilobytes of padding — and 1 Mbit is what the early
+ * cartridges of this console actually were. Below it the sizes stop being
+ * period-correct rather than stopping being expressible.
+ *
  * Four megabytes is where this stops, and it is the flat limit rather than an
  * arbitrary one: past it a cartridge needs bank switching through `$A130F1`, which
  * is a different piece of work (doc 13 §Banked cartridges).
  */
-export const MD_ROM_SIZES: readonly number[] = [0x80000, 0x100000, 0x200000, 0x400000];
+export const MD_ROM_SIZES: readonly number[] = [
+  0x20000, 0x40000, 0x80000, 0x100000, 0x200000, 0x400000,
+];
 
 /** Pad a field with spaces, or cut it to length — the header's own convention. */
 function field(text: string, length: number): number[] {

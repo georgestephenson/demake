@@ -22,14 +22,21 @@
  *     rather than deciding per game: the map arithmetic in the renderer is written
  *     for one answer, and making it depend on whether *this* game scrolls would put
  *     two layouts in the ROM for no gain.
+ *   - **NROM is two boards, and which one a game gets is its own size.** A program
+ *     that fits sixteen kilobytes ships on an NROM-128, where the image is mapped
+ *     at `$C000` *and* mirrored at `$8000` — so the only difference in the build is
+ *     the origin it is assembled at, and the vectors land at the top of the image
+ *     either way. Half the file for a game that was never going to use the other
+ *     half (`backend.ts` §Elastic cartridges).
  */
 
 import { buildNesGameAudio } from "@demake/audio";
 import {
   AsmError,
   NES_CHR_SIZE,
-  NES_PRG_ORIGIN,
   NES_PRG_SIZE,
+  NES_PRG_SIZES,
+  nesPrgOrigin,
   packInesRom,
   type Executor,
 } from "@demake/core";
@@ -56,7 +63,7 @@ import { NesCtx } from "./nes/ctx.js";
 import { emitProgram, type NesEmitOptions } from "./nes/emit.js";
 import type { ArtSettings } from "./settings.js";
 
-/** Bytes of program an NROM cartridge holds. */
+/** Bytes of program the largest NROM cartridge holds. */
 export const ROM_SIZE = NES_PRG_SIZE;
 
 /**
@@ -65,11 +72,15 @@ export const ROM_SIZE = NES_PRG_SIZE;
  * The last six are the CPU's three vectors, which is what makes a cartridge
  * bootable at all — so they are subtracted from the budget rather than left for a
  * game to overwrite and discover the problem in an emulator.
+ *
+ * Measured against the *big* board even when the small one ships, which is
+ * `backend.ts` §Elastic cartridges' rule: what this answers is how much room is
+ * left before the game stops fitting an NROM cartridge at all.
  */
 export const CODE_SIZE = NES_PRG_SIZE - 6;
 
-/** Where the vectors sit, as offsets into the program image. */
-const VECTOR_OFFSET = { nmi: NES_PRG_SIZE - 6, reset: NES_PRG_SIZE - 4, irq: NES_PRG_SIZE - 2 };
+/** Bytes the three vectors occupy at the top of whichever image was chosen. */
+const VECTOR_BYTES = 6;
 
 /**
  * What the NES's audio binding hands the emitter.
@@ -215,44 +226,77 @@ export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
 
   assemble({ program, analysis, layout, art, audio, title }): Assembled {
     void title; // an iNES header carries no title field
-    const ctx = new NesCtx(
-      program,
-      analysis,
-      layout,
-      getProfile(program.profile.id),
-      NES_PRG_ORIGIN,
-      art.bank,
-    );
-    if (audio.hooks) {
-      ctx.audio = {
-        driver: audio.hooks.driver,
-        music: audio.hooks.music,
-        request: audio.hooks.request,
-        trace: layout.sound,
-        effects: audio.hooks.effects,
-      };
-    }
-    let code: Uint8Array;
-    try {
-      emitProgram(ctx, { ...art, ...audio.options });
-      code = ctx.asm.assemble();
-    } catch (error) {
-      if (error instanceof AsmError) {
-        throw new BuildError(
-          "E_INTERNAL",
-          `the code generator produced invalid code: ${error.message}`,
-        );
-      }
-      throw error;
-    }
 
-    const prg = new Uint8Array(NES_PRG_SIZE);
-    prg.set(code.subarray(0, Math.min(code.length, NES_PRG_SIZE)), 0);
+    /**
+     * Compile the whole program with its image ending at `$FFFF`.
+     *
+     * A fresh `NesCtx` each time, because emitting is what pulls a helper into the
+     * output — a context that had already been emitted into would emit them twice.
+     */
+    const assembleAt = (origin: number): { ctx: NesCtx; code: Uint8Array } => {
+      const ctx = new NesCtx(
+        program,
+        analysis,
+        layout,
+        getProfile(program.profile.id),
+        origin,
+        art.bank,
+      );
+      if (audio.hooks) {
+        ctx.audio = {
+          driver: audio.hooks.driver,
+          music: audio.hooks.music,
+          request: audio.hooks.request,
+          trace: layout.sound,
+          effects: audio.hooks.effects,
+        };
+      }
+      try {
+        emitProgram(ctx, { ...art, ...audio.options });
+        return { ctx, code: ctx.asm.assemble() };
+      } catch (error) {
+        if (error instanceof AsmError) {
+          throw new BuildError(
+            "E_INTERNAL",
+            `the code generator produced invalid code: ${error.message}`,
+          );
+        }
+        throw error;
+      }
+    };
+
+    // The big board first, and its bytes are exactly what they always were. Not
+    // because it is the likely answer — the whole point is that it often is not —
+    // but because a program that does *not* fit the small one would be assembled
+    // past `$FFFF` there, and this assembler truncates an address rather than
+    // refusing it: a wasted pass that produced garbage would be measured, not
+    // caught. Every 6502 addressing mode is a fixed width, so the length this
+    // hands back is the length at either origin, and it decides the board.
+    let attempt = assembleAt(nesPrgOrigin(NES_PRG_SIZE));
+    let size = NES_PRG_SIZE;
+    const board = NES_PRG_SIZES.find((bytes) => attempt.code.length <= bytes - VECTOR_BYTES);
+    if (board !== undefined && board < size) {
+      const smaller = assembleAt(nesPrgOrigin(board));
+      // Belt and braces: the length is the same at both origins by construction,
+      // and if it ever were not, the big board is still right rather than a
+      // cartridge whose last instructions are its own vectors.
+      if (smaller.code.length <= board - VECTOR_BYTES) {
+        attempt = smaller;
+        size = board;
+      }
+    }
+    const { ctx, code } = attempt;
+
+    const prg = new Uint8Array(size);
+    prg.set(code.subarray(0, Math.min(code.length, size)), 0);
     // The three vectors. There is no fixed entry point on this CPU — it takes the
     // address from `$FFFC` — so these six bytes are what makes the cartridge boot.
-    const vector = (name: string): number => ctx.asm.addressOf(name);
-    for (const [key, offset] of Object.entries(VECTOR_OFFSET)) {
-      const target = vector(key === "nmi" ? "Nmi" : key === "reset" ? "Reset" : "Irq");
+    // They are the last six of the *image*, which on an NROM-128 the CPU reads
+    // through the mirror at `$FFFA`.
+    const vectors = { nmi: "Nmi", reset: "Reset", irq: "Irq" } as const;
+    for (const [index, name] of Object.values(vectors).entries()) {
+      const offset = size - VECTOR_BYTES + index * 2;
+      const target = ctx.asm.addressOf(name);
       prg[offset] = target & 0xff;
       prg[offset + 1] = (target >> 8) & 0xff;
     }

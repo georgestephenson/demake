@@ -29,7 +29,8 @@ import {
   zp,
 } from "../src/asm/mos6502.js";
 import {
-  NES_CHR_OFFSET,
+  nesChrOffset,
+  nesPrgOrigin,
   NES_CHR_SIZE,
   NES_PRG_OFFSET,
   NES_PRG_SIZE,
@@ -125,11 +126,32 @@ describe("the NES cartridge wrapper", () => {
     expect(rom[6]).toBe(0x01); // mapper 0, vertical mirroring
     expect(rom[7]).toBe(0x00);
     expect(rom[NES_PRG_OFFSET]).toBe(0xea);
-    expect(rom[NES_CHR_OFFSET]).toBe(0x5a);
+    expect(rom[nesChrOffset(rom)]).toBe(0x5a);
   });
 
-  it("refuses a program that is not exactly a mapper-less cartridge", () => {
+  // The small board, which is what an elastic cartridge shrinks to: the header's
+  // bank count is what says which one this is, so a reader that asks the
+  // cartridge where the characters start cannot be told the wrong answer.
+  it("packs a 16 KiB program as an NROM-128, characters and all", () => {
+    const prg = new Uint8Array(0x4000).fill(0xea);
+    const chr = new Uint8Array(NES_CHR_SIZE).fill(0x5a);
+    const rom = packInesRom(prg, chr);
+    expect(rom.length).toBe(16 + 0x4000 + NES_CHR_SIZE);
+    expect(rom[4]).toBe(1); // one 16 KiB program bank
+    expect(nesChrOffset(rom)).toBe(16 + 0x4000);
+    expect(rom[nesChrOffset(rom)]).toBe(0x5a);
+  });
+
+  // Where such a program is assembled, which is the whole of the difference: the
+  // image ends at `$FFFF` on either board, because that is where the vectors are.
+  it("assembles a short program at the high mirror", () => {
+    expect(nesPrgOrigin(0x8000)).toBe(0x8000);
+    expect(nesPrgOrigin(0x4000)).toBe(0xc000);
+  });
+
+  it("refuses a program that is not one of NROM's two boards", () => {
     expect(() => packInesRom(new Uint8Array(1024), new Uint8Array(NES_CHR_SIZE))).toThrow();
+    expect(() => packInesRom(new Uint8Array(0x6000), new Uint8Array(NES_CHR_SIZE))).toThrow();
     expect(() => packInesRom(new Uint8Array(NES_PRG_SIZE), new Uint8Array(16))).toThrow();
   });
 });

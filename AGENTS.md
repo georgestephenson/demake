@@ -110,7 +110,8 @@ Hz, because this VDP reloads its line counter outside the active display — a l
 interrupt is a raster effect, not a tempo.
 
 **And it builds for a Super Nintendo.** `demake build -c snes` produces a real
-128 KiB LoROM cartridge — 65816 machine code written for the game, a Mode 1
+LoROM cartridge — 128 KiB with its music in it, 64 without — 65816 machine code
+written for the game, a Mode 1
 background demade into 4bpp tiles across seven sixteen-colour sub-palettes, and
 tile art in a _second cartridge bank_ that no instruction ever addresses because
 it reaches video RAM by DMA — and the whole example library traces identically
@@ -143,8 +144,10 @@ half an artifact — the waveform bank in `binding/sdsp-bank.ts` is the other ha
 and `render()` puts it behind the model so the WAV and the cartridge sound the
 same.
 
-**And it builds for a Mega Drive.** `demake build -c md` produces a real 512 KiB
-cartridge — 68000 machine code written for the game, the art demade into a
+**And it builds for a Mega Drive.** `demake build -c md` produces a real
+cartridge — one megabit for every game in the library, which is the smallest
+board this console came on — 68000 machine code written for the game, the art
+demade into a
 1408-tile bank across three of the VDP's four sub-palettes — and the whole
 example library traces identically there, in the same battery, at the same one
 frame per tick. This is the first 16-bit console in the set and the first
@@ -936,6 +939,31 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   cannot do what a `.dmt` asks for, `unsupportedFeatures` names it and the build
   stops. A cartridge that plays a different game from the preview would make the
   trace oracle report a divergence three layers from its cause.
+- **A cartridge is as big as the game needs and no bigger** (doc 14 §Elastic
+  cartridges). Every console that shipped its games on more than one board takes
+  the smallest that holds the program — an NROM-128 rather than an NROM-256, 32
+  KiB of Sega rather than 48, one megabit of Mega Drive rather than four, two
+  LoROM banks rather than four — and grows only when the game does. Which boards
+  exist is the **console's** answer and lives beside its header in
+  `core/src/asm/*-cart.ts`; a backend's job is to pick, and where picking the
+  small one moves the code, it emits the program a second time rather than
+  patching the first attempt. Never add a size the hardware did not ship: the
+  point is the board a game that size shipped on, not the smallest file that
+  boots. A Game Boy ROM-only cartridge is 32 KiB and cannot move in either
+  direction, because the header's smallest size code _is_ 32 KiB and every code
+  above it names a mapper.
+- **`free` is measured against the largest board, never the one that shipped.**
+  It is the budget-regression signal (§Testing truths), and a headroom figure
+  that jumped by sixteen kilobytes the moment a game crossed a boundary would
+  move in the wrong direction — a game getting bigger must never look like a game
+  with more room. What was written is `stats.cartridge`.
+- **A game that will not fit loses its music first, and is told so.** The build
+  binds the audio again with no asset bytes at all and reports it in `stats.cut`,
+  so what ships is exactly the cartridge a project with its music left out
+  already produces — request bytes and all, so the _trace is unchanged_ and only
+  the listening differs. A cartridge somebody can play beats a build error; a
+  cartridge that plays silently and does not say why does not, which is why the
+  CLI prints a `warning:` line and the page puts a note under the screen.
 - **`CLAUDE.md` stays a pure `@AGENTS.md` import** (CI-checked, doc 12).
 - **Commands named in this file must exist as `package.json` scripts** (CI
   staleness check, doc 12) — update both together.
@@ -1037,9 +1065,12 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   tables, the looped collision pairs and the grouped integrator won it back, and
   it now has 13457 bytes free. `OVER_BUDGET` is empty as a result, and the
   emptiness is the record. The tightest cartridge in the library is the Game
-  Boy's shooter at 2178 bytes free — that is where a budget regression shows
+  Boy's shooter at 2177 bytes free — that is where a budget regression shows
   first, which is why the Game Boys sweep the whole library and the NES sweeps
-  two.
+  two. And a Game Boy is the tightest for a reason that is now structural rather
+  than incidental: it is the one console whose cartridge cannot grow (§Iron
+  rules), so everywhere else a fixture that got bigger takes a bigger board and
+  only here does it run out.
 - **New language features come from the example library, not from theory**
   (`packages/demotic/fixtures/games/`). Each example is there for something the
   others do not exercise; `touches`, the `reaches` crossing rule and `visible`'s
@@ -1598,7 +1629,7 @@ is the game.
 
 ### The 65816 half
 
-`demake build -c snes` builds a playable 128 KiB LoROM cartridge, and the whole
+`demake build -c snes` builds a playable LoROM cartridge, and the whole
 example library traces identically on it. This CPU is a 6502 with three things
 added, and every bullet here is one of them biting.
 
@@ -1786,13 +1817,15 @@ most of the value layer stops being a problem and three new ones appear.
   The full redraw runs with interrupts masked for exactly that reason; everything
   else runs a few instructions after the interrupt it waited for.
 - **A cartridge is the smallest board that holds the game.** `MD_ROM_SIZES` runs
-  512 KiB to 4 MiB and needs no mapper: the console maps the whole cartridge from
+  128 KiB to 4 MiB and needs no mapper: the console maps the whole cartridge from
   `$000000` and the header records where it ends, so growing one is a bigger array
-  and a different number at `$1A4`. Half a megabyte is the floor rather than the
-  only option, which is what keeps every cartridge built before this
-  byte-identical. Past 4 MiB it wants paging through `$A130F1`.
-- **There is no cartridge-budget story here, and that is the news.** 512 KiB
-  against 32, and 64 KiB of work RAM against an NROM cartridge's 2. The scarce
+  and a different number at `$1A4`. One megabit is the floor because that is what
+  the early boards of this console were, and every example game is six times
+  smaller than one — half a megabyte was four hundred and eighty kilobytes of
+  padding. Past 4 MiB it wants paging through `$A130F1`.
+- **There is no cartridge-budget story here, and that is the news.** 128 KiB
+  against 32 and four megabytes to grow into, and 64 KiB of work RAM against an
+  NROM cartridge's 2. The scarce
   resources are the tile bank and the four sub-palettes, so the art path is where
   the interesting decisions are — not the emitter. It is also why the audio
   driver steps over a packed byte rather than forking the packed format to save

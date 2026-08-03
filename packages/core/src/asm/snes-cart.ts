@@ -46,7 +46,7 @@
  */
 
 /**
- * Bytes of the LoROM cartridge a demade game ships on: four banks.
+ * Bytes of the largest LoROM cartridge a demade game ships on: four banks.
  *
  * Bank zero is the program, bank one is the tile art, bank two is the sound
  * processor's image, and the fourth is padding to the next size the header's
@@ -56,8 +56,23 @@
  * picture's room with it. A bank each is the arrangement the hardware wants
  * anyway — this console takes cartridges up to four megabytes, so 64 KiB was a
  * choice rather than a limit, and the wrong one.
+ *
+ * A game with nothing to play needs neither the sound processor's bank nor the
+ * padding behind it, and ships on {@link SNES_ROM_SIZES}'s smaller entry.
  */
 export const SNES_ROM_SIZE = 0x20000;
+
+/**
+ * Cartridge sizes, smallest first — which here is a count of banks.
+ *
+ * Two, or four. Bank zero and bank one are always spoken for: a program and the
+ * tile art it draws with, and every game has both. Bank two is the sound
+ * processor's image, and a game with no `music` and no `sound` does not have one —
+ * so a silent cartridge is 64 KiB and a sounding one is 128, because three banks
+ * is not a size the capacity field can express and a mask ROM was a power of two
+ * regardless.
+ */
+export const SNES_ROM_SIZES: readonly number[] = [0x10000, 0x20000];
 
 /** Bytes of one LoROM bank, which is what the CPU sees at `$8000`. */
 export const SNES_BANK_SIZE = 0x8000;
@@ -174,9 +189,10 @@ export function snesChecksum(rom: Uint8Array): number {
 /**
  * Stamp the header and the vectors into a two-bank image.
  *
- * `image` must be exactly {@link SNES_ROM_SIZE}: a LoROM cartridge has no short
+ * `image` must be one of {@link SNES_ROM_SIZES}: a LoROM cartridge has no short
  * banks, and padding here rather than in the caller is how two builders that
- * produce one stay identical. The sixty-four bytes at
+ * produce one stay identical. The size code follows from the length, so a
+ * two-bank cartridge cannot describe itself as a four-bank one. The sixty-four bytes at
  * {@link SNES_HEADER_OFFSET} are overwritten, so a program that ran past them
  * would have its code replaced — which the game backend avoids by refusing the
  * build up front rather than discovering the overlap in an emulator.
@@ -191,8 +207,11 @@ export function packSnesRom(
   vectors: { reset: number; nmi: number; irq?: number },
   options: SnesHeaderOptions = {},
 ): Uint8Array {
-  if (image.length !== SNES_ROM_SIZE) {
-    throw new Error(`a four-bank LoROM cartridge is ${SNES_ROM_SIZE} bytes, not ${image.length}`);
+  if (!SNES_ROM_SIZES.includes(image.length)) {
+    throw new Error(
+      `a LoROM cartridge is ${SNES_ROM_SIZES.map((n) => n / 1024 + " KiB").join(" or ")}` +
+        `, not ${image.length} bytes`,
+    );
   }
   const rom = Uint8Array.from(image);
   const at = SNES_HEADER_OFFSET;

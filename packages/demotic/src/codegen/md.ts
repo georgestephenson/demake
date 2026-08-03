@@ -58,17 +58,22 @@ import { MdCtx } from "./md/ctx.js";
 import { BANK_TILES, CODE_ORIGIN, emitProgram, STACK_TOP, type MdEmitOptions } from "./md/emit.js";
 import type { ArtSettings } from "./settings.js";
 
-/** Bytes a Demotic Mega Drive cartridge holds. */
+/** Bytes the smallest Mega Drive cartridge holds: one megabit. */
 export const ROM_SIZE = MD_ROM_SIZE;
 
+/** Bytes the largest flat one holds, which is where this console stops. */
+export const MAX_ROM_SIZE = MD_ROM_SIZES[MD_ROM_SIZES.length - 1] as number;
+
 /**
- * Bytes of it a game may use.
+ * Bytes a game may use before it stops fitting this console.
  *
- * The whole cartridge less the vectors and the header, which this console keeps
+ * The largest cartridge less the vectors and the header, which this console keeps
  * *outside* the program rather than inside it — so unlike the Sega 8-bits there
- * is no region the emitter has to avoid running into.
+ * is no region the emitter has to avoid running into. Against the largest board
+ * rather than the one a given game ships on, which is `backend.ts` §Elastic
+ * cartridges' rule.
  */
-export const CODE_SIZE = MD_ROM_SIZE - CODE_ORIGIN;
+export const CODE_SIZE = MAX_ROM_SIZE - CODE_ORIGIN;
 
 /**
  * What this backend's audio binding hands the emitter.
@@ -225,18 +230,19 @@ export const mdBackend: Backend<MdEmitOptions, MdAudio> = {
     if (reset === undefined || vint === undefined) {
       throw new BuildError("E_INTERNAL", "the code generator emitted no entry point");
     }
-    // The smallest board that holds it. Half a megabyte is the floor rather than
-    // the only option, so every cartridge built before this is byte-identical and
-    // a game that outgrows it pads to the next power of two instead of failing.
-    // There is no mapper involved: the console maps the whole cartridge from
-    // `$000000` and the header says where it ends.
+    // The smallest board that holds it (`backend.ts` §Elastic cartridges). One
+    // megabit is the floor and four megabytes the ceiling, and nothing in between
+    // costs anything but padding: there is no mapper involved, because the console
+    // maps the whole cartridge from `$000000` and the header says where it ends.
+    // A demade game is twenty-odd kilobytes with its art beside it, so this is the
+    // console where elasticity is worth the most — the same cartridge that used to
+    // be half a megabyte of which four hundred and eighty kilobytes were zero.
     const size = MD_ROM_SIZES.find((bytes) => bytes >= code.length + CODE_ORIGIN);
     if (size === undefined) {
-      const largest = MD_ROM_SIZES[MD_ROM_SIZES.length - 1] as number;
       throw new BuildError(
         "E_GAME_TOO_LARGE",
         `this game compiles to ${code.length} bytes and a flat Mega Drive cartridge holds ` +
-          `${largest - CODE_ORIGIN}`,
+          `${MAX_ROM_SIZE - CODE_ORIGIN}`,
         "past 4 MiB a cartridge has to page through $A130F1 (doc 13 §Banked cartridges).",
       );
     }
@@ -247,7 +253,9 @@ export const mdBackend: Backend<MdEmitOptions, MdAudio> = {
         size,
       }),
       code: code.length,
-      capacity: size - CODE_ORIGIN,
+      // The *largest* board, not the one chosen: what `free` answers is how much
+      // room is left before the game stops fitting this console at all.
+      capacity: MAX_ROM_SIZE - CODE_ORIGIN,
       symbols,
       helpers: ctx.helperNames(),
     };

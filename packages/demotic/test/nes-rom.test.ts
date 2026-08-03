@@ -25,14 +25,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  backendFor,
-  getConsole,
-  NES_CHR_OFFSET,
-  NES_PRG_OFFSET,
-  NES_PRG_SIZE,
-  prep,
-} from "@demake/core";
+import { backendFor, getConsole, nesChrOffset, NES_PRG_OFFSET, prep } from "@demake/core";
 import { Nes } from "@demake/nes";
 
 import { buildNesRom } from "../src/codegen/nes.js";
@@ -52,31 +45,68 @@ describe("the NES cartridge", async () => {
 
   it("is an iNES file describing NROM with vertical mirroring", () => {
     expect([...built.bytes.subarray(0, 4)]).toEqual([0x4e, 0x45, 0x53, 0x1a]);
-    expect(built.bytes[4]).toBe(2); // two 16 KiB program banks
     expect(built.bytes[5]).toBe(1); // one 8 KiB character bank
     // Mapper 0, and bit 0 set: the two nametables side by side, which is what the
     // renderer's 64-column wrap is written for.
     expect(built.bytes[6]).toBe(0x01);
     expect(built.bytes[7]).toBe(0x00);
-    expect(built.bytes.length).toBe(16 + 0x8000 + 0x2000);
+    // And the file is exactly the board the header claims: a game with no art and
+    // no audio is a small program, so this one is an NROM-128 and the file is half
+    // what it used to be. The claim and the length are checked against each other
+    // rather than against a constant, because which board a game gets is the
+    // game's own size (`backend.ts` §Elastic cartridges).
+    const banks = built.bytes[4] as number;
+    expect(banks).toBe(1);
+    expect(built.bytes.length).toBe(16 + banks * 0x4000 + 0x2000);
   });
 
   it("points its three vectors at the routines they name", () => {
+    // The last six bytes of the *image*, which on this cartridge the CPU reads
+    // through the mirror at `$FFFA`.
+    const size = (built.bytes[4] as number) * 0x4000;
     const vector = (offset: number): number =>
       (built.bytes[NES_PRG_OFFSET + offset] as number) |
       ((built.bytes[NES_PRG_OFFSET + offset + 1] as number) << 8);
-    expect(vector(NES_PRG_SIZE - 6)).toBe(built.symbols.get("Nmi"));
-    expect(vector(NES_PRG_SIZE - 4)).toBe(built.symbols.get("Reset"));
-    expect(vector(NES_PRG_SIZE - 2)).toBe(built.symbols.get("Irq"));
+    expect(vector(size - 6)).toBe(built.symbols.get("Nmi"));
+    expect(vector(size - 4)).toBe(built.symbols.get("Reset"));
+    expect(vector(size - 2)).toBe(built.symbols.get("Irq"));
+    // And they point into the half the board really has.
+    expect(built.symbols.get("Reset")).toBeGreaterThanOrEqual(0x10000 - size);
+  });
+
+  it("takes the big board when the game needs it, and only then", async () => {
+    // Two games rather than one setting, because the program's own length is the
+    // only thing that decides this (`backend.ts` §Elastic cartridges). Pong is
+    // thirteen kilobytes and the caves nineteen, so one gets each board — and
+    // the file really is a whole 16 KiB shorter rather than merely claiming to be.
+    const caves = await buildNesRom(
+      build("caves", { "cavern.dmtl": projectText("caves", "levels/cavern.dmtl") }),
+    );
+    expect(built.stats.bytes).toBeLessThanOrEqual(0x4000 - 6);
+    expect(caves.stats.bytes).toBeGreaterThan(0x4000 - 6);
+    expect(built.bytes[4]).toBe(1);
+    expect(caves.bytes[4]).toBe(2);
+    expect(caves.bytes.length - built.bytes.length).toBe(0x4000);
+    expect(built.stats.cartridge).toBe(built.bytes.length);
+    // `free` is measured against the largest board either way, so it does not
+    // jump when a game crosses between the two: the two games' headroom differs
+    // by exactly what their code does.
+    expect(built.stats.free + built.stats.bytes).toBe(caves.stats.free + caves.stats.bytes);
+    // And it was assembled where that board is mapped. An NROM-128's image is at
+    // `$C000` (mirrored down to `$8000`), so *nothing* in it is below that, and
+    // the big board's program starts at `$8000` — which is the whole of the
+    // difference between the two builds.
+    const lowest = (rom: { symbols: ReadonlyMap<string, number> }): number =>
+      Math.min(...rom.symbols.values());
+    expect(lowest(built)).toBeGreaterThanOrEqual(0xc000);
+    expect(lowest(caves)).toBe(0x8000);
   });
 
   it("puts the built-in patterns in both tables, because the bank is fixed anyway", async () => {
     const bank = (await bindNesArt(build("pong"), new Map())).options.bank as SelectedBank;
-    const background = built.bytes.subarray(NES_CHR_OFFSET, NES_CHR_OFFSET + bank.chr.length);
-    const objects = built.bytes.subarray(
-      NES_CHR_OFFSET + 0x1000,
-      NES_CHR_OFFSET + 0x1000 + bank.chr.length,
-    );
+    const chr = nesChrOffset(built.bytes);
+    const background = built.bytes.subarray(chr, chr + bank.chr.length);
+    const objects = built.bytes.subarray(chr + 0x1000, chr + 0x1000 + bank.chr.length);
     expect([...background]).toEqual([...bank.chr]);
     expect([...objects]).toEqual([...bank.chr]);
     expect(bank.chr.length).toBe(bank.count * TILE_BYTES);
@@ -141,7 +171,10 @@ describe("the NES art budget", { timeout: ART_TIMEOUT }, async () => {
     const built = await buildNesRom(build("pong"), { assets: pongAssets() });
     expect(built.stats.missingArt).toEqual([]);
     expect(built.stats.artTiles).toBeGreaterThan(0);
-    expect(built.bytes.length).toBe(16 + 0x8000 + 0x2000);
+    // Whichever board the program landed on, the characters are a whole 8 KiB
+    // bank behind it: art costs pattern tables and not program.
+    expect(built.bytes.length).toBe(16 + (built.bytes[4] as number) * 0x4000 + 0x2000);
+    expect(built.bytes[5]).toBe(1);
   });
 
   /**
@@ -297,7 +330,13 @@ describe("what the NES actually draws", async () => {
     size: { width: number; height: number },
     camera: { column: number; row: number },
   ): number {
-    const prg = (address: number): number => rom[16 + (address - 0x8000)] as number;
+    // Where the program sits in the CPU's address space is the *board's*
+    // answer, and the board is elastic: an NROM-128 is mapped at `$C000` and a
+    // 256 at `$8000`. The header's own bank count is what says which, so this
+    // reads the cartridge rather than assuming the big board — which is what it
+    // did until a small game started shipping on the small one.
+    const prgBytes = (rom[4] as number) * 0x4000;
+    const prg = (address: number): number => rom[16 + (address - (0x10000 - prgBytes))] as number;
     const expected = (column: number, row: number): number => {
       if (column < 0 || row < 0 || column >= size.width || row >= size.height) return 0;
       const legend = prg(tables.grid + row * size.width + column);
