@@ -44,6 +44,7 @@ const CONSOLES = [
   "md",
   "gba",
   "nds",
+  "pce",
 ];
 
 describe("ingest", () => {
@@ -285,12 +286,12 @@ describe("the console registry", () => {
     expect(audioConsoles().sort()).toEqual([...CONSOLES].sort());
   });
 
-  // The PC Engine, which is now the nearest console with a video spec and no
-  // audio in it — the Game Boy Advance had that job until its own spec landed,
-  // and the Nintendo DS after it. What this wants is a console whose sound
-  // hardware has no model yet, and Tier 2 is where those are.
+  // The WonderSwan Color, which is now the nearest console with a video spec and
+  // no audio in it — the Game Boy Advance had that job until its own spec landed,
+  // then the Nintendo DS, then the PC Engine. What this wants is a console whose
+  // sound hardware has no model yet, and Tier 2 is where those are.
   it("explains a console it cannot demake", () => {
-    expect(() => bindingFor("pce")).toThrow(/no audio spec yet/);
+    expect(() => bindingFor("wsc")).toThrow(/no audio spec yet/);
   });
 });
 

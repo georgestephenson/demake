@@ -22,6 +22,9 @@
   "scripts": {
     "build": "tsc --build"
   },
+  "dependencies": {
+    "@demake/chip": "workspace:*"
+  },
   "devDependencies": {
     "@demake/core": "workspace:*"
   }

@@ -128,6 +128,12 @@ function commandWriter(
       return (data, reg, value) => {
         data.push(0xb4, reg & 0xff, value & 0xff);
       };
+    case "huc6280-psg":
+      // 0xB9: HuC6280, register offset from $0800 — which is the chip's own
+      // numbering and therefore the schedule's, with no translation at all.
+      return (data, reg, value) => {
+        data.push(0xb9, reg & 0xff, value & 0xff);
+      };
     case "ym2612":
       // 0x52/0x53 are the two halves of the chip's bus, and each carries an
       // address *and* a datum — so the model's four ports pair up into two
@@ -171,6 +177,9 @@ function writeClock(view: DataView, chip: string | undefined): void {
       break;
     case "nes-apu":
       view.setUint32(0x84, 1789773, true);
+      break;
+    case "huc6280-psg":
+      view.setUint32(0xa4, 3579545, true);
       break;
     case "ym2612":
       view.setUint32(0x2c, 7670453, true);

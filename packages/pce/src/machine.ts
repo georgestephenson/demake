@@ -22,17 +22,17 @@
  * so a cartridge bigger than the visible space is reached by `tam` and nothing
  * else, which is what the backend emits.
  *
- * The PSG is not implemented. It is the one chip in this console that
- * `@demake/chip` has no model for, so a write to `$0800`–`$0BFF` is accepted and
- * dropped, and `demake build -c pce` emits no audio driver at all rather than one
- * that plays into a chip nobody modelled (doc 13 §Console rollout, AGENTS.md
- * §Iron rules — a chip with no model is a gap to close, not a reason to pretend).
- * `psgTap` is here so that when the model lands, the audio proof has the same
- * window into this machine that it has into every other one.
+ * The PSG is `@demake/chip`'s `Huc6280Psg`, not a second one — the same rule
+ * every other core here keeps, and the reason `demake render` and a booted cartridge
+ * cannot quietly stop agreeing. `psgTap` is the window doc 16's Level A proof
+ * reads through, and `audioSink` is where the chip's output goes when something
+ * wants to hear it.
  *
  * Sources: Archaic Pixels — PC Engine memory map, the I/O port and the interrupt
  * controller.
  */
+
+import { Huc6280Psg, type SampleSink } from "@demake/chip";
 
 import { type Bus, Cpu, HARDWARE_PAGE } from "./cpu.js";
 import { LINES_PER_FRAME, MASTER_PER_LINE, SCREEN_HEIGHT, SCREEN_WIDTH, Vdc } from "./vdc.js";
@@ -62,6 +62,8 @@ const SAVE_BANK = 0xf7;
 export class Pce implements Bus {
   readonly cpu = new Cpu(this);
   readonly vdc = new Vdc();
+  /** The sound hardware — `@demake/chip`'s model, not a second one. */
+  readonly psg = new Huc6280Psg();
   /** The cartridge image, from bank zero. */
   readonly rom: Uint8Array;
   /** The console's 8 KiB, which is where a game's whole state lives. */
@@ -75,12 +77,20 @@ export class Pce implements Bus {
   /**
    * Called for every write the CPU makes to a sound register.
    *
-   * The window doc 16's Level A proof reads, present before the chip it will
-   * observe is: this console's PSG has no model in `@demake/chip` yet, so writes
-   * are dropped rather than played. When one lands, the audio battery needs no
-   * change here.
+   * The window doc 16's Level A proof reads. It *observes* rather than
+   * intercepts: the chip receives the write either way, so an oracle watching
+   * through it cannot change what the hardware saw.
    */
   psgTap: ((reg: number, value: number) => void) | undefined = undefined;
+
+  /**
+   * Where the chip's output goes, when anything wants it.
+   *
+   * Left unset the chip still receives every write and keeps its state; it is
+   * only the integration that is skipped, which is what makes a conformance run
+   * cost nothing for audio it does not listen to.
+   */
+  audioSink: SampleSink | undefined = undefined;
 
   private held = 0;
   /** The pad's two select lines: `SEL` chooses the nibble, `CLR` resets. */
@@ -94,6 +104,9 @@ export class Pce implements Bus {
   private timerCycles = 0;
   /** Latched until the program acknowledges it at `$1403`. */
   private timerFired = false;
+
+  /** Master clocks not yet handed to the PSG, which runs at a sixth of them. */
+  private psgClocks = 0;
 
   constructor(rom: Uint8Array) {
     if (rom.length === 0 || rom.length % 0x2000 !== 0) {
@@ -151,7 +164,7 @@ export class Pce implements Bus {
   private readHardware(offset: number): number {
     if (offset < 0x0400) return this.vdc.readVdc(offset);
     if (offset < 0x0800) return this.vdc.readVce(offset);
-    if (offset < 0x0c00) return 0; // the PSG is write-only, and unmodelled besides
+    if (offset < 0x0c00) return 0; // the PSG is write-only
     if (offset < 0x1000) return this.readTimer(offset);
     if (offset < 0x1400) return this.readPad();
     if (offset < 0x1800) return this.readIrq(offset);
@@ -168,7 +181,11 @@ export class Pce implements Bus {
       return;
     }
     if (offset < 0x0c00) {
-      this.psgTap?.(offset - 0x0800, byte);
+      // The ten registers are mirrored through the whole kilobyte, which is what
+      // the mask is: the chip decodes four address lines and no more.
+      const reg = offset & 0x0f;
+      this.psg.write(reg, byte);
+      this.psgTap?.(reg, byte);
       return;
     }
     if (offset < 0x1000) {
@@ -284,9 +301,21 @@ export class Pce implements Bus {
     // the boot code performs and never undoes, but the model has to answer for
     // both or a cartridge that forgot it would run four times too fast here and
     // correctly on hardware.
-    this.vdc.step(cycles * (this.cpu.fast ? 3 : 12));
+    const master = cycles * (this.cpu.fast ? 3 : 12);
+    this.vdc.step(master);
     this.cpu.setIrq("irq1", this.vdc.irq);
     this.stepTimer(cycles);
+    // The PSG is fed the master clock divided by six, so its clock is a ratio of
+    // the CPU's rather than the same number — which is why this counts master
+    // clocks and the timer above counts the processor's own.
+    if (this.audioSink) {
+      this.psgClocks += master;
+      const steps = (this.psgClocks / 6) | 0;
+      if (steps > 0) {
+        this.psgClocks -= steps * 6;
+        this.psg.run(steps, this.audioSink);
+      }
+    }
     this.frames = this.vdc.frames;
     return cycles;
   }

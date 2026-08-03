@@ -1,18 +1,21 @@
 /**
  * What every game driver does to a schedule before a CPU ever sees it.
  *
- * Four consoles' builders sit beside this file and each owns one instruction
- * set; none of them owns *this*, because none of it is about a processor. The
+ * Every console's builder sits beside this file and each owns one instruction
+ * set — two of them share one, because a HuC6280 is a 6502 — and none of them
+ * owns *this*, because none of it is about a processor. The
  * boot prefix comes off because the ROM initialises the chip once and not at the
  * head of every stream; an effect is cut down to the channel it borrowed because
  * the rest of its writes are the music's notes being silenced; a player is
  * emitted once and therefore needs the union of what its streams ask for. Those
- * are facts about the hand-off (doc 16 §The driver contract), and a fourth copy
- * of any of them is a fourth chance for one console to answer differently.
+ * are facts about the hand-off (doc 16 §The driver contract), and a second copy
+ * of any of them is a second chance for one console to answer differently.
  *
  * What is *not* here is anything a chip decides. `psg.ts` holds the SN76489's
- * side of the same hand-off, because two of those four consoles drive that chip
- * from different processors and it is the chip that has the opinions.
+ * side of the same hand-off, because two of those consoles drive that chip from
+ * different processors and it is the chip that has the opinions. `mos-player.ts`
+ * is the third kind of thing again: nobody's console and nobody's chip, but one
+ * *processor's*, shared by the two machines that run it.
  */
 
 import type { RegisterWrite } from "@demake/chip";

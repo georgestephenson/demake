@@ -25,21 +25,26 @@ in `pnpm test`** — the ROM boots in `@demake/dmg`, whose APU is now
 `ChipScript` tick for tick.
 
 **And there are five more CPUs' drivers**, generated the same way. `demake build -c
-nes` puts a game's music and effects in an NROM cartridge as 6502 machine code;
-`-c sms` and `-c gg` put them in a Sega cartridge as Z80; `-c md` as 68000; `-c
-snes` as SPC700, on a processor that is not the console's own; and `-c gba` as
-ARM. `packages/demotic/test/_audio-battery.ts` runs the whole Level A battery on
-every one of them — the Game Boy's driver
-on its timer at 120 Hz, the NES's on the picture's own interrupt at 60, the Sega's
+nes` puts a game's music and effects in an NROM cartridge as 6502 machine code and
+`-c pce` puts them in a HuCard as the *same* 6502, because a HuC6280 is one with a
+memory mapper; `-c sms` and `-c gg` put them in a Sega cartridge as Z80; `-c md`
+as 68000; `-c snes` as SPC700, on a processor that is not the console's own; and
+`-c gba` as ARM. `packages/demotic/test/_audio-battery.ts` runs the whole Level A
+battery on every one of them — the Game Boy's driver
+on its timer at 120 Hz, the NES's on the picture's own interrupt at 60, the PC
+Engine's on the CPU's *own* timer at 120, the Sega's
 on the VDP's frame interrupt at 59.92 and writing an I/O port rather than an
 address, the Mega Drive's storing a byte to an address, the Super Nintendo's on a
 timer of the *sound processor's* at 125 Hz, and the Game Boy Advance's on its own
 sample transfer at 128 — diffed against the same schedules with the same
 tolerance, which is none. What the extra drivers prove is that the *contract* is the contract rather
-than a description of one emitter: they share the packed format and nothing below
-it. The third one stretched even that, and the seam is recorded in §Two streams,
+than a description of one emitter: they share the packed format and — where the
+CPU is the same — the stream player, and nothing below either. The third one
+stretched even that, and the seam is recorded in §Two streams,
 one clock: an SN76489 puts the channel in the data byte and latches it, so
 "which voice does this write belong to" became a question with a running answer.
+A HuC6280 asks it a third way — the channel is a *register*, latched across every
+write that follows it — and the answer is the same machinery again.
 
 The web app's audio sections are live over the same engine, the browser's `.vgm`,
 sidecar, WAV and cartridge are byte-identical to the CLI's (doc 07 §The audio
@@ -513,7 +518,7 @@ locked by the tests, not by this table.
 
 | Console | Chip | Channels | Notes |
 |---|---|---|---|
-| PC Engine | HuC6280 PSG | 6 × 32-sample, 5-bit wavetable; ch5/6 noise; direct DAC write mode | Wavetables are quantization again: fitting a 32 × 5-bit waveform to a target spectrum is Stage 3 in miniature |
+| PC Engine | HuC6280 PSG | 6 × 32-sample, 5-bit wavetable; ch5/6 noise; direct DAC write mode | **Built.** Every voice is a wavetable, so *timbre* is the demaker's choice rather than the hardware's — and it is a **boot** choice, because a waveform is uploaded through the register port rather than selected. The five pitched voices therefore take five different shapes at once, which is more than any other eight-bit console here can hold. Volume is three attenuators in series in 1.5 dB steps; the channel is a *register* and it is latched, so preemption is a run-level decision as it is on an SN76489; and nothing at all is shared between two streams, so the driver emits no merge. Fitting a 32 × 5-bit waveform to a target spectrum is Stage 3 in miniature and is not attempted yet |
 | Neo Geo | YM2610 | 4 FM + 3 SSG square + 6 ADPCM-A + 1 ADPCM-B | Abundant; the work is the ADPCM budget and the Z80 sound program |
 | WonderSwan / Color | WS sound | 4 × 32-sample 4-bit wavetable; ch2 PCM voice, ch3 sweep, ch4 noise | Stereo 4-bit per side |
 | Neo Geo Pocket (C) | T6W28 | 3 square + 1 noise, **independent L/R attenuation** | A genuinely stereo PSG — panning is a real arrangement tool |
@@ -710,6 +715,15 @@ carrying every channel's left and right enables four bits apart — `NR51`'s exa
 shape, reached by different hardware — and the merge comes straight back. Two
 machines, one backend, and this is the only thing in the driver that differs
 between them.
+
+A PC Engine says it a third time, and for a third reason: its global level is
+written once at boot, its panning is the channel's own balance byte, and it has no
+enable mask and no key-on pulse — so two streams sharing that chip never write the
+same register either. What it *does* share is the **selection**: register `$00`
+says which channel the eight above it address, so a run that is skipped has to
+take its own select with it, and every run has to open with one. That is the
+SN76489's latch discipline reached through a register rather than a data bit, and
+`checkSelectDiscipline` refuses a schedule where it does not hold.
 
 The Nintendo DS says the same thing from the other end of the range. Sixteen
 channels, and *nothing* is shared: panning is a byte per channel rather than two

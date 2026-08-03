@@ -15,11 +15,9 @@
  * palette in a cell's own map entry, sixteen-pixel sprites and a sprite table the
  * chip *copies* rather than reads.
  *
- * It has no dependency on `@demake/chip`, which every other core here does, and
- * that is a gap rather than a design: this console's PSG has no model yet, so a
- * cartridge built for it carries no audio driver (doc 13 §Console rollout). The
- * write tap the audio proof needs is already on the machine, so closing the gap
- * is a chip and a binding rather than a change here.
+ * Its sound is `@demake/chip`'s `Huc6280Psg`, not a second one — six channels of
+ * wavetable, fed the master clock over six — and `psgTap` is the window doc 16's
+ * Level A proof reads through.
  *
  * Platform-pure on the same terms as `@demake/core`: no `fs`, no DOM, no wall
  * clock. Rendering produces a plain RGBA buffer; where that goes is the caller's

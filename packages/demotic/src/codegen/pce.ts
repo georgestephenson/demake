@@ -20,22 +20,23 @@
  *     ignored: the smallest HuCard is 128 KiB and the biggest program the window
  *     can hold is 48, so there is nothing to grow into and `free` is measured
  *     against the *window* — which is the number a size regression is about.
- *   - **There is no audio.** This console's PSG has no model in `@demake/chip`,
- *     so `bindAudio` reports every file missing and the cartridge plays nothing.
- *     What it still does is *record* what a rule asked for, in the byte the trace
- *     reads — so a game traces identically here to everywhere else, which is what
- *     makes the conformance suite comparable at all (doc 14 §Conformance). The
- *     gap is doc 13 §Console rollout's to close and `@demake/pce`'s `psgTap` is
- *     already waiting for it.
+ *   - **The audio clock is the CPU's own timer.** This processor has one nothing
+ *     else in a demade cartridge uses, so a game's driver runs at 120 Hz rather
+ *     than at the frame rate — the Game Boy's clock discipline on an 8-bit
+ *     machine the NES had to do without. Which interrupts the cartridge answers
+ *     is decided here, in the reset's mask, because that is the console's policy
+ *     rather than the driver's (`@demake/audio` §`pce-game.ts`).
  */
 
 import { AsmError, PCE_BANK_SIZE, PCE_ROM_SIZES, packHuCard, type Executor } from "@demake/core";
+import { buildPceGameAudio } from "@demake/audio";
 
 import { getProfile } from "../profiles.js";
 import type { Program } from "../program.js";
 
 import { type Analysis } from "./analyze.js";
 import type { AssetBytes } from "./art.js";
+import { bindAudio, effectIndices, trackForScene } from "./audio.js";
 import {
   buildRom,
   BuildError,
@@ -47,6 +48,7 @@ import {
   type BuiltRom,
 } from "./backend.js";
 import { PCE_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
+import { slotOf } from "./mos/zp.js";
 import { bindPceArt, type BoundPceArt } from "./pce-art.js";
 import { PceCtx } from "./pce/ctx.js";
 import {
@@ -73,15 +75,20 @@ export const WINDOW_SIZE = 0x10000 - CODE_ORIGIN;
 export const CODE_SIZE = WINDOW_SIZE - 10;
 
 /**
- * What this console's audio binding hands the emitter: nothing, so far.
+ * What this console's audio binding hands the emitter.
  *
- * The shape is every other backend's, and it is present rather than absent for
- * the reason `bindAudio` gives — a game with no driver still records what it
- * asked for, and `present: false` is what tells `buildRom` there is no music to
- * cut when a cartridge does not fit.
+ * The same shape every other backend's has, and it carries the same two things
+ * for the same reason: what the emitter needs to *play* the audio, and —
+ * separately — what a rule needs to record that it asked for a sound. The second
+ * survives a build with the files left out, because that is a field of the trace
+ * (doc 14 §Conformance): a silent build has to trace identically to a sounding
+ * one, or the conformance suite would be comparing two different games.
  */
 interface PceAudio extends BoundAudioShape {
-  options: Record<string, never>;
+  /** The emitter options the driver contributes: itself, and its index tables. */
+  options: PceEmitOptions;
+  /** The bytes a rule writes to ask for a sound; absent when none can. */
+  hooks?: { driver: boolean; music: number; request: number; effects: readonly number[] };
 }
 
 /** The PC Engine's implementation of the build. */
@@ -142,31 +149,77 @@ export const pceBackend: Backend<PceEmitOptions, PceAudio> = {
     }
   },
 
-  async bindAudio(program: Program): Promise<BoundAssets<PceAudio>> {
-    // Every file the program names, reported as unsupplied. Not an error: the
-    // game plays silently and says why, which is what an honest gap looks like.
-    const missing = [...program.tracks, ...program.sounds];
+  async bindAudio(
+    program: Program,
+    assets: AssetBytes,
+    layout: Layout,
+    executor?: Executor,
+  ): Promise<BoundAssets<PceAudio>> {
+    // The driver's state is the cheap page the allocator set aside for it, which
+    // it only does for a program that names audio — so a game with none reaches
+    // here with nowhere to put a driver and does not need one. It is reduced to
+    // an *operand* on the way in, because this CPU's zero page is at `$2000` and
+    // the driver writes `zp $nn` (`codegen/mos/zp.ts`).
+    const state = layout.audio;
+    const bound =
+      state === null
+        ? { driver: undefined, missing: [] as readonly string[], notes: [] as readonly string[] }
+        : await bindAudio(
+            program,
+            assets,
+            {
+              build: (tracks, effects) =>
+                buildPceGameAudio({ tracks, effects, state: slotOf(state) }),
+            },
+            executor,
+          );
+    const names = program.tracks.length > 0 || program.sounds.length > 0;
+    const driver = bound.driver;
+    // Back to machine addresses for the hooks, because a rule reaches them
+    // through `mem()` and that takes an address. The page base is whatever the
+    // reduction above took off, so the two cannot disagree.
+    const page = state === null ? 0 : state - slotOf(state);
+    const options: PceEmitOptions = driver
+      ? {
+          audio: driver,
+          effectIndices: effectIndices(program, bound),
+          sceneTracks: trackForScene(program, bound),
+        }
+      : {};
     const emit: PceAudio = {
-      present: false,
-      options: {},
-      tracks: 0,
-      effects: 0,
+      present: driver !== undefined,
+      options,
+      tracks: driver?.stats.tracks ?? 0,
+      effects: driver?.stats.effects ?? 0,
+      // Queries, not copies: the driver is emitted during `assemble`, which has
+      // not run yet, so its sizes are still zero here (`backend.ts`
+      // §BoundAudioShape).
       get code(): number {
-        return 0;
+        return driver?.stats.code ?? 0;
       },
       get data(): number {
-        return 0;
+        return driver?.stats.data ?? 0;
       },
       get helpers(): readonly string[] {
-        return [];
+        return driver?.stats.helpers ?? [];
       },
-      rateHz: 0,
-      writesRestricted: 0,
+      rateHz: driver ? driver.stats.rate.num / driver.stats.rate.den : 0,
+      writesRestricted: driver?.stats.writesRestricted ?? 0,
+      ...(names
+        ? {
+            hooks: {
+              driver: driver !== undefined,
+              music: page + (driver?.request.music ?? 0),
+              request: page + (driver?.request.sfx ?? 0),
+              effects: options.effectIndices ?? program.sounds.map(() => -1),
+            },
+          }
+        : {}),
     };
-    return { emit, tiles: 0, missing, notes: [] };
+    return { emit, tiles: 0, missing: bound.missing, notes: bound.notes };
   },
 
-  assemble({ program, analysis, layout, art, title }): Assembled {
+  assemble({ program, analysis, layout, art, audio, title }): Assembled {
     void title; // a HuCard carries no title field
 
     const state = bound.get(art);
@@ -180,24 +233,21 @@ export const pceBackend: Backend<PceEmitOptions, PceAudio> = {
       state?.patterns ?? 0,
       state?.levelPalette ?? 0,
     );
-    // A rule that fires a sound still *records* that it did, in the byte the
-    // trace reads — so this cartridge's trace is the one every other console
-    // produces and the conformance suite is comparing the same game (doc 14
-    // §Conformance). There is no driver to ask for anything, which is what
-    // `driver: false` says; the indices are the program's own, because with no
-    // driver to renumber against that is what "which sound" means.
-    if (layout.sound !== null) {
+    // A rule that fires a sound both asks the driver for it and *records* that it
+    // did, in the byte the trace reads — so a build with the files left out
+    // traces identically to one that plays them (doc 14 §Conformance).
+    if (audio.hooks) {
       ctx.audio = {
-        driver: false,
-        music: 0,
-        request: 0,
+        driver: audio.hooks.driver,
+        music: audio.hooks.music,
+        request: audio.hooks.request,
         trace: layout.sound,
-        effects: program.sounds.map((_, index) => index),
+        effects: audio.hooks.effects,
       };
     }
     let code: Uint8Array;
     try {
-      emitProgram(ctx, art);
+      emitProgram(ctx, { ...art, ...audio.options });
       code = ctx.asm.assemble();
     } catch (error) {
       if (error instanceof AsmError) {

@@ -16,8 +16,8 @@ real emulator, compared pixel for pixel):
 | --------------------- | ------ | ---------------------------------------------------------------------------- |
 | art (images)          | 03–06  | working, ten consoles proven on hardware                                     |
 | game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on eleven consoles |
-| music (`arrange`)     | 16, 17 | MIDI → chip music, nine consoles — and a Game Boy ROM that plays it          |
-| sound (`sfx`)         | 16, 18 | WAV → chip effects, ten consoles — same ROM, same proof                      |
+| music (`arrange`)     | 16, 17 | MIDI → chip music, twelve consoles — and a Game Boy ROM that plays it        |
+| sound (`sfx`)         | 16, 18 | WAV → chip effects, twelve consoles — same ROM, same proof                   |
 
 The four are not four tools that share a repo any more: a `.dmt` says
 `music theme.mid` and `sound bounce.wav on ball hits paddle`, and `demake build`
@@ -116,7 +116,7 @@ background demade into 4bpp tiles across seven sixteen-colour sub-palettes, and
 tile art in a _second cartridge bank_ that no instruction ever addresses because
 it reaches video RAM by DMA — and the whole example library traces identically
 there too, in the same battery, at the same one frame per tick. The page plays it
-in `@demake/snes`, one of the six self-hosted cores.
+in `@demake/snes`, one of the eight self-hosted cores.
 
 This is the first console that is bigger than the language needs, and what it
 changes is the _size_ of the backend rather than its shape. With `M` clear the
@@ -486,12 +486,29 @@ is a whole 128 bytes. The upside is the same fact — an object `w` cells wide i
 budget of sixteen rather than eight — and the glyph patterns are _pulled_ like a
 helper, so a game with no scrolling HUD ships none.
 
-**It has no sound, and that is a gap rather than a decision.** The HuC6280's
-six-channel wavetable PSG has no model in `@demake/chip`, so the build emits no
-driver and the cartridge plays silently — while still recording what a rule asked
-for in the byte the trace reads, which is what keeps its trace the one every other
-machine produces. `@demake/pce`'s `psgTap` is already the window doc 16's Level A
-proof will read through.
+**And it has sound, which is six wavetables and a clock the NES could not have.**
+`@demake/chip` models the HuC6280's PSG — thirty-two five-bit samples of RAM per
+channel, a twelve-bit divider, and a shift register on two of the six — and the
+cartridge carries a **generated HuC6280 driver** whose stream player is the NES's
+(`rom/mos-player.ts`, shared because a HuC6280 _is_ a 6502). Three things are this
+machine's rather than that one's restated. The **clock is the CPU's own timer**, a
+seven-bit reload at master ÷ 3 ÷ 1024, so a game's audio runs at 120 Hz where the
+NES's runs at 60 — still counted rather than ridden, because the blanking interval
+belongs to the picture. **Nothing on the chip is shared**, so no merge routine is
+emitted at all: the third console in the set that can say so, and the third to say
+it by having _less_ shared hardware. And the **channel is a register and it is
+latched**, so `pceChannelTag` carries a select the way the SN76489's carries a
+data-byte latch, preemption skips whole runs, and `checkSelectDiscipline` refuses
+a schedule where a run would not open with one.
+
+**Timbre here is a boot decision, which no other chip in the set allows.** A
+waveform is _uploaded_ through the register port rather than selected, so there is
+no bank in ROM at all — `binding/pce-bank.ts` produces register writes, and they
+reach the cartridge as part of the driver's own initialisation. Since a strategy's
+duty is a whole-track constant, the five pitched voices take five _different_
+shapes instead of five copies of one: a triangle, a saw, and three pulse widths.
+That is more timbre than any other eight-bit console here can hold at once, and it
+is the demaker spending the machine rather than the hardware being generous.
 
 Still to come: the remaining Tier 2/3 consoles (each = a codegen backend, a ROM
 harness + toolchain, and a libretro core + DAC calibration), the remaining
@@ -502,11 +519,11 @@ Demotic runtime story (the speed work doc 14 §Runtime model names).
 **The audio spine is built, and two consoles boot** (docs
 [16](docs/16-audio-engine.md), [17](docs/17-music-demaker.md),
 [18](docs/18-sound-demaker.md)): `@demake/chip` models the Game Boy APU, the
-SN76489, the NES 2A03, the YM2612, the Super Nintendo's S-DSP and the Nintendo
-DS's SPU; `@demake/audio`
+SN76489, the NES 2A03, the YM2612, the Super Nintendo's S-DSP, the Nintendo DS's
+SPU and the HuC6280's wavetable PSG; `@demake/audio`
 holds both demakers; and `demake arrange`, `demake sfx` and `demake render` work
-for `dmg`, `gbc`, `megaduck`, `nes`, `sms`, `gg`, `sg1000`, `snes`, `md`, `gba`
-and `nds`. A
+for `dmg`, `gbc`, `megaduck`, `nes`, `sms`, `gg`, `sg1000`, `snes`, `md`, `gba`,
+`nds` and `pce`. A
 track becomes a `.vgm` plus a WAV that is exactly what the schedule produces — or,
 on the one console whose chip plays samples rather than generating them, an
 `.spc`, which is a snapshot of the sound processor's RAM and therefore exactly
@@ -527,13 +544,14 @@ artifact _is_ the schedule.
 effect per event, one clock serving both, and the same proof one level up —
 `packages/demotic/test/_audio-battery.ts` boots a cartridge that is playing a game
 and diffs every register write against the schedules the demakers produced.
-It does that on **every** console the game backend builds for, over six drivers
-that share only the packed format and — where the chip is the same — what the
-chip decides: an SM83 player on a programmable timer, a 6502 player on the
-picture's interrupt, a Z80 player writing an I/O port, a 68000 player storing a
-byte to an address, an SPC700 player that is not on the console's processor at
-all, and an ARM player clocked by its own sample transfer that has to _compute_
-six of its ten voices before it can play them.
+It does that on **every** console the game backend builds for, over seven drivers
+that share only the packed format and — where the CPU is the same — the stream
+player, and below that only what the chip decides: an SM83 player on a
+programmable timer, a 6502 player on the picture's interrupt, the _same_ 6502
+player on a timer one console over, a Z80 player writing an I/O port, a 68000
+player storing a byte to an address, an SPC700 player that is not on the console's
+processor at all, and an ARM player clocked by its own sample transfer that has to
+_compute_ six of its ten voices before it can play them.
 
 **And both demakers are on the web** (doc 07 §The audio sections): a music
 section and a sound section over their own worker, carrying the whole
@@ -544,13 +562,14 @@ four pinned byte-identical to the CLI's by
 `packages/web/test/e2e/determinism.spec.ts`.
 
 Still to come for audio: `bin`/`asm`/`c` emit, a _standalone_ audio cartridge for
-anything but the Game Boy (the NES, the Sega 8-bits, the Mega Drive and the Game
-Boy Advance have drivers, but only inside a game; the Super Nintendo's driver
-writes an `.spc` rather than a cartridge), driver backends for the remaining
+anything but the Game Boy (the NES, the PC Engine, the Sega 8-bits, the Mega Drive
+and the Game Boy Advance have drivers, but only inside a game; the Super
+Nintendo's driver writes an `.spc` rather than a cartridge), driver backends for the remaining
 consoles (each needs a CPU encoder or a checked-in driver source, plus a core to
-prove it in), Level B sample comparison, the remaining chips (the handhelds) and
-the three parts of the YM2612 that are stored and inert (LFO pitch modulation,
-SSG-EG, channel 3's per-operator mode), tracker and lossy-audio input with the
+prove it in), Level B sample comparison, the remaining chips (the handhelds), the
+three parts of the YM2612 that are stored and inert (LFO pitch modulation, SSG-EG,
+channel 3's per-operator mode), the two parts of the HuC6280's PSG that are (its
+LFO, and the direct D/A as a sample player), tracker and lossy-audio input with the
 transcription front end, and FLAC/M4A export. Read doc
 16 before touching any of it — several of its decisions are load-bearing and easy
 to undo by accident (§Working on audio).
@@ -627,10 +646,9 @@ packages/nds/        @demake/nds — a self-hosted Nintendo DS core, and the onl
                      the second screen, interrupts (on both processors) and every
                      ARM7 peripheral that is not the sound are absent rather than
                      half-implemented, and each raises
-packages/pce/        @demake/pce — a self-hosted PC Engine core, and the only one
-                     here with no dependency on @demake/chip: this console's
-                     six-channel wavetable PSG has no model yet, so a write to it
-                     is dropped and `psgTap` waits for the day it is not. The CPU
+packages/pce/        @demake/pce — a self-hosted PC Engine core. Its PSG is
+                     @demake/chip's Huc6280Psg, not a second one, and `psgTap`
+                     is the window doc 16's Level A proof reads through. The CPU
                      is transcribed rather than copied from @demake/nes's, for
                      the reason every decoder here is written twice; the picture
                      hardware has nothing in common with a 2C02 at all — word-
@@ -751,6 +769,12 @@ packages/chip/       @demake/chip — every sound chip as a register-driven mode
                      pitch that multiplies, and an exact integer mix the ARM
                      driver has to reproduce sample for sample. Its register
                      file is demake's own, deliberately shaped like the S-DSP's
+  src/huc6280-psg.ts the PC Engine's: six channels and every one of them a
+                     wavetable — thirty-two five-bit samples of RAM apiece, which
+                     is why this console's *timbre* is a boot decision and not a
+                     duty bit. Volume is three attenuators in series in 1.5 dB
+                     steps, so a level is a table lookup on a sum. The LFO and the
+                     direct D/A's use as a sample player are stored and inert
   src/nds-spu.ts     the Nintendo DS's: sixteen channels that are sample players
                      first, six of which switch to a duty generator and two to a
                      noise register — an S-DSP and a Game Boy APU on one die, with
@@ -774,8 +798,10 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
   src/rom/           the console hand-off: schedule packing (data.ts, shared) +
                      a generated driver per CPU (doc 16). SM83: one stream player
                      (gb-driver.ts), two callers — the cartridge (gb.ts) and the
-                     driver a game embeds (gb-game.ts). 6502: nes-driver.ts and
-                     nes-game.ts; Z80: sms-driver.ts and sms-game.ts; 68000:
+                     driver a game embeds (gb-game.ts). 6502: mos-player.ts, which
+                     is the *processor's* rather than either machine's, and two
+                     callers — nes-game.ts and pce-game.ts, because a HuC6280 is a
+                     6502 with a mapper; Z80: sms-driver.ts and sms-game.ts; 68000:
                      md-driver.ts and md-game.ts; SPC700: spc-driver.ts and
                      spc-game.ts, and it is one of the two that do not run on the
                      console's own processor — what it builds is a block to
@@ -797,6 +823,14 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
   src/binding/gba-bank.ts  the Game Boy Advance mixer's, and nothing like it:
                      signed 8-bit PCM read straight out of cartridge ROM, so the
                      driver lays these same bytes down rather than uploading them
+  src/binding/pce-bank.ts  the PC Engine's, and the one that is not a bank at
+                     all: this chip's wave RAM is only reachable through the
+                     register port, so what this file produces is *register
+                     writes* — nothing in ROM, nothing to copy, no address anybody
+                     has to agree about. It is also where the five pitched voices
+                     are given five different shapes, because on identical
+                     hardware which timbre a channel plays is the demaker's
+                     choice and it is made once, at boot
   src/binding/nds-bank.ts  the Nintendo DS's: thirty-two-sample cycles, because
                      that chip's pitch is a *divider* and a longer cycle is a finer
                      lattice. A channel reads an absolute address, so the bank has
@@ -828,7 +862,7 @@ packages/web/        the site (doc 07): a window — title bar, menus, explorer,
                      language out of the chunks that only need a box to type in)
   src/players/       one module per emulator core, reached through `bootPlayer`'s
                      `import()`, so a visitor downloads the console they are
-                     playing rather than all five. player.ts is the part that is
+                     playing rather than all of them. player.ts is the part that is
                      safe to import eagerly: an interface and each console's
                      framebuffer size, pinned against the cores' own constants
   src/lib/           option records ⇄ engine options ⇄ equivalent command line,
@@ -1578,6 +1612,24 @@ renderer and the four ways this machine's _addresses_ differ.
   in the high byte and not `$08`; one bit out and it steps thirty-two words, so
   every other cell of a scrolled column lands a row early. `packages/pce/test/vdc.test.ts`
   is what found it.
+- **The audio clock is the CPU's own timer, and the game only counts it.** Seven
+  bits of reload at master ÷ 3 ÷ 1024 gives 54.6 Hz to 6991 Hz, so 120 Hz is half
+  a hertz out and a game gets the Game Boy's rate rather than the NES's. The
+  handler increments a byte and the main loop performs what it says — the vertical
+  blank belongs to the picture — and counting rather than riding is what makes a
+  frame the game overran cost it no tempo. Which interrupts the cartridge answers
+  is decided in the _reset's_ mask, because that is the console's policy; the
+  driver's `AudioInit` programmes the timer's two registers and nothing else.
+- **The chip's initialisation is a table, not a run of stores.** Uploading five
+  waveforms is a hundred and sixty writes through the register port, so `AudioInit`
+  walks `(register, value)` pairs with a `$FF` terminator — four hundred bytes of
+  data instead of a kilobyte of code. It borrows the run walk's scratch as its
+  pointer, which is safe because nothing else is running yet and those two bytes
+  are adjacent for the stream player's sake.
+- **Six channels against a four-bit run field, and they do not have to fit.**
+  `pcePackTag` numbers only the channels effects were placed on, exactly as the
+  Mega Drive's and the Nintendo DS's do, so the other voices tag zero and a track
+  plays _through_ an effect rather than ducking for it.
 
 ### The Z80 half
 
@@ -2364,6 +2416,18 @@ not per console.
   8-bit consoles share. It also checks the Duck's cartridge _fails_ on a Game
   Boy — identical traces are also what a register map that had quietly become the
   identity would produce.
+- `packages/demotic/test/audio-pce.test.ts` is the second console to run
+  `mos-player.ts`, so what it proves that `audio-nes.test.ts` does not is the
+  _machine_ around those instructions: a different register base, a clock that is
+  a timer rather than the frame, and a channel selection that has to survive a run
+  being skipped. It is also where the harness learned that **an interrupt return
+  is not an arrival** for the second time — a timer firing 120 times a second
+  right where the service loop calls the tick lands on that instruction sooner or
+  later, and it presents as a phantom empty tick with everything after it one
+  late. The Game Boy Advance filters it by where the step came from; this console
+  cannot, because its handler is in the same cartridge, so it filters on the
+  _opcode_ at the address the step came from: a real arrival is a `jsr` and a
+  return is an `rti`.
 - `packages/demotic/test/audio-nds.test.ts` is the seventh machine the shared
   battery is pointed at, and the second whose driver is not on the console's own
   processor — but for a different reason from the Super Nintendo's, which is the
@@ -2794,11 +2858,11 @@ not per console.
   console. The split that makes that true lives in two places and both have to
   stay split: `demotic`'s `codegen/registry.ts` answers every question about a
   family from a static description and `import()`s the emitter only when
-  something builds, and the page's `src/players/` does the same for the five
-  emulator cores. Chunks are matched to a family **by name**, so a module that
+  something builds, and the page's `src/players/` does the same for the emulator
+  cores. Chunks are matched to a family **by name**, so a module that
   has to be per-family belongs in a file named after it; anything else counts as
   always-loaded, which fails loud rather than passing quietly. Current figures:
-  380 KB for a visitor against a 400 KB budget, 478 KB for the whole site — and
+  381 KB for a visitor against a 400 KB budget, 481 KB for the whole site — and
   a new example game costs about fourteen of those kilobytes, because the page
   bundles every fixture SVG twice (raw text for the ROM build, a URL for the
   preview). Measure with a **clean** `dist`: the checker reads every `.js` it

@@ -130,6 +130,15 @@ export {
   type NesGameAudioStats,
 } from "./rom/nes-game.js";
 export {
+  buildPceGameAudio,
+  resolvePceClock,
+  PCE_AUDIO_BYTES,
+  type PceGameAudio,
+  type PceGameAudioInput,
+  type PceGameAudioStats,
+} from "./rom/pce-game.js";
+export { pceChannelTag, pcePackTag } from "./binding/pce.js";
+export {
   buildSmsGameAudio,
   resolveSmsClock,
   SMS_AUDIO_BYTES,

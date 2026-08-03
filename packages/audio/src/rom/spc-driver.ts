@@ -1,7 +1,7 @@
 /**
  * The SPC700 stream player (doc 16 §The driver contract).
  *
- * `gb-driver.ts`, `nes-driver.ts` and `sms-driver.ts` a fourth CPU over, and the
+ * `gb-driver.ts`, `mos-player.ts` and `sms-driver.ts` a fourth CPU over, and the
  * first one that does not run on the console's main processor. On a Super
  * Nintendo the sound hardware is a second computer, so this code is *uploaded* to
  * it at boot and then runs on its own: it takes its tempo from the sound

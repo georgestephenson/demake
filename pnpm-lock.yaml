@@ -170,6 +170,10 @@ importers:
         version: link:../core
 
   packages/pce:
+    dependencies:
+      '@demake/chip':
+        specifier: workspace:*
+        version: link:../chip
     devDependencies:
       '@demake/core':
         specifier: workspace:*

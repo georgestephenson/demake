@@ -738,3 +738,108 @@ export const ndsAudio: AudioSpec = {
   mixing: { channels: 2, linear: true },
   docs: { sources: NDS_SOURCES },
 };
+
+const PCE_PSG_CLOCK = 3579545;
+
+const PCE_SOURCES = [
+  "Archaic Pixels — PSG: https://archaicpixels.com/PSG",
+  "Charles MacDonald — PC Engine hardware notes (pcetech.txt), §PSG",
+];
+
+/**
+ * One pitched voice, which is the same hardware whatever it is used for.
+ *
+ * `f = 3579545 / (32 × divider)` with a twelve-bit divider, which puts the floor
+ * at 27 Hz — an octave and a half below a Master System's tone channels and low
+ * enough that a bass line never has to be transposed. Volume is five bits in
+ * 1.5 dB steps, and panning is a *level* rather than an enable, which is the
+ * other thing this chip has that its contemporaries do not.
+ *
+ * `kind` is therefore the *demaker's* decision rather than the chip's, exactly as
+ * it is on the Super Nintendo: an S-DSP voice plays whatever sample is in RAM and
+ * a HuC6280 voice plays whatever thirty-two bytes are in its wave table, so what
+ * these entries describe is the palette demake spends the machine on
+ * (`binding/pce-bank.ts` §What each channel gets). There is no envelope generator
+ * at all, so every shape is a driver write — the SN76489's terms, with four times
+ * the resolution to write it in.
+ */
+function pcePitchedChannel(id: string, kind: "wave" | "pulse"): AudioChannelSpec {
+  return {
+    id,
+    kind,
+    chip: 0,
+    pitch: { clockHz: PCE_PSG_CLOCK, step: 32, minDivider: 1, maxDivider: 4096 },
+    volume: { steps: 32, law: "db", stepDb: 1.5 },
+    waveform: { samples: 32, bits: 5 },
+    ...(kind === "pulse" ? { duties: [0.125, 0.25, 0.5] } : {}),
+    envelope: { kind: "none" },
+    panning: "lr-level",
+  };
+}
+
+/**
+ * The HuC6280's PSG.
+ *
+ * Six channels, and every one of them is a wavetable — the widest set of
+ * *shapeable* voices in the eight-bit half of this matrix, and the reason
+ * `binding/pce-bank.ts` is a set of waveforms rather than a duty selector.
+ *
+ * One thing here is a modelling choice forced by the schema rather than by the
+ * hardware, and it is worth naming. Channels five and six *share a noise
+ * generator*: either can output a shift register instead of its waveform. A
+ * channel's `kind` is one value, so the sixth is declared as the noise voice and
+ * the fifth as the wavetable voice it is used as — five melodic parts and a kit,
+ * which is what an arranger wants from six voices. Two noise voices would need
+ * the schema to say a channel can be either, and nothing has asked for it.
+ */
+export const pceAudio: AudioSpec = {
+  chips: ["huc6280-psg"],
+  channels: [
+    // Pulses first, as on every other console here, and it is not cosmetic: the
+    // sound demaker places a pitched gesture on the *first* pitched channel
+    // (`sfx/index.ts`), so this is the difference between an effect borrowing a
+    // lead voice and an effect silencing the bass every time it fires.
+    pcePitchedChannel("pulse1", "pulse"),
+    pcePitchedChannel("pulse2", "pulse"),
+    pcePitchedChannel("pulse3", "pulse"),
+    pcePitchedChannel("wave1", "wave"),
+    pcePitchedChannel("wave2", "wave"),
+    {
+      id: "noise",
+      kind: "noise",
+      chip: 0,
+      volume: { steps: 32, law: "db", stepDb: 1.5 },
+      // A five-bit rate counting down from the top, so thirty-two colours from a
+      // rattle at 1.7 kHz to hiss at 56 kHz. No tonal mode: this shift register
+      // has no "periodic" setting the way an SN76489's does.
+      noise: { periods: 32, tonalMode: false },
+      envelope: { kind: "none" },
+      panning: "lr-level",
+    },
+  ],
+  driver: {
+    // The CPU's own timer, which nothing else in a demade cartridge uses: a
+    // seven-bit counter at master ÷ 1024, so 55 Hz to 6991 Hz and 120 Hz within
+    // half a hertz. The frame is the fallback, as everywhere.
+    sources: ["timer", "vblank"],
+    // 21477270 / (1364 × 262): the raster this console's VDC counts.
+    frameRate: { num: 21477270, den: 357368 },
+    timerRange: [55, 6991],
+    // Larger than every other console's, and the reason is this chip's alone: a
+    // waveform is *uploaded* through the register port rather than selected, so
+    // the tick that carries the chip's initialisation is a hundred and sixty
+    // writes longer than anywhere else (`binding/pce-bank.ts`). The budget has to
+    // cover it, and the hardware does not notice — a tick at 120 Hz is around
+    // 59,600 cycles of a 7.16 MHz CPU and a packed write is a dozen, so this is
+    // five per cent of one. What a schedule really has to stay under is the
+    // *flat* packed format's 127 writes a tick, which only a cartridge that owned
+    // the chip would meet: a game strips those writes into its boot routine.
+    writesPerTick: 256,
+  },
+  // The window a program addresses is 48 KiB and its characters come out of the
+  // same place (`demotic/src/codegen/pce/emit.ts`), so a track's schedule is
+  // budgeted like a Game Boy's rather than like a cartridge's.
+  budgets: { romBytes: 12288 },
+  mixing: { channels: 2, linear: true },
+  docs: { sources: PCE_SOURCES },
+};

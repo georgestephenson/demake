@@ -16,6 +16,7 @@
 
 import { GbApu } from "./gb-apu.js";
 import { GbaPcm } from "./gba-pcm.js";
+import { Huc6280Psg } from "./huc6280-psg.js";
 import { NdsSpu } from "./nds-spu.js";
 import { NesApu } from "./nes-apu.js";
 import { SDsp } from "./s-dsp.js";
@@ -50,6 +51,15 @@ export {
   NDS_SPU_REGISTERS,
   type NdsSpuOptions,
 } from "./nds-spu.js";
+export {
+  Huc6280Psg,
+  HUC6280_FIRST_NOISE_CHANNEL,
+  HUC6280_PSG_CHANNELS,
+  HUC6280_PSG_CLOCK_HZ,
+  HUC6280_PSG_REG,
+  HUC6280_WAVE_BITS,
+  HUC6280_WAVE_SAMPLES,
+} from "./huc6280-psg.js";
 export { Sn76489, SN76489_CLOCK_HZ } from "./sn76489.js";
 export { NesApu, NES_CLOCK_HZ } from "./nes-apu.js";
 export { Ym2612, YM2612_CLOCK_HZ } from "./ym2612.js";
@@ -100,6 +110,8 @@ export function createChip(
       });
     case "sn76489":
       return new Sn76489(options);
+    case "huc6280-psg":
+      return new Huc6280Psg();
     case "nes-apu":
       return new NesApu();
     case "ym2612":

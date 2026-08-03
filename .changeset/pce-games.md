@@ -23,11 +23,8 @@ New in `@demake/core`: `Asm6280` (`asm/huc6280.ts`), the HuCard wrapper
 (`asm/pce-cart.ts`), and the `indZp` addressing mode the 65C02 line added.
 
 New package `@demake/pce`: a self-hosted core — the CPU with its mapper and block
-transfers, a HuC6270 scanline renderer over word-addressed video RAM, and the
-HuC6260 colour table. It is the only core here with no dependency on
-`@demake/chip`, because this console's six-channel wavetable PSG has no model
-yet: a build emits no audio driver and the cartridge plays silently, while still
-recording what a rule asked for in the byte a trace reads. The write tap is
-already in place for the day the chip lands.
+transfers, a HuC6270 scanline renderer over word-addressed video RAM, the HuC6260
+colour table, and `@demake/chip`'s model of the six-channel wavetable PSG (see
+the sound changeset beside this one).
 
 The page plays it too, as a seventh lazily-loaded core.

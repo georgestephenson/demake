@@ -122,8 +122,8 @@ them now compiles games as well as pictures:
   through the generic libretro runner. It is also the first Tier 2 console with a
   **Demotic backend**: `demake build -c pce` produces a real HuCard and the whole
   example library traces identically on it in `@demake/pce` (§Console rollout,
-  item 2). Its sound is the one gap, and it is a chip model rather than a
-  console.
+  item 2) — **with its music and effects**, since `Huc6280Psg` and a generated
+  HuC6280 driver closed the one gap it had left.
 - **WonderSwan Color** — a `wsc` backend (packed 4bpp tiles, screen-map words
   with palette/bank/flip, 16 RGB444 palettes), a 4 Mbit cartridge assembled by
   **NASM** (the V30MZ is an 8086-compatible core, so a stock x86 assembler is
@@ -223,8 +223,7 @@ tighter than the NES.
    same interrupt vectors; a permuted LCD register map, a permuted LCDC, a
    permuted APU register map, no cartridge header and no boot ROM. A whole
    console for a machine-description change.
-2. **PC Engine** — *games done; the sound is what remains*, and **TurboExpress**
-   free behind it. It was the highest capability per unit of effort on this list
+2. **PC Engine** — *done, sound included*, and **TurboExpress** free behind it. It was the highest capability per unit of effort on this list
    and it came out that way: `Asm6280` *extends* `Asm6502` rather than restating
    it, which is what let the whole 16.16 value layer, the rule bodies, the tile
    walk and tile collision move to `codegen/mos/` and be shared verbatim between
@@ -244,12 +243,16 @@ tighter than the NES.
    *pulled* like a helper, and a game whose HUD is all on the background layer
    ships none.
 
-   What remains is the **HuC6280's own PSG**: six wavetable channels
-   `@demake/chip` has no model for, so `demake build -c pce` emits no driver and
-   the cartridge plays silently — recording what a rule asked for in the byte the
-   trace reads, so the game traces identically to every other machine's. The
-   write tap is already on `@demake/pce`; closing the gap is a chip, a binding and
-   a generated driver.
+   The **sound** closed the same way: `Huc6280Psg` in `@demake/chip`, a binding,
+   and a generated driver whose stream player is the NES's — `rom/mos-player.ts`
+   is the *processor's* rather than either machine's, on `arm-player.ts`'s
+   precedent, so this console's driver is a clock, a register base and a release
+   routine. Three things about it are the machine's. The clock is the **CPU's own
+   timer**, so a game gets 120 Hz where the NES has only its frame; **nothing on
+   the chip is shared**, so no merge routine is emitted at all; and the **channel
+   is a register and it is latched**, which makes preemption a run-level decision
+   the way an SN76489's is. `packages/demotic/test/audio-pce.test.ts` runs the
+   whole battery on it.
 3. **Z80** — *done for the Master System and the Game Gear*, from one encoder,
    with an SN76489 driver behind them. **SG-1000** is what the encoder has left
    to buy: the same CPU against a TMS9918 rather than a Mode 4 VDP, so it is a

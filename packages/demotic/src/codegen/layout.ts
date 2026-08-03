@@ -36,6 +36,7 @@ import {
   MD_AUDIO_BYTES,
   NDS_AUDIO_BYTES,
   NES_AUDIO_BYTES,
+  PCE_AUDIO_BYTES,
   SMS_AUDIO_BYTES,
 } from "@demake/audio";
 
@@ -399,10 +400,10 @@ export const PCE_MEMORY: MemoryPlan = {
   // would like.
   queueMax: 50,
   plotMax: 40,
-  // No driver: this console's PSG has no model in `@demake/chip` yet, so a
-  // cartridge carries no audio at all and there is no state for one to keep
-  // (doc 13 §Console rollout).
-  audioBytes: 0,
+  // The driver's own state, in the CPU's cheap page for the reason every 6502
+  // driver's is: `($nn),y` is the only indirection this processor has, so a
+  // stream pointer has to *live* there.
+  audioBytes: PCE_AUDIO_BYTES,
   // A BAT entry is a word — twelve bits of character and four of palette — so a
   // queued cell is a tile and an attribute.
   cellAttributes: true,

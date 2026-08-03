@@ -1,11 +1,10 @@
 /**
- * The PC Engine's player, and the only one here with nothing to listen to.
+ * The PC Engine's player.
  *
- * `chips` is empty, and that is the honest answer rather than a placeholder:
- * this console's PSG has no model in `@demake/chip`, so the cartridge a build
- * makes carries no audio driver at all (doc 13 §Console rollout). An empty list
- * is what tells the pane there is nothing to play, so the sound control is
- * absent instead of present and silent.
+ * This console's sound chip is a PSG, not an APU, so it is adapted rather than
+ * renamed — the core keeps calling it what it is. What it plays is the
+ * cartridge's own generated HuC6280 driver, through the same `StreamSink` every
+ * other console uses.
  */
 
 import { Pce, SCREEN_HEIGHT, SCREEN_WIDTH, type Button as PceButton } from "@demake/pce";
@@ -21,7 +20,17 @@ export function boot(rom: Uint8Array): Player {
     width: SCREEN_WIDTH,
     height: SCREEN_HEIGHT,
     framebuffer: machine.framebuffer,
-    chips: [],
+    chips: [
+      {
+        get audioSink() {
+          return machine.audioSink;
+        },
+        set audioSink(sink) {
+          machine.audioSink = sink;
+        },
+        apu: machine.psg,
+      },
+    ],
     setButtons: (down) => machine.setButtons(down.map((name) => MAP[name] ?? (name as PceButton))),
     runFrame: () => void machine.runFrame(),
     readMemory: (address, length) => machine.readMemory(address, length),

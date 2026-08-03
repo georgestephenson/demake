@@ -4,6 +4,7 @@
  * palettes make fits easy; the codegen VRAM layout is the real work. The BAT has
  * no per-tile flip.
  */
+import { pceAudio } from "./audio-specs.js";
 import type { ConsoleSpec } from "./types.js";
 export const pce = {
   id: "pce",
@@ -23,5 +24,11 @@ export const pce = {
     flip: false,
   },
   codegen: { family: "pce", formats: ["bin", "asm", "c", "rom"] },
-  docs: { sources: ["Archaic Pixels — HuC6270 VDC & VCE palette (RGB333)"] },
+  audio: pceAudio,
+  docs: {
+    sources: [
+      "Archaic Pixels — HuC6270 VDC & VCE palette (RGB333)",
+      "Archaic Pixels — PSG: https://archaicpixels.com/PSG",
+    ],
+  },
 } satisfies ConsoleSpec;

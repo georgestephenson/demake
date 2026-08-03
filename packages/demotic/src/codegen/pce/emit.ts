@@ -49,6 +49,7 @@
  */
 
 import { Asm6280, abs, absX, imm, indY, label, type Ref } from "@demake/core";
+import { AUDIO_STOP, type PceGameAudio } from "@demake/audio";
 
 import type { InstanceDef } from "../../program.js";
 import { isMutable } from "../analyze.js";
@@ -247,6 +248,18 @@ export interface PceEmitOptions {
   fontPalette?: Uint8Array;
   /** Which sub-palette a level's tile art was fitted into. */
   levelSubPalette?: number;
+  /**
+   * The game's audio driver, already built from its demade tracks and effects.
+   *
+   * Absent for a game with nothing to play, and then the ROM is exactly what it
+   * was before audio existed — the timer stopped, its interrupt masked, no
+   * service call in the loop and no cheap page set aside.
+   */
+  audio?: PceGameAudio;
+  /** Driver index of each of the program's sounds, or `-1` when unsupplied. */
+  effectIndices?: readonly number[];
+  /** Which track each scene plays, as an index, or `-1` for a silent one. */
+  sceneTracks?: readonly number[];
 }
 
 /** A BAT word: a character number and the sub-palette that colours it. */
@@ -283,8 +296,8 @@ export function emitProgram(ctx: PceCtx, options: PceEmitOptions = {}): void {
     if (found) levelFor.set(scene.index, found);
   }
 
-  emitInterrupts(ctx);
-  emitMainLoop(ctx);
+  emitInterrupts(ctx, options);
+  emitMainLoop(ctx, options);
   emitInput(ctx);
   emitTickDispatch(ctx, scenes);
   emitSceneChange(ctx, scenes);
@@ -298,6 +311,7 @@ export function emitProgram(ctx: PceCtx, options: PceEmitOptions = {}): void {
 
   emitRenderHelpers(ctx);
   emitTileContactHelper(ctx);
+  if (options.audio) options.audio.emitCode(ctx.asm);
   ctx.finish();
 
   // --- data ------------------------------------------------------------------
@@ -343,6 +357,20 @@ export function emitProgram(ctx: PceCtx, options: PceEmitOptions = {}): void {
   emitGlyphPatterns(ctx);
   asm.label("SpritePalette");
   asm.bytes(options.spritePalette ?? defaultPalette(1));
+
+  if (options.audio) {
+    if (program.tracks.length > 0) {
+      asm.label("SceneTracks");
+      // One byte per scene: the request value that starts its track, or the one
+      // that stops the music. A table rather than a dispatch because a scene
+      // change already costs a redraw, and this is the cheapest thing in it.
+      for (const scene of scenes) {
+        const track = options.sceneTracks?.[scene.index] ?? -1;
+        asm.db(track < 0 ? AUDIO_STOP : track + 1);
+      }
+    }
+    options.audio.emitData(asm);
+  }
 
   // The boot stub, in the one bank reset maps: the top 8 KiB of the image, which
   // packs into cartridge bank 0 (`asm/pce-cart.ts`). Everything above is the
@@ -454,8 +482,12 @@ function emitReset(ctx: PceCtx, options: PceEmitOptions): void {
     asm.lda(imm(page - 1));
     asm.tam(Asm6280.mprBit(page));
   }
-  // Every interrupt masked but the video chip's.
-  asm.lda(imm(0x05));
+  // Every interrupt masked but the ones this cartridge answers: the video chip's
+  // always, and the CPU's own timer when there is a driver riding it. Which
+  // interrupts a program takes is the *console's* policy rather than the audio
+  // driver's, which is why the mask is here and only the timer's two registers
+  // are `AudioInit`'s.
+  asm.lda(imm(options.audio ? 0x01 : 0x05));
   asm.sta(abs(R.IRQ_MASK));
   asm.sta(abs(R.IRQ_STATUS));
 
@@ -557,6 +589,11 @@ function emitReset(ctx: PceCtx, options: PceEmitOptions): void {
   asm.jsr("BuildFrame");
   asm.jsr("UploadFrame");
 
+  if (options.audio) {
+    asm.jsr("AudioInit");
+    if (program.tracks.length > 0) asm.jsr("SceneMusic");
+  }
+
   vdcControl(ctx, CR_ON, CR_STEP_ONE);
   asm.lda(imm(1));
   asm.sta(mem(layout.booted));
@@ -649,7 +686,7 @@ const FRAME_READY = 6;
  * flag says "a blank happened", not "we are in one", so a tick that overran its
  * frame would upload in the middle of active display and tear.
  */
-function emitInterrupts(ctx: PceCtx): void {
+function emitInterrupts(ctx: PceCtx, options: PceEmitOptions): void {
   const { asm, layout } = ctx;
   const idle = ctx.unique("irqNoFrame");
   // The scratch the upload borrows, saved because the tick may be mid-expression.
@@ -685,15 +722,31 @@ function emitInterrupts(ctx: PceCtx): void {
   asm.pla();
   asm.rti();
 
-  // Nothing else can raise one: the timer is stopped, IRQ2 is masked, and this
-  // cartridge has no hardware of its own.
-  asm.label("Irq2");
+  // The timer, which is this console's audio clock and nothing else's. The tick
+  // is *counted* here and performed in the main loop: the vertical blank belongs
+  // to the picture, and a driver tick taken in a handler is a tick the tilemap
+  // upload waits behind. Counting is also what makes a frame the game overran
+  // cost it no tempo — the timer keeps running whatever the loop is doing.
+  //
+  // Writing the status register is what acknowledges it; the timer is the one
+  // source on this console with no register of its own to clear.
   asm.label("TimerIrq");
+  if (options.audio) {
+    asm.pha();
+    asm.sta(abs(R.IRQ_STATUS));
+    asm.jsr(options.audio.routines.frame);
+    asm.pla();
+  }
+  asm.rti();
+
+  // Nothing else can raise one: IRQ2 is masked and this cartridge has no
+  // hardware of its own.
+  asm.label("Irq2");
   asm.label("Nmi");
   asm.rti();
 }
 
-function emitMainLoop(ctx: PceCtx): void {
+function emitMainLoop(ctx: PceCtx, options: PceEmitOptions): void {
   const { asm, layout } = ctx;
   const wait = ctx.unique("waitVblank");
   // The flag is cleared *after* it is seen, not before the wait: a tick that
@@ -706,6 +759,10 @@ function emitMainLoop(ctx: PceCtx): void {
   asm.sta(mem(layout.scratch + VBLANKED));
   asm.jsr("ReadInput");
   asm.jsr("Tick");
+  // After the tick, so an effect a rule asked for is heard this pass rather than
+  // next; before the frame is built, so the ticks the timer counted are performed
+  // while the picture is still showing the last one.
+  if (options.audio) asm.jsr(options.audio.routines.service);
   asm.jsr("BuildFrame");
   // The objects go to video RAM here, in active display, because the chip fetches
   // them at the *top* of the next blank — so this is what lands them on the same
@@ -823,6 +880,7 @@ function emitSceneChange(ctx: PceCtx, scenes: readonly SceneCtx[]): void {
   asm.sta(mem(layout.scene));
   asm.lda(imm(0xff));
   asm.sta(mem(layout.pending));
+  if (ctx.audio?.driver === true && ctx.program.tracks.length > 0) asm.jsr("SceneMusic");
   asm.jsr("ResetScene");
   emitSeedRng(ctx);
   emitClearState(ctx);
@@ -830,6 +888,17 @@ function emitSceneChange(ctx: PceCtx, scenes: readonly SceneCtx[]): void {
   asm.lda(imm(1));
   asm.sta(mem(layout.redraw));
   asm.rts();
+
+  // Music follows the scene, so it starts where the scene does. Asking for it
+  // rather than starting it here is what keeps the request one byte: the driver
+  // is serviced from the loop, and a scene change is not where it happens.
+  if (ctx.audio?.driver === true && ctx.program.tracks.length > 0) {
+    asm.label("SceneMusic");
+    asm.ldx(mem(layout.scene));
+    asm.lda(absX("SceneTracks"));
+    asm.sta(mem(ctx.audio.music));
+    asm.rts();
+  }
 
   asm.label("ResetScene");
   emitSceneDispatch(
