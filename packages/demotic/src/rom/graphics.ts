@@ -439,6 +439,17 @@ function packBuiltin(encode: (rows: readonly string[]) => Uint8Array): Uint8Arra
 export interface SelectedBank {
   /** The bank, in the plane-grouped layout the NES addresses. */
   chr: Uint8Array;
+  /**
+   * The same cells as colour-index rows, for a console that packs its own.
+   *
+   * Every backend but the Game Boy's re-encodes this bank into its hardware's
+   * tile format, and two of them re-encode the *selected* subset rather than all
+   * sixty-four — so the rows go out beside the bytes instead of each console
+   * getting a `builtinXxx` that can only pack the whole thing. Shade zero is the
+   * blank, and what shades 1–3 become is the backend's decision (see
+   * {@link builtinSega}).
+   */
+  cells: readonly (readonly string[])[];
   /** Patterns in it. */
   count: number;
   /** The tile one character draws as, or the blank for one not in the bank. */
@@ -478,6 +489,7 @@ export function selectBank(want: {
   for (const [at, cell] of cells.entries()) chr.set(encodeChrTile(cell), at * TILE_BYTES);
   return {
     chr,
+    cells,
     count: cells.length,
     glyph: (character) => index.get(character.toUpperCase().charCodeAt(0)) ?? FONT_BASE,
     pattern: (legendIndex, solid) =>

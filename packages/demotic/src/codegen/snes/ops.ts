@@ -2,7 +2,7 @@
  * The backend's own corner of the direct page, and how it addresses everything
  * else.
  *
- * The counterpart of `codegen/nes/zp.ts`, and the striking thing is how much
+ * The counterpart of `codegen/mos/zp.ts`, and the striking thing is how much
  * *smaller* it is. Page zero on a 6502 is the only place a pointer can live,
  * because `($nn),y` is that CPU's one indirect mode — so every shared helper
  * there needs a fixed pair of bytes to be told its argument in. Here the index

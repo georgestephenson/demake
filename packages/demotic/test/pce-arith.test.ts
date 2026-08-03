@@ -1,29 +1,31 @@
 /**
- * The NES value layer, proven against `fixed.ts` on the hardware itself.
+ * The PC Engine value layer, proven against `fixed.ts` on the hardware itself.
  *
- * The 16.16 arithmetic is where a second backend goes wrong first, and it goes
- * wrong quietly: a multiply that floors the wrong way for negative operands
- * produces a game that plays *almost* right and diverges from the trace a
- * thousand ticks later, by which point the failure names a position rather than
- * an operation. So the emitters are exercised here directly — assemble one
- * operation into a cartridge, run it in `@demake/nes`, read the four bytes back,
- * and compare against the reference implementation the interpreter itself uses.
+ * The counterpart of `nes-arith.test.ts`, and it looks like a duplicate of it on
+ * purpose: the *emitters* are the same file (`codegen/mos/val.ts`), because a
+ * HuC6280 is a 6502 with a memory mapper on it — so what this proves is not the
+ * arithmetic a second time but that the same instructions still mean the same
+ * thing on the second machine that runs them.
  *
- * The vectors are chosen for the cases that differ between implementations rather
- * than for coverage: both signs, the exact ±1.0 identity the multiply
- * short-circuits, a fractional operand whose product needs the floor, a division
- * by a whole number of cells (the fast path) and one that does not (the general
- * loop), the clamp's exact boundary, and zero.
+ * Two things about this console can break that, and neither would show up as a
+ * wrong sum on the first. **Zero page is at `$2000`**, so an operand the plan put
+ * in the cheap page is `zp $7E` to the instruction and `$207E` to an indexed
+ * access — and a backend that got the two the same way round on one machine and
+ * not the other would produce a game that plays *almost* right and diverges a
+ * thousand ticks later. And **the mapper decides what an address means at all**,
+ * so a program whose `tam`s were wrong would read its own code as data.
+ *
+ * The vectors are the NES's, deliberately: the cases that differ between
+ * implementations rather than the ones that cover lines.
  */
 
 import { describe, expect, it } from "vitest";
 
-import { NES_CHR_SIZE, NES_PRG_ORIGIN, NES_PRG_SIZE, packInesRom, type Ref } from "@demake/core";
-import { Nes } from "@demake/nes";
+import { PCE_BANK_SIZE, packHuCard, Asm6280, imm, type Ref } from "@demake/core";
+import { Pce } from "@demake/pce";
 
 import { analyze } from "../src/codegen/analyze.js";
-import { NES_MEMORY, planLayout } from "../src/codegen/layout.js";
-import { NesCtx } from "../src/codegen/nes/ctx.js";
+import { PCE_MEMORY, planLayout } from "../src/codegen/layout.js";
 import {
   add32,
   asr32,
@@ -36,20 +38,25 @@ import {
   set32,
   sub32,
 } from "../src/codegen/mos/val.js";
+import { PceCtx } from "../src/codegen/pce/ctx.js";
+import { CODE_ORIGIN, BOOT_ORIGIN } from "../src/codegen/pce/emit.js";
 import { compile } from "../src/compile.js";
 import { clampFixed, div, mul, ONE } from "../src/fixed.js";
 import { getProfile } from "../src/profiles.js";
 
 /** A program with nothing in it: all these tests need from one is a layout. */
-const PROGRAM = compile("start only\n\nscene only\n", { profile: getProfile("nes") });
+const PROGRAM = compile("start only\n\nscene only\n", { profile: getProfile("pce") });
 
 /** Where a test's operands live — clear of everything the plan allocated. */
-const A = 0x0500;
-const B = 0x0504;
-const OUT = 0x0508;
+const A = 0x3000;
+const B = 0x3004;
+const OUT = 0x3008;
+
+/** And one in the cheap page, which on this CPU is `$2000` and not `$0000`. */
+const FAST = 0x2080;
 
 /** The four bytes at `address`, as a signed 32-bit integer. */
-function read32(machine: Nes, address: number): number {
+function read32(machine: Pce, address: number): number {
   const bytes = machine.readMemory(address, 4);
   return (
     (bytes[0] as number) |
@@ -61,35 +68,57 @@ function read32(machine: Nes, address: number): number {
 }
 
 /** Assemble `body` into a cartridge, run it to its spin loop, hand it back. */
-function run(body: (ctx: NesCtx) => void): Nes {
+function run(body: (ctx: PceCtx) => void): Pce {
   const analysis = analyze(PROGRAM);
-  const layout = planLayout(PROGRAM, analysis, NES_MEMORY);
-  const ctx = new NesCtx(PROGRAM, analysis, layout, getProfile("nes"), NES_PRG_ORIGIN);
+  const layout = planLayout(PROGRAM, analysis, PCE_MEMORY);
+  const ctx = new PceCtx(PROGRAM, analysis, layout, getProfile("pce"), CODE_ORIGIN);
   const { asm } = ctx;
 
-  asm.label("Reset");
+  asm.label("Body");
   body(ctx);
   asm.label("Spin");
-  asm.jmp("Spin");
+  asm.bra("Spin");
   ctx.finish();
+  if (asm.pc > BOOT_ORIGIN) throw new Error("pce-arith: the test program is too big");
 
-  const prg = new Uint8Array(NES_PRG_SIZE);
-  prg.set(asm.assemble(), 0);
-  const reset = asm.addressOf("Reset");
-  prg[NES_PRG_SIZE - 4] = reset & 0xff;
-  prg[NES_PRG_SIZE - 3] = (reset >> 8) & 0xff;
+  // The boot stub, which on this console is not optional: until the `tam`s run
+  // there is no work RAM, no stack and nothing at `$4000` at all.
+  asm.padTo(BOOT_ORIGIN, 0xff);
+  asm.label("Reset");
+  asm.sei();
+  asm.csh();
+  asm.cld();
+  asm.lda(imm(0xff));
+  asm.tam(Asm6280.mprBit(0));
+  asm.lda(imm(0xf8));
+  asm.tam(Asm6280.mprBit(1));
+  asm.ldx(imm(0xff));
+  asm.txs();
+  for (let page = 2; page <= 6; page += 1) {
+    asm.lda(imm(page - 1));
+    asm.tam(Asm6280.mprBit(page));
+  }
+  asm.jmp("Body");
+  const code = asm.assemble();
 
-  const machine = new Nes(packInesRom(prg, new Uint8Array(NES_CHR_SIZE)));
+  // The window rearranged into banks: reset maps bank 0 at `$E000`, so the top
+  // 8 KiB of the image is bank 0 and everything below it follows.
+  const split = BOOT_ORIGIN - CODE_ORIGIN;
+  const banks = new Uint8Array(0x10000 - CODE_ORIGIN);
+  banks.set(code.subarray(split), 0);
+  banks.set(code.subarray(0, split), PCE_BANK_SIZE);
+  const machine = new Pce(packHuCard(banks, { vectors: { reset: asm.addressOf("Reset") } }));
+
   const spin = asm.addressOf("Spin");
-  for (let step = 0; step < 500_000; step += 1) {
+  for (let step = 0; step < 2_000_000; step += 1) {
     if (machine.cpu.pc === spin) return machine;
     machine.stepInstruction();
   }
-  throw new Error("nes: the program never reached its spin loop");
+  throw new Error("pce: the program never reached its spin loop");
 }
 
 /** Run one binary operation over two operands and read the result. */
-function binary(op: (ctx: NesCtx, dst: Ref, src: Ref) => void, a: number, b: number): number {
+function binary(op: (ctx: PceCtx, dst: Ref, src: Ref) => void, a: number, b: number): number {
   const machine = run((ctx) => {
     set32(ctx, A, a);
     set32(ctx, B, b);
@@ -98,7 +127,7 @@ function binary(op: (ctx: NesCtx, dst: Ref, src: Ref) => void, a: number, b: num
   return read32(machine, A);
 }
 
-describe("the NES 32-bit arithmetic", () => {
+describe("the PC Engine 32-bit arithmetic", () => {
   it("adds and subtracts across the sign", () => {
     expect(binary(add32, 3 * ONE, -5 * ONE)).toBe(-2 * ONE);
     expect(binary(sub32, 3 * ONE, 5 * ONE)).toBe(-2 * ONE);
@@ -112,7 +141,6 @@ describe("the NES 32-bit arithmetic", () => {
       neg32(ctx, A);
     });
     expect(read32(negated, A)).toBe(-(5 * ONE + 1));
-    // An arithmetic shift is floor, so an odd negative value rounds down.
     const halved = run((ctx) => {
       set32(ctx, A, -3);
       asr32(ctx, A);
@@ -150,18 +178,15 @@ describe("the NES 32-bit arithmetic", () => {
 
   it("divides exactly as the interpreter does, on both paths", () => {
     const vectors: readonly (readonly [number, number])[] = [
-      // A whole-cell divisor takes the byte-division path.
       [7 * ONE, 2 * ONE],
       [-7 * ONE, 2 * ONE],
       [7 * ONE, -2 * ONE],
       [-7 * ONE, -2 * ONE],
       [5 * ONE, 60 * ONE],
-      // A fractional divisor takes the general loop.
       [7 * ONE, ONE + 32768],
       [-7 * ONE, ONE + 32768],
       [ONE, 3 * ONE + 1],
       [0, 3 * ONE],
-      // And a zero divisor gives zero, not a crash.
       [5 * ONE, 0],
     ];
     for (const [a, b] of vectors) {
@@ -182,18 +207,18 @@ describe("the NES 32-bit arithmetic", () => {
       -2000 * ONE,
     ];
     for (const value of vectors) {
-      // Once at a work-RAM address, which goes through the pointer form...
       const heap = run((ctx) => {
         set32(ctx, A, value);
         clamp32(ctx, A);
       });
       expect(read32(heap, A), `clamp ${value} in work RAM`).toBe(clampFixed(value));
-      // ...and once in page zero, which goes through the indexed one.
+      // And once in the cheap page, which is the address this console gets wrong
+      // if the two windows in `mos/zp.ts` were ever confused for each other.
       const zero = run((ctx) => {
-        set32(ctx, 0x80, value);
-        clamp32(ctx, 0x80);
+        set32(ctx, FAST, value);
+        clamp32(ctx, FAST);
       });
-      expect(read32(zero, 0x80), `clamp ${value} in page zero`).toBe(clampFixed(value));
+      expect(read32(zero, FAST), `clamp ${value} in the cheap page`).toBe(clampFixed(value));
     }
   });
 
@@ -223,5 +248,18 @@ describe("the NES 32-bit arithmetic", () => {
     for (const [a, b] of cases) {
       expect(less(a, b), `${a} < ${b}`).toBe(a < b ? 1 : 0);
     }
+  });
+
+  it("reaches the cheap page and work RAM as the same memory", () => {
+    // The one property this console has that the NES does not: `$2080` is both
+    // `zp $80` to an unindexed instruction and an ordinary absolute address to an
+    // indexed one, and a build that disagreed with itself about which would put a
+    // game's contact bits in the video chip's register page.
+    const machine = run((ctx) => {
+      set32(ctx, FAST, 0x0badf00d | 0);
+      copy32(ctx, A, FAST);
+    });
+    expect(read32(machine, A)).toBe(0x0badf00d);
+    expect(machine.ram[0x80]).toBe(0x0d);
   });
 });

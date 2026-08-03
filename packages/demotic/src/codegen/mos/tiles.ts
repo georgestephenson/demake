@@ -25,9 +25,9 @@ import {
   type LevelData,
 } from "../shape.js";
 
-import type { NesCtx } from "./ctx.js";
+import type { MosCtx } from "./ctx.js";
 import { add32, branchLess32, clamp32, copy32, neg32, set32, sub32, abs32 } from "./val.js";
-import { mem, ZP } from "./zp.js";
+import { mem, slotOf, ZP } from "./zp.js";
 
 export {
   collectLevels,
@@ -41,7 +41,7 @@ export {
 };
 
 /** `dst = src`, on a 16-bit word. */
-export function copy16(ctx: NesCtx, dst: number, src: number): void {
+export function copy16(ctx: MosCtx, dst: number, src: number): void {
   const { asm } = ctx;
   asm.lda(mem(src));
   asm.sta(mem(dst));
@@ -50,7 +50,7 @@ export function copy16(ctx: NesCtx, dst: number, src: number): void {
 }
 
 /** `addr += 1`, on a 16-bit word. */
-export function inc16(ctx: NesCtx, addr: number): void {
+export function inc16(ctx: MosCtx, addr: number): void {
   const { asm } = ctx;
   const done = ctx.unique("inc16");
   asm.inc(mem(addr));
@@ -60,7 +60,7 @@ export function inc16(ctx: NesCtx, addr: number): void {
 }
 
 /** `addr -= 1`, on a 16-bit word. */
-export function dec16(ctx: NesCtx, addr: number): void {
+export function dec16(ctx: MosCtx, addr: number): void {
   const { asm } = ctx;
   const high = ctx.unique("dec16");
   const done = ctx.unique("dec16done");
@@ -73,7 +73,7 @@ export function dec16(ctx: NesCtx, addr: number): void {
 }
 
 /** `dst = src * value`, with the constant expanded into doublings and adds. */
-export function mulConst16(ctx: NesCtx, dst: number, src: number, value: number): void {
+export function mulConst16(ctx: MosCtx, dst: number, src: number, value: number): void {
   const { asm } = ctx;
   if (value === 0) {
     asm.lda(imm(0));
@@ -106,7 +106,7 @@ export function mulConst16(ctx: NesCtx, dst: number, src: number, value: number)
  * here means every tile lookup falls out of bounds and a level simply has no tiles
  * in it.
  */
-export function branchAtLeast16(ctx: NesCtx, addr: number, value: number, target: string): void {
+export function branchAtLeast16(ctx: MosCtx, addr: number, value: number, target: string): void {
   const { asm } = ctx;
   const below = ctx.unique("below16");
   asm.lda(mem(addr, 1));
@@ -123,7 +123,7 @@ export function branchAtLeast16(ctx: NesCtx, addr: number, value: number, target
  * `A = the legend index at (word[tileCol], word[tileRow])`, or `$FF` outside the
  * grid — emitted once per level.
  */
-export function emitTileAt(ctx: NesCtx, data: LevelData): void {
+export function emitTileAt(ctx: MosCtx, data: LevelData): void {
   const { asm, layout } = ctx;
   const level = data.file;
   const col = layout.words + W.tileCol * 2;
@@ -166,7 +166,7 @@ export function emitTileAt(ctx: NesCtx, data: LevelData): void {
  * boundary is not in that cell — which matches how object overlap already works,
  * so an object resting against a wall is touching it and not inside it.
  */
-export function emitTilesUnder(ctx: NesCtx, base: number, data: LevelData, body: () => void): void {
+export function emitTilesUnder(ctx: MosCtx, base: number, data: LevelData, body: () => void): void {
   const { asm, layout } = ctx;
   const w = layout.words;
   const firstCol = w + W.firstCol * 2;
@@ -221,7 +221,7 @@ export function emitTilesUnder(ctx: NesCtx, base: number, data: LevelData, body:
   asm.label(colLoop);
   branchLess16(ctx, lastCol, col, colDone);
   asm.ldy(imm(0));
-  asm.lda(indY(layout.tilePtr));
+  asm.lda(indY(slotOf(layout.tilePtr)));
   body();
   inc16(ctx, layout.tilePtr);
   inc16(ctx, col);
@@ -233,7 +233,7 @@ export function emitTilesUnder(ctx: NesCtx, base: number, data: LevelData, body:
 }
 
 /** `addr = max(addr, 0)`, on a signed 16-bit cell coordinate. */
-function clampLow16(ctx: NesCtx, addr: number): void {
+function clampLow16(ctx: MosCtx, addr: number): void {
   const { asm } = ctx;
   const done = ctx.unique("clampLow16");
   asm.lda(mem(addr, 1));
@@ -246,7 +246,7 @@ function clampLow16(ctx: NesCtx, addr: number): void {
 
 /** `addr = min(addr, limit)`, leaving a negative coordinate alone so an object
  * entirely off the grid ends up with `last < first` and walks nothing. */
-function clampHigh16(ctx: NesCtx, addr: number, limit: number): void {
+function clampHigh16(ctx: MosCtx, addr: number, limit: number): void {
   const { asm } = ctx;
   const done = ctx.unique("clampHigh16");
   const tooBig = ctx.unique("clampSet16");
@@ -263,7 +263,7 @@ function clampHigh16(ctx: NesCtx, addr: number, limit: number): void {
 }
 
 /** `dst16 = floor(value)` — the integer cell a 16.16 coordinate sits in. */
-function floorCell(ctx: NesCtx, src: number, dst: number): void {
+function floorCell(ctx: MosCtx, src: number, dst: number): void {
   const { asm } = ctx;
   asm.lda(mem(src, 2));
   asm.sta(mem(dst));
@@ -275,7 +275,7 @@ function floorCell(ctx: NesCtx, src: number, dst: number): void {
  * The last cell a half-open span touches: `floor(edge)`, minus one when the edge
  * lands exactly on a boundary.
  */
-function ceilOpen(ctx: NesCtx, src: number, dst: number): void {
+function ceilOpen(ctx: MosCtx, src: number, dst: number): void {
   const { asm } = ctx;
   const notExact = ctx.unique("ceilOpen");
   floorCell(ctx, src, dst);
@@ -287,7 +287,7 @@ function ceilOpen(ctx: NesCtx, src: number, dst: number): void {
 }
 
 /** Jump to `target` when the signed word at `a` is less than the one at `b`. */
-export function branchLess16(ctx: NesCtx, a: number, b: number, target: string): void {
+export function branchLess16(ctx: MosCtx, a: number, b: number, target: string): void {
   const { asm } = ctx;
   // (a - b) < 0, using the sign of the difference; cell counts are small enough
   // that this cannot overflow.
@@ -304,7 +304,7 @@ export function branchLess16(ctx: NesCtx, a: number, b: number, target: string):
  * object separation uses, and for the same reason: resolving the deeper axis
  * would teleport a walking object over a wall it merely brushed.
  */
-export function emitTileSeparate(ctx: NesCtx, base: number): void {
+export function emitTileSeparate(ctx: MosCtx, base: number): void {
   const { asm, layout } = ctx;
   const col = layout.words + W.tileCol * 2;
   const row = layout.words + W.tileRow * 2;
@@ -359,7 +359,7 @@ export function emitTileSeparate(ctx: NesCtx, base: number): void {
 }
 
 /** Widen a signed 16-bit cell coordinate into 16.16. */
-function cellToFixed(ctx: NesCtx, src: number, dst: number): void {
+function cellToFixed(ctx: MosCtx, src: number, dst: number): void {
   const { asm } = ctx;
   asm.lda(imm(0));
   asm.sta(mem(dst));

@@ -32,8 +32,8 @@
 
 import { absX, acc, imm, indY, type Ref } from "@demake/core";
 
-import type { NesCtx } from "./ctx.js";
-import { inFastPage, mem, ZP } from "./zp.js";
+import type { MosCtx } from "./ctx.js";
+import { inFastPage, mem, slotOf, ZP } from "./zp.js";
 
 /** 1.0 in 16.16. */
 export const ONE = 0x10000;
@@ -42,7 +42,7 @@ export const ONE = 0x10000;
 export const FIXED_MAX = 1024 * ONE;
 
 /** `dst = src`, four bytes. */
-export function copy32(ctx: NesCtx, dst: Ref, src: Ref): void {
+export function copy32(ctx: MosCtx, dst: Ref, src: Ref): void {
   const { asm } = ctx;
   for (let index = 0; index < 4; index += 1) {
     asm.lda(mem(src, index));
@@ -51,7 +51,7 @@ export function copy32(ctx: NesCtx, dst: Ref, src: Ref): void {
 }
 
 /** `dst = value`. */
-export function set32(ctx: NesCtx, dst: Ref, value: number): void {
+export function set32(ctx: MosCtx, dst: Ref, value: number): void {
   const { asm } = ctx;
   const bytes = [value & 0xff, (value >> 8) & 0xff, (value >> 16) & 0xff, (value >> 24) & 0xff];
   // Zero is by far the commonest literal, and holding the byte in A across
@@ -68,7 +68,7 @@ export function set32(ctx: NesCtx, dst: Ref, value: number): void {
 }
 
 /** `dst += src`. */
-export function add32(ctx: NesCtx, dst: Ref, src: Ref): void {
+export function add32(ctx: MosCtx, dst: Ref, src: Ref): void {
   const { asm } = ctx;
   asm.clc();
   for (let index = 0; index < 4; index += 1) {
@@ -79,7 +79,7 @@ export function add32(ctx: NesCtx, dst: Ref, src: Ref): void {
 }
 
 /** `dst -= src`. */
-export function sub32(ctx: NesCtx, dst: Ref, src: Ref): void {
+export function sub32(ctx: MosCtx, dst: Ref, src: Ref): void {
   const { asm } = ctx;
   asm.sec();
   for (let index = 0; index < 4; index += 1) {
@@ -96,7 +96,7 @@ export function sub32(ctx: NesCtx, dst: Ref, src: Ref): void {
  * the first non-zero byte of the constant is where the code has to start. For
  * `+1.0` that removes half the instructions.
  */
-export function addConst32(ctx: NesCtx, dst: Ref, value: number): void {
+export function addConst32(ctx: MosCtx, dst: Ref, value: number): void {
   const { asm } = ctx;
   const bytes = [value & 0xff, (value >> 8) & 0xff, (value >> 16) & 0xff, (value >> 24) & 0xff];
   let first = 0;
@@ -111,7 +111,7 @@ export function addConst32(ctx: NesCtx, dst: Ref, value: number): void {
 }
 
 /** `dst = -dst`. */
-export function neg32(ctx: NesCtx, dst: Ref): void {
+export function neg32(ctx: MosCtx, dst: Ref): void {
   const { asm } = ctx;
   asm.sec();
   for (let index = 0; index < 4; index += 1) {
@@ -122,7 +122,7 @@ export function neg32(ctx: NesCtx, dst: Ref): void {
 }
 
 /** `dst >>= 1`, arithmetic — which is floor division by two. */
-export function asr32(ctx: NesCtx, dst: Ref): void {
+export function asr32(ctx: MosCtx, dst: Ref): void {
   const { asm } = ctx;
   // The top byte's sign has to come back in at the top, so it goes out through
   // the carry first: `asl` on a copy of it, then rotate the whole value right.
@@ -132,14 +132,14 @@ export function asr32(ctx: NesCtx, dst: Ref): void {
 }
 
 /** Set Z when the value is zero. Clobbers A. */
-export function isZero32(ctx: NesCtx, addr: Ref): void {
+export function isZero32(ctx: MosCtx, addr: Ref): void {
   const { asm } = ctx;
   asm.lda(mem(addr, 0));
   for (let index = 1; index < 4; index += 1) asm.ora(mem(addr, index));
 }
 
 /** Branch to `target` when the value at `addr` is zero, or when it is not. */
-export function branchZero32(ctx: NesCtx, addr: Ref, target: string, whenZero = true): void {
+export function branchZero32(ctx: MosCtx, addr: Ref, target: string, whenZero = true): void {
   isZero32(ctx, addr);
   ctx.far(whenZero ? "eq" : "ne", target);
 }
@@ -152,7 +152,7 @@ export function branchZero32(ctx: NesCtx, addr: Ref, target: string, whenZero = 
  * final `sbc` leaves that sign in N, and the `lda`s between the `sbc`s do not
  * disturb the carry — which is what lets the chain run without saving anything.
  */
-export function branchLess32(ctx: NesCtx, lhs: Ref, rhs: Ref, target: string, whenLess = true) {
+export function branchLess32(ctx: MosCtx, lhs: Ref, rhs: Ref, target: string, whenLess = true) {
   const { asm } = ctx;
   asm.sec();
   for (let index = 0; index < 4; index += 1) {
@@ -163,7 +163,7 @@ export function branchLess32(ctx: NesCtx, lhs: Ref, rhs: Ref, target: string, wh
 }
 
 /** Branch on equality, by comparing until a byte differs. */
-export function branchEqual32(ctx: NesCtx, lhs: Ref, rhs: Ref, target: string, whenEqual = true) {
+export function branchEqual32(ctx: MosCtx, lhs: Ref, rhs: Ref, target: string, whenEqual = true) {
   const { asm } = ctx;
   if (whenEqual) {
     // A local label, so these four can be short branches: the whole comparison
@@ -186,7 +186,7 @@ export function branchEqual32(ctx: NesCtx, lhs: Ref, rhs: Ref, target: string, w
 }
 
 /** Branch to `target` unless the four bytes hold exactly this constant. */
-export function branchUnlessConst32(ctx: NesCtx, addr: Ref, value: number, target: string): void {
+export function branchUnlessConst32(ctx: MosCtx, addr: Ref, value: number, target: string): void {
   const { asm } = ctx;
   const bytes = [value & 0xff, (value >> 8) & 0xff, (value >> 16) & 0xff, (value >> 24) & 0xff];
   for (let index = 0; index < 4; index += 1) {
@@ -197,7 +197,7 @@ export function branchUnlessConst32(ctx: NesCtx, addr: Ref, value: number, targe
 }
 
 /** `dst = |dst|`. */
-export function abs32(ctx: NesCtx, dst: Ref): void {
+export function abs32(ctx: MosCtx, dst: Ref): void {
   const { asm } = ctx;
   const done = ctx.unique("absDone");
   asm.lda(mem(dst, 3));
@@ -215,10 +215,12 @@ export function abs32(ctx: NesCtx, dst: Ref): void {
  * and reached with `$00,x`, which is two instructions at the call site. Anything
  * else needs its address written into a pointer first.
  */
-export function clamp32(ctx: NesCtx, dst: Ref): void {
+export function clamp32(ctx: MosCtx, dst: Ref): void {
   const { asm } = ctx;
   if (inFastPage(dst)) {
-    asm.ldx(imm(dst as number));
+    // The *operand*, not the address: `$nn,x` indexes from the page's own base,
+    // which is `$2000` on one of the two CPUs here.
+    asm.ldx(imm(slotOf(dst as number)));
     asm.jsr(ctx.need("ClampZp", emitClampZp));
     return;
   }
@@ -242,7 +244,7 @@ interface ByteAccess {
  * `$FC000000` is out of range the other way. Both limits are three zero bytes and
  * a sign, which is why they share the store.
  */
-function emitClampBody(ctx: NesCtx, byte: ByteAccess): void {
+function emitClampBody(ctx: MosCtx, byte: ByteAccess): void {
   const { asm } = ctx;
   const done = ctx.unique("clampDone");
   const high = ctx.unique("clampHigh");
@@ -286,17 +288,21 @@ function emitClampBody(ctx: NesCtx, byte: ByteAccess): void {
  * on `$00` — which is the first argument pointer. Absolute indexed carries
  * instead, and costs one cycle for the guarantee.
  */
-function emitClampZp(ctx: NesCtx): void {
+function emitClampZp(ctx: MosCtx): void {
   const { asm } = ctx;
+  // `X` holds an offset into the cheap page, so the base has to come back —
+  // zero on a 6502 and `$2000` on a HuC6280, which is the one bare offset in
+  // this file and therefore the one place that could have gone silently wrong.
+  const base = ctx.zeroPage;
   emitClampBody(ctx, {
-    load: (index) => asm.lda(absX(index)),
-    orIn: (index) => asm.ora(absX(index)),
-    store: (index) => asm.sta(absX(index)),
+    load: (index) => asm.lda(absX(base + index)),
+    orIn: (index) => asm.ora(absX(base + index)),
+    store: (index) => asm.sta(absX(base + index)),
   });
 }
 
 /** `p0` points at the value: clamp the four bytes there. */
-function emitClampPtr(ctx: NesCtx): void {
+function emitClampPtr(ctx: MosCtx): void {
   const { asm } = ctx;
   const reach = (index: number): void => {
     asm.ldy(imm(index));
@@ -325,17 +331,17 @@ function emitClampPtr(ctx: NesCtx): void {
  * before the shift, since a two's complement right shift is floor and negating
  * afterwards would round the wrong way for anything with a fractional part.
  */
-export function mul32(ctx: NesCtx, dst: Ref, src: Ref): void {
+export function mul32(ctx: MosCtx, dst: Ref, src: Ref): void {
   callBinary(ctx, dst, src, ctx.need("Mul32", emitMul32));
 }
 
 /** `dst = floor(dst * 65536 / src)`, and zero when the divisor is zero. */
-export function div32(ctx: NesCtx, dst: Ref, src: Ref): void {
+export function div32(ctx: MosCtx, dst: Ref, src: Ref): void {
   callBinary(ctx, dst, src, ctx.need("Div32", emitDiv32));
 }
 
 /** Copy both operands into the helper's workspace, call it, take the result. */
-function callBinary(ctx: NesCtx, dst: Ref, src: Ref, routine: Ref): void {
+function callBinary(ctx: MosCtx, dst: Ref, src: Ref, routine: Ref): void {
   const { asm, layout } = ctx;
   copy32(ctx, layout.mathA, dst);
   copy32(ctx, layout.mathB, src);
@@ -344,7 +350,7 @@ function callBinary(ctx: NesCtx, dst: Ref, src: Ref, routine: Ref): void {
 }
 
 /** `mathA = |mathA|`, remembering its sign for the caller. */
-function signOf(ctx: NesCtx, sign: number): void {
+function signOf(ctx: MosCtx, sign: number): void {
   const { asm, layout } = ctx;
   asm.lda(mem(layout.mathA, 3));
   asm.eor(mem(layout.mathB, 3));
@@ -355,7 +361,7 @@ function signOf(ctx: NesCtx, sign: number): void {
 }
 
 /** Branch into `body` when the four bytes at `addr` are exactly 1.0. */
-function ifOne(ctx: NesCtx, addr: number, body: () => void): void {
+function ifOne(ctx: MosCtx, addr: number, body: () => void): void {
   const { asm } = ctx;
   const no = ctx.unique("notOne");
   for (const [index, expected] of [
@@ -379,7 +385,7 @@ function ifOne(ctx: NesCtx, addr: number, body: () => void): void {
  * the ±1.0 identity taken before the loop — a direction is almost always exactly
  * one, and that case is exact so it can skip the arithmetic entirely.
  */
-function emitMul32(ctx: NesCtx): void {
+function emitMul32(ctx: MosCtx): void {
   const { asm, layout } = ctx;
   const a = layout.mathA;
   const b = layout.mathB;
@@ -496,7 +502,7 @@ function emitMul32(ctx: NesCtx): void {
  * order of magnitude cheaper. Every `speed / fps` in a game takes that path,
  * which is why it is worth the branch.
  */
-function emitDiv32(ctx: NesCtx): void {
+function emitDiv32(ctx: MosCtx): void {
   const { asm, layout } = ctx;
   const a = layout.mathA;
   const b = layout.mathB;
@@ -653,7 +659,7 @@ function emitDiv32(ctx: NesCtx): void {
  * the divisor is above 128. The carry out of the shift is that ninth bit, and it
  * always means "subtract".
  */
-function emitDivideByByte(ctx: NesCtx, value: number, divisor: number, rem: number): void {
+function emitDivideByByte(ctx: MosCtx, value: number, divisor: number, rem: number): void {
   const { asm } = ctx;
   const loop = ctx.unique("byteDivLoop");
   const next = ctx.unique("byteDivNext");

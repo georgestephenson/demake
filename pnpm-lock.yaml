@@ -109,6 +109,9 @@ importers:
       '@demake/nes':
         specifier: workspace:*
         version: link:../nes
+      '@demake/pce':
+        specifier: workspace:*
+        version: link:../pce
       '@demake/sms':
         specifier: workspace:*
         version: link:../sms
@@ -166,6 +169,12 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/pce:
+    devDependencies:
+      '@demake/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/sms:
     dependencies:
       '@demake/chip':
@@ -217,6 +226,9 @@ importers:
       '@demake/nes':
         specifier: workspace:*
         version: link:../nes
+      '@demake/pce':
+        specifier: workspace:*
+        version: link:../pce
       '@demake/sms':
         specifier: workspace:*
         version: link:../sms

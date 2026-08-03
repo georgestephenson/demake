@@ -26,6 +26,7 @@ import { Gba, type Button as GbaButton } from "@demake/gba";
 import { Nds, type Button as NdsButton } from "@demake/nds";
 import { Md, type Button as MdButton } from "@demake/md";
 import { Nes, type Button as NesButton } from "@demake/nes";
+import { Pce, type Button as PceButton } from "@demake/pce";
 import { Sms, type Button as SmsButton } from "@demake/sms";
 import { Snes, type Button as SnesButton } from "@demake/snes";
 
@@ -34,6 +35,7 @@ import { buildGbaRom } from "../src/codegen/gba.js";
 import type { Layout } from "../src/codegen/layout.js";
 import { buildMdRom } from "../src/codegen/md.js";
 import { buildNesRom } from "../src/codegen/nes.js";
+import { buildPceRom } from "../src/codegen/pce.js";
 import { buildSmsRom } from "../src/codegen/sms.js";
 import { buildSnesRom } from "../src/codegen/snes.js";
 import type { BuildOptions, BuiltRom } from "../src/codegen/backend.js";
@@ -103,6 +105,26 @@ export const nesTarget: RomTarget = {
       stepInstruction: () => machine.stepInstruction(),
       runFrame: () => machine.runFrame(),
       setButtons: (down) => machine.setButtons(down as NesButton[]),
+    };
+  },
+};
+
+/**
+ * The PC Engine, whose pad calls the abstract `a` and `b` its I and II keys and
+ * the abstract `start` its Run key.
+ */
+export const pceTarget: RomTarget = {
+  console: "pce",
+  build: (program, options) => buildPceRom(program, options),
+  boot: (bytes) => {
+    const machine = new Pce(bytes);
+    const map: Readonly<Record<string, PceButton>> = { a: "i", b: "ii", start: "run" };
+    return {
+      readMemory: (address, length) => machine.readMemory(address, length),
+      stepInstruction: () => machine.stepInstruction(),
+      runFrame: () => machine.runFrame(),
+      setButtons: (down) =>
+        machine.setButtons(down.map((name) => map[name] ?? (name as PceButton))),
     };
   },
 };

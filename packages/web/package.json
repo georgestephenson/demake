@@ -24,7 +24,8 @@
     "@demake/nes": "workspace:*",
     "@demake/sms": "workspace:*",
     "@demake/snes": "workspace:*",
-    "preact": "^10.29.7"
+    "preact": "^10.29.7",
+    "@demake/pce": "workspace:*"
   },
   "devDependencies": {
     "@lhci/cli": "^0.15.1",

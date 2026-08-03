@@ -17,6 +17,7 @@
     { "path": "../md/tsconfig.json" },
     { "path": "../nds/tsconfig.json" },
     { "path": "../nes/tsconfig.json" },
+    { "path": "../pce/tsconfig.json" },
     { "path": "../sms/tsconfig.json" },
     { "path": "../snes/tsconfig.json" }
   ]

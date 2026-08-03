@@ -42,7 +42,7 @@ import {
 import type { Program } from "../program.js";
 
 import type { Analysis } from "./analyze.js";
-import { ZP_FREE } from "./nes/zp.js";
+import { ZP_FREE } from "./mos/zp.js";
 import { DP_FREE } from "./snes/ops.js";
 
 /**
@@ -234,7 +234,7 @@ export interface MemoryPlan {
    * two-byte record pointer and a one-byte index.
    *
    * Zero on a console whose backend has somewhere cheaper. The 6502 keeps both
-   * in page zero (`codegen/nes/zp.ts`) because `($nn),y` is the only indirect
+   * in page zero (`codegen/mos/zp.ts`) because `($nn),y` is the only indirect
    * mode it has, so the pointer must live there; the Z80 reaches a record
    * through `hl`, `de` or `ix` and needs no such place — but a rule body fires
    * between one iteration and the next and may use every register there is, so
@@ -326,7 +326,7 @@ export const MEGADUCK_MEMORY: MemoryPlan = { ...GB_MEMORY, machine: "Mega Duck" 
  * a register rather than being the store's own operand.
  *
  * The cheap region starts above the backend's own named pointers rather than at
- * `$0000` (`codegen/nes/zp.ts` owns them, and states where the allocator may
+ * `$0000` (`codegen/mos/zp.ts` owns them, and states where the allocator may
  * begin): a routine that walks a table needs a pointer at a *fixed* address, not
  * one the allocator chose.
  */
@@ -350,6 +350,67 @@ export const NES_MEMORY: MemoryPlan = {
   cellAttributes: false,
   interruptBytes: 0,
   // The 6502 backend's loops keep their cursor in page zero, which the allocator
+  // never sees; see {@link MemoryPlan.loopBytes}.
+  loopBytes: 0,
+};
+
+/**
+ * The PC Engine's plan, which is the NES's arithmetic in a machine four times
+ * the size.
+ *
+ * The same processor, so the same three fixed reservations shape it — the zero
+ * page a pointer has to live in, the stack the hardware puts in one place, and
+ * the object shadow — and every one of them lands somewhere else, because on this
+ * CPU the zero page is at `$2000` and the stack at `$2100` (`asm/huc6280.ts`).
+ * What is left of the 8 KiB is the heap, and it is four times an NROM
+ * cartridge's whole RAM.
+ *
+ * Two numbers here are the *video* hardware's rather than the memory's:
+ *
+ *   - **The object shadow is uploaded, not transferred.** This chip fetches its
+ *     sprite table out of video RAM rather than out of work RAM, so the 512 bytes
+ *     below the heap are a staging buffer the runtime streams across with one
+ *     block-transfer instruction. Nothing about it has to be page-aligned, which
+ *     is why it sits wherever the map put it rather than at a boundary.
+ *   - **A queued cell is an address and a word.** A BAT entry carries its own
+ *     palette, so a cell is a tile *and* an attribute — the Sega's shape reached
+ *     by different hardware — and the queue is bytes rather than entries because
+ *     a scrolled column goes in as one run.
+ */
+export const PCE_MEMORY: MemoryPlan = {
+  machine: "PC Engine",
+  // Past the stack page, which the hardware fixes at `$2100`-`$21FF`, and past
+  // the object staging buffer below.
+  heapStart: 0x2400,
+  heapEnd: 0x4000,
+  // The cheap page is the CPU's own `$2000`-`$20FF`, above the bytes the
+  // backend's shared routines have fixed addresses in (`codegen/mos/zp.ts`).
+  // These are the machine's addresses and not operands, because an *indexed*
+  // access takes them as absolute ones.
+  fastStart: 0x2000 + ZP_FREE,
+  fastEnd: 0x2100,
+  oamShadow: 0x2200,
+  oamEntries: 64,
+  viewW: 32,
+  viewH: 28,
+  // Bytes rather than cells: the queue is a stream of runs, and a diagonal scroll
+  // is a column of twenty-nine and a row of thirty-three in the same frame — 130
+  // bytes of it. The count is a byte, so this cannot pass 255 whatever the plan
+  // would like.
+  queueMax: 50,
+  plotMax: 40,
+  // No driver: this console's PSG has no model in `@demake/chip` yet, so a
+  // cartridge carries no audio at all and there is no state for one to keep
+  // (doc 13 §Console rollout).
+  audioBytes: 0,
+  // A BAT entry is a word — twelve bits of character and four of palette — so a
+  // queued cell is a tile and an attribute.
+  cellAttributes: true,
+  // The frame flag is one of the backend's own named scratch bytes, saved and
+  // restored around the upload the handler performs; the NES's arrangement, and
+  // for the NES's reason.
+  interruptBytes: 0,
+  // The 6502 family keeps its loop cursors in the zero page, which the allocator
   // never sees; see {@link MemoryPlan.loopBytes}.
   loopBytes: 0,
 };

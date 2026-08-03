@@ -185,6 +185,24 @@ const PROFILES: readonly ConsoleProfile[] = [
     romPath: true,
   },
   {
+    // Two hundred and fifty-six by two hundred and twenty-four, like the Super
+    // Nintendo — and unlike every other console here, the sprites are sixteen
+    // pixels square at their smallest, so an object costs a quarter of the
+    // entries it costs elsewhere. That is why sixteen a line is a *more*
+    // generous budget than it reads as beside a Game Boy's ten.
+    id: "pce",
+    name: "PC Engine",
+    screenWidth: 32,
+    screenHeight: 28,
+    rawWidth: 256,
+    rawHeight: 224,
+    cellSize: 8,
+    fps: 60,
+    sprites: { total: 64, perLine: 16, hFlip: true },
+    startButton: "dedicated",
+    romPath: true,
+  },
+  {
     id: "snes",
     name: "Super Nintendo",
     screenWidth: 32,

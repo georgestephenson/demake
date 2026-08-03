@@ -112,13 +112,18 @@ optimizer polish (SNES/GBA/ANTIC).
 table auto-updated.
 
 **Status: started.** Two Tier 2 verticals are complete and ride the same loop as
-Tier 1, each reusing an existing edge rather than adding one:
+Tier 1, each reusing an existing edge rather than adding one — and the first of
+them now compiles games as well as pictures:
 
 - **PC Engine** — a `pce` codegen backend (word-planar HuC6270 characters, BAT
   words, 9-bit VCE palettes), a 64 KiB HuCard harness assembled by
   `wla-huc6280` (a fourth CPU target on the WLA-DX build the SMS/SG-1000/SNES
   families already provision), and a pixel-perfect E2E against beetle-pce-fast
-  through the generic libretro runner.
+  through the generic libretro runner. It is also the first Tier 2 console with a
+  **Demotic backend**: `demake build -c pce` produces a real HuCard and the whole
+  example library traces identically on it in `@demake/pce` (§Console rollout,
+  item 2). Its sound is the one gap, and it is a chip model rather than a
+  console.
 - **WonderSwan Color** — a `wsc` backend (packed 4bpp tiles, screen-map words
   with palette/bank/flip, 16 RGB444 palettes), a 4 Mbit cartridge assembled by
   **NASM** (the V30MZ is an 8086-compatible core, so a stock x86 assembler is
@@ -156,7 +161,7 @@ rom` and *not* for `demake build`. Encoders pay for more than one console:
 |---|---|---|
 | SM83 | built (`core/src/asm/sm83.ts`) | Game Boy, Game Boy Color, **Mega Duck** |
 | 6502 | built (`core/src/asm/mos6502.ts`) | NES, **Atari 7800**; the CMOS additions extend it to Lynx and Supervision |
-| HuC6280 | a 65C02 superset — additive over the above | PC Engine, TurboExpress |
+| HuC6280 | built (`core/src/asm/huc6280.ts`) — a 65C02 superset, and the first encoder here that *extends* another | **PC Engine**, TurboExpress |
 | Z80 | built (`core/src/asm/z80.ts`) | Master System, Game Gear; the SG-1000 needs no more of it |
 | 68000 | built (`core/src/asm/m68k.ts`) | Mega Drive, Neo Geo |
 | 65816 | built (`core/src/asm/wdc65816.ts`) | SNES |
@@ -218,12 +223,33 @@ tighter than the NES.
    same interrupt vectors; a permuted LCD register map, a permuted LCDC, a
    permuted APU register map, no cartridge header and no boot ROM. A whole
    console for a machine-description change.
-2. **PC Engine**, and **TurboExpress** free behind it. Highest capability per
-   unit of effort anywhere on this list: the encoder is additive over
-   `mos6502.ts`, and the image codegen, the HuCard ROM edge and a pixel-perfect
-   E2E all exist already (§Phase 5). 8 KB of work RAM against the NROM's 2 KB,
-   hardware scroll, 16 palettes of 16, a 2048-tile budget, and a built-in
-   6-channel wavetable PSG that `@demake/chip` would gain.
+2. **PC Engine** — *games done; the sound is what remains*, and **TurboExpress**
+   free behind it. It was the highest capability per unit of effort on this list
+   and it came out that way: `Asm6280` *extends* `Asm6502` rather than restating
+   it, which is what let the whole 16.16 value layer, the rule bodies, the tile
+   walk and tile collision move to `codegen/mos/` and be shared verbatim between
+   the two consoles. What the backend owns is a renderer, and the hardware is
+   generous with it — 8 KB of work RAM against an NROM's 2, a 64×32 map against a
+   32×28 window so neither axis has a seam, a sub-palette per *cell* so there is
+   no attribute table at all, and sixteen sprites a line rather than eight.
+
+   Three things cost more here than the numbers suggest and are worth knowing
+   before the next console on a mapper. **A program lives in a 48 KiB window**,
+   not in its cartridge: the mapper's eight pages have to hold the hardware, work
+   RAM, the code and the data, and `$4000`–`$FFFF` is what is left. **Characters
+   are program bytes**, uploaded at boot, where an NES's are a separate ROM that
+   costs the program nothing — so art is a real budget here. And **there is no
+   8×8 sprite**, so a one-cell object is a 16×16 pattern with three quarters of it
+   transparent and a HUD glyph costs 128 bytes; the glyph patterns are therefore
+   *pulled* like a helper, and a game whose HUD is all on the background layer
+   ships none.
+
+   What remains is the **HuC6280's own PSG**: six wavetable channels
+   `@demake/chip` has no model for, so `demake build -c pce` emits no driver and
+   the cartridge plays silently — recording what a rule asked for in the byte the
+   trace reads, so the game traces identically to every other machine's. The
+   write tap is already on `@demake/pce`; closing the gap is a chip, a binding and
+   a generated driver.
 3. **Z80** — *done for the Master System and the Game Gear*, from one encoder,
    with an SN76489 driver behind them. **SG-1000** is what the encoder has left
    to buy: the same CPU against a TMS9918 rather than a Mode 4 VDP, so it is a

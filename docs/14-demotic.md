@@ -55,9 +55,9 @@ the game *looks or builds*, it is the Demakefile.
 
 ## Scope
 
-Eight consoles: `gb`, `gbc`, `megaduck`, `nes`, `sms`, `gg`, `md`, `snes` — all
-tiled sprite machines with multi-colour hardware sprites and a comparable button
-set. Which of them *build today* is [`console-support.md`](console-support.md),
+Eleven consoles: `gb`, `gbc`, `megaduck`, `nes`, `sms`, `gg`, `md`, `snes`,
+`gba`, `nds`, `pce` — all tiled sprite machines with multi-colour hardware
+sprites and a comparable button set. Which of them *build today* is [`console-support.md`](console-support.md),
 which is generated; doc 13 §Console rollout costs the rest.
 
 Deliberately excluded, each for its own reason:
@@ -734,7 +734,7 @@ not do.
 | `caves` | a hand-drawn level bigger than the screen, tiles, a scrolling camera |
 | `runner` | a course composed from chunks at build time, and the seeded generator |
 
-All seven compile for all seven consoles, stay inside every sprite budget, and
+All eight compile for all eleven consoles, stay inside every sprite budget, and
 pass their own `.test.dmt` suites on every one — run in the unit suite, from the
 CLI, and in the browser.
 
@@ -877,19 +877,28 @@ controls and rules, console-specific only in that constants are folded — and a
 backend then compiles that `Program` into code written for this game and no
 other (§2).
 
-Five backends exist, in `packages/demotic/src/codegen/`: `gb` (SM83), `nes`
-(6502, NROM), `sms` (Z80), `snes` (65816, LoROM) and `md` (68000, Mega Drive).
-Nothing about any of them is a table format, so there is no format contract to
-keep in step with an assembly file.
+Seven backends exist, in `packages/demotic/src/codegen/`: `gb` (SM83), `nes`
+(6502, NROM), `sms` (Z80), `snes` (65816, LoROM), `md` (68000, Mega Drive), `gba`
+(ARM) and `pce` (HuC6280, HuCard). Nothing about any of them is a table format,
+so there is no format contract to keep in step with an assembly file.
 
-**Five backends, eight consoles** — because a console is not always a machine.
+**Seven backends, eleven consoles** — because a console is not always a machine.
 The `gb` backend builds for three: a Game Boy, a Game Boy Color (the same
 machine code with a second half bolted to the renderer, §Colour) and a Mega Duck
 (the same machine code through that console's own I/O page). The `sms` backend
-builds for two, a Master System and a Game Gear. A variant costs a *machine
-description* — a register table, a permuted `LCDC`, an entry point, a cartridge
-shape, a smaller window — and not one instruction, which is why the whole example
-library traces identically on all eight. Before writing a backend, check whether
+builds for two, a Master System and a Game Gear, and the `gba` backend for two
+more: a Nintendo DS's 2D engine A *is* a Game Boy Advance's. A variant costs a
+*machine description* — a register table, a permuted `LCDC`, an entry point, a
+cartridge shape, a smaller window — and not one instruction, which is why the
+whole example library traces identically on all eleven.
+
+**And a backend is not always an instruction set of its own, either.** The `pce`
+backend's CPU is the `nes` backend's with a memory mapper on it, so the two share
+`codegen/mos/` — the 16.16 value layer, the expression compiler, the rule bodies,
+the tile walk and step 6 of the tick — and what the seventh backend owns is a
+renderer. The same rule applies one level down: if you find yourself copying a
+*routine* between two backends on related processors, it belongs in the family's
+directory. Before writing a backend, check whether
 the console is a variant of one you have: if you find yourself copying an
 emitter, it is.
 

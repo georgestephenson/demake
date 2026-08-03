@@ -62,6 +62,7 @@ export type Mode =
   | "ind"
   | "indX"
   | "indY"
+  | "indZp"
   | "rel";
 
 /**
@@ -140,6 +141,19 @@ export function indX(address: Ref): Operand {
 /** `($nn),y` — indirect indexed: the 6502's pointer dereference. */
 export function indY(address: Ref): Operand {
   return { mode: "indY", value: address };
+}
+
+/**
+ * `($nn)` — indirect, unindexed.
+ *
+ * No 6502 instruction has it; the 65C02 added it to eight, and the HuC6280
+ * inherits them. The mode lives here rather than in `huc6280.ts` because the
+ * operand model is this file's and a mode a subclass invented would be a second
+ * one — but nothing in {@link OPCODES} names it, so a plain 6502 still refuses
+ * it as it should.
+ */
+export function indZp(address: Ref): Operand {
+  return { mode: "indZp", value: address };
 }
 
 /** The accumulator, for the shifts and rotates. */
@@ -361,6 +375,7 @@ const OPERAND_BYTES: Readonly<Record<Mode, number>> = {
   ind: 2,
   indX: 1,
   indY: 1,
+  indZp: 1,
   rel: 1,
 };
 
@@ -484,6 +499,19 @@ export class Asm6502 {
     if (opcode === undefined) {
       throw new AsmError(`${mnemonic} has no ${operand.mode} addressing mode`);
     }
+    return this.encode(opcode, operand);
+  }
+
+  /**
+   * Emit an opcode already chosen, and the operand its mode calls for.
+   *
+   * `protected` because {@link Mnemonic} is this CPU's list and a superset of it
+   * is a subclass's — the HuC6280 has fifty-odd instructions a 6502 does not
+   * (`asm/huc6280.ts`). What is shared is the operand encoding, the fixup list
+   * and the branch-range check, and sharing them is what makes one `codegen`
+   * value layer serve both machines.
+   */
+  protected encode(opcode: number, operand: Operand): this {
     this.db(opcode);
     switch (OPERAND_BYTES[operand.mode]) {
       case 0:
@@ -499,7 +527,16 @@ export class Asm6502 {
     }
   }
 
-  private word(value: Ref): void {
+  /**
+   * The operand encoders, `protected` for the same reason {@link encode} is.
+   *
+   * A HuC6280 instruction can put an immediate *before* an address (`tst`) or a
+   * zero-page byte before a branch offset (`bbr`), neither of which is a mode in
+   * {@link Mode} — so the subclass lays those out itself and needs the pieces.
+   * `relative` in particular: its range check and its fixup are what stop a
+   * three-byte instruction's branch landing one byte out.
+   */
+  protected word(value: Ref): void {
     if (typeof value === "number") {
       this.db(value, value >> 8);
       return;
@@ -508,7 +545,7 @@ export class Asm6502 {
     this.db(0, 0);
   }
 
-  private byte(value: Ref): void {
+  protected byte(value: Ref): void {
     if (typeof value === "number") {
       if (value > 0xff || value < 0) {
         throw new AsmError(`$${value.toString(16)} is not a zero-page address`);
@@ -520,7 +557,7 @@ export class Asm6502 {
     this.db(0);
   }
 
-  private immediate(value: Imm): void {
+  protected immediate(value: Imm): void {
     if (typeof value === "number") {
       this.db(value);
       return;
@@ -534,7 +571,7 @@ export class Asm6502 {
     this.db(0);
   }
 
-  private relative(target: Ref): void {
+  protected relative(target: Ref): void {
     const at = this.code.length;
     this.db(0);
     const next = this.pc;

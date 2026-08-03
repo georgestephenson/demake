@@ -44,7 +44,7 @@ import {
   type SceneCtx,
 } from "../shape.js";
 
-import type { NesCtx } from "./ctx.js";
+import type { MosCtx } from "./ctx.js";
 import {
   copyFromPtr,
   copyToPtr,
@@ -83,7 +83,7 @@ export type { SceneCtx };
  * object whose `visible` no assignment can reach is decided here rather than every
  * tick. That removes the test from every rule in most games.
  */
-function guardVisible(ctx: NesCtx, id: number, skip: string): "always" | "never" | "runtime" {
+function guardVisible(ctx: MosCtx, id: number, skip: string): "always" | "never" | "runtime" {
   const instance = ctx.program.instances[id] as InstanceDef;
   if (!isMutable(ctx.analysis, id, "visible")) {
     return (instance.numbers["visible"] ?? 0) !== 0 ? "always" : "never";
@@ -99,7 +99,7 @@ function guardVisible(ctx: NesCtx, id: number, skip: string): "always" | "never"
  * computed against the pre-rule state, then the writes land together.
  */
 export function emitAssignments(
-  ctx: NesCtx,
+  ctx: MosCtx,
   assignments: readonly CAssignment[],
   bind: Binding,
 ): void {
@@ -178,7 +178,7 @@ type Trigger = (falseLabel: string) => "always" | "never" | "runtime";
  * Fire a rule: its assignments when the trigger held and the guard passed, its
  * `else` when it was evaluated and did not.
  */
-function emitFire(ctx: NesCtx, rule: RuleDef, bind: Binding, trigger?: Trigger): void {
+function emitFire(ctx: MosCtx, rule: RuleDef, bind: Binding, trigger?: Trigger): void {
   const { asm } = ctx;
   const elseLabel = ctx.unique("ruleElse");
   const done = ctx.unique("ruleDone");
@@ -222,7 +222,7 @@ function emitFire(ctx: NesCtx, rule: RuleDef, bind: Binding, trigger?: Trigger):
  * the driver reads it from an interrupt: a byte is written atomically, and a
  * pointer arriving half-written would play half of one effect.
  */
-export function emitSound(ctx: NesCtx, rule: RuleDef): void {
+export function emitSound(ctx: MosCtx, rule: RuleDef): void {
   if (rule.sound === undefined || ctx.audio === undefined) return;
   const index = ctx.audio.effects[rule.sound] ?? -1;
   // A sound whose file was never supplied still records the request, so a trace
@@ -240,14 +240,14 @@ export function emitSound(ctx: NesCtx, rule: RuleDef): void {
 // --- 2. controls -------------------------------------------------------------
 
 /** Test an abstract button against one of the three input sets. */
-function emitButton(ctx: NesCtx, set: number, action: string, skip: string): void {
+function emitButton(ctx: MosCtx, set: number, action: string, skip: string): void {
   const bit = ACTIONS.indexOf(action as (typeof ACTIONS)[number]);
   ctx.asm.lda(mem(set));
   ctx.asm.and(imm(1 << bit));
   ctx.far("eq", skip);
 }
 
-export function emitControls(ctx: NesCtx, scene: SceneCtx): void {
+export function emitControls(ctx: MosCtx, scene: SceneCtx): void {
   const { asm, layout } = ctx;
   let holdBase = 0;
   for (const control of ctx.program.controls) {
@@ -291,7 +291,7 @@ export function emitControls(ctx: NesCtx, scene: SceneCtx): void {
   }
 }
 
-function emitSnapshot(ctx: NesCtx, control: ControlDef, bind: Binding, base: number): void {
+function emitSnapshot(ctx: MosCtx, control: ControlDef, bind: Binding, base: number): void {
   const { asm, layout } = ctx;
   for (const [index, assignment] of control.assignments.entries()) {
     const target = assignment.target;
@@ -308,7 +308,7 @@ function emitSnapshot(ctx: NesCtx, control: ControlDef, bind: Binding, base: num
   }
 }
 
-function emitRestore(ctx: NesCtx, control: ControlDef, bind: Binding, base: number): void {
+function emitRestore(ctx: MosCtx, control: ControlDef, bind: Binding, base: number): void {
   const { asm, layout } = ctx;
   for (const [index, assignment] of control.assignments.entries()) {
     const target = assignment.target;
@@ -328,7 +328,7 @@ function emitRestore(ctx: NesCtx, control: ControlDef, bind: Binding, base: numb
 
 // --- 3. level rules ----------------------------------------------------------
 
-export function emitLevelRules(ctx: NesCtx, scene: SceneCtx): void {
+export function emitLevelRules(ctx: MosCtx, scene: SceneCtx): void {
   const { asm } = ctx;
   for (const rule of ctx.program.rules) {
     if (rule.event.kind !== "predicate" || !ruleInScene(rule, scene)) continue;
@@ -358,7 +358,7 @@ export function emitLevelRules(ctx: NesCtx, scene: SceneCtx): void {
  * them identically compile to identical code — which is the whole condition for
  * running them through one loop rather than a copy each (see {@link emitMoveLoop}).
  */
-function moveShape(ctx: NesCtx, id: number): string {
+function moveShape(ctx: MosCtx, id: number): string {
   const instance = ctx.program.instances[id] as InstanceDef;
   const mutable = (prop: string): string => (isMutable(ctx.analysis, id, prop) ? "m" : "f");
   const fixed = (prop: string): string =>
@@ -375,7 +375,7 @@ function moveShape(ctx: NesCtx, id: number): string {
   ].join(":");
 }
 
-export function emitIntegrate(ctx: NesCtx, scene: SceneCtx): void {
+export function emitIntegrate(ctx: MosCtx, scene: SceneCtx): void {
   const { asm } = ctx;
   // Group first: an object's movement reads and writes only its own record, so
   // objects that compile the same way can share one body without reordering
@@ -425,7 +425,7 @@ export function emitIntegrate(ctx: NesCtx, scene: SceneCtx): void {
  * is a proof rather than a hope: two objects in one group would have produced the
  * same instructions anyway.
  */
-function emitMoveLoop(ctx: NesCtx, ids: readonly number[]): boolean {
+function emitMoveLoop(ctx: MosCtx, ids: readonly number[]): boolean {
   const { asm } = ctx;
   const first = ids[0] as number;
   const table = ctx.unique("moveTable");
@@ -473,7 +473,7 @@ function emitMoveLoop(ctx: NesCtx, ids: readonly number[]): boolean {
  * one behind a pointer it is a temporary, staged in and copied back — the four
  * bytes each way that make a shared body possible at all.
  */
-function openProp(ctx: NesCtx, entity: EntityAddr, prop: string): { addr: Ref; close: () => void } {
+function openProp(ctx: MosCtx, entity: EntityAddr, prop: string): { addr: Ref; close: () => void } {
   if (entity.kind === "const") {
     return { addr: entity.base + propOffset(prop), close: () => undefined };
   }
@@ -490,7 +490,7 @@ function openProp(ctx: NesCtx, entity: EntityAddr, prop: string): { addr: Ref; c
 }
 
 function emitAxis(
-  ctx: NesCtx,
+  ctx: MosCtx,
   entity: EntityAddr,
   id: number,
   posProp: string,
@@ -574,7 +574,7 @@ function emitAxis(
 
 /** Jump to `skip` when the subject is not touching this edge of the playfield. */
 function emitEdgeTest(
-  ctx: NesCtx,
+  ctx: MosCtx,
   entity: EntityAddr,
   edge: Edge,
   scene: SceneCtx,
@@ -616,7 +616,7 @@ function emitEdgeTest(
 
 /** Push the subject back inside the playfield. The interpreter does not clamp
  * here, and neither does this. */
-function emitEdgeSeparate(ctx: NesCtx, entity: EntityAddr, edge: Edge, scene: SceneCtx): void {
+function emitEdgeSeparate(ctx: MosCtx, entity: EntityAddr, edge: Edge, scene: SceneCtx): void {
   const axis = edge === "screenleft" || edge === "screenright" ? "x" : "y";
   const span = axis === "x" ? "width" : "height";
   const near = edge === "screenleft" || edge === "screentop";
@@ -657,7 +657,7 @@ function emitEdgeSeparate(ctx: NesCtx, entity: EntityAddr, edge: Edge, scene: Sc
  * one of a game's collision pairs.
  */
 /** The routine that stages a box; it takes the record's address in `p0`. */
-function needCopyBox(ctx: NesCtx, slot: "a" | "b"): Ref {
+function needCopyBox(ctx: MosCtx, slot: "a" | "b"): Ref {
   const dst = (slot === "a" ? ctx.layout.pairA : ctx.layout.pairB) as number;
   return ctx.need(`CopyBox${slot.toUpperCase()}`, (inner) => {
     const loop = inner.unique("boxLoop");
@@ -671,12 +671,12 @@ function needCopyBox(ctx: NesCtx, slot: "a" | "b"): Ref {
   });
 }
 
-function emitStageBox(ctx: NesCtx, src: number, slot: "a" | "b"): void {
+function emitStageBox(ctx: MosCtx, src: number, slot: "a" | "b"): void {
   ctx.pointer(ZP.p0, src);
   ctx.asm.jsr(needCopyBox(ctx, slot));
 }
 
-function emitStagePair(ctx: NesCtx, a: number, b: number): void {
+function emitStagePair(ctx: MosCtx, a: number, b: number): void {
   emitStageBox(ctx, a, "a");
   emitStageBox(ctx, b, "b");
 }
@@ -690,7 +690,7 @@ function boxProp(base: number, prop: string): number {
  * `A = 1` when the staged boxes overlap, `0` when they do not. Half-open on both
  * axes, matching the interpreter and matching tile contact.
  */
-function needOverlapPair(ctx: NesCtx): Ref {
+function needOverlapPair(ctx: MosCtx): Ref {
   return ctx.need("OverlapPair", (inner) => {
     const { asm, layout } = inner;
     const a = layout.pairA as number;
@@ -722,7 +722,7 @@ function needOverlapPair(ctx: NesCtx): Ref {
  * penetration — the same rule the interpreter uses, because resolving the deeper
  * axis would teleport a walking object over something it merely brushed.
  */
-function needSeparatePair(ctx: NesCtx): Ref {
+function needSeparatePair(ctx: MosCtx): Ref {
   return ctx.need("SeparatePair", (inner) => {
     const { asm, layout } = inner;
     const a = layout.pairA as number;
@@ -784,7 +784,7 @@ function needSeparatePair(ctx: NesCtx): Ref {
  * rounding the margin outward by one keeps it conservative: it may say "maybe"
  * when the answer is no, never the reverse.
  */
-function needNearBox(ctx: NesCtx): Ref {
+function needNearBox(ctx: MosCtx): Ref {
   return ctx.need("NearBox", (inner) => {
     const { asm, layout } = inner;
     const subject = layout.pairA as number;
@@ -831,7 +831,7 @@ function needNearBox(ctx: NesCtx): Ref {
 }
 
 /** Write the staged subject's position back to the entity it came from. */
-function emitCommitPair(ctx: NesCtx, entity: number): void {
+function emitCommitPair(ctx: MosCtx, entity: number): void {
   const { asm, layout } = ctx;
   const source = layout.pairA as number;
   ctx.pointer(ZP.p1, entity);
@@ -850,14 +850,14 @@ function emitCommitPair(ctx: NesCtx, entity: number): void {
 }
 
 /** Test a contact bit from last tick; jump to `seen` when it was set. */
-function emitContactSeen(ctx: NesCtx, bit: number, seen: string): void {
+function emitContactSeen(ctx: MosCtx, bit: number, seen: string): void {
   const { asm, layout } = ctx;
   asm.lda(mem(layout.contactsPrev + (bit >> 3)));
   asm.and(imm(1 << (bit & 7)));
   ctx.far("ne", seen);
 }
 
-function emitContactSet(ctx: NesCtx, bit: number): void {
+function emitContactSet(ctx: MosCtx, bit: number): void {
   const { asm, layout } = ctx;
   asm.lda(mem(layout.contacts + (bit >> 3)));
   asm.ora(imm(1 << (bit & 7)));
@@ -905,7 +905,7 @@ const LOOP_PAIRS = 3;
  * Returns whether it took the loop.
  */
 function emitPairLoop(
-  ctx: NesCtx,
+  ctx: MosCtx,
   rule: RuleDef,
   subject: EntityAddr,
   subjectId: number,
@@ -995,7 +995,7 @@ function emitPairLoop(
 }
 
 /** `p0`-style copy between two page-zero pointers. */
-function emitCopyPointer(ctx: NesCtx, dst: number, src: number): void {
+function emitCopyPointer(ctx: MosCtx, dst: number, src: number): void {
   const { asm } = ctx;
   asm.lda(mem(src));
   asm.sta(mem(dst));
@@ -1004,7 +1004,7 @@ function emitCopyPointer(ctx: NesCtx, dst: number, src: number): void {
 }
 
 /** The looped other's `visible`, which is four bytes behind a pointer. */
-function emitGuardVisiblePtr(ctx: NesCtx, skip: string): void {
+function emitGuardVisiblePtr(ctx: MosCtx, skip: string): void {
   const { asm } = ctx;
   const offset = propOffset("visible");
   asm.ldy(imm(offset));
@@ -1017,7 +1017,7 @@ function emitGuardVisiblePtr(ctx: NesCtx, skip: string): void {
 }
 
 /** Stage the looped other's box, which `CopyBoxB` already reads through `p0`. */
-function emitStageBoxPtr(ctx: NesCtx, slot: "a" | "b"): void {
+function emitStageBoxPtr(ctx: MosCtx, slot: "a" | "b"): void {
   emitCopyPointer(ctx, ZP.p0, ZP.pair);
   ctx.asm.jsr(needCopyBox(ctx, slot));
 }
@@ -1027,7 +1027,7 @@ function emitStageBoxPtr(ctx: NesCtx, slot: "a" | "b"): void {
  * time. `X` holds the loop index throughout, so both tables are read from it.
  */
 function emitContactBitPtr(
-  ctx: NesCtx,
+  ctx: MosCtx,
   table: string,
   what: "seen" | "set",
   seen?: string,
@@ -1063,7 +1063,7 @@ function emitContactBitPtr(
  * for it. Visibility has to be one answer across the subjects, as it does there.
  */
 function emitEdgeLoop(
-  ctx: NesCtx,
+  ctx: MosCtx,
   rule: RuleDef,
   scene: SceneCtx,
   subjects: readonly { id: number; base: number; bit: number }[],
@@ -1131,7 +1131,7 @@ function emitEdgeLoop(
   return true;
 }
 
-export function emitCollisions(ctx: NesCtx, scene: SceneCtx): void {
+export function emitCollisions(ctx: MosCtx, scene: SceneCtx): void {
   const { asm, layout } = ctx;
   for (const rule of ctx.program.rules) {
     if (rule.event.kind !== "hits" || !ruleInScene(rule, scene)) continue;
@@ -1278,7 +1278,7 @@ export function emitCollisions(ctx: NesCtx, scene: SceneCtx): void {
 
 // --- 7. edge rules -----------------------------------------------------------
 
-export function emitEdgeRules(ctx: NesCtx, scene: SceneCtx): void {
+export function emitEdgeRules(ctx: MosCtx, scene: SceneCtx): void {
   const { asm, layout } = ctx;
   for (const rule of ctx.program.rules) {
     if (!ruleInScene(rule, scene)) continue;
@@ -1325,7 +1325,7 @@ export function emitEdgeRules(ctx: NesCtx, scene: SceneCtx): void {
 /** Run one subject binding of an edge rule, with the trigger's verdict in a byte
  * when it is not statically known. */
 function emitSubjectFire(
-  ctx: NesCtx,
+  ctx: MosCtx,
   rule: RuleDef,
   subject: number | null,
   firedFlag: number | undefined,
@@ -1357,7 +1357,7 @@ function emitSubjectFire(
  * exactly on its target or crosses it from either side, and a value that *starts*
  * on its target has not reached it.
  */
-function emitReaches(ctx: NesCtx, rule: RuleDef, scene: SceneCtx): void {
+function emitReaches(ctx: MosCtx, rule: RuleDef, scene: SceneCtx): void {
   const { asm, layout } = ctx;
   if (rule.event.kind !== "reaches") return;
   const slot = layout.reachSlots.get(rule.id);
@@ -1431,7 +1431,7 @@ function emitReaches(ctx: NesCtx, rule: RuleDef, scene: SceneCtx): void {
  * end of a level, and it means a level no bigger than the screen never scrolls, so
  * a non-scrolling game needs no special case anywhere.
  */
-export function emitCamera(ctx: NesCtx, scene: SceneCtx): void {
+export function emitCamera(ctx: MosCtx, scene: SceneCtx): void {
   const { asm, layout, profile } = ctx;
   const camera = layout.camera;
   if (camera === null) return;

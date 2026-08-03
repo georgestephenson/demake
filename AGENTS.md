@@ -12,12 +12,12 @@ something 8/16-bit-era consoles and handhelds up to the Nintendo DS could
 actually run. Four demakers, sharing one engine and one proof (a real ROM, in a
 real emulator, compared pixel for pixel):
 
-| Demaker               | Docs   | State                                                                     |
-| --------------------- | ------ | ------------------------------------------------------------------------- |
-| art (images)          | 03–06  | working, ten consoles proven on hardware                                  |
-| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on ten consoles |
-| music (`arrange`)     | 16, 17 | MIDI → chip music, nine consoles — and a Game Boy ROM that plays it       |
-| sound (`sfx`)         | 16, 18 | WAV → chip effects, ten consoles — same ROM, same proof                   |
+| Demaker               | Docs   | State                                                                        |
+| --------------------- | ------ | ---------------------------------------------------------------------------- |
+| art (images)          | 03–06  | working, ten consoles proven on hardware                                     |
+| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on eleven consoles |
+| music (`arrange`)     | 16, 17 | MIDI → chip music, nine consoles — and a Game Boy ROM that plays it          |
+| sound (`sfx`)         | 16, 18 | WAV → chip effects, ten consoles — same ROM, same proof                      |
 
 The four are not four tools that share a repo any more: a `.dmt` says
 `music theme.mid` and `sound bounce.wav on ball hits paddle`, and `demake build`
@@ -446,6 +446,53 @@ described that said yes to both — a year before the ARM driver existed. A driv
 is a _CPU's_: the same `gb-apu` is driven by an SM83 on a Game Boy and by an ARM7
 here, so those tables are keyed by console and not by chip.
 
+**And it builds for the first Tier 2 console, on a processor it already had.**
+`demake build -c pce` produces a real HuCard — HuC6280 machine code written for
+the game, art demade into 4bpp characters across fifteen sixteen-colour
+sub-palettes — and the whole example library traces identically there, in the
+same battery, at the same one frame per tick. What this console changed is the
+shape of the _shared_ code rather than the size of the backend, because its CPU
+is a 6502 with three habits: `Asm6280` **extends** `Asm6502`
+(`core/src/asm/huc6280.ts`), so `codegen/mos/` — the 16.16 value layer, the
+expression compiler, the rule bodies, the tile walk and tile collision — is one
+copy that two consoles run. The seventh backend is the smallest in the set and
+owns nothing but a renderer.
+
+Three of its habits are worth knowing before touching it. **Zero page is at
+`$2000`** and the stack at `$2100`, which the CPU does with arithmetic no memory
+map can move — so a plan's addresses are the machine's, an _indexed_ access takes
+them as absolute, and `mos/zp.ts` names both windows in one place because that is
+what makes `absX(layout.contacts)` mean the same thing on both machines. **A
+program lives in a 48 KiB window rather than in its cartridge**: the mapper's
+eight pages hold the hardware, work RAM, the code and the data, and `$4000`–
+`$FFFF` is what is left — so the boot stub is emitted _last_, padded to `$E000`,
+because reset maps cartridge bank 0 there and nothing else is mapped at all until
+four `tam`s have run. And **one instruction fills video RAM**: `tia src, $0002, n`
+streams a run into the data port with the destination alternating between its two
+bytes, which is exactly a word write, so the character bank, the sprite patterns
+and each palette upload are one instruction rather than a loop.
+
+The renderer is the easiest in the set for two reasons and the hardest for one.
+The map is **64×32 against a 32×28 window**, so a scrolling scene paints its
+leading edge where nobody is looking and both wraps are powers of two — the Mega
+Drive's arrangement on an 8-bit CPU, and the cell address is two masks and a
+shift where the NES needs a modulo. A **BAT entry carries its own sub-palette**,
+so there is no attribute table, no 16×16 block to reason about and no compile-time
+attribute machinery — a caption's cell simply names the font's palette. What
+costs is that **there is no 8×8 sprite**: an object is 16×16 at its smallest, so a
+one-cell object is a pattern with three quarters of it transparent and a HUD glyph
+is a whole 128 bytes. The upside is the same fact — an object `w` cells wide is
+`ceil(w/2)` entries against every other console's `ceil(w)`, into a per-line
+budget of sixteen rather than eight — and the glyph patterns are _pulled_ like a
+helper, so a game with no scrolling HUD ships none.
+
+**It has no sound, and that is a gap rather than a decision.** The HuC6280's
+six-channel wavetable PSG has no model in `@demake/chip`, so the build emits no
+driver and the cartridge plays silently — while still recording what a rule asked
+for in the byte the trace reads, which is what keeps its trace the one every other
+machine produces. `@demake/pce`'s `psgTap` is already the window doc 16's Level A
+proof will read through.
+
 Still to come: the remaining Tier 2/3 consoles (each = a codegen backend, a ROM
 harness + toolchain, and a libretro core + DAC calibration), the remaining
 framebuffer/scanline layout paths (Lynx, GBA/NDS bitmap modes, 2600/7800), the
@@ -512,7 +559,7 @@ to undo by accident (§Working on audio).
 
 ```
 packages/core/       @demake/core — the engine (zero platform deps; ESM; ships types)
-  src/asm/           the SM83, 6502, Z80, 65816, SPC700, 68000 and ARM assemblers
+  src/asm/           the SM83, 6502, HuC6280, Z80, 65816, SPC700, 68000 and ARM assemblers
                      + the GB, iNES, Sega, LoROM, Mega Drive, GBA and DS
                      cartridge wrappers —
                      shared by the Demotic game backends and the audio drivers, so
@@ -525,7 +572,12 @@ packages/core/       @demake/core — the engine (zero platform deps; ESM; ships
                      of a DS's processors), and the only one whose *constants*
                      need a mechanism — a 32-bit literal does not fit in a
                      32-bit instruction, so `ldrConst`/`ltorg` are a literal
-                     pool rather than an addressing mode. gba-sound.ts is that
+                     pool rather than an addressing mode. huc6280.ts is the one
+                     that *extends* another rather than restating it — a PC
+                     Engine's CPU is a 6502 with a memory mapper, block transfers
+                     and a zero page at $2000 — and that inheritance is what lets
+                     `demotic/src/codegen/mos/` be one copy for two consoles.
+                     gba-sound.ts is that
                      console's sound page, here for megaduck.ts's reason: the
                      core routes a store by it and the ARM driver emits one from
                      it, and two copies would cancel each other's errors out
@@ -575,6 +627,16 @@ packages/nds/        @demake/nds — a self-hosted Nintendo DS core, and the onl
                      the second screen, interrupts (on both processors) and every
                      ARM7 peripheral that is not the sound are absent rather than
                      half-implemented, and each raises
+packages/pce/        @demake/pce — a self-hosted PC Engine core, and the only one
+                     here with no dependency on @demake/chip: this console's
+                     six-channel wavetable PSG has no model yet, so a write to it
+                     is dropped and `psgTap` waits for the day it is not. The CPU
+                     is transcribed rather than copied from @demake/nes's, for
+                     the reason every decoder here is written twice; the picture
+                     hardware has nothing in common with a 2C02 at all — word-
+                     addressed video RAM behind a port, a sub-palette in the
+                     cell's own map entry, sixteen-pixel sprites and a sprite
+                     table the chip *copies* out of video RAM once a frame
 packages/nes/        @demake/nes — a self-hosted NES core, for the two jobs
                      @demake/dmg exists for: the conformance harnesses in Vitest
                      and (later) the page's player. Its APU is @demake/chip's
@@ -643,6 +705,16 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
   src/codegen/       the console backends and what they share:
     backend.ts       the contract — the six questions a console answers, the
                      build's order, and doc 14's seven tick steps in one function
+    mos/             the *6502 family's*, not one console's: the 16.16 value
+                     layer, the expression compiler, the rule bodies, the tile
+                     walk and step 6 of the tick, all shared verbatim by the NES
+                     and the PC Engine because a HuC6280 is a 6502 with a mapper.
+                     zp.ts names both CPUs' cheap-page windows ($0000 and $2000)
+                     in one place, which is what makes an *indexed* access mean
+                     the same thing on both
+    pack.ts          the run encoder for a map whose entry is a word, which two
+                     consoles have — a Sega name-table entry and a PC Engine BAT
+                     entry are both two bytes a cell
     shape.ts         what both backends decide identically: scene membership,
                      mutability questions, a tick of movement, the level tables.
                      Anything that would emit an instruction is *not* here
@@ -654,6 +726,10 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
     sms.ts, sms-art.ts, sms/              the Z80 backend and its image path
     snes.ts, snes-art.ts, snes/           the 65816 backend and its image path
     md.ts, md-art.ts, md/                 the 68000 backend and its image path
+    pce.ts, pce-art.ts, pce/              the HuC6280 backend and its image path,
+                     and the smallest in the set — everything but the renderer is
+                     `mos/`'s, because this console's CPU is the NES's with a
+                     mapper on it
     gba.ts, gba-art.ts, gba/              the ARM backend and its image path,
                      which is *two* machines: gba/machine.ts is the description
                      that makes a Nintendo DS a variant rather than a seventh
@@ -788,9 +864,10 @@ pnpm play          # Demotic: play the Pong fixture in a terminal (build first)
 pnpm test:dmt      # Demotic: run the .test.dmt suite on every console (build first)
 pnpm gen:demotic-docs  # regenerate the language reference from the registry (build first)
 pnpm gen:console-docs  # regenerate docs/console-support.md from the registries (build first)
-pnpm cli -- build packages/demotic/fixtures/pong.dmt -o pong.gb  # a playable cartridge
-pnpm cli -- build packages/demotic/fixtures/pong.dmt -c nes -o pong.nes  # the same game, 6502
-pnpm cli -- build packages/demotic/fixtures/pong.dmt -c snes -o pong.sfc # the same game, 65816
+pnpm cli -- build packages/demotic/fixtures/projects/pong/src/pong.dmt -o pong.gb  # a playable cartridge
+pnpm cli -- build packages/demotic/fixtures/projects/pong/src/pong.dmt -c nes -o pong.nes  # the same game, 6502
+pnpm cli -- build packages/demotic/fixtures/projects/pong/src/pong.dmt -c snes -o pong.sfc # the same game, 65816
+pnpm cli -- build packages/demotic/fixtures/projects/pong/src/pong.dmt -c pce -o pong.pce  # the same game, HuC6280
 pnpm dev:web       # run the web app against the workspace core (build core first)
 pnpm build:web     # typecheck + bundle the web app into packages/web/dist
 pnpm test:rom-e2e  # just the emulator E2E suites (needs toolchains + emulator)
@@ -1440,6 +1517,67 @@ packages/demotic/test/rom.test.ts` builds every fixture game and diffs raw
   does not try: every row sits at its own address and the two overscan rows such
   a level scrolls into show its own top two. A taller level wraps properly and is
   painted a row at a time like the columns.
+
+### The HuC6280 half
+
+`demake build -c pce` builds a playable HuCard, and the whole example library
+traces identically on it. Almost nothing here is arithmetic: the CPU is a 6502
+with three habits and `codegen/mos/` is shared verbatim, so what is left is a
+renderer and the four ways this machine's _addresses_ differ.
+
+- **Zero page is at `$2000` and the stack at `$2100`.** The CPU adds the base to
+  every zero-page operand and no memory map moves it, so a plan's addresses are
+  the machine's: `PCE_MEMORY`'s cheap page runs from `$2013` to `$2100` and its
+  heap from `$2400`. An _unindexed_ access takes the operand — `mos/zp.ts`'s
+  `mem` reduces it — and an **indexed** one takes the address as absolute, which
+  is why `absX(layout.contacts)` needs no translation and is the whole reason the
+  two windows are named in one file. Get it backwards and a game's contact bits
+  land in the video chip's register page: it traces almost right and one alien
+  never turns round.
+- **A pointer is an operand and a plan's pointer is an address.** `($nn),y`
+  encodes an offset into the cheap page, so anything the allocator _placed_ — the
+  tile walk's cursor, the object shadow's — goes through `slotOf` before it
+  reaches an instruction. It raises rather than assembling something that reads
+  the wrong two bytes.
+- **The program is not where it was assembled.** The mapper's eight pages hold
+  the hardware, work RAM, and the code and data between them, so a build has
+  `$4000`–`$FFFF` and no more. Reset maps cartridge bank 0 at `$E000` and nothing
+  else at all, so the boot stub is emitted _last_, padded to `$E000`, and
+  `assemble` swaps the halves: the top 8 KiB of the window is bank 0 of the image
+  and everything below it follows. A build that wrote them in the obvious order
+  boots into the middle of a rule body.
+- **One instruction fills video RAM.** `tia src, $0002, n` walks the source into
+  the data port with the destination alternating between its two bytes, which is
+  exactly a word write — so the character bank, the sprite patterns and a palette
+  upload are one instruction each. It destroys `A`, `X` and `Y`, which is why the
+  object upload is the last thing `BuildFrame` does.
+- **The map is bigger than the screen on both axes and both wraps are powers of
+  two.** 64×32 against 32×28, so a scrolling scene paints its leading edge where
+  nobody is looking, none of the Master System's masking exists, and the cell
+  address is `(row & 31) << 6 | (col & 63)`. A level the map holds whole is
+  painted once and scrolled by the register alone, which is the NES's `pinsRows`
+  problem simply not arising.
+- **A cell carries its own sub-palette**, so there is no attribute table and no
+  16×16 block: a caption's cell names the font's palette and the NES's whole
+  compile-time attribute machinery is absent. Fifteen sub-palettes are the art's
+  and the sixteenth is the font's, on both layers.
+- **Colour zero of every background palette is the one shared backdrop**, so a
+  caption's _paper_ is whatever the picture chose and only its ink is decided —
+  and it is decided per scene, against that backdrop, exactly as the NES's is.
+- **There is no 8×8 sprite.** An object is 16×16 at its smallest, so `pce-art.ts`
+  composes four 8×8 tiles into each pattern and an object `w` cells wide is
+  `ceil(w/2)` entries — a quarter of what it costs elsewhere, into a per-line
+  budget of sixteen. A HUD glyph is a whole 128-byte pattern, so those are
+  _pulled_ like a helper and a game with no scrolling HUD ships none.
+- **The sprite table is copied, not read.** The chip fetches 256 words from
+  `DVSSR` at the top of every blank, so the runtime writes its shadow into video
+  RAM during _active display_ — from the main loop, not the handler — and the
+  objects then land on the same frame as the background the blank uploads. Doing
+  it in the blanking interval instead is a game whose sprites lag its scenery.
+- **`CR`'s increment select is bits 12 and 11.** A step of one map row is `$10`
+  in the high byte and not `$08`; one bit out and it steps thirty-two words, so
+  every other cell of a scrolled column lands a row early. `packages/pce/test/vdc.test.ts`
+  is what found it.
 
 ### The Z80 half
 
@@ -2213,7 +2351,7 @@ not per console.
 - The Demotic ROM conformance suite (`packages/demotic/test/rom.test.ts`) builds
   a cartridge from each fixture game **for every console with a backend** — both
   Game Boys, the Mega Duck, the NES, both Sega 8-bits, the Super Nintendo, the
-  Mega Drive and the Game Boy Advance — and runs it in the matching self-hosted core, asserting the trace
+  Mega Drive, the Game Boy Advance and the PC Engine — and runs it in the matching self-hosted core, asserting the trace
   matches the reference interpreter tick for tick. No toolchain, no emulator
   install, so it runs everywhere `pnpm test` does. Running the same battery on all
   eight is what makes `Backend` a contract rather than a resemblance, and each
@@ -2277,6 +2415,25 @@ not per console.
   backdrop word for word. Between them they caught a packed cell read as a word
   from an odd address and an unwidened column index in the grid lookup, neither
   of which a trace can see.
+- `packages/demotic/test/pce-arith.test.ts` and `pce-rom.test.ts` are the PC
+  Engine's pair, and the first of them looks like a copy of the NES's on purpose:
+  the _emitters_ are the same file, so what it proves is not the arithmetic a
+  second time but that the same instructions still mean the same thing on the
+  second machine that runs them — which on this console turns entirely on the
+  cheap page being at `$2000`. The second checks the things a trace cannot see and
+  every case is one this hardware alone can get wrong: that the boot stub landed
+  in the bank reset maps, that four `tam`s ran, that the character bank and the
+  sprite patterns arrived in video RAM, that a picture went in at the _hardware's_
+  sixty-four-cell row rather than its own thirty-two (the Super Nintendo's stride
+  hazard, one console along), that the font's sub-palette survived the fit, and
+  that the object table reached the copy the chip fetches rather than the one the
+  runtime wrote.
+- `packages/pce/test/{cpu,vdc}.test.ts` sit under those. The CPU is driven by
+  `core`'s own HuC6280 assembler, so an encoder and a decoder that agreed with
+  each other and not with the hardware would still fail against the published
+  opcode bytes `packages/core/test/huc6280.test.ts` pins — and the VDC test is
+  where the _increment select_ was found to be one bit out, which no trace and no
+  register assertion could have seen.
 - `packages/demotic/test/nes-arith.test.ts` is one layer below that: it assembles
   each 16.16 operation on its own, runs it in `@demake/nes` and compares with
   `fixed.ts`. A multiply that floors the wrong way for negative operands makes a
@@ -2641,7 +2798,7 @@ not per console.
   emulator cores. Chunks are matched to a family **by name**, so a module that
   has to be per-family belongs in a file named after it; anything else counts as
   always-loaded, which fails loud rather than passing quietly. Current figures:
-  335 KB for a visitor against a 400 KB budget, 424 KB for the whole site — and
+  380 KB for a visitor against a 400 KB budget, 478 KB for the whole site — and
   a new example game costs about fourteen of those kilobytes, because the page
   bundles every fixture SVG twice (raw text for the ROM build, a URL for the
   preview). Measure with a **clean** `dist`: the checker reads every `.js` it
