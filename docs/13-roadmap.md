@@ -455,7 +455,7 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
 
     **The Super Nintendo is the fourth console, and it is the first one that is
     bigger than the language needs.** `demake build -c snes` produces a real
-    64 KiB LoROM cartridge — 65816 machine code written for the game, a Mode 1
+    128 KiB LoROM cartridge — 65816 machine code written for the game, a Mode 1
     background demade into 4bpp tiles across seven sixteen-colour sub-palettes,
     and art in a second cartridge bank that reaches video RAM by transfer — and
     the whole example library traces identically there, in the same battery, at

@@ -110,7 +110,7 @@ Hz, because this VDP reloads its line counter outside the active display — a l
 interrupt is a raster effect, not a tempo.
 
 **And it builds for a Super Nintendo.** `demake build -c snes` produces a real
-64 KiB LoROM cartridge — 65816 machine code written for the game, a Mode 1
+128 KiB LoROM cartridge — 65816 machine code written for the game, a Mode 1
 background demade into 4bpp tiles across seven sixteen-colour sub-palettes, and
 tile art in a _second cartridge bank_ that no instruction ever addresses because
 it reaches video RAM by DMA — and the whole example library traces identically
@@ -1598,7 +1598,7 @@ is the game.
 
 ### The 65816 half
 
-`demake build -c snes` builds a playable 64 KiB LoROM cartridge, and the whole
+`demake build -c snes` builds a playable 128 KiB LoROM cartridge, and the whole
 example library traces identically on it. This CPU is a 6502 with three things
 added, and every bullet here is one of them biting.
 

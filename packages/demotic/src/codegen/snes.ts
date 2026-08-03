@@ -75,7 +75,7 @@ import { SnesCtx } from "./snes/ctx.js";
 import { BANK_TILES, emitProgram, type SnesEmitOptions } from "./snes/emit.js";
 import type { ArtSettings } from "./settings.js";
 
-/** Bytes a two-bank LoROM cartridge holds. */
+/** Bytes a four-bank LoROM cartridge holds. */
 export const ROM_SIZE = SNES_ROM_SIZE;
 
 /**
@@ -108,7 +108,7 @@ interface SnesAudio extends BoundAudioShape {
 export const snesBackend: Backend<SnesEmitOptions, SnesAudio> = {
   family: "snes",
   consoles: ["snes"],
-  cartridge: "a two-bank LoROM cartridge",
+  cartridge: "a four-bank LoROM cartridge",
 
   extension(): string {
     return "sfc";

@@ -7,7 +7,7 @@
  * byte in one of them, and more than one builder will wrap 65816 code into a
  * cartridge once the S-DSP has a driver.
  *
- * **A 64 KiB LoROM cartridge**, which is two banks, and the split is a hardware
+ * **A 128 KiB LoROM cartridge**, which is four banks, and the split is a hardware
  * fact rather than a convenience:
  *
  *   - **Bank `$00` is the program**, visible at `$00:8000`–`$00:FFFF`. Code, the
@@ -20,6 +20,12 @@
  *     which takes its source bank as a *data byte* ({@link SNES_TILE_BANK}). That
  *     is what lets a game spend sixteen kilobytes on art without spending it out
  *     of the thirty-two the program has.
+ *   - **Bank `$02` is the sound processor's image**, at `$02:8000`–`$02:FFFF`.
+ *     It is never executed by *this* processor either: the boot reads it with
+ *     `long,X` and hands it over four mailbox bytes at a time
+ *     ({@link SNES_SPC_BANK}). A bank of its own because the art and the music
+ *     are sized by different things, and the fourth bank is padding to a size the
+ *     header's capacity field can express.
  *
  * Three things about this header have bitten somebody:
  *

@@ -472,10 +472,12 @@ test("builds and plays a real Super Nintendo ROM in the page", async ({ page }) 
   await page.getByTestId("console-select").selectOption("snes");
   await expect(canvas).toHaveAttribute("data-console", "snes", { timeout: 240_000 });
 
-  // A fourth cartridge shape: two 32 KiB banks, the second of which no
-  // instruction addresses — it holds the tile art and, above it, the program the
-  // sound processor is handed at boot.
-  await expect(page.getByTestId("rom-stat")).toContainText("64 KiB");
+  // A fourth cartridge shape: four 32 KiB banks, of which no instruction
+  // addresses the last three — bank one is the tile art and bank two is the whole
+  // program the sound processor is handed at boot. They shared a bank while a
+  // schedule was three voices wide, and stopped fitting the moment the example
+  // library's music had parts enough to fill eight.
+  await expect(page.getByTestId("rom-stat")).toContainText("128 KiB");
   await expect(page.getByTestId("rom-download")).toContainText(".sfc");
   await expect(canvas).toHaveAttribute("width", "256");
   await expect(canvas).toHaveAttribute("height", "224");
