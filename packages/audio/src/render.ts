@@ -15,6 +15,7 @@ import { createChip, mix, renderSchedule, type OutputStage, type Pcm } from "@de
 
 import { bindingFor } from "./binding/registry.js";
 import { sampleBank } from "./binding/gba-bank.js";
+import { ndsSampleRam } from "./binding/nds-bank.js";
 import { sampleAram } from "./binding/sdsp-bank.js";
 import type { ChipScript } from "./chipscript.js";
 
@@ -38,6 +39,11 @@ export function render(script: ChipScript, options: RenderAudioOptions = {}): Pc
     // bank is the default rather than something every caller has to remember —
     // a schedule may override it, and nothing does yet (doc 16 §The sample bank).
     const ram = script.sampleRam ?? (id === "s-dsp" ? sampleAram() : undefined);
+    // The third sample player reads an *address space* rather than a private RAM,
+    // so it is handed the bank and the address the bank's first byte answers at.
+    // Without the second half every source register points somewhere the model
+    // has nothing at, which renders as silence and looks like a wrong schedule.
+    const ndsRam = id === "nds-spu" && script.sampleRam === undefined ? ndsSampleRam() : undefined;
     // The other sample player takes its waveforms as a *bank* rather than as a
     // block of RAM, because that is what it plays: the mixer reads cartridge
     // ROM, so a build hands it the table rather than an address space.
@@ -45,6 +51,7 @@ export function render(script: ChipScript, options: RenderAudioOptions = {}): Pc
     const chip = createChip(id, {
       stereo: true,
       ...(ram === undefined ? {} : { ram }),
+      ...(ndsRam === undefined ? {} : { ram: ndsRam.ram, ramBase: ndsRam.base }),
       ...(bank === undefined ? {} : { bank }),
     });
     // Filtered per *write* rather than per tick: a console with two chips writes

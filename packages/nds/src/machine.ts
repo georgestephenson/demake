@@ -35,19 +35,21 @@
  *     engine, and a cartridge that never writes it draws to hardware that is
  *     switched off.
  *
- * Two absences, named rather than left to be discovered:
+ *   - **There are two processors**, and the second is not an optional extra: the
+ *     sound channels answer the ARM7 alone, so a cartridge with sound in it
+ *     carries two programs and this runs both. That is `arm7.ts`, and the
+ *     interleaving is here — the ARM9 runs at twice the system clock, so the
+ *     sound processor is given half as many cycles as the picture spends.
  *
- *   - **Interrupts are not modelled**, because nothing reaches them: this
- *     console's backend waits on the beam rather than on a vertical-blank
- *     handler (`codegen/gba/machine.ts` §`frame`). A write that tried to enable
- *     one raises, so the day a driver wants an interrupt this fails loudly
- *     instead of hanging in a wait loop that will never be released.
- *   - **The ARM7 does not run.** A cartridge carries a binary for it and this
- *     copies that binary into main RAM, because a loader does and the memory
- *     image should be the one hardware has — but the second processor exists to
- *     drive the sound registers, and there is no audio driver for this console
- *     yet. Doc 13 §D4 is where that is tracked; when it lands, this is where the
- *     second processor arrives.
+ * One absence, named rather than left to be discovered:
+ *
+ *   - **Interrupts are not modelled**, on either processor, because nothing
+ *     reaches them: this console's backend waits on the beam rather than on a
+ *     vertical-blank handler (`codegen/gba/machine.ts` §`frame`), and its audio
+ *     driver's clock is a pair of chained timers it *reads* rather than a flag it
+ *     catches (`audio/rom/nds-driver.ts`). A write that tried to enable one
+ *     raises, so the day something wants an interrupt this fails loudly instead
+ *     of hanging in a wait loop that will never be released.
  *
  * Platform-pure on the same terms as `@demake/core`: no `fs`, no DOM, no wall
  * clock. Rendering produces a plain RGBA buffer; where that goes is the caller's
@@ -57,8 +59,11 @@
  * *DMA Transfers* (https://problemkaputt.de/gbatek.htm).
  */
 
+import type { SampleSink } from "@demake/chip";
 import { NDS_ARM7_RAM, NDS_ARM9_RAM, NDS_HEADER_SIZE } from "@demake/core";
 import { Arm7, Ppu, type Bus } from "@demake/gba";
+
+import { Arm7Machine } from "./arm7.js";
 
 /** Visible width, in pixels. */
 export const FRAME_WIDTH = 256;
@@ -156,11 +161,29 @@ export class Nds implements Bus {
   /** Video RAM bank B, which a build maps to object memory. */
   readonly bankB: Uint8Array;
 
+  /**
+   * The sound processor, and everything only it can reach.
+   *
+   * Present whether the cartridge has a second program or not, because the
+   * hardware is: what decides whether anything happens there is whether the
+   * image named an ARM7 binary, which {@link Nds.arm7Running} answers.
+   */
+  readonly arm7: Arm7Machine;
+
   /** Frames completed since power-on — the harness's clock. */
   frames = 0;
 
   private held = 0;
   private cycles = 0;
+  /**
+   * ARM9 cycles the sound processor has not been paid yet.
+   *
+   * It runs at half this processor's clock, so the debt is spent two cycles at a
+   * time — an exact halving carried across calls, so however finely a host steps
+   * the game the two processors stay in one fixed relationship.
+   */
+  private arm7Debt = 0;
+  private readonly arm7Running: boolean;
   private powcnt = 0;
   /** One control byte per video RAM bank, `VRAMCNT_A` through `VRAMCNT_I`. */
   private readonly vramcnt = new Uint8Array(9);
@@ -199,12 +222,15 @@ export class Nds implements Bus {
       view.getUint32(0x028, true),
       view.getUint32(0x02c, true),
     );
-    this.load(
-      rom,
-      view.getUint32(0x030, true),
-      view.getUint32(0x038, true),
-      view.getUint32(0x03c, true),
-    );
+    const arm7Length = view.getUint32(0x03c, true);
+    this.load(rom, view.getUint32(0x030, true), view.getUint32(0x038, true), arm7Length);
+    // A cartridge with no sound in it still names an ARM7 binary, because the
+    // header has nowhere to say "there isn't one" — so what decides whether the
+    // second processor runs is whether the binary is more than the branch to
+    // itself a silent cartridge carries. Running that branch would be harmless
+    // and pointless; not running it keeps a silent build's cost at zero.
+    this.arm7Running = arm7Length > 4;
+    this.arm7 = new Arm7Machine(this.ram, view.getUint32(0x034, true) >>> 0);
     const entry = view.getUint32(0x024, true) >>> 0;
     if (entry !== NDS_ARM9_RAM) {
       throw new NdsError(
@@ -626,8 +652,38 @@ export class Nds implements Bus {
     return cycles;
   }
 
+  /**
+   * Where the sound processor's output goes when anything is listening.
+   *
+   * On the other cores this is a property of the machine because the chip is; on
+   * this one the chip is on the other side of a bus the game cannot cross, so it
+   * is forwarded rather than owned. Same name, same shape, same promise.
+   */
+  get audioSink(): SampleSink | undefined {
+    return this.arm7.audioSink;
+  }
+
+  set audioSink(sink: SampleSink | undefined) {
+    this.arm7.audioSink = sink;
+  }
+
+  /** Everything the sound channels receive, observed rather than intercepted. */
+  set spuTap(listener: ((reg: number, value: number, chip: number) => void) | undefined) {
+    this.arm7.spuTap = listener;
+  }
+
   /** Advance the raster, which on this console is the only clock anything has. */
   private advance(cycles: number): void {
+    if (this.arm7Running) {
+      // Half as many, because the ARM9 runs at twice the system clock. The debt
+      // is carried rather than rounded, so nothing drifts across a long run.
+      this.arm7Debt += cycles;
+      const owed = this.arm7Debt >> 1;
+      if (owed > 0) {
+        this.arm7Debt -= owed * 2;
+        this.arm7.run(owed);
+      }
+    }
     this.cycles += cycles;
     while (this.cycles >= CYCLES_PER_LINE) {
       this.cycles -= CYCLES_PER_LINE;

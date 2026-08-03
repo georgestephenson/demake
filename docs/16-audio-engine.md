@@ -507,7 +507,7 @@ locked by the tests, not by this table.
 | **Mega Drive** | YM2612 + SN76489 | 6 FM (4-operator, 8 algorithms), ch6 switchable to 8-bit PCM; plus the 4 PSG channels | The only Tier-1 target where *timbre is fitted*, not chosen: a 4-op FM patch is a search problem against the source's spectrum (doc 17 §Stage 3). PCM on ch6 costs CPU per sample. **Built, both chips**, and the first console here to need per-write chip routing |
 | **SNES** | SPC700 + S-DSP | 8 sample voices, ADSR/GAIN, per-voice stereo, echo (8-tap FIR), noise, pitch modulation | Sampling, not synthesis: the "palette" is a **sample set in 64 KB of ARAM**, shared by the whole track, minus driver and echo buffer. This is the tile-budget problem with different units. The driver is a separate program for a separate CPU. Pitch is a **multiplier**, not a divider — the only chip here that counts up, so its lattice is uniform in frequency and nothing needs octave-folding |
 | **GBA** | 2 DirectSound PCM + the 4 GB APU channels | software-mixed voices at a timer rate | The constraint is *CPU*, not channels: a software mixer costs cycles per sample per voice. Budget is mixing rate × voices, and ROM for samples |
-| **NDS** | 16 hardware PCM channels (ch8–13 PSG, ch14–15 noise) | 16 | The most generous target; the interesting work is sample budget and the ARM7 hand-off |
+| **NDS** | NDS SPU | 16 sample players, of which ch8–13 switch to a duty generator and ch14–15 to a noise shift register; seven-bit panning *level* per channel | **Built.** The widest palette in the set by a factor of three, and the one with *nothing shared*: no panning byte, no enable mask, no key-on pulse, so two streams sharing the chip never write the same register. The channels answer the **ARM7 alone**, so the driver is the cartridge's second binary and the game reaches it by writing two bytes of shared main RAM. Pitch is a divider whose *step* is the channel's kind — one sample, an eighth of a square-wave cycle, one shift |
 
 ### Tier 2
 
@@ -580,8 +580,14 @@ code does. The rules that follow from it:
 | `rom` | a bootable ROM that plays the track — the audio counterpart of the display harness, and the foundation of the proof loop |
 
 **Built today: `rom`, for the Game Boy family** — and, inside a game rather than
-as a cartridge of its own, a 6502 driver for the NES and a Z80 driver for the
-Sega 8-bits (§Two streams, one clock).
+as a cartridge of its own, a driver for every other console with a backend: 6502
+for the NES, Z80 for the Sega 8-bits, 68000 for the Mega Drive, SPC700 for the
+Super Nintendo and ARM for both handhelds (§Two streams, one clock). Two of those
+are not on the console's own processor at all, and the two are not alike: a Super
+Nintendo's is *uploaded* into a chip's private RAM through four mailbox bytes, and
+a Nintendo DS's is simply **the cartridge's other binary** — a `.nds` names two
+programs, the loader copies both into the memory they share, and the driver is
+running before the game's first frame.
 `bin`/`asm`/`c` are named
 errors rather than approximations, because the order list holds *absolute
 addresses* the driver resolves at assembly time: a relocatable blob would be a
@@ -705,6 +711,15 @@ shape, reached by different hardware — and the merge comes straight back. Two
 machines, one backend, and this is the only thing in the driver that differs
 between them.
 
+The Nintendo DS says the same thing from the other end of the range. Sixteen
+channels, and *nothing* is shared: panning is a byte per channel rather than two
+bits of one, enabling is the channel's own start bit rather than a mask, and there
+is no key-on pulse to mask either. So the widest palette in the set and the
+narrowest one reach the same driver — no merge routine at all — for opposite
+reasons, and what preemption costs there is the four-bit run field, which sixteen
+channels do not fit and do not need to (§the Mega Drive's answer, one console
+over: only the channels an effect was placed on are numbered).
+
 Two things are *not* in the schedules and are performed once at boot instead: the
 chip's power-up writes, and the wave-table upload. An effect that re-ran the
 chip's initialisation would silence the music every time it fired. And an effect
@@ -722,7 +737,9 @@ rather than between routines.
 ## The sample bank
 
 Every other chip demake targets generates its own waveform from a duty cycle, a
-staircase or a shift register. The S-DSP generates nothing: a voice reads
+staircase or a shift register. Two do not — the S-DSP and the Nintendo DS's SPU —
+and a third, the Game Boy Advance's mixer, is demake's own software. The S-DSP
+generates nothing: a voice reads
 compressed blocks out of the sound processor's RAM, so a demade arrangement needs
 waveforms to *exist* before a note can sound. `packages/audio/src/binding/sdsp-bank.ts`
 is where they come from, and three decisions in it are load-bearing.
@@ -744,6 +761,19 @@ without every caller having to remember. It is the one place the "a schedule is 
 complete artifact" claim needed qualifying, and it is a fact about sample hardware
 rather than a leak in the representation.
 
+**The Nintendo DS's bank is the same three decisions with the addresses moved**
+(`packages/audio/src/binding/nds-bank.ts`). Single cycles, but **thirty-two
+samples** rather than sixteen, because this chip's pitch is a *divider*: a longer
+cycle is a larger period and therefore a finer lattice everywhere a melody lives,
+for eight bytes a waveform. And the bank is not uploaded into a private memory —
+a channel's source register is an **absolute address**, so the bank has to *be*
+somewhere both the binding and the driver name, and it is a page of main RAM below
+the ARM7's binary that the driver copies its own bytes into at boot. Main RAM
+rather than the sound processor's faster private 64 KiB deliberately: every piece
+of software on the console streams from main RAM, so a model that turned out to be
+wrong about the other could not hide behind a cartridge written to the same wrong
+belief.
+
 ## The proof
 
 Doc 10 gains an audio section; the summary of it belongs here because it is the
@@ -752,8 +782,8 @@ justification for the whole ChipScript design.
 **Level A — schedule equality (exact, runs in `pnpm test`).** *Built for the Game
 Boy as a cartridge of its own (`packages/audio/test/rom.test.ts`), and for every
 console with a game backend inside a game — the Game Boy, the NES, the Sega
-8-bits, the Mega Drive, the Super Nintendo and the Game Boy Advance
-(`packages/demotic/test/_audio-battery.ts`).*
+8-bits, the Mega Drive, the Super Nintendo, the Game Boy Advance and the Nintendo
+DS (`packages/demotic/test/_audio-battery.ts`).*
 Boot the generated ROM in a core we own,
 log every write to the chip with its tick, and diff against the ChipScript.
 `@demake/dmg` grew its APU by consuming `@demake/chip` — which it needed anyway
@@ -787,9 +817,11 @@ the register tap does.
 
 One trap is worth stating, because it makes such a test pass while proving
 nothing: the arranger gives each part the channel that serves it best, so a
-four-part MIDI on a ten-voice console uses four voices — and on this one they are
-usually the Game Boy's. A mixer diff pointed at such a track compares silence with
-silence. The proof names a track whose parts land on the sample voices.
+four-part MIDI on a ten-voice console uses four voices — and on this one they
+would usually be the Game Boy's. A mixer diff pointed at such a track compares
+silence with silence. That is why the example library is written around ten parts
+wide rather than four (AGENTS.md §Writing music), and why the proof still *names*
+the track it is pointed at rather than trusting any track to reach the mixer.
 
 **Level B — sample comparison against third-party cores (CI).** The existing
 libretro harness already receives an audio callback and currently discards it;

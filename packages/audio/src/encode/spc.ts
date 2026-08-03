@@ -97,12 +97,17 @@ export function encodeSpc(script: ChipScript, options: SpcOptions = {}): Uint8Ar
  * VGM carrying only the four Game Boy channels would be a schedule with a third
  * of the music missing, presented as the schedule.
  *
+ * A Nintendo DS schedule is a WAV for both of the other two reasons at once: no
+ * container has a block for this chip, and it plays samples — so even a format
+ * that grew one would carry a write log without the waveforms, which is the
+ * Super Nintendo's objection restated on hardware that has no `.spc`.
+ *
  * Takes the whole chip list rather than the first of it, because that is the
  * question: a console is its board.
  */
 export function artifactFormat(chips: readonly (string | undefined)[]): "vgm" | "spc" | "wav" {
   if (chips[0] === "s-dsp") return "spc";
-  if (chips.includes("gba-pcm")) return "wav";
+  if (chips.includes("gba-pcm") || chips.includes("nds-spu")) return "wav";
   return "vgm";
 }
 

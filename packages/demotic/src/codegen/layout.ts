@@ -31,7 +31,13 @@
  * able to read either machine's entity table with one function.
  */
 
-import { GBA_AUDIO_BYTES, MD_AUDIO_BYTES, NES_AUDIO_BYTES, SMS_AUDIO_BYTES } from "@demake/audio";
+import {
+  GBA_AUDIO_BYTES,
+  MD_AUDIO_BYTES,
+  NDS_AUDIO_BYTES,
+  NES_AUDIO_BYTES,
+  SMS_AUDIO_BYTES,
+} from "@demake/audio";
 
 import type { Program } from "../program.js";
 
@@ -625,7 +631,14 @@ export const NDS_MEMORY: MemoryPlan = {
   viewH: 24,
   queueMax: 128,
   plotMax: 96,
-  audioBytes: 0,
+  // The *smallest* driver state of any console here, and the largest is the
+  // machine this backend shares its instruction set with — because on this one
+  // the driver is not in this program at all. Its cursors, its tables and its
+  // schedules live in the sound processor's own memory, and what the game sets
+  // aside is the two bytes it writes to ask for a track and a sound effect
+  // (`audio/rom/nds-game.ts` §requests). Four, for the alignment the allocator
+  // wants on a machine that faults on an odd word.
+  audioBytes: NDS_AUDIO_BYTES,
   cellAttributes: true,
   interruptBytes: 0,
   loopBytes: 6,

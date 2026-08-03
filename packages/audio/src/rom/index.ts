@@ -156,6 +156,10 @@ const CONSOLE_RATES: Readonly<Record<string, number>> = { gba: 32768 / 256 };
  *   - `snes` — SPC700 (`rom/spc-game.ts`), and it is not the console's own CPU
  *   - `gba` — ARM (`rom/gba-game.ts`), and it is the one that has to *compute*
  *     half of what it plays rather than only describing it
+ *   - `nds` — ARM (`rom/nds-game.ts`), and it is not the console's own processor
+ *     either: the sound channels answer the ARM7 alone, so the cartridge's second
+ *     binary *is* the driver and the game reaches it by writing two bytes of
+ *     shared memory
  *
  * Keeping it by console is what let the Game Boy Advance be absent from it for
  * as long as its ARM driver was: its four Game Boy channels are the same
@@ -173,6 +177,7 @@ const GAME_DRIVERS: readonly string[] = [
   "snes",
   "md",
   "gba",
+  "nds",
 ];
 
 /** Whether a `demake build` cartridge for this console can play its audio. */

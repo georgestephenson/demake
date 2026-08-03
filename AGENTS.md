@@ -17,7 +17,7 @@ real emulator, compared pixel for pixel):
 | art (images)          | 03–06  | working, ten consoles proven on hardware                                  |
 | game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on ten consoles |
 | music (`arrange`)     | 16, 17 | MIDI → chip music, nine consoles — and a Game Boy ROM that plays it       |
-| sound (`sfx`)         | 16, 18 | WAV → chip effects, nine consoles — same ROM, same proof                  |
+| sound (`sfx`)         | 16, 18 | WAV → chip effects, ten consoles — same ROM, same proof                   |
 
 The four are not four tools that share a repo any more: a `.dmt` says
 `music theme.mid` and `sound bounce.wav on ball hits paddle`, and `demake build`
@@ -110,7 +110,7 @@ Hz, because this VDP reloads its line counter outside the active display — a l
 interrupt is a raster effect, not a tempo.
 
 **And it builds for a Super Nintendo.** `demake build -c snes` produces a real
-64 KiB LoROM cartridge — 65816 machine code written for the game, a Mode 1
+128 KiB LoROM cartridge — 65816 machine code written for the game, a Mode 1
 background demade into 4bpp tiles across seven sixteen-colour sub-palettes, and
 tile art in a _second cartridge bank_ that no instruction ever addresses because
 it reaches video RAM by DMA — and the whole example library traces identically
@@ -245,12 +245,37 @@ interrupt vector lives inside data TCM and its base is a CP15 setting rather tha
 an address — a description this project would have to get exactly right for a
 gain of nothing, since the main loop is what waits either way.
 
-`@demake/nds` is the seventh owned core and the smallest: the processor is
-`@demake/gba`'s and so is the 2D engine, because on everything a demade game
-touches they are the same processor and the same engine. What is there is the
-machine around them. Sound is absent and named: this console's sixteen channels
-are the **ARM7's**, so playing them needs a driver for a second processor, and
-doc 13 §D4 is where that is tracked.
+`@demake/nds` is the seventh owned core, and it is the only one that is _two_
+processors: the ARM9 is `@demake/gba`'s `Arm7` and so is the 2D engine, because on
+everything a demade game touches they are the same processor and the same engine,
+and beside them is `arm7.ts` — the second processor's whole world, because this
+console's sound channels answer it alone.
+
+**And it has sound, on the other side of a bus the game cannot cross.**
+`demake build -c nds` emits _two_ programs: ARM for the game, and an ARM7 driver
+(`packages/audio/src/rom/nds-driver.ts`, `nds-game.ts`) that is simply **the
+cartridge's other binary**. A `.nds` names two of them and the loader copies both
+into the four megabytes they share, so unlike the Super Nintendo's there is no
+upload, no handshake and no boot protocol — the driver is running before the
+game's first frame, and asking for a track is one `strb` to ordinary main RAM.
+Three things follow and none is true of any other console here. The **clock is a
+hardware tally**: timer 0 reloads at the driver rate and timer 1 counts its
+overflows, so how many ticks have happened is a register the driver _reads_ rather
+than a flag it must catch, no interrupt is involved anywhere in this cartridge's
+sound, and a tick cannot be lost by a driver that was busy. **Nothing on the chip
+is shared**, so no merge routine is emitted at all — panning is a byte per
+channel, enabling is the channel's own start bit, and there is no key-on pulse;
+the widest palette in the set and the narrowest (a Master System's) reach the same
+answer for opposite reasons. And **sixteen channels against a four-bit run field**
+do not have to fit, on the Mega Drive's terms: only the channels an effect was
+placed on are numbered, so fourteen voices of a track play straight _through_ a
+sound effect.
+
+The ARM stream player moved when the second ARM console arrived, and that is the
+rule rather than a tidy-up: `packages/audio/src/rom/arm-player.ts` is the walk
+over packed data, and it belongs to the **processor** — the third thing in that
+directory that is nobody's console, beside `shared.ts` (nobody's CPU) and `psg.ts`
+(one chip's). What each console still owns is `AudioWrite` and its hardware.
 
 **And one machine cost almost nothing, which is the point.**
 `demake build -c megaduck` produces a real Mega Duck cartridge, and it is not a
@@ -375,13 +400,26 @@ unchanged — four channel bits, a steal mask, `NR51` merged and never stored �
 the mixer's six voices tag no channel at all and play _through_ an effect. An
 effect placed on a mixer voice is refused by name rather than half-handled.
 
-**A four-part MIDI does not fill this machine**, and that is the arranger's
-answer rather than a gap in the driver: each part gets the channel that serves it
-best, and on ten voices four parts take four. Most of the example library
-therefore plays entirely on the Game Boy channels; `runner`'s `updraft.mid` is the
-one whose parts fit the sample voices better, and it is what the mixer proof is
-pointed at — a diff of silence against silence would pass on a driver that did
-nothing.
+**Ten voices are ten parts here**, because the example library is written to fill
+the widest machine in the set rather than the narrowest: each part gets the
+channel that serves it best, and a ten-part arrangement takes the Game Boy
+channels _and_ the mixer's. That is what makes the mixer proof mean something —
+pointed at a track whose parts all landed on the Game Boy half, a diff of silence
+against silence would pass on a driver that did nothing.
+
+**And the mix loop runs from work RAM, not from the cartridge.** On this console
+every instruction fetched over the cartridge bus costs the wait states `WAITCNT`
+names — four cycles a word at the setting the boot writes — and one fetched from
+internal RAM costs none, so an eleven-instruction inner loop run six times a
+sample is five times dearer out there. The driver therefore copies `AudioMix` and
+its literal pool into internal RAM at boot and calls the copy; the routine is
+position-independent by construction, because every constant it loads is
+PC-relative, every branch it takes is its own, and it calls nothing. Measured on
+the shooter with six voices sounding, that is 1.85 frames a game tick against
+1.00 — the difference between a mixer that fits in a frame and one that does not,
+and the reason every real mixer on this machine does the same thing. It was
+invisible for as long as the example library's tracks did not reach the mixer at
+all (§Writing music).
 
 The _demakers_ reach it too: `demake arrange -c gba`, `sfx` and `render` demake
 this console's ten voices through `binding/gba.ts`, which is the second two-chip
@@ -414,9 +452,11 @@ Demotic runtime story (the speed work doc 14 §Runtime model names).
 **The audio spine is built, and two consoles boot** (docs
 [16](docs/16-audio-engine.md), [17](docs/17-music-demaker.md),
 [18](docs/18-sound-demaker.md)): `@demake/chip` models the Game Boy APU, the
-SN76489, the NES 2A03, the YM2612 and the Super Nintendo's S-DSP; `@demake/audio`
+SN76489, the NES 2A03, the YM2612, the Super Nintendo's S-DSP and the Nintendo
+DS's SPU; `@demake/audio`
 holds both demakers; and `demake arrange`, `demake sfx` and `demake render` work
-for `dmg`, `gbc`, `megaduck`, `nes`, `sms`, `gg`, `sg1000`, `snes` and `md`. A
+for `dmg`, `gbc`, `megaduck`, `nes`, `sms`, `gg`, `sg1000`, `snes`, `md`, `gba`
+and `nds`. A
 track becomes a `.vgm` plus a WAV that is exactly what the schedule produces — or,
 on the one console whose chip plays samples rather than generating them, an
 `.spc`, which is a snapshot of the sound processor's RAM and therefore exactly
@@ -520,14 +560,18 @@ tools/toolchains/    provisioners (cached): RGBDS, cc65, WLA-DX, SameBoy source 
                      GNU m68k + arm-none-eabi binutils and NASM (apt); libretro
                      cores (fceumm, genesis-plus-gx, snes9x, mgba, desmume,
                      mednafen_pce_fast, mednafen_wswan)
-packages/nds/        @demake/nds — a self-hosted Nintendo DS core, and the
-                     smallest of the seven: the processor is @demake/gba's and so
-                     is the 2D engine, because a DS's engine A *is* a Game Boy
-                     Advance's. What is here is the machine around them — 4 MiB a
-                     cartridge is *copied into* rather than run from, nine video
-                     RAM banks of which two are mapped, and a screen a third
-                     bigger. Engine B, the second screen, interrupts and the ARM7
-                     are absent rather than half-implemented, and each raises
+packages/nds/        @demake/nds — a self-hosted Nintendo DS core, and the only
+                     one of the seven that is *two* processors: the ARM9 and the
+                     2D engine are @demake/gba's, because a DS's engine A *is* a
+                     Game Boy Advance's, and arm7.ts is the second processor's
+                     world — shared main RAM, its own 64 KiB, four timers and
+                     @demake/chip's NdsSpu — because the sound channels answer it
+                     alone. The rest is the machine around them: 4 MiB a cartridge
+                     is *copied into* rather than run from, nine video RAM banks of
+                     which two are mapped, and a screen a third bigger. Engine B,
+                     the second screen, interrupts (on both processors) and every
+                     ARM7 peripheral that is not the sound are absent rather than
+                     half-implemented, and each raises
 packages/nes/        @demake/nes — a self-hosted NES core, for the two jobs
                      @demake/dmg exists for: the conformance harnesses in Vitest
                      and (later) the page's player. Its APU is @demake/chip's
@@ -628,6 +672,14 @@ packages/chip/       @demake/chip — every sound chip as a register-driven mode
                      pitch that multiplies, and an exact integer mix the ARM
                      driver has to reproduce sample for sample. Its register
                      file is demake's own, deliberately shaped like the S-DSP's
+  src/nds-spu.ts     the Nintendo DS's: sixteen channels that are sample players
+                     first, six of which switch to a duty generator and two to a
+                     noise register — an S-DSP and a Game Boy APU on one die, with
+                     a seven-bit panning *level* per channel and nothing shared
+                     between them at all. Its source register is an absolute
+                     address, so the model is told where the memory it was handed
+                     begins. IMA-ADPCM, the capture units and the 32.7 kHz output
+                     stage are absent rather than half-implemented
   src/mix.ts         exact box-integration render, DC block, the one renderer
   src/stream.ts      the same renderer for a chip that is still running: the
                      ring buffer the web app's ROM pane plays from
@@ -646,9 +698,15 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
                      driver a game embeds (gb-game.ts). 6502: nes-driver.ts and
                      nes-game.ts; Z80: sms-driver.ts and sms-game.ts; 68000:
                      md-driver.ts and md-game.ts; SPC700: spc-driver.ts and
-                     spc-game.ts, and it is the one that does not run on the
+                     spc-game.ts, and it is one of the two that do not run on the
                      console's own processor — what it builds is a block to
-                     *upload*. One caller each so far. shared.ts is what none of
+                     *upload*. ARM is two consoles and therefore three files:
+                     arm-player.ts is the stream walk, which is the *processor's*
+                     and neither machine's, and gba-driver.ts/gba-game.ts and
+                     nds-driver.ts/nds-game.ts are what each adds to it — a mixer
+                     on one, and a whole second binary on the other, because a DS's
+                     sound channels answer the ARM7 alone. One caller each so far.
+                     shared.ts is what none of
                      them owns — the boot strip, the channel restriction, the
                      player's shape — and psg.ts is what the *chip* owns, shared
                      by the two CPUs that drive an SN76489; md-chips.ts is the
@@ -660,6 +718,11 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
   src/binding/gba-bank.ts  the Game Boy Advance mixer's, and nothing like it:
                      signed 8-bit PCM read straight out of cartridge ROM, so the
                      driver lays these same bytes down rather than uploading them
+  src/binding/nds-bank.ts  the Nintendo DS's: thirty-two-sample cycles, because
+                     that chip's pitch is a *divider* and a longer cycle is a finer
+                     lattice. A channel reads an absolute address, so the bank has
+                     to *be* at the one the binding named — a page of main RAM the
+                     driver copies its own bytes into at boot
   src/dsp.ts         deterministic FFT/resampler/pitch, all on core's kernels
   src/manifest.ts    the --emit-manifest sidecar: one shape, two callers (CLI, web)
   src/render.ts      ChipScript → PCM; the only way anything makes sound
@@ -1047,18 +1110,48 @@ Same bargain as the art: hand the demakers what a modern game would have and let
 them do the work. Generators live in the session scratchpad; the `.mid` and
 `.wav` files are the artefact.
 
-- **Do not write chip music.** The MIDIs are four-part arrangements — bass,
-  chords, melody, drum kit — because the arranger's whole job is choosing what to
-  do when there are more parts than channels. A two-voice MIDI proves nothing and
-  hides every interesting decision.
+- **Do not write chip music, and do not write for the smallest machine.** The
+  MIDIs are full arrangements — around ten parts: bass, sub, chords, pad,
+  arpeggio, melody, harmony, counter-line, echo, drum kit — because the demakers
+  are supposed to be handed what a modern game would have. Two things go wrong if
+  they are not. A two-voice MIDI proves nothing and hides every interesting
+  decision on a four-channel console. And a _four_-part MIDI hides every
+  interesting decision on the wide ones: a Mega Drive has ten voices and a
+  Nintendo DS sixteen, so four parts leave twelve channels idle and make a
+  spent machine look identical to a starved one. The fixtures were four-part
+  once and that is exactly what it cost — the rule is the art path's, restated
+  (§Drawing art: never author at the smallest target's resolution).
+- **A part count is a floor, not a target.** The arranger takes as many parts as
+  the console can play and drops the rest by salience, so more parts is strictly
+  more information: the small consoles show it _choosing_ and the wide ones show
+  it spending everything. `demake arrange --json` reports the channels used and
+  the parts dropped; check both when you add a tune.
+- **Give every part the General MIDI programme a real arranger would.** It is not
+  decoration: `analysis.ts` takes a _role prior_ from it, so a programme is how a
+  part says what it is for. A counter-line under a lead patch is classified as a
+  lead, competes with the tune for the channel that suits one, and wins on a tie
+  — which is exactly how a Game Boy came to play two accompaniment lines and no
+  bass. Check the roles the classifier settled on before checking anything else.
+- **A widened arrangement is also a test of the arranger, and it found two
+  faults.** Salience saturated — every lead-role note scored exactly 1.0, so two
+  leads were indistinguishable — and the planner ranked purely by worth, so five
+  melodic parts filled a four-channel console and left no room for the bass or
+  the kit. Both are fixed (`analysis.ts` §scoreSalience, `plan.ts`
+  §byWorthThenBreadth). Neither was reachable with four-part fixtures, which is
+  the argument for widening them in one line.
 - **Do not synthesize square waves for effects either.** The sounds are built
   from harmonics, filtered noise and decay envelopes, so the class gate has
   something to classify and the gesture tournament has something to choose
   between. A source that is already a chip blip makes the sound demaker look
   perfect and tests nothing.
-- **Length is the cost.** Bars are cartridge: eight bars of four parts is around
-  five kilobytes of schedule, and a game with 4 KB free gets two bars. Check the
-  headroom before making a tune longer.
+- **Length is the cost, and density is too.** Bars are cartridge: eight bars is
+  around five kilobytes of schedule on a four-channel console, and a game with
+  4 KB free gets two bars. Adding _parts_ is nearly free there — only four of
+  them are ever played — but adding sixteenth-note lines is not, because whatever
+  channel takes one writes four times a beat. A sixteenth-note arpeggio across
+  eight bars is what put the library over the Game Boy's 16 KiB schedule budget
+  the first time these were widened. Check the headroom before making a tune
+  longer _or_ busier.
 - **The generator must be deterministic** — no `Math.random` for the noise bed —
   or regenerating the fixtures changes the goldens for no reason.
 
@@ -1505,7 +1598,7 @@ is the game.
 
 ### The 65816 half
 
-`demake build -c snes` builds a playable 64 KiB LoROM cartridge, and the whole
+`demake build -c snes` builds a playable 128 KiB LoROM cartridge, and the whole
 example library traces identically on it. This CPU is a 6502 with three things
 added, and every bullet here is one of them biting.
 
@@ -1629,10 +1722,17 @@ hands it to a second processor at boot. Everything here is a consequence of that
   remember — and `demake arrange -c snes` writes an `.spc` rather than a `.vgm`,
   because a write log without the RAM is not a piece of music and an SPC is
   exactly what the cartridge uploads.
-- **The image sits at the top of the second cartridge bank, under the tile art.**
-  Both are sized by what the game contains and only one of them can have the low
-  end without the other having to know how big it got; `E_BACKDROP_TILES` names
-  the sound processor's share when there is one.
+- **The image has a cartridge bank of its own**, and it did not always. It shared
+  the tile art's bank until the example library's music grew enough parts to fill
+  eight voices, at which point a track's schedule doubled and took the picture's
+  room with it — a game refused for having too much art when what it had too much
+  of was music. Bank zero is the program, bank one is the art, bank two is the
+  sound processor's image, and the two are refused separately. A cartridge here is
+  128 KiB rather than 64: this console takes four megabytes, so the old size was a
+  choice and the wrong one. The image is bounded by its bank because the upload
+  indexes it with `long,X` and `X` is sixteen bits — the addressing's limit and
+  the bank's happen to be the same number, which is why it starts at the bank's
+  first byte.
 
 ### The 68000 half
 
@@ -2016,6 +2116,12 @@ Game Boy Advance's 2D engine on a bigger screen, which is five entries in
 description and no instructions; if you find yourself copying an emitter, you are
 writing the wrong one of the two.
 
+**A console can be a variant for step 4 and not for the driver.** The Nintendo DS
+is the case: its game backend is a description, and its _sound_ is a whole ARM7
+program, because the sound registers answer a processor the game cannot reach.
+Ask the four questions separately — the answer to "is this a variant" is per step,
+not per console.
+
 ## Testing truths
 
 - `pnpm test` runs the Vitest unit suite locally with no Docker. Most of it is
@@ -2087,6 +2193,15 @@ writing the wrong one of the two.
   8-bit consoles share. It also checks the Duck's cartridge _fails_ on a Game
   Boy — identical traces are also what a register map that had quietly become the
   identity would produce.
+- `packages/demotic/test/audio-nds.test.ts` is the seventh machine the shared
+  battery is pointed at, and the second whose driver is not on the console's own
+  processor — but for a different reason from the Super Nintendo's, which is the
+  thing it exists to hold. There is no upload: the cartridge carries two programs,
+  the loader copies both into the memory they share, and the game asks for a track
+  by storing a byte the ARM7 reads. It runs no size sweep, for the Game Boy
+  Advance's reason, and asserts instead that the driver's reported sizes are real
+  — which is worth more here, because on this machine those numbers describe a
+  whole second binary rather than routines inside the first.
 - `packages/demotic/test/audio-gba.test.ts` is the one console whose Level A proof
   is in two halves, because its two sound devices are not both chips. The shared
   battery diffs the four Game Boy channels tick for tick, exactly as it does on

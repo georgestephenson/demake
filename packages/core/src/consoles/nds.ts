@@ -3,6 +3,7 @@
  * 8×8 4bpp tiles, 16 sub-palettes of 16 (shared transparent 0), with flip. The
  * dual-screen spanning and 16-bit framebuffer modes are later additions.
  */
+import { ndsAudio } from "./audio-specs.js";
 import type { ConsoleSpec } from "./types.js";
 export const nds = {
   id: "nds",
@@ -50,5 +51,6 @@ export const nds = {
     },
   ],
   codegen: { family: "nds", formats: ["bin", "asm", "c", "rom"] },
+  audio: ndsAudio,
   docs: { sources: ["GBATEK — DS video & extended palettes (RGB555)"] },
 } satisfies ConsoleSpec;

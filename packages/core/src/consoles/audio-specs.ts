@@ -587,3 +587,154 @@ export const mdAudio: AudioSpec = {
     ],
   },
 };
+
+const NDS_SOURCES = [
+  "GBATEK — DS Sound Channels: https://problemkaputt.de/gbatek.htm#dssound",
+  "GBATEK — DS Sound Control Registers: https://problemkaputt.de/gbatek.htm#dssoundcontrolregisters",
+  "GBATEK — DS Timers (the ARM7's, which the driver rides): https://problemkaputt.de/gbatek.htm#dstimers",
+];
+
+/**
+ * A channel's timer clock: half the 33.513982 MHz the machine runs at.
+ *
+ * One lattice with three meanings, which is this chip's whole arrangement: the
+ * period a channel reloads is a *sample* rate for one playing PCM, an eighth of a
+ * square wave's frequency for one generating a duty, and a shift rate for the
+ * noise register. So the three kinds below differ only in `step`.
+ */
+const NDS_TIMER_HZ = 16756991;
+
+/** Samples in one cycle of a built-in waveform (`binding/nds-bank.ts`). */
+const NDS_WAVE_SAMPLES = 32;
+
+/** Seven bits of multiplier, before a divider that is not used for notes. */
+const NDS_VOLUME = { steps: 128, law: "linear" as const };
+
+/**
+ * A sample channel's pitch lattice.
+ *
+ * A single-cycle waveform of {@link NDS_WAVE_SAMPLES} samples played one sample
+ * per timer period is a note of `clock / (samples × period)`, so the lattice is a
+ * divider with a step of the cycle length. Sixteen bits of period puts the floor
+ * at 8 Hz and the ceiling far above hearing; what it costs is the divider's usual
+ * crowding at the bottom, which is the opposite of the Super Nintendo's sample
+ * player and the price of a timer that counts down.
+ */
+const NDS_SAMPLE_PITCH = {
+  clockHz: NDS_TIMER_HZ,
+  step: NDS_WAVE_SAMPLES,
+  minDivider: 1,
+  maxDivider: 0xffff,
+};
+
+/**
+ * A duty channel's, which is the same timer over eight steps of a square wave.
+ *
+ * `f = clock / (8 × period)`, from 32 Hz to well past the audible — the honest
+ * hardware range, and the reason the arranger never has to fold a bass line up an
+ * octave on this console.
+ */
+const NDS_PSG_PITCH = {
+  clockHz: NDS_TIMER_HZ,
+  step: 8,
+  minDivider: 1,
+  maxDivider: 0xffff,
+};
+
+/** One of the eight channels that can only play a sample. */
+function ndsSampleChannel(id: string, kind: "pulse" | "wave"): AudioChannelSpec {
+  return {
+    id,
+    kind,
+    chip: 0,
+    pitch: NDS_SAMPLE_PITCH,
+    volume: NDS_VOLUME,
+    ...(kind === "pulse" ? { duties: [0.125, 0.25, 0.5] } : {}),
+    ...(kind === "wave" ? { waveform: { samples: NDS_WAVE_SAMPLES, bits: 8 } } : {}),
+    // No envelope generator anywhere on this chip: a note's whole dynamic shape
+    // is one volume byte a tick, which is what makes sixteen channels affordable
+    // for a driver that has a processor to itself.
+    envelope: { kind: "none" },
+    panning: "lr-level",
+  };
+}
+
+/**
+ * The Nintendo DS, and it is the widest palette in the set by a factor of three.
+ *
+ * Sixteen channels on one chip. Eight of them are sample players and nothing else
+ * — the Super Nintendo's arrangement, so their kinds are the *demaker's*
+ * assignment and what makes one a pulse or a saw is which built-in waveform the
+ * driver points it at. Six more can be switched to a square-wave generator with a
+ * duty of their own, which is a Game Boy's pulse channel four times over, and the
+ * last two to a noise shift register.
+ *
+ * Three things about it have no precedent here. **Panning is a level**, seven
+ * bits of position per channel, where every other console in the set offers one
+ * bit each way or nothing at all. **Nothing is shared**: there is no `NR51`, no
+ * `$4015` and no key-on pulse, so two streams sharing this chip never write the
+ * same register and the driver merges nothing. And **the driver is not on the
+ * game's processor** — the sound registers answer the ARM7 alone — so a frame the
+ * game overran costs it no tempo, which on this list only the Super Nintendo can
+ * also say.
+ */
+export const ndsAudio: AudioSpec = {
+  chips: ["nds-spu"],
+  channels: [
+    ndsSampleChannel("sample1", "pulse"),
+    ndsSampleChannel("sample2", "pulse"),
+    ndsSampleChannel("sample3", "pulse"),
+    ndsSampleChannel("sample4", "pulse"),
+    ndsSampleChannel("sample5", "wave"),
+    ndsSampleChannel("sample6", "wave"),
+    ndsSampleChannel("sample7", "wave"),
+    ndsSampleChannel("sample8", "wave"),
+    ...["pulse1", "pulse2", "pulse3", "pulse4", "pulse5", "pulse6"].map((id): AudioChannelSpec => ({
+      id,
+      kind: "pulse",
+      chip: 0,
+      pitch: NDS_PSG_PITCH,
+      volume: NDS_VOLUME,
+      // Seven of the eight duty settings are a square wave; the eighth is a
+      // constant, which GBATEK's table calls 0% and a listener calls silence.
+      duties: [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875],
+      envelope: { kind: "none" },
+      panning: "lr-level",
+    })),
+    ...["noise1", "noise2"].map((id): AudioChannelSpec => ({
+      id,
+      kind: "noise",
+      chip: 0,
+      volume: NDS_VOLUME,
+      // The period is the channel's own sixteen-bit timer rather than a table
+      // of divisors, so the reachable rates are dense; sixty-four of them is
+      // what the arranger and the sound demaker index against, exactly as they
+      // do on a Game Boy.
+      noise: { periods: 64, tonalMode: false },
+      envelope: { kind: "none" },
+      panning: "lr-level",
+    })),
+  ],
+  driver: {
+    // The ARM7's four timers, none of which anything else in a demade cartridge
+    // uses — that processor's whole job here is the sound.
+    sources: ["timer", "vblank"],
+    // 33513982 / (355 × 263 × 6): the same raster the ARM9's `VCOUNT` counts.
+    frameRate: { num: 33513982, den: 560190 },
+    timerRange: [16, 4096],
+    // The one console here where the honest bound is genuinely large, and it is
+    // the CPU's rather than the format's. A driver tick at 120 Hz is 279,283
+    // ARM7 cycles and the processor has *nothing else to do with them* — the
+    // sound hardware is all it drives — so twelve per cent of a tick at some
+    // sixteen cycles a packed write is around two thousand. Sixteen channels
+    // stating themselves at once is about a hundred, and the chip's whole
+    // initialisation is a hundred and thirty, so a demade schedule is two orders
+    // of magnitude inside it. That is a fact about a machine with a processor to
+    // spare, not a budget nobody checked (the Mega Drive's arithmetic, on a tick
+    // twice as long and with no game in it).
+    writesPerTick: 1920,
+  },
+  budgets: { romBytes: 262144 },
+  mixing: { channels: 2, linear: true },
+  docs: { sources: NDS_SOURCES },
+};

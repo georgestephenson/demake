@@ -127,6 +127,36 @@ function worth(part: Part): number {
   return mean * roleWeight[part.role] * Math.min(1, part.notes.length / 8 + 0.25);
 }
 
+/**
+ * The order parts are offered a channel in: the best of each role first, then
+ * everything else by worth.
+ *
+ * Worth alone is what a *ranking* wants and not what an arrangement wants. Five
+ * lead-role parts all outrank a bass and a kit — legitimately, since a lead is
+ * the thing you would hum — so a four-channel console handed a full arrangement
+ * spent every channel on melodic lines and dropped the bass and the drums. No
+ * arranger does that: the first pass is one voice for each *kind* of thing the
+ * piece is made of, and only then does the second-best lead get a look.
+ *
+ * Within a role, and for everything after the first pass, it is worth order
+ * unchanged — so a piece with one part per role is assigned exactly as it was
+ * before this existed.
+ */
+function byWorthThenBreadth(parts: readonly Part[]): Part[] {
+  const ranked = [...parts].sort((a, b) => worth(b) - worth(a) || a.id.localeCompare(b.id));
+  const first: Part[] = [];
+  const rest: Part[] = [];
+  const seen = new Set<PartRole>();
+  for (const part of ranked) {
+    if (seen.has(part.role)) rest.push(part);
+    else {
+      seen.add(part.role);
+      first.push(part);
+    }
+  }
+  return [...first, ...rest];
+}
+
 /** True when two parts never sound at the same time, so they can share. */
 function disjoint(a: Part, b: Part): boolean {
   let i = 0;
@@ -193,7 +223,7 @@ export function planArrangement(
   if (options.channels !== undefined) channels = channels.slice(0, options.channels);
   if (!options.percussion) channels = channels.filter(({ channel }) => channel.kind !== "noise");
 
-  const candidates = [...parts].sort((a, b) => worth(b) - worth(a) || a.id.localeCompare(b.id));
+  const candidates = byWorthThenBreadth(parts);
 
   // 3. Greedy assignment by worth, then refine by exchange.
   const assignment = new Map<number, Part>();

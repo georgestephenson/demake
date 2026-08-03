@@ -16,6 +16,7 @@
 
 import { GbApu } from "./gb-apu.js";
 import { GbaPcm } from "./gba-pcm.js";
+import { NdsSpu } from "./nds-spu.js";
 import { NesApu } from "./nes-apu.js";
 import { SDsp } from "./s-dsp.js";
 import { Sn76489 } from "./sn76489.js";
@@ -34,6 +35,21 @@ export {
   GBA_PCM_VOICES,
   type GbaSample,
 } from "./gba-pcm.js";
+export {
+  NdsSpu,
+  NDS_CH,
+  NDS_CHANNEL_STRIDE,
+  NDS_FIRST_NOISE_CHANNEL,
+  NDS_FIRST_PSG_CHANNEL,
+  NDS_MASTER_ENABLE,
+  NDS_MASTER_VOLUME,
+  NDS_RAM_BASE,
+  NDS_SOUNDCNT,
+  NDS_SPU_CHANNELS,
+  NDS_SPU_CLOCK_HZ,
+  NDS_SPU_REGISTERS,
+  type NdsSpuOptions,
+} from "./nds-spu.js";
 export { Sn76489, SN76489_CLOCK_HZ } from "./sn76489.js";
 export { NesApu, NES_CLOCK_HZ } from "./nes-apu.js";
 export { Ym2612, YM2612_CLOCK_HZ } from "./ym2612.js";
@@ -62,11 +78,26 @@ export { StreamSink, type StreamOptions } from "./stream.js";
 /** Construct a chip model by id — the one place a chip id becomes an object. */
 export function createChip(
   id: ChipId,
-  options: { stereo?: boolean; ram?: Uint8Array; bank?: readonly GbaSample[] } = {},
+  options: {
+    stereo?: boolean;
+    ram?: Uint8Array;
+    /** Where {@link ram}'s first byte answers, for a chip that sees an address. */
+    ramBase?: number;
+    bank?: readonly GbaSample[];
+  } = {},
 ): ChipModel {
   switch (id) {
     case "gb-apu":
       return new GbApu();
+    case "nds-spu":
+      // The third sample player, and the one that reads an *address space* rather
+      // than a private RAM: a source register is an absolute address, so the
+      // model is told where the memory it was handed begins as well as what is in
+      // it (doc 16 §The sample bank).
+      return new NdsSpu({
+        ...(options.ram === undefined ? {} : { ram: options.ram }),
+        ...(options.ramBase === undefined ? {} : { ramBase: options.ramBase }),
+      });
     case "sn76489":
       return new Sn76489(options);
     case "nes-apu":
