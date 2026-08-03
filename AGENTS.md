@@ -2783,3 +2783,17 @@ not per console.
   every doc that states it (they cross-reference each other by number).
 - Keep this file current: any workflow or convention you introduce that an agent
   needs on day one gets a line here, in the same PR.
+- **Write it so it can only be read one way.** These docs compress hard, and past
+  a point that stops being concision and becomes a riddle — a reader cannot
+  recover a word that is not on the page. Two habits produce the bad lines and
+  both were in one table in doc 13. A **pronoun pointing at a column heading**:
+  "the SG-1000 needs no more of it", where _it_ was the Z80 encoder two columns
+  away. And a **noun standing in for the whole action performed on it**: "a
+  camera it must refuse", which meant that a game declaring a camera is rejected
+  at build time, by name. Both were shorter than the clear version by about six
+  words, and both cost a reader the sentence. So: name the actor, name what is
+  done to it, and expand a pronoun whose referent is not in the same sentence.
+  A line that needs the surrounding paragraph to be decoded is a line to rewrite,
+  not to annotate. Vivid is welcome — the voice in these docs is deliberate —
+  but ambiguous never is, and the test is whether one sentence read cold has
+  exactly one meaning.

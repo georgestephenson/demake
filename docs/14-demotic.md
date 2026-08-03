@@ -55,16 +55,22 @@ the game *looks or builds*, it is the Demakefile.
 
 ## Scope
 
-Eight consoles: `gb`, `gbc`, `megaduck`, `nes`, `sms`, `gg`, `md`, `snes` — all
-tiled sprite machines with multi-colour hardware sprites and a comparable button
-set. Which of them *build today* is [`console-support.md`](console-support.md),
-which is generated; doc 13 §Console rollout costs the rest.
+Ten consoles: `gb`, `gbc`, `megaduck`, `nes`, `sms`, `gg`, `md`, `snes`, `gba`,
+`nds` — all tiled sprite machines with multi-colour hardware sprites and a
+comparable button set. Which of them *build today* is
+[`console-support.md`](console-support.md), which is generated; doc 13 §Console
+rollout costs the rest.
 
 Deliberately excluded, each for its own reason:
 
 - **SG-1000 / TMS9918** — four sprites per scanline and one colour per sprite.
   That does not constrain the language so much as distort it, since every other
-  target shares a multi-colour sprite model. It remains a `prep`/`inspect` target.
+  target shares a multi-colour sprite model. Two further facts about the hardware
+  put it out of scope for games for good rather than for now — it has no scroll
+  register, so a camera cannot be compiled, and 1 KB of work RAM against the
+  700–950 bytes a game needs. Doc 13 §The SG-1000 is out of scope for games is
+  where that decision is recorded in full. It remains a target for everything
+  else demake does: art, data, a display ROM, and music and effects.
 - **Framebuffer-only handhelds** (Supervision, Game.com, Lynx) — no hardware
   sprites at all.
 - **Neo Geo** — no tilemap background; the background *is* sprites.
