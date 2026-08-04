@@ -35,7 +35,7 @@ import type { ChipScript } from "../chipscript.js";
 
 import type { ChannelTag } from "./data.js";
 import { AudioRomError } from "./gb.js";
-import { psgChannelTag } from "./psg.js";
+import { psgChannelTag, psgShadowSlot, PSG_STEREO_REG } from "./psg.js";
 
 /** The two chips, as `BoundWrite.chip` indexes them. */
 export const YM_CHIP = 0;
@@ -175,6 +175,202 @@ export function checkMdLatchDiscipline(script: ChipScript): void {
           "this chip latches the register address on a separate port, so a driver could not tell which register the write belongs to; this is a bug in the binding, not in the track.",
         );
       }
+    }
+  }
+}
+
+/** One register of a borrowable voice on this board, and where its copy lives. */
+export interface MdShadowWrite {
+  /**
+   * What names the register.
+   *
+   * An FM address, for a voice on that chip: the packed byte is a *bus port* and
+   * the register is whatever the address port last latched, so the port cannot
+   * name one. Otherwise one of `psg.ts`'s `PSG_SHADOW` three, because the tone chip
+   * has no register numbers at all.
+   */
+  key: number;
+  /** Which half of the FM bus reaches it. Absent for a tone voice. */
+  half?: number;
+  slot: number;
+}
+
+/** What the music remembers about one borrowable voice on this board. */
+export interface MdShadowChannel {
+  /** Channel bit, as the packed run format numbers it. */
+  channel: number;
+  kind: "fm" | "psg";
+  /** Lowest key; a copy is indexed by `key - base`. */
+  base: number;
+  slot: number;
+  length: number;
+  writes: readonly MdShadowWrite[];
+}
+
+/**
+ * What the music must remember about the voices effects can borrow, on a board
+ * with two chips and not one register number between them.
+ *
+ * `shared.ts`'s {@link shadowPlan} indexes a copy by the byte the packed data
+ * carries, and neither chip here lets it: the tone chip's byte is a latch that
+ * says what it is, and the FM chip's is one of four *bus ports* whose meaning is
+ * whatever the address port last held. So this walks the schedules the way the
+ * driver's own tag does, following both latches, and names a register by what
+ * actually identifies one.
+ *
+ * A voice is on one chip or the other and never both, which is what lets a copy
+ * be one dense window either way.
+ */
+export function mdShadowPlan(
+  tracks: readonly ChipScript[],
+  stealable: readonly number[],
+): MdShadowChannel[] {
+  const owned = new Map<number, { kind: "fm" | "psg"; keys: Map<number, number> }>();
+  for (const script of tracks) {
+    const tag = mdChannelTag(stealable)();
+    const psg = psgChannelTag();
+    let latched = -1;
+    let half = 0;
+    for (const tick of script.ticks) {
+      for (const write of tick.writes) {
+        const chip = write.chip ?? 0;
+        const bit = tag(write.reg, write.value, chip);
+        // Both latches move on *every* write, tagged or not, because the chip's
+        // do: a run this stream skips still changes what comes after it.
+        if (chip === PSG_CHIP) psg(write.reg, write.value, chip);
+        const address = chip === PSG_CHIP || (write.reg & 1) === 0 ? -1 : latched;
+        if (chip !== PSG_CHIP && (write.reg & 1) === 0) {
+          latched = write.value & 0xff;
+          half = (write.reg >> 1) & 1;
+        }
+        if (bit === 0) continue;
+        const kind = chip === PSG_CHIP ? "psg" : "fm";
+        let entry = owned.get(bit);
+        if (!entry) owned.set(bit, (entry = { kind, keys: new Map() }));
+        if (entry.kind !== kind) {
+          throw new AudioRomError(
+            "E_SHADOW_CHIPS",
+            `voice ${bit} of this game's music is written through both of this board's sound chips`,
+            "a borrowable voice's registers have to live on one device for the driver to replay them; this is a bug in the channel tag, not in the track.",
+          );
+        }
+        if (kind === "psg") {
+          if (write.reg === PSG_STEREO_REG) continue;
+          entry.keys.set(psgShadowSlot(write.value), 0);
+        } else if (address >= 0) {
+          entry.keys.set(address, half);
+        }
+      }
+    }
+  }
+
+  const out: MdShadowChannel[] = [];
+  let bytes = 0;
+  for (const channel of [...owned.keys()].sort((a, b) => a - b)) {
+    const entry = owned.get(channel) as { kind: "fm" | "psg"; keys: Map<number, number> };
+    const keys = [...entry.keys.keys()].sort((a, b) => a - b);
+    if (keys.length === 0) continue;
+    const base = keys[0] as number;
+    const length = (keys[keys.length - 1] as number) - base + 1;
+    out.push({
+      channel,
+      kind: entry.kind,
+      base,
+      slot: bytes,
+      length,
+      // Ascending, so an FM voice's key register — `$28`, the lowest address any
+      // voice writes — is stated first and its frequency last.
+      writes: keys.map((key) => ({
+        key,
+        ...(entry.kind === "fm" ? { half: entry.keys.get(key) as number } : {}),
+        slot: bytes + key - base,
+      })),
+    });
+    bytes += length;
+  }
+  return out;
+}
+
+/**
+ * What each copied byte holds before the music has said anything.
+ *
+ * The chip initialisation the ROM performs at boot, read the way the run walk
+ * reads the music — because that is what those registers really hold at that
+ * point, and the schedules have the boot prefix stripped off their first tick.
+ * A tone voice makes it matter: silence on that chip is attenuation `$F`, so a
+ * copy that started at zero would replay *full volume* on a voice the music had
+ * not yet touched.
+ */
+export function mdShadowInit(
+  boot: readonly { reg: number; value: number; chip?: number }[],
+  plan: readonly MdShadowChannel[],
+  bytes: number,
+): number[] {
+  const init = new Array<number>(bytes).fill(0);
+  const psg = psgChannelTag();
+  let latched = -1;
+  for (const write of boot) {
+    const chip = write.chip ?? 0;
+    if (chip === PSG_CHIP) {
+      const voices = psg(write.reg, write.value, chip);
+      if (write.reg === PSG_STEREO_REG) continue;
+      const slot = psgShadowSlot(write.value);
+      for (const channel of plan) {
+        if (channel.kind !== "psg") continue;
+        const at = channel.writes.find((one) => one.key === slot);
+        // The tag names the console's own voice numbering and a plan entry the
+        // packed run format's, so membership is asked of the *slot* the boot
+        // write lands in and the voice the latch selected.
+        if (at !== undefined && voices !== 0) init[at.slot] = write.value & 0xff;
+      }
+      continue;
+    }
+    if ((write.reg & 1) === 0) {
+      latched = write.value & 0xff;
+      continue;
+    }
+    for (const channel of plan) {
+      if (channel.kind !== "fm") continue;
+      const at = channel.writes.find((one) => one.key === latched);
+      if (at !== undefined) init[at.slot] = write.value & 0xff;
+    }
+  }
+  return init;
+}
+
+/** Bytes a plan takes, which is what the driver's allocator is told. */
+export function mdShadowBytes(plan: readonly MdShadowChannel[]): number {
+  return plan.reduce((sum, channel) => sum + channel.length, 0);
+}
+
+/**
+ * Check that an FM data byte always follows *its own* address byte.
+ *
+ * The driver keeps one latch and not one per bus half, which is only sound while
+ * nothing writes an address on one half between an address and its data on the
+ * other. The binding writes a register as an adjacent pair, so this holds — and
+ * it is checked rather than assumed because if it stops holding, a borrowed voice
+ * comes back with one register's value in another register's place, which is
+ * exactly the shape of the bug this whole mechanism exists to fix.
+ */
+export function checkMdPairDiscipline(script: ChipScript): void {
+  for (let tick = 0; tick < script.ticks.length; tick += 1) {
+    let pending = -1;
+    for (const write of script.ticks[tick]?.writes ?? []) {
+      if ((write.chip ?? 0) === PSG_CHIP) continue;
+      const half = (write.reg >> 1) & 1;
+      if ((write.reg & 1) === 0) {
+        if (pending >= 0 && pending !== half) {
+          throw new AudioRomError(
+            "E_FM_PAIR",
+            `tick ${tick} of an audio schedule latches an FM address on both bus halves before writing either`,
+            "the driver keeps one address latch, so an address must be followed by its own data byte; this is a bug in the binding, not in the track.",
+          );
+        }
+        pending = half;
+        continue;
+      }
+      pending = -1;
     }
   }
 }

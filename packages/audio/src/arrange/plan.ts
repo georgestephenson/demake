@@ -49,13 +49,25 @@ export interface PlanOptions {
   percussion: boolean;
 }
 
+/**
+ * At or above this an affinity is not a reduction but a different instrument.
+ *
+ * The two pairings that reach it are a melodic part on a noise generator and a
+ * drum part on a pitched channel, and neither has a musical reading: a noise
+ * channel has no pitch to play a tune with, and a percussion part's "pitch" is
+ * General MIDI's *drum numbers* — 36 is a kick, not a C2 — so a pitched channel
+ * handed one plays the drum map as a bassline in whatever key it happens to
+ * land in. A part that can only reach a channel this way is dropped and counted.
+ */
+const UNUSABLE = 40;
+
 /** Role affinity per channel kind: lower is better. */
 function affinity(role: PartRole, channel: AudioChannelSpec): number {
   const kind = channel.kind;
   // An FM voice can be struck as well as held, so it is a real percussion
   // option — worse than a noise generator for a snare, far better for a tom.
-  if (role === "percussion") return kind === "noise" ? 0 : kind === "fm" ? 6 : 40;
-  if (kind === "noise") return 40;
+  if (role === "percussion") return kind === "noise" ? 0 : kind === "fm" ? 6 : UNUSABLE;
+  if (kind === "noise") return UNUSABLE;
   // Four operators and a fitted patch beat every fixed timbre on this list at
   // every job, which is why the whole `fm` column is zero: the arranger should
   // spend an FM voice before it spends a square wave, and only the *count* of
@@ -83,6 +95,10 @@ function affinity(role: PartRole, channel: AudioChannelSpec): number {
 /** Cost of asking `channel` to carry `part`, in comparable units. */
 function cost(part: Part, channel: AudioChannelSpec, options: PlanOptions): number {
   let value = affinity(part.role, channel);
+  // Infinity rather than a large number, so a part with no usable channel left
+  // never beats the greedy pass's `Infinity` seed and falls through to the drop
+  // list — which is also what stops the exchange pass trading one in later.
+  if (value >= UNUSABLE) return Infinity;
   if (part.role === "percussion") return value;
 
   if (channel.pitch) {
@@ -221,9 +237,28 @@ export function planArrangement(
     .map((channel, channelIndex) => ({ channel, channelIndex }))
     .filter(({ channel }) => !reserved.has(channel.id));
   if (options.channels !== undefined) channels = channels.slice(0, options.channels);
-  if (!options.percussion) channels = channels.filter(({ channel }) => channel.kind !== "noise");
+  // "No drums" has to mean the *part* and not only the noise generator. Taking
+  // the channel away and leaving the part behind is what a console with FM voices
+  // reads as "put the kit on one of those" — which is a legitimate arrangement
+  // and the opposite of what this candidate is for, so it is `full-band`'s to
+  // choose and not this one's.
+  const dropping = options.percussion ? [] : parts.filter((part) => part.role === "percussion");
+  for (const part of dropping) {
+    dropped.push({
+      kind: "part",
+      partId: part.id,
+      count: part.notes.length,
+      salience: meanSalience(part),
+      reason: "this arrangement spends every channel on pitched material",
+    });
+  }
+  if (!options.percussion) {
+    channels = channels.filter(({ channel }) => channel.kind !== "noise");
+  }
 
-  const candidates = byWorthThenBreadth(parts);
+  const candidates = byWorthThenBreadth(
+    options.percussion ? parts : parts.filter((part) => part.role !== "percussion"),
+  );
 
   // 3. Greedy assignment by worth, then refine by exchange.
   const assignment = new Map<number, Part>();
@@ -254,7 +289,7 @@ export function planArrangement(
     for (const { channel, channelIndex } of channels) {
       const existing = shared.get(channelIndex);
       if (!existing) continue;
-      if (affinity(part.role, channel) >= 40) continue;
+      if (affinity(part.role, channel) >= UNUSABLE) continue;
       if (!existing.every((other) => disjoint(other, part))) continue;
       existing.push(part);
       placed = true;

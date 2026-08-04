@@ -49,7 +49,19 @@ import {
   type MosScratch,
   type MosStreamState,
 } from "./mos-player.js";
-import { clampByte, MAX_PENDING, pack, rateHz, restrict, shapeOf, stripBoot } from "./shared.js";
+import {
+  clampByte,
+  MAX_PENDING,
+  pack,
+  rateHz,
+  restrict,
+  shadowBias,
+  shadowPlan,
+  shadowReserve,
+  shapeOf,
+  stripBoot,
+  type ShadowPlan,
+} from "./shared.js";
 
 /** The value that stops the music, rather than starting a track. */
 export const STOP = 0xff;
@@ -99,7 +111,16 @@ export interface NesGameAudioInput {
  *
  * Counted from the allocator rather than written down, so the two cannot drift.
  */
-export const NES_AUDIO_BYTES = layout(0).end;
+/**
+ * Worst case for the borrowed-channel copies: every channel, its own registers.
+ *
+ * Four registers each on this chip, so sixteen bytes — reserved rather than
+ * fitted, because the memory plan is settled before the game's effects are
+ * demade and it is the plan that says how much page zero the driver has.
+ */
+const SHADOW_MAX = shadowReserve(nesChannelOf, 0x00, 0x13);
+
+export const NES_AUDIO_BYTES = layout(0, SHADOW_MAX).end;
 
 /** Sizes and reductions, reported rather than assumed. */
 export interface NesGameAudioStats {
@@ -222,7 +243,11 @@ export function buildNesGameAudio(input: NesGameAudioInput): NesGameAudio {
     pack(script, { ...packOptions, end: "stop" as const }),
   );
 
-  const state = layout(input.state);
+  const stealable = input.effects.reduce((bits, effect) => bits | (1 << effect.channel), 0);
+  // What the music has to remember so a borrowed channel comes back holding the
+  // music's own note rather than the effect's last one (`shared.ts`).
+  const shadow = shadowPlan(tracks, stealable, () => nesChannelOf, boot);
+  const state = layout(input.state, shadow.bytes);
   const bootEnable = boot.find((write) => write.reg === SND_CHN - APU_BASE)?.value ?? 0;
 
   const helpers: string[] = [];
@@ -231,7 +256,7 @@ export function buildNesGameAudio(input: NesGameAudioInput): NesGameAudio {
 
   const emitCode = (asm: Asm6502): void => {
     const start = asm.pc;
-    emitInit(asm, state, boot, bootEnable);
+    emitInit(asm, state, boot, bootEnable, shadow);
     emitClock(asm, state, clock.ticksPerFrame);
     emitTick(asm, state, input);
     if (input.tracks.length > 0) {
@@ -244,12 +269,22 @@ export function buildNesGameAudio(input: NesGameAudioInput): NesGameAudio {
           scratch: state.scratch,
           data: shapeOf(musicData),
           ...(shared ? { steal: state.steal, merge: "AudioMusEnable" } : {}),
+          ...(shared && shadow.bytes > 0
+            ? {
+                shadow: {
+                  channels: shadow.channels.map((channel) => ({
+                    bit: channel.channel,
+                    base: state.shadow + shadowBias(channel),
+                  })),
+                },
+              }
+            : {}),
         }).map((name) => `music-${name}`),
       );
     }
     if (input.effects.length > 0) {
       emitSfxStart(asm, state, input);
-      emitRelease(asm, state, shared);
+      emitRelease(asm, state, shared, shadow);
       helpers.push(
         ...emitStream(asm, {
           prefix: "AudioSfx",
@@ -360,6 +395,14 @@ interface Layout {
   music: MosStreamState;
   sfx: MosStreamState;
   scratch: MosScratch;
+  /**
+   * First byte of the music's copy of the borrowable channels.
+   *
+   * In the cheap page like everything else the driver keeps, because that is the
+   * allocation it is handed — the copy is reached with `sta $nnnn,x`, which does
+   * not care where it is, so this is a convenience rather than a requirement.
+   */
+  shadow: number;
   /** Channels an effect has taken. */
   steal: number;
   /** Each stream's intended `$4015`, which the merge folds together. */
@@ -377,7 +420,7 @@ interface Layout {
   end: number;
 }
 
-function layout(base: number): Layout {
+function layout(base: number, shadowBytes: number): Layout {
   let at = base;
   const take = (): number => at++;
   // The pointer pairs come first and adjacent, because they are dereferenced
@@ -411,10 +454,13 @@ function layout(base: number): Layout {
   const musicReq = take();
   const sfxReq = take();
   const pending = take();
+  const shadow = at;
+  at += shadowBytes;
   return {
     music,
     sfx,
     scratch,
+    shadow,
     steal,
     enableMusic,
     enableSfx,
@@ -440,6 +486,7 @@ function emitInit(
   state: Layout,
   boot: readonly { reg: number; value: number }[],
   bootEnable: number,
+  plan: ShadowPlan,
 ): void {
   asm.label("AudioInit");
   let held: number | undefined;
@@ -472,6 +519,19 @@ function emitInit(
   // first merge folds against the truth rather than against a guess.
   if (bootEnable !== 0) asm.lda(imm(bootEnable));
   asm.sta(zp(state.enableMusic));
+
+  // Each borrowable channel's copy starts at what the boot writes left in its
+  // registers, so a replay before the music has stated anything restores the
+  // chip's power-up condition rather than a guess.
+  let seeded = bootEnable;
+  for (let byte = 0; byte < plan.bytes; byte += 1) {
+    const value = plan.init[byte] as number;
+    if (seeded !== value) {
+      asm.lda(imm(value));
+      seeded = value;
+    }
+    asm.sta(zp(state.shadow + byte));
+  }
   asm.rts();
 }
 
@@ -639,19 +699,37 @@ function emitSfxStart(asm: Asm6502, state: Layout, input: NesGameAudioInput): vo
 /**
  * Give back the channels an effect borrowed.
  *
- * On this chip that is one byte: the channels are silenced by clearing their
- * bits in `$4015`, which is what the merge computes anyway once the effect's
- * shadow is empty. The music picks them up again at its next note rather than
- * being restored — keeping a shadow of every register on every channel to hide a
- * gap of a few ticks is the Game Boy driver's rejected trade, and it is rejected
- * here for the same reason.
+ * The enable mask alone is not enough. Clearing a channel's bit in `$4015` does
+ * silence it, and the merge computes that anyway once the effect's shadow is
+ * empty — but the *music's* bit goes straight back on, and the channel's own
+ * four registers are still holding the effect's last values. The packed music is
+ * a delta stream, so it never states them again until its next note on that
+ * channel, which for a held chord tone is a whole bar. So the music's registers
+ * are replayed first, from the copy the run walk keeps (`shared.ts`
+ * §`shadowPlan`), and the merge then turns the channel back on.
+ *
+ * A channel the music never writes has no copy, and the merge alone is the
+ * whole of its release.
  */
-function emitRelease(asm: Asm6502, state: Layout, shared: boolean): void {
+function emitRelease(asm: Asm6502, state: Layout, shared: boolean, plan: ShadowPlan): void {
   asm.label("AudioSfxRelease");
   asm.lda(zp(state.steal));
   asm.bne("AudioSfxReleaseDo");
   asm.rts();
   asm.label("AudioSfxReleaseDo");
+  for (const channel of plan.channels) {
+    const skip = `AudioRelease${channel.channel}`;
+    asm.lda(zp(state.steal));
+    asm.and(imm(channel.channel));
+    asm.beq(skip);
+    // Ascending register order, so the byte carrying the length counter — which
+    // re-triggers this chip's envelopes — is written last.
+    for (const write of channel.writes) {
+      asm.lda(zp(state.shadow + write.slot));
+      asm.sta(abs(APU_BASE + write.port));
+    }
+    asm.label(skip);
+  }
   asm.lda(imm(0));
   asm.sta(zp(state.steal));
   asm.sta(zp(state.sfx.active as number));

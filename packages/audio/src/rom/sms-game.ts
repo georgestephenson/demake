@@ -50,7 +50,17 @@ import { bindingFor } from "../binding/registry.js";
 import type { DriverData } from "./data.js";
 import { AudioRomError } from "./gb.js";
 import type { GameEffect } from "./gb-game.js";
-import { checkLatchDiscipline, psgAttenuationOff, psgChannelTag, PSG_STEREO_REG } from "./psg.js";
+import {
+  checkDataDiscipline,
+  checkLatchDiscipline,
+  psgAttenuationOff,
+  psgChannelTag,
+  psgShadowInit,
+  psgShadowPlan,
+  PSG_CHANNELS,
+  PSG_SHADOW_BYTES,
+  PSG_STEREO_REG,
+} from "./psg.js";
 import { clampByte, MAX_PENDING, pack, rateHz, restrict, shapeOf, stripBoot } from "./shared.js";
 import { emitStream, emitStreamData, type SmsStreamState } from "./sms-driver.js";
 
@@ -96,7 +106,16 @@ export interface SmsGameAudioInput {
  * NES's page zero there is nothing to be economical about. Counted from the
  * allocator rather than written down, so the two cannot drift.
  */
-export const SMS_AUDIO_BYTES = layout(0).end;
+/**
+ * Worst case for the borrowed-channel copies: every channel, three bytes each.
+ *
+ * Reserved rather than fitted, because the memory plan is settled before the
+ * game's effects are demade and it is the plan that says how much work RAM the
+ * driver has.
+ */
+const SHADOW_MAX = PSG_CHANNELS * PSG_SHADOW_BYTES;
+
+export const SMS_AUDIO_BYTES = layout(0, SHADOW_MAX).end;
 
 /** Sizes and reductions, reported rather than assumed. */
 export interface SmsGameAudioStats {
@@ -192,7 +211,10 @@ export function buildSmsGameAudio(input: SmsGameAudioInput): SmsGameAudio {
       );
     }
   }
-  for (const script of scripts) checkLatchDiscipline(script);
+  for (const script of scripts) {
+    checkLatchDiscipline(script);
+    checkDataDiscipline(script);
+  }
 
   const clock = resolveSmsClock(first);
   const binding = bindingFor(first.console);
@@ -228,8 +250,14 @@ export function buildSmsGameAudio(input: SmsGameAudioInput): SmsGameAudio {
     pack(script, { ...packOptions, end: "stop" as const }),
   );
 
-  const state = layout(input.state);
   const stealable = input.effects.reduce((bits, effect) => bits | (1 << effect.channel), 0);
+  // What the music has to remember so a borrowed channel comes back holding the
+  // music's own note rather than the effect's last one. This chip's copy is keyed
+  // by what a byte *is* rather than by a register number (`psg.ts`).
+  const copies = shared ? psgShadowPlan(tracks, stealable) : [];
+  const state = layout(input.state, copies.length * PSG_SHADOW_BYTES);
+  /** Where one borrowable channel's three bytes begin. */
+  const shadowAt = (index: number): number => state.shadow + index * PSG_SHADOW_BYTES;
   const bootStereo = boot.find((write) => write.reg === PSG_STEREO_REG)?.value ?? 0xff;
   const merging = shared && stereo;
 
@@ -239,7 +267,7 @@ export function buildSmsGameAudio(input: SmsGameAudioInput): SmsGameAudio {
 
   const emitCode = (asm: AsmZ80): void => {
     const start = asm.pc;
-    emitInit(asm, state, boot, stereo ? bootStereo : undefined);
+    emitInit(asm, state, boot, stereo ? bootStereo : undefined, copies);
     emitClock(asm, state, clock.ticksPerFrame);
     emitTick(asm, state, input);
     if (input.tracks.length > 0) {
@@ -250,13 +278,24 @@ export function buildSmsGameAudio(input: SmsGameAudioInput): SmsGameAudio {
           state: state.music,
           data: shapeOf(musicData),
           ...(shared ? { steal: state.steal } : {}),
+          ...(copies.length > 0
+            ? {
+                shadow: {
+                  channels: copies.map((copy, index) => ({
+                    bit: copy.channel,
+                    at: shadowAt(index),
+                    slots: copy.slots,
+                  })),
+                },
+              }
+            : {}),
           ...(merging ? { merge: "AudioMusStereo" } : {}),
         }).map((name) => `music-${name}`),
       );
     }
     if (input.effects.length > 0) {
       emitSfxStart(asm, state, input);
-      emitRelease(asm, state, stealable, merging);
+      emitRelease(asm, state, stealable, merging, copies, shadowAt);
       helpers.push(
         ...emitStream(asm, {
           prefix: "AudioSfx",
@@ -365,6 +404,14 @@ export function resolveSmsClock(script: ChipScript): SmsGameAudio["clock"] {
 interface Layout {
   music: SmsStreamState;
   sfx: SmsStreamState;
+  /**
+   * First byte of the music's copy of the borrowable channels.
+   *
+   * Three bytes a channel rather than one per register, because this chip has no
+   * register numbers: a tone latch, the data byte that continues it, and an
+   * attenuation latch are the whole of a voice (`psg.ts` §`PSG_SHADOW`).
+   */
+  shadow: number;
   /** Channels an effect has taken. */
   steal: number;
   /** Each stream's intended stereo latch, which the merge folds together. */
@@ -380,7 +427,7 @@ interface Layout {
   end: number;
 }
 
-function layout(base: number): Layout {
+function layout(base: number, shadowBytes: number): Layout {
   let at = base;
   const take = (bytes = 1): number => {
     const address = at;
@@ -408,9 +455,11 @@ function layout(base: number): Layout {
   const musicReq = take();
   const sfxReq = take();
   const pending = take();
+  const shadow = take(shadowBytes);
   return {
     music,
     sfx,
+    shadow,
     steal,
     stereoMusic,
     stereoSfx,
@@ -436,6 +485,7 @@ function emitInit(
   state: Layout,
   boot: readonly { reg: number; value: number }[],
   bootStereo: number | undefined,
+  copies: readonly { channel: number; slots: readonly number[] }[],
 ): void {
   asm.label("AudioInit");
   for (const write of boot) {
@@ -458,6 +508,18 @@ function emitInit(
   ]) {
     asm.sta(byte);
   }
+  // Each borrowable channel's copy starts at what the boot writes left in its
+  // latches. Zero would be full volume on this chip, so a replay before the
+  // music had stated anything would come back at maximum rather than silent.
+  const seeded = psgShadowInit(boot, copies);
+  for (let index = 0; index < copies.length; index += 1) {
+    const copy = copies[index] as { slots: readonly number[] };
+    for (let slot = 0; slot < copy.slots.length; slot += 1) {
+      asm.ldn("a", (seeded[index] as number[])[slot] as number);
+      asm.sta(state.shadow + index * PSG_SHADOW_BYTES + (copy.slots[slot] as number));
+    }
+  }
+
   // The music's shadow starts at what the boot writes left in the stereo latch,
   // so the first merge folds against the truth rather than against zero.
   if (bootStereo !== undefined) {
@@ -657,7 +719,14 @@ function emitSfxStart(asm: AsmZ80, state: Layout, input: SmsGameAudioInput): voi
  * a scene change that happened while an effect was playing would otherwise start
  * whichever track the effect's channel mask happened to name.
  */
-function emitRelease(asm: AsmZ80, state: Layout, stealable: number, merging: boolean): void {
+function emitRelease(
+  asm: AsmZ80,
+  state: Layout,
+  stealable: number,
+  merging: boolean,
+  copies: readonly { channel: number; slots: readonly number[] }[],
+  shadowAt: (index: number) => number,
+): void {
   asm.label("AudioSfxRelease");
   asm.lda(state.steal);
   asm.alu("or", "a");
@@ -668,8 +737,19 @@ function emitRelease(asm: AsmZ80, state: Layout, stealable: number, merging: boo
     const skip = `AudioRelease${channel}`;
     asm.bit(channel, "c");
     asm.jr(skip, "z");
-    asm.ldn("a", psgAttenuationOff(channel));
-    asm.outN(PORT.psg);
+    const index = copies.findIndex((copy) => copy.channel === 1 << channel);
+    if (index >= 0) {
+      // Ascending, so the period is stated before the attenuation turns the
+      // voice back up. Each byte carries its own channel select, so there is
+      // nothing to say in front of them.
+      for (const slot of (copies[index] as { slots: readonly number[] }).slots) {
+        asm.lda(shadowAt(index) + slot);
+        asm.outN(PORT.psg);
+      }
+    } else {
+      asm.ldn("a", psgAttenuationOff(channel));
+      asm.outN(PORT.psg);
+    }
     asm.label(skip);
   }
   asm.alu("xor", "a");

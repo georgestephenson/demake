@@ -137,6 +137,28 @@ export interface MosStreamOptions {
    * called with `y` and both scratch bytes live, and must preserve all three.
    */
   merge?: string;
+  /**
+   * Where this stream keeps a copy of the channels another stream can borrow.
+   *
+   * A run naming one of `channels` is recorded as well as written, and a run
+   * that is *skipped* is recorded instead of written, so the copy is the music's
+   * own state whether or not the chip currently holds it (`shared.ts`
+   * §`shadowPlan`). It costs one instruction in the write loop, because X
+   * already holds the packed register byte and the copy is laid out to be
+   * indexed by it.
+   */
+  shadow?: {
+    /**
+     * One per borrowable channel: its bit, and the address a packed register
+     * byte indexes to reach that channel's copy of it.
+     *
+     * A channel has a window of its own rather than sharing one, so the base is
+     * per channel and a run is routed to its own loop — which is what makes this
+     * work on a PC Engine, where two voices are written through the same
+     * register numbers behind a channel select.
+     */
+    channels: readonly { bit: number; base: number }[];
+  };
   /** Routine called when a stoppable stream's order list runs out. */
   onEnd?: string;
 }
@@ -223,6 +245,7 @@ export function emitStream(asm: Asm6502, options: MosStreamOptions): string[] {
   if (data.runs) {
     emitRuns(asm, options, { preemptible, fetch, step, far });
     helpers.push(preemptible ? "preemptible-runs" : "runs");
+    if (preemptible && options.shadow) helpers.push("borrowed-channel-shadow");
   } else {
     asm.label(`${p}TickWrite`);
     fetch();
@@ -294,6 +317,8 @@ function emitRuns(asm: Asm6502, options: MosStreamOptions, walk: Walk): void {
   const { prefix: p, base, scratch, data } = options;
   const { fetch, step, far } = walk;
 
+  const shadow = walk.preemptible ? options.shadow : undefined;
+
   asm.label(`${p}TickRun`);
   fetch();
   asm.sta(zp(scratch.flags));
@@ -302,6 +327,13 @@ function emitRuns(asm: Asm6502, options: MosStreamOptions, walk: Walk): void {
     asm.beq(`${p}TickOwn`); // a run that names no channel is never preempted
     asm.and(zp(options.steal as number));
     far("ne", `${p}TickSkip`);
+    if (shadow) {
+      // Ours right now, but borrowable: the chip and the copy both take it, so
+      // the copy is still true the next time an effect hands the channel back.
+      asm.lda(zp(scratch.flags));
+      asm.and(imm(shadow.channels.reduce((bits, one) => bits | one.bit, 0)));
+      far("ne", `${p}TickRecord`);
+    }
   }
   asm.label(`${p}TickOwn`);
   if (data.hasMerges) {
@@ -329,12 +361,45 @@ function emitRuns(asm: Asm6502, options: MosStreamOptions, walk: Walk): void {
     asm.jmp(`${p}TickNext`);
   }
 
+  if (shadow) {
+    // One instruction more than the plain loop: X is the register either way.
+    // One loop per borrowable channel, because each has a window of its own.
+    asm.label(`${p}TickRecord`);
+    perChannel(asm, options, `${p}TickRecordOn`, (name, at) => {
+      asm.label(name);
+      fetch();
+      asm.tax();
+      fetch();
+      asm.sta(absX(base));
+      asm.sta(absX(at));
+      asm.dec(zp(scratch.count));
+      asm.bne(name);
+      asm.jmp(`${p}TickNext`);
+    });
+  }
+
   if (walk.preemptible) {
+    // A skipped run is recorded and not written: the chip belongs to the effect
+    // until it lets go, but the music's own idea of the channel has to keep
+    // moving or the replay would restore a note that ended while it played.
     asm.label(`${p}TickSkip`);
-    step();
-    step();
-    asm.dec(zp(scratch.count));
-    asm.bne(`${p}TickSkip`);
+    if (shadow) {
+      perChannel(asm, options, `${p}TickSkipOn`, (name, at) => {
+        asm.label(name);
+        fetch();
+        asm.tax();
+        fetch();
+        asm.sta(absX(at));
+        asm.dec(zp(scratch.count));
+        asm.bne(name);
+        asm.jmp(`${p}TickNext`);
+      });
+    } else {
+      step();
+      step();
+      asm.dec(zp(scratch.count));
+      asm.bne(`${p}TickSkip`);
+    }
   }
 
   asm.label(`${p}TickNext`);
@@ -343,6 +408,32 @@ function emitRuns(asm: Asm6502, options: MosStreamOptions, walk: Walk): void {
   fetch();
   asm.sta(zp(scratch.count));
   asm.jmp(`${p}TickRun`);
+}
+
+/**
+ * Emit one body per borrowable channel, routed on the run's flags.
+ *
+ * The last channel falls through rather than being tested, because a run only
+ * reaches here when it named one of them — so with a single borrowable channel,
+ * which is what a game with one pitched effect has, there is no test at all.
+ */
+function perChannel(
+  asm: Asm6502,
+  options: MosStreamOptions,
+  prefix: string,
+  body: (name: string, base: number) => void,
+): void {
+  const channels = (options.shadow as { channels: readonly { bit: number; base: number }[] })
+    .channels;
+  const flags = options.scratch.flags;
+  for (let index = 0; index < channels.length - 1; index += 1) {
+    asm.lda(zp(flags));
+    asm.and(imm((channels[index] as { bit: number }).bit));
+    asm.bne(`${prefix}${index}`);
+  }
+  for (let index = 0; index < channels.length; index += 1) {
+    body(`${prefix}${index}`, (channels[index] as { base: number }).base);
+  }
 }
 
 /**

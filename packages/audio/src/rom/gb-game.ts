@@ -40,7 +40,17 @@ import { bindingFor } from "../binding/registry.js";
 import type { DriverData } from "./data.js";
 import { emitStream, emitStreamData, type StreamState } from "./gb-driver.js";
 import { AudioRomError, resolveClock } from "./gb.js";
-import { clampByte, pack, rateHz, restrict, shapeOf, stripBoot } from "./shared.js";
+import {
+  clampByte,
+  pack,
+  rateHz,
+  restrict,
+  shadowBias,
+  shadowPlan,
+  shapeOf,
+  stripBoot,
+  type ShadowPlan,
+} from "./shared.js";
 
 /** One effect the game can fire, and what it needs while it plays. */
 export interface GameEffect {
@@ -151,6 +161,19 @@ export function gbChannelOf(reg: number): number {
 /** Note-off for one channel: the register that powers its DAC down. */
 const CHANNEL_OFF = [0x12, 0x17, 0x1a, 0x21] as const;
 
+/**
+ * Each borrowable channel's bit and the offset a packed register byte adds.
+ *
+ * The copies are laid out so that `register + delta` is the copy's own high-RAM
+ * offset, which makes recording a write one `add` rather than a table lookup.
+ */
+function shadowChannels(state: Layout, plan: ShadowPlan): { bit: number; delta: number }[] {
+  return plan.channels.map((channel) => ({
+    bit: channel.channel,
+    delta: (state.shadow + shadowBias(channel)) & 0xff,
+  }));
+}
+
 /** Build the driver a game embeds. */
 export function buildGameAudio(input: GameAudioInput): GameAudio {
   const scripts = [...input.tracks, ...input.effects.map((effect) => effect.script)];
@@ -207,8 +230,17 @@ export function buildGameAudio(input: GameAudioInput): GameAudio {
     pack(script, { ...packOptions, end: "stop" as const }),
   );
 
-  const state = layout(input.hram, input.effects.length > 0);
   const stealable = input.effects.reduce((bits, effect) => bits | (1 << effect.channel), 0);
+  // What the music has to remember so a borrowed channel comes back holding the
+  // music's own note rather than the effect's last one (`shared.ts`).
+  const shadow = shadowPlan(
+    tracks,
+    stealable,
+    () => gbChannelOf,
+    boot,
+    (reg) => at(reg),
+  );
+  const state = layout(input.hram, shadow.bytes);
 
   const helpers: string[] = [];
   let code = 0;
@@ -216,7 +248,7 @@ export function buildGameAudio(input: GameAudioInput): GameAudio {
 
   const emitCode = (asm: Asm): void => {
     const start = asm.pc;
-    emitInit(asm, state, boot, clock, at);
+    emitInit(asm, state, boot, clock, at, shadow);
     emitTick(asm, state, input);
     if (input.tracks.length > 0) {
       emitMusicStart(asm, state, input);
@@ -226,12 +258,15 @@ export function buildGameAudio(input: GameAudioInput): GameAudio {
           state: state.music,
           data: shapeOf(musicData),
           ...(shared ? { steal: state.steal, merge: "AudioMusPan" } : {}),
+          ...(shared && shadow.bytes > 0
+            ? { shadow: { channels: shadowChannels(state, shadow) } }
+            : {}),
         }).map((name) => `music-${name}`),
       );
     }
     if (input.effects.length > 0) {
       emitSfxStart(asm, state, input);
-      emitRelease(asm, state, stealable, shared, at);
+      emitRelease(asm, state, stealable, shared, at, shadow);
       helpers.push(
         ...emitStream(asm, {
           prefix: "AudioSfx",
@@ -317,11 +352,20 @@ interface Layout {
   priority: number;
   musicReq: number;
   sfxReq: number;
+  /**
+   * First byte of the music's copy of the borrowable channels.
+   *
+   * In high RAM rather than work RAM because both halves of the mechanism reach
+   * it through `$FF00 + n`: the run walk records with `ld [c], a` and the replay
+   * reads with `ldh a, [n]`, and a copy anywhere else would cost a sixteen-bit
+   * pointer in a loop that has no register free for one.
+   */
+  shadow: number;
   /** One past the last byte used. */
   end: number;
 }
 
-function layout(base: number, effects: boolean): Layout {
+function layout(base: number, shadowBytes: number): Layout {
   let at = base;
   const take = (): number => at++;
   const music: StreamState = {
@@ -349,8 +393,18 @@ function layout(base: number, effects: boolean): Layout {
   const priority = take();
   const musicReq = take();
   const sfxReq = take();
-  void effects;
-  return { music, sfx, steal, panMusic, panSfx, priority, musicReq, sfxReq, end: at };
+  const shadow = at;
+  at += shadowBytes;
+  // `$FFFF` is the interrupt-enable register, so the last byte a driver may take
+  // is `$FFFE`.
+  if (at > 0xffff) {
+    throw new AudioRomError(
+      "E_AUDIO_HRAM",
+      `this game's audio driver needs ${at - base} bytes of high RAM and there are ${0xffff - base}`,
+      "high RAM is 127 bytes and the copy of each borrowable channel is part of what a driver keeps there; this is a bug in the build, not in the track.",
+    );
+  }
+  return { music, sfx, steal, panMusic, panSfx, priority, musicReq, sfxReq, shadow, end: at };
 }
 
 // --- code --------------------------------------------------------------------
@@ -362,6 +416,7 @@ function emitInit(
   boot: readonly { reg: number; value: number }[],
   clock: ReturnType<typeof resolveClock>,
   at: (reg: number) => number,
+  plan: ShadowPlan,
 ): void {
   asm.label("AudioInit");
   let held: number | undefined;
@@ -390,6 +445,22 @@ function emitInit(
   const panning = boot.find((write) => write.reg === NR51);
   asm.ldn("a", panning?.value ?? 0xff);
   asm.stha(state.panMusic);
+
+  // The copy of each borrowable channel starts at what the boot writes leave
+  // those registers holding, so a replay before the music has stated anything
+  // restores the chip's power-up condition rather than a guess. Unrolled because
+  // it is a handful of bytes and a loop would cost a register the caller has not
+  // been told about.
+  let last: number | undefined;
+  for (let byte = 0; byte < plan.bytes; byte += 1) {
+    const value = plan.init[byte] as number;
+    if (last !== value) {
+      if (value === 0) asm.alu("xor", "a");
+      else asm.ldn("a", value);
+      last = value;
+    }
+    asm.stha(state.shadow + byte);
+  }
 
   if (clock.source === "timer") {
     asm.alu("xor", "a").stha(0x07); // TAC off while the reload is set
@@ -528,10 +599,19 @@ function emitSfxStart(asm: Asm, state: Layout, input: GameAudioInput): void {
 /**
  * Give back the channels an effect borrowed.
  *
- * The channel is silenced rather than left holding the effect's last register
- * values, and the music picks it up again at its next note. Restoring what the
- * music *would* have been playing would mean keeping a shadow of every register
- * on every channel, to hide a gap of at most a few ticks.
+ * The music's own registers are replayed from the copy the run walk keeps
+ * (`shared.ts` §`shadowPlan`), so the channel comes back sounding the note the
+ * music was holding. Silencing it and waiting for the music's next note — which
+ * is what this did — is wrong twice over: the packed music is a delta stream, so
+ * the *next note* can be a whole bar away for a held chord tone, and the channel
+ * does not stay silent that long either. Any later write the music makes to it —
+ * a volume step, which the driver-shaped decay makes several times a note —
+ * re-triggers it through `NRx4` while `NRx3` still holds the effect's low byte,
+ * so a pulse comes back a whole tone sharp and rings until the bar ends. It was
+ * heard in pong as a dissonant note on every bounce.
+ *
+ * A channel the music never writes has no copy and is silenced, because there is
+ * nothing truer to say about it.
  *
  * The mask is held in `c` rather than `b` because **`b` is live in the caller**:
  * `AudioMusicStart` holds the track it was asked for there across this call, and
@@ -546,21 +626,33 @@ function emitRelease(
   stealable: number,
   shared: boolean,
   at: (reg: number) => number,
+  plan: ShadowPlan,
 ): void {
   asm.label("AudioSfxRelease");
   asm.ldha(state.steal);
   asm.alu("or", "a");
   asm.ret("z");
   asm.ld("c", "a");
-  asm.alu("xor", "a");
   for (let channel = 0; channel < CHANNEL_OFF.length; channel += 1) {
     if ((stealable & (1 << channel)) === 0) continue;
     const skip = `AudioRelease${channel}`;
     asm.bit(channel, "c");
     asm.jr(skip, "z");
-    asm.stha(at(CHANNEL_OFF[channel] as number));
+    const copy = plan.channels.find((one) => one.channel === 1 << channel);
+    if (copy) {
+      // Ascending register order, so the byte carrying the trigger is written
+      // last and strikes a voice the rest of the replay has already stated.
+      for (const write of copy.writes) {
+        asm.ldha(state.shadow + write.slot);
+        asm.stha(write.port);
+      }
+    } else {
+      asm.alu("xor", "a");
+      asm.stha(at(CHANNEL_OFF[channel] as number));
+    }
     asm.label(skip);
   }
+  asm.alu("xor", "a");
   asm.stha(state.steal);
   asm.stha(state.sfx.active as number);
   if (shared) {

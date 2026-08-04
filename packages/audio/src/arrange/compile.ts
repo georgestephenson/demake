@@ -36,15 +36,28 @@ export interface CompileOptions {
  * the reduction is a musical decision, not a lookup. `period` indexes the
  * binding's low-to-high noise colours; `envelope` is the chip's own decay rate,
  * which is what keeps a hit ringing without the driver writing every tick.
+ *
+ * `pitch` and `ticks` are for the other kind of percussion channel. An FM voice
+ * can be *struck*, which is why `plan.ts`'s affinity table offers one — and a
+ * struck voice needs a pitch, which a drum has no business taking from its
+ * General MIDI note number: 36 is a kick because that is where the kick sample
+ * sits on a keyboard, not because a kick is a C2. Taking it literally is what
+ * played a hi-hat as an F#2 under the melody. So a class states the pitch a
+ * pitched voice should strike it at, and how long to hold it for: the tonal
+ * classes stay low where a drum lives, and the metallic ones go up where a short
+ * bright patch reads as a tick rather than a bass note.
  */
-const DRUM_MAP: Record<DrumClass, { period: number; envelope: number; tonal: boolean }> = {
-  kick: { period: 4, envelope: 2, tonal: true },
-  snare: { period: 26, envelope: 3, tonal: false },
-  "hat-closed": { period: 58, envelope: 1, tonal: false },
-  "hat-open": { period: 56, envelope: 5, tonal: false },
-  tom: { period: 14, envelope: 3, tonal: true },
-  cymbal: { period: 52, envelope: 7, tonal: false },
-  perc: { period: 40, envelope: 2, tonal: false },
+const DRUM_MAP: Record<
+  DrumClass,
+  { period: number; envelope: number; tonal: boolean; pitch: number; ticks: number }
+> = {
+  kick: { period: 4, envelope: 2, tonal: true, pitch: 3600, ticks: 8 },
+  snare: { period: 26, envelope: 3, tonal: false, pitch: 6200, ticks: 6 },
+  "hat-closed": { period: 58, envelope: 1, tonal: false, pitch: 9300, ticks: 2 },
+  "hat-open": { period: 56, envelope: 5, tonal: false, pitch: 9300, ticks: 6 },
+  tom: { period: 14, envelope: 3, tonal: true, pitch: 4500, ticks: 8 },
+  cymbal: { period: 52, envelope: 7, tonal: false, pitch: 8800, ticks: 12 },
+  perc: { period: 40, envelope: 2, tonal: false, pitch: 8100, ticks: 4 },
 };
 
 /** Build the schedule. */
@@ -147,6 +160,38 @@ function buildLane(
     }
   }
   placed.sort((a, b) => a.start - b.start || b.note.salience - a.note.salience);
+
+  // A percussion part on a channel that has no noise generator. The gesture is
+  // the noise path's — struck, and left to decay — and only the voicing differs,
+  // because there is a pitch to choose instead of a colour.
+  if (assignment.parts.some((part) => part.role === "percussion")) {
+    if (channel.kind !== "noise") {
+      for (const entry of placed) {
+        // One voice, so two hits on one tick are one hit. `placed` is in salience
+        // order within a tick, so the first is the one to keep: a snare and a hat
+        // land together on every backbeat, and the hat is not the one you would
+        // hear a drummer play there.
+        if (frames[entry.start]!.retrigger) continue;
+        const drum = DRUM_MAP[entry.note.drum ?? "perc"];
+        const hz = centsToHz(drum.pitch + assignment.octaveShift * 1200);
+        const folded = channel.pitch ? foldIntoRange(channel.pitch, hz) : { hz, octaves: 0 };
+        const base = entry.note.velocity / 127;
+        const end = Math.min(entry.start + drum.ticks, entry.end, totalTicks);
+        for (let tick = entry.start; tick < end; tick += 1) {
+          const frame = frames[tick]!;
+          if (tick > entry.start && frame.retrigger) break;
+          frame.on = true;
+          frame.retrigger = tick === entry.start;
+          frame.hz = folded.hz;
+          frame.duty = options.duty;
+          // A struck voice decays to nothing rather than to a tail: this channel
+          // has no envelope generator of its own to hand the note off to.
+          frame.level = base * (1 - (tick - entry.start) / drum.ticks);
+        }
+      }
+      return frames;
+    }
+  }
 
   if (channel.kind === "noise") {
     for (const entry of placed) {

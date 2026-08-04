@@ -36,6 +36,7 @@
 import { AsmZ80, label } from "@demake/core";
 
 import { RUN, type DriverData } from "./data.js";
+import { PSG_SHADOW } from "./psg.js";
 
 /**
  * Where a stream keeps its position, in work RAM.
@@ -95,6 +96,20 @@ export interface SmsStreamOptions {
    * merge path at all. Called with `b`, `d` and `hl` live.
    */
   merge?: string;
+  /**
+   * Where this stream keeps a copy of the channels another stream can borrow.
+   *
+   * A run naming one of `channels` is recorded as well as written, and a run
+   * that is *skipped* is recorded instead of written, so the copy is the music's
+   * own state whether or not the chip currently holds it (`shared.ts`
+   * §`shadowPlan`). This chip has no register numbers to index a copy by, so the
+   * three bytes of a channel are told apart by what each byte *is* — which is
+   * `psg.ts`'s job, and why `slots` names them rather than an address doing it.
+   */
+  shadow?: {
+    /** One per borrowable channel: its bit, and where its three bytes live. */
+    channels: readonly { bit: number; at: number; slots: readonly number[] }[];
+  };
   /** Routine called when a stoppable stream's order list runs out. */
   onEnd?: string;
 }
@@ -148,6 +163,7 @@ export function emitStream(asm: AsmZ80, options: SmsStreamOptions): string[] {
   if (data.runs) {
     emitRuns(asm, options, preemptible);
     helpers.push(preemptible ? "preemptible-runs" : "runs");
+    if (preemptible && options.shadow) helpers.push("borrowed-channel-shadow");
   } else {
     asm.label(`${p}TickWrite`);
     emitWrite(asm);
@@ -208,6 +224,8 @@ function emitWrite(asm: AsmZ80): void {
 function emitRuns(asm: AsmZ80, options: SmsStreamOptions, preemptible: boolean): void {
   const { prefix: p, data } = options;
 
+  const shadow = preemptible ? options.shadow : undefined;
+
   asm.label(`${p}TickRun`);
   fetch(asm);
   asm.ld("d", "a"); // flags
@@ -218,6 +236,16 @@ function emitRuns(asm: AsmZ80, options: SmsStreamOptions, preemptible: boolean):
     asm.lda(options.steal as number);
     asm.alu("and", "e");
     asm.jp(`${p}TickSkip`, "nz");
+    if (shadow) {
+      // Ours right now, but borrowable: the chip and the copy both take it, so
+      // the copy is still true the next time an effect hands the channel back.
+      asm.ld("a", "e");
+      asm.aluN(
+        "and",
+        shadow.channels.reduce((bits, one) => bits | one.bit, 0),
+      );
+      asm.jp(`${p}TickRecord`, "nz");
+    }
   }
   asm.label(`${p}TickOwn`);
   if (data.hasMerges) {
@@ -241,14 +269,44 @@ function emitRuns(asm: AsmZ80, options: SmsStreamOptions, preemptible: boolean):
     asm.jp(`${p}TickNext`);
   }
 
+  if (shadow) {
+    // Written *and* recorded, one loop per borrowable channel. `a` is the only
+    // register the classification needs, because each of the three destinations
+    // is a constant address: this chip has no register number to index by, so
+    // the byte is told apart by its own top bits.
+    asm.label(`${p}TickRecord`);
+    perChannel(asm, shadow.channels, `${p}TickRecordOn`, (name, entry) => {
+      asm.label(name);
+      emitWrite(asm);
+      emitRecord(asm, name, entry);
+      asm.dec("b");
+      asm.jp(name, "nz");
+      asm.jp(`${p}TickNext`);
+    });
+  }
+
   if (preemptible) {
-    // A skipped run still has to be stepped over, and two bytes per write is the
-    // only thing the data says about its length.
+    // A skipped run is recorded and not written: the chip belongs to the effect
+    // until it lets go, but the music's own idea of the channel has to keep
+    // moving or the replay would restore a note that ended while it played.
     asm.label(`${p}TickSkip`);
-    asm.inc16("hl");
-    asm.inc16("hl");
-    asm.dec("b");
-    asm.jr(`${p}TickSkip`, "nz");
+    if (shadow) {
+      perChannel(asm, shadow.channels, `${p}TickSkipOn`, (name, entry) => {
+        asm.label(name);
+        asm.inc16("hl"); // the port, which nothing but the chip wants
+        fetch(asm);
+        emitRecord(asm, name, entry);
+        asm.dec("b");
+        asm.jp(name, "nz");
+        asm.jp(`${p}TickNext`);
+      });
+    } else {
+      // Two bytes per write is the only thing the data says about its length.
+      asm.inc16("hl");
+      asm.inc16("hl");
+      asm.dec("b");
+      asm.jr(`${p}TickSkip`, "nz");
+    }
   }
 
   asm.label(`${p}TickNext`);
@@ -257,6 +315,69 @@ function emitRuns(asm: AsmZ80, options: SmsStreamOptions, preemptible: boolean):
   fetch(asm);
   asm.ld("b", "a");
   asm.jp(`${p}TickRun`);
+}
+
+/**
+ * Emit one body per borrowable channel, routed on the run's channel bits in `e`.
+ *
+ * The last channel falls through rather than being tested, because a run only
+ * reaches here when it named one of them — so with a single borrowable channel,
+ * which is what a game with one pitched effect has, there is no test at all.
+ */
+function perChannel(
+  asm: AsmZ80,
+  channels: readonly { bit: number; at: number; slots: readonly number[] }[],
+  prefix: string,
+  body: (name: string, entry: { at: number; slots: readonly number[] }) => void,
+): void {
+  for (let index = 0; index < channels.length - 1; index += 1) {
+    asm.ld("a", "e");
+    asm.aluN("and", (channels[index] as { bit: number }).bit);
+    asm.jp(`${prefix}${index}`, "nz");
+  }
+  for (let index = 0; index < channels.length; index += 1) {
+    body(`${prefix}${index}`, channels[index] as { at: number; slots: readonly number[] });
+  }
+}
+
+/**
+ * Put the byte in `a` into whichever of a channel's three copies it is.
+ *
+ * Three constant addresses and two bit tests, because this chip's byte says what
+ * it is: bit 7 separates a latch from the data that continues it, and bit 4
+ * separates a tone latch from an attenuation one ({@link psgShadowSlot}). Only
+ * the bytes the music really writes get a branch — the noise channel has no data
+ * byte, so its copy is two bytes and one test.
+ */
+function emitRecord(
+  asm: AsmZ80,
+  name: string,
+  entry: { at: number; slots: readonly number[] },
+): void {
+  const has = (slot: number): boolean => entry.slots.includes(slot);
+  const done = `${name}Kept`;
+  if (has(PSG_SHADOW.DATA)) {
+    asm.bit(7, "a");
+    asm.jr(`${name}Data`, "z");
+  }
+  if (has(PSG_SHADOW.LEVEL) && has(PSG_SHADOW.TONE)) {
+    asm.bit(4, "a");
+    asm.jr(`${name}Level`, "nz");
+  }
+  if (has(PSG_SHADOW.TONE)) {
+    asm.sta(entry.at + PSG_SHADOW.TONE);
+    if (has(PSG_SHADOW.LEVEL) || has(PSG_SHADOW.DATA)) asm.jr(done);
+  }
+  if (has(PSG_SHADOW.LEVEL)) {
+    if (has(PSG_SHADOW.TONE)) asm.label(`${name}Level`);
+    asm.sta(entry.at + PSG_SHADOW.LEVEL);
+    if (has(PSG_SHADOW.DATA)) asm.jr(done);
+  }
+  if (has(PSG_SHADOW.DATA)) {
+    asm.label(`${name}Data`);
+    asm.sta(entry.at + PSG_SHADOW.DATA);
+  }
+  asm.label(done);
 }
 
 /**

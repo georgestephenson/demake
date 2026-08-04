@@ -319,6 +319,52 @@ The ARM pair are, if anything, the *easiest* backends in the set — 16.16 fixed
 point is a native 32-bit register there, so the shift-and-subtract arithmetic the
 SM83 and 6502 pay for every tick collapses to single instructions.
 
+### Handing a borrowed channel back
+
+A game's music and its sound effects share one chip, and an effect *borrows* a
+channel while it plays. The packed music is a **delta stream** — a register is
+written when the music's own value for it changes and not otherwise — so once an
+effect has borrowed a channel the chip is holding the effect's values for it, and
+the music never states its own again. It comes back wrong, and not quietly: the
+driver-shaped decay writes a channel's volume several times a note, and each of
+those re-triggers the voice through a register whose neighbour still carries the
+effect's pitch. On a Game Boy that is a pulse coming back a whole tone sharp and
+ringing until the bar ends — heard in pong as a dissonant note on every bounce,
+and originally mistaken for a glitch in the demade *music*.
+
+The fix is a copy: the music records every register belonging to a channel an
+effect can take, updated whether or not the write reached the chip, and the
+release replays it (`audio/src/rom/shared.ts` §`shadowPlan`). It is per CPU,
+because it lives inside each stream player's run walk, and the shared battery
+asserts it on every console — not that *something* wrote the borrowed channel
+afterwards, which is what it used to check, but that what the chip is left
+holding is what the schedule says.
+
+**All seven drivers have it**: SM83, 6502 (the NES and the PC Engine share the
+player), Z80, 68000, SPC700, and ARM (the Game Boy Advance and the Nintendo DS
+share theirs). Three needed more than the generic plan, and each for a reason
+about its chip rather than its processor.
+
+The **SN76489** has no register numbers at all — one write port, and the channel
+latched in the byte — so its three bytes are told apart by what each byte *is*
+(`rom/psg.ts` §`PSG_SHADOW`). The **PC Engine** *selects* a voice rather than
+addressing one, so every voice is written through the same ten register numbers
+and each needs a window of its own rather than one window per register — which is
+why a window is per channel on every console and not per register.
+
+The **Mega Drive** is both of those on one board, and it added the one thing none
+of the others needed. Its FM chip has four bus *ports* whose meaning is whatever
+the address port last latched, so a copy is indexed by that address — and the
+address write and its data write **can land in different runs**. `$28` is the
+case that forces it: the key register belongs to no voice until its datum names
+one, so its address write is tagged "no channel" and goes down the plain write
+path while its data write goes down the recording one. A latch kept only by the
+recorder is still holding the register before it, and the key byte is copied into
+the frequency's slot — which is what it did, and what a borrowed voice then
+replayed. So the latch is a byte of driver state that **every** FM write this
+stream makes updates, and `checkMdPairDiscipline` refuses a schedule that would
+need two of them.
+
 ## Phase 6 — 1.0
 
 Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs complete

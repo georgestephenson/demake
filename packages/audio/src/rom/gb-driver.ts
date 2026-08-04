@@ -71,6 +71,26 @@ export interface StreamOptions {
    * stream that stored it would erase the other stream's channels.
    */
   merge?: string;
+  /**
+   * Where this stream keeps a copy of the channels another stream can borrow.
+   *
+   * A run naming one of `channels` is recorded as well as written, and a run
+   * that is *skipped* is recorded instead of written — so the copy is the
+   * music's own state whether or not the chip currently holds it, and the
+   * release routine has something true to replay (`shared.ts` §`shadowPlan`).
+   * Absent when nothing borrowable is ever written, and then neither the
+   * recording loop nor the shadow exists.
+   */
+  shadow?: {
+    /**
+     * One per borrowable channel: its bit, and what a packed register byte is
+     * offset by to reach that channel's copy of it.
+     *
+     * A channel has a window of its own rather than sharing one, so the offset
+     * is per channel and a run is routed to its own loop.
+     */
+    channels: readonly { bit: number; delta: number }[];
+  };
   /** Routine called when a stoppable stream's order list runs out. */
   onEnd?: string;
 }
@@ -126,6 +146,7 @@ export function emitStream(asm: Asm, options: StreamOptions): string[] {
   if (data.runs) {
     emitRuns(asm, options, preemptible);
     helpers.push(preemptible ? "preemptible-runs" : "runs");
+    if (preemptible && options.shadow) helpers.push("borrowed-channel-shadow");
   } else {
     asm.label(`${p}TickWrite`);
     asm.ldaHLI().ld("c", "a"); // register
@@ -175,6 +196,8 @@ export function emitStream(asm: Asm, options: StreamOptions): string[] {
 function emitRuns(asm: Asm, options: StreamOptions, preemptible: boolean): void {
   const { prefix: p, data } = options;
 
+  const shadow = preemptible ? options.shadow : undefined;
+
   asm.label(`${p}TickRun`);
   asm.ldaHLI().ld("d", "a"); // flags
   if (preemptible) {
@@ -184,6 +207,13 @@ function emitRuns(asm: Asm, options: StreamOptions, preemptible: boolean): void 
     asm.ldha(options.steal as number);
     asm.alu("and", "e");
     asm.jr(`${p}TickSkip`, "nz");
+    if (shadow) {
+      // Ours right now, but borrowable: the chip and the copy both take it, so
+      // the copy is still true the next time an effect hands the channel back.
+      asm.ld("a", "e");
+      asm.aluN("and", maskOf(shadow.channels));
+      asm.jr(`${p}TickRecord`, "nz");
+    }
   }
   asm.label(`${p}TickOwn`);
   if (data.hasMerges) {
@@ -208,13 +238,51 @@ function emitRuns(asm: Asm, options: StreamOptions, preemptible: boolean): void 
     asm.jr(`${p}TickNext`);
   }
 
+  if (shadow) {
+    // Written *and* recorded, one loop per borrowable channel because each has a
+    // window of its own. `e` carries the run's channel bits in and then the
+    // value across the two stores, since `a` is the only register either of them
+    // can go through.
+    asm.label(`${p}TickRecord`);
+    perChannel(asm, shadow.channels, `${p}TickRecordOn`, (label, delta) => {
+      asm.label(label);
+      asm.ldaHLI().ld("c", "a"); // register
+      asm.ldaHLI().ld("e", "a"); // value
+      asm.staC(); // value → $FF00 + c
+      asm.ld("a", "c");
+      asm.aluN("add", delta & 0xff);
+      asm.ld("c", "a");
+      asm.ld("a", "e");
+      asm.staC(); // value → the copy
+      asm.dec("b");
+      asm.jr(label, "nz");
+      asm.jr(`${p}TickNext`);
+    });
+  }
+
   if (preemptible) {
-    // A skipped run still has to be stepped over, and two bytes per write is
-    // the only thing the data says about its length.
+    // A skipped run is recorded and not written: the chip belongs to the effect
+    // until it lets go, but the music's own idea of the channel has to keep
+    // moving or the replay would restore a note that ended while it played.
     asm.label(`${p}TickSkip`);
-    asm.inc16("hl").inc16("hl");
-    asm.dec("b");
-    asm.jr(`${p}TickSkip`, "nz");
+    if (shadow) {
+      perChannel(asm, shadow.channels, `${p}TickSkipOn`, (label, delta) => {
+        asm.label(label);
+        asm.ldaHLI();
+        asm.aluN("add", delta & 0xff);
+        asm.ld("c", "a"); // register → its copy
+        asm.ldaHLI().staC();
+        asm.dec("b");
+        asm.jr(label, "nz");
+        asm.jr(`${p}TickNext`);
+      });
+    } else {
+      // Nothing borrowable is ever written, so a skipped run is only stepped
+      // over — two bytes per write is the only thing the data says about it.
+      asm.inc16("hl").inc16("hl");
+      asm.dec("b");
+      asm.jr(`${p}TickSkip`, "nz");
+    }
   }
 
   asm.label(`${p}TickNext`);
@@ -222,6 +290,35 @@ function emitRuns(asm: Asm, options: StreamOptions, preemptible: boolean): void 
   asm.jr(`${p}TickSave`, "z");
   asm.ldaHLI().ld("b", "a");
   asm.jr(`${p}TickRun`);
+}
+
+/** Every channel a run may be recorded for, as one mask. */
+function maskOf(channels: readonly { bit: number }[]): number {
+  return channels.reduce((bits, one) => bits | one.bit, 0);
+}
+
+/**
+ * Emit one body per borrowable channel, routed on the run's channel bits in `e`.
+ *
+ * The last channel falls through rather than being tested, because a run only
+ * reaches here when it named one of them — so with a single borrowable channel,
+ * which is what a game with one pitched effect has, there is no test at all.
+ */
+function perChannel(
+  asm: Asm,
+  channels: readonly { bit: number; delta: number }[],
+  prefix: string,
+  body: (label: string, delta: number) => void,
+): void {
+  for (let index = 0; index < channels.length - 1; index += 1) {
+    asm.ld("a", "e");
+    asm.aluN("and", (channels[index] as { bit: number }).bit);
+    asm.jr(`${prefix}${index}`, "nz");
+  }
+  for (let index = 0; index < channels.length; index += 1) {
+    const { delta } = channels[index] as { delta: number };
+    body(`${prefix}${index}`, delta);
+  }
 }
 
 /**

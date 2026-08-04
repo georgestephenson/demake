@@ -400,7 +400,12 @@ test("builds and plays a real NES ROM in the page", async ({ page }) => {
   // The Game Boy cartridge keeps playing while this one demakes, so what is
   // waited on is the *cartridge's* console rather than the picker's — otherwise
   // every assertion below could be answered by the ROM that is on its way out.
-  await expect(canvas).toHaveAttribute("data-console", "nes", { timeout: 60_000 });
+  // The same budget the Sega consoles below get. This was 60 s — the number from
+  // when the NES was the second console in the file — and every console added
+  // since has needed more: a runner gives each Playwright worker about half a
+  // core while the other worker is also demaking a cartridge, and a fixed-master
+  // fit is not free.
+  await expect(canvas).toHaveAttribute("data-console", "nes", { timeout: 150_000 });
 
   // A different cartridge, not a setting on the last one: 32 KiB of program and
   // 8 of characters, on a screen that is not the Game Boy's shape.

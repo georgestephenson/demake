@@ -96,6 +96,54 @@ describe("arrangement", () => {
     expect(byChannel.get("wave")).toContain("bass");
   });
 
+  it("strikes a pitched voice at the drum's own pitch, not its General MIDI number", () => {
+    // An FM voice is a real percussion option — it can be struck as well as held
+    // — so a console with one and no noise generator to spare puts the kit there.
+    // What it must not do is take the pitch from the note number: 42 is a hi-hat
+    // because that is where the sample sits on a keyboard, and playing it as an
+    // F#2 is a bass note under the melody, which is what it used to be.
+    const result = arrangeScore(parseMidi(bandFixture()), {
+      console: "md",
+      // Pinned, because the tournament is free to pick the candidate that spends
+      // every channel on pitched material and drops the kit — which is a fine
+      // answer and not the one under test.
+      strategy: "full-band",
+      reserve: ["psg-noise"],
+    });
+    const carrying = result.plan.assignments.find((assignment) =>
+      assignment.parts.some((part) => part.role === "percussion"),
+    );
+    expect(carrying?.channel.kind).toBe("fm");
+
+    // What the chip receives for that voice. A frequency is `$A4` (block and the
+    // top three bits of the F-number) and then `$A0`, on the bus half the voice
+    // lives on — and the register is whatever the address port last latched, so
+    // the walk has to follow it exactly as the driver does.
+    const half = (carrying as { channelIndex: number }).channelIndex < 3 ? 0 : 1;
+    const within = (carrying as { channelIndex: number }).channelIndex % 3;
+    const blocks = new Set<number>();
+    let latched = -1;
+    let pending = -1;
+    for (const tick of result.script.ticks) {
+      for (const write of tick.writes) {
+        if ((write.chip ?? 0) !== 0) continue;
+        if ((write.reg >> 1) % 2 !== half) continue;
+        if ((write.reg & 1) === 0) {
+          latched = write.value;
+          continue;
+        }
+        if (latched === 0xa4 + within) pending = (write.value >> 3) & 0x07;
+        else if (latched === 0xa0 + within && pending >= 0) blocks.add(pending);
+      }
+    }
+    // Three classes at three heights: a kick low, a snare in the middle and a hat
+    // up where a short bright patch reads as a tick. Blocks are octaves, so the
+    // spread is the assertion — the note numbers would have put all three inside
+    // one.
+    expect(blocks.size).toBeGreaterThanOrEqual(3);
+    expect(Math.max(...blocks) - Math.min(...blocks)).toBeGreaterThanOrEqual(3);
+  });
+
   it("keeps the melody when channels run out, and counts what it dropped", () => {
     // One melodic channel for three melodic parts: something has to go, and the
     // one thing that must not is the tune.

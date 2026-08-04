@@ -73,6 +73,8 @@ import {
   nesChannelOf,
   pceChannelTag,
   psgChannelTag,
+  psgShadowSlot,
+  PSG_STEREO_REG,
   sdspChannelTag,
   type ChannelTag,
   type ChipScript,
@@ -194,6 +196,19 @@ export interface Target {
    * track.
    */
   ratio: number;
+  /**
+   * A **fresh** namer: which *register* a write addresses, `null` for none.
+   *
+   * Sibling of {@link Target.tag} and a factory for the same reason. Everywhere
+   * but the SN76489 a register is named by its own number, so the default is the
+   * number; that chip has one write port and puts the register select in the byte
+   * — and only in some bytes — so naming one there means carrying its latch.
+   *
+   * It is what lets "the channel came back holding the music's own registers" be
+   * one assertion rather than one per console: reduce both write streams to a
+   * last-value-per-register map and compare.
+   */
+  register?(): (write: Write) => string | null;
 }
 
 /** What every driver agrees to hand back, which is all this file uses. */
@@ -394,6 +409,7 @@ const ALL: readonly Target[] = [
     // byte that carries more than one of them. The Game Gear is the same chip
     // with a stereo latch bolted beside it, which is where the merge comes back —
     // its own case is below, rather than a fourth pass over the whole battery.
+    register: psgRegister,
     mergeReg: null,
     mergeHelper: "stereo-merge",
     ratio: 0.5,
@@ -531,6 +547,7 @@ const ALL: readonly Target[] = [
     // Gear's stereo latch is the one place this chip grows a shared register, and
     // it is not on this console — the panning here lives in the FM half, which
     // `demake build` does not emit.
+    register: mdRegister,
     mergeReg: null,
     mergeHelper: "stereo-merge",
     ratio: 0.5,
@@ -751,6 +768,49 @@ export function capture(
   return groups.slice(0, ticks);
 }
 
+/** A register named by its own number, which is every chip but one. */
+function defaultRegister(): (write: Write) => string {
+  return (write) => `${write.chip ?? 0}:${write.reg}`;
+}
+
+/**
+ * The SN76489's, which has no register numbers at all.
+ *
+ * One write port, and the byte says what it is: `psgShadowSlot` reads the same
+ * two bits the driver's own recording path reads. The stereo latch is a
+ * different device and belongs to no voice. On a Mega Drive this chip is the
+ * second one, so the chip index rides along and the FM half keeps its numbers.
+ */
+/**
+ * The Mega Drive's, which is both of the above and neither.
+ *
+ * The PSG is the second chip and keeps its own answer. The FM chip has four bus
+ * *ports* rather than register numbers: an even port latches an address and an
+ * odd one writes the register that address named, so a register is only named by
+ * following the latch — and an address write is a selector rather than state, so
+ * it names nothing.
+ */
+function mdRegister(): (write: Write) => string | null {
+  const latched: [number, number] = [-1, -1];
+  const psg = psgRegister();
+  return (write) => {
+    if ((write.chip ?? 0) !== 0) return psg(write);
+    const half = (write.reg >> 1) & 1;
+    if ((write.reg & 1) === 0) {
+      latched[half] = write.value & 0xff;
+      return null;
+    }
+    return `0:fm:${latched[half]}`;
+  };
+}
+
+function psgRegister(): (write: Write) => string | null {
+  return (write) => {
+    if (write.reg === PSG_STEREO_REG) return null;
+    return `${write.chip ?? 0}:psg:${psgShadowSlot(write.value)}`;
+  };
+}
+
 export function show(writes: readonly Write[]): string {
   return writes
     .map((w) => `${w.chip ? `c${w.chip}:` : ""}$${hex(w.reg)}=$${hex(w.value)}`)
@@ -931,6 +991,77 @@ export function audioBattery(target: Target): void {
       expect(after.length, "the borrowed channel never came back").toBeGreaterThan(0);
     });
 
+    it("hands it back holding the music's own registers, not the effect's", async () => {
+      // The sharp half of the previous test. The packed music is a *delta*
+      // stream, so a register the music's own value did not change is a register
+      // the music never states again — and after an effect has borrowed the
+      // channel the chip is holding the effect's value for it. Left alone, the
+      // music's next volume step re-triggers the voice through a register whose
+      // neighbour still carries the effect's pitch, and a Game Boy pulse comes
+      // back a whole tone sharp and rings until the bar ends. So the release has
+      // to replay what the music would have been holding, and this is where that
+      // is checked: not that *something* wrote the channel, but that what the
+      // chip ends up holding is what the schedule says.
+      const { built, bound } = await build(target, WITH_EFFECT);
+      const driver = bound.driver as Driver;
+      const effect = driver.performed.effects[0] as ChipScript;
+      const track = driver.performed.tracks[0] as ChipScript;
+      const owned = channelOfEffect(target, effect);
+      const address = target.tickAddress(built, bound);
+      const press = Math.round(120 * target.ratio);
+      const ticks = Math.round(600 * target.ratio);
+      const groups = capture(target, built.bytes, address, ticks, press);
+
+      // Two walks of the same length: what the chip was left holding for the
+      // borrowed channel, and what the music's schedule says it should. Both tags
+      // and both namers run across the whole stream in order, because a latch is
+      // state that carries through one.
+      const chipTag = target.tag();
+      const chipReg = (target.register ?? defaultRegister)();
+      const musicTag = target.tag();
+      const musicReg = (target.register ?? defaultRegister)();
+      const held = new Map<string, number>();
+      const wanted = new Map<string, number>();
+      const record = (
+        into: Map<string, number>,
+        tag: ChannelTag,
+        name: (write: Write) => string | null,
+        writes: readonly Write[],
+      ): void => {
+        for (const write of writes) {
+          const channels = tag(write.reg, write.value, write.chip ?? 0);
+          const key = name(write);
+          if (key === null || (channels & owned) === 0) continue;
+          // A merged register is not state a voice holds: it is folded from two
+          // shadows, and on the Super Nintendo it is a *pulse* that starts one.
+          // The test above it is what checks a merge; this one is about the
+          // registers the release has to replay.
+          if (write.reg === target.mergeReg) continue;
+          into.set(key, write.value);
+        }
+      };
+
+      const disagreements: string[] = [];
+      for (let tick = 0; tick < ticks && tick < track.ticks.length; tick += 1) {
+        record(held, chipTag, chipReg, (groups[tick] ?? []) as Write[]);
+        record(wanted, musicTag, musicReg, (track.ticks[tick] as { writes: Write[] }).writes);
+        // While the effect is sounding the chip is *meant* to hold its values, so
+        // the window opens once it has let go. It is a few ticks long and the
+        // press lands at `press`; a generous margin keeps this from depending on
+        // exactly which tick the button was seen.
+        if (tick < press + effect.ticks.length + 4) continue;
+        for (const [key, value] of wanted) {
+          if (held.get(key) !== value && disagreements.length < 6) {
+            disagreements.push(
+              `tick ${tick}: ${key} holds ${held.get(key) ?? "nothing"}, the music wants ${value}`,
+            );
+          }
+        }
+        if (disagreements.length > 0) break;
+      }
+      expect(disagreements.join("; ")).toBe("");
+    });
+
     it.skipIf(target.mergeReg === null)(
       "leaves the music's own bits alone in the register they share",
       async () => {
@@ -1097,18 +1228,35 @@ export function audioSweep(target: Target): void {
     const BUILD_TIMEOUT = 120_000;
 
     /**
-     * And the Mega Drive is slower still, for the same reason one layer along.
+     * And the colour consoles are slower still, for the same reason one layer along.
      *
-     * A fit's cost is its pixels, and this console has the biggest screen in the
-     * set: 320x224 against a Master System's 256x192 and a Game Boy's 160x144. One
-     * backdrop through the tournament is around twenty-five seconds here — nearly
-     * all of it inside `latticeKmeans`, which is the fit doing its job rather than
-     * a redundant scan — so a two-backdrop game with objects is minutes. The
-     * number is generous rather than tight because what it guards against is a
-     * hang, and a build that got half again slower should be caught by someone
-     * reading a duration rather than by a red test with nothing to say about why.
+     * A fit's cost is its pixels, and these have the big screens: 320x224 on a
+     * Mega Drive against a Master System's 256x192 and a Game Boy's 160x144, and
+     * a Super Nintendo's 256x224 fitted into *seven* sixteen-colour sub-palettes
+     * rather than one. One backdrop through the tournament is around twenty-five
+     * seconds on a Mega Drive and thirty on a Super Nintendo — nearly all of it
+     * inside `latticeKmeans`, which is the fit doing its job rather than a
+     * redundant scan — so a two-backdrop game with objects is minutes.
+     *
+     * **The rule is at least double what the console costs on the slowest machine
+     * that runs it**, which is CI rather than a workstation: a GitHub runner is
+     * around half the speed of a developer's, so a budget with a comfortable
+     * margin here is a red test there. What these guard against is a *hang*, and
+     * a build that merely got half again slower should be caught by someone
+     * reading a duration rather than by a timeout with nothing to say about why —
+     * so a generous number is the point and not a concession. Measured on the
+     * runner, slowest fixture per console: Mega Drive 122 s, Super Nintendo 247 s,
+     * PC Engine 123 s.
+     *
+     * The PC Engine had no entry and inherited {@link BUILD_TIMEOUT}, which was
+     * written before that console existed and is a third of what its slowest
+     * fixture takes in CI.
      */
-    const TIMEOUT: Readonly<Record<string, number>> = { md: 360_000, snes: 240_000 };
+    const TIMEOUT: Readonly<Record<string, number>> = {
+      md: 360_000,
+      snes: 540_000,
+      pce: 300_000,
+    };
 
     /**
      * How much of the library each console sweeps.

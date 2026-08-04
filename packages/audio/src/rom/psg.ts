@@ -27,6 +27,8 @@
  * - SMS Power! — Game Gear stereo port ($06): https://www.smspower.org/Development/AudioPort
  */
 
+import type { RegisterWrite } from "@demake/chip";
+
 import type { ChipScript } from "../chipscript.js";
 
 import type { ChannelTag } from "./data.js";
@@ -81,6 +83,133 @@ export function psgChannelTag(): ChannelTag {
  */
 export function psgAttenuationOff(channel: number): number {
   return 0x90 | (channel << 5) | 0x0f;
+}
+
+/**
+ * The three things one channel of this chip holds, as a driver has to remember.
+ *
+ * A register-indexed copy — which is what {@link shadowPlan} builds and what
+ * every other chip in the set takes — cannot work here, because this chip has
+ * one write port and no register numbers: every byte of the packed music carries
+ * the same "register". So a channel's copy is keyed by what the *byte* is
+ * instead, which is the same encoding {@link psgChannelTag} already reads.
+ */
+export const PSG_SHADOW = {
+  /** `%1cc0dddd`: the low four bits of a tone period, or the noise control. */
+  TONE: 0,
+  /** `%0dddddd`: the high six bits of the tone period the latch selected. */
+  DATA: 1,
+  /** `%1cc1dddd`: attenuation, which is this chip's whole note-off. */
+  LEVEL: 2,
+} as const;
+
+/** How many bytes one borrowable channel's copy takes. */
+export const PSG_SHADOW_BYTES = 3;
+
+/** Which of a channel's three bytes this one is. */
+export function psgShadowSlot(value: number): number {
+  if ((value & 0x80) === 0) return PSG_SHADOW.DATA;
+  return (value & 0x10) !== 0 ? PSG_SHADOW.LEVEL : PSG_SHADOW.TONE;
+}
+
+/**
+ * Check that a data byte only ever continues a *tone* latch.
+ *
+ * {@link psgShadowSlot} classifies a byte on its own, with no latch to carry,
+ * and that is only sound while the byte after an attenuation latch is never a
+ * data byte. The binding never emits one — attenuation is four bits and fits in
+ * the latch — so this is checked rather than worked around, on
+ * {@link checkLatchDiscipline}'s terms: if it stops being true, the symptom is a
+ * borrowed channel coming back at the wrong volume, and the cause is nowhere
+ * near the driver.
+ */
+export function checkDataDiscipline(script: ChipScript): void {
+  for (let tick = 0; tick < script.ticks.length; tick += 1) {
+    let level = false;
+    for (const write of script.ticks[tick]?.writes ?? []) {
+      if (write.reg === PSG_STEREO_REG) continue;
+      if ((write.value & 0x80) !== 0) {
+        level = (write.value & 0x10) !== 0;
+        continue;
+      }
+      if (level) {
+        throw new AudioRomError(
+          "E_PSG_DATA",
+          `tick ${tick} of an audio schedule continues an attenuation latch with a data byte`,
+          "this driver classifies a packed byte on its own so it can remember what a borrowed channel was holding; this is a bug in the binding, not in the track.",
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Which of a channel's three bytes the music has ever written, per channel.
+ *
+ * The counterpart of {@link shadowPlan} for a chip that has no register numbers.
+ * A tone channel writes all three; the noise channel writes two, because its
+ * "tone" latch is the noise control and carries no data byte. Emitting only what
+ * a channel really uses is what keeps a replay from sending a data byte that
+ * would set a period nobody ever set.
+ */
+export function psgShadowPlan(
+  tracks: readonly ChipScript[],
+  stealable: number,
+): { channel: number; slots: readonly number[] }[] {
+  const owned = new Map<number, Set<number>>();
+  for (const script of tracks) {
+    const tag = psgChannelTag();
+    for (const tick of script.ticks) {
+      for (const write of tick.writes) {
+        const channels = tag(write.reg, write.value, write.chip ?? 0) & stealable;
+        if (write.reg === PSG_STEREO_REG) continue;
+        for (let bit = 1; bit <= channels; bit <<= 1) {
+          if ((channels & bit) === 0) continue;
+          let slots = owned.get(bit);
+          if (!slots) owned.set(bit, (slots = new Set()));
+          slots.add(psgShadowSlot(write.value));
+        }
+      }
+    }
+  }
+  return [...owned.keys()]
+    .sort((a, b) => a - b)
+    .map((channel) => ({
+      channel,
+      // Ascending, so the period is stated before the attenuation turns the
+      // voice back up — the same order every other chip's replay uses.
+      slots: [...(owned.get(channel) as Set<number>)].sort((a, b) => a - b),
+    }));
+}
+
+/**
+ * What each copied byte holds before the music has said anything.
+ *
+ * The chip initialisation the ROM performs at boot, read the same way the run
+ * walk reads the music — because that is what those latches really hold at that
+ * point, and the schedules have the boot prefix stripped off their first tick.
+ * On this chip it matters more than on any other: silence here is attenuation
+ * `$F`, so a copy that started at zero would replay *full volume* on a channel
+ * the music had not yet touched.
+ */
+export function psgShadowInit(
+  boot: readonly RegisterWrite[],
+  copies: readonly { channel: number; slots: readonly number[] }[],
+): number[][] {
+  const init = copies.map((copy) => copy.slots.map(() => 0));
+  const tag = psgChannelTag();
+  for (const write of boot) {
+    const channels = tag(write.reg, write.value, write.chip ?? 0);
+    if (write.reg === PSG_STEREO_REG) continue;
+    const slot = psgShadowSlot(write.value);
+    for (let index = 0; index < copies.length; index += 1) {
+      const copy = copies[index] as { channel: number; slots: readonly number[] };
+      if ((channels & copy.channel) === 0) continue;
+      const at = copy.slots.indexOf(slot);
+      if (at >= 0) (init[index] as number[])[at] = write.value & 0xff;
+    }
+  }
+  return init;
 }
 
 /**
