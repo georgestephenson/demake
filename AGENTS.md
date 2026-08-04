@@ -15,7 +15,7 @@ real emulator, compared pixel for pixel):
 | Demaker               | Docs   | State                                                                        |
 | --------------------- | ------ | ---------------------------------------------------------------------------- |
 | art (images)          | 03–06  | working, ten consoles proven on hardware                                     |
-| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on eleven consoles |
+| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on twelve consoles |
 | music (`arrange`)     | 16, 17 | MIDI → chip music, twelve consoles — and a Game Boy ROM that plays it        |
 | sound (`sfx`)         | 16, 18 | WAV → chip effects, twelve consoles — same ROM, same proof                   |
 
@@ -513,22 +513,51 @@ That is more timbre than any other eight-bit console here can hold at once, and
 the demaker is what spends it: the hardware offers six identical voices and says
 nothing about what to put in them.
 
-**And the WonderSwan Color is started: the spine under it is built.** The
-encoder (`core/src/asm/v30mz.ts`) is 16-bit x86 and the second one here with two
-oracles — hand-read encodings and a differential battery against NASM, which this
-architecture wants for the ARM encoder's reason inverted: it packs three fields
-into a mod/reg/rm byte and gives a displacement a length that depends on its
-_value_, so a register in the wrong field still decodes as an instruction.
-`@demake/wsc` is the ninth owned core, and the **value layer is proven**
-(`codegen/wsc/val.ts`, `wsc-arith.test.ts`). What makes it small is not a wide
-register file — a V30MZ is sixteen bits like the Z80 — but an ALU that reaches
-memory on both sides and a real multiplier: `add [dst],ax` / `adc [dst+2],dx` is
-a 32-bit add with no pointer and no scratch, and a 16.16 multiply is **four
-multiplies and no loop**, which no other backend here can say. What remains is
-the renderer, the rules and the emitter; doc 13 §Console rollout item 4 has the
-shape of all three, and §The WonderSwan half below has what is already decided.
+**And it builds for a WonderSwan Color.** `demake build -c wsc` produces a real
+512 KiB cartridge — V30MZ machine code written for the game, art demade into a
+bank of 4bpp tiles the boot code copies into the console's own RAM — and the
+whole example library traces identically there, in the same battery, at the same
+one frame per tick. The encoder (`core/src/asm/v30mz.ts`) is 16-bit x86 and the
+second one here with two oracles — hand-read encodings and a differential battery
+against NASM, which this architecture wants for the ARM encoder's reason
+inverted: it packs three fields into a mod/reg/rm byte and gives a displacement a
+length that depends on its _value_, so a register in the wrong field still
+decodes as an instruction. `@demake/wsc` is the ninth owned core, and the page
+plays this console too.
 
-Still to come: the rest of that backend, the remaining Tier 2/3 consoles (each =
+The value layer is small, and not because the register file is wide — a V30MZ is
+sixteen bits like the Z80. What buys it is an **ALU that reaches memory on both
+sides** and a **real multiplier**: `add [dst],ax` / `adc [dst+2],dx` is a 32-bit
+add with no pointer and no scratch, and a 16.16 multiply is four multiplies and
+no loop, which no other backend here can say.
+
+**And this is the first console where a read has to say which _segment_ it
+means.** `DS` is the machine's 64 KiB of RAM and `CS` is the cartridge's mapped
+bank, so a level's grid, a packed picture and a pooled 16.16 constant are all
+read with a one-byte override and a game's own state is read without one. That
+distinction is not a detail an emitter can leave to a convention: `val.ts` keys
+it on the reference's own type — a number is RAM and a label is cartridge — and
+before it did, every comparison against a pooled constant read a game's
+variables instead, which is a program that traces perfectly for one tick.
+
+The renderer is the easiest in the set and it is the hardware's doing. **There is
+no video memory at all**: the two screen maps, the tile bank, the object table
+and palette RAM are addresses in the same 64 KiB the variables are in, so nothing
+is uploaded through a port, the object table is not a shadow, and a cell is one
+store. **The HUD gets a plane of its own** — `SCR2` scrolls independently of
+`SCR1` and draws in front of it, so a caption's cells are written once and its
+scroll registers never again, which is the Game Boy Advance's arrangement on a
+tenth of the hardware and the second time in the set the sprite HUD is absent
+rather than reimplemented. And the **map is 32×32 against a 28×18 window**, so a
+scrolling scene paints its leading edge where nobody is looking and both wraps
+are powers of two.
+
+What this console does not have is sound: no binding, no driver, and a game that
+names music still records the request its rules made, so a build here traces
+identically to one on a machine that plays it and the only difference is that
+nobody is listening. Doc 13 §Console rollout item 4 has what closing that costs.
+
+Still to come: this console's audio, the remaining Tier 2/3 consoles (each =
 a codegen backend, a ROM harness + toolchain, and a libretro core + DAC
 calibration), the remaining framebuffer/scanline layout paths (Lynx, GBA/NDS
 bitmap modes, 2600/7800), and the rest of the Demotic runtime story (the speed
@@ -787,11 +816,15 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
                      and the smallest in the set — everything but the renderer is
                      `mos/`'s, because this console's CPU is the NES's with a
                      mapper on it
-    wsc/ctx.ts, ops.ts, val.ts            the V30MZ backend's spine: the 16.16
-                     value layer, the context, and the operand aliases. The
-                     renderer, the rules and the emitter are what remains (doc 13
-                     §Console rollout item 4); ops.ts is snes/ops.ts's file for
-                     the third CPU whose `abs` means something else again
+    wsc.ts, wsc-art.ts, wsc/              the V30MZ backend and its image path,
+                     and the one whose renderer writes no port at all: the screen
+                     maps, the tile bank, the object table and palette RAM are
+                     addresses in the console's own 64 KiB, so `emit.ts` copies
+                     rather than uploads. val.ts is where this machine's other
+                     fact lives — `source()`/`dest()` decide the *segment* a
+                     16.16 read means, because a table is in the cartridge and a
+                     variable is not; ops.ts is snes/ops.ts's file for the third
+                     CPU whose `abs` means something else again
     gba.ts, gba-art.ts, gba/              the ARM backend and its image path,
                      which is *two* machines: gba/machine.ts is the description
                      that makes a Nintendo DS a variant rather than a seventh
@@ -2181,12 +2214,11 @@ emitter's business:
 
 ### The V30MZ half
 
-`demake build -c wsc` does not exist yet: the encoder, the cartridge wrapper, a
-self-hosted core and the 16.16 value layer are built and proven
-(`wsc-arith.test.ts`), and the renderer, the rules and the emitter are what
-remains. What is here is what is already settled, so that the rest is written
-against decisions rather than against a blank page. Doc 13 §Console rollout item
-4 is the same list at more length.
+`demake build -c wsc` builds a playable cartridge, and the whole example library
+traces identically on it. This machine's habits are an addressing mode's rather
+than an arithmetic unit's — the value layer is the smallest in the set after the
+Mega Drive's — so almost everything below is about _where_ a byte is rather than
+what is done to it.
 
 - **An operand is a byte after the opcode, not part of it.** Every 8-bit CPU here
   spends an opcode per addressing form and this one spends a _mod/reg/rm_ byte,
@@ -2206,6 +2238,27 @@ against decisions rather than against a blank page. Doc 13 §Console rollout ite
   a one-byte override (`romAt`, `romAbs`) and a property is read without one. A
   block copy out of ROM loads `DS` for the length of the copy instead, with
   interrupts off, rather than relying on a prefix surviving one.
+- **And a pooled constant is a table.** `ctx.constant()` emits a 16.16 literal
+  into the code stream, so it is in the cartridge and reading it with a plain
+  data access reads a game's own variables. `val.ts` decides the segment from the
+  reference's own type — `source()` for a read, `dest()` for a write, a number is
+  RAM and a label is cartridge — rather than leaving it to each emitter to
+  remember. Before it did, every comparison against a constant compared against
+  whatever state happened to sit at that address, and a game froze on its second
+  tick with nothing about the arithmetic wrong.
+- **`mul` writes `dx`, and `dl` is a register an emitter reaches for.** The
+  product's high half goes there whether the caller wants it or not, so anything
+  held in `dx` across a multiply is gone. The cell walk was carrying a legend
+  index in `dl` across the entry-offset arithmetic, so every cell of every level
+  was recorded as tile zero — a hero standing on solid ground the grid says is
+  air, and a trace that names the tick and not the instruction. A stride that is
+  a shift and an add costs one byte more and touches nothing.
+- **The map a picture is packed into is packed by the art path, not the
+  emitter.** `wsc-art.ts` encodes it as it interns the tiles, exactly as the PC
+  Engine's does, because the tile pool is what decides a cell's number. Packing
+  it again on the way out encodes the _stream_ as a run of literal cells, which
+  the blit then unpacks into RAM verbatim: a title screen that boots as its own
+  compression format, in every colour the fit chose.
 - **There is no video memory.** The screen maps, the tile bank, the object table
   and palette RAM are addresses in the same 64 KiB the game's variables are in,
   so nothing is ever uploaded and the object table is **not a shadow** — the
@@ -2544,17 +2597,22 @@ not per console.
 - The Demotic ROM conformance suite (`packages/demotic/test/rom.test.ts`) builds
   a cartridge from each fixture game **for every console with a backend** — both
   Game Boys, the Mega Duck, the NES, both Sega 8-bits, the Super Nintendo, the
-  Mega Drive, the Game Boy Advance and the PC Engine — and runs it in the matching self-hosted core, asserting the trace
+  Mega Drive, the Game Boy Advance, the Nintendo DS, the PC Engine and the
+  WonderSwan Color — and runs it in the matching self-hosted core, asserting the
+  trace
   matches the reference interpreter tick for tick. No toolchain, no emulator
-  install, so it runs everywhere `pnpm test` does. Running the same battery on all
-  eight is what makes `Backend` a contract rather than a resemblance, and each
+  install, so it runs everywhere `pnpm test` does. Running the same battery on
+  every one of them is what makes `Backend` a contract rather than a resemblance,
+  and each
   console proves something different: the colour build that the attribute work
   never touched simulation state, the NES, the Master System and the Mega Drive
   that a second, third and fifth CPU's arithmetic and ordering agree to the bit,
   the Mega Duck that a machine description never leaked into the code the tick
-  runs, and the Super Nintendo that a value layer whose accumulator is _sixteen_
+  runs, the Super Nintendo that a value layer whose accumulator is _sixteen_
   bits agrees too — every routine there is a different program from the one the
-  8-bit consoles share. It also checks the Duck's cartridge _fails_ on a Game
+  8-bit consoles share — and the WonderSwan Color that an emitter which has to
+  name a _segment_ on every read still reads the same values, which is the one
+  question no console before it could ask. It also checks the Duck's cartridge _fails_ on a Game
   Boy — identical traces are also what a register map that had quietly become the
   identity would produce.
 - `packages/demotic/test/audio-pce.test.ts` is the second console to run
@@ -2620,10 +2678,10 @@ not per console.
   backdrop word for word. Between them they caught a packed cell read as a word
   from an odd address and an unwidened column index in the grid lookup, neither
   of which a trace can see.
-- `packages/demotic/test/wsc-arith.test.ts` is the WonderSwan's, and for now it is
-  the _only_ thing that runs V30MZ code the code generator wrote — so it is where
-  a new value-layer emitter is proven and the file to run when touching
-  `codegen/wsc/val.ts`. Two of its vectors are aimed at answers this machine gives
+- `packages/demotic/test/wsc-arith.test.ts` and `wsc-rom.test.ts` are the
+  WonderSwan's pair. The first is where a new value-layer emitter is proven and
+  the file to run when touching `codegen/wsc/val.ts`; two of its vectors are aimed
+  at answers this machine gives
   that no predecessor does. The multiply is four multiplies and no loop, which is
   only right if the sign reaches all forty-eight bits of the product before its
   middle thirty-two are taken — `THIRD × -THIRD` is where truncation and floor
@@ -2631,7 +2689,17 @@ not per console.
   file. And the divide has _three_ paths rather than two, so the vectors name a
   whole number of cells, a divisor below one, and the fractional divisor of a cell
   or more that reaches the bit loop — which nothing in the example library does,
-  making this the only place that path runs at all.
+  making this the only place that path runs at all. The second checks the things
+  a trace cannot see, and every case is one this hardware alone can get wrong:
+  that the tile bank and palette RAM arrived in the console's _own_ memory
+  (nothing is uploaded here, so a short copy is a perfect game on a blank
+  screen), that every visible cell of the world plane matches the level's own
+  grid before and after the camera has travelled, that a picture went in at the
+  hardware's thirty-two-cell row rather than the window's twenty-eight (the Super
+  Nintendo's stride hazard, two consoles along), that both reserved palettes
+  survived the fit, and that the HUD plane's scroll registers stay at zero for
+  hundreds of frames while the world plane's move — which is the claim the whole
+  HUD-layer design rests on and the second time in the set it can be made at all.
   `packages/wsc/test/{cpu,display}.test.ts` sit under it: the CPU is driven by
   `core`'s own V30MZ assembler, so an encoder and a decoder that agreed with each
   other and not with the hardware would still fail against NASM, which

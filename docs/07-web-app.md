@@ -309,9 +309,12 @@ APU. So the sound button lives in the cartridge view, the preview is silent, and
 in *Preview* there is no sound control at all — which is the honest way to say
 that a simulator has nothing to play.
 
-Every console with a backend has a driver now, so the button is never withheld:
-the only thing that can take it away is a browser that will not give the page an
-`AudioContext`.
+Every console with a backend has a driver but one, so the button is offered
+almost everywhere: a browser that will not give the page an `AudioContext` takes
+it away, and so does the WonderSwan Color, whose hardware has no chip model, no
+binding and no driver yet (doc 13 §Console rollout item 4). Its player therefore
+hands the pane an *empty* chip list rather than a silent chip, which is what
+makes the pane withhold the control instead of offering one that does nothing.
 
 The ROM pane plays the cartridge's own sound, and every sample of it comes out of
 `@demake/chip`'s model of that console's chip — the Game Boy's APU, the NES's

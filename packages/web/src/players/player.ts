@@ -1,10 +1,9 @@
 /**
  * What the ROM pane needs of a console, and nothing about which console it is.
  *
- * Seven cores live behind this — a Game Boy, an NES, a Sega 8-bit, a Super
- * Nintendo, a Mega Drive, a Game Boy Advance and a PC Engine — and each is tens
- * of kilobytes of processor and
- * video hardware. The pane plays *one* of them, so they are reached through
+ * Eight cores live behind this — a Game Boy, an NES, a Sega 8-bit, a Super
+ * Nintendo, a Mega Drive, a Game Boy Advance, a PC Engine and a WonderSwan
+ * Color — and each is tens of kilobytes of processor and video hardware. The pane plays *one* of them, so they are reached through
  * `bootPlayer` and loaded on demand (see `index.ts`); this module is the part
  * that is safe to import eagerly, because it holds a type and a table of
  * numbers.
@@ -39,8 +38,8 @@ export interface Player {
  * Each console's framebuffer, in pixels.
  *
  * Here rather than read off the cores, because the pane has to size its canvas
- * *before* it knows whether the core has finished loading — and importing six
- * modules to learn twelve numbers is the thing this directory exists to stop.
+ * *before* it knows whether the core has finished loading — and importing eight
+ * modules to learn twenty numbers is the thing this directory exists to stop.
  * `players.test.ts` pins every entry against the core's own constant, so a
  * number that drifted would fail rather than crop a picture.
  *
@@ -59,6 +58,7 @@ export const SCREENS: Readonly<Record<string, { width: number; height: number }>
   gba: { width: 240, height: 160 },
   nds: { width: 256, height: 192 },
   pce: { width: 256, height: 224 },
+  wsc: { width: 224, height: 144 },
 };
 
 /** The framebuffer a console draws into, by family and — where it differs — id. */

@@ -41,7 +41,7 @@ columns are [doc 03](03-console-matrix.md); the plan for the empty cells is
 | Neo Geo Pocket Color | `ngpc` | `ngpc` | yes | `bin` `asm` `c` | — | — | — | — | — |
 | PC Engine | `pce` | `pce` | yes | `bin` `asm` `c` | WLA-DX | beetle-pce-fast | `pce` | yes | 120 Hz |
 | WonderSwan | `ws` | `ws` | yes | `bin` `asm` `c` | — | — | — | — | — |
-| WonderSwan Color | `wsc` | `wsc` | yes | `bin` `asm` `c` | NASM | beetle-wswan | — | — | — |
+| WonderSwan Color | `wsc` | `wsc` | yes | `bin` `asm` `c` | NASM | beetle-wswan | `wsc` | — | — |
 
 ## Tier 3
 
@@ -58,5 +58,5 @@ columns are [doc 03](03-console-matrix.md); the plan for the empty cells is
 
 - **21** consoles have a spec, so all 21 do art.
 - **12** build a display ROM; **12** of those are proven pixel-perfect in an emulator.
-- **11** compile a Demotic game.
+- **12** compile a Demotic game.
 - **12** demake music and sound effects; **11** play it from inside a game.

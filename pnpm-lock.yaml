@@ -242,6 +242,9 @@ importers:
       '@demake/snes':
         specifier: workspace:*
         version: link:../snes
+      '@demake/wsc':
+        specifier: workspace:*
+        version: link:../wsc
       preact:
         specifier: ^10.29.7
         version: 10.29.7

@@ -48,7 +48,6 @@ import { glyphTile, OBJECT_TILE, patternTile } from "../../rom/graphics.js";
 import { isMutable } from "../analyze.js";
 import { emitTickSteps, type TickSteps } from "../backend.js";
 import { PROPS, TILE_CONTACT_MAX, W } from "../layout.js";
-import { packCellPairs } from "../pack.js";
 import {
   artKey,
   emitInstanceDefaults,
@@ -127,7 +126,7 @@ const PORT = {
  * because port `$04` addresses it in those units. The two screen maps are this
  * plan's to place, in units of 2 KiB, and they are where {@link WSC_MEMORY} says.
  */
-const RAM = {
+export const RAM = {
   /** The world: the plane the camera scrolls. */
   SCR1: 0x2000,
   /** The HUD: the plane in front of it, whose scroll never moves. */
@@ -143,8 +142,8 @@ const RAM = {
 } as const;
 
 /** Cells each screen map holds, on both axes. */
-const MAP_W = 32;
-const MAP_H = 32;
+export const MAP_W = 32;
+export const MAP_H = 32;
 
 /** Tiles the bank holds. A map entry has nine bits of tile; an object has nine too. */
 export const BANK_TILES = 512;
@@ -271,8 +270,13 @@ export function emitProgram(ctx: WscCtx, options: WscEmitOptions = {}): void {
   for (const scene of scenes) {
     const art = options.backdrops?.get(scene.def.name);
     if (art) {
+      // Already packed: `wsc-art.ts` encodes the map as it interns the tiles,
+      // exactly as the PC Engine's does, because the pool is what decides a
+      // cell's number. Packing it a second time here encodes the *stream* as a
+      // run of literal cells, which is a title screen that boots as its own
+      // compression format.
       asm.label(backdropLabel(scene));
-      asm.bytes(packCells(art.map));
+      asm.bytes(art.map);
     }
     const palette = options.scenePalettes?.get(scene.def.name);
     if (palette) {
@@ -1118,15 +1122,6 @@ function emitBlankPlane(ctx: WscCtx, base: number): void {
   asm.movi("ax", 0);
   asm.rep().stosw();
 }
-
-/**
- * A packed map: literals and runs of whole *cells*.
- *
- * The encoder is `codegen/pack.ts`'s, because three consoles want it — a Sega
- * name-table entry, a PC Engine BAT entry and a WonderSwan screen entry are all
- * two bytes a cell.
- */
-export const packCells = packCellPairs;
 
 /** `si` = a packed map, `di` = where it goes; unpack it into RAM. */
 function needBlitBackdrop(ctx: WscCtx): Ref {

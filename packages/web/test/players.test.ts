@@ -2,10 +2,10 @@
  * The screen table is numbers, and this is what stops them drifting.
  *
  * `players/player.ts` carries each console's framebuffer size so the ROM pane
- * can size its canvas before the core has finished loading — importing seven
- * modules to learn fourteen numbers is exactly what `players/` exists to avoid.
+ * can size its canvas before the core has finished loading — importing eight
+ * modules to learn sixteen numbers is exactly what `players/` exists to avoid.
  * That is only safe while the numbers are the cores' own, and nothing in the type
- * system checks it. This test imports all seven, which a test may and the page
+ * system checks it. This test imports all eight, which a test may and the page
  * may not.
  */
 
@@ -19,6 +19,7 @@ import { SCREEN_HEIGHT as NES_H, SCREEN_WIDTH as NES_W } from "@demake/nes";
 import { SCREEN_HEIGHT as PCE_H, SCREEN_WIDTH as PCE_W } from "@demake/pce";
 import { FRAME_HEIGHT as SMS_H, FRAME_WIDTH as SMS_W, GG_HEIGHT, GG_WIDTH } from "@demake/sms";
 import { SCREEN_HEIGHT as SNES_H, SCREEN_WIDTH as SNES_W } from "@demake/snes";
+import { SCREEN_HEIGHT as WSC_H, SCREEN_WIDTH as WSC_W } from "@demake/wsc";
 
 import { screenFor, SCREENS } from "../src/players/player.js";
 
@@ -33,6 +34,7 @@ describe("the ROM pane's screen table", () => {
     expect(SCREENS["gba"]).toEqual({ width: GBA_W, height: GBA_H });
     expect(SCREENS["nds"]).toEqual({ width: NDS_W, height: NDS_H });
     expect(SCREENS["pce"]).toEqual({ width: PCE_W, height: PCE_H });
+    expect(SCREENS["wsc"]).toEqual({ width: WSC_W, height: WSC_H });
   });
 
   // A Game Gear renders the frame a Master System does and shows the middle of

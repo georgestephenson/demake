@@ -129,7 +129,10 @@ them now compiles games as well as pictures:
   **NASM** (the V30MZ is an 8086-compatible core, so a stock x86 assembler is
   the native tool, not an approximation) with the cartridge footer and its
   checksum packed by demake itself, and a pixel-perfect E2E against
-  beetle-wswan.
+  beetle-wswan. It is the second Tier 2 console with a **Demotic backend**:
+  `demake build -c wsc` produces a real cartridge and the whole example library
+  traces identically on it in `@demake/wsc` (§Console rollout, item 4). Sound is
+  the one gap it has left.
 
 Both march the shared image battery. The Game Gear shipped with the SMS family
 in Phase 2 and SG-1000 with the TMS9918 path.
@@ -300,11 +303,14 @@ the backend today, and either is a reason to revisit rather than to work around.
    with an SN76489 driver behind them. The encoder has no console left to buy:
    the only other Z80 machine in the matrix is the SG-1000, which is out of scope
    for games ([§above](#the-sg-1000-is-out-of-scope-for-games)).
-4. **WonderSwan Color** — *started; the spine is built* — then the **tiled-mono
-   fitter**, then **WonderSwan**. The mono machine's blocker is the art path, not
-   the CPU, and the fitter is an engine increment that stands on its own.
+4. **WonderSwan Color** — *done for games; the sound is what remains* — then the
+   **tiled-mono fitter**, then **WonderSwan**. The mono machine's blocker is the
+   art path, not the CPU, and the fitter is an engine increment that stands on
+   its own.
 
-   Three of the four things a console needs are done. **The encoder**
+   `demake build -c wsc` produces a playable 512 KiB cartridge and the whole
+   example library traces identically on it, in the same battery every other
+   console runs. **The encoder**
    (`core/src/asm/v30mz.ts`) is 16-bit x86 and the second one here with two
    oracles: hand-read encodings, as every encoder gets, *and* a differential
    battery against NASM, which the display-ROM harness already provisions. It
@@ -342,8 +348,9 @@ the backend today, and either is a reason to revisit rather than to work around.
    nothing to draw. And the **modulo a draw needs is one instruction**, so
    `Mod16` is not a routine on this console at all.
 
-   What remains is the renderer, the rules and the emitter — and the shape of all
-   three is already decided by the hardware:
+   The renderer, the rules and the emitter are built (`codegen/wsc/emit.ts`,
+   `rules.ts`, `tiles.ts`, `wsc-art.ts`), and five things about them are this
+   hardware's:
 
    - **The HUD gets a plane of its own**, which only the Game Boy Advance has so
      far. `SCR2` scrolls independently of `SCR1` and draws in front of it, and
@@ -367,6 +374,24 @@ the backend today, and either is a reason to revisit rather than to work around.
      interrupt controller vectors through the processor's own table, and a game
      whose main loop waits either way gains nothing by it. That changes the day
      this console gets an audio driver, which it has not.
+
+   What the backend cost that no predecessor did was **saying which segment a
+   read means**. `DS` is the console's RAM and `CS` is its cartridge, so a level's
+   grid, a packed picture and a pooled 16.16 constant all need a one-byte
+   override and a game's own property does not — and `val.ts` decides it from the
+   reference's own type rather than leaving each emitter to remember, because the
+   version that did not froze every game on its second tick with nothing about
+   the arithmetic wrong.
+
+   **What is still to come here is the sound**, and it is the whole of it: no
+   chip model, no binding, no driver. This console's audio hardware is four
+   wavetable channels with a sweep and a noise mode, an output stage the chip
+   mixes itself, and — unlike every console in the set with a driver — a *DMA*
+   channel that plays samples out of the same 64 KiB everything else lives in.
+   Closing it is a `@demake/chip` model, a `binding/wsc.ts`, a generated V30MZ
+   driver in `audio/src/rom/`, and the same Level A proof
+   (`_audio-battery.ts`) every other machine's driver answers to. A game that
+   names music builds and traces today; it simply plays nothing.
 
    **And one thing it found was not this console's** — *closed*. The display runs
    at **75.47 Hz**, so a tick that is a frame happens seventy-five times a second,
