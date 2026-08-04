@@ -321,8 +321,8 @@ the backend today, and either is a reason to revisit rather than to work around.
    smaller to choose, the way a Game Boy ROM-only cartridge cannot move either.
    And **`@demake/wsc`** is the ninth owned core.
 
-   The **value layer** is built and proven (`codegen/wsc/val.ts`,
-   `wsc-arith.test.ts`), and it is small for a reason neither 16-bit console
+   The **value and expression layers** are built and proven (`codegen/wsc/val.ts`,
+   `expr.ts`, `wsc-arith.test.ts`), and the value layer is small for a reason neither 16-bit console
    before it has. A V30MZ is sixteen bits wide, so an add is still two
    instructions — but its ALU reaches memory on *both* sides, so a 32-bit add is
    four instructions with no pointer and no scratch, and it has a real multiplier
@@ -332,6 +332,15 @@ the backend today, and either is a reason to revisit rather than to work around.
    of a cell or more, which nothing in the example library reaches, and it is
    thirty-two iterations rather than forty-eight because such a divisor is at
    least `1.0` and the dividend's top sixteen bits cannot produce a quotient bit.
+
+   The multiplier reaches the expression layer too, and in two places no other
+   backend has. The **generator advances with no loop**: `rng * 1664525 +
+   1013904223` is three `mul` instructions and two adds, where every other
+   backend here shifts and adds over thirty-two bits — bit-for-bit `rng.ts`
+   either way, which is what `wsc-arith.test.ts` checks against the definition
+   and against the rule that a draw advances the state even when the bounds leave
+   nothing to draw. And the **modulo a draw needs is one instruction**, so
+   `Mod16` is not a routine on this console at all.
 
    What remains is the renderer, the rules and the emitter — and the shape of all
    three is already decided by the hardware:

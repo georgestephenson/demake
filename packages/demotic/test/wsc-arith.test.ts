@@ -32,6 +32,7 @@ import { describe, expect, it } from "vitest";
 import { analyze } from "../src/codegen/analyze.js";
 import { planLayout, WSC_MEMORY } from "../src/codegen/layout.js";
 import { WscCtx } from "../src/codegen/wsc/ctx.js";
+import { emitExpr, UNBOUND } from "../src/codegen/wsc/expr.js";
 import {
   abs32,
   add32,
@@ -53,17 +54,42 @@ import {
 import { compile } from "../src/compile.js";
 import { clampFixed, div, mul, ONE } from "../src/fixed.js";
 import { getProfile } from "../src/profiles.js";
+import { draw } from "../src/rng.js";
+
+/** A program with nothing in it: all these tests need from one is a layout. */
+const PROGRAM = compile("start only\n\nscene only\n", { profile: getProfile("wsc") });
 
 /**
- * A program with nothing in it: all these tests need from one is a layout.
+ * A program whose one rule assigns `source`, so a test can emit that expression.
  *
- * Compiled for a console that is not this one, because this one has no profile
- * yet and the reason is written down in `profiles.ts` — its 75 Hz tick rate is
- * what the example library's `.test.dmt` scripts turn out not to survive. None
- * of it reaches here: a layout is decided by {@link WSC_MEMORY} and the program's
- * own shape, and the WonderSwan context reads nothing off a profile at all.
+ * Going through a compiled rule rather than hand-building an AST is what makes
+ * these tests exercise the path a game takes: constants fold where the compiler
+ * folds them, and `random` pulls the generator in the way a rule pulls it —
+ * which is also the only way, since a helper reaches the output by being asked
+ * for and never by being named.
  */
-const PROGRAM = compile("start only\n\nscene only\n", { profile: getProfile("sms") });
+function programFor(source: string) {
+  return compile(
+    [
+      "start only",
+      "",
+      "scene only",
+      "",
+      "create number n in only (value 0, visible 0)",
+      "",
+      `when always then n.value as ${source}`,
+      "",
+    ].join("\n"),
+    { profile: getProfile("wsc") },
+  );
+}
+
+/** The expression that program's rule assigns. */
+function expressionOf(program: ReturnType<typeof programFor>) {
+  const value = program.rules[0]?.assignments[0]?.value;
+  if (!value) throw new Error("the fixture program has no assignment to read");
+  return value;
+}
 
 /** A third of a cell, as a whole 16.16 value — `ONE / 3` is not one. */
 const THIRD = Math.floor(ONE / 3);
@@ -86,10 +112,10 @@ function read32(machine: Wsc, address: number): number {
 }
 
 /** Assemble `body` into a cartridge, run it to its spin loop, hand it back. */
-function run(body: (ctx: WscCtx) => void): Wsc {
-  const analysis = analyze(PROGRAM);
-  const layout = planLayout(PROGRAM, analysis, WSC_MEMORY);
-  const ctx = new WscCtx(PROGRAM, analysis, layout, getProfile("sms"), 0);
+function run(body: (ctx: WscCtx) => void, program = PROGRAM): Wsc {
+  const analysis = analyze(program);
+  const layout = planLayout(program, analysis, WSC_MEMORY);
+  const ctx = new WscCtx(program, analysis, layout, getProfile("wsc"), 0);
   const { asm } = ctx;
 
   // The processor resets into the far jump at the top of the bank and arrives
@@ -340,13 +366,89 @@ describe("the WonderSwan value layer", () => {
     // that never divides ships no divider, because nothing ever asked for one.
     const analysis = analyze(PROGRAM);
     const layout = planLayout(PROGRAM, analysis, WSC_MEMORY);
-    const plain = new WscCtx(PROGRAM, analysis, layout, getProfile("sms"), 0);
+    const plain = new WscCtx(PROGRAM, analysis, layout, getProfile("wsc"), 0);
     add32(plain, A, B);
     expect(plain.helperNames()).toEqual([]);
 
-    const dividing = new WscCtx(PROGRAM, analysis, layout, getProfile("sms"), 0);
+    const dividing = new WscCtx(PROGRAM, analysis, layout, getProfile("wsc"), 0);
     div32(dividing, A, B);
     expect(dividing.helperNames()).toContain("Div32");
+  });
+
+  it("draws exactly what the language's generator draws", () => {
+    // `rng.ts` is the definition and every backend has to reproduce it bit for
+    // bit — a generator that disagreed would make two implementations of the
+    // same game incomparable, which is the whole reason it is in the language.
+    // Three multiplies and no loop here, so this is where that would show.
+    const SEED = 1;
+    for (const [source, low, high] of [
+      ["random(0, 10)", 0, 10 * ONE],
+      ["random(3, 3)", 3 * ONE, 3 * ONE],
+      // Crossed bounds: the low one is the answer, and the state still moves.
+      ["random(5, 2)", 5 * ONE, 2 * ONE],
+      ["random(0 - 4, 4)", -4 * ONE, 4 * ONE],
+      // Floored to whole cells before anything else happens.
+      ["random(1.5, 6.25)", ONE + ONE / 2, 6 * ONE + ONE / 4],
+      ["random(0, 1000)", 0, 1000 * ONE],
+    ] as const) {
+      const program = programFor(source);
+      const expr = expressionOf(program);
+      const layout = planLayout(program, analyze(program), WSC_MEMORY);
+      const rng = layout.rng as number;
+      const machine = run((ctx) => {
+        set32(ctx, rng, SEED);
+        emitExpr(ctx, expr, UNBOUND, OUT);
+        copy32(ctx, OUT + 4, rng);
+      }, program);
+      const want = draw(SEED, low, high);
+      expect(`${source} = ${read32(machine, OUT)}`).toBe(`${source} = ${want.value}`);
+      expect(read32(machine, OUT + 4) >>> 0).toBe(want.state);
+    }
+  });
+
+  it("advances the generator even when the bounds leave nothing to draw", () => {
+    // The rule `rng.ts` exists to state: *when* a draw happens is behaviour, so
+    // the degenerate case still moves the state. Five backends got this wrong
+    // before it was written down in one place.
+    const program = programFor("random(2, 2)");
+    const expr = expressionOf(program);
+    const layout = planLayout(program, analyze(program), WSC_MEMORY);
+    const rng = layout.rng as number;
+    const machine = run((ctx) => {
+      set32(ctx, rng, 7);
+      emitExpr(ctx, expr, UNBOUND, OUT);
+      copy32(ctx, OUT + 4, rng);
+    }, program);
+    expect(read32(machine, OUT + 4) >>> 0).toBe(draw(7, 2 * ONE, 2 * ONE).state);
+  });
+
+  it("compiles the builtins the expression layer offers", () => {
+    // `abs`, `min`, `max` and `clamp` are the whole of the language's arithmetic
+    // vocabulary beyond the operators, and each is a branch this backend picks
+    // rather than an instruction the hardware has.
+    const cases: { source: string; want: number }[] = [
+      { source: "abs(0 - 3)", want: 3 * ONE },
+      { source: "min(2, 5)", want: 2 * ONE },
+      { source: "min(5, 2)", want: 2 * ONE },
+      { source: "max(0 - 2, 0 - 5)", want: -2 * ONE },
+      { source: "clamp(9, 1, 4)", want: 4 * ONE },
+      { source: "clamp(0 - 9, 1, 4)", want: ONE },
+      { source: "clamp(3, 1, 4)", want: 3 * ONE },
+      { source: "2 * 3", want: 6 * ONE },
+      { source: "7 / 2", want: Math.floor(3.5 * ONE) },
+      { source: "1 < 2", want: ONE },
+      { source: "2 < 1", want: 0 },
+      { source: "3 = 3", want: ONE },
+      { source: "3 != 3", want: 0 },
+    ];
+    for (const { source, want } of cases) {
+      const program = programFor(source);
+      const expr = expressionOf(program);
+      const machine = run((ctx) => {
+        emitExpr(ctx, expr, UNBOUND, OUT);
+      }, program);
+      expect(`${source} = ${read32(machine, OUT)}`).toBe(`${source} = ${want}`);
+    }
   });
 
   it("assembles the same bytes every time", () => {
@@ -355,7 +457,7 @@ describe("the WonderSwan value layer", () => {
     const build = (): Uint8Array => {
       const analysis = analyze(PROGRAM);
       const layout = planLayout(PROGRAM, analysis, WSC_MEMORY);
-      const ctx = new WscCtx(PROGRAM, analysis, layout, getProfile("sms"), 0);
+      const ctx = new WscCtx(PROGRAM, analysis, layout, getProfile("wsc"), 0);
       mul32(ctx, A, B);
       div32(ctx, A, B);
       ctx.finish();
