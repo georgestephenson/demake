@@ -20,6 +20,7 @@ import { nesBackend } from "../src/codegen/nes.js";
 import { pceBackend } from "../src/codegen/pce.js";
 import { smsBackend } from "../src/codegen/sms.js";
 import { snesBackend } from "../src/codegen/snes.js";
+import { wscBackend } from "../src/codegen/wsc.js";
 import {
   familyFor,
   hasRuntime,
@@ -39,6 +40,7 @@ const LOADED: readonly AnyBackend[] = [
   anyBackend(mdBackend),
   anyBackend(gbaBackend),
   anyBackend(pceBackend),
+  anyBackend(wscBackend),
 ];
 
 /** The smallest program that compiles, so a profile is all that varies. */
@@ -82,18 +84,12 @@ describe("the backend registry", () => {
     }
   });
 
-  // The case this used to stand in for is real now. Every profile had a backend
-  // until the WonderSwan Color's landed ahead of its emitter — which is what the
-  // picker greys a console out on, and what a build has to refuse by name rather
-  // than by producing something. A console with no profile at all takes the same
-  // path, so both are checked.
+  // Every profile has a backend today, which is the happy answer and not a
+  // reason to leave this untested: the picker greys a console out on it, and the
+  // next console to gain a `ConsoleSpec` before an emitter will be the first to
+  // take this path. So the profile is stood in for rather than found.
   it("says so for a console nothing builds", () => {
-    expect(profiles.some((profile) => !runtimeConsoles.includes(profile.id))).toBe(true);
-    expect(familyFor("wsc")).toBeUndefined();
-    expect(hasRuntime("wsc")).toBe(false);
-    expect(unsupportedFor(program("wsc"))).toEqual(["a runtime for WonderSwan Color"]);
-    expect(romExtension(program("wsc"))).toBe("bin");
-
+    expect(profiles.every((profile) => runtimeConsoles.includes(profile.id))).toBe(true);
     expect(familyFor("lynx")).toBeUndefined();
     expect(hasRuntime("lynx")).toBe(false);
     const compiled = program("gb");

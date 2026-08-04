@@ -50,7 +50,7 @@
 import { type Ref } from "@demake/core";
 
 import type { WscCtx } from "./ctx.js";
-import { abs, at } from "./ops.js";
+import { abs, at, romAbs, type Mem } from "./ops.js";
 
 /** 1.0 in 16.16. */
 export const ONE = 0x10000;
@@ -72,6 +72,36 @@ export function mem(address: Ref, offset = 0): Ref {
   return { label: address.label, addend: address.addend + offset };
 }
 
+/**
+ * A 16.16 operand to *read*, in whichever segment it lives in.
+ *
+ * **A label is in the cartridge and a number is in RAM**, and on this console
+ * that is the difference between a `cs:` override and no prefix. It is not a
+ * convention anybody has to remember: every address the allocator hands out is a
+ * number and every pooled constant is a label, so the type of the reference
+ * already says which it is. Reading a constant without the override reads a
+ * game's own variables instead — which produces a game that boots, runs, and is
+ * wrong from its second tick.
+ */
+export function source(address: Ref, offset = 0): Mem {
+  const target = mem(address, offset);
+  return typeof target === "number" ? abs(target) : romAbs(target);
+}
+
+/**
+ * The same operand to *write*, which can only ever be RAM.
+ *
+ * A label here would be a store into the cartridge — silently nothing on
+ * hardware, and a wrong answer in a core that lets it through. It raises.
+ */
+export function dest(address: Ref, offset = 0): Mem {
+  const target = mem(address, offset);
+  if (typeof target !== "number") {
+    throw new Error("a 16.16 write needs a RAM address; this is a cartridge label");
+  }
+  return abs(target);
+}
+
 /** The low and high sixteen bits of a 32-bit literal. */
 function halves(value: number): [number, number] {
   return [value & 0xffff, (value >>> 16) & 0xffff];
@@ -82,18 +112,18 @@ export function copy32(ctx: WscCtx, dst: Ref, src: Ref): void {
   const { asm } = ctx;
   // Through `ax`, which has an opcode of its own for a direct address: three
   // bytes a move rather than four.
-  asm.movm("ax", abs(mem(src, 0)));
-  asm.movmr(abs(mem(dst, 0)), "ax");
-  asm.movm("ax", abs(mem(src, 2)));
-  asm.movmr(abs(mem(dst, 2)), "ax");
+  asm.movm("ax", source(src, 0));
+  asm.movmr(dest(dst, 0), "ax");
+  asm.movm("ax", source(src, 2));
+  asm.movmr(dest(dst, 2), "ax");
 }
 
 /** `dst = value`. */
 export function set32(ctx: WscCtx, dst: Ref, value: number): void {
   const { asm } = ctx;
   const [low, high] = halves(value);
-  asm.movmi(abs(mem(dst, 0)), low);
-  asm.movmi(abs(mem(dst, 2)), high);
+  asm.movmi(dest(dst, 0), low);
+  asm.movmi(dest(dst, 2), high);
 }
 
 /**
@@ -105,19 +135,19 @@ export function set32(ctx: WscCtx, dst: Ref, value: number): void {
  */
 export function add32(ctx: WscCtx, dst: Ref, src: Ref): void {
   const { asm } = ctx;
-  asm.movm("ax", abs(mem(src, 0)));
-  asm.movm("dx", abs(mem(src, 2)));
-  asm.aluMR("add", abs(mem(dst, 0)), "ax");
-  asm.aluMR("adc", abs(mem(dst, 2)), "dx");
+  asm.movm("ax", source(src, 0));
+  asm.movm("dx", source(src, 2));
+  asm.aluMR("add", dest(dst, 0), "ax");
+  asm.aluMR("adc", dest(dst, 2), "dx");
 }
 
 /** `dst -= src`. */
 export function sub32(ctx: WscCtx, dst: Ref, src: Ref): void {
   const { asm } = ctx;
-  asm.movm("ax", abs(mem(src, 0)));
-  asm.movm("dx", abs(mem(src, 2)));
-  asm.aluMR("sub", abs(mem(dst, 0)), "ax");
-  asm.aluMR("sbb", abs(mem(dst, 2)), "dx");
+  asm.movm("ax", source(src, 0));
+  asm.movm("dx", source(src, 2));
+  asm.aluMR("sub", dest(dst, 0), "ax");
+  asm.aluMR("sbb", dest(dst, 2), "dx");
 }
 
 /**
@@ -132,23 +162,23 @@ export function addConst32(ctx: WscCtx, dst: Ref, value: number): void {
   const [low, high] = halves(value);
   if (low === 0 && high === 0) return;
   if (low === 0) {
-    asm.aluMI("add", abs(mem(dst, 2)), high);
+    asm.aluMI("add", dest(dst, 2), high);
     return;
   }
-  asm.aluMI("add", abs(mem(dst, 0)), low);
-  asm.aluMI("adc", abs(mem(dst, 2)), high);
+  asm.aluMI("add", dest(dst, 0), low);
+  asm.aluMI("adc", dest(dst, 2), high);
 }
 
 /** `dst = -dst`. */
 export function neg32(ctx: WscCtx, dst: Ref): void {
   const { asm } = ctx;
-  asm.movm("ax", abs(mem(dst, 0)));
-  asm.movm("dx", abs(mem(dst, 2)));
+  asm.movm("ax", dest(dst, 0));
+  asm.movm("dx", dest(dst, 2));
   asm.unary("neg", "dx");
   asm.unary("neg", "ax");
   asm.aluI("sbb", "dx", 0);
-  asm.movmr(abs(mem(dst, 0)), "ax");
-  asm.movmr(abs(mem(dst, 2)), "dx");
+  asm.movmr(dest(dst, 0), "ax");
+  asm.movmr(dest(dst, 2), "dx");
 }
 
 /** `dst >>= 1`, arithmetic — which is floor division by two. */
@@ -156,15 +186,15 @@ export function asr32(ctx: WscCtx, dst: Ref): void {
   const { asm } = ctx;
   // The top half first, so the bit that leaves it is in the carry when the
   // bottom half is rotated through it.
-  asm.shiftM("sar", abs(mem(dst, 2)));
-  asm.shiftM("rcr", abs(mem(dst, 0)));
+  asm.shiftM("sar", dest(dst, 2));
+  asm.shiftM("rcr", dest(dst, 0));
 }
 
 /** Set Z when the value is zero. Clobbers `ax`. */
 export function isZero32(ctx: WscCtx, addr: Ref): void {
   const { asm } = ctx;
-  asm.movm("ax", abs(mem(addr, 0)));
-  asm.aluM("or", "ax", abs(mem(addr, 2)));
+  asm.movm("ax", source(addr, 0));
+  asm.aluM("or", "ax", source(addr, 2));
 }
 
 /** Branch to `target` when the value at `addr` is zero, or when it is not. */
@@ -184,10 +214,10 @@ export function branchZero32(ctx: WscCtx, addr: Ref, target: string, whenZero = 
  */
 export function branchLess32(ctx: WscCtx, lhs: Ref, rhs: Ref, target: string, whenLess = true) {
   const { asm } = ctx;
-  asm.movm("ax", abs(mem(lhs, 0)));
-  asm.movm("dx", abs(mem(lhs, 2)));
-  asm.aluM("sub", "ax", abs(mem(rhs, 0)));
-  asm.aluM("sbb", "dx", abs(mem(rhs, 2)));
+  asm.movm("ax", source(lhs, 0));
+  asm.movm("dx", source(lhs, 2));
+  asm.aluM("sub", "ax", source(rhs, 0));
+  asm.aluM("sbb", "dx", source(rhs, 2));
   ctx.far(whenLess ? "s" : "ns", target);
 }
 
@@ -201,10 +231,10 @@ export function branchLess32(ctx: WscCtx, lhs: Ref, rhs: Ref, target: string, wh
  */
 export function branchEqual32(ctx: WscCtx, lhs: Ref, rhs: Ref, target: string, whenEqual = true) {
   const { asm } = ctx;
-  asm.movm("ax", abs(mem(lhs, 0)));
-  asm.movm("dx", abs(mem(lhs, 2)));
-  asm.aluM("sub", "ax", abs(mem(rhs, 0)));
-  asm.aluM("sbb", "dx", abs(mem(rhs, 2)));
+  asm.movm("ax", source(lhs, 0));
+  asm.movm("dx", source(lhs, 2));
+  asm.aluM("sub", "ax", source(rhs, 0));
+  asm.aluM("sbb", "dx", source(rhs, 2));
   asm.alu("or", "ax", "dx");
   ctx.far(whenEqual ? "z" : "nz", target);
 }
@@ -213,10 +243,10 @@ export function branchEqual32(ctx: WscCtx, lhs: Ref, rhs: Ref, target: string, w
 export function branchUnlessConst32(ctx: WscCtx, addr: Ref, value: number, target: string): void {
   const { asm } = ctx;
   const [low, high] = halves(value);
-  asm.movm("ax", abs(mem(addr, 0)));
+  asm.movm("ax", source(addr, 0));
   asm.aluI("cmp", "ax", low);
   ctx.far("nz", target);
-  asm.movm("ax", abs(mem(addr, 2)));
+  asm.movm("ax", source(addr, 2));
   asm.aluI("cmp", "ax", high);
   ctx.far("nz", target);
 }
@@ -227,7 +257,7 @@ export function abs32(ctx: WscCtx, dst: Ref): void {
   const done = ctx.unique("absDone");
   // The sign of a 16.16 value is the sign of its high half, and comparing that
   // half against zero is how it reaches the flags without loading it.
-  asm.aluMI("cmp", abs(mem(dst, 2)), 0);
+  asm.aluMI("cmp", dest(dst, 2), 0);
   ctx.far("ns", done);
   neg32(ctx, dst);
   asm.label(done);
@@ -243,6 +273,7 @@ export function abs32(ctx: WscCtx, dst: Ref): void {
  */
 export function clamp32(ctx: WscCtx, dst: Ref): void {
   const { asm } = ctx;
+  dest(dst); // a clamp writes, so this can only be RAM
   asm.movi("bx", dst);
   asm.call(ctx.need("Clamp32", emitClamp32));
 }
