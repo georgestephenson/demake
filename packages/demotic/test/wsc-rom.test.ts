@@ -33,6 +33,11 @@
  *   - **Two reserved palettes, not one.** An object's palette field is three bits
  *     and selects among 8–15, so the background half and the object half cannot
  *     share a font palette. A caption is legible only if the fit reaches neither.
+ *   - **The digits themselves.** This is the one backend whose decimal renderer
+ *     divides rather than subtracting in a loop, and no fixture reaches an
+ *     interior zero, the widest value the language allows and a negative number
+ *     in one run — so the numbers are put on the screen deliberately and read
+ *     back off it.
  */
 
 import { describe, expect, it } from "vitest";
@@ -51,7 +56,7 @@ import {
   SYSTEM_OBJECT_PALETTE,
   SYSTEM_PALETTE,
 } from "../src/codegen/wsc/emit.js";
-import { BUILTIN_TILES, patternTile } from "../src/rom/graphics.js";
+import { BUILTIN_TILES, glyphTile, patternTile } from "../src/rom/graphics.js";
 import { exampleProject, projectText } from "./_projects.js";
 
 function build(project: string, levels?: Record<string, string>) {
@@ -216,9 +221,11 @@ describe("the background plane", async () => {
     // enough to cross the wrap and check the grid again from the other side.
     // A hero eleven cells a second, a window twenty-eight wide and a camera that
     // centres on it: the camera does not move at all until the player has crossed
-    // half the window, which at 75.47 Hz is most of two seconds.
+    // half the window, which at 75.47 Hz is most of two seconds. Long enough for
+    // that and no longer — the spikes are twenty-six cells along, and a hero that
+    // reaches them is a `gameover` scene with no level in it.
     machine.setButtons(["right"]);
-    settle(machine, 220);
+    settle(machine, 130);
     machine.setButtons([]);
     settle(machine, 2);
     const grid = level as NonNullable<typeof level>;
@@ -256,7 +263,7 @@ describe("the HUD plane", async () => {
     // scrolls in both directions, so both registers are exercised.
     machine.setButtons(["right"]);
     let moved = 0;
-    for (let frame = 0; frame < 240; frame += 1) {
+    for (let frame = 0; frame < 130; frame += 1) {
       machine.runFrame();
       if (machine.readPort(PORT.SCR1_X) !== 0) moved += 1;
       expect(machine.readPort(PORT.SCR2_X)).toBe(0);
@@ -283,12 +290,64 @@ describe("the HUD plane", async () => {
     const before = occupied();
     expect(before.length).toBeGreaterThan(0);
     const scrolled = machine.readPort(PORT.SCR1_X);
-    machine.setButtons(["right"]);
+    // Back the way it came, so the camera moves without walking the hero into
+    // the spikes the previous case stopped short of.
+    machine.setButtons(["left"]);
     settle(machine, 40);
     machine.setButtons([]);
     settle(machine, 2);
     expect(machine.readPort(PORT.SCR1_X)).not.toBe(scrolled);
     expect(occupied()).toBe(before);
+  });
+});
+
+describe("the decimal renderer", async () => {
+  // Its own program rather than a fixture's counter, because what has to be
+  // checked is the *digits* — and no example game reaches an interior zero, the
+  // widest value the language allows, or a negative number in the same run. A
+  // `number` whose value nothing can change is painted once with the display off,
+  // through the same routine the per-frame HUD calls, so one still frame proves
+  // both. 1024 is the widest there is: every value is clamped to ±1024 cells
+  // (doc 14 §3), so four digits and a sign is the whole vocabulary.
+  const source = [
+    "start play",
+    "scene play",
+    "create number small in play (value 7, x 1, y 1)",
+    "create number wide in play (value 1024, x 1, y 3)",
+    "create number down in play (value -915, x 1, y 5)",
+    "create number none in play (value 0, x 1, y 7)",
+  ].join("\n");
+  const built = await buildWscRom(compile(source, { profile: getProfile("wsc") }));
+  const machine = boot(built.bytes, built.layout.booted);
+  settle(machine, 4);
+
+  /** The glyphs painted along a row of the HUD plane, as the string they spell. */
+  function readRow(row: number, length: number): string {
+    let out = "";
+    for (let column = 1; column <= length; column += 1) {
+      const tile = entryAt(machine, RAM.SCR2, column, row).tile;
+      const found = [..."-0123456789"].find((c) => glyphTile(c) === tile);
+      out += found ?? "?";
+    }
+    return out;
+  }
+
+  it("prints a number with no leading zero and no missing one", () => {
+    // Four cases the subtraction loop this replaced got right by suppressing
+    // leading zeroes, and the division loop gets right by never producing them:
+    // a single digit, four with an interior zero, a sign, and zero itself.
+    expect(readRow(1, 1)).toBe("7");
+    expect(readRow(3, 4)).toBe("1024");
+    expect(readRow(5, 4)).toBe("-915");
+    expect(readRow(7, 1)).toBe("0");
+  });
+
+  it("leaves the cell after the last digit alone", () => {
+    // The pen advances once per glyph, so a number that got shorter must not
+    // leave the tail of the longer one behind it — and a shorter number must not
+    // have painted past its own end in the first place.
+    expect(entryAt(machine, RAM.SCR2, 2, 1).tile).toBe(0);
+    expect(entryAt(machine, RAM.SCR2, 5, 5).tile).toBe(0);
   });
 });
 

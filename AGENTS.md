@@ -1438,6 +1438,17 @@ the artefact. What is not obvious the first time:
   The web app shows the measured figure rather than hiding it behind a speed
   multiplier; if a change pushes a fixture over 1.2, that is a regression worth
   chasing before anything else.
+- **And the console with the shortest frame is where it is measured second.** A
+  WonderSwan draws 75.47 times a second where every other machine here draws
+  sixty, so a tick has a fifth less time to fit in and this is the machine a
+  costly routine shows up on first. It is what found the decimal renderer walking
+  the powers of ten by subtraction — an eighth of a tick spent printing a
+  two-digit coin counter, on a processor that can divide — and `rom.test.ts` now
+  measures `caves` there as well as on the Game Boy. The profile that found it is
+  the same one every other optimisation came from, weighted by _cycles_ rather
+  than by instructions: on a machine whose main loop polls a line counter, two
+  thirds of the instructions retired are the poll, and an unweighted histogram
+  says nothing at all.
 - **Profile before optimising, with the real tool.** Build with
   `--format sym`, run the ROM in `@demake/dmg`, and bucket `cpu.pc` by symbol.
   Because the code is generated _for this game_, the histogram names the game's
@@ -2288,6 +2299,13 @@ what is done to it.
   `WSC_MEMORY` takes no `interruptBytes`, leaves that kilobyte alone, and the
   day this console gets an audio driver is the day one of those vectors is
   wanted.
+- **A digit is a division here, not a subtraction loop.** Every 8-bit backend in
+  this project walks the powers of ten subtracting one at a time, because none of
+  their processors can divide; this one can. Four unsigned comparisons pick the
+  power to start at, so a leading zero is never produced rather than suppressed,
+  and each digit after that is one `div` whose remainder is what is left to
+  print. That was an eighth of a tick on `caves` — a two-digit coin counter — and
+  it is the difference between 1.29 frames a tick on this console and 1.09.
 - **A cartridge is 512 KiB and cannot move**, because the header's size byte has
   no smaller value to say. Only the last 64 KiB answers segment `$F000` from
   reset, so a program has `$0000`–`$FFEF` — the entry far jump is at `$FFF0`

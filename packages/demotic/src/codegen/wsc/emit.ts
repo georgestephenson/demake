@@ -721,11 +721,21 @@ function emitOverCells(ctx: WscCtx, subjectId: number, body: () => void): void {
   const col = layout.words + W.tileCol * 2;
   const row = layout.words + W.tileRow * 2;
   const cursor = layout.words + W.count * 2;
+  // Where the walk stops, in bytes. Computed once: the list cannot grow while it
+  // is being read, and a `mul` in the loop's tail is twenty-four cycles a cell on
+  // a machine whose whole frame is forty thousand. `W.temp` is free here — only
+  // the *grid* walk uses it, and this is the walk that reads the list instead.
+  const limit = layout.words + W.temp * 2;
   const loop = ctx.unique("cellLoop");
   const done = ctx.unique("cellDone");
 
   asm.aluMI8("cmp", abs(list), 0);
   ctx.far("z", done);
+  asm.movm8("al", abs(list));
+  asm.movi8("ah", 0);
+  asm.movi("cx", 5);
+  asm.unary("mul", "cx");
+  asm.movmr(abs(limit), "ax");
   asm.movmi(abs(cursor), 0);
   asm.label(loop);
   asm.movm("bx", abs(cursor));
@@ -735,13 +745,10 @@ function emitOverCells(ctx: WscCtx, subjectId: number, body: () => void): void {
   asm.movmr(abs(row), "ax");
   asm.movm8("al", at("bx", list + 5));
   body();
-  // Five bytes on, and stop when the count is reached. The cursor is in RAM
+  // Five bytes on, and stop when the end is reached. The cursor is in RAM
   // because a rule body uses every register there is.
   asm.aluMI("add", abs(cursor), 5);
-  asm.movm8("al", abs(list));
-  asm.movi8("ah", 0);
-  asm.movi("cx", 5);
-  asm.unary("mul", "cx");
+  asm.movm("ax", abs(limit));
   asm.aluM("cmp", "ax", abs(cursor));
   ctx.far("nz", loop);
   asm.label(done);
@@ -1717,8 +1724,17 @@ function emitScrollWrite(ctx: WscCtx): void {
  *
  * `plot` is the routine that puts a glyph down and advances the pen, and it is
  * the *only* difference between the static HUD and the queued one — which is why
- * it is a parameter rather than a second copy of the digit loop. Leading zeroes
- * are suppressed and a lone zero still prints.
+ * it is a parameter rather than a second copy of the digit loop.
+ *
+ * **A digit is a division here, not a subtraction loop.** Every 8-bit backend in
+ * this project walks the powers of ten subtracting one at a time, because none of
+ * their processors can divide; this one can, so a digit is `div` against the
+ * power and the remainder is what is left to print. The leading zeroes are then
+ * not suppressed but never produced: four unsigned comparisons pick the power to
+ * start at, and a lone zero starts at the units. That is five divisions and four
+ * comparisons against what was a hundred and thirty memory accesses, and on a
+ * console whose whole frame is forty thousand cycles it was an eighth of a tick
+ * spent printing a two-digit coin counter.
  */
 function emitDecimal(ctx: WscCtx, plot: Ref): void {
   const { asm, layout } = ctx;
@@ -1729,14 +1745,13 @@ function emitDecimal(ctx: WscCtx, plot: Ref): void {
   // being written, and — the one that actually bites — **not the map origin**,
   // which has to survive from one frame to the next.
   const value = layout.words + W.firstCol * 2;
-  const flag = layout.words + W.firstRow * 2;
-  const digit = layout.words + W.firstRow * 2 + 1;
   const power = layout.words + W.lastCol * 2;
 
   asm.movm("ax", at("si"));
   asm.movmr(abs(value), "ax");
 
   const positive = ctx.unique("numPos");
+  const chosen = ctx.unique("numChosen");
   asm.alu("or", "ax", "ax");
   ctx.far("ns", positive);
   // Negate, then print the sign. The pen has to advance first, which is why the
@@ -1745,46 +1760,45 @@ function emitDecimal(ctx: WscCtx, plot: Ref): void {
   asm.movmr(abs(value), "ax");
   asm.movi("ax", mapWord(glyphTile("-"), SYSTEM_PALETTE));
   asm.call(plot);
+  asm.movm("ax", abs(value));
   asm.label(positive);
 
-  asm.movmi8(abs(flag), 0);
-  asm.movmi8(abs(power), 0);
-  const powerLoop = ctx.unique("numPower");
-  const subLoop = ctx.unique("numSub");
-  const digitDone = ctx.unique("numDigit");
-  const emitDigit = ctx.unique("numEmit");
-  const skipDigit = ctx.unique("numSkip");
+  // The power to start at, as a byte offset into `DecimalPowers`. Unsigned, and
+  // the value is known non-negative by here. Short branches: every target is a
+  // few instructions along and there is no call between them.
+  asm.movi8("bl", 8);
+  asm.aluI("cmp", "ax", 10);
+  asm.jcc("b", chosen);
+  asm.movi8("bl", 6);
+  asm.aluI("cmp", "ax", 100);
+  asm.jcc("b", chosen);
+  asm.movi8("bl", 4);
+  asm.aluI("cmp", "ax", 1000);
+  asm.jcc("b", chosen);
+  asm.movi8("bl", 2);
+  asm.aluI("cmp", "ax", 10000);
+  asm.jcc("b", chosen);
+  asm.movi8("bl", 0);
+  asm.label(chosen);
+  asm.movmr8(abs(power), "bl");
 
-  asm.label(powerLoop);
-  asm.movmi8(abs(digit), 0);
-  asm.label(subLoop);
-  // value -= power, keeping it only while it does not go negative.
+  const digitLoop = ctx.unique("numDigit");
+  asm.label(digitLoop);
   asm.movm8("bl", abs(power));
   asm.movi8("bh", 0);
-  asm.movm("dx", romAt("bx", label("DecimalPowers")));
+  asm.movm("cx", romAt("bx", label("DecimalPowers")));
   asm.movm("ax", abs(value));
-  asm.alu("sub", "ax", "dx");
-  ctx.far("b", digitDone);
-  asm.movmr(abs(value), "ax");
-  asm.incM8(abs(digit));
-  asm.jmp(subLoop);
-  asm.label(digitDone);
-  asm.aluMI8("cmp", abs(digit), 0);
-  ctx.far("nz", emitDigit);
-  asm.aluMI8("cmp", abs(flag), 0);
-  ctx.far("nz", emitDigit);
-  asm.aluMI8("cmp", abs(power), 8);
-  ctx.far("nz", skipDigit);
-  asm.label(emitDigit);
-  asm.movmi8(abs(flag), 1);
-  asm.movm8("al", abs(digit));
+  asm.movi("dx", 0);
+  asm.unary("div", "cx");
+  // The quotient is the digit and the remainder is the rest of the number, so
+  // what is left has to be stored before `ax` is turned into a map word.
+  asm.movmr(abs(value), "dx");
   asm.movi8("ah", 0);
   asm.aluI("add", "ax", mapWord(glyphTile("0"), SYSTEM_PALETTE));
   asm.call(plot);
-  asm.label(skipDigit);
   asm.aluMI8("add", abs(power), 2);
   asm.aluMI8("cmp", abs(power), 10);
-  ctx.far("nz", powerLoop);
+  ctx.far("nz", digitLoop);
   asm.ret();
 }
 

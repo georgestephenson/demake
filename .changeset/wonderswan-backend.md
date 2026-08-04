@@ -38,6 +38,14 @@ a game that names music builds, traces and plays exactly as it does on a machine
 that would play it, and nobody is listening. What closing that costs is in doc 13
 §Console rollout item 4.
 
+A tick fits inside this console's frame, which is not free: a WonderSwan draws
+75.47 times a second where every other machine here draws sixty, so the same work
+has a fifth less time to do it in. `caves` was 1.29 frames a tick until the
+decimal renderer stopped walking the powers of ten by subtraction — an eighth of
+a tick spent printing a two-digit coin counter, on the one processor in the set
+that can divide — and it is 1.09 now, in line with the Game Boy's 1.11.
+`rom.test.ts` measures it there as well as on the Game Boy.
+
 `packages/demotic/test/wsc-rom.test.ts` is the rendering oracle beside the trace
 battery, and every case in it is something a trace cannot see: that the tile bank
 and palette RAM arrived in the console's own memory, that every visible cell
