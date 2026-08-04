@@ -170,6 +170,7 @@ export {
   ind,
   indX,
   indY,
+  indZp,
   zp,
   zpX,
   zpY,
@@ -178,6 +179,18 @@ export {
   type Mode,
   type Operand,
 } from "./asm/mos6502.js";
+export { Asm6280, type BlockMove, type Mnemonic6280 } from "./asm/huc6280.js";
+export {
+  PCE_BANK_SIZE,
+  PCE_CODE_ORIGIN,
+  PCE_CODE_SIZE,
+  PCE_ROM_SIZE,
+  PCE_ROM_SIZES,
+  PCE_VECTOR_BYTES,
+  PCE_VECTORS,
+  packHuCard,
+  type PceCartOptions,
+} from "./asm/pce-cart.js";
 export {
   NES_CHR_SIZE,
   NES_HEADER_SIZE,

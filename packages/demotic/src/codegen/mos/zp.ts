@@ -52,14 +52,45 @@ export const ZP = {
 export const ZP_FREE = 0x13;
 
 /**
- * Address a byte, choosing the short form when the address is in page zero.
+ * Where each CPU in this family puts the page its short addressing reaches.
+ *
+ * `$0000` on a 6502 and `$2000` on a HuC6280, which adds that base to every
+ * zero-page operand and puts the stack in the page above it. No memory map moves
+ * either — it is the instruction's own arithmetic — so a plan's addresses are the
+ * *machine's*: a PC Engine build's cheap page really is at `$2013` and its heap
+ * really is at `$2400` (`codegen/layout.ts` §`PCE_MEMORY`).
+ *
+ * Both windows are named here rather than threaded through, because this is the
+ * family's addressing module and no console in it has RAM in the other's window:
+ * an NES has 2 KiB at `$0000` and a PC Engine 8 KiB at `$2000`. That is what lets
+ * one predicate serve both — and it is what makes `absX(layout.contacts)` mean
+ * the same thing on both machines, which is the thing that has to be true for
+ * `rules.ts` to be one copy.
+ */
+const ZERO_PAGES: readonly number[] = [0x0000, 0x2000];
+
+/** The operand byte an address would take, or `null` if it is out of reach. */
+function shortForm(address: number): number | null {
+  for (const base of ZERO_PAGES) {
+    if (address >= base && address < base + 0x100) return address - base;
+  }
+  return null;
+}
+
+/**
+ * Address a byte, choosing the short form when the address is in the cheap page.
  *
  * Only ever unindexed. An indexed zero-page access wraps at `$FF` where an
  * absolute one carries, so the assembler refuses to infer the short form there
- * and so does this.
+ * and so does this — which is also why every *indexed* access in this family
+ * takes the plan's address as an absolute one and needs no translation.
  */
 export function mem(address: Ref, offset = 0): Operand {
-  if (typeof address === "number") return memAt(address + offset);
+  if (typeof address === "number") {
+    const at = address + offset;
+    const short = shortForm(at);
+    return short === null ? memAt(at) : zp(short);
+  }
   if (offset === 0) return abs(address);
   return abs(
     typeof address === "string"
@@ -68,12 +99,33 @@ export function mem(address: Ref, offset = 0): Operand {
   );
 }
 
-/** The same, forced to page zero — for an address the caller knows is in it. */
+/** The same, forced to the cheap page — for an address the caller knows is in it. */
 export function fast(address: number, offset = 0): Operand {
-  return zp(address + offset);
+  const short = shortForm(address + offset);
+  if (short === null) {
+    throw new Error(`$${(address + offset).toString(16)} is not in this CPU's zero page`);
+  }
+  return zp(short);
 }
 
-/** Whether an address is one page zero can reach. */
+/**
+ * The operand a zero-page *pointer* takes.
+ *
+ * `($nn),y` encodes an offset into the cheap page rather than an address, so a
+ * pointer the allocator placed — which is a machine address like every other
+ * allocation — has to be reduced to one. On a 6502 that is the identity and on a
+ * HuC6280 it is minus `$2000`; anywhere else it is a bug, and it raises here
+ * rather than assembling an instruction that reads the wrong two bytes.
+ */
+export function slotOf(address: number): number {
+  const short = shortForm(address);
+  if (short === null) {
+    throw new Error(`a pointer at $${address.toString(16)} is not in this CPU's zero page`);
+  }
+  return short;
+}
+
+/** Whether an address is one the cheap page can reach. */
 export function inFastPage(address: Ref): boolean {
-  return typeof address === "number" && address < 0x100;
+  return typeof address === "number" && shortForm(address) !== null;
 }

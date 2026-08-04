@@ -138,7 +138,7 @@ if (scripts.length === 0) {
  * Boy's whichever of the two graphs it came out of — and both belong to the same
  * visitor's choice, which is why one list covers them.
  */
-const FAMILIES = ["gb", "nes", "sms", "snes", "md"];
+const FAMILIES = ["gb", "nes", "sms", "snes", "md", "pce"];
 
 /** The family a chunk belongs to, or null when everyone loads it. */
 function familyOf(name) {

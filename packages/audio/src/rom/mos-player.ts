@@ -1,11 +1,18 @@
 /**
- * The 2A03 driver's stream player — one implementation, two callers.
+ * The 6502 family's stream player — one implementation, two consoles.
  *
  * The 6502 half of `gb-driver.ts`, and it exists for the same reason: a stream is
  * a pointer walking packed data, a rest counter, and an order list that says
  * which block comes next, and writing that twice is how two callers come to
  * disagree about the one thing doc 16 makes a contract — *on tick N the driver
  * performs exactly the writes `ChipScript.ticks[N]` lists, in order*.
+ *
+ * It belongs to the **processor** rather than to either machine, which is
+ * `arm-player.ts`'s arrangement one architecture over: a NES drives a 2A03 with
+ * it and a PC Engine drives a HuC6280 PSG, and what each console adds is in
+ * `nes-game.ts` and `pce-game.ts`. That the same instructions serve both is not
+ * a coincidence — a HuC6280 is a 6502 with a memory mapper — and it is the same
+ * argument `codegen/mos/` rests on in the game backend.
  *
  * What differs is not the algorithm but the machine, and three of the
  * differences decide the shape of the code:
@@ -20,9 +27,11 @@
  *     byte. Four instructions a byte against the Game Boy's one `ld a, [hl+]`,
  *     and there is no cheaper form on this CPU.
  *   - **A register is an index, not an address.** Every sound register is
- *     `$4000 + reg`, so a write is `ldx reg` then `sta $4000,x` — which makes
+ *     `base + reg`, so a write is `ldx reg` then `sta base,x` — which makes
  *     the packed format's low-byte register numbers (`data.ts`) the right
- *     encoding here as well as on the Game Boy, for an unrelated reason.
+ *     encoding here as well as on the Game Boy, for an unrelated reason. The
+ *     base is the *console's* ({@link MosStreamOptions.base}): `$4000` on a NES
+ *     and `$0800` on a PC Engine, where the hardware page is mapped at zero.
  *
  * Everything below is specialised at emit time from the packed data, exactly as
  * the SM83 player is: a schedule with no rests emits no rest handling, and a
@@ -38,7 +47,7 @@ import { Asm6502, absX, imm, indY, label, zp } from "@demake/core";
 import { RUN, type DriverData } from "./data.js";
 
 /**
- * Where the sound registers start; every one of them is an index off this.
+ * Where the NES's sound registers start; every one of them is an index off this.
  *
  * Two indices inside the window are *not* sound registers — `$4014` starts an
  * object DMA and `$4016` strobes the controllers — so a schedule that named one
@@ -49,13 +58,23 @@ import { RUN, type DriverData } from "./data.js";
 export const APU_BASE = 0x4000;
 
 /**
+ * Where the PC Engine's are, which is inside the hardware page the boot code
+ * maps at logical zero.
+ *
+ * The whole page is the console's own — video, sound, timer, pad and interrupt
+ * controller — and the ten sound registers occupy `$0800`–`$0809`, mirrored
+ * through `$0BFF`. A schedule names those ten and nothing else.
+ */
+export const PSG_BASE = 0x0800;
+
+/**
  * Where a stream keeps its position — one byte per field, in page zero.
  *
  * `dataLo`/`dataHi` are not merely *stored* in page zero, they are dereferenced
  * there: the walk does `lda (dataLo),y`, so the pair has to be a zero-page
  * pointer and the two bytes have to be adjacent. `orderLo`/`orderHi` likewise.
  */
-export interface NesStreamState {
+export interface MosStreamState {
   /** The block pointer. Adjacent, page zero, dereferenced in place. */
   dataLo: number;
   dataHi: number;
@@ -81,7 +100,7 @@ export interface NesStreamState {
 }
 
 /** Two bytes the walk needs and the three registers cannot hold. */
-export interface NesScratch {
+export interface MosScratch {
   /** Writes left in the run, or the low half of an order entry. */
   count: number;
   /** The run's flags, or the high half of an order entry. */
@@ -89,11 +108,19 @@ export interface NesScratch {
 }
 
 /** What to emit, and how this stream shares the chip. */
-export interface NesStreamOptions {
+export interface MosStreamOptions {
   /** Label namespace, so one player can be emitted twice. */
   prefix: string;
-  state: NesStreamState;
-  scratch: NesScratch;
+  /**
+   * Where the chip's registers are, as the base a packed register number indexes.
+   *
+   * {@link APU_BASE} on a NES, {@link PSG_BASE} on a PC Engine. It is a
+   * parameter rather than a constant because it is the only thing in this file
+   * that is a console's rather than the processor's.
+   */
+  base: number;
+  state: MosStreamState;
+  scratch: MosScratch;
   data: DriverData;
   /**
    * Page-zero byte naming the channels another stream has taken.
@@ -122,8 +149,8 @@ export interface NesStreamOptions {
  * supplies whatever drives them, because a cartridge and a game arrive here from
  * different places — on this console, from the picture's own interrupt.
  */
-export function emitStream(asm: Asm6502, options: NesStreamOptions): string[] {
-  const { prefix: p, state, scratch, data } = options;
+export function emitStream(asm: Asm6502, options: MosStreamOptions): string[] {
+  const { prefix: p, base, state, scratch, data } = options;
   const helpers: string[] = [];
   const stoppable = state.active !== undefined;
   const preemptible = options.steal !== undefined && data.runs;
@@ -199,9 +226,9 @@ export function emitStream(asm: Asm6502, options: NesStreamOptions): string[] {
   } else {
     asm.label(`${p}TickWrite`);
     fetch();
-    asm.tax(); // the register, as an index off $4000
+    asm.tax(); // the register, as an index off the chip's base
     fetch();
-    asm.sta(absX(APU_BASE));
+    asm.sta(absX(base));
     asm.dec(zp(scratch.count));
     asm.bne(`${p}TickWrite`);
     asm.jmp(`${p}TickSave`);
@@ -263,8 +290,8 @@ interface Walk {
  * has nothing left over. A skipped run is stepped past two bytes at a time,
  * which is all the data says about its length.
  */
-function emitRuns(asm: Asm6502, options: NesStreamOptions, walk: Walk): void {
-  const { prefix: p, scratch, data } = options;
+function emitRuns(asm: Asm6502, options: MosStreamOptions, walk: Walk): void {
+  const { prefix: p, base, scratch, data } = options;
   const { fetch, step, far } = walk;
 
   asm.label(`${p}TickRun`);
@@ -287,7 +314,7 @@ function emitRuns(asm: Asm6502, options: NesStreamOptions, walk: Walk): void {
   fetch();
   asm.tax();
   fetch();
-  asm.sta(absX(APU_BASE));
+  asm.sta(absX(base));
   asm.dec(zp(scratch.count));
   asm.bne(`${p}TickWrite`);
   asm.jmp(`${p}TickNext`);
@@ -327,7 +354,7 @@ function emitRuns(asm: Asm6502, options: NesStreamOptions, walk: Walk): void {
  * asking. The scratch pair carries the entry, because the 6502 cannot hold two
  * bytes and an index at once.
  */
-function emitNextBlock(asm: Asm6502, options: NesStreamOptions): void {
+function emitNextBlock(asm: Asm6502, options: MosStreamOptions): void {
   const { prefix: p, state, scratch } = options;
   asm.label(`${p}NextBlock`);
   emitReadOrder(asm, options);
@@ -373,7 +400,7 @@ function emitNextBlock(asm: Asm6502, options: NesStreamOptions): void {
  * `$0000` terminator without a second load — the same reason the Game Boy player
  * ends its read with `or e`.
  */
-function emitReadOrder(asm: Asm6502, options: NesStreamOptions): void {
+function emitReadOrder(asm: Asm6502, options: MosStreamOptions): void {
   const { state, scratch } = options;
   asm.ldy(imm(1));
   asm.lda(indY(state.orderLo));

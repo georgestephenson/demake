@@ -30,7 +30,7 @@ import {
   type TestVerdict,
 } from "../shape.js";
 
-import type { NesCtx } from "./ctx.js";
+import type { MosCtx } from "./ctx.js";
 import {
   add32,
   addConst32,
@@ -62,7 +62,7 @@ export {
 };
 
 /** Copy four bytes from `[ptr] + offset` to an absolute address. */
-export function copyFromPtr(ctx: NesCtx, ptr: number, offset: number, dst: Ref): void {
+export function copyFromPtr(ctx: MosCtx, ptr: number, offset: number, dst: Ref): void {
   const { asm } = ctx;
   for (let index = 0; index < 4; index += 1) {
     asm.ldy(imm(offset + index));
@@ -72,7 +72,7 @@ export function copyFromPtr(ctx: NesCtx, ptr: number, offset: number, dst: Ref):
 }
 
 /** Copy four bytes from an absolute address to `[ptr] + offset`. */
-export function copyToPtr(ctx: NesCtx, ptr: number, offset: number, src: Ref): void {
+export function copyToPtr(ctx: MosCtx, ptr: number, offset: number, src: Ref): void {
   const { asm } = ctx;
   for (let index = 0; index < 4; index += 1) {
     asm.lda(mem(src, index));
@@ -82,7 +82,7 @@ export function copyToPtr(ctx: NesCtx, ptr: number, offset: number, src: Ref): v
 }
 
 /** Read a stored property into a slot, without copying where possible. */
-function readStored(ctx: NesCtx, entity: EntityAddr, prop: string): Slot {
+function readStored(ctx: MosCtx, entity: EntityAddr, prop: string): Slot {
   switch (entity.kind) {
     case "none":
       return { addr: ctx.constant(0), temp: false };
@@ -97,7 +97,7 @@ function readStored(ctx: NesCtx, entity: EntityAddr, prop: string): Slot {
 }
 
 /** Read any property, stored or derived. */
-export function readProp(ctx: NesCtx, entity: EntityAddr, prop: string): Slot {
+export function readProp(ctx: MosCtx, entity: EntityAddr, prop: string): Slot {
   const derived = DERIVED_PARTS[prop];
   if (!derived) return readStored(ctx, entity, prop);
   if (entity.kind === "none") return { addr: ctx.constant(0), temp: false };
@@ -124,7 +124,7 @@ export function readProp(ctx: NesCtx, entity: EntityAddr, prop: string): Slot {
 }
 
 /** Write a value into a property, clamping it the way `writeProp` does. */
-export function writeProp(ctx: NesCtx, entity: EntityAddr, prop: string, value: Ref): void {
+export function writeProp(ctx: MosCtx, entity: EntityAddr, prop: string, value: Ref): void {
   if (entity.kind === "none") return;
   // The interpreter clamps on write, so the value is clamped in the staging slot
   // it already owns rather than copied first.
@@ -142,7 +142,7 @@ export function writeProp(ctx: NesCtx, entity: EntityAddr, prop: string, value: 
  * `into` asks for a specific destination; without it the compiler picks the
  * cheapest place, which for a bare property read is the entity record itself.
  */
-export function emitExpr(ctx: NesCtx, expr: CExpr, bind: Binding, into?: number): Slot {
+export function emitExpr(ctx: MosCtx, expr: CExpr, bind: Binding, into?: number): Slot {
   const constant = fold(expr);
   if (constant !== undefined) {
     if (into === undefined) return { addr: ctx.constant(constant), temp: false };
@@ -186,7 +186,7 @@ export function emitExpr(ctx: NesCtx, expr: CExpr, bind: Binding, into?: number)
 }
 
 function emitBinary(
-  ctx: NesCtx,
+  ctx: MosCtx,
   op: CBinaryOp,
   leftExpr: CExpr,
   rightExpr: CExpr,
@@ -240,7 +240,7 @@ function emitBinary(
   return { addr: target, temp: into === undefined };
 }
 
-function emitCall(ctx: NesCtx, expr: CExpr & { kind: "call" }, bind: Binding, into?: number): Slot {
+function emitCall(ctx: MosCtx, expr: CExpr & { kind: "call" }, bind: Binding, into?: number): Slot {
   const { asm } = ctx;
   const target = into ?? ctx.pushTemp();
   const args = expr.args;
@@ -310,7 +310,7 @@ function emitCall(ctx: NesCtx, expr: CExpr & { kind: "call" }, bind: Binding, in
  * and get the same code with one flag changed.
  */
 export function emitCompare(
-  ctx: NesCtx,
+  ctx: MosCtx,
   op: CBinaryOp,
   leftExpr: CExpr,
   rightExpr: CExpr,
@@ -355,7 +355,7 @@ export function emitCompare(
  * body behind it.
  */
 export function emitTest(
-  ctx: NesCtx,
+  ctx: MosCtx,
   expr: CExpr,
   bind: Binding,
   falseTarget: string,
@@ -386,7 +386,7 @@ export function emitTest(
  * that disagree about it cannot be compared at all. The low bits of an LCG cycle
  * short, so a draw comes from the high half.
  */
-function emitRngPick(ctx: NesCtx): void {
+function emitRngPick(ctx: MosCtx): void {
   const { asm, layout } = ctx;
   const rng = layout.rng;
   if (rng === null) throw new Error("random() without a generator allocated");
@@ -459,7 +459,7 @@ function emitRngPick(ctx: NesCtx): void {
 }
 
 /** `rng = rng * 1664525 + 1013904223`, modulo 2^32. */
-function emitRngAdvance(ctx: NesCtx): void {
+function emitRngAdvance(ctx: MosCtx): void {
   const { asm, layout } = ctx;
   const rng = layout.rng as number;
   const acc = layout.mathWork; // 4 bytes
@@ -501,7 +501,7 @@ function emitRngAdvance(ctx: NesCtx): void {
  * Sixteen bits is enough: the value is the generator's high half and the count is
  * a span in cells, so neither can exceed a word.
  */
-function emitMod16(ctx: NesCtx): void {
+function emitMod16(ctx: MosCtx): void {
   const { asm } = ctx;
   const value = ZP.t2;
   const divisor = ZP.saved;

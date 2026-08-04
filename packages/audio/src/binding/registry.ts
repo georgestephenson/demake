@@ -15,6 +15,7 @@ import { gbaBinding } from "./gba.js";
 import { mdBinding } from "./md.js";
 import { ndsBinding } from "./nds.js";
 import { nesBinding } from "./nes.js";
+import { pceBinding } from "./pce.js";
 import { psgBinding } from "./psg.js";
 import { sdspBinding } from "./sdsp.js";
 import type { ChipBinding } from "./types.js";
@@ -71,6 +72,8 @@ export function bindingFor(consoleId: string): ChipBinding {
       return sdspBinding(spec.id, audio);
     case "nds-spu":
       return ndsBinding(spec.id, audio);
+    case "huc6280-psg":
+      return pceBinding(spec.id, audio);
     default:
       throw new UnsupportedConsoleError(
         spec.id,

@@ -2,7 +2,7 @@
  * The backend's own scratch, and why it is four anonymous words.
  *
  * The 6502 backend keeps sixteen named pointers below the allocator's page zero
- * (`codegen/nes/zp.ts`) because on that CPU a shared routine has no other way to
+ * (`codegen/mos/zp.ts`) because on that CPU a shared routine has no other way to
  * be told where its argument is. This CPU does: an address goes in `hl`, `de`,
  * `ix` or `iy`, and a routine that needs two of them has two to spare. So what is
  * left over is the much smaller problem of a value that has to *survive a call* —

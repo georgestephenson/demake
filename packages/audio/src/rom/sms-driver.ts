@@ -1,7 +1,7 @@
 /**
  * The SN76489 driver's stream player — the Z80 half.
  *
- * `gb-driver.ts` and `nes-driver.ts` one console over, and the same machine
+ * `gb-driver.ts` and `mos-player.ts` one console over, and the same machine
  * again: a pointer walking packed data, a rest counter, and an order list saying
  * which block comes next. It is written once and specialised at emit time from
  * the packed data — a schedule with no rests emits no rest handling, a stream

@@ -65,11 +65,13 @@ import {
   buildMdGameAudio,
   buildNdsGameAudio,
   buildNesGameAudio,
+  buildPceGameAudio,
   buildSmsGameAudio,
   buildSpcGameAudio,
   gbChannelOf,
   ndsChannelTag,
   nesChannelOf,
+  pceChannelTag,
   psgChannelTag,
   sdspChannelTag,
   type ChannelTag,
@@ -79,6 +81,7 @@ import {
 import {
   GB_CLOCK_HZ,
   NDS_SPU_CLOCK_HZ,
+  HUC6280_PSG_CLOCK_HZ,
   NES_CLOCK_HZ,
   SDSP_CLOCK_HZ,
   SN76489_CLOCK_HZ,
@@ -91,6 +94,7 @@ import { Gba, ROM_BASE } from "@demake/gba";
 import { Md } from "@demake/md";
 import { Nds } from "@demake/nds";
 import { Nes } from "@demake/nes";
+import { Pce } from "@demake/pce";
 import { Sms } from "@demake/sms";
 import { Snes } from "@demake/snes";
 
@@ -102,6 +106,7 @@ import { buildGbaRom } from "../src/codegen/gba.js";
 import { buildGbRom } from "../src/codegen/gb.js";
 import { buildMdRom } from "../src/codegen/md.js";
 import { buildNesRom } from "../src/codegen/nes.js";
+import { buildPceRom } from "../src/codegen/pce.js";
 import { buildSmsRom } from "../src/codegen/sms.js";
 import { buildSnesRom } from "../src/codegen/snes.js";
 import { EXAMPLES, exampleProject, gameSource } from "./_projects.js";
@@ -309,6 +314,76 @@ const ALL: readonly Target[] = [
     boot(rom) {
       const machine = new Nes(rom);
       return wrap(machine);
+    },
+  },
+  {
+    id: "pce",
+    name: "PC Engine",
+    clockHz: HUC6280_PSG_CLOCK_HZ,
+    // Nothing shared to merge: the global level is written once at boot and
+    // everything a stream touches afterwards belongs to one channel. A Master
+    // System and a Mega Drive are the other two, and all three say it by having
+    // *less* shared hardware rather than more.
+    mergeReg: null,
+    mergeHelper: "enable-merge",
+    // The CPU has a timer nothing else in a demade cartridge uses, so this
+    // driver gets the Game Boy's 120 Hz on an eight-bit machine the NES had to
+    // do without.
+    ratio: 1,
+    // The channel is a *register* here rather than an address or a data bit, so
+    // the tag carries the select latch — the SN76489's problem, reached by
+    // different hardware.
+    tag: pceChannelTag,
+    tickAddress: cartridgeTick,
+    async build(source, project) {
+      const { files, levels, assets } = exampleProject(project);
+      const program = compile(source, {
+        profile: getProfile("pce"),
+        files,
+        levels,
+      });
+      const built = await buildPceRom(program, { assets });
+      // The cheap page the allocator set aside, reduced to the operand the
+      // driver writes — this CPU's zero page is at `$2000`, so the two are not
+      // the same number (`codegen/mos/zp.ts`).
+      const state = (built.layout.audio as number) & 0xff;
+      const bound = await bindAudio(program, assets, {
+        build: (tracks, effects) =>
+          buildPceGameAudio({ tracks, effects: effects as GameEffect[], state }),
+      });
+      return { built, bound };
+    },
+    boot(rom) {
+      const machine = new Pce(rom);
+      const wrapped = wrap(machine);
+      // The reset vector rather than zero: a program on this console never runs
+      // from the hardware page, and reading an opcode out of it would acknowledge
+      // an interrupt rather than answer a question.
+      let previous = machine.cpu.pc;
+      return {
+        ...wrapped,
+        /**
+         * The program counter, unless this step was an interrupt *return*.
+         *
+         * A return lands on the instruction it interrupted, so the driver's entry
+         * address is seen a second time without having been reached a second
+         * time — the Game Boy Advance's hazard (below), on a machine that
+         * interrupts a hundred and twenty times a second right where the service
+         * loop calls the tick. It presents as the ROM performing a phantom empty
+         * tick and everything after it being one tick late.
+         *
+         * A real arrival is a `jsr`; a return is an `rti`, and the opcode at the
+         * address the step came *from* is the whole test. Reading it is
+         * observation like everything else here — nothing is added to the
+         * cartridge, and `$40` is the byte the hardware itself decodes.
+         */
+        step: () => {
+          const from = previous;
+          const pc = wrapped.step();
+          previous = pc;
+          return machine.read(machine.cpu.physical(from)) === 0x40 ? -1 : pc;
+        },
+      };
     },
   },
   {
@@ -559,7 +634,7 @@ const ALL: readonly Target[] = [
 ];
 
 /** Every core answers the same five questions; this is the adapter, once. */
-function wrap(machine: Gameboy | Nes | Sms | Snes | Md | Gba | Nds): Machine {
+function wrap(machine: Gameboy | Nes | Sms | Snes | Md | Gba | Nds | Pce): Machine {
   return {
     step: () => {
       machine.stepInstruction();
@@ -582,7 +657,7 @@ function wrap(machine: Gameboy | Nes | Sms | Snes | Md | Gba | Nds): Machine {
         machine.psgTap = (reg, value) => listener(reg, value, 1);
         return;
       }
-      if (machine instanceof Sms) machine.psgTap = listener;
+      if (machine instanceof Sms || machine instanceof Pce) machine.psgTap = listener;
       else if (machine instanceof Snes) machine.dspTap = listener;
       else if (machine instanceof Nds) machine.spuTap = listener;
       else machine.apuTap = listener;
@@ -594,7 +669,15 @@ function wrap(machine: Gameboy | Nes | Sms | Snes | Md | Gba | Nds): Machine {
           machine.setButtons(
             down.map((name) => (name === "a" ? "b" : name === "b" ? "y" : name)) as never,
           )
-        : machine.setButtons(down as never),
+        : machine instanceof Pce
+          ? // This pad's face buttons are I and II and its start is Run, which
+            // is what the cartridge reads and what the page maps onto.
+            machine.setButtons(
+              down.map((name) =>
+                name === "a" ? "i" : name === "b" ? "ii" : name === "start" ? "run" : name,
+              ) as never,
+            )
+          : machine.setButtons(down as never),
     runFrame: () => void machine.runFrame(),
     listen: (sink) => {
       machine.audioSink = sink;
@@ -1047,7 +1130,7 @@ export function audioSweep(target: Target): void {
      * built *with* its music and effects, since `rom.test.ts` traces them with the
      * assets left out.
      *
-     * The other four sweep the fixtures that could actually fail. A Master System
+     * The other five sweep the fixtures that could actually fail. A Master System
      * used to be a real budget at 32 KiB and is now measured against the 48 KiB
      * board it grows onto, so its numbers above are the larger ones; it keeps the
      * two tightest, because the caves are still the fixture nearest whatever the
@@ -1087,6 +1170,13 @@ export function audioSweep(target: Target): void {
       sms: ["caves", "runner"],
       md: ["shooter"],
       snes: ["shooter"],
+      // The PC Engine keeps the two tightest, and here they really are the two
+      // tightest rather than the shooter: characters are *program* bytes on this
+      // console, uploaded at boot, so a game's budget follows its art and not its
+      // object count. The caves and the runner leave around eight kilobytes of
+      // the 48 KiB window; the shooter, which is the tightest fixture on every
+      // other machine, leaves fifteen.
+      pce: ["caves", "runner"],
     };
 
     for (const file of cases) {

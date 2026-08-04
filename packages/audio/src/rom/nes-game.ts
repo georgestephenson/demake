@@ -46,9 +46,9 @@ import {
   APU_BASE,
   emitStream,
   emitStreamData,
-  type NesScratch,
-  type NesStreamState,
-} from "./nes-driver.js";
+  type MosScratch,
+  type MosStreamState,
+} from "./mos-player.js";
 import { clampByte, MAX_PENDING, pack, rateHz, restrict, shapeOf, stripBoot } from "./shared.js";
 
 /** The value that stops the music, rather than starting a track. */
@@ -239,6 +239,7 @@ export function buildNesGameAudio(input: NesGameAudioInput): NesGameAudio {
       helpers.push(
         ...emitStream(asm, {
           prefix: "AudioMus",
+          base: APU_BASE,
           state: state.music,
           scratch: state.scratch,
           data: shapeOf(musicData),
@@ -252,6 +253,7 @@ export function buildNesGameAudio(input: NesGameAudioInput): NesGameAudio {
       helpers.push(
         ...emitStream(asm, {
           prefix: "AudioSfx",
+          base: APU_BASE,
           state: state.sfx,
           scratch: state.scratch,
           data: shapeOf(effectData),
@@ -355,9 +357,9 @@ export function resolveNesClock(script: ChipScript): NesGameAudio["clock"] {
 
 /** Where the driver keeps everything, laid out from the game's first free byte. */
 interface Layout {
-  music: NesStreamState;
-  sfx: NesStreamState;
-  scratch: NesScratch;
+  music: MosStreamState;
+  sfx: MosStreamState;
+  scratch: MosScratch;
   /** Channels an effect has taken. */
   steal: number;
   /** Each stream's intended `$4015`, which the merge folds together. */
@@ -381,7 +383,7 @@ function layout(base: number): Layout {
   // The pointer pairs come first and adjacent, because they are dereferenced
   // where they lie: `lda (dataLo),y` reads the byte after `dataLo` as the high
   // half whether or not anyone meant it to.
-  const music: NesStreamState = {
+  const music: MosStreamState = {
     dataLo: take(),
     dataHi: take(),
     orderLo: take(),
@@ -392,7 +394,7 @@ function layout(base: number): Layout {
     active: take(),
   };
   // A sound effect stops rather than looping, so it needs no loop entry.
-  const sfx: NesStreamState = {
+  const sfx: MosStreamState = {
     dataLo: take(),
     dataHi: take(),
     orderLo: take(),
@@ -400,7 +402,7 @@ function layout(base: number): Layout {
     rest: take(),
     active: take(),
   };
-  const scratch: NesScratch = { count: take(), flags: take() };
+  const scratch: MosScratch = { count: take(), flags: take() };
   const steal = take();
   const enableMusic = take();
   const enableSfx = take();

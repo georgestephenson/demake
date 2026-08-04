@@ -35,7 +35,7 @@ import {
   neg32,
   set32,
   sub32,
-} from "../src/codegen/nes/val.js";
+} from "../src/codegen/mos/val.js";
 import { compile } from "../src/compile.js";
 import { clampFixed, div, mul, ONE } from "../src/fixed.js";
 import { getProfile } from "../src/profiles.js";

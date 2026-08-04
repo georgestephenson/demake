@@ -1,7 +1,7 @@
 /**
  * The SN76489 driver's stream player — the 68000 half.
  *
- * The fourth copy of one machine (`gb-driver.ts`, `nes-driver.ts`,
+ * The fourth copy of one machine (`gb-driver.ts`, `mos-player.ts`,
  * `sms-driver.ts` beside it): a pointer walking packed data, a rest counter, and
  * an order list saying which block comes next. It is written once and
  * specialised at emit time from the packed data — a schedule with no rests emits

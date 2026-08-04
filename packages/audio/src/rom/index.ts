@@ -88,6 +88,10 @@ const GAME_CLOCKS: Readonly<Record<string, "timer" | "frame">> = {
   // rate is the loop's rather than the timer's, and therefore not a clock at
   // all. The picture's interrupt is the one this CPU actually gets.
   ym2612: "frame",
+  // The HuC6280 has a timer of its own — seven bits of reload at master ÷ 3 ÷
+  // 1024 — and nothing else in a demade cartridge uses it, so this console gets
+  // the Game Boy's clock discipline rather than the NES's.
+  "huc6280-psg": "timer",
 };
 
 /**
@@ -160,6 +164,8 @@ const CONSOLE_RATES: Readonly<Record<string, number>> = { gba: 32768 / 256 };
  *     either: the sound channels answer the ARM7 alone, so the cartridge's second
  *     binary *is* the driver and the game reaches it by writing two bytes of
  *     shared memory
+ *   - `pce` — 6502 (`rom/pce-game.ts`), sharing `mos-player.ts` with the NES
+ *     because a HuC6280 *is* a 6502, and clocked by that CPU's own timer
  *
  * Keeping it by console is what let the Game Boy Advance be absent from it for
  * as long as its ARM driver was: its four Game Boy channels are the same
@@ -178,6 +184,7 @@ const GAME_DRIVERS: readonly string[] = [
   "md",
   "gba",
   "nds",
+  "pce",
 ];
 
 /** Whether a `demake build` cartridge for this console can play its audio. */
