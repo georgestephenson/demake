@@ -361,7 +361,12 @@ export function emitCompare(
  * was emitted and the caller can drop the branch — and, for `never`, the whole
  * body behind it.
  */
-export function emitTest(ctx: WscCtx, expr: CExpr, bind: Binding, falseTarget: string): TestVerdict {
+export function emitTest(
+  ctx: WscCtx,
+  expr: CExpr,
+  bind: Binding,
+  falseTarget: string,
+): TestVerdict {
   const constant = fold(expr);
   if (constant !== undefined) return constant !== 0 ? "always" : "never";
 
