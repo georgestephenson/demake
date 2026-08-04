@@ -162,7 +162,7 @@ rom` and *not* for `demake build`. Encoders pay for more than one console:
 | SM83 | built (`core/src/asm/sm83.ts`) | Game Boy, Game Boy Color, **Mega Duck** |
 | 6502 | built (`core/src/asm/mos6502.ts`) | NES, **Atari 7800**; the CMOS additions extend it to Lynx and Supervision |
 | HuC6280 | built (`core/src/asm/huc6280.ts`) — a 65C02 superset, and the first encoder here that *extends* another | **PC Engine**, TurboExpress |
-| Z80 | built (`core/src/asm/z80.ts`) | Master System, Game Gear; the SG-1000 needs no more of it |
+| Z80 | built (`core/src/asm/z80.ts`) | Master System, Game Gear. It would cover the SG-1000 too — same CPU, no further encoder work — but that console is out of scope for games ([§below](#the-sg-1000-is-out-of-scope-for-games)) |
 | 68000 | built (`core/src/asm/m68k.ts`) | Mega Drive, Neo Geo |
 | 65816 | built (`core/src/asm/wdc65816.ts`) | SNES |
 | ARM | built (`core/src/asm/arm.ts`) | **GBA, NDS** — one encoder for three processors, since a DS has two |
@@ -185,7 +185,7 @@ real work is.
 | Shape | Consoles | What it costs |
 |---|---|---|
 | Tilemap + scroll + sprites | GB, GBC, Mega Duck, NES, SMS, GG, MD, SNES, PCE, TurboExpress, WS, WSC, NGP, NGPC, GBA, NDS | Nothing new — this is what the backend interface is |
-| Tilemap, **no scroll**, 1 KB RAM | SG-1000 | A camera it must refuse; scrolling means rewriting the pattern table |
+| Tilemap, **no scroll**, 1 KB RAM | SG-1000 | **Out of scope for games** ([§below](#the-sg-1000-is-out-of-scope-for-games)). The hardware has no scroll register, so a backend would have to reject any game that declares a camera; scrolling would mean rewriting the pattern table every frame |
 | **Sprite-only**, no tilemap | Neo Geo | The background is 512 sprites of vertical tile strips plus an 8×8 fix layer; all five background-cell writers need counterparts |
 | **Display list** | Atari 7800 | MARIA draws from per-zone header lists and steals cycles from the 6502; no tilemap, no ordinary sprites |
 | **Framebuffer + blitter** | Atari Lynx | Suzy blits scaled RLE sprite packets into RAM; background, scroll and tile rendering all become software |
@@ -207,7 +207,9 @@ A fixture game needs **≈700–950 bytes of work RAM** and **10–30 KB of ROM*
 before its art and audio (measured on the NES, the tightest machine with a
 backend). That is the yardstick two consoles fail or nearly fail:
 
-- **SG-1000** has 1 KB of work RAM. Small games fit; nothing else does.
+- **SG-1000** has 1 KB of work RAM, against the 700–950 bytes a fixture game needs
+  before its level tables, its sprite shadow and its audio state. That is the
+  second of the two reasons it is out of scope for games ([§below](#the-sg-1000-is-out-of-scope-for-games)).
 - **Supervision** has 8 KB, of which 160×160 at 2bpp is 6,400 bytes of visible
   bitmap.
 
@@ -216,6 +218,46 @@ over with its music in it (§D4). The obvious win is the backdrop nametable,
 which is stored raw and would pack to roughly a third — worth about six hundred
 bytes a game, and worth more than it looks, because several consoles below are
 tighter than the NES.
+
+### The SG-1000 is out of scope for games
+
+**Decided 2026-08. `demake build -c sg1000` is not planned, and the SG-1000 is
+not in the rollout order below.** This excludes step 4 of §How to add a console
+(a Demotic game backend) and nothing else — the console keeps everything it has
+today, which is art (`prep`/`inspect` through the TMS9918 row-pair fitter), data
+(`bin`/`asm`/`c`), a display ROM through WLA-DX with a pixel-perfect emulator
+E2E behind it, and music and effects through `arrange`, `sfx` and `render`.
+[`console-support.md`](console-support.md) is generated and already says exactly
+this; it needs no edit.
+
+Doc 14 §Scope had already excluded this console from the language, on the grounds
+that four sprites per scanline and one colour per sprite distort the sprite model
+every other target shares. This section is the roadmap half of the same decision:
+two further hardware facts, both about what a game *is* rather than about how much
+work a backend would be, which together make the exclusion permanent rather than
+an ordering.
+
+- **There is no scroll register.** A Demotic scene can declare a camera that
+  follows an object, and on every console with a backend that camera compiles to
+  a hardware scroll register. The TMS9918 has none, so the only way to scroll is
+  to rewrite the pattern table every frame on a machine with 1 KB of work RAM. A
+  backend would therefore have to reject any game that declares a camera, by
+  name, at build time — the rule in AGENTS.md §Iron rules that a backend gap is a
+  build error and never a silent difference.
+- **1 KB of work RAM.** A fixture game needs 700–950 bytes before its level
+  tables, its sprite shadow and its audio state (§RAM and cartridge, measured).
+  What fits is a game with no camera, no level and few objects.
+
+Between them, what the console could build is a strict subset of what the example
+library already is — so the honest description is that this hardware does not run
+the games this language describes, and shipping a backend that refused most of
+them would say otherwise. The `unsupported()` hook exists for a feature a backend
+has not implemented yet, not for a console that cannot implement it.
+
+**What would reopen it**: a demand for the subset that does fit — single-screen,
+cameraless games — or the ColecoVision, which is the same TMS9918 with 8× the
+work RAM and would make the RAM half of this moot. Neither is a reason to build
+the backend today, and either is a reason to revisit rather than to work around.
 
 ### The order
 
@@ -245,19 +287,19 @@ tighter than the NES.
 
    The **sound** closed the same way: `Huc6280Psg` in `@demake/chip`, a binding,
    and a generated driver whose stream player is the NES's — `rom/mos-player.ts`
-   is the *processor's* rather than either machine's, on `arm-player.ts`'s
-   precedent, so this console's driver is a clock, a register base and a release
-   routine. Three things about it are the machine's. The clock is the **CPU's own
-   timer**, so a game gets 120 Hz where the NES has only its frame; **nothing on
-   the chip is shared**, so no merge routine is emitted at all; and the **channel
-   is a register and it is latched**, which makes preemption a run-level decision
-   the way an SN76489's is. `packages/demotic/test/audio-pce.test.ts` runs the
-   whole battery on it.
-3. **Z80** — *done for the Master System and the Game Gear*, from one encoder,
-   with an SN76489 driver behind them. **SG-1000** is what the encoder has left
-   to buy: the same CPU against a TMS9918 rather than a Mode 4 VDP, so it is a
-   renderer and a 1 KB memory plan rather than an instruction set, and it lands
-   with `unsupported()` naming the camera — which is what that hook is for.
+   belongs to the *processor* rather than to either machine, on
+   `arm-player.ts`'s precedent, so all this console's own driver file adds is a
+   clock, a register base and a routine that gives a borrowed channel back.
+   Three things about that driver are this machine's. The clock is the **CPU's
+   own timer**, so a game's audio runs at 120 Hz where a NES game's runs at its
+   frame rate; **nothing on the chip is shared**, so the build emits no merge
+   routine at all; and the **channel is a register and it is latched**, so the
+   driver skips a preempted run whole, the way an SN76489 driver does.
+   `packages/demotic/test/audio-pce.test.ts` runs the whole battery on it.
+3. **Z80** — *done*, for the Master System and the Game Gear, from one encoder
+   with an SN76489 driver behind them. The encoder has no console left to buy:
+   the only other Z80 machine in the matrix is the SG-1000, which is out of scope
+   for games ([§above](#the-sg-1000-is-out-of-scope-for-games)).
 4. **WonderSwan Color**, then the **tiled-mono fitter**, then **WonderSwan**. The
    mono machine's blocker is the art path, not the CPU, and the fitter is an
    engine increment that stands on its own.

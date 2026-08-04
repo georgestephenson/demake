@@ -26,23 +26,23 @@ lookup on a sum. The LFO and the direct D/A's use as a sample player are stored
 and inert, and both are named as gaps rather than left to be discovered.
 
 `binding/pce.ts` is the encoder, and two things about it are this chip's alone.
-The **channel is a register and it is latched**, so the tag `data.ts` asks for
-carries a select latch exactly as the SN76489's does, preemption skips whole
-runs, and `checkSelectDiscipline` refuses a schedule where a run would not open
-with one. And **timbre is a boot decision**: a waveform is uploaded through the
-register port rather than selected, so `binding/pce-bank.ts` hands the five
-pitched voices five different shapes — a triangle, a saw, and three pulse widths
-— which is more timbral variety than any other eight-bit console here can hold at
-once.
+The **channel is a register and the chip latches it**, so the tag `data.ts` asks
+for carries a select latch exactly as the SN76489's tag carries a data-byte latch,
+the driver skips a preempted run whole, and `checkSelectDiscipline` refuses a
+schedule in which some run does not open with a select. And **which timbre a voice
+plays is decided at boot**: a driver uploads a waveform through the register port
+rather than selecting one, so `binding/pce-bank.ts` gives the five pitched voices
+five different shapes — a triangle, a saw, and three pulse widths — which is more
+timbral variety than any other eight-bit console here can hold at once.
 
 The driver shares its stream player with the NES. `rom/nes-driver.ts` is now
 `rom/mos-player.ts` and belongs to the **processor** rather than to either
 machine, on `arm-player.ts`'s precedent; what each console adds is `nes-game.ts`
 and `pce-game.ts`. The NES's output bytes are unchanged. What the PC Engine adds
 is its clock — the CPU's own timer at 120 Hz, where the NES has only the frame —
-and the fact that there is **no shared register at all**, so no merge routine is
-emitted: the third console in the set that can say so, with the Master System and
-the Mega Drive.
+and the fact that **no register is written by both streams**, so the build emits
+no merge routine: the third console in the set with none, after the Master System
+and the Mega Drive.
 
 Its channel palette puts the pulses first, as every other console's spec does,
 because the sound demaker places a pitched gesture on the _first_ pitched channel

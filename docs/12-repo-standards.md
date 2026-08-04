@@ -61,3 +61,13 @@ AGENTS.md must exist in package.json scripts).
   docs; a doc that contradicts code is a bug; ADRs (`docs/adr/NNN-*.md`) record
   decisions that change plan-era choices, starting with ADR-001 "TypeScript core"
   (imported from doc 02).
+- **Docs say what they mean.** The house voice is compressed, and the failure mode
+  that comes with it is a line that reads as a riddle: a pronoun whose referent is
+  a column heading ("the SG-1000 needs no more of it" — *it* was the Z80 encoder),
+  or a noun standing in for the whole action performed on it ("a camera it must
+  refuse" — a game declaring a camera is rejected at build time). Neither can be
+  recovered by a reader, because the missing word is nowhere on the page. Name the
+  actor and the action; expand a pronoun whose referent is not in the same
+  sentence; treat a line that needs its paragraph to decode as one to rewrite. The
+  standard is that a sentence read cold has exactly one meaning — table cells and
+  headings included, since those are read out of order by definition.

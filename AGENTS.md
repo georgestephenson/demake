@@ -491,15 +491,17 @@ helper, so a game with no scrolling HUD ships none.
 channel, a twelve-bit divider, and a shift register on two of the six — and the
 cartridge carries a **generated HuC6280 driver** whose stream player is the NES's
 (`rom/mos-player.ts`, shared because a HuC6280 _is_ a 6502). Three things are this
-machine's rather than that one's restated. The **clock is the CPU's own timer**, a
-seven-bit reload at master ÷ 3 ÷ 1024, so a game's audio runs at 120 Hz where the
-NES's runs at 60 — still counted rather than ridden, because the blanking interval
-belongs to the picture. **Nothing on the chip is shared**, so no merge routine is
-emitted at all: the third console in the set that can say so, and the third to say
-it by having _less_ shared hardware. And the **channel is a register and it is
-latched**, so `pceChannelTag` carries a select the way the SN76489's carries a
-data-byte latch, preemption skips whole runs, and `checkSelectDiscipline` refuses
-a schedule where a run would not open with one.
+machine's rather than the NES's restated. The **clock is the CPU's own timer**, a
+seven-bit reload at master ÷ 3 ÷ 1024, so a game's audio runs at 120 Hz where a
+NES game's runs at 60. The handler still only counts the tick and the main loop
+performs it, because the blanking interval belongs to the picture. **Nothing on
+the chip is shared**, so the build emits no merge routine at all — the third
+console in the set with no shared register, and the third to have none because
+its hardware shares less rather than more. And the **channel is a register and it
+is latched**, so `pceChannelTag` carries a select the way the SN76489's tag
+carries a data-byte latch, preemption skips whole runs, and
+`checkSelectDiscipline` refuses a schedule where a run would not open with a
+select.
 
 **Timbre here is a boot decision, which no other chip in the set allows.** A
 waveform is _uploaded_ through the register port rather than selected, so there is
@@ -507,8 +509,9 @@ no bank in ROM at all — `binding/pce-bank.ts` produces register writes, and th
 reach the cartridge as part of the driver's own initialisation. Since a strategy's
 duty is a whole-track constant, the five pitched voices take five _different_
 shapes instead of five copies of one: a triangle, a saw, and three pulse widths.
-That is more timbre than any other eight-bit console here can hold at once, and it
-is the demaker spending the machine rather than the hardware being generous.
+That is more timbre than any other eight-bit console here can hold at once, and
+the demaker is what spends it: the hardware offers six identical voices and says
+nothing about what to put in them.
 
 Still to come: the remaining Tier 2/3 consoles (each = a codegen backend, a ROM
 harness + toolchain, and a libretro core + DAC calibration), the remaining
@@ -3004,3 +3007,17 @@ not per console.
   every doc that states it (they cross-reference each other by number).
 - Keep this file current: any workflow or convention you introduce that an agent
   needs on day one gets a line here, in the same PR.
+- **Write it so it can only be read one way.** These docs compress hard, and past
+  a point that stops being concision and becomes a riddle — a reader cannot
+  recover a word that is not on the page. Two habits produce the bad lines and
+  both were in one table in doc 13. A **pronoun pointing at a column heading**:
+  "the SG-1000 needs no more of it", where _it_ was the Z80 encoder two columns
+  away. And a **noun standing in for the whole action performed on it**: "a
+  camera it must refuse", which meant that a game declaring a camera is rejected
+  at build time, by name. Both were shorter than the clear version by about six
+  words, and both cost a reader the sentence. So: name the actor, name what is
+  done to it, and expand a pronoun whose referent is not in the same sentence.
+  A line that needs the surrounding paragraph to be decoded is a line to rewrite,
+  not to annotate. Vivid is welcome — the voice in these docs is deliberate —
+  but ambiguous never is, and the test is whether one sentence read cold has
+  exactly one meaning.
