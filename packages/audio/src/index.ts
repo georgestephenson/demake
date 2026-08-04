@@ -139,6 +139,22 @@ export {
 } from "./rom/pce-game.js";
 export { pceChannelTag, pcePackTag } from "./binding/pce.js";
 export {
+  psgShadowInit,
+  psgShadowPlan,
+  psgShadowSlot,
+  PSG_SHADOW,
+  PSG_SHADOW_BYTES,
+} from "./rom/psg.js";
+export {
+  shadowBias,
+  shadowPlan,
+  shadowReserve,
+  NO_SHADOW,
+  type ShadowChannel,
+  type ShadowPlan,
+  type ShadowRegister,
+} from "./rom/shared.js";
+export {
   buildSmsGameAudio,
   resolveSmsClock,
   SMS_AUDIO_BYTES,

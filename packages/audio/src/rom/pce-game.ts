@@ -53,7 +53,19 @@ import {
   type MosScratch,
   type MosStreamState,
 } from "./mos-player.js";
-import { clampByte, MAX_PENDING, pack, rateHz, restrict, shapeOf, stripBoot } from "./shared.js";
+import {
+  clampByte,
+  MAX_PENDING,
+  NO_SHADOW,
+  pack,
+  rateHz,
+  restrict,
+  shadowBias,
+  shadowPlan,
+  shapeOf,
+  stripBoot,
+  type ShadowPlan,
+} from "./shared.js";
 
 /** The value that stops the music, rather than starting a track. */
 export const STOP = 0xff;
@@ -88,6 +100,18 @@ const MAX_TIMER_RELOAD = 0x7f;
  */
 const MAX_STEAL_CHANNELS = 4;
 
+/**
+ * Where this CPU's cheap page really is.
+ *
+ * {@link PceGameAudioInput.state} is an *operand*, because that is what a
+ * zero-page instruction encodes — but this CPU adds `$2000` to it and no memory
+ * map can move that, so an **indexed** access to the driver's own state has to
+ * name the absolute address instead (`demotic/src/codegen/mos/zp.ts`). Getting
+ * it backwards puts the copy of a borrowed channel in the first page of RAM,
+ * where it is read back as whatever else lives there.
+ */
+const CHEAP_PAGE = 0x2000;
+
 /** What the game hands the driver builder. */
 export interface PceGameAudioInput {
   /** One schedule per track, in the order the game refers to them. */
@@ -112,7 +136,19 @@ export interface PceGameAudioInput {
  * has. Counted from the allocator rather than written down, so the two cannot
  * drift.
  */
-export const PCE_AUDIO_BYTES = layout(0).end;
+/**
+ * Worst case for the borrowed-channel copies.
+ *
+ * Not {@link shadowReserve}'s answer, because this chip *selects* a channel
+ * rather than addressing one: every voice is written through the same ten
+ * register numbers, so a window is ten bytes and there are as many windows as
+ * the packed run format can number ({@link MAX_STEAL_CHANNELS}). Reserved rather
+ * than fitted, because the memory plan is settled before the game's effects are
+ * demade and it is the plan that says how much of the cheap page the driver has.
+ */
+const SHADOW_MAX = MAX_STEAL_CHANNELS * (PSG.NOISE + 1);
+
+export const PCE_AUDIO_BYTES = layout(0, SHADOW_MAX).end;
 
 /** Sizes and reductions, reported rather than assumed. */
 export interface PceGameAudioStats {
@@ -234,14 +270,20 @@ export function buildPceGameAudio(input: PceGameAudioInput): PceGameAudio {
     pack(script, { ...packOptions, end: "stop" as const }),
   );
 
-  const state = layout(input.state);
+  // What the music has to remember so a borrowed channel comes back holding the
+  // music's own note rather than the effect's last one (`shared.ts`). The tag is
+  // the packer's, because the run walk tests the *renumbered* channel bits.
+  const shadow = shared
+    ? shadowPlan(tracks, (1 << stealable.length) - 1, pcePackTag(stealable), boot)
+    : NO_SHADOW;
+  const state = layout(input.state, shadow.bytes);
   const helpers: string[] = [];
   let code = 0;
   let data = 0;
 
   const emitCode = (asm: Asm6502): void => {
     const start = asm.pc;
-    emitInit(asm, state, clock.reload);
+    emitInit(asm, state, clock.reload, shadow);
     emitClock(asm, state);
     emitTick(asm, state, input);
     if (input.tracks.length > 0) {
@@ -254,12 +296,22 @@ export function buildPceGameAudio(input: PceGameAudioInput): PceGameAudio {
           scratch: state.scratch,
           data: shapeOf(musicData),
           ...(shared ? { steal: state.steal } : {}),
+          ...(shared && shadow.bytes > 0
+            ? {
+                shadow: {
+                  channels: shadow.channels.map((channel) => ({
+                    bit: channel.channel,
+                    base: CHEAP_PAGE + state.shadow + shadowBias(channel),
+                  })),
+                },
+              }
+            : {}),
         }).map((name) => `music-${name}`),
       );
     }
     if (input.effects.length > 0) {
       emitSfxStart(asm, state, input);
-      emitRelease(asm, state, stealable);
+      emitRelease(asm, state, stealable, shadow);
       helpers.push(
         ...emitStream(asm, {
           prefix: "AudioSfx",
@@ -401,6 +453,15 @@ interface Layout {
   music: MosStreamState;
   sfx: MosStreamState;
   scratch: MosScratch;
+  /**
+   * First byte of the music's copy of the borrowable channels.
+   *
+   * One window per channel rather than one per register, because this chip
+   * selects a voice instead of addressing one: every channel is written through
+   * the same ten register numbers, so a shared window would have each replaying
+   * whichever voice wrote last.
+   */
+  shadow: number;
   /** Channels an effect has taken, in the packed run field's numbering. */
   steal: number;
   /** Priority of the effect playing, for the one that wants to interrupt it. */
@@ -413,7 +474,7 @@ interface Layout {
   end: number;
 }
 
-function layout(base: number): Layout {
+function layout(base: number, shadowBytes: number): Layout {
   let at = base;
   const take = (): number => at++;
   // The pointer pairs come first and adjacent, because they are dereferenced
@@ -444,7 +505,9 @@ function layout(base: number): Layout {
   const musicReq = take();
   const sfxReq = take();
   const pending = take();
-  return { music, sfx, scratch, steal, priority, musicReq, sfxReq, pending, end: at };
+  const shadow = at;
+  at += shadowBytes;
+  return { music, sfx, scratch, shadow, steal, priority, musicReq, sfxReq, pending, end: at };
 }
 
 // --- code --------------------------------------------------------------------
@@ -459,7 +522,7 @@ function layout(base: number): Layout {
  * the set. The walk borrows the run scratch as its pointer — the two bytes are
  * adjacent for the stream player's sake and nothing else is running yet.
  */
-function emitInit(asm: Asm6502, state: Layout, reload: number): void {
+function emitInit(asm: Asm6502, state: Layout, reload: number, plan: ShadowPlan): void {
   const { count, flags } = state.scratch;
   asm.label("AudioInit");
   asm.lda(immLow(label("AudioBoot")));
@@ -501,6 +564,19 @@ function emitInit(asm: Asm6502, state: Layout, reload: number): void {
   asm.sta(abs(TIMER_RELOAD));
   asm.lda(imm(1));
   asm.sta(abs(TIMER_CONTROL));
+
+  // Each borrowable channel's copy starts at what the boot table left in its
+  // registers, so a replay before the music has stated anything restores the
+  // chip's initialised condition rather than a guess.
+  let seeded: number | undefined;
+  for (let byte = 0; byte < plan.bytes; byte += 1) {
+    const value = plan.init[byte] as number;
+    if (seeded !== value) {
+      asm.lda(imm(value));
+      seeded = value;
+    }
+    asm.sta(zp(state.shadow + byte));
+  }
   asm.rts();
 }
 
@@ -676,16 +752,26 @@ function emitSfxStart(asm: Asm6502, state: Layout, input: PceGameAudioInput): vo
 /**
  * Give back the channels an effect borrowed.
  *
- * A select and a zero each: the enable bit and the volume are the same byte, so
- * there is nothing else to clear and no shared register to recompute. The music
- * picks the channel up again at its next note rather than being restored —
- * keeping a shadow of every register on every channel to hide a gap of a few
- * ticks is the Game Boy driver's rejected trade, rejected here for the same
- * reason.
+ * The music's own registers are replayed from the copy the run walk keeps
+ * (`shared.ts` §`shadowPlan`), so the channel comes back sounding the note the
+ * music was holding. Selecting the channel and clearing its control byte — which
+ * is what this did — leaves it silent until the music's *next note* on it, and
+ * the packed music is a delta stream, so for a held chord tone that is a whole
+ * bar.
+ *
+ * The replay opens with the select, because it is register zero and the order is
+ * ascending: the whole voice is stated and then its control byte turns it back
+ * on. A channel the music never writes has no copy and is silenced instead,
+ * because there is nothing truer to say about it.
  *
  * **Clobbers `a` only**, because `x` is live in the caller.
  */
-function emitRelease(asm: Asm6502, state: Layout, stealable: readonly number[]): void {
+function emitRelease(
+  asm: Asm6502,
+  state: Layout,
+  stealable: readonly number[],
+  plan: ShadowPlan,
+): void {
   asm.label("AudioSfxRelease");
   asm.lda(zp(state.steal));
   asm.bne("AudioSfxReleaseDo");
@@ -698,10 +784,18 @@ function emitRelease(asm: Asm6502, state: Layout, stealable: readonly number[]):
       asm.and(imm(1 << index));
       asm.beq(skip);
     }
-    asm.lda(imm(stealable[index] as number));
-    asm.sta(abs(SELECT));
-    asm.lda(imm(0));
-    asm.sta(abs(CONTROL));
+    const copy = plan.channels.find((one) => one.channel === 1 << index);
+    if (copy) {
+      for (const write of copy.writes) {
+        asm.lda(zp(state.shadow + write.slot));
+        asm.sta(abs(PSG_BASE + write.port));
+      }
+    } else {
+      asm.lda(imm(stealable[index] as number));
+      asm.sta(abs(SELECT));
+      asm.lda(imm(0));
+      asm.sta(abs(CONTROL));
+    }
     if (stealable.length > 1) asm.label(skip);
   }
   asm.lda(imm(0));
