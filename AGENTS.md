@@ -1286,6 +1286,20 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
 - **`.test.dmt` suites run on every console.** That is what makes a _balance_
   regression visible; a mechanical one would show up anywhere. Write assertions
   in the relative vocabulary or they will only be true on one machine.
+- **And write a duration in _seconds_, for the same reason.** `play 4 seconds`
+  and `hold left for 5 seconds` are resolved against the console's `fps` by the
+  runner — the one place a rate enters a script — exactly as a `speed` is
+  resolved at compile time. A tick count was portable only while every console
+  ticked sixty times a second, and the WonderSwan Color does not: it runs at
+  75.47 Hz, so `hold right for 42 ticks` covers three quarters of the ground
+  there. `ticks` is still a unit, and the suites keep it for the two- and
+  eight-tick waits that give a rule an edge to fire on — but anything that means
+  _an amount of elapsed game_ is a duration.
+- **An assertion about what happens after a scene change is usually not
+  portable.** `quest`'s pit test asserted a power-up's value after a death _and a
+  level restart_ — a second run at the same level, whose progress when the script
+  stops depends on where the first one ended, which tick quantisation makes
+  differ per console. What such a test can assert is the scene.
 - **Every suite opens with `press a`,** because every game opens on its title
   screen. It is one line of ceremony in exchange for the title screen being part
   of what the suite checks rather than something it routes around.
