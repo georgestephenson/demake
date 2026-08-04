@@ -29,7 +29,7 @@
  * the shorter player, exactly as a cartridge that owns the chip does.
  */
 
-import { Asm700, A, X, Y, spcDp, spcIdxIndY, spcImm } from "@demake/core";
+import { Asm700, A, X, Y, spcDp, spcDpX, spcIdxIndY, spcImm } from "@demake/core";
 
 import { RUN, type DriverData } from "./data.js";
 
@@ -72,6 +72,19 @@ export interface SpcStreamOptions {
   scratch: SpcScratch;
   /** The union of what this stream's schedules ask for. */
   data: DriverData;
+  /**
+   * Where this stream keeps a copy of the voices another stream can borrow.
+   *
+   * A run naming one of `channels` is recorded as well as written, and a run
+   * that is *skipped* is recorded instead of written, so the copy is the music's
+   * own state whether or not the chip currently holds it (`shared.ts`
+   * §`shadowPlan`). `X` is free in this walk — `readByte` indexes through `Y` —
+   * so a copy costs one transfer and one indexed store.
+   */
+  shadow?: {
+    /** One per borrowable voice: its bit, and the direct-page base it indexes. */
+    channels: readonly { bit: number; base: number }[];
+  };
   /** Routine to jump to when a one-shot's order list runs out. */
   onEnd?: string;
 }
@@ -139,6 +152,14 @@ export function emitStream(asm: Asm700, options: SpcStreamOptions): string[] {
     asm.and(A, spcDp(scratch.mask));
     asm.bne(at("Skip"));
     helpers.push("preemptible-skip");
+    if (options.shadow) {
+      // Ours right now, but borrowable: the chip and the copy both take it, so
+      // the copy is still true the next time an effect hands the voice back.
+      asm.mov(A, spcDp(scratch.mask));
+      asm.and(A, spcImm(options.shadow.channels.reduce((bits, one) => bits | one.bit, 0)));
+      asm.bne(at("Record"));
+      helpers.push("borrowed-channel-shadow");
+    }
   }
 
   asm.label(at("Write"));
@@ -161,15 +182,49 @@ export function emitStream(asm: Asm700, options: SpcStreamOptions): string[] {
     asm.bra(at("After"));
   }
 
+  if (data.runs && options.shadow) {
+    // Written *and* recorded, one loop per borrowable voice because each has a
+    // window of its own. `X` carries the register into the indexed store.
+    asm.label(at("Record"));
+    spcPerChannel(asm, options, at, "RecordOn", (name, base) => {
+      asm.label(name);
+      readByte(asm, s.ptr);
+      asm.mov(X, A);
+      asm.mov(spcDp(0xf2), A);
+      readByte(asm, s.ptr);
+      asm.mov(spcDp(0xf3), A);
+      asm.mov(spcDpX(base), A);
+      asm.dbnzDp(scratch.count, name);
+      asm.bra(at("After"));
+    });
+  }
+
   if (data.runs) {
     asm.label(at("Skip"));
-    asm.mov(A, spcDp(scratch.count));
-    asm.asl();
-    asm.clrc();
-    asm.adc(A, spcDp(s.ptr));
-    asm.mov(spcDp(s.ptr), A);
-    asm.bcc(at("After"));
-    asm.inc(spcDp(s.ptr + 1));
+    if (options.shadow) {
+      // A skipped run is recorded and not written: the chip belongs to the
+      // effect until it lets go, but the music's own idea of the voice has to
+      // keep moving or the replay would restore a note that ended while it
+      // played. Which is also why this is a walk now rather than the bulk
+      // pointer bump it was.
+      spcPerChannel(asm, options, at, "SkipOn", (name, base) => {
+        asm.label(name);
+        readByte(asm, s.ptr);
+        asm.mov(X, A);
+        readByte(asm, s.ptr);
+        asm.mov(spcDpX(base), A);
+        asm.dbnzDp(scratch.count, name);
+        asm.bra(at("After"));
+      });
+    } else {
+      asm.mov(A, spcDp(scratch.count));
+      asm.asl();
+      asm.clrc();
+      asm.adc(A, spcDp(s.ptr));
+      asm.mov(spcDp(s.ptr), A);
+      asm.bcc(at("After"));
+      asm.inc(spcDp(s.ptr + 1));
+    }
 
     asm.label(at("After"));
     asm.mov(A, spcDp(scratch.flags));
@@ -234,6 +289,32 @@ export function emitStream(asm: Asm700, options: SpcStreamOptions): string[] {
 }
 
 /** `a = *ptr++`, which is two instructions and the whole of the read path. */
+/**
+ * Emit one body per borrowable voice, routed on the run's voice mask.
+ *
+ * The last voice falls through rather than being tested, because a run only
+ * reaches here when it named one of them — so with a single borrowable voice,
+ * which is what a game with one pitched effect has, there is no test at all.
+ */
+function spcPerChannel(
+  asm: Asm700,
+  options: SpcStreamOptions,
+  at: (what: string) => string,
+  prefix: string,
+  body: (name: string, base: number) => void,
+): void {
+  const channels = (options.shadow as { channels: readonly { bit: number; base: number }[] })
+    .channels;
+  for (let index = 0; index < channels.length - 1; index += 1) {
+    asm.mov(A, spcDp(options.scratch.mask));
+    asm.and(A, spcImm((channels[index] as { bit: number }).bit));
+    asm.bne(at(`${prefix}${index}`));
+  }
+  for (let index = 0; index < channels.length; index += 1) {
+    body(at(`${prefix}${index}`), (channels[index] as { base: number }).base);
+  }
+}
+
 function readByte(asm: Asm700, ptr: number): void {
   asm.mov(A, spcIdxIndY(ptr));
   asm.incw(spcDp(ptr));

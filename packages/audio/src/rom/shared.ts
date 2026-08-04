@@ -218,6 +218,11 @@ export function shadowBias(channel: ShadowChannel): number {
  * channel replaying the other's note. Within a window the index is the packed
  * byte, so recording a write is a subtraction and not a search.
  *
+ * A register two streams *merge* into is excluded: it is folded rather than
+ * stored, and the merge already keeps a shadow per stream. On the Super
+ * Nintendo it is also a pulse — `KON` starts the voices whose bits are set — so
+ * replaying one would strike a note nothing asked for.
+ *
  * The registers of one channel must live on one device. Only the Mega Drive has
  * two, and there an effect takes a voice on one chip or the other and never a
  * voice made of both, so a channel that reached across them would be a tagging
@@ -229,6 +234,7 @@ export function shadowPlan(
   channelOf: () => ChannelTag,
   boot: readonly RegisterWrite[] = [],
   port: (reg: number, chip: number) => number = (reg) => reg,
+  merge: ReadonlySet<number> = new Set(),
 ): ShadowPlan {
   if (stealable === 0) return NO_SHADOW;
   // Which (chip, register) pairs each stealable channel is written through. The
@@ -242,6 +248,11 @@ export function shadowPlan(
       for (const write of tick.writes) {
         const chip = write.chip ?? 0;
         const channels = tag(write.reg, write.value, chip) & stealable;
+        // A merged register belongs to no one stream — it is folded rather than
+        // stored, and on one of these chips it is a *pulse* that starts a voice
+        // rather than state a voice holds. Copying one would have the release
+        // strike a note the schedule never asked for.
+        if (merge.has(write.reg)) continue;
         for (let bit = 1; bit <= channels; bit <<= 1) {
           if ((channels & bit) === 0) continue;
           const was = chips.get(bit);
@@ -291,6 +302,10 @@ export function shadowPlan(
   for (const write of boot) {
     const chip = write.chip ?? 0;
     const named = bootTag(write.reg, write.value, chip);
+    // Asked *after* the tag, because a boot write may be a register no channel
+    // owns — a master volume, on one of these chips — and the port map is only
+    // defined for the ones a schedule can carry.
+    if (merge.has(write.reg) || (named & stealable) === 0) continue;
     const byte = port(write.reg, chip);
     for (const channel of channels) {
       if ((named & channel.channel) === 0 || channel.chip !== chip) continue;

@@ -57,7 +57,19 @@ import {
   NDS_STACK_TOP,
   NDS_STATE_BASE,
 } from "./nds-driver.js";
-import { clampByte, MAX_PENDING, pack, rateHz, restrict, shapeOf, stripBoot } from "./shared.js";
+import {
+  clampByte,
+  MAX_PENDING,
+  NO_SHADOW,
+  pack,
+  rateHz,
+  restrict,
+  shadowBias,
+  shadowPlan,
+  shapeOf,
+  stripBoot,
+  type ShadowPlan,
+} from "./shared.js";
 
 /** The value that stops the music, rather than starting a track. */
 export const NDS_STOP = 0xff;
@@ -206,7 +218,14 @@ export function buildNdsGameAudio(input: NdsGameAudioInput): NdsGameAudio {
     pack(script, { ...packOptions, end: "stop" as const }),
   );
 
-  const state = layout(input.state);
+  // What the music has to remember so a borrowed channel comes back holding the
+  // music's own note rather than the effect's last one (`shared.ts`). The tag and
+  // the port are the packer's, because the run walk tests the bits the packed
+  // data carries and indexes the copy by the byte it holds.
+  const shadow = shared
+    ? shadowPlan(tracks, (1 << stealable.length) - 1, channelOf, boot, (reg) => ndsPort(reg))
+    : NO_SHADOW;
+  const state = layout(input.state, shadow.bytes);
   const helpers: string[] = [];
 
   const asm = new AsmArm(NDS_ARM7_RAM);
@@ -222,13 +241,23 @@ export function buildNdsGameAudio(input: NdsGameAudioInput): NdsGameAudio {
         state: state.music,
         data: shapeOf(musicData),
         base: state.base,
+        ...(shadow.bytes > 0
+          ? {
+              shadow: {
+                channels: shadow.channels.map((channel) => ({
+                  bit: channel.channel,
+                  base: state.shadow + shadowBias(channel),
+                })),
+              },
+            }
+          : {}),
         ...(shared ? { steal: state.steal } : {}),
       }).map((name) => `music-${name}`),
     );
   }
   if (input.effects.length > 0) {
     emitSfxStart(asm, state, input);
-    emitRelease(asm, state, stealable);
+    emitRelease(asm, state, stealable, shadow);
     helpers.push(
       ...emitStream(asm, {
         prefix: "AudioSfx",
@@ -307,6 +336,8 @@ interface Layout {
   base: number;
   music: ArmStreamState;
   sfx: ArmStreamState;
+  /** First byte of the music's copy of the borrowable channels. */
+  shadow: number;
   /** Channels an effect has taken. */
   steal: number;
   /** Priority of the effect playing, for the one that wants to interrupt it. */
@@ -327,7 +358,7 @@ interface Layout {
  * faulting, so a stream pointer read from an odd address is a wrong pointer and
  * not a crash.
  */
-function layout(requests: number): Layout {
+function layout(requests: number, shadowBytes: number): Layout {
   let at = NDS_STATE_BASE;
   const word = (): number => {
     const address = at;
@@ -366,10 +397,13 @@ function layout(requests: number): Layout {
   };
   const steal = byte();
   const priority = byte();
+  const shadow = at;
+  at += shadowBytes;
   return {
     base: NDS_STATE_BASE,
     music,
     sfx,
+    shadow,
     steal,
     priority,
     tally,
@@ -578,7 +612,12 @@ function emitSfxStart(asm: AsmArm, state: Layout, input: NdsGameAudioInput): voi
  * asked for in `r4` across this call and `AudioSfxStart` holds a table pointer
  * there.
  */
-function emitRelease(asm: AsmArm, state: Layout, stealable: readonly number[]): void {
+function emitRelease(
+  asm: AsmArm,
+  state: Layout,
+  stealable: readonly number[],
+  plan: ShadowPlan,
+): void {
   asm.label("AudioSfxRelease");
   asm.ldrConst(3, state.base);
   asm.ldrb(1, armAt(3, off(state, state.steal)));
@@ -588,7 +627,20 @@ function emitRelease(asm: AsmArm, state: Layout, stealable: readonly number[]): 
     const skip = `AudioRelease${index}`;
     asm.tst(1, armImm(1 << index));
     asm.b(skip, "eq");
-    emitSoundWrite(asm, (stealable[index] as number) * NDS_CHANNEL_STRIDE + NDS_CH.control, 0);
+    const copy = plan.channels.find((one) => one.channel === 1 << index);
+    if (copy) {
+      // Ascending register order, so the byte carrying the start bit — which is
+      // the whole of a note's existence here — is written last. `r1` is the steal
+      // mask and `r3` the state base, both live across it.
+      for (const write of copy.writes) {
+        asm.ldrConst(2, state.shadow);
+        asm.ldrb(0, armAt(2, write.slot));
+        asm.ldrConst(12, NDS_SPU_BASE + write.port);
+        asm.strb(0, armAt(12, 0));
+      }
+    } else {
+      emitSoundWrite(asm, (stealable[index] as number) * NDS_CHANNEL_STRIDE + NDS_CH.control, 0);
+    }
     asm.label(skip);
   }
   asm.ldrConst(3, state.base);

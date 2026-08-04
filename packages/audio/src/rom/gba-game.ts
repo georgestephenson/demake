@@ -79,7 +79,19 @@ import {
   VOICE,
   VOICE_STRIDE,
 } from "./gba-driver.js";
-import { clampByte, pack, rateHz, restrict, shapeOf, stripBoot } from "./shared.js";
+import {
+  clampByte,
+  pack,
+  rateHz,
+  restrict,
+  shadowBias,
+  shadowPlan,
+  shadowReserve,
+  shapeOf,
+  stripBoot,
+  NO_SHADOW,
+  type ShadowPlan,
+} from "./shared.js";
 
 /** The value that stops the music, rather than starting a track. */
 export const STOP = 0xff;
@@ -115,7 +127,19 @@ export interface GbaGameAudioInput {
  * difference between the mixer costing a tenth of the processor and costing a
  * third of it.
  */
-export const GBA_AUDIO_BYTES = layout(0).end;
+/**
+ * Worst case for the borrowed-channel copies: every Game Boy channel, its own
+ * registers.
+ *
+ * The mixer's six voices are not in it, because an effect never borrows one —
+ * the sound demaker places a gesture on the first pulse or on the noise channel,
+ * and one placed on a mixer voice is refused by name. Reserved rather than
+ * fitted, because the memory plan is settled before the game's effects are
+ * demade.
+ */
+const SHADOW_MAX = shadowReserve(gbaChannelTag(), 0x60, 0x81);
+
+export const GBA_AUDIO_BYTES = layout(0, SHADOW_MAX).end;
 
 /** Sizes and reductions, reported rather than assumed. */
 export interface GbaGameAudioStats {
@@ -261,8 +285,15 @@ export function buildGbaGameAudio(input: GbaGameAudioInput): GbaGameAudio {
     pack(script, { ...packOptions, end: "stop" as const }),
   );
 
-  const state = layout(input.state);
   const stealable = input.effects.reduce((bits, effect) => bits | (1 << effect.channel), 0);
+  // What the music has to remember so a borrowed channel comes back holding the
+  // music's own note rather than the effect's last one (`shared.ts`).
+  // The packer's tag and the packer's port, because the run walk tests the bits
+  // the *packed data* carries and indexes the copy by the byte it holds.
+  const shadow = shared
+    ? shadowPlan(tracks, stealable, channelOf, boot, port, new Set([NR51]))
+    : NO_SHADOW;
+  const state = layout(input.state, shadow.bytes);
   // `KOF` is a second way to say what a level of zero already says, and the
   // binding never emits it — so the driver only grows the path if a schedule
   // really carries one.
@@ -290,12 +321,22 @@ export function buildGbaGameAudio(input: GbaGameAudioInput): GbaGameAudio {
           data: shapeOf(musicData),
           base: state.base,
           ...(shared ? { steal: state.steal, merge: "AudioMusPan" } : {}),
+          ...(shadow.bytes > 0
+            ? {
+                shadow: {
+                  channels: shadow.channels.map((channel) => ({
+                    bit: channel.channel,
+                    base: state.shadow + shadowBias(channel),
+                  })),
+                },
+              }
+            : {}),
         }).map((name) => `music-${name}`),
       );
     }
     if (input.effects.length > 0) {
       emitSfxStart(asm, state, input);
-      emitRelease(asm, state, stealable, shared);
+      emitRelease(asm, state, stealable, shared, shadow);
       helpers.push(
         ...emitStream(asm, {
           prefix: "AudioSfx",
@@ -430,6 +471,14 @@ interface Layout {
   writeBlock: number;
   /** Blocks counted by the interrupt that the main loop has not mixed yet. */
   pending: number;
+  /**
+   * First byte of the music's copy of the borrowable channels.
+   *
+   * Only the Game Boy half is ever in it: an effect placed on a mixer voice is
+   * refused by name, so those six voices are never borrowed and have nothing to
+   * hand back.
+   */
+  shadow: number;
   /** The mixer's six voice records. */
   voices: number;
   /** The 32-bit stereo accumulator one block is summed in. */
@@ -449,7 +498,7 @@ interface Layout {
  * byte is placed before anything narrower, and the two blocks are re-aligned
  * after the byte fields.
  */
-function layout(base: number): Layout {
+function layout(base: number, shadowBytes: number): Layout {
   let at = base;
   const word = (): number => {
     const address = at;
@@ -493,6 +542,8 @@ function layout(base: number): Layout {
   const readBlock = byte();
   const writeBlock = byte();
   const pending = byte();
+  const shadow = at;
+  at += shadowBytes;
   align();
   const voices = at;
   at += GBA_PCM_VOICES * VOICE_STRIDE;
@@ -507,6 +558,7 @@ function layout(base: number): Layout {
     base,
     music,
     sfx,
+    shadow,
     steal,
     panMusic,
     panSfx,
@@ -781,18 +833,25 @@ function emitSfxStart(asm: AsmArm, state: Layout, input: GbaGameAudioInput): voi
 /**
  * Give back the channels an effect borrowed.
  *
- * The channel is silenced rather than left holding the effect's last register
- * values, and the music picks it up again at its next note. Restoring what the
- * music *would* have been playing would mean keeping a shadow of every register
- * on every channel, to hide a gap of at most a few ticks — the trade every
- * driver here rejects.
+ * The music's own registers are replayed from the copy the run walk keeps
+ * (`shared.ts` §`shadowPlan`), so the channel comes back sounding the note the
+ * music was holding. Silencing it and waiting for the music's next note leaves a
+ * gap that is a whole bar for a held chord tone, and does not stay a gap: the
+ * music's next volume step re-triggers the voice through `NRx4` while `NRx3`
+ * still holds the effect's low byte.
  *
  * Clobbers `r0`–`r3` and `r12` only: `AudioMusicStart` holds the track it was
  * asked for in `r4` across this call and `AudioSfxStart` holds a table pointer
  * there, and a scene change that happened while an effect was playing would
  * otherwise start whichever track a scratch register happened to name.
  */
-function emitRelease(asm: AsmArm, state: Layout, stealable: number, shared: boolean): void {
+function emitRelease(
+  asm: AsmArm,
+  state: Layout,
+  stealable: number,
+  shared: boolean,
+  plan: ShadowPlan,
+): void {
   asm.label("AudioSfxRelease");
   asm.ldrConst(3, state.base);
   asm.ldrb(1, armAt(3, off(state, state.steal)));
@@ -803,7 +862,21 @@ function emitRelease(asm: AsmArm, state: Layout, stealable: number, shared: bool
     const skip = `AudioRelease${channel}`;
     asm.tst(1, armImm(1 << channel));
     asm.b(skip, "eq");
-    emitSoundWrite(asm, gbaSoundAddress(CHANNEL_OFF[channel] as number) - 0x04000060, 0);
+    const copy = plan.channels.find((one) => one.channel === 1 << channel);
+    if (copy) {
+      // Ascending register order, so the byte carrying the trigger is written
+      // last and strikes a voice the rest of the replay has already stated.
+      // `r3` is the state base and `r1` is the steal mask, both live across it.
+      for (const write of copy.writes) {
+        asm.ldrConst(2, state.shadow);
+        asm.ldrb(0, armAt(2, write.slot));
+        // The packed byte *is* the offset from this console's sound base
+        // (`gba-driver.ts` §`gbaPort`), so there is nothing to map back.
+        emitSoundWriteReg(asm, write.port, 0);
+      }
+    } else {
+      emitSoundWrite(asm, gbaSoundAddress(CHANNEL_OFF[channel] as number) - 0x04000060, 0);
+    }
     asm.label(skip);
   }
   asm.ldrConst(3, state.base);

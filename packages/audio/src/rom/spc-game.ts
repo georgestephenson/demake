@@ -46,6 +46,12 @@ import {
   type SpcScratch,
   type SpcStreamState,
 } from "./spc-driver.js";
+import {
+  NO_SHADOW,
+  shadowBias,
+  shadowPlan,
+  type ShadowPlan,
+} from "./shared.js";
 
 /** The value that stops the music, rather than starting a track. */
 export const STOP = 0xff;
@@ -81,6 +87,14 @@ const DP = {
   mask: 0x09,
   music: 0x10,
   sfx: 0x19,
+  /**
+   * First byte of the music's copy of the borrowable voices.
+   *
+   * In the direct page because that is where the indexed store this chip offers
+   * reaches — `mov $nn+X, A` — and the page has room: the driver's own state
+   * ends at `$22` and the hardware's begins at `$F0`.
+   */
+  shadow: 0x30,
 } as const;
 
 const SCRATCH: SpcScratch = { count: DP.count, flags: DP.flags, mask: DP.mask };
@@ -197,6 +211,28 @@ export function buildSpcGameAudio(input: SpcGameAudioInput): SpcGameAudio {
     pack(script, { ...packOptions, end: "stop" as const }),
   );
 
+  // What the music has to remember so a borrowed voice comes back holding the
+  // music's own note rather than the effect's last one (`shared.ts`).
+  const stealable = input.effects.reduce((bits, effect) => bits | (1 << effect.channel), 0);
+  const shadow =
+    input.tracks.length > 0 && input.effects.length > 0
+      ? shadowPlan(tracks, stealable, sdspChannelTag, boot, undefined, SDSP_MERGE_REGS)
+      : NO_SHADOW;
+  if (DP.shadow + shadow.bytes > 0xf0) {
+    throw new AudioRomError(
+      "E_SPC_PAGE",
+      `this game's sound driver needs ${DP.shadow + shadow.bytes} bytes of the sound processor's direct page`,
+      "the page ends at $F0, where this chip's own registers begin; this is a bug in the build, not in the track.",
+    );
+  }
+  const shadowChannels = shadow.channels.map((channel) => ({
+    bit: channel.channel,
+    // `mov $nn+X, A` wraps inside the page, so the base is the byte a register
+    // number indexes rather than an address — the same shape as every other
+    // driver's, one page smaller.
+    base: (DP.shadow + shadowBias(channel)) & 0xff,
+  }));
+
   const helpers: string[] = [];
   const asm = new Asm700(SPC_CODE_BASE);
   const codeStart = asm.pc;
@@ -211,6 +247,7 @@ export function buildSpcGameAudio(input: SpcGameAudioInput): SpcGameAudio {
         state: MUSIC,
         scratch: SCRATCH,
         data: shapeOf(musicData),
+        ...(shadowChannels.length > 0 ? { shadow: { channels: shadowChannels } } : {}),
       }).map((name) => `music-${name}`),
     );
     emitSilence(asm, "AudioSilence");
@@ -218,7 +255,7 @@ export function buildSpcGameAudio(input: SpcGameAudioInput): SpcGameAudio {
   }
   if (input.effects.length > 0) {
     emitSfxStart(asm, input.tracks.length > 0);
-    emitRelease(asm, input.tracks.length > 0);
+    emitRelease(asm, input.tracks.length > 0, shadow);
     helpers.push(
       ...emitStream(asm, {
         prefix: "AudioSfx",
@@ -466,10 +503,29 @@ function emitSfxStart(asm: Asm700, hasMusic: boolean): void {
  * The music's next write to that voice brings it back; until then it is silent,
  * which is what every other console's release does too.
  */
-function emitRelease(asm: Asm700, hasMusic: boolean): void {
+function emitRelease(asm: Asm700, hasMusic: boolean, plan: ShadowPlan): void {
   asm.label("AudioSfxRelease");
+  // The effect's own voice goes quiet first — its `GAIN` is the one register the
+  // table already carries — and then the music's registers are replayed over it
+  // from the copy the run walk keeps (`shared.ts` §`shadowPlan`). Silencing
+  // alone, which is what this did, leaves the voice holding the effect's sample,
+  // pitch and envelope until the music's *next note* on it, and the packed music
+  // is a delta stream, so for a held chord tone that is a whole bar.
   asm.mov(spcDp(0xf2), spcDp(DP.sfxGain));
   asm.mov(spcDp(0xf3), spcImm(0x00));
+  for (const channel of plan.channels) {
+    const skip = `AudioRelease${channel.channel}`;
+    asm.mov(A, spcDp(DP.steal));
+    asm.and(A, spcImm(channel.channel));
+    asm.beq(skip);
+    // Ascending, so the level a voice is heard at is the last thing written.
+    for (const write of channel.writes) {
+      asm.mov(spcDp(0xf2), spcImm(write.port));
+      asm.mov(A, spcDp(DP.shadow + write.slot));
+      asm.mov(spcDp(0xf3), A);
+    }
+    asm.label(skip);
+  }
   asm.mov(spcDp(DP.steal), spcImm(0x00));
   asm.mov(spcDp(SFX.own), spcImm(0x00));
   asm.mov(spcDp(DP.sfxPrio), spcImm(0x00));

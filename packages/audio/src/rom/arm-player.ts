@@ -34,7 +34,16 @@
  *     merge routine are documented as clobbering `r0`–`r3` and `r12` only.
  */
 
-import { AsmArm, armAt, armAtPost, armImm, armReg, label, type Ref } from "@demake/core";
+import {
+  AsmArm,
+  armAt,
+  armAtIdx,
+  armAtPost,
+  armImm,
+  armReg,
+  label,
+  type Ref,
+} from "@demake/core";
 
 import { RUN, type DriverData } from "./data.js";
 
@@ -104,6 +113,20 @@ export interface ArmStreamOptions {
    * Advance's `NR51` is the whole of it, and a Nintendo DS has none at all.
    */
   merge?: string;
+  /**
+   * Where this stream keeps a copy of the channels another stream can borrow.
+   *
+   * A run naming one of `channels` is recorded as well as written, and a run
+   * that is *skipped* is recorded instead of written, so the copy is the music's
+   * own state whether or not the chip currently holds it (`shared.ts`
+   * §`shadowPlan`). `base` is an absolute address rather than an offset from the
+   * state register, because `strb` with a register index wants a base of its own
+   * and `r7` is carrying the stream's fields.
+   */
+  shadow?: {
+    /** One per borrowable channel: its bit, and the address it indexes. */
+    channels: readonly { bit: number; base: number }[];
+  };
   /** Routine called when a stoppable stream's order list runs out. */
   onEnd?: string;
 }
@@ -228,6 +251,15 @@ function emitRuns(asm: AsmArm, options: ArmStreamOptions, preemptible: boolean):
     asm.ldrb(REG.a1, armAt(REG.state, at(base, options.steal as number)));
     asm.tst(REG.a0, armReg(REG.a1));
     asm.b(`${p}TickSkip`, "ne");
+    if (options.shadow) {
+      // Ours right now, but borrowable: the chip and the copy both take it, so
+      // the copy is still true the next time an effect hands the channel back.
+      asm.tst(
+        REG.a0,
+        armImm(options.shadow.channels.reduce((bits, one) => bits | one.bit, 0)),
+      );
+      asm.b(`${p}TickRecord`, "ne");
+    }
   }
   asm.label(`${p}TickOwn`);
   if (data.hasMerges) {
@@ -254,13 +286,48 @@ function emitRuns(asm: AsmArm, options: ArmStreamOptions, preemptible: boolean):
     asm.b(`${p}TickNext`);
   }
 
+  if (preemptible && options.shadow) {
+    // Written *and* recorded, one loop per borrowable channel because each has a
+    // window of its own. `r2` carries the copy's base, which is why the plan
+    // hands over an address rather than an offset.
+    asm.label(`${p}TickRecord`);
+    armPerChannel(asm, options, `${p}TickRecordOn`, (name, address) => {
+      asm.label(name);
+      asm.ldrb(REG.a0, armAtPost(REG.data, 1));
+      asm.ldrb(REG.a1, armAtPost(REG.data, 1));
+      // The copy first: `AudioWrite` clobbers `r0`-`r3`, so the register and the
+      // value it takes are gone by the time it returns.
+      asm.ldrConst(REG.a2, address);
+      asm.strb(REG.a1, armAtIdx(REG.a2, REG.a0));
+      asm.bl("AudioWrite");
+      asm.subs(REG.count, REG.count, armImm(1));
+      asm.b(name, "ne");
+      asm.b(`${p}TickNext`);
+    });
+  }
+
   if (preemptible) {
-    // A skipped run still has to be stepped over, and two bytes per write is the
-    // only thing the data says about its length.
+    // A skipped run is recorded and not written: the chip belongs to the effect
+    // until it lets go, but the music's own idea of the channel has to keep
+    // moving or the replay would restore a note that ended while it played.
     asm.label(`${p}TickSkip`);
-    asm.add(REG.data, REG.data, armImm(2));
-    asm.subs(REG.count, REG.count, armImm(1));
-    asm.b(`${p}TickSkip`, "ne");
+    if (options.shadow) {
+      armPerChannel(asm, options, `${p}TickSkipOn`, (name, address) => {
+        asm.label(name);
+        asm.ldrb(REG.a0, armAtPost(REG.data, 1));
+        asm.ldrb(REG.a1, armAtPost(REG.data, 1));
+        asm.ldrConst(REG.a2, address);
+        asm.strb(REG.a1, armAtIdx(REG.a2, REG.a0));
+        asm.subs(REG.count, REG.count, armImm(1));
+        asm.b(name, "ne");
+        asm.b(`${p}TickNext`);
+      });
+    } else {
+      // Two bytes per write is the only thing the data says about its length.
+      asm.add(REG.data, REG.data, armImm(2));
+      asm.subs(REG.count, REG.count, armImm(1));
+      asm.b(`${p}TickSkip`, "ne");
+    }
   }
 
   asm.label(`${p}TickNext`);
@@ -268,6 +335,30 @@ function emitRuns(asm: AsmArm, options: ArmStreamOptions, preemptible: boolean):
   asm.b(`${p}TickSave`, "eq");
   asm.ldrb(REG.count, armAtPost(REG.data, 1));
   asm.b(`${p}TickRun`);
+}
+
+/**
+ * Emit one body per borrowable channel, routed on the run's channel bits in `r0`.
+ *
+ * The last channel falls through rather than being tested, because a run only
+ * reaches here when it named one of them — so with a single borrowable channel,
+ * which is what a game with one pitched effect has, there is no test at all.
+ */
+function armPerChannel(
+  asm: AsmArm,
+  options: ArmStreamOptions,
+  prefix: string,
+  body: (name: string, address: number) => void,
+): void {
+  const channels = (options.shadow as { channels: readonly { bit: number; base: number }[] })
+    .channels;
+  for (let index = 0; index < channels.length - 1; index += 1) {
+    asm.tst(REG.a0, armImm((channels[index] as { bit: number }).bit));
+    asm.b(`${prefix}${index}`, "ne");
+  }
+  for (let index = 0; index < channels.length; index += 1) {
+    body(`${prefix}${index}`, (channels[index] as { base: number }).base);
+  }
 }
 
 /**

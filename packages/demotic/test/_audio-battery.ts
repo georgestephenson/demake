@@ -1009,6 +1009,11 @@ export function audioBattery(target: Target): void {
           const channels = tag(write.reg, write.value, write.chip ?? 0);
           const key = name(write);
           if (key === null || (channels & owned) === 0) continue;
+          // A merged register is not state a voice holds: it is folded from two
+          // shadows, and on the Super Nintendo it is a *pulse* that starts one.
+          // The test above it is what checks a merge; this one is about the
+          // registers the release has to replay.
+          if (write.reg === target.mergeReg) continue;
           into.set(key, write.value);
         }
       };
