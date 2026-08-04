@@ -1228,18 +1228,35 @@ export function audioSweep(target: Target): void {
     const BUILD_TIMEOUT = 120_000;
 
     /**
-     * And the Mega Drive is slower still, for the same reason one layer along.
+     * And the colour consoles are slower still, for the same reason one layer along.
      *
-     * A fit's cost is its pixels, and this console has the biggest screen in the
-     * set: 320x224 against a Master System's 256x192 and a Game Boy's 160x144. One
-     * backdrop through the tournament is around twenty-five seconds here — nearly
-     * all of it inside `latticeKmeans`, which is the fit doing its job rather than
-     * a redundant scan — so a two-backdrop game with objects is minutes. The
-     * number is generous rather than tight because what it guards against is a
-     * hang, and a build that got half again slower should be caught by someone
-     * reading a duration rather than by a red test with nothing to say about why.
+     * A fit's cost is its pixels, and these have the big screens: 320x224 on a
+     * Mega Drive against a Master System's 256x192 and a Game Boy's 160x144, and
+     * a Super Nintendo's 256x224 fitted into *seven* sixteen-colour sub-palettes
+     * rather than one. One backdrop through the tournament is around twenty-five
+     * seconds on a Mega Drive and thirty on a Super Nintendo — nearly all of it
+     * inside `latticeKmeans`, which is the fit doing its job rather than a
+     * redundant scan — so a two-backdrop game with objects is minutes.
+     *
+     * **The rule is at least double what the console costs on the slowest machine
+     * that runs it**, which is CI rather than a workstation: a GitHub runner is
+     * around half the speed of a developer's, so a budget with a comfortable
+     * margin here is a red test there. What these guard against is a *hang*, and
+     * a build that merely got half again slower should be caught by someone
+     * reading a duration rather than by a timeout with nothing to say about why —
+     * so a generous number is the point and not a concession. Measured on the
+     * runner, slowest fixture per console: Mega Drive 122 s, Super Nintendo 247 s,
+     * PC Engine 123 s.
+     *
+     * The PC Engine had no entry and inherited {@link BUILD_TIMEOUT}, which was
+     * written before that console existed and is a third of what its slowest
+     * fixture takes in CI.
      */
-    const TIMEOUT: Readonly<Record<string, number>> = { md: 360_000, snes: 240_000 };
+    const TIMEOUT: Readonly<Record<string, number>> = {
+      md: 360_000,
+      snes: 540_000,
+      pce: 300_000,
+    };
 
     /**
      * How much of the library each console sweeps.
