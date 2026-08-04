@@ -34,16 +34,7 @@
  *     merge routine are documented as clobbering `r0`–`r3` and `r12` only.
  */
 
-import {
-  AsmArm,
-  armAt,
-  armAtIdx,
-  armAtPost,
-  armImm,
-  armReg,
-  label,
-  type Ref,
-} from "@demake/core";
+import { AsmArm, armAt, armAtIdx, armAtPost, armImm, armReg, label, type Ref } from "@demake/core";
 
 import { RUN, type DriverData } from "./data.js";
 
@@ -254,10 +245,7 @@ function emitRuns(asm: AsmArm, options: ArmStreamOptions, preemptible: boolean):
     if (options.shadow) {
       // Ours right now, but borrowable: the chip and the copy both take it, so
       // the copy is still true the next time an effect hands the channel back.
-      asm.tst(
-        REG.a0,
-        armImm(options.shadow.channels.reduce((bits, one) => bits | one.bit, 0)),
-      );
+      asm.tst(REG.a0, armImm(options.shadow.channels.reduce((bits, one) => bits | one.bit, 0)));
       asm.b(`${p}TickRecord`, "ne");
     }
   }

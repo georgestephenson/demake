@@ -319,6 +319,47 @@ The ARM pair are, if anything, the *easiest* backends in the set — 16.16 fixed
 point is a native 32-bit register there, so the shift-and-subtract arithmetic the
 SM83 and 6502 pay for every tick collapses to single instructions.
 
+### Handing a borrowed channel back
+
+A game's music and its sound effects share one chip, and an effect *borrows* a
+channel while it plays. The packed music is a **delta stream** — a register is
+written when the music's own value for it changes and not otherwise — so once an
+effect has borrowed a channel the chip is holding the effect's values for it, and
+the music never states its own again. It comes back wrong, and not quietly: the
+driver-shaped decay writes a channel's volume several times a note, and each of
+those re-triggers the voice through a register whose neighbour still carries the
+effect's pitch. On a Game Boy that is a pulse coming back a whole tone sharp and
+ringing until the bar ends — heard in pong as a dissonant note on every bounce,
+and originally mistaken for a glitch in the demade *music*.
+
+The fix is a copy: the music records every register belonging to a channel an
+effect can take, updated whether or not the write reached the chip, and the
+release replays it (`audio/src/rom/shared.ts` §`shadowPlan`). It is per CPU,
+because it lives inside each stream player's run walk, and the shared battery
+asserts it on every console — not that *something* wrote the borrowed channel
+afterwards, which is what it used to check, but that what the chip is left
+holding is what the schedule says.
+
+**Six of the seven drivers have it**: SM83, 6502 (the NES and the PC Engine share
+the player), Z80, SPC700, and ARM (the Game Boy Advance and the Nintendo DS share
+theirs). Two of those needed more than the generic plan. The SN76489 has no
+register numbers at all — one write port, and the channel latched in the byte —
+so its three bytes are told apart by what each byte *is* (`rom/psg.ts`
+§`PSG_SHADOW`). The PC Engine *selects* a voice rather than addressing one, so
+every voice is written through the same ten register numbers and each needs a
+window of its own rather than one window per register.
+
+**The Mega Drive does not have it yet**, and the battery names the gap rather
+than skipping past it. That board has two chips and not one register number
+between them: the PSG's byte says what it is, and the FM chip has four bus
+*ports* whose meaning is whatever the address port last latched. So a copy cannot
+be indexed by the byte the run walk has in its hand, and the plan for it belongs
+in `rom/md-chips.ts` beside the latch rules it has to follow — a voice keyed by
+(bus half, latched address) for the FM chip and by `PSG_SHADOW`'s three for the
+tone half. Until it lands, a Mega Drive game's music keeps whatever patch an
+effect left in the voice it borrowed, which on that chip is a whole instrument
+rather than a wrong note.
+
 ## Phase 6 — 1.0
 
 Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs complete

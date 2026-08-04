@@ -240,7 +240,10 @@ function emitRuns(asm: AsmZ80, options: SmsStreamOptions, preemptible: boolean):
       // Ours right now, but borrowable: the chip and the copy both take it, so
       // the copy is still true the next time an effect hands the channel back.
       asm.ld("a", "e");
-      asm.aluN("and", shadow.channels.reduce((bits, one) => bits | one.bit, 0));
+      asm.aluN(
+        "and",
+        shadow.channels.reduce((bits, one) => bits | one.bit, 0),
+      );
       asm.jp(`${p}TickRecord`, "nz");
     }
   }

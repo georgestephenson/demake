@@ -2180,6 +2180,13 @@ that keep them from being undone. All of them come from doc 16.
   not _accumulate_; a bar boundary must land where it should after ninety
   seconds. Report requested BPM, achieved BPM, ppm error and worst onset
   deviation every time.
+- **A part that can only reach a channel by being mangled is dropped, not
+  mangled.** A drum part on a pitched channel plays General MIDI's _drum
+  numbers_ as pitches — 36 is a kick, not a C2 — so a console handed one plays
+  the drum map as a bassline in whatever key it lands in, which is what the
+  `melody-first` candidate did to two of the quest tracks. `plan.ts`'s `UNUSABLE`
+  affinity is infinite cost, so the part falls through to the drop list and is
+  counted.
 - **Never lose a part silently.** Every dropped note, merged voice and stolen
   channel is counted in the manifest and `--json`; `--strict` turns any of them
   into an error. The image path's tile-merge reporting is the precedent.
@@ -2232,6 +2239,20 @@ that keep them from being undone. All of them come from doc 16.
   fired. That is why `performed` exists on a game's driver: the schedules the ROM
   really plays are the ones with the boot prefix taken off and an effect narrowed
   to its own channel, and it is what the conformance harness must diff against.
+- **A borrowed channel is given back holding the music's own registers.** The
+  packed music is a delta stream, so a register the music's own value did not
+  change is one it never states again — and after an effect has borrowed the
+  channel the chip is holding the effect's value for it. Releasing it is
+  therefore a _replay_ from a copy the run walk keeps (`rom/shared.ts`
+  §`shadowPlan`), not a note-off: the music's next volume step re-triggers the
+  voice, and on a Game Boy that meant a pulse coming back a whole tone sharp and
+  ringing until the bar ended, on every bounce in pong. Six drivers have it and
+  the Mega Drive does not (doc 13 §Handing a borrowed channel back); the battery
+  asserts on every console that what the chip is left holding is what the
+  schedule says, which is a sharper claim than "something wrote it afterwards".
+  Two chips needed more than a register-indexed copy and both say so where the
+  chip's other rules live: the SN76489 has no register numbers, and the PC Engine
+  _selects_ a voice rather than addressing one.
 - **`NR51` is merged, never stored, whenever two streams share the chip.** One
   byte carries every channel's panning. Each stream keeps a shadow and the driver
   folds them under the steal mask, which is what makes the register stream exactly

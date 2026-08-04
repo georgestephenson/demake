@@ -46,12 +46,7 @@ import {
   type SpcScratch,
   type SpcStreamState,
 } from "./spc-driver.js";
-import {
-  NO_SHADOW,
-  shadowBias,
-  shadowPlan,
-  type ShadowPlan,
-} from "./shared.js";
+import { NO_SHADOW, shadowBias, shadowPlan, type ShadowPlan } from "./shared.js";
 
 /** The value that stops the music, rather than starting a track. */
 export const STOP = 0xff;

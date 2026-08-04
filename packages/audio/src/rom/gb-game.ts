@@ -233,7 +233,13 @@ export function buildGameAudio(input: GameAudioInput): GameAudio {
   const stealable = input.effects.reduce((bits, effect) => bits | (1 << effect.channel), 0);
   // What the music has to remember so a borrowed channel comes back holding the
   // music's own note rather than the effect's last one (`shared.ts`).
-  const shadow = shadowPlan(tracks, stealable, () => gbChannelOf, boot, (reg) => at(reg));
+  const shadow = shadowPlan(
+    tracks,
+    stealable,
+    () => gbChannelOf,
+    boot,
+    (reg) => at(reg),
+  );
   const state = layout(input.hram, shadow.bytes);
 
   const helpers: string[] = [];
