@@ -3087,7 +3087,7 @@ not per console.
   cores. Chunks are matched to a family **by name**, so a module that
   has to be per-family belongs in a file named after it; anything else counts as
   always-loaded, which fails loud rather than passing quietly. Current figures:
-  381 KB for a visitor against a 400 KB budget, 481 KB for the whole site — and
+  384 KB for a visitor against a 400 KB budget, 510 KB for the whole site — and
   a new example game costs about fourteen of those kilobytes, because the page
   bundles every fixture SVG twice (raw text for the ROM build, a URL for the
   preview). Measure with a **clean** `dist`: the checker reads every `.js` it
