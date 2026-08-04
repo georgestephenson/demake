@@ -17,6 +17,7 @@ import { bindingFor } from "./binding/registry.js";
 import { sampleBank } from "./binding/gba-bank.js";
 import { ndsSampleRam } from "./binding/nds-bank.js";
 import { sampleAram } from "./binding/sdsp-bank.js";
+import { wsDefaultWaveforms, wsWaveRam } from "./binding/wsc-bank.js";
 import type { ChipScript } from "./chipscript.js";
 
 export interface RenderAudioOptions {
@@ -48,11 +49,21 @@ export function render(script: ChipScript, options: RenderAudioOptions = {}): Pc
     // block of RAM, because that is what it plays: the mixer reads cartridge
     // ROM, so a build hands it the table rather than an address space.
     const bank = id === "gba-pcm" ? sampleBank() : undefined;
+    // And the fourth: this chip's waveforms are sixty-four bytes of the
+    // *console's* RAM rather than a register file, so a model with nothing
+    // behind it walks a flat table and renders silence. The shapes are the
+    // binding's, so the page a standalone render hears is the page a cartridge
+    // copies (`binding/wsc-bank.ts`).
+    const waveRam =
+      id === "ws-sound" && script.sampleRam === undefined
+        ? wsWaveRam(wsDefaultWaveforms())
+        : undefined;
     const chip = createChip(id, {
       stereo: true,
       ...(ram === undefined ? {} : { ram }),
       ...(ndsRam === undefined ? {} : { ram: ndsRam.ram, ramBase: ndsRam.base }),
       ...(bank === undefined ? {} : { bank }),
+      ...(waveRam === undefined ? {} : { ram: waveRam }),
     });
     // Filtered per *write* rather than per tick: a console with two chips writes
     // both within one driver tick, and a tick-level tag could not say so.

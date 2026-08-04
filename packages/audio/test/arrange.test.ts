@@ -45,6 +45,11 @@ const CONSOLES = [
   "gba",
   "nds",
   "pce",
+  // Both WonderSwans: the mono machine has no *video* path yet (doc 13 §Phase 5)
+  // and the same sound hardware, and a demaker is per-domain — so `arrange -c ws`
+  // works on a console `build -c ws` cannot target.
+  "ws",
+  "wsc",
 ];
 
 describe("ingest", () => {
@@ -334,12 +339,13 @@ describe("the console registry", () => {
     expect(audioConsoles().sort()).toEqual([...CONSOLES].sort());
   });
 
-  // The WonderSwan Color, which is now the nearest console with a video spec and
-  // no audio in it — the Game Boy Advance had that job until its own spec landed,
-  // then the Nintendo DS, then the PC Engine. What this wants is a console whose
-  // sound hardware has no model yet, and Tier 2 is where those are.
+  // The Neo Geo Pocket Color, which is now the nearest console with a video spec
+  // and no audio in it — the Game Boy Advance had that job until its own spec
+  // landed, then the Nintendo DS, then the PC Engine, then the WonderSwan. What
+  // this wants is a console whose sound hardware has no model yet, and Tier 2 is
+  // where those are.
   it("explains a console it cannot demake", () => {
-    expect(() => bindingFor("wsc")).toThrow(/no audio spec yet/);
+    expect(() => bindingFor("ngpc")).toThrow(/no audio spec yet/);
   });
 });
 

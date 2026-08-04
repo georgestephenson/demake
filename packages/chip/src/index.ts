@@ -17,6 +17,7 @@
 import { GbApu } from "./gb-apu.js";
 import { GbaPcm } from "./gba-pcm.js";
 import { Huc6280Psg } from "./huc6280-psg.js";
+import { WsSound } from "./ws-sound.js";
 import { NdsSpu } from "./nds-spu.js";
 import { NesApu } from "./nes-apu.js";
 import { SDsp } from "./s-dsp.js";
@@ -60,6 +61,21 @@ export {
   HUC6280_WAVE_BITS,
   HUC6280_WAVE_SAMPLES,
 } from "./huc6280-psg.js";
+export {
+  WsSound,
+  WS_NOISE_CHANNEL,
+  WS_SOUND_CHANNELS,
+  WS_SOUND_CLOCK_HZ,
+  WS_SOUND_PORT_FIRST,
+  WS_SOUND_PORT_LAST,
+  WS_SOUND_REG,
+  WS_SWEEP_CHANNEL,
+  WS_WAVE_BITS,
+  WS_WAVE_BYTES,
+  WS_WAVE_CHANNEL_BYTES,
+  WS_WAVE_SAMPLES,
+  type WsSoundOptions,
+} from "./ws-sound.js";
 export { Sn76489, SN76489_CLOCK_HZ } from "./sn76489.js";
 export { NesApu, NES_CLOCK_HZ } from "./nes-apu.js";
 export { Ym2612, YM2612_CLOCK_HZ } from "./ym2612.js";
@@ -112,6 +128,11 @@ export function createChip(
       return new Sn76489(options);
     case "huc6280-psg":
       return new Huc6280Psg();
+    case "ws-sound":
+      // The second model whose waveforms are *memory* rather than a register
+      // file: this chip reads sixty-four bytes of the console's own RAM, so a
+      // caller with a machine hands it that RAM and one without renders silence.
+      return new WsSound(options.ram === undefined ? {} : { ram: options.ram });
     case "nes-apu":
       return new NesApu();
     case "ym2612":

@@ -18,9 +18,18 @@
  * NASM, so an encoder and a decoder that agreed only with each other would still
  * have to get past a third party.
  *
- * Sound is absent rather than half-implemented: this console has no audio
- * binding and no generated driver yet, so `demake build -c wsc` emits nothing
- * for a chip model to receive.
+ * Its sound is `@demake/chip`'s `WsSound`, not a second copy, and it is handed
+ * the same RAM for the same reason the display is: this chip's four waveforms
+ * are sixty-four bytes of the console's own memory rather than a register file.
+ * `soundTap` is the window doc 16's Level A proof reads through, and `audioSink`
+ * is where the output goes when something is listening.
+ *
+ * The **interrupt controller is absent** rather than half-implemented, and
+ * nothing a demade cartridge does needs it: the main loop watches the beam, and
+ * the audio driver reads the vertical-blank timer's *counter* rather than taking
+ * its interrupt — so both timers are modelled as the tallies they are. The two
+ * window units, channel two's PCM voice and the mono display modes are absent on
+ * the same terms, and each one raises rather than answering plausibly.
  *
  * Platform-pure on the same terms as `@demake/core`: no `fs`, no DOM, no wall
  * clock. Rendering produces a plain RGBA buffer; where that goes is the caller's

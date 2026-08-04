@@ -39,8 +39,17 @@
  * Sources: WSdev wiki — Memory map, I/O ports, Cartridge banking and Keypad.
  */
 
+import { WsSound, WS_SOUND_PORT_FIRST, WS_SOUND_PORT_LAST, type SampleSink } from "@demake/chip";
+
 import { Cpu, type Bus } from "./cpu.js";
-import { Display, LINES_PER_FRAME, SCREEN_HEIGHT, SCREEN_WIDTH } from "./display.js";
+import {
+  CYCLES_PER_LINE,
+  Display,
+  LINES_PER_FRAME,
+  SCREEN_HEIGHT,
+  SCREEN_WIDTH,
+  VBLANK_LINE,
+} from "./display.js";
 
 export { SCREEN_HEIGHT, SCREEN_WIDTH };
 
@@ -66,6 +75,25 @@ const KEYPAD = 0xb5;
 const GROUP_X = 0x20;
 const GROUP_BUTTONS = 0x40;
 
+/**
+ * The two timers, whose counters are readable.
+ *
+ * The horizontal one decrements every 256 CPU cycles — one scanline — and the
+ * vertical one at the start of line 144, so between them they are a scanline
+ * clock and a frame clock. What a demade cartridge uses is the *vertical* one,
+ * and it uses it as a **tally rather than a source of interrupts**: with the
+ * repeat bit set the counter runs down and reloads for ever, so how many frames
+ * have passed is a subtraction the driver performs rather than a flag it has to
+ * catch (doc 16 §A frame-clocked console counts frames). That is the Nintendo
+ * DS's argument reached by different hardware, and it is why this console needs
+ * no interrupt controller to keep tempo.
+ */
+const TIMER_CONTROL = 0xa2;
+const TIMER_H_RELOAD = 0xa4;
+const TIMER_V_RELOAD = 0xa6;
+const TIMER_H_COUNT = 0xa8;
+const TIMER_V_COUNT = 0xaa;
+
 /** Cartridge banking. */
 const BANK_LINEAR = 0xc0;
 const BANK_SRAM = 0xc1;
@@ -78,6 +106,33 @@ export class Wsc implements Bus {
   /** The console's 64 KiB: a game's state and everything the display reads. */
   readonly ram = new Uint8Array(0x10000);
   readonly display = new Display(this.ram);
+  /**
+   * The sound hardware, which is `@demake/chip`'s and not a second copy.
+   *
+   * It is handed the console's RAM for the same reason {@link Display} is: this
+   * machine has no memory of its own anywhere: the four waveforms are sixty-four
+   * bytes of the same sixty-four kilobytes a game's variables are in, read
+   * through a base register that carries bits 6–13 of an address.
+   */
+  readonly sound = new WsSound({ ram: this.ram });
+
+  /**
+   * Every write the sound hardware receives, for the conformance oracle.
+   *
+   * The window doc 16's Level A proof reads. It *observes* rather than
+   * intercepts: the chip receives the write either way, so an oracle watching
+   * through it cannot change what the hardware saw.
+   */
+  soundTap: ((reg: number, value: number) => void) | undefined = undefined;
+
+  /**
+   * Where the chip's output goes, when anything wants it.
+   *
+   * Left unset the chip still receives every write and keeps its state; it is
+   * only the integration that is skipped, which is what makes a conformance run
+   * cost nothing for audio it does not listen to.
+   */
+  audioSink: SampleSink | undefined = undefined;
   /** The cartridge image, from its first byte. */
   readonly rom: Uint8Array;
   /** Battery RAM, which nothing demade here uses but the map has to answer for. */
@@ -88,6 +143,11 @@ export class Wsc implements Bus {
 
   private held = 0;
   private keyGroup = 0;
+  /** The two timers' current counts, and the cycles owed to the scanline one. */
+  private hCount = 0;
+  private vCount = 0;
+  private hCycles = 0;
+  private lastLine = 0;
 
   constructor(rom: Uint8Array) {
     if (rom.length < 0x10000 || (rom.length & (rom.length - 1)) !== 0) {
@@ -157,6 +217,13 @@ export class Wsc implements Bus {
     const at = port & 0xff;
     if (Display.owns(at)) return this.display.read(at);
     if (at === KEYPAD) return this.readKeypad();
+    // The counters read back where the reloads were written, which is the whole
+    // point of them: a driver asks how many frames have passed rather than
+    // being told.
+    if (at === TIMER_H_COUNT) return this.hCount & 0xff;
+    if (at === TIMER_H_COUNT + 1) return (this.hCount >> 8) & 0xff;
+    if (at === TIMER_V_COUNT) return this.vCount & 0xff;
+    if (at === TIMER_V_COUNT + 1) return (this.vCount >> 8) & 0xff;
     return this.ports[at] as number;
   }
 
@@ -168,7 +235,62 @@ export class Wsc implements Bus {
       this.display.write(at, byte);
       return;
     }
+    if (at >= WS_SOUND_PORT_FIRST && at <= WS_SOUND_PORT_LAST) {
+      this.sound.write(at, byte);
+      this.soundTap?.(at, byte);
+      return;
+    }
+    // Writing a reload initialises the counter with it, which is what makes a
+    // driver's first read meaningful rather than whatever the timer held.
+    if (at === TIMER_H_RELOAD || at === TIMER_H_RELOAD + 1) {
+      this.hCount = this.reloadOf(TIMER_H_RELOAD);
+      return;
+    }
+    if (at === TIMER_V_RELOAD || at === TIMER_V_RELOAD + 1) {
+      this.vCount = this.reloadOf(TIMER_V_RELOAD);
+      return;
+    }
     if (at === KEYPAD) this.keyGroup = byte & 0x70;
+  }
+
+  /** A timer's sixteen-bit reload, as the two bytes a program wrote. */
+  private reloadOf(port: number): number {
+    return (this.ports[port] as number) | ((this.ports[port + 1] as number) << 8);
+  }
+
+  /**
+   * Step both timers by the cycles just spent.
+   *
+   * The horizontal one counts scanlines and the vertical one counts frames, so
+   * one is cycles divided and the other is an edge of the display's own line
+   * counter. Neither raises anything here: this console's interrupt controller
+   * is absent (`index.ts` §Deliberately absent), and a counter is what a demade
+   * cartridge reads anyway.
+   */
+  private stepTimers(cycles: number): void {
+    const control = this.ports[TIMER_CONTROL] as number;
+    if ((control & 0x01) !== 0) {
+      this.hCycles += cycles;
+      while (this.hCycles >= CYCLES_PER_LINE) {
+        this.hCycles -= CYCLES_PER_LINE;
+        this.hCount = this.tick(this.hCount, this.reloadOf(TIMER_H_RELOAD), (control & 0x02) !== 0);
+      }
+    }
+    const line = this.display.line;
+    if (line !== this.lastLine) {
+      // The vertical timer decrements at the *start* of the blanking interval,
+      // so the edge into line 144 is the event and not the frame boundary.
+      if (line === VBLANK_LINE && (control & 0x04) !== 0) {
+        this.vCount = this.tick(this.vCount, this.reloadOf(TIMER_V_RELOAD), (control & 0x08) !== 0);
+      }
+      this.lastLine = line;
+    }
+  }
+
+  /** One decrement, reloading where the timer repeats and stopping where not. */
+  private tick(count: number, reload: number, repeat: boolean): number {
+    if (count <= 1) return repeat ? reload & 0xffff : 0;
+    return (count - 1) & 0xffff;
   }
 
   // --- the keypad ------------------------------------------------------------
@@ -209,6 +331,10 @@ export class Wsc implements Bus {
   stepInstruction(): number {
     const cycles = this.cpu.step();
     this.display.step(cycles);
+    this.stepTimers(cycles);
+    // The chip's clock *is* the CPU's, so a cycle spent is a clock delivered and
+    // there is no ratio to carry — the one console here where the two agree.
+    if (this.audioSink) this.sound.run(cycles, this.audioSink);
     return cycles;
   }
 

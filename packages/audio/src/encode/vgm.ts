@@ -17,6 +17,7 @@
  * Reference: VGM specification 1.71 — https://vgmrips.net/wiki/VGM_Specification
  */
 
+import { wsDefaultWaveforms, wsWaveBank, WS_WAVE_BASE } from "../binding/wsc-bank.js";
 import type { ChipScript } from "../chipscript.js";
 
 /** VGM's fixed timebase, in samples per second. */
@@ -46,6 +47,20 @@ export function encodeVgm(script: ChipScript, options: VgmOptions = {}): Uint8Ar
   const data: number[] = [];
   let loopOffset = -1;
   let emittedSamples = 0;
+
+  // One chip here plays *memory* rather than a register file, and VGM has a
+  // command for exactly that — so a WonderSwan track is a whole artifact where a
+  // Super Nintendo's is half of one (doc 16 §The sample bank). The sixty-four
+  // bytes go in before the first tick, at the address `$8F` will name.
+  if (script.chips.includes("ws-sound")) {
+    const bank = script.sampleRam
+      ? script.sampleRam.subarray(WS_WAVE_BASE, WS_WAVE_BASE + 64)
+      : wsWaveBank(wsDefaultWaveforms());
+    for (let index = 0; index < bank.length; index += 1) {
+      const at = WS_WAVE_BASE + index;
+      data.push(0xc6, (at >> 8) & 0xff, at & 0xff, bank[index] as number);
+    }
+  }
 
   for (let tick = 0; tick < script.ticks.length; tick += 1) {
     if (tick === script.loopTick) loopOffset = data.length;
@@ -134,6 +149,12 @@ function commandWriter(
       return (data, reg, value) => {
         data.push(0xb9, reg & 0xff, value & 0xff);
       };
+    case "ws-sound":
+      // 0xBC: WonderSwan, register offset from $80 — the chip's own port number
+      // less the base, so a schedule's `$88` is this command's `$08`.
+      return (data, reg, value) => {
+        data.push(0xbc, (reg - 0x80) & 0xff, value & 0xff);
+      };
     case "ym2612":
       // 0x52/0x53 are the two halves of the chip's bus, and each carries an
       // address *and* a datum — so the model's four ports pair up into two
@@ -180,6 +201,9 @@ function writeClock(view: DataView, chip: string | undefined): void {
       break;
     case "huc6280-psg":
       view.setUint32(0xa4, 3579545, true);
+      break;
+    case "ws-sound":
+      view.setUint32(0xc0, 3072000, true);
       break;
     case "ym2612":
       view.setUint32(0x2c, 7670453, true);

@@ -3,6 +3,7 @@
  * 16 sub-palettes of 16 (shared transparent 0), with flip. Portrait/landscape
  * orientation is a display flag; this spec uses the landscape viewport.
  */
+import { wsAudio } from "./audio-specs.js";
 import type { ConsoleSpec } from "./types.js";
 export const wsc = {
   id: "wsc",
@@ -21,6 +22,7 @@ export const wsc = {
     tileBudget: 512,
     flip: true,
   },
+  audio: wsAudio,
   codegen: { family: "wsc", formats: ["bin", "asm", "c", "rom"] },
   docs: { sources: ["WSdev — Display controller & palettes (RGB444)"] },
 } satisfies ConsoleSpec;
