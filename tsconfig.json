@@ -36,6 +36,9 @@
       "path": "./packages/pce"
     },
     {
+      "path": "./packages/wsc"
+    },
+    {
       "path": "./packages/chip"
     },
     {
