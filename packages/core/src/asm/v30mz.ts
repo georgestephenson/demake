@@ -366,6 +366,11 @@ export class Asm30 {
     return this.db(0, 0);
   }
 
+  /** Emit a little-endian 32-bit value — one pooled 16.16 constant. */
+  dd(value: number): this {
+    return this.db(value, value >> 8, value >> 16, value >> 24);
+  }
+
   /** Emit `count` bytes of `fill`. */
   ds(count: number, fill = 0): this {
     for (let index = 0; index < count; index += 1) this.db(fill);

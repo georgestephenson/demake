@@ -118,6 +118,9 @@ importers:
       '@demake/snes':
         specifier: workspace:*
         version: link:../snes
+      '@demake/wsc':
+        specifier: workspace:*
+        version: link:../wsc
 
   packages/dmg:
     dependencies:

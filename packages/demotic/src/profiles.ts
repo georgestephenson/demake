@@ -261,6 +261,30 @@ const PROFILES: readonly ConsoleProfile[] = [
   },
 ];
 
+/**
+ * The WonderSwan Color is not in that table yet, and the reason is a finding
+ * rather than an omission.
+ *
+ * Its display runs at **75.47 Hz**, so a tick that is a frame is a tick that
+ * happens seventy-five times a second — the first console in this set that does
+ * not run at sixty. The language is built for exactly that (doc 14 §3): a rally
+ * written in `vw` and seconds lasts as long there as it does on a Game Boy.
+ * The **`.test.dmt` suites are not**, and adding this profile is what showed it:
+ * every script in the example library says `play 240 ticks` and `hold right for
+ * 42 ticks`, and `caves`' own comment states the assumption in as many words —
+ * "an eleven-cell-a-second hero … takes the same ticks to reach the same ledge
+ * on every console". A tick count is an absolute *duration* dressed as a
+ * portable one, and it has been portable only because every console so far
+ * shared a rate.
+ *
+ * Closing it is one of two things and neither is this file's: a duration unit in
+ * the test-script grammar, so a suite can say `play 4 seconds` and mean it on
+ * both (a language change, and therefore the maintainer's call — AGENTS.md
+ * §Iron rules), or per-console scripts, which gives up what the suites are for.
+ * The profile lands with the backend (doc 13 §Console rollout), by which time
+ * the answer has to exist anyway.
+ */
+
 /** Every profile, in a stable order. */
 export const profiles: readonly ConsoleProfile[] = PROFILES;
 

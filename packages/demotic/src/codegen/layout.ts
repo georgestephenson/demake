@@ -707,6 +707,64 @@ export const NDS_MEMORY: MemoryPlan = {
   align: 4,
 };
 
+/**
+ * The WonderSwan Color's plan, and the one console where the *picture* is in it.
+ *
+ * Sixty-four kilobytes at segment zero, and everything the display reads is in
+ * them: there is no video memory on this machine at all, so the two screen maps,
+ * the tile bank, the object table and palette RAM are addresses beside the
+ * game's own variables rather than somewhere a port reaches. Three of them the
+ * hardware fixes and the rest is this plan's to place:
+ *
+ * ```text
+ *   $0000–$03FF  the processor's own interrupt vectors, which nothing uses yet
+ *   $0400–$1FFF  the heap
+ *   $2000–$27FF  the first screen map, 32×32 words
+ *   $2800–$2FFF  the second screen map — the HUD's plane
+ *   $3000–$31FF  the object table, which port $04 addresses in units of 512
+ *   $3200–$3FFF  the stack, growing down
+ *   $4000–$7FFF  the tile bank: 512 tiles of 32 bytes, where the chip looks
+ *   $FE00–$FFFF  palette RAM: sixteen palettes of sixteen RGB444 words
+ * ```
+ *
+ * Two of the numbers are worth stating for what they say about the machine
+ * rather than about the map. The **object table is not a shadow**: the display
+ * reads it where it is, so a frame's objects are written once rather than built
+ * and then uploaded, and this is the only console here where `oamShadow` names
+ * the hardware's own table. And the vectors are left alone rather than handed
+ * out — a demade cartridge polls the display's line counter and takes no
+ * interrupt at all, but the day this console gains an audio driver is the day
+ * one of them is wanted, and a kilobyte of sixty-four is not worth the argument.
+ */
+export const WSC_MEMORY: MemoryPlan = {
+  machine: "WonderSwan Color",
+  heapStart: 0x0400,
+  heapEnd: 0x2000,
+  oamShadow: 0x3000,
+  oamEntries: 128,
+  viewW: 28,
+  viewH: 18,
+  // A queued cell is an address and a word, as on the Sega and the PC Engine —
+  // though here the address is the store's own operand rather than something a
+  // port has to be told. Sixty is a diagonal scroll: a column of nineteen and a
+  // row of twenty-nine, painted in the same frame.
+  queueMax: 60,
+  plotMax: 40,
+  // No driver on this console yet, so no state for one (doc 13 §Console
+  // rollout). A game that names music still records what it asked for.
+  audioBytes: 0,
+  // A screen entry is a word — nine bits of tile, four of palette, one of bank
+  // and two of flip — so a queued cell is a tile *and* an attribute.
+  cellAttributes: true,
+  // No interrupts: the main loop watches the line counter, exactly as the
+  // Nintendo DS's does, so no handler writes a byte behind a routine's back.
+  interruptBytes: 0,
+  // The record pointer and index the collision, edge and movement loops walk
+  // with. In memory rather than in `bx` for the Z80's reason: a rule body fires
+  // between one iteration and the next and uses every register there is.
+  loopBytes: 3,
+};
+
 /** Raised when a game needs more state than the machine has. */
 export class LayoutError extends Error {
   constructor(
