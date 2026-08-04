@@ -11,19 +11,19 @@
 
 test gravity pulls the hero down
 press a
-play 20 ticks
+play 0.33 seconds
 expect player.ydirection > 0
 expect player.y > 2
 
 test the hero lands on the ground and stops falling
 press a
-play 240 ticks
+play 4 seconds
 expect player.ydirection <= 0.05
 expect player.bottom <= screenheight
 
 test jumping from the ground lifts the hero
 press a
-play 240 ticks
+play 4 seconds
 press a
 play 6 ticks
 expect player.ydirection < 0
@@ -33,9 +33,9 @@ expect player.ydirection < 0
 -- every console because gravity and the impulse are both in `speed`.
 test a jump clears the step between shelves
 press a
-play 240 ticks
+play 4 seconds
 press a
-play 40 ticks
+play 0.67 seconds
 expect player.bottom <= screenheight - 4
 
 -- The bug this rule exists to stop: with the jump bound straight to the button,
@@ -43,16 +43,16 @@ expect player.bottom <= screenheight - 4
 -- one press at a time. The second press here must do nothing at all.
 test the hero cannot jump again in mid air
 press a
-play 240 ticks
+play 4 seconds
 press a
-play 20 ticks
+play 0.33 seconds
 press a
 play 2 ticks
 expect player.ydirection > -1
 
 test the hero runs to the left edge and stops
 press a
-hold left for 300 ticks
+hold left for 5 seconds
 expect player.x = 0
 expect player.xdirection = 0
 
@@ -60,9 +60,9 @@ expect player.xdirection = 0
 -- scores exactly once however long the hero stands in it.
 test a collected coin is gone for good
 press a
-play 240 ticks
-hold right for 90 ticks
+play 4 seconds
+hold right for 1.5 seconds
 expect score.value = 1
 expect coin1.visible = 0
-play 240 ticks
+play 4 seconds
 expect score.value = 1

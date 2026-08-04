@@ -785,28 +785,44 @@ against every console.
 ```
 test the ball serves down and to the left
 press a
-play 60 ticks
+play 1 second
 expect ball1.y > centery
 expect ball1.x < centerx
 
 test the player paddle reaches the left wall and stops there
 press a
-hold left for 300 ticks
+hold left for 5 seconds
 expect paddle1.x = 0
 expect paddle1.xdirection = 0
 
 test a still player concedes a point and the ball returns to the middle
 press a
-play 80 ticks
+play 1.33 seconds
 expect score2.value = 1
 expect abs(ball1.y - centery) < 15vh
 ```
 
-Statements are `test <name>`, `play <n> ticks`, `press <button>`,
-`hold <button> for <n> ticks`, `expect <expression>` and `expect scene <name>`.
+Statements are `test <name>`, `play <n> seconds`, `press <button>`,
+`hold <button> for <n> seconds`, `expect <expression>` and `expect scene <name>`.
 Same shape as the language: one per line, no nesting, `--` comments, per-line
 error recovery. A `test` line opens a case and every line after it belongs to
 that case; each case gets a fresh simulator, so none can leak into another.
+
+**A duration is written in seconds, and that is the same rule one layer up.** A
+`speed` is cells per *second* because dividing by the frame rate at compile time
+is what makes a 50 Hz build play at the same speed as a 60 Hz one (§3); a script
+says `play 4 seconds` for the same reason, and the runner resolves it against the
+console's `fps`. `ticks` is still a unit — a step that means "one more tick"
+should say so, and the example suites use it for the two- and eight-tick waits
+that give a rule an edge to fire on — but anything that means *an amount of
+elapsed game* is a duration and belongs in seconds.
+
+This was portable by accident until it wasn't. Every console in the set ticked
+sixty times a second, so a tick count was a duration in disguise and nothing
+noticed; the WonderSwan Color runs at 75.47 Hz, and `hold right for 42 ticks`
+covers three quarters of the ground there that it covers on a Game Boy. The
+suites now say what they mean, and the conversion changed no console's behaviour
+— two decimal places of seconds round-trips to the same tick count at sixty.
 
 **The relative vocabulary is what makes one suite cover every console.** `centery`
 is 9 on a Game Boy and 14 on a Mega Drive; `15vh` is 2.7 cells and 4.2. An

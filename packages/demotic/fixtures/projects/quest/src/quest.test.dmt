@@ -27,7 +27,7 @@ expect tokens.value = 0
 
 test the hero falls onto the meadow floor and stays on it
 press a
-play 120 ticks
+play 2 seconds
 expect footing.value > 0
 expect p1.bottom = 24
 expect p1.ydirection <= 0.05
@@ -35,17 +35,20 @@ expect p1.ydirection <= 0.05
 -- The pits are six cells wide for exactly this reason: a hero is two cells tall
 -- and a landing surface is one, so a narrower gap lets it catch the far lip on
 -- the way past instead of falling clear, and a pit you can hang on is not a pit.
+-- The scene, not the power-up: what happens after the restart is a second run
+-- at the same level, and where it has got to when the script stops depends on
+-- the console's tick rate.
 test running blindly into the first pit costs a life and restarts the level
 press a
-hold right for 200 ticks
+hold right for 3.33 seconds
 expect lives.value = 2
-expect power.value = 0
+expect scene play1
 
 test a jump carries the hero over the first pit and keeps the life
 press a
-hold right for 85 ticks
+hold right for 1.42 seconds
 press a
-hold right for 90 ticks
+hold right for 1.5 seconds
 expect p1.x > 26
 expect lives.value = 3
 expect p1.bottom = 24
@@ -54,10 +57,10 @@ expect p1.bottom = 24
 -- has to be platformed for is one most players never see.
 test the mushroom is picked up on the way and survives the pit
 press a
-hold right for 85 ticks
+hold right for 1.42 seconds
 expect power.value = 1
 press a
-hold right for 90 ticks
+hold right for 1.5 seconds
 expect power.value = 1
 
 -- Coins are objects rather than tiles, because a tile has no `visible` and so
@@ -65,19 +68,19 @@ expect power.value = 1
 -- what lets it survive a level and makes reaching `title` a new game.
 test a collected coin reaches the counter that outlives the level
 press a
-hold right for 85 ticks
+hold right for 1.42 seconds
 press a
-hold right for 90 ticks
+hold right for 1.5 seconds
 press a
-hold right for 45 ticks
+hold right for 0.75 seconds
 press a
-hold right for 45 ticks
+hold right for 0.75 seconds
 expect coins.value > 0
 expect sc1.value = coins.value
 
 test the hud counters ride the camera rather than the world
 press a
-hold right for 120 ticks
+hold right for 2 seconds
 expect sc1.x = camera.x + 1
 expect sc1.y = camera.y + 1
 expect sl1.x = camera.x + screenwidth - 3
@@ -89,9 +92,9 @@ expect sl1.value = lives.value
 -- because the trigger has to name no object to run in every scene.
 test running out of lives ends the game
 press a
-hold right for 200 ticks
-hold right for 200 ticks
-hold right for 200 ticks
+hold right for 3.33 seconds
+hold right for 3.33 seconds
+hold right for 3.33 seconds
 play 10 ticks
 expect scene lost
 expect lives.value < 1

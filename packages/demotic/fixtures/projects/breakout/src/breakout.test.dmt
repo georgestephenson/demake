@@ -11,24 +11,24 @@ expect score.value = 0
 
 test the ball breaks a brick and the brick stops being solid
 press a
-play 240 ticks
+play 4 seconds
 expect score.value >= 1
 expect left.value <= 7
 
 test the bat runs to the left wall and stops
 press a
-hold left for 300 ticks
+hold left for 5 seconds
 expect bat.x = 0
 expect bat.xdirection = 0
 
 test the bat runs to the right wall and stops
 press a
-hold right for 300 ticks
+hold right for 5 seconds
 expect bat.right = screenwidth
 expect bat.xdirection = 0
 
 test losing the ball re-serves rather than ending the game
 press a
-play 600 ticks
+play 10 seconds
 expect scene play
 expect ball1.y > 0

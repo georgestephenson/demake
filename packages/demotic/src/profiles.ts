@@ -259,6 +259,28 @@ const PROFILES: readonly ConsoleProfile[] = [
     startButton: "dedicated",
     romPath: true,
   },
+  {
+    // **The first console in the table that does not run at sixty.** This
+    // display is 75.47 Hz and a tick is a frame, so a second of game is
+    // seventy-five ticks — which is exactly what the relative unit system exists
+    // for (doc 14 §3), and what made the `.test.dmt` suites say `play 4 seconds`
+    // where they used to say `play 240 ticks`. Nominal integer rate, like every
+    // other row.
+    id: "wsc",
+    name: "WonderSwan Color",
+    screenWidth: 28,
+    screenHeight: 18,
+    rawWidth: 224,
+    rawHeight: 144,
+    cellSize: 8,
+    fps: 75,
+    // Thirty-two objects a line, four times what the 8-bit consoles allow and
+    // the same as the Super Nintendo's — but 8×8 only, so a wide object costs
+    // its width in entries here and there is no 8×16 to halve it.
+    sprites: { total: 128, perLine: 32, hFlip: true },
+    startButton: "dedicated",
+    romPath: true,
+  },
 ];
 
 /*

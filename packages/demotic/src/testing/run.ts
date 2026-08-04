@@ -16,7 +16,7 @@ import type { Expr } from "../lang/ast.js";
 import type { CBinaryOp, Program, PureBuiltinFn } from "../program.js";
 import { Sim, type InputState } from "../sim.js";
 
-import type { TestCase, TestFile } from "./parse.js";
+import { durationTicks, type Duration, type TestCase, type TestFile } from "./parse.js";
 
 /** Outcome of one assertion. */
 export interface AssertionResult {
@@ -61,11 +61,15 @@ export function runTests(file: TestFile, program: Program): RunResult {
 function runCase(testCase: TestCase, program: Program): CaseResult {
   const sim = new Sim(program);
   const assertions: AssertionResult[] = [];
+  // A duration written in seconds is a different number of ticks per console,
+  // which is the whole point of it: this is the one place the profile's rate
+  // enters a test script.
+  const ticksOf = (duration: Duration): number => durationTicks(duration, program.profile.fps);
 
   for (const step of testCase.steps) {
     switch (step.kind) {
       case "play":
-        for (let i = 0; i < step.ticks; i += 1) sim.step({});
+        for (let i = 0; i < ticksOf(step.duration); i += 1) sim.step({});
         break;
 
       case "press":
@@ -77,7 +81,7 @@ function runCase(testCase: TestCase, program: Program): CaseResult {
 
       case "hold": {
         const input = { [step.action]: true } as InputState;
-        for (let i = 0; i < step.ticks; i += 1) sim.step(input);
+        for (let i = 0; i < ticksOf(step.duration); i += 1) sim.step(input);
         sim.step({});
         break;
       }

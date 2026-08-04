@@ -7,12 +7,12 @@
 
 test the alien line advances
 press a
-play 30 ticks
+play 0.5 seconds
 expect a1.x > 4vw - 1
 
 test the alien line turns at the wall instead of leaving it
 press a
-play 900 ticks
+play 15 seconds
 expect a9.right <= screenwidth
 expect a1.x >= 0
 
@@ -66,11 +66,11 @@ expect s2.y < s3.y
 test a shot parks itself again at the top
 press a
 press a
-play 300 ticks
+play 5 seconds
 expect s1.visible = 0
 
 test the ship runs to each edge and stops
 press a
-hold left for 300 ticks
+hold left for 5 seconds
 expect player.x = 0
 expect player.xdirection = 0

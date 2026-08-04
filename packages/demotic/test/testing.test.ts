@@ -65,6 +65,33 @@ describe(".test.dmt", () => {
     expect(result.cases[1]?.passed).toBe(true);
   });
 
+  it("resolves a duration in seconds against the console's own rate", () => {
+    // The property the whole change exists for: the same script advances the
+    // same amount of *game* on two consoles that tick at different rates.
+    const script = ["test elapsed", "play 2 seconds", "expect 1"].join("\n");
+    const gb = runTests(parseTests(script), compile(PONG, { profile: getProfile("gb") }));
+    const wsc = runTests(parseTests(script), compile(PONG, { profile: getProfile("wsc") }));
+    expect(gb.cases[0]?.ticks).toBe(120);
+    expect(wsc.cases[0]?.ticks).toBe(150);
+  });
+
+  it("keeps ticks meaning ticks, on every console", () => {
+    // Not a deprecation: a step that means "one more tick" still says so, and
+    // that count is the same number everywhere by definition.
+    const script = ["test elapsed", "play 30 ticks", "expect 1"].join("\n");
+    const gb = runTests(parseTests(script), compile(PONG, { profile: getProfile("gb") }));
+    const wsc = runTests(parseTests(script), compile(PONG, { profile: getProfile("wsc") }));
+    expect(gb.cases[0]?.ticks).toBe(30);
+    expect(wsc.cases[0]?.ticks).toBe(30);
+  });
+
+  it("refuses a fractional tick, and a duration it cannot read", () => {
+    const bad = parseTests(
+      ["test x", "play 1.5 ticks", "hold left for soon", "play forever"].join("\n"),
+    );
+    expect(bad.diagnostics.map((d) => d.code)).toEqual(["E_SYNTAX", "E_SYNTAX", "E_SYNTAX"]);
+  });
+
   it("understands relative units in assertions", () => {
     const gb = runTests(
       parseTests(["test width", "expect screenwidth = 100vw"].join("\n")),

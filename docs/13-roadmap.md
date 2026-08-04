@@ -359,21 +359,30 @@ the backend today, and either is a reason to revisit rather than to work around.
      whose main loop waits either way gains nothing by it. That changes the day
      this console gets an audio driver, which it has not.
 
-   **And one thing it found is not this console's**, which is why it is recorded
-   here rather than in a commit. The display runs at **75.47 Hz**, so a tick that
-   is a frame happens seventy-five times a second — the first console in the set
-   that does not run at sixty. The language is built for exactly that (doc 14 §3),
-   but the **`.test.dmt` suites are not**: every script in the example library
-   measures with `play 240 ticks` and `hold right for 42 ticks`, and `caves`' own
-   comment states the assumption out loud — "an eleven-cell-a-second hero … takes
-   the same ticks to reach the same ledge on every console". A tick count is an
-   absolute duration dressed as a portable one, and it has been portable only
-   because every console so far shared a rate. Closing it is a duration unit in
-   the test-script grammar, so a suite can say `play 4 seconds` and mean it on
-   both — which is a language change and therefore the maintainer's call — or
-   per-console scripts, which gives up what the suites are for. The profile is
-   held back until that is answered, since a profile is what makes the example
-   library get checked against this console at all.
+   **And one thing it found was not this console's** — *closed*. The display runs
+   at **75.47 Hz**, so a tick that is a frame happens seventy-five times a second,
+   which makes this the first console in the set that does not run at sixty. The
+   language was built for exactly that (doc 14 §3) and the **`.test.dmt` suites
+   were not: every script in the example library measured with `play 240 ticks`
+   and `hold right for 42 ticks`**, and `caves`' own comment stated the assumption
+   out loud — "an eleven-cell-a-second hero … takes the same ticks to reach the
+   same ledge on every console". A tick count was an absolute duration dressed as
+   a portable one, and it had been portable only because every console so far
+   shared a rate.
+
+   The test-script grammar now takes a duration in **seconds**, resolved against
+   the profile's `fps` by the runner — the same rule `speed` already runs under
+   one layer down. `ticks` stays a unit, because a step that means "one more tick"
+   should say so, and the suites keep it for the two- and eight-tick waits that
+   give a rule an edge to fire on. The conversion changed no console's behaviour:
+   two decimal places of seconds round-trips to the same tick count at sixty, and
+   every count in the library does.
+
+   It also found one assertion that was never portable and was not about the
+   rate. `quest`'s pit test asserted a power-up's value after a death *and a level
+   restart* — a second run at the same level, whose progress when the script stops
+   depends on where the first one ended. It asserts the scene now, which is what
+   its own name claims and what the restart actually is.
 5. **Atari 7800** — the encoder is free, and it buys the display-list layout path
    the image side wants anyway.
 6. **Neo Geo Pocket / Color** — one large encoder for two consoles, 12 KB of RAM,
