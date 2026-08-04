@@ -261,7 +261,7 @@ const PROFILES: readonly ConsoleProfile[] = [
   },
 ];
 
-/**
+/*
  * The WonderSwan Color is not in that table yet, and the reason is a finding
  * rather than an omission.
  *

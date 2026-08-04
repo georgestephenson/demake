@@ -166,7 +166,7 @@ rom` and *not* for `demake build`. Encoders pay for more than one console:
 | 68000 | built (`core/src/asm/m68k.ts`) | Mega Drive, Neo Geo |
 | 65816 | built (`core/src/asm/wdc65816.ts`) | SNES |
 | ARM | built (`core/src/asm/arm.ts`) | **GBA, NDS** — one encoder for three processors, since a DS has two |
-| V30MZ (8086) | new | WonderSwan, WonderSwan Color |
+| V30MZ (8086) | built (`core/src/asm/v30mz.ts`) — 16-bit x86, and the second encoder here with two oracles | **WonderSwan, WonderSwan Color** |
 | TLCS-900/H | new, and the largest of them | Neo Geo Pocket, NGP Color |
 | SPC700 | built (`core/src/asm/spc700.ts`) | SNES audio only |
 
@@ -300,9 +300,80 @@ the backend today, and either is a reason to revisit rather than to work around.
    with an SN76489 driver behind them. The encoder has no console left to buy:
    the only other Z80 machine in the matrix is the SG-1000, which is out of scope
    for games ([§above](#the-sg-1000-is-out-of-scope-for-games)).
-4. **WonderSwan Color**, then the **tiled-mono fitter**, then **WonderSwan**. The
-   mono machine's blocker is the art path, not the CPU, and the fitter is an
-   engine increment that stands on its own.
+4. **WonderSwan Color** — *started; the spine is built* — then the **tiled-mono
+   fitter**, then **WonderSwan**. The mono machine's blocker is the art path, not
+   the CPU, and the fitter is an engine increment that stands on its own.
+
+   Three of the four things a console needs are done. **The encoder**
+   (`core/src/asm/v30mz.ts`) is 16-bit x86 and the second one here with two
+   oracles: hand-read encodings, as every encoder gets, *and* a differential
+   battery against NASM, which the display-ROM harness already provisions. It
+   earns that here for the ARM encoder's reason turned inside out — this
+   architecture packs three fields into a mod/reg/rm byte and gives a
+   displacement a length that depends on its *value*, so a register written into
+   the wrong field still decodes as an instruction. **The cartridge wrapper**
+   (`core/src/asm/ws-cart.ts`) is the other half: the program is in the last
+   64 KiB bank because that is what the processor answers segment `$F000` with
+   from reset, the entry point is a far jump at that bank's `$FFF0` because that
+   is physically where reset starts fetching, and the checksum covers every byte
+   but its own two. There is **one board**, unlike the NES's or the Mega Drive's
+   — the size byte's vocabulary starts at 4 Mbit, so this console has nothing
+   smaller to choose, the way a Game Boy ROM-only cartridge cannot move either.
+   And **`@demake/wsc`** is the ninth owned core.
+
+   The **value layer** is built and proven (`codegen/wsc/val.ts`,
+   `wsc-arith.test.ts`), and it is small for a reason neither 16-bit console
+   before it has. A V30MZ is sixteen bits wide, so an add is still two
+   instructions — but its ALU reaches memory on *both* sides, so a 32-bit add is
+   four instructions with no pointer and no scratch, and it has a real multiplier
+   and divider. A 16.16 multiply is **four multiplies and no loop at all**, which
+   no other backend here can say, and the two divisor shapes a game actually uses
+   are three chained divides each. The bit loop is left for a fractional divisor
+   of a cell or more, which nothing in the example library reaches, and it is
+   thirty-two iterations rather than forty-eight because such a divisor is at
+   least `1.0` and the dividend's top sixteen bits cannot produce a quotient bit.
+
+   What remains is the renderer, the rules and the emitter — and the shape of all
+   three is already decided by the hardware:
+
+   - **The HUD gets a plane of its own**, which only the Game Boy Advance has so
+     far. `SCR2` scrolls independently of `SCR1` and draws in front of it, and
+     colour zero is transparent on both, so a caption's cell can be held still
+     while the picture slides under it. The sprite HUD, the second decimal
+     renderer and the pixel-pinning argument every 8-bit console needs are absent
+     rather than reimplemented.
+   - **A cell carries its own palette** — four bits in the map word — so there is
+     no attribute table and no 16×16 block, which is the PC Engine's arrangement.
+     The split is the Game Boy Color's: seven palettes for background art and one
+     for the font, seven for objects and one for theirs, because a sprite's
+     palette field is three bits and selects among the upper eight.
+   - **The map is 32×32 against a 28×18 window**, so a scrolling scene paints its
+     leading edge where nobody is looking and both wraps are powers of two — no
+     seam to mask on either axis.
+   - **There is no video memory at all.** The screen maps, the tile bank, the
+     object table and palette RAM are addresses in the same 64 KiB the game's
+     variables are in, so nothing is ever uploaded and the object table is not a
+     shadow — the display reads it where the runtime wrote it.
+   - **The loop watches the beam**, as the Nintendo DS's does: this console's
+     interrupt controller vectors through the processor's own table, and a game
+     whose main loop waits either way gains nothing by it. That changes the day
+     this console gets an audio driver, which it has not.
+
+   **And one thing it found is not this console's**, which is why it is recorded
+   here rather than in a commit. The display runs at **75.47 Hz**, so a tick that
+   is a frame happens seventy-five times a second — the first console in the set
+   that does not run at sixty. The language is built for exactly that (doc 14 §3),
+   but the **`.test.dmt` suites are not**: every script in the example library
+   measures with `play 240 ticks` and `hold right for 42 ticks`, and `caves`' own
+   comment states the assumption out loud — "an eleven-cell-a-second hero … takes
+   the same ticks to reach the same ledge on every console". A tick count is an
+   absolute duration dressed as a portable one, and it has been portable only
+   because every console so far shared a rate. Closing it is a duration unit in
+   the test-script grammar, so a suite can say `play 4 seconds` and mean it on
+   both — which is a language change and therefore the maintainer's call — or
+   per-console scripts, which gives up what the suites are for. The profile is
+   held back until that is answered, since a profile is what makes the example
+   library get checked against this console at all.
 5. **Atari 7800** — the encoder is free, and it buys the display-list layout path
    the image side wants anyway.
 6. **Neo Geo Pocket / Color** — one large encoder for two consoles, 12 KB of RAM,
