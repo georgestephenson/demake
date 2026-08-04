@@ -237,9 +237,28 @@ export function planArrangement(
     .map((channel, channelIndex) => ({ channel, channelIndex }))
     .filter(({ channel }) => !reserved.has(channel.id));
   if (options.channels !== undefined) channels = channels.slice(0, options.channels);
-  if (!options.percussion) channels = channels.filter(({ channel }) => channel.kind !== "noise");
+  // "No drums" has to mean the *part* and not only the noise generator. Taking
+  // the channel away and leaving the part behind is what a console with FM voices
+  // reads as "put the kit on one of those" — which is a legitimate arrangement
+  // and the opposite of what this candidate is for, so it is `full-band`'s to
+  // choose and not this one's.
+  const dropping = options.percussion ? [] : parts.filter((part) => part.role === "percussion");
+  for (const part of dropping) {
+    dropped.push({
+      kind: "part",
+      partId: part.id,
+      count: part.notes.length,
+      salience: meanSalience(part),
+      reason: "this arrangement spends every channel on pitched material",
+    });
+  }
+  if (!options.percussion) {
+    channels = channels.filter(({ channel }) => channel.kind !== "noise");
+  }
 
-  const candidates = byWorthThenBreadth(parts);
+  const candidates = byWorthThenBreadth(
+    options.percussion ? parts : parts.filter((part) => part.role !== "percussion"),
+  );
 
   // 3. Greedy assignment by worth, then refine by exchange.
   const assignment = new Map<number, Part>();

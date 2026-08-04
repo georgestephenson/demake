@@ -340,25 +340,30 @@ asserts it on every console — not that *something* wrote the borrowed channel
 afterwards, which is what it used to check, but that what the chip is left
 holding is what the schedule says.
 
-**Six of the seven drivers have it**: SM83, 6502 (the NES and the PC Engine share
-the player), Z80, SPC700, and ARM (the Game Boy Advance and the Nintendo DS share
-theirs). Two of those needed more than the generic plan. The SN76489 has no
-register numbers at all — one write port, and the channel latched in the byte —
-so its three bytes are told apart by what each byte *is* (`rom/psg.ts`
-§`PSG_SHADOW`). The PC Engine *selects* a voice rather than addressing one, so
-every voice is written through the same ten register numbers and each needs a
-window of its own rather than one window per register.
+**All seven drivers have it**: SM83, 6502 (the NES and the PC Engine share the
+player), Z80, 68000, SPC700, and ARM (the Game Boy Advance and the Nintendo DS
+share theirs). Three needed more than the generic plan, and each for a reason
+about its chip rather than its processor.
 
-**The Mega Drive does not have it yet**, and the battery names the gap rather
-than skipping past it. That board has two chips and not one register number
-between them: the PSG's byte says what it is, and the FM chip has four bus
-*ports* whose meaning is whatever the address port last latched. So a copy cannot
-be indexed by the byte the run walk has in its hand, and the plan for it belongs
-in `rom/md-chips.ts` beside the latch rules it has to follow — a voice keyed by
-(bus half, latched address) for the FM chip and by `PSG_SHADOW`'s three for the
-tone half. Until it lands, a Mega Drive game's music keeps whatever patch an
-effect left in the voice it borrowed, which on that chip is a whole instrument
-rather than a wrong note.
+The **SN76489** has no register numbers at all — one write port, and the channel
+latched in the byte — so its three bytes are told apart by what each byte *is*
+(`rom/psg.ts` §`PSG_SHADOW`). The **PC Engine** *selects* a voice rather than
+addressing one, so every voice is written through the same ten register numbers
+and each needs a window of its own rather than one window per register — which is
+why a window is per channel on every console and not per register.
+
+The **Mega Drive** is both of those on one board, and it added the one thing none
+of the others needed. Its FM chip has four bus *ports* whose meaning is whatever
+the address port last latched, so a copy is indexed by that address — and the
+address write and its data write **can land in different runs**. `$28` is the
+case that forces it: the key register belongs to no voice until its datum names
+one, so its address write is tagged "no channel" and goes down the plain write
+path while its data write goes down the recording one. A latch kept only by the
+recorder is still holding the register before it, and the key byte is copied into
+the frequency's slot — which is what it did, and what a borrowed voice then
+replayed. So the latch is a byte of driver state that **every** FM write this
+stream makes updates, and `checkMdPairDiscipline` refuses a schedule that would
+need two of them.
 
 ## Phase 6 — 1.0
 

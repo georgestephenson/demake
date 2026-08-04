@@ -53,10 +53,15 @@ import {
   checkMdLatchDiscipline,
   mdChannelTag,
   mdPort,
+  mdShadowBytes,
+  mdShadowInit,
+  mdShadowPlan,
   mdSilenceWrites,
   MD_FM_CHANNELS,
   PSG_CHIP,
   YM_CHIP,
+  checkMdPairDiscipline,
+  type MdShadowChannel,
 } from "./md-chips.js";
 import { clampByte, MAX_PENDING, pack, rateHz, restrict, shapeOf, stripBoot } from "./shared.js";
 
@@ -91,7 +96,18 @@ export interface MdGameAudioInput {
  * bytes' worth are longword pointers, and a `move.l` from an odd address is an
  * address error rather than a wrong note.
  */
-export const MD_AUDIO_BYTES = layout(0).end;
+/**
+ * Worst case for the borrowed-voice copies.
+ *
+ * Every voice the packed run format can number, each with a window as wide as an
+ * FM voice's addresses — `$28`, the key register, up to `$B4`. A tone voice takes
+ * three bytes and is nowhere near it, so this covers both. Reserved rather than
+ * fitted, because the memory plan is settled before the game's effects are
+ * demade — and with 64 KiB of work RAM there is nothing to weigh it against.
+ */
+const SHADOW_MAX = 4 * (0xb4 - 0x28 + 1);
+
+export const MD_AUDIO_BYTES = layout(0, SHADOW_MAX).end;
 
 /** Sizes and reductions, reported rather than assumed. */
 export interface MdGameAudioStats {
@@ -187,7 +203,10 @@ export function buildMdGameAudio(input: MdGameAudioInput): MdGameAudio {
       );
     }
   }
-  for (const script of scripts) checkMdLatchDiscipline(script);
+  for (const script of scripts) {
+    checkMdLatchDiscipline(script);
+    checkMdPairDiscipline(script);
+  }
 
   const clock = resolveMdClock(first);
   const boot = bindingFor(first.console).init();
@@ -232,7 +251,12 @@ export function buildMdGameAudio(input: MdGameAudioInput): MdGameAudio {
     pack(script, { ...packOptions, end: "stop" as const }),
   );
 
-  const state = layout(input.state);
+  // What the music has to remember so a borrowed voice comes back holding the
+  // music's own note rather than the effect's last one. Neither chip on this
+  // board has a register number the packed byte carries, so the plan is
+  // `md-chips.ts`'s rather than `shared.ts`'s.
+  const copies = shared ? mdShadowPlan(tracks, stealable) : [];
+  const state = layout(input.state, mdShadowBytes(copies));
 
   const helpers: string[] = [];
   let code = 0;
@@ -240,7 +264,7 @@ export function buildMdGameAudio(input: MdGameAudioInput): MdGameAudio {
 
   const emitCode = (asm: Asm68k): void => {
     const start = asm.pc;
-    emitInit(asm, state, boot);
+    emitInit(asm, state, boot, copies);
     emitClock(asm, state, clock.ticksPerFrame);
     emitTick(asm, state, input);
     if (input.tracks.length > 0) {
@@ -251,12 +275,15 @@ export function buildMdGameAudio(input: MdGameAudioInput): MdGameAudio {
           state: state.music,
           data: shapeOf(musicData),
           ...(shared ? { steal: state.steal } : {}),
+          ...(copies.length > 0
+            ? { shadow: { at: state.shadow, latch: state.fmLatch, channels: copies } }
+            : {}),
         }).map((name) => `music-${name}`),
       );
     }
     if (input.effects.length > 0) {
       emitSfxStart(asm, state, input);
-      emitRelease(asm, state, stealable);
+      emitRelease(asm, state, stealable, copies);
       helpers.push(
         ...emitStream(asm, {
           prefix: "AudioSfx",
@@ -359,6 +386,10 @@ export function resolveMdClock(script: ChipScript): MdGameAudio["clock"] {
 interface Layout {
   music: MdStreamState;
   sfx: MdStreamState;
+  /** First byte of the music's copy of the borrowable voices. */
+  shadow: number;
+  /** The FM address the music's stream last latched (`md-driver.ts`). */
+  fmLatch: number;
   /** Channels an effect has taken. */
   steal: number;
   /** Priority of the effect playing, for the one that wants to interrupt it. */
@@ -379,7 +410,7 @@ interface Layout {
  * than a byte. Putting a byte field between two longwords would push the second
  * one odd and fault at the first tick.
  */
-function layout(base: number): Layout {
+function layout(base: number, shadowBytes: number): Layout {
   let at = base;
   const long = (): number => {
     const address = at;
@@ -415,7 +446,10 @@ function layout(base: number): Layout {
   const musicReq = byte();
   const sfxReq = byte();
   const pending = byte();
-  return { music, sfx, steal, priority, musicReq, sfxReq, pending, end: at };
+  const fmLatch = byte();
+  const shadow = at;
+  at += shadowBytes;
+  return { music, sfx, shadow, fmLatch, steal, priority, musicReq, sfxReq, pending, end: at };
 }
 
 // --- code --------------------------------------------------------------------
@@ -431,9 +465,19 @@ function emitInit(
   asm: Asm68k,
   state: Layout,
   boot: readonly { reg: number; value: number }[],
+  copies: readonly MdShadowChannel[],
 ): void {
   asm.label("AudioInit");
   for (const write of boot) emitChipWrite(asm, write);
+  // Each borrowable voice's copy starts at what the boot writes left in its
+  // registers, so a replay before the music has stated anything restores the
+  // chip's power-up condition rather than a guess.
+  const seeded = mdShadowInit(boot, copies, mdShadowBytes(copies));
+  for (let byte = 0; byte < seeded.length; byte += 1) {
+    const value = seeded[byte] as number;
+    if (value === 0) asm.clr("b", eaAbs(state.shadow + byte));
+    else asm.move("b", eaImm(value), eaAbs(state.shadow + byte));
+  }
   for (const byte of [
     state.music.active as number,
     state.sfx.active as number,
@@ -444,6 +488,7 @@ function emitInit(
     state.musicReq,
     state.sfxReq,
     state.pending,
+    state.fmLatch,
   ]) {
     asm.clr("b", eaAbs(byte));
   }
@@ -621,7 +666,12 @@ function emitSfxStart(asm: Asm68k, state: Layout, input: MdGameAudioInput): void
  * `a0`; a scene change that happened while an effect was playing would otherwise
  * start whichever track a scratch register happened to name.
  */
-function emitRelease(asm: Asm68k, state: Layout, stealable: readonly number[]): void {
+function emitRelease(
+  asm: Asm68k,
+  state: Layout,
+  stealable: readonly number[],
+  copies: readonly MdShadowChannel[],
+): void {
   asm.label("AudioSfxRelease");
   asm.move("b", eaAbs(state.steal), eaD(1));
   asm.bcc("eq", "AudioReleaseDone");
@@ -630,7 +680,23 @@ function emitRelease(asm: Asm68k, state: Layout, stealable: readonly number[]): 
     const skip = `AudioRelease${bit}`;
     asm.btst(bit, eaD(1));
     asm.bcc("eq", skip);
-    for (const write of silenceVoice(voice)) emitChipWrite(asm, write);
+    const copy = copies.find((one) => one.channel === 1 << bit);
+    if (copy) {
+      // Ascending, so an FM voice's key register — `$28`, the lowest address any
+      // voice writes — is stated first and its frequency last. A tone voice's
+      // bytes carry their own channel select and need nothing in front of them.
+      for (const write of copy.writes) {
+        if (copy.kind === "fm") {
+          const port = YM_ADDRESS + (write.half as number) * 2;
+          asm.move("b", eaImm(write.key), eaAbs(port));
+          asm.move("b", eaAbs(state.shadow + write.slot), eaAbs(port + 1));
+        } else {
+          asm.move("b", eaAbs(state.shadow + write.slot), eaAbs(PSG_ADDRESS));
+        }
+      }
+    } else {
+      for (const write of silenceVoice(voice)) emitChipWrite(asm, write);
+    }
     asm.label(skip);
   }
   asm.clr("b", eaAbs(state.steal));

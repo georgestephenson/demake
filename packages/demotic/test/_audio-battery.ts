@@ -991,88 +991,76 @@ export function audioBattery(target: Target): void {
       expect(after.length, "the borrowed channel never came back").toBeGreaterThan(0);
     });
 
-    // The Mega Drive is the one console this does not hold on, and the reason is
-    // its board rather than its driver: neither of its two chips has a register
-    // number the packed byte carries — the PSG puts the channel in the byte and
-    // the FM chip has four bus *ports* whose meaning is whatever the address port
-    // last latched — so the copy `shadowPlan` builds cannot be indexed by what
-    // the run walk has in its hand. `md-chips.ts` is where the plan for it
-    // belongs, beside the latch rules it has to follow. Named here rather than
-    // quietly passing, because a game on that console still comes back holding
-    // the effect's patch (doc 13 §Handing a borrowed channel back).
-    it.skipIf(target.id === "md")(
-      "hands it back holding the music's own registers, not the effect's",
-      async () => {
-        // The sharp half of the previous test. The packed music is a *delta*
-        // stream, so a register the music's own value did not change is a register
-        // the music never states again — and after an effect has borrowed the
-        // channel the chip is holding the effect's value for it. Left alone, the
-        // music's next volume step re-triggers the voice through a register whose
-        // neighbour still carries the effect's pitch, and a Game Boy pulse comes
-        // back a whole tone sharp and rings until the bar ends. So the release has
-        // to replay what the music would have been holding, and this is where that
-        // is checked: not that *something* wrote the channel, but that what the
-        // chip ends up holding is what the schedule says.
-        const { built, bound } = await build(target, WITH_EFFECT);
-        const driver = bound.driver as Driver;
-        const effect = driver.performed.effects[0] as ChipScript;
-        const track = driver.performed.tracks[0] as ChipScript;
-        const owned = channelOfEffect(target, effect);
-        const address = target.tickAddress(built, bound);
-        const press = Math.round(120 * target.ratio);
-        const ticks = Math.round(600 * target.ratio);
-        const groups = capture(target, built.bytes, address, ticks, press);
+    it("hands it back holding the music's own registers, not the effect's", async () => {
+      // The sharp half of the previous test. The packed music is a *delta*
+      // stream, so a register the music's own value did not change is a register
+      // the music never states again — and after an effect has borrowed the
+      // channel the chip is holding the effect's value for it. Left alone, the
+      // music's next volume step re-triggers the voice through a register whose
+      // neighbour still carries the effect's pitch, and a Game Boy pulse comes
+      // back a whole tone sharp and rings until the bar ends. So the release has
+      // to replay what the music would have been holding, and this is where that
+      // is checked: not that *something* wrote the channel, but that what the
+      // chip ends up holding is what the schedule says.
+      const { built, bound } = await build(target, WITH_EFFECT);
+      const driver = bound.driver as Driver;
+      const effect = driver.performed.effects[0] as ChipScript;
+      const track = driver.performed.tracks[0] as ChipScript;
+      const owned = channelOfEffect(target, effect);
+      const address = target.tickAddress(built, bound);
+      const press = Math.round(120 * target.ratio);
+      const ticks = Math.round(600 * target.ratio);
+      const groups = capture(target, built.bytes, address, ticks, press);
 
-        // Two walks of the same length: what the chip was left holding for the
-        // borrowed channel, and what the music's schedule says it should. Both tags
-        // and both namers run across the whole stream in order, because a latch is
-        // state that carries through one.
-        const chipTag = target.tag();
-        const chipReg = (target.register ?? defaultRegister)();
-        const musicTag = target.tag();
-        const musicReg = (target.register ?? defaultRegister)();
-        const held = new Map<string, number>();
-        const wanted = new Map<string, number>();
-        const record = (
-          into: Map<string, number>,
-          tag: ChannelTag,
-          name: (write: Write) => string | null,
-          writes: readonly Write[],
-        ): void => {
-          for (const write of writes) {
-            const channels = tag(write.reg, write.value, write.chip ?? 0);
-            const key = name(write);
-            if (key === null || (channels & owned) === 0) continue;
-            // A merged register is not state a voice holds: it is folded from two
-            // shadows, and on the Super Nintendo it is a *pulse* that starts one.
-            // The test above it is what checks a merge; this one is about the
-            // registers the release has to replay.
-            if (write.reg === target.mergeReg) continue;
-            into.set(key, write.value);
-          }
-        };
-
-        const disagreements: string[] = [];
-        for (let tick = 0; tick < ticks && tick < track.ticks.length; tick += 1) {
-          record(held, chipTag, chipReg, (groups[tick] ?? []) as Write[]);
-          record(wanted, musicTag, musicReg, (track.ticks[tick] as { writes: Write[] }).writes);
-          // While the effect is sounding the chip is *meant* to hold its values, so
-          // the window opens once it has let go. It is a few ticks long and the
-          // press lands at `press`; a generous margin keeps this from depending on
-          // exactly which tick the button was seen.
-          if (tick < press + effect.ticks.length + 4) continue;
-          for (const [key, value] of wanted) {
-            if (held.get(key) !== value && disagreements.length < 6) {
-              disagreements.push(
-                `tick ${tick}: ${key} holds ${held.get(key) ?? "nothing"}, the music wants ${value}`,
-              );
-            }
-          }
-          if (disagreements.length > 0) break;
+      // Two walks of the same length: what the chip was left holding for the
+      // borrowed channel, and what the music's schedule says it should. Both tags
+      // and both namers run across the whole stream in order, because a latch is
+      // state that carries through one.
+      const chipTag = target.tag();
+      const chipReg = (target.register ?? defaultRegister)();
+      const musicTag = target.tag();
+      const musicReg = (target.register ?? defaultRegister)();
+      const held = new Map<string, number>();
+      const wanted = new Map<string, number>();
+      const record = (
+        into: Map<string, number>,
+        tag: ChannelTag,
+        name: (write: Write) => string | null,
+        writes: readonly Write[],
+      ): void => {
+        for (const write of writes) {
+          const channels = tag(write.reg, write.value, write.chip ?? 0);
+          const key = name(write);
+          if (key === null || (channels & owned) === 0) continue;
+          // A merged register is not state a voice holds: it is folded from two
+          // shadows, and on the Super Nintendo it is a *pulse* that starts one.
+          // The test above it is what checks a merge; this one is about the
+          // registers the release has to replay.
+          if (write.reg === target.mergeReg) continue;
+          into.set(key, write.value);
         }
-        expect(disagreements.join("; ")).toBe("");
-      },
-    );
+      };
+
+      const disagreements: string[] = [];
+      for (let tick = 0; tick < ticks && tick < track.ticks.length; tick += 1) {
+        record(held, chipTag, chipReg, (groups[tick] ?? []) as Write[]);
+        record(wanted, musicTag, musicReg, (track.ticks[tick] as { writes: Write[] }).writes);
+        // While the effect is sounding the chip is *meant* to hold its values, so
+        // the window opens once it has let go. It is a few ticks long and the
+        // press lands at `press`; a generous margin keeps this from depending on
+        // exactly which tick the button was seen.
+        if (tick < press + effect.ticks.length + 4) continue;
+        for (const [key, value] of wanted) {
+          if (held.get(key) !== value && disagreements.length < 6) {
+            disagreements.push(
+              `tick ${tick}: ${key} holds ${held.get(key) ?? "nothing"}, the music wants ${value}`,
+            );
+          }
+        }
+        if (disagreements.length > 0) break;
+      }
+      expect(disagreements.join("; ")).toBe("");
+    });
 
     it.skipIf(target.mergeReg === null)(
       "leaves the music's own bits alone in the register they share",
