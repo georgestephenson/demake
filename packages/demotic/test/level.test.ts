@@ -28,6 +28,53 @@ describe(".dmtl", () => {
     expect(parseLevel(CAVERN).height).toBeGreaterThan(28);
   });
 
+  it("keeps every ledge in the cavern within a jump of one below it", () => {
+    // The cavern is a staircase and its step is the hero's jump: five cells of
+    // rise, of which the top one is spent getting *above* the ledge, so a pad
+    // four rows below a ledge is a step and one six rows below it is scenery.
+    // Both facts are geometry rather than taste, and the exit and one coin sat
+    // on ledges that had neither — flush under the roof, six rows above the
+    // nearest pad — which made a third of the cavern decoration.
+    //
+    // Two conditions, and neither is the whole story: a jump also has to reach
+    // horizontally, and only the interpreter can answer that. What this pins is
+    // what a level edit can break without anyone noticing.
+    const parsed = parseLevel(CAVERN);
+    // By the legend's own name rather than by the character it happens to be
+    // drawn with, which is the whole point of a legend.
+    const isLedge = (column: number, row: number) => tileAt(parsed, column, row)?.name === "ledge";
+    const solid = (column: number, row: number) => tileAt(parsed, column, row)?.solid === true;
+
+    const ledges: { row: number; from: number; to: number }[] = [];
+    for (let row = 0; row < parsed.height; row += 1) {
+      for (let column = 0; column < parsed.width; column += 1) {
+        if (!isLedge(column, row)) continue;
+        const from = column;
+        while (isLedge(column, row)) column += 1;
+        ledges.push({ row, from, to: column - 1 });
+      }
+    }
+
+    // The floor and the rock under it are what everything else is climbed from.
+    const floor = Math.max(...ledges.map((l) => l.row));
+    const problems: string[] = [];
+    for (const ledge of ledges.filter((l) => l.row < floor - 1)) {
+      const where = `row ${ledge.row}, columns ${ledge.from}-${ledge.to}`;
+      // Room to land: the hero is two cells tall and has to be *above* the
+      // ledge before it can come down on it, so the three rows over it are its.
+      for (let row = ledge.row - 3; row < ledge.row; row += 1) {
+        for (let column = ledge.from; column <= ledge.to; column += 1) {
+          if (solid(column, row)) problems.push(`${where}: no room to land, row ${row} is solid`);
+        }
+      }
+      // Something to jump from: a surface one to four rows below it.
+      if (!ledges.some((l) => l.row > ledge.row && l.row <= ledge.row + 4)) {
+        problems.push(`${where}: nothing to jump from within four rows`);
+      }
+    }
+    expect(problems).toEqual([]);
+  });
+
   it("collects the art each tile needs", () => {
     expect(levelAssets(parseLevel(CAVERN))).toEqual([
       "air.svg",

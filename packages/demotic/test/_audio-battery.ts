@@ -1325,9 +1325,9 @@ export function audioSweep(target: Target): void {
      *
      * | console | free bytes |
      * | --- | --- |
-     * | `gb` | shooter 2177, caves 5114, runner 6518, dodger 8738, breakout 10637, pong 12716, platformer 14443 |
-     * | `sms` | caves 19137, runner 20982, shooter 23602, dodger 25301, breakout 25695, pong 27477, platformer 28386 |
-     * | `nes` | caves 9972, runner 11205, shooter 13457, breakout 14285, pong 14582, dodger 14692, platformer 18037 |
+     * | `gb` | shooter 2177, caves 5961, runner 6518, dodger 8738, breakout 10637, pong 12716, platformer 14443 |
+     * | `sms` | caves 19648, runner 20982, shooter 23602, dodger 25301, breakout 25695, pong 27477, platformer 28386 |
+     * | `nes` | caves 10586, runner 11205, shooter 13457, breakout 14285, pong 14582, dodger 14692, platformer 18037 |
      *
      * The Game Boys sweep everything because they are the tightest family in the
      * library *and* the cheapest to build — the whole seven is under a minute

@@ -548,7 +548,7 @@ time the language changed.
 
 ### The one place it stops: expressions
 
-`when always in play then player.ydirection as min(player.ydirection + 0.04, 0.9)`
+`when always in play then player.ydirection as min(player.ydirection + 2.4 / fps, 0.9)`
 is a nested expression inside a flat line, and it is the only part of Demotic that
 *is* nested. So it is the one part a list of blocks cannot mirror.
 

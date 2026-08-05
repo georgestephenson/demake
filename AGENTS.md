@@ -1238,6 +1238,29 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   the top of the tick, before anything has been collided with, so a control
   cannot ask whether there is ground underfoot — and a jump that cannot ask is a
   jump you can press forever.
+- **A delta a rule adds every tick is written against `fps`, or the game is a
+  different game on the WonderSwan.** A `speed` is cells per _second_ and the
+  compiler resolves it against the console's rate, but a rule that adds to a
+  property runs once a tick and nothing scales what it adds — so gravity written
+  as `ydirection + 0.04` falls half again as hard on a machine that ticks 75
+  times a second as on one that ticks 60. The caves' hero cleared five cells
+  everywhere and four on the WonderSwan, which stopped its climb two thirds of
+  the way up the cavern and was invisible from every other console.
+  `2.4 / fps` folds at compile time to the same constant a 60 Hz console already
+  had, so saying it portably moved no bytes on eleven of the twelve. The
+  platformer, quest and runner fixtures still write theirs as a constant and
+  jump short there.
+- **A ledge wants three clear rows above it and a surface within four rows
+  below.** A hero is two cells tall and a jump rises five, of which the top one
+  is spent getting _above_ the ledge rather than into its side — so a ledge four
+  rows above the one below it is a step, one six rows above it is scenery, and
+  one flush under a level's roof has nowhere to be above and cannot be landed on
+  at all. The caves' exit and one of its coins sat on two of those for months:
+  drawn, demade, shipped, and reachable only by a _wall hop_ — a solid ledge
+  grants footing from its side, so a falling hero can take footing off the face
+  of one and jump again — which is a bug being exploited, not a route.
+  `level.test.ts` checks both conditions on the cavern; the horizontal reach it
+  cannot check, and the interpreter is the oracle for that.
 - **A scene's playfield is its level's size, or the screen's** (doc 14 §Levels).
   So `screenright` means the end of the _level_, object positions are level
   coordinates, and the camera is the only thing that knows where the view is —
