@@ -205,6 +205,10 @@ const GAME_DRIVERS: readonly string[] = [
   "nds",
   "pce",
   "wsc",
+  // The mono machine's sound hardware *is* the colour machine's — same chip,
+  // same ports, same waveform page in the same place (`binding/wsc-bank.ts`) —
+  // so the driver is one driver and this is one more console for it.
+  "ws",
 ];
 
 /** Whether a `demake build` cartridge for this console can play its audio. */

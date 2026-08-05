@@ -83,9 +83,12 @@ const FAMILIES: readonly FamilyDescriptor[] = [
     load: async () => anyBackend((await import("./pce.js")).pceBackend),
   },
   {
+    // Two machines, one emitter: a WonderSwan and a WonderSwan Color are one
+    // processor and one display controller, so the mono machine is a description
+    // rather than a ninth backend (`codegen/wsc/machine.ts`).
     family: "wsc",
-    consoles: ["wsc"],
-    extension: () => "wsc",
+    consoles: ["wsc", "ws"],
+    extension: (id) => (id === "ws" ? "ws" : "wsc"),
     load: async () => anyBackend((await import("./wsc.js")).wscBackend),
   },
   {

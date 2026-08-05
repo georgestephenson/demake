@@ -310,8 +310,10 @@ the backend today, and either is a reason to revisit rather than to work around.
    shades chosen from sixteen LCD levels, a shared backdrop, sixteen four-entry
    palettes indexing the pool, and a per-cell choice among them — the first fit
    in the project whose search space is small enough to enumerate rather than
-   cluster. What the mono machine still wants is a `Backend`, which is the
-   colour one's with a different renderer rather than a ninth instruction set.
+   cluster. And `demake build -c ws` then followed for the price of a
+   *description*: these two consoles are one processor and one display
+   controller, so the mono machine is a variant (`codegen/wsc/machine.ts` — four
+   entries and not one instruction) rather than a ninth backend.
 
    `demake build -c wsc` produces a playable 512 KiB cartridge and the whole
    example library traces identically on it, in the same battery every other

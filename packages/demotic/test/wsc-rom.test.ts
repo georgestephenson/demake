@@ -49,13 +49,13 @@ import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
 import { buildWscRom, CODE_SIZE } from "../src/codegen/wsc.js";
 import { bindWscArt } from "../src/codegen/wsc-art.js";
-import {
-  MAP_H,
-  MAP_W,
-  RAM,
-  SYSTEM_OBJECT_PALETTE,
-  SYSTEM_PALETTE,
-} from "../src/codegen/wsc/emit.js";
+import { MAP_H, MAP_W, SYSTEM_OBJECT_PALETTE, SYSTEM_PALETTE } from "../src/codegen/wsc/emit.js";
+import { WS_MACHINE, WSC_MACHINE } from "../src/codegen/wsc/machine.js";
+
+/** Where the colour machine keeps everything the display reads. */
+const RAM = WSC_MACHINE.ram;
+/** And where its palettes go — RAM here, ports on the mono machine. */
+const PALETTE_RAM = "ram" in WSC_MACHINE.palette ? WSC_MACHINE.palette.ram : 0;
 import { BUILTIN_TILES, glyphTile, patternTile } from "../src/rom/graphics.js";
 import { exampleProject, projectText } from "./_projects.js";
 
@@ -172,7 +172,7 @@ describe("boot", async () => {
     // Two reservations rather than one, because an object's palette field is
     // three bits: 0–6 and 8–14 are the art's, 7 and 15 are the font's.
     for (const palette of [SYSTEM_PALETTE, SYSTEM_OBJECT_PALETTE]) {
-      const at = RAM.PALETTE + palette * 32;
+      const at = PALETTE_RAM + palette * 32;
       const entries = machine.ram.subarray(at, at + 32);
       expect(
         entries.some((byte) => byte !== 0),
@@ -428,5 +428,169 @@ describe("the object table", async () => {
     // and the table past it is nobody's business.
     expect(machine.readPort(PORT.SPR_COUNT)).toBeLessThanOrEqual(built.layout.memory.oamEntries);
     expect(machine.readPort(PORT.SPR_FIRST)).toBe(0);
+  });
+});
+
+/**
+ * The mono machine, and every case here is one it alone can get wrong.
+ *
+ * The instructions are the colour machine's — `rom.test.ts` runs the whole
+ * example library on both and says so tick for tick — so what is left to check
+ * is the four things `codegen/wsc/machine.ts` describes: where everything lives
+ * in sixteen kilobytes rather than sixty-four, that a tile is planar 2bpp,
+ * that palettes are *ports* rather than RAM, and that the footer says a mono
+ * console can run this.
+ */
+describe("the mono WonderSwan", async () => {
+  const monoRam = WS_MACHINE.ram;
+
+  function buildMono(project: string) {
+    const example = exampleProject(project);
+    return compile(example.source, {
+      profile: getProfile("ws"),
+      files: example.files,
+      levels: example.levels,
+    });
+  }
+
+  /** Boot a mono cartridge, in the core told which machine it is. */
+  function bootMono(bytes: Uint8Array, bootedAt: number): Wsc {
+    const machine = new Wsc(bytes, "ws");
+    for (let guard = 0; guard < 8_000_000; guard += 1) {
+      if (machine.readMemory(bootedAt, 1)[0] !== 0) return machine;
+      machine.stepInstruction();
+    }
+    throw new Error("ws: the runtime never finished initialising");
+  }
+
+  const built = await buildWscRom(buildMono("pong"), {
+    assets: exampleProject("pong").assets,
+  });
+
+  it("says in its footer that a mono console can run it", () => {
+    // The minimum-system byte is this console's `$C0`: a colour cartridge
+    // refuses to run on a mono machine, and this one must not.
+    const footer = WS_ROM_SIZE - 16;
+    expect(built.bytes[footer + 1]).toBe(0);
+  });
+
+  it("keeps everything the display reads inside sixteen kilobytes", () => {
+    // The whole reason this machine needs its own map: the colour one's tile
+    // bank starts where this one's memory ends. Anything above `$3FFF` would be
+    // written into an address the RAM chip does not decode.
+    for (const address of Object.values(monoRam)) {
+      expect(address).toBeLessThan(0x4000);
+    }
+    expect(monoRam.TILES + 512 * WS_MACHINE.tileBytes).toBe(0x4000);
+    expect(WS_MACHINE.memory.heapEnd).toBeLessThanOrEqual(WS_MACHINE.stackTop);
+  });
+
+  it("copies a planar 2bpp bank into the top half of its RAM", () => {
+    const machine = bootMono(built.bytes, built.layout.booted);
+    settle(machine, 4);
+    let written = 0;
+    for (let at = monoRam.TILES; at < 0x4000; at += 1) {
+      if ((machine.ram[at] as number) !== 0) written += 1;
+    }
+    // Nothing is uploaded through a port on this console, so a short copy is a
+    // perfect game on a blank screen — which no trace can see.
+    expect(written).toBeGreaterThan(200);
+  });
+
+  it("writes its palettes to ports, because it has no palette RAM", () => {
+    const machine = bootMono(built.bytes, built.layout.booted);
+    settle(machine, 4);
+    // The shade pool at $1C-$1F and the sixteen palettes at $20-$3F. A pool of
+    // all zeroes is eight copies of white, which is a screen with one shade on
+    // it — the failure this asserts against, and one a register-free check for
+    // "did anything get written" would miss.
+    const pool: number[] = [];
+    for (let port = 0x1c; port < 0x20; port += 1) {
+      const byte = machine.readPort(port);
+      pool.push(byte & 0x0f, (byte >> 4) & 0x0f);
+    }
+    expect(new Set(pool).size).toBe(8);
+    for (const level of pool) expect(level).toBeLessThan(16);
+
+    let palettes = 0;
+    for (let port = 0x20; port < 0x40; port += 1) {
+      if (machine.readPort(port) !== 0) palettes += 1;
+    }
+    expect(palettes).toBeGreaterThan(0);
+  });
+
+  it("keeps a palette of each kind for the font, as the colour machine does", async () => {
+    const art = await bindWscArt(
+      buildMono("pong"),
+      exampleProject("pong").assets,
+      undefined,
+      undefined,
+      WS_MACHINE,
+    );
+    for (const [name, block] of art.options.scenePalettes ?? []) {
+      // Four pool bytes, then two bytes a palette: the font's two must carry an
+      // ink whatever the picture wanted, or a caption is the colour it is
+      // written on.
+      for (const palette of [SYSTEM_PALETTE, SYSTEM_OBJECT_PALETTE]) {
+        const at = 4 + palette * 2;
+        expect(
+          (block[at] as number) !== 0 || (block[at + 1] as number) !== 0,
+          `${name} palette ${palette}`,
+        ).toBe(true);
+      }
+    }
+  }, 120000);
+
+  it("brings a pool of its own for every scene with a picture", async () => {
+    // The fact that makes this console's art work at all: the eight levels are
+    // a *global* choice, so a scene's picture chooses them and the objects and
+    // the font drawn over it ride along in whatever it picked. Two scenes with
+    // different pictures must therefore differ in the first four bytes.
+    const art = await bindWscArt(
+      buildMono("pong"),
+      exampleProject("pong").assets,
+      undefined,
+      undefined,
+      WS_MACHINE,
+    );
+    const pools = [...(art.options.scenePalettes ?? []).values()].map((block) =>
+      [...block.subarray(0, 4)].join(","),
+    );
+    expect(pools.length).toBeGreaterThan(1);
+    for (const pool of pools) expect(pool).not.toBe("0,0,0,0");
+  }, 120000);
+
+  it("paints the picture at the hardware's row, as the colour machine does", () => {
+    const machine = bootMono(built.bytes, built.layout.booted);
+    settle(machine, 4);
+    for (let row = 0; row < 18; row += 1) {
+      for (let column = 28; column < MAP_W; column += 1) {
+        const at = monoRam.SCR1 + ((row % MAP_H) * MAP_W + column) * 2;
+        const word = (machine.ram[at] as number) | ((machine.ram[at + 1] as number) << 8);
+        expect(word & 0x1ff, `row ${row} column ${column}`).toBe(0);
+      }
+    }
+    let painted = 0;
+    for (let row = 0; row < 18; row += 1) {
+      for (let column = 0; column < 28; column += 1) {
+        const at = monoRam.SCR1 + (row * MAP_W + column) * 2;
+        const word = (machine.ram[at] as number) | ((machine.ram[at + 1] as number) << 8);
+        if ((word & 0x1ff) !== 0) painted += 1;
+      }
+    }
+    expect(painted).toBeGreaterThan(100);
+  });
+
+  it("draws more than one shade on the panel", () => {
+    // The end-to-end claim: tiles in the right format, a pool that is a pool,
+    // palettes that reached their ports. Any one of them wrong is a screen of
+    // one colour, and every check above it passes on a picture nobody can see.
+    const machine = bootMono(built.bytes, built.layout.booted);
+    settle(machine, 8);
+    const shades = new Set<number>();
+    for (let at = 0; at < machine.framebuffer.length; at += 4) {
+      shades.add(machine.framebuffer[at] as number);
+    }
+    expect(shades.size).toBeGreaterThan(3);
   });
 });

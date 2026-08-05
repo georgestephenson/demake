@@ -718,7 +718,8 @@ export const NDS_MEMORY: MemoryPlan = {
  * hardware fixes and the rest is this plan's to place:
  *
  * ```text
- *   $0000–$03FF  the processor's own interrupt vectors, which nothing uses yet
+ *   $0000–$02FF  the processor's own interrupt vectors, which nothing uses
+ *   $0300–$033F  the sound hardware's four waveforms (`WS_WAVE_BASE`)
  *   $0400–$1FFF  the heap
  *   $2000–$27FF  the first screen map, 32×32 words
  *   $2800–$2FFF  the second screen map — the HUD's plane
@@ -738,12 +739,53 @@ export const NDS_MEMORY: MemoryPlan = {
  * vertical-blank timer's *counter* and pays whatever frames it finds owed
  * (`audio/src/rom/wsc-game.ts`), so the kilobyte stays the processor's.
  *
- * The sound hardware's sixty-four bytes of waveform sit at `$3400`, which is the
- * first sixty-four-byte-aligned page above the object table and below the tile
- * bank — and it has to be both, because port `$8F` carries only bits 6–13 of an
- * address. `WS_WAVE_BASE` is where that number lives; the gap between the object
- * table and `$4000` is why there is room for it.
+ * The sound hardware's sixty-four bytes of waveform sit at `$0300`, inside those
+ * untouched vectors — the last aligned page of the kilobyte, because port `$8F`
+ * carries only bits 6–13 of an address and the page has to be free on the *mono*
+ * machine too, whose sixteen kilobytes have their tile bank where this one has
+ * its gap. `WS_WAVE_BASE` is where that number lives.
  */
+/**
+ * The mono WonderSwan's plan, which is the same machine with a quarter of it.
+ *
+ * Sixteen kilobytes rather than sixty-four, and the top half of them is the tile
+ * bank — 512 tiles of *sixteen* bytes, because a tile is planar 2bpp here. So
+ * everything a game has lives in the 8 KiB below it, and every address moves:
+ *
+ * ```text
+ *   $0000–$02FF  the processor's own interrupt vectors, which nothing uses
+ *   $0300–$033F  the sound hardware's four waveforms (`WS_WAVE_BASE`)
+ *   $0340–$0B3F  the heap
+ *   $0B40–$0BFF  the stack, growing down from $0C00
+ *   $0C00–$0DFF  the object shadow, built during the frame
+ *   $0E00–$0FFF  the object table, which port $04 addresses in units of 512
+ *   $1000–$17FF  the first screen map, 32×32 words
+ *   $1800–$1FFF  the second screen map — the HUD's plane
+ *   $2000–$3FFF  the tile bank, where the chip looks
+ * ```
+ *
+ * The heap is 2 KiB against the colour machine's 7, which is the NES's budget on
+ * a console with four times its screen — and it is the one number here that is a
+ * *choice* rather than the hardware's, because the stack and the heap share what
+ * the fixed structures leave. The palettes cost nothing, which is the compensation:
+ * they are ports on this machine rather than five hundred and twelve bytes of RAM.
+ */
+export const WS_MEMORY: MemoryPlan = {
+  machine: "WonderSwan",
+  heapStart: 0x0340,
+  heapEnd: 0x0b40,
+  oamShadow: 0x0c00,
+  oamEntries: 128,
+  viewW: 28,
+  viewH: 18,
+  queueMax: 60,
+  plotMax: 40,
+  audioBytes: WSC_AUDIO_BYTES,
+  cellAttributes: true,
+  interruptBytes: 0,
+  loopBytes: 3,
+};
+
 export const WSC_MEMORY: MemoryPlan = {
   machine: "WonderSwan Color",
   heapStart: 0x0400,

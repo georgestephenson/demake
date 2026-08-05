@@ -149,6 +149,29 @@ export const wscTarget: RomTarget = {
   },
 };
 
+/**
+ * The mono WonderSwan: the same cartridge builder, the same core, a different
+ * machine (`codegen/wsc/machine.ts`).
+ *
+ * Which console the core comes up as is its constructor's, because these two
+ * machines do not differ in anything a cartridge header could record — so this
+ * target is the place that says which one a `.ws` is for, and a build that
+ * quietly emitted colour-machine tiles would draw noise here.
+ */
+export const wsTarget: RomTarget = {
+  console: "ws",
+  build: (program, options) => buildWscRom(program, options),
+  boot: (bytes) => {
+    const machine = new Wsc(bytes, "ws");
+    return {
+      readMemory: (address, length) => machine.readMemory(address, length),
+      stepInstruction: () => machine.stepInstruction(),
+      runFrame: () => machine.runFrame(),
+      setButtons: (down) => machine.setButtons(down as WscButton[]),
+    };
+  },
+};
+
 export const smsTarget: RomTarget = {
   console: "sms",
   build: (program, options) => buildSmsRom(program, options),

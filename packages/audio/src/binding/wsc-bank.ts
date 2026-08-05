@@ -39,11 +39,19 @@ import { WS_SOUND_CHANNELS, WS_WAVE_CHANNEL_BYTES, WS_WAVE_SAMPLES } from "@dema
  * game whose bass plays the snare (`sdsp-bank.ts`).
  *
  * It has to be sixty-four-byte aligned and below `$4000`, because those are the
- * bits port `$8F` carries. `$3400` is the first aligned page above the object
- * table in `WSC_MEMORY` and below the tile bank, which is the only gap in that
- * map big enough and low enough to hold it.
+ * bits port `$8F` carries — and it has to be free on **both** WonderSwans, whose
+ * memory maps agree about almost nothing: the mono machine has sixteen kilobytes
+ * with its tile bank in the top half, so the colour machine's roomy gap below
+ * `$4000` is tiles over there.
+ *
+ * What both have is the processor's interrupt-vector table, which neither uses:
+ * a demade cartridge takes no interrupt anywhere — the main loop watches the
+ * beam and the audio driver reads a timer's counter — so the last aligned page
+ * of that first kilobyte is free on either machine. That is what keeps this one
+ * number one number, which is the Super Nintendo's rule: a second copy of it is
+ * a game whose bass plays the snare (`sdsp-bank.ts`).
  */
-export const WS_WAVE_BASE = 0x3400;
+export const WS_WAVE_BASE = 0x0300;
 
 /** Samples in one channel's wave table, which is also its pitch lattice's step. */
 export const WS_WAVE_STEP = WS_WAVE_SAMPLES;

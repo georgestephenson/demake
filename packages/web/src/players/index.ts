@@ -32,7 +32,10 @@ export async function bootPlayer(
     case "pce":
       return (await import("./pce.js")).boot(rom);
     case "wsc":
-      return (await import("./wsc.js")).boot(rom);
+      // Two machines behind one family again, and here the *core* is the one
+      // that has to be told: a WonderSwan and a WonderSwan Color do not differ
+      // in anything a cartridge header could record.
+      return (await import("./wsc.js")).boot(rom, consoleId);
     case "gba":
       // Two machines behind one family, decided by the console rather than the
       // family: a Nintendo DS runs the same cartridge code on a bigger screen,

@@ -39,6 +39,7 @@ import {
   smsTarget,
   snesTarget,
   wscTarget,
+  wsTarget,
   type RomTarget,
 } from "./_rom-harness.js";
 import { gameSource, projectBytes, projectText } from "./_projects.js";
@@ -71,6 +72,7 @@ const TARGETS: readonly RomTarget[] = [
   gbaTarget,
   ndsTarget,
   wscTarget,
+  wsTarget,
 ];
 
 describe("gb ROM", async () => {
