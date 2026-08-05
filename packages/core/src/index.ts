@@ -458,6 +458,30 @@ export {
   type X86ShiftOp,
   type X86UnaryOp,
 } from "./asm/v30mz.js";
+// The TLCS-900/H, for the Neo Geo Pocket pair. Its operand constructors collide
+// by name for the fourth time and are prefixed for a fourth distinct reason:
+// `at` here is a 32-bit base register with a displacement, in a 24-bit address
+// space, which is not an addressing mode any of the other three CPUs has.
+export {
+  abs as t9Abs,
+  at as t9At,
+  Asm900,
+  indexed as t9Indexed,
+  invert as t9Invert,
+  postinc as t9Postinc,
+  predec as t9Predec,
+  sizeOf as t9SizeOf,
+  type Mem as T9Mem,
+  type T9AluOp,
+  type T9CC,
+  type T9MemMode,
+  type T9R8,
+  type T9R16,
+  type T9R32,
+  type T9Reg,
+  type T9ShiftOp,
+  type T9Size,
+} from "./asm/tlcs900.js";
 export {
   packWsRom,
   wsChecksum,
