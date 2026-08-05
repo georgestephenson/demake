@@ -73,4 +73,4 @@ export {
   VIDEO_SIZE,
   type NgpModel,
 } from "./display.js";
-export { DEFAULT_STACK, Ngp } from "./machine.js";
+export { BUTTONS, DEFAULT_STACK, Ngp, type Button } from "./machine.js";

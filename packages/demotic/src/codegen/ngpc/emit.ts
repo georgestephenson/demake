@@ -124,8 +124,8 @@ import { at, branchZero32, copy32, sub32 } from "./val.js";
 export const CODE_ORIGIN = 0x200040;
 
 /** Cells across and down a scroll plane. Both are powers of two. */
-const MAP_W = 32;
-const MAP_H = 32;
+export const MAP_W = 32;
+export const MAP_H = 32;
 
 /**
  * Tiles a build may use.
@@ -744,7 +744,10 @@ function emitFillCells(ctx: NgpcCtx, subjectId: number, level: LevelData): void 
     asm.stm(based("xhl"), "wa");
     asm.ldm("wa", at(row));
     asm.stm(based("xhl", 2), "wa");
-    asm.ld("a", "iy");
+    // The legend index comes back down through `XWA`: the index registers have
+    // no byte name this encoder will take, so a long move is how a byte held in
+    // one is reached.
+    asm.ld("xwa", "xiy");
     asm.stm(based("xhl", 4), "a");
     asm.incMem(1, at(list), "b");
     asm.label(next);
@@ -1299,9 +1302,14 @@ function emitLegendToTile(ctx: NgpcCtx, level: LevelData): void {
 function emitOriginFromScroll(ctx: NgpcCtx, dstCol: number, dstRow: number): void {
   const { asm, layout } = ctx;
   const shift = (src: number, dst: number): void => {
+    // Sign-extended into the long, because a camera left of the origin is a
+    // negative pixel count and an arithmetic shift is what floors it. `exts`
+    // rather than a shift pair: this processor's shift count is one to sixteen,
+    // so widening by shifting up and back down is two instructions and a
+    // sign-extend is one.
     asm.ldm("hl", at(src));
-    asm.shift("sll", 16, "xhl");
-    asm.shift("sra", 19, "xhl");
+    asm.exts("xhl");
+    asm.shift("sra", 3, "xhl");
     asm.stm(at(dst), "hl");
   };
   shift(layout.words + W.camX * 2, dstCol);
@@ -1609,7 +1617,7 @@ function emitOam(ctx: NgpcCtx, scene: SceneCtx, options: NgpcEmitOptions): void 
     for (let row = 0; row < height; row += 1) {
       for (let column = 0; column < width; column += 1) {
         const tile = art ? art.tile + row * art.width + column : OBJECT_TILE;
-        const palette = art ? 0 : SYSTEM_PALETTE;
+        const palette = art ? (art.palette ?? 0) : SYSTEM_PALETTE;
         asm.ldm("hl", at(layout.words + W.cell * 2));
         if (column !== 0) asm.aluImm("add", "hl", column * 8);
         asm.ldm("de", at(layout.words + W.count * 2));
@@ -1736,12 +1744,15 @@ function needPushSprite(ctx: NgpcCtx): Ref {
     asm.stm(based("xiy", 2), "a");
     asm.ld("a", "e");
     asm.stm(based("xiy", 3), "a");
-    // The colour palette lives in a table of its own, one byte an object.
+    // The colour palette lives in a table of its own, one byte an object. `HL`
+    // held the caller's x and has already been stored, so it is free to address
+    // it; the palette comes down out of `IZ` through `XWA`, because the index
+    // registers have no byte name this encoder will take.
     asm.ldn("xwa", 0);
     asm.ldm("a", at(layout.oamCount));
     asm.ldn("xhl", NGP_SPRITE_PALETTES);
     asm.alu("add", "xhl", "xwa");
-    asm.ld("a", "iz");
+    asm.ld("xwa", "xiz");
     asm.stm(based("xhl"), "a");
     asm.incMem(1, at(layout.oamCount), "b");
     asm.ret();

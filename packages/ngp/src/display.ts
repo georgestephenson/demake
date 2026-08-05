@@ -95,11 +95,54 @@ export const VIDEO_SIZE = 0x4000;
 /** The backdrop is black unless the background register says otherwise. */
 const BACKGROUND_ON = 0x80;
 
+/**
+ * The display's own structures, as offsets into the array it is handed.
+ *
+ * Everything below reads the console's memory through an *offset* rather than
+ * through an address, because this model is given the region rather than the
+ * bus. Naming them once here is also what keeps the per-pixel path free of
+ * module-level lookups, which matters more than it reads: a scanline renderer
+ * that resolved `NGP_CHARACTERS` per pixel spends most of a frame doing it.
+ */
+const OFF_PLANE: readonly number[] = [0, NGP_PLANE1 - NGP_VIDEO, NGP_PLANE2 - NGP_VIDEO];
+const OFF_SCROLL_H: readonly number[] = [0, NGP_S1SO_H - NGP_VIDEO, NGP_S2SO_H - NGP_VIDEO];
+const OFF_SCROLL_V: readonly number[] = [0, NGP_S1SO_V - NGP_VIDEO, NGP_S2SO_V - NGP_VIDEO];
+const OFF_CHARACTERS = NGP_CHARACTERS - NGP_VIDEO;
+const OFF_PALETTE = NGP_PALETTE - NGP_VIDEO;
+const OFF_K1GE = NGP_K1GE_PALETTE - NGP_VIDEO;
+
+/**
+ * Bytes one 8×8 character at 2bpp occupies, and how a pixel is read out of a
+ * row.
+ *
+ * A row is a little-endian halfword and the *rightmost* pixel is in the low two
+ * bits, so the leftmost is the highest pair — the opposite way round from every
+ * packed format in this project, and the one thing about this layout worth
+ * stating twice. Both readers below spell the shift out rather than calling a
+ * helper, because both are inside a loop that runs once a pixel.
+ */
+const CHARACTER_BYTES = 16;
+
+/** Colours in one palette — the same four on both machines. */
+const PALETTE_SIZE = 4;
+
+/**
+ * Where a layer's palettes start in the resolved colour cache.
+ *
+ * In *entries*, where the hardware's own stride is in bytes and a colour is two
+ * of them — so this is derived from the register map rather than being a second
+ * count of the same palettes.
+ */
+const LAYER_STRIDE = NGP_PALETTE_STRIDE / 2;
+
 /** Expand a four-bit channel to eight bits by replicating it. */
 export function expandChannel(value: number): number {
   const nibble = value & 0xf;
   return (nibble << 4) | nibble;
 }
+
+/** The same sixteen answers, for the loop that resolves every palette a line. */
+const EXPANDED: readonly number[] = Array.from({ length: 16 }, (_, value) => expandChannel(value));
 
 /**
  * The mono machine's eight grey levels, lightest first.
@@ -123,6 +166,10 @@ interface Sprite {
   priority: number;
   monoPalette: number;
   colorPalette: number;
+  /** The character row this object shows on the line being drawn. */
+  row: number;
+  /** Where its palette starts in the resolved colour cache, for that line. */
+  paletteBase: number;
 }
 
 export class Display {
@@ -138,6 +185,21 @@ export class Display {
   /** Set for one step when the beam reaches the first blanked line. */
   frameReady = false;
 
+  /**
+   * The objects of each priority that cover the line being drawn.
+   *
+   * Rebuilt once a scanline rather than consulted once a pixel, which is what
+   * the hardware itself does — this chip evaluates a per-line budget, and on
+   * this console that budget is the whole table. Without it a frame is 160 by
+   * 152 pixels times three priorities times sixty-four entries, and the core is
+   * thirty times slower than every other one in the set for a picture that is
+   * usually four sprites wide.
+   *
+   * Indexed by priority, so index 0 is unused: a priority of zero is what hides
+   * an object on this hardware.
+   */
+  private readonly onLine: Sprite[][] = [[], [], [], []];
+
   private readonly sprites: Sprite[] = Array.from({ length: NGP_SPRITE_COUNT }, () => ({
     x: 0,
     y: 0,
@@ -147,7 +209,31 @@ export class Display {
     priority: 0,
     monoPalette: 0,
     colorPalette: 0,
+    row: 0,
+    paletteBase: 0,
   }));
+
+  /**
+   * Every palette, resolved to a colour, refreshed once a line.
+   *
+   * A hundred and ninety-two entries against twenty-four thousand pixels, so
+   * this is cheaper by two orders of magnitude than looking a colour up when a
+   * pixel needs one — and it is *equivalent*, because a scanline renderer draws
+   * a whole line from the palettes as they stood when the line began.
+   */
+  private readonly colours = new Int32Array(3 * LAYER_STRIDE);
+
+  /** One line of each scroll plane: the colour index, and the colour it shows. */
+  private readonly planeIndex = [
+    new Uint8Array(SCREEN_WIDTH),
+    new Uint8Array(SCREEN_WIDTH),
+    new Uint8Array(SCREEN_WIDTH),
+  ];
+  private readonly planeColour = [
+    new Int32Array(SCREEN_WIDTH),
+    new Int32Array(SCREEN_WIDTH),
+    new Int32Array(SCREEN_WIDTH),
+  ];
 
   /**
    * @param video the console's `$8000`–`$BFFF`, which the processor writes to
@@ -225,52 +311,157 @@ export class Display {
     }
   }
 
-  /** One pixel of an 8×8 character, as a colour index of zero to three. */
-  private characterPixel(tile: number, x: number, y: number): number {
-    const row = this.word(NGP_CHARACTERS + tile * 16 + y * 2);
-    // The rightmost pixel is in the low two bits, so the leftmost is the highest
-    // pair — which is the opposite way round from every packed format in this
-    // project and the one thing about the tile layout worth stating twice.
-    return (row >> ((7 - x) * 2)) & 3;
+  /** The backdrop or the out-of-window colour, which are the same eight colours. */
+  private backdrop(register: number): number {
+    const index = register & 0x07;
+    if (this.model === "ngp") return MONO_SHADES[index] as number;
+    const value = this.word(NGP_BACKGROUND_PALETTE + index * 2);
+    return (
+      (expandChannel(value) << 16) | (expandChannel(value >> 4) << 8) | expandChannel(value >> 8)
+    );
   }
 
-  /** A scroll plane's colour index and palette at a screen position, or index zero. */
-  private planePixel(plane: 1 | 2, x: number, y: number): { index: number; entry: number } {
-    const base = plane === 1 ? NGP_PLANE1 : NGP_PLANE2;
-    const scrollX = this.byte(plane === 1 ? NGP_S1SO_H : NGP_S2SO_H);
-    const scrollY = this.byte(plane === 1 ? NGP_S1SO_V : NGP_S2SO_V);
-    const mapX = (x + scrollX) & 0xff;
-    const mapY = (y + scrollY) & 0xff;
-    const entry = this.word(base + ((mapY >> 3) * 32 + (mapX >> 3)) * 2);
-    const fineX = (entry & 0x8000) !== 0 ? 7 - (mapX & 7) : mapX & 7;
-    const fineY = (entry & 0x4000) !== 0 ? 7 - (mapY & 7) : mapY & 7;
-    return { index: this.characterPixel(entry & 0x1ff, fineX, fineY), entry };
-  }
-
-  /** A colour, given the layer's palette block and which palette and entry. */
-  private colorOf(layer: number, palette: number, index: number): number {
+  /**
+   * Resolve every palette on every layer into {@link colours}, once a line.
+   *
+   * The cache is laid out as the hardware lays the palettes out, which is what
+   * makes this one walk rather than three nested loops: a colour machine's
+   * entry `layer * 64 + palette * 4 + index` is the word at twice that offset,
+   * and a mono machine's is the byte at `layer * 8 + entry` with only two
+   * palettes a layer — the rest of each layer's block is left as it was,
+   * because nothing can name it. The palette field a mono map entry and a mono
+   * object carry is one bit.
+   */
+  private refreshPalettes(): void {
+    const video = this.video;
+    const colours = this.colours;
     if (this.model === "ngp") {
-      // Three shades and a transparent slot, in a table of four bytes.
-      const shade = this.byte(NGP_K1GE_PALETTE + layer * 8 + palette * 4 + index) & 7;
-      return MONO_SHADES[shade] as number;
+      for (let layer = 0; layer < 3; layer += 1) {
+        for (let entry = 0; entry < 8; entry += 1) {
+          const shade = (video[OFF_K1GE + layer * 8 + entry] as number) & 7;
+          colours[layer * LAYER_STRIDE + entry] = MONO_SHADES[shade] as number;
+        }
+      }
+      return;
     }
-    const value = this.word(NGP_PALETTE + layer * NGP_PALETTE_STRIDE + palette * 8 + index * 2);
-    return (
-      (expandChannel(value) << 16) | (expandChannel(value >> 4) << 8) | expandChannel(value >> 8)
-    );
+    for (let entry = 0; entry < 3 * LAYER_STRIDE; entry += 1) {
+      const low = video[OFF_PALETTE + entry * 2] as number;
+      const high = video[OFF_PALETTE + entry * 2 + 1] as number;
+      // **The word is BGR, not RGB**: red is the low nibble and blue the high
+      // one, which is the opposite of every other RGB444 console in this set and
+      // the single easiest thing here to get wrong in a way nothing catches.
+      colours[entry] =
+        ((EXPANDED[low & 0x0f] as number) << 16) |
+        ((EXPANDED[low >> 4] as number) << 8) |
+        (EXPANDED[high & 0x0f] as number);
+    }
   }
 
-  /** The backdrop, which is a register rather than a layer. */
-  private backdrop(select: number): number {
-    if (this.model === "ngp") return MONO_SHADES[select & 7] as number;
-    const value = this.word(NGP_BACKGROUND_PALETTE + (select & 7) * 2);
-    return (
-      (expandChannel(value) << 16) | (expandChannel(value >> 4) << 8) | expandChannel(value >> 8)
-    );
+  /**
+   * Resolve one scroll plane's whole line into its index and colour arrays.
+   *
+   * A cell at a time rather than a pixel at a time, which is the difference
+   * between one map entry and one character row per eight pixels and one of each
+   * per pixel. The first cell of a line is usually partial, because the plane
+   * scrolls by pixels and the window starts wherever it starts.
+   */
+  private planeLine(plane: 1 | 2, y: number): void {
+    const video = this.video;
+    const index = this.planeIndex[plane] as Uint8Array;
+    const colour = this.planeColour[plane] as Int32Array;
+    const scrollX = video[OFF_SCROLL_H[plane] as number] as number;
+    const scrollY = video[OFF_SCROLL_V[plane] as number] as number;
+    const mapY = (y + scrollY) & 0xff;
+    // Thirty-two cells of two bytes to a map row, and the map wraps at 256
+    // pixels on both axes — so both wraps are a byte and there is no modulo.
+    const rowBase = (OFF_PLANE[plane] as number) + (mapY >> 3) * 64;
+    const layerBase = plane * LAYER_STRIDE;
+    const mono = this.model === "ngp";
+    for (let x = 0; x < SCREEN_WIDTH;) {
+      const mapX = (x + scrollX) & 0xff;
+      const at = rowBase + (mapX >> 3) * 2;
+      const entry = (video[at] as number) | ((video[at + 1] as number) << 8);
+      const fineY = (entry & 0x4000) !== 0 ? 7 - (mapY & 7) : mapY & 7;
+      const rowAt = OFF_CHARACTERS + (entry & 0x1ff) * CHARACTER_BYTES + fineY * 2;
+      const row = (video[rowAt] as number) | ((video[rowAt + 1] as number) << 8);
+      const flipX = (entry & 0x8000) !== 0;
+      const palette = mono ? (entry >> 13) & 1 : (entry >> 9) & 0x0f;
+      const base = layerBase + palette * PALETTE_SIZE;
+      const first = mapX & 7;
+      const span = Math.min(8 - first, SCREEN_WIDTH - x);
+      for (let step = 0; step < span; step += 1) {
+        const pixel = first + step;
+        const fineX = flipX ? 7 - pixel : pixel;
+        const value = (row >> ((7 - fineX) * 2)) & 3;
+        index[x + step] = value;
+        colour[x + step] = this.colours[base + value] as number;
+      }
+      x += span;
+    }
   }
 
+  /**
+   * Sort the objects covering this line into the three priority lists, and
+   * resolve what each of them shows on it.
+   *
+   * Walked from the end so that the lowest-numbered object is applied last and
+   * therefore wins, which is the ordering the object table's own priority
+   * implies. Rebuilding this once a scanline rather than consulting the whole
+   * table once a pixel is what the hardware itself does — this chip evaluates a
+   * per-line budget, and on this console that budget is the whole table.
+   */
+  private gatherSprites(y: number): void {
+    const video = this.video;
+    const mono = this.model === "ngp";
+    for (let priority = 1; priority <= 3; priority += 1) {
+      (this.onLine[priority] as Sprite[]).length = 0;
+    }
+    for (let index = NGP_SPRITE_COUNT - 1; index >= 0; index -= 1) {
+      const sprite = this.sprites[index] as Sprite;
+      if (sprite.priority < 1 || sprite.priority > 3) continue;
+      // Eight bits of position against a 152-line screen, and the subtraction
+      // wraps — which is deliberate rather than incidental. It is the only way
+      // an object can hang off the *top* edge: there is no sign bit, so "four
+      // pixels off the top-left" is written as position 252.
+      const dy = (y - sprite.y) & 0xff;
+      if (dy >= 8) continue;
+      const fineY = sprite.vflip ? 7 - dy : dy;
+      const at = OFF_CHARACTERS + sprite.tile * CHARACTER_BYTES + fineY * 2;
+      sprite.row = (video[at] as number) | ((video[at + 1] as number) << 8);
+      sprite.paletteBase = (mono ? sprite.monoPalette : sprite.colorPalette) * PALETTE_SIZE;
+      (this.onLine[sprite.priority] as Sprite[]).push(sprite);
+    }
+  }
+
+  /** The topmost object of a given priority covering this pixel, or what is under. */
+  private spriteOver(under: number, x: number, priority: number): number {
+    let color = under;
+    for (const sprite of this.onLine[priority] as Sprite[]) {
+      // The horizontal half of the wrap {@link gatherSprites} did vertically.
+      const dx = (x - sprite.x) & 0xff;
+      if (dx >= 8) continue;
+      const fineX = sprite.hflip ? 7 - dx : dx;
+      const value = (sprite.row >> ((7 - fineX) * 2)) & 3;
+      if (value === 0) continue;
+      color = this.colours[sprite.paletteBase + value] as number;
+    }
+    return color;
+  }
+
+  /**
+   * Draw one visible scanline.
+   *
+   * Back to front: the furthest objects, the back plane, the middle objects, the
+   * front plane, and the objects in front of everything — which is this chip's
+   * three-deep object priority, and the reason an object can sit *between* the
+   * two planes.
+   */
   private renderLine(y: number): void {
     if (y === 0) this.positionSprites();
+    this.refreshPalettes();
+    this.gatherSprites(y);
+    this.planeLine(1, y);
+    this.planeLine(2, y);
 
     const background = this.byte(NGP_BGC);
     // Both background-on bits have to agree, and anything else is black — which
@@ -286,8 +477,13 @@ export class Display {
     const windowH = this.byte(NGP_WSI_V);
     const inRows = y >= windowY && y < windowY + windowH;
 
-    const frontPlane = (this.byte(NGP_PLANE_PRIORITY) & 0x80) !== 0 ? 2 : 1;
-    const backPlane = frontPlane === 1 ? 2 : 1;
+    const front = (this.byte(NGP_PLANE_PRIORITY) & 0x80) !== 0 ? 2 : 1;
+    const back = front === 1 ? 2 : 1;
+    const backIndex = this.planeIndex[back] as Uint8Array;
+    const backColour = this.planeColour[back] as Int32Array;
+    const frontIndex = this.planeIndex[front] as Uint8Array;
+    const frontColour = this.planeColour[front] as Int32Array;
+    const framebuffer = this.framebuffer;
 
     for (let x = 0; x < SCREEN_WIDTH; x += 1) {
       const at = (y * SCREEN_WIDTH + x) * 4;
@@ -296,56 +492,16 @@ export class Display {
         color = outside;
       } else {
         color = backdrop;
-        // Back to front: the furthest objects, the back plane, the middle
-        // objects, the front plane, and the objects in front of everything.
-        color = this.spriteOver(color, x, y, 1);
-        color = this.planeOver(color, backPlane, x, y);
-        color = this.spriteOver(color, x, y, 2);
-        color = this.planeOver(color, frontPlane, x, y);
-        color = this.spriteOver(color, x, y, 3);
+        color = this.spriteOver(color, x, 1);
+        if ((backIndex[x] as number) !== 0) color = backColour[x] as number;
+        color = this.spriteOver(color, x, 2);
+        if ((frontIndex[x] as number) !== 0) color = frontColour[x] as number;
+        color = this.spriteOver(color, x, 3);
       }
-      this.framebuffer[at] = (color >> 16) & 0xff;
-      this.framebuffer[at + 1] = (color >> 8) & 0xff;
-      this.framebuffer[at + 2] = color & 0xff;
-      this.framebuffer[at + 3] = 0xff;
+      framebuffer[at] = (color >> 16) & 0xff;
+      framebuffer[at + 1] = (color >> 8) & 0xff;
+      framebuffer[at + 2] = color & 0xff;
+      framebuffer[at + 3] = 0xff;
     }
-  }
-
-  private planeOver(under: number, plane: 1 | 2, x: number, y: number): number {
-    const { index, entry } = this.planePixel(plane, x, y);
-    if (index === 0) return under;
-    const palette = this.model === "ngp" ? (entry >> 13) & 1 : (entry >> 9) & 0x0f;
-    return this.colorOf(plane, palette, index);
-  }
-
-  /**
-   * The topmost object of a given priority covering this pixel, or what is under.
-   *
-   * Walked from the end so that the lowest-numbered object wins, which is the
-   * ordering the object table's own priority implies.
-   */
-  private spriteOver(under: number, x: number, y: number, priority: number): number {
-    let color = under;
-    for (let index = NGP_SPRITE_COUNT - 1; index >= 0; index -= 1) {
-      const sprite = this.sprites[index] as Sprite;
-      if (sprite.priority !== priority) continue;
-      // Eight bits of position against a 160-pixel screen, and the subtraction
-      // wraps — which is deliberate rather than incidental. It is the only way
-      // an object can hang off the *left* edge: there is no sign bit, so "four
-      // pixels off the top-left" is written as position 252.
-      const dx = (x - sprite.x) & 0xff;
-      const dy = (y - sprite.y) & 0xff;
-      if (dx >= 8 || dy >= 8) continue;
-      const fineX = sprite.hflip ? 7 - dx : dx;
-      const fineY = sprite.vflip ? 7 - dy : dy;
-      const value = this.characterPixel(sprite.tile, fineX, fineY);
-      if (value === 0) continue;
-      color = this.colorOf(
-        0,
-        this.model === "ngp" ? sprite.monoPalette : sprite.colorPalette,
-        value,
-      );
-    }
-    return color;
   }
 }

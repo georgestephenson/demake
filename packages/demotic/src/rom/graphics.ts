@@ -401,6 +401,38 @@ function packLinear8(cells: readonly (readonly string[])[], ink: number, paper =
   return bank;
 }
 
+/**
+ * The same bank again, as Neo Geo Pocket characters — two-bit pixels in a
+ * little-endian halfword a row, leftmost pixel in the highest bits.
+ *
+ * The one built-in encoder with **no `ink` parameter**, and the reason is worth
+ * saying: on every console above, the runtime's art shares a sixteen-colour
+ * palette with something else and has to be told which few entries it may use.
+ * A palette here is *four* colours, so the reservation is a whole palette rather
+ * than a corner of one — the emitter gives the font the sixteenth and these
+ * pictures' four shades are its four entries, unmapped. Shade zero stays index
+ * zero, which is transparent on both scroll planes and on an object, so one
+ * glyph draws correctly wherever it is put.
+ */
+export function builtinNgp(): Uint8Array {
+  const bank = new Uint8Array(BUILTIN_TILES * TILE_BYTES);
+  let at = 0;
+  for (const cell of builtinCells()) {
+    for (let y = 0; y < 8; y += 1) {
+      const row = cell[y] ?? "";
+      for (let x = 0; x < 8; x += 1) {
+        const shade = Number.parseInt(row[x] ?? "0", 10) || 0;
+        // The high byte of a row comes first in pixel order and second in
+        // memory, so the byte a pixel lands in counts down from the right.
+        const index = at + y * 2 + (1 - (x >> 2));
+        bank[index] = (bank[index] as number) | ((shade & 3) << (6 - (x & 3) * 2));
+      }
+    }
+    at += TILE_BYTES;
+  }
+  return bank;
+}
+
 /** The cells of the built-in bank, in order, as 8×8 colour-index rows. */
 export function builtinCells(): readonly (readonly string[])[] {
   const cells: (readonly string[])[] = [];

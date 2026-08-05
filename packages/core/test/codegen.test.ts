@@ -7,6 +7,7 @@ import { gen } from "../src/codegen/gen.js";
 import { detectCompliant } from "../src/codegen/detect.js";
 import {
   extractTiles,
+  packPacked2Word,
   packPacked4,
   packPacked4Le,
   packPlanar,
@@ -81,6 +82,53 @@ describe("packed-nibble tile packing, little-endian (GBA/NDS 4bpp)", () => {
     expect(bytes.length).toBe(32);
     expect(bytes[0]).toBe(0x3a);
     expect(bytes[4]).toBe(0x05);
+  });
+});
+
+describe("two-bit packed tile packing (Neo Geo Pocket 2bpp)", () => {
+  it("packs a row as a little-endian halfword with the left pixel highest", () => {
+    const grid = new Uint8Array(64);
+    grid[0] = 3; // row 0, col 0 → the row word's top two bits
+    grid[7] = 1; // row 0, col 7 → its bottom two
+    grid[8] = 2; // row 1, col 0
+    const bytes = packPacked2Word(grid, 8, 8);
+    expect(bytes.length).toBe(16); // 2 bytes/row × 8 rows
+    // Row 0's word is $C001, stored low byte first — so the *first* byte of a
+    // row holds its right-hand four pixels. That inversion is the whole reason
+    // this is a packer of its own rather than a flag on the planar one.
+    expect(bytes[0]).toBe(0x01);
+    expect(bytes[1]).toBe(0xc0);
+    expect(bytes[2]).toBe(0x00);
+    expect(bytes[3]).toBe(0x80);
+  });
+});
+
+describe("gen — ngpc family (Neo Geo Pocket Color / K2GE)", () => {
+  it("emits 16-byte characters, palette-tagged map words, and BGR444 palettes", async () => {
+    const png = encodeRgbaPng(64, 64, makeSource(64, 64));
+    const result = await gen(png, { console: "ngpc", format: "bin", symbol: "demake" });
+    const tiles = result.artifacts.find((a) => a.suffix === ".tiles.bin")!.bytes;
+    const map = result.artifacts.find((a) => a.suffix === ".map.bin")!.bytes;
+    const pal = result.artifacts.find((a) => a.suffix === ".pal.bin")!.bytes;
+
+    expect(tiles.length % 16).toBe(0);
+    expect(map.length).toBe((64 / 8) * (64 / 8) * 2);
+    expect(pal.length).toBe(16 * 4 * 2); // 16 palettes × 4 colours
+    for (let i = 0; i < map.length; i += 2) {
+      const word = map[i]! | (map[i + 1]! << 8);
+      expect(word & 0x1ff).toBeLessThan(tiles.length / 16); // 9-bit character
+      expect((word >> 9) & 0xf).toBeLessThan(16); // 4-bit palette select
+      expect((word >> 13) & 1).toBe(0); // the mono machine's palette bit
+    }
+    // Every palette word is 12 bits wide, and colour 0 of every palette is the
+    // shared backdrop — index 0 is transparent on every layer this chip has.
+    for (let i = 0; i < pal.length; i += 2) {
+      expect(pal[i]! | (pal[i + 1]! << 8)).toBeLessThan(0x1000);
+    }
+    for (let p = 1; p < 16; p += 1) {
+      expect(pal[p * 4 * 2]).toBe(pal[0]);
+      expect(pal[p * 4 * 2 + 1]).toBe(pal[1]);
+    }
   });
 });
 

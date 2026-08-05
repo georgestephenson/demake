@@ -19,13 +19,17 @@
  *     and the processor writes to it directly with no port and no upload, so the
  *     array this machine allocates is the same one {@link Display} reads.
  *
- * **Input is absent rather than half-implemented.** The controller status byte's
- * bit layout is not in either hardware reference this project could reach, and a
- * machine description that is wrong *and consistent* passes every test there is
- * (AGENTS.md §Gotchas) — so there is no button register here at all, and adding
- * one is a matter of pinning it against a source rather than of writing code.
- * The sound processor, its four kilobytes and the on-chip timers are absent on
- * the same terms.
+ * **Input goes through the one description, and that description is
+ * unverified.** The controller byte's address is confirmed by every reference
+ * this project could reach and its *bit order* is in none of them, so
+ * `NGP_BUTTON_BITS` writes it down as a guess rather than hiding it — and this
+ * core writes the byte through those same constants a cartridge reads it
+ * through. That is exactly the shape AGENTS.md §Gotchas warns about: a machine
+ * description that is wrong *and consistent* passes every test there is. It is
+ * one line to change when a source turns up, and both readers pick it up.
+ *
+ * The sound processor, its four kilobytes and the on-chip timers are absent
+ * rather than half-implemented, and each is a gap rather than a decision.
  */
 
 import {
@@ -37,6 +41,8 @@ import {
   NGP_VECTOR_VBLANK,
   NGP_VIDEO,
   NGP_Z80_RAM,
+  NGP_BUTTON_BITS,
+  NGP_BUTTONS,
 } from "@demake/core";
 
 import { Tlcs900, type Bus } from "./cpu.js";
@@ -54,6 +60,22 @@ const SOUND_RAM_SIZE = 0x1000;
  * `XSP` in its first instructions.
  */
 export const DEFAULT_STACK = NGP_RAM_RESERVED;
+
+/**
+ * Keys, as the language names them.
+ *
+ * Seven, which is doc 14's portable floor — and the seventh is Option, because
+ * this console has no separate Start and Option is the button a game pauses on.
+ */
+export const BUTTONS = ["left", "right", "up", "down", "a", "b", "start"] as const;
+
+/** One key. */
+export type Button = (typeof BUTTONS)[number];
+
+/** Which bit of the controller byte each abstract key is, once. */
+const KEY_BITS: readonly number[] = BUTTONS.map(
+  (button) => NGP_BUTTON_BITS[button === "start" ? "option" : button] ?? 0,
+);
 
 export class Ngp implements Bus {
   /** Twelve kilobytes at `$4000`, of which the top kilobyte is the boot ROM's. */
@@ -78,8 +100,27 @@ export class Ngp implements Bus {
   /** Frames completed since the machine was loaded. */
   frames = 0;
 
-  constructor(readonly model: NgpModel = "ngpc") {
+  /** Which keys are down, as the controller byte the cartridge will read. */
+  private held = 0;
+
+  /**
+   * Load a cartridge, if one is given.
+   *
+   * Which Neo Geo Pocket this is is *not* a header's decision: these two
+   * machines differ in nothing a cartridge could record, so the caller names it
+   * — the WonderSwan's arrangement, one console along.
+   */
+  constructor(
+    rom?: Uint8Array,
+    readonly model: NgpModel = "ngpc",
+  ) {
     this.display = new Display(model, this.video);
+    if (rom) this.load(rom);
+  }
+
+  /** The picture, as RGBA. */
+  get framebuffer(): Uint8ClampedArray {
+    return this.display.framebuffer;
   }
 
   /**
@@ -95,6 +136,8 @@ export class Ngp implements Bus {
     this.video.fill(0);
     this.io.fill(0);
     this.frames = 0;
+    // The keys survive a reload, because a harness sets them before it boots.
+    this.write(NGP_BUTTONS, this.held);
     const entry =
       (rom[NGP_ENTRY_OFFSET] as number) |
       ((rom[NGP_ENTRY_OFFSET + 1] as number) << 8) |
@@ -160,10 +203,55 @@ export class Ngp implements Bus {
     return cycles;
   }
 
-  /** Run until the next frame has been completed. */
-  runFrame(limit = 400_000): void {
+  /** Run one instruction and clock the display with what it cost. */
+  stepInstruction(): number {
+    return this.step();
+  }
+
+  /** Run until the next frame boundary, and return the frame index. */
+  runFrame(limit = 4_000_000): number {
     const target = this.frames + 1;
-    for (let step = 0; step < limit && this.frames < target; step += 1) this.step();
+    let guard = 0;
+    while (this.frames < target) {
+      this.step();
+      // A runtime that hangs must fail a harness rather than the process.
+      if ((guard += 1) > limit) throw new Error("ngp: no frame after 4M instructions");
+    }
+    return this.frames;
+  }
+
+  /**
+   * Set which keys are down.
+   *
+   * The byte lives in the boot ROM's reserved page rather than behind a port, so
+   * "the controller" on this machine is four bytes of RAM somebody else's
+   * firmware would have written — which is why this is a plain store and why the
+   * bit numbers come from the one description both sides read.
+   */
+  setButtons(down: Iterable<Button>): void {
+    let mask = 0;
+    for (const button of down) {
+      const index = BUTTONS.indexOf(button as Button);
+      if (index >= 0) mask |= 1 << (KEY_BITS[index] as number);
+    }
+    this.held = mask;
+    this.write(NGP_BUTTONS, mask);
+  }
+
+  /**
+   * Read `length` bytes of the machine's address space — the trace reader's
+   * window.
+   *
+   * Through the bus rather than out of the RAM array, because on this console a
+   * plan's addresses are the machine's: work RAM at `$4000`, the display's own
+   * memory at `$8000` and the cartridge at `$200000` are all things a caller may
+   * legitimately want to look at, and one of them is not an array this class
+   * owns.
+   */
+  readMemory(address: number, length: number): Uint8Array {
+    const out = new Uint8Array(length);
+    for (let index = 0; index < length; index += 1) out[index] = this.read(address + index);
+    return out;
   }
 
   /** Read one of the boot ROM's dispatch pointers out of RAM. */
