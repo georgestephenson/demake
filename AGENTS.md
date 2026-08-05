@@ -3112,6 +3112,20 @@ not per console.
   needs a one-row template when the tree is off (`.workbench.no-explorer`), or
   the editor sits in a row sized to its content and the window clips it with
   nothing to scroll.
+- **A grid that states its rows must state its column too.** An implicit track is
+  sized to its widest item's _max-content_, so `.workspace` — rows pinned,
+  column left to itself — was as wide as the widest toolbar or line of source in
+  whatever section was open: on a phone the title bar, the editor and the status
+  bar were all 410px inside a 375px window, and `overflow: hidden` cut the
+  surplus off with nothing able to scroll to it. `minmax(0, 1fr)` is the fix and
+  the symptom is worth recognising, because it does not look like a layout bug —
+  it looks like a button that is missing and a caption that stops mid-word.
+- **The window's name moves on a narrow screen rather than going away.** Below
+  900px the title flows to the right of the menus and below 640px the strip wraps
+  and gives it the row above them; only the engine note is dropped. It used to
+  drop the tagline and then the name, which left the one thing on screen that
+  says what is open with nothing on it — on the machine most likely to have
+  arrived from a link. `workbench.spec.ts` pins both halves at 390px.
 - **Which is why two of the commands have no accelerator and two are `native`.**
   ⌘N is the browser's new window and cannot be prevented; ⌘⌫ deletes the previous
   word in a text box and must not be taken over by a delete with no undo behind
