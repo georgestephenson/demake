@@ -162,6 +162,22 @@ export {
   type SmsGameAudioInput,
   type SmsGameAudioStats,
 } from "./rom/sms-game.js";
+export { wscBinding, wscChannelTag, wsWaveforms, WSC_SHARED_REG } from "./binding/wsc.js";
+export {
+  buildWscGameAudio,
+  resolveWscClock,
+  WSC_AUDIO_BYTES,
+  type WscGameAudio,
+  type WscGameAudioInput,
+  type WscGameAudioStats,
+} from "./rom/wsc-game.js";
+export {
+  wsDefaultWaveforms,
+  wsWaveBank,
+  WS_BANK_BYTES,
+  WS_WAVE_BASE,
+  type WsWaveform,
+} from "./binding/wsc-bank.js";
 export {
   buildSpcGameAudio,
   resolveSpcClock,

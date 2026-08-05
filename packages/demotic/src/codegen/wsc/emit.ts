@@ -41,9 +41,10 @@
  * decides what the game does.
  */
 
+import { AUDIO_STOP, type WscGameAudio } from "@demake/audio";
 import { label, type Ref } from "@demake/core";
 
-import type { InstanceDef, RuleDef } from "../../program.js";
+import type { InstanceDef, Program, RuleDef } from "../../program.js";
 import { glyphTile, OBJECT_TILE, patternTile } from "../../rom/graphics.js";
 import { isMutable } from "../analyze.js";
 import { emitTickSteps, type TickSteps } from "../backend.js";
@@ -186,6 +187,18 @@ export interface WscEmitOptions {
   scenePalettes?: ReadonlyMap<string, Uint8Array>;
   /** Which sub-palette a level's tile art was fitted into. */
   levelPalette?: number;
+  /**
+   * The game's audio driver, already built from its demade tracks and effects.
+   *
+   * Absent for a game with no audio, and then the cartridge is exactly what it
+   * was before sound existed — no tally read in the loop, no service call, no
+   * driver. Pulled in by a game that asks for it, like everything else.
+   */
+  audio?: WscGameAudio;
+  /** Driver index of each of the program's sounds, or `-1` when unsupplied. */
+  effectIndices?: readonly number[];
+  /** Which track each scene plays, as an index into the driver's table. */
+  sceneTracks?: readonly number[];
 }
 
 /** Dispatch on the running scene to one of a set of labels. */
@@ -218,10 +231,10 @@ export function emitProgram(ctx: WscCtx, options: WscEmitOptions = {}): void {
   }
 
   emitReset(ctx, options);
-  emitMainLoop(ctx);
+  emitMainLoop(ctx, options.audio !== undefined);
   emitInput(ctx);
   emitTickDispatch(ctx, scenes);
-  emitSceneChange(ctx, scenes);
+  emitSceneChange(ctx, scenes, program);
 
   for (const scene of scenes) {
     emitSceneTick(ctx, scene, levelFor.get(scene.index));
@@ -232,6 +245,7 @@ export function emitProgram(ctx: WscCtx, options: WscEmitOptions = {}): void {
 
   emitRenderHelpers(ctx);
   emitTileContactHelper(ctx);
+  if (options.audio) options.audio.emitCode(asm);
   ctx.finish();
 
   // --- data ------------------------------------------------------------------
@@ -283,6 +297,20 @@ export function emitProgram(ctx: WscCtx, options: WscEmitOptions = {}): void {
       asm.label(scenePaletteLabel(scene));
       asm.bytes(palette);
     }
+  }
+
+  if (options.audio) {
+    if (program.tracks.length > 0) {
+      asm.label("SceneTracks");
+      // One byte per scene: the request value that starts its track, or the one
+      // that stops the music. A table rather than a dispatch because a scene
+      // change already costs a redraw, and this is the cheapest thing in it.
+      for (const scene of scenes) {
+        const track = options.sceneTracks?.[scene.index] ?? -1;
+        asm.db(track < 0 ? AUDIO_STOP : track + 1);
+      }
+    }
+    options.audio.emitData(asm);
   }
 
   asm.label("TileBank");
@@ -400,6 +428,11 @@ function emitReset(ctx: WscCtx, options: WscEmitOptions): void {
   asm.call("BuildFrame");
   asm.call("UploadFrame");
 
+  if (options.audio) {
+    asm.call("AudioInit");
+    if (program.tracks.length > 0) asm.call("SceneMusic");
+  }
+
   // The screen comes on last, so nothing above it was ever visible.
   emitPort(ctx, PORT.LCD_CTRL, 0x01);
   emitPort(ctx, PORT.DISP_CTRL, 0x07);
@@ -471,7 +504,7 @@ function emitClearState(ctx: WscCtx): void {
  * because a tick that finished *inside* the blanking interval would otherwise
  * see it still set and run twice on one frame.
  */
-function emitMainLoop(ctx: WscCtx): void {
+function emitMainLoop(ctx: WscCtx, audio: boolean): void {
   const { asm } = ctx;
   const active = ctx.unique("waitActive");
   const blank = ctx.unique("waitBlank");
@@ -485,6 +518,15 @@ function emitMainLoop(ctx: WscCtx): void {
   asm.aluI8("cmp", "al", ctx.layout.memory.viewH * 8);
   ctx.far("b", blank);
   asm.call("UploadFrame");
+  if (audio) {
+    // The frame the loop just waited for, counted before anything else spends
+    // it. `AudioFrame` reads the vertical-blank timer's counter rather than
+    // being told, so a frame the game overran is owed rather than lost — and
+    // `AudioService` performs what is owed *outside* the blanking interval,
+    // which belongs to the picture.
+    asm.call("AudioFrame");
+    asm.call("AudioService");
+  }
   asm.call("ReadInput");
   asm.call("Tick");
   asm.call("BuildFrame");
@@ -572,8 +614,9 @@ function emitTickDispatch(ctx: WscCtx, scenes: readonly SceneCtx[]): void {
   asm.ret();
 }
 
-function emitSceneChange(ctx: WscCtx, scenes: readonly SceneCtx[]): void {
+function emitSceneChange(ctx: WscCtx, scenes: readonly SceneCtx[], program: Program): void {
   const { asm, layout } = ctx;
+  const audio = ctx.audio?.driver === true && program.tracks.length > 0;
   asm.label("SceneChange");
   asm.movm8("al", abs(layout.pending));
   asm.aluI8("cmp", "al", 0xff);
@@ -583,12 +626,26 @@ function emitSceneChange(ctx: WscCtx, scenes: readonly SceneCtx[]): void {
   asm.label(go);
   asm.movmr8(abs(layout.scene), "al");
   asm.movmi8(abs(layout.pending), 0xff);
+  if (audio) asm.call("SceneMusic");
   asm.call("ResetScene");
   emitSeedRng(ctx);
   emitClearState(ctx);
   asm.call("UpdateCamera");
   asm.movmi8(abs(layout.redraw), 1);
   asm.ret();
+
+  // Music follows the scene, so it starts where the scene does. Asking for it
+  // rather than starting it here is what keeps the request one byte: the driver
+  // is serviced from the loop, and a scene change is not where it happens.
+  if (audio) {
+    asm.label("SceneMusic");
+    asm.movm8("al", abs(layout.scene));
+    asm.movi8("ah", 0);
+    asm.mov("bx", "ax");
+    asm.movm8("al", romAt("bx", label("SceneTracks")));
+    asm.movmr8(abs(ctx.audio?.music as number), "al");
+    asm.ret();
+  }
 
   asm.label("ResetScene");
   emitSceneDispatch(

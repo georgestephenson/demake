@@ -38,6 +38,7 @@ import {
   NES_AUDIO_BYTES,
   PCE_AUDIO_BYTES,
   SMS_AUDIO_BYTES,
+  WSC_AUDIO_BYTES,
 } from "@demake/audio";
 
 import type { Program } from "../program.js";
@@ -733,8 +734,15 @@ export const NDS_MEMORY: MemoryPlan = {
  * and then uploaded, and this is the only console here where `oamShadow` names
  * the hardware's own table. And the vectors are left alone rather than handed
  * out — a demade cartridge polls the display's line counter and takes no
- * interrupt at all, but the day this console gains an audio driver is the day
- * one of them is wanted, and a kilobyte of sixty-four is not worth the argument.
+ * interrupt at all, and its audio driver takes none either: it reads the
+ * vertical-blank timer's *counter* and pays whatever frames it finds owed
+ * (`audio/src/rom/wsc-game.ts`), so the kilobyte stays the processor's.
+ *
+ * The sound hardware's sixty-four bytes of waveform sit at `$3400`, which is the
+ * first sixty-four-byte-aligned page above the object table and below the tile
+ * bank — and it has to be both, because port `$8F` carries only bits 6–13 of an
+ * address. `WS_WAVE_BASE` is where that number lives; the gap between the object
+ * table and `$4000` is why there is room for it.
  */
 export const WSC_MEMORY: MemoryPlan = {
   machine: "WonderSwan Color",
@@ -750,9 +758,7 @@ export const WSC_MEMORY: MemoryPlan = {
   // row of twenty-nine, painted in the same frame.
   queueMax: 60,
   plotMax: 40,
-  // No driver on this console yet, so no state for one (doc 13 §Console
-  // rollout). A game that names music still records what it asked for.
-  audioBytes: 0,
+  audioBytes: WSC_AUDIO_BYTES,
   // A screen entry is a word — nine bits of tile, four of palette, one of bank
   // and two of flip — so a queued cell is a tile *and* an attribute.
   cellAttributes: true,

@@ -1,11 +1,11 @@
 /**
  * The WonderSwan Color's player.
  *
- * The one console here whose `chips` list is empty, and it is empty for a
- * reason rather than as a stub: this machine has no audio binding and no
- * generated driver (doc 13 §Console rollout item 4), so a demade cartridge
- * makes no sound at all. An empty list is how the pane says that — it takes the
- * sound control away rather than offering one that does nothing.
+ * Its sound hardware is four wavetable channels whose waveforms are in the
+ * console's own RAM, so the chip this hands the pane is `@demake/chip`'s
+ * `WsSound` reading the same sixty-four kilobytes the display does — and what it
+ * plays is the cartridge's own generated V30MZ driver, through the same
+ * `StreamSink` every other console uses.
  *
  * Its pad is a handheld's: two face buttons and a Start, and the four
  * directions are the upper of the two D-pads a landscape game uses.
@@ -21,7 +21,17 @@ export function boot(rom: Uint8Array): Player {
     width: SCREEN_WIDTH,
     height: SCREEN_HEIGHT,
     framebuffer: machine.framebuffer,
-    chips: [],
+    chips: [
+      {
+        get audioSink() {
+          return machine.audioSink;
+        },
+        set audioSink(sink) {
+          machine.audioSink = sink;
+        },
+        apu: machine.sound,
+      },
+    ],
     setButtons: (down) => machine.setButtons(down as WscButton[]),
     runFrame: () => void machine.runFrame(),
     readMemory: (address, length) => machine.readMemory(address, length),

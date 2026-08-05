@@ -303,8 +303,8 @@ the backend today, and either is a reason to revisit rather than to work around.
    with an SN76489 driver behind them. The encoder has no console left to buy:
    the only other Z80 machine in the matrix is the SG-1000, which is out of scope
    for games ([§above](#the-sg-1000-is-out-of-scope-for-games)).
-4. **WonderSwan Color** — *done for games; the sound is what remains* — then the
-   **tiled-mono fitter**, then **WonderSwan**. The mono machine's blocker is the
+4. **WonderSwan Color** — *done* — then the **tiled-mono fitter**, then
+   **WonderSwan**. The mono machine's blocker is the
    art path, not the CPU, and the fitter is an engine increment that stands on
    its own.
 
@@ -383,15 +383,25 @@ the backend today, and either is a reason to revisit rather than to work around.
    version that did not froze every game on its second tick with nothing about
    the arithmetic wrong.
 
-   **What is still to come here is the sound**, and it is the whole of it: no
-   chip model, no binding, no driver. This console's audio hardware is four
-   wavetable channels with a sweep and a noise mode, an output stage the chip
-   mixes itself, and — unlike every console in the set with a driver — a *DMA*
-   channel that plays samples out of the same 64 KiB everything else lives in.
-   Closing it is a `@demake/chip` model, a `binding/wsc.ts`, a generated V30MZ
-   driver in `audio/src/rom/`, and the same Level A proof
-   (`_audio-battery.ts`) every other machine's driver answers to. A game that
-   names music builds and traces today; it simply plays nothing.
+   **And it has sound.** `@demake/chip`'s `WsSound` models the four wavetable
+   channels, `binding/wsc.ts` drives them, and the cartridge carries a generated
+   V30MZ driver (`rom/wsc-driver.ts`, `wsc-game.ts`) whose every register write
+   is diffed against the demakers' schedules tick for tick by the shared battery.
+   Both WonderSwans demake music and effects, because the mono machine has the
+   same sound hardware; only the *game* backend is the colour machine's.
+
+   Three things about it are this console's. The waveforms are in its **own RAM**
+   — port `$8F` names a sixty-four-byte page — so the bank is bytes the driver
+   copies rather than register writes it performs, and the address is one
+   constant the binding, the renderer and the memory plan all read. The **clock
+   is a tally**: this cartridge takes no interrupts anywhere, so the driver reads
+   the vertical-blank timer's counter and pays whatever frames it finds owed,
+   which is the frame-counting discipline every other frame-clocked console needs
+   a handler for. And the **pitch register counts up** — it is subtracted from
+   2048 — so the spec declares the lattice and the binding does the subtraction.
+
+   What is left on this console's audio is channel two's PCM voice, which is
+   stored and inert in the model and reachable by nothing above it.
 
    **And one thing it found was not this console's** — *closed*. The display runs
    at **75.47 Hz**, so a tick that is a frame happens seventy-five times a second,

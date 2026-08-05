@@ -16,8 +16,8 @@ real emulator, compared pixel for pixel):
 | --------------------- | ------ | ---------------------------------------------------------------------------- |
 | art (images)          | 03–06  | working, ten consoles proven on hardware                                     |
 | game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on twelve consoles |
-| music (`arrange`)     | 16, 17 | MIDI → chip music, twelve consoles — and a Game Boy ROM that plays it        |
-| sound (`sfx`)         | 16, 18 | WAV → chip effects, twelve consoles — same ROM, same proof                   |
+| music (`arrange`)     | 16, 17 | MIDI → chip music, fourteen consoles — and a Game Boy ROM that plays it      |
+| sound (`sfx`)         | 16, 18 | WAV → chip effects, fourteen consoles — same ROM, same proof                 |
 
 The four are not four tools that share a repo any more: a `.dmt` says
 `music theme.mid` and `sound bounce.wav on ball hits paddle`, and `demake build`
@@ -552,10 +552,25 @@ rather than reimplemented. And the **map is 32×32 against a 28×18 window**, so
 scrolling scene paints its leading edge where nobody is looking and both wraps
 are powers of two.
 
-What this console does not have is sound: no binding, no driver, and a game that
-names music still records the request its rules made, so a build here traces
-identically to one on a machine that plays it and the only difference is that
-nobody is listening. Doc 13 §Console rollout item 4 has what closing that costs.
+**And it has sound, on a clock that is not an interrupt at all.** `@demake/chip`
+models the WonderSwan's four wavetable channels, `binding/wsc.ts` drives them and
+the cartridge carries a **generated V30MZ driver** (`rom/wsc-driver.ts`,
+`wsc-game.ts`) — the sixth processor to get one, and the whole example library
+plays its music and effects on it, diffed tick for tick by the shared battery.
+
+Three things about it are this machine's. The **waveforms are in the console's
+own RAM**: port `$8F` carries bits 6–13 of an address and the chip reads
+sixty-four bytes from there, so the bank is _bytes the driver copies_ rather than
+register writes it performs — the third kind of bank in the set, after a sample
+block and a stream of port writes — and `WS_WAVE_BASE` is one number with three
+readers because a second copy of it is a game whose bass plays the snare. The
+**clock is a tally**: this cartridge takes no interrupts anywhere, so `AudioFrame`
+reads the vertical-blank timer's _counter_ and pays whatever frames it finds owed
+— which is the frame-counting discipline every other frame-clocked console needs
+a handler for, and the Nintendo DS's argument reached by different hardware. And
+the **pitch register counts the wrong way**: it is subtracted from 2048 rather
+than dividing, so a larger value is a higher note, and the spec declares the
+lattice while the binding does the subtraction.
 
 Still to come: this console's audio, the remaining Tier 2/3 consoles (each =
 a codegen backend, a ROM harness + toolchain, and a libretro core + DAC
@@ -567,10 +582,12 @@ work doc 14 §Runtime model names).
 [16](docs/16-audio-engine.md), [17](docs/17-music-demaker.md),
 [18](docs/18-sound-demaker.md)): `@demake/chip` models the Game Boy APU, the
 SN76489, the NES 2A03, the YM2612, the Super Nintendo's S-DSP, the Nintendo DS's
-SPU and the HuC6280's wavetable PSG; `@demake/audio`
+SPU, the HuC6280's wavetable PSG and the WonderSwan's; `@demake/audio`
 holds both demakers; and `demake arrange`, `demake sfx` and `demake render` work
 for `dmg`, `gbc`, `megaduck`, `nes`, `sms`, `gg`, `sg1000`, `snes`, `md`, `gba`,
-`nds` and `pce`. A
+`nds`, `pce` and both WonderSwans — the mono machine included, because it has the
+same sound hardware and a demaker is per-domain, so `arrange -c ws` works on a
+console `build -c ws` cannot target. A
 track becomes a `.vgm` plus a WAV that is exactly what the schedule produces — or,
 on the one console whose chip plays samples rather than generating them, an
 `.spc`, which is a snapshot of the sound processor's RAM and therefore exactly
@@ -613,7 +630,8 @@ anything but the Game Boy (the NES, the PC Engine, the Sega 8-bits, the Mega Dri
 and the Game Boy Advance have drivers, but only inside a game; the Super
 Nintendo's driver writes an `.spc` rather than a cartridge), driver backends for the remaining
 consoles (each needs a CPU encoder or a checked-in driver source, plus a core to
-prove it in), Level B sample comparison, the remaining chips (the handhelds), the
+prove it in), Level B sample comparison, the remaining chips (the rest of the
+handhelds), the
 three parts of the YM2612 that are stored and inert (LFO pitch modulation, SSG-EG,
 channel 3's per-operator mode), the two parts of the HuC6280's PSG that are (its
 LFO, and the direct D/A as a sample player), tracker and lossy-audio input with the
@@ -852,6 +870,15 @@ packages/chip/       @demake/chip — every sound chip as a register-driven mode
                      duty bit. Volume is three attenuators in series in 1.5 dB
                      steps, so a level is a table lookup on a sum. The LFO and the
                      direct D/A's use as a sample player are stored and inert
+  src/ws-sound.ts    the WonderSwan's: four channels and every one of them a
+                     wavetable — thirty-two four-bit samples apiece, and the only
+                     chip here whose waveforms are the *console's own RAM* rather
+                     than a register file or a sample block, so the model is
+                     handed the machine's memory the way its display is. Volume
+                     is four linear bits a side; the noise voice picks a *tap*
+                     rather than a rate, so a drum has a colour and a pitch.
+                     Channel two's PCM voice, the Hyper Voice stage and the
+                     readable output registers are stored-and-inert or absent
   src/nds-spu.ts     the Nintendo DS's: sixteen channels that are sample players
                      first, six of which switch to a duty generator and two to a
                      noise register — an S-DSP and a Game Boy APU on one die, with
@@ -888,7 +915,10 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
                      nds-driver.ts/nds-game.ts are what each adds to it — a mixer
                      on one, and a whole second binary on the other, because a DS's
                      sound channels answer the ARM7 alone. One caller each so far.
-                     shared.ts is what none of
+                     V30MZ: wsc-driver.ts and wsc-game.ts, and the only driver
+                     whose clock is not an interrupt — this cartridge takes none,
+                     so it reads the vertical-blank timer's counter and pays what
+                     it finds owed. shared.ts is what none of
                      them owns — the boot strip, the channel restriction, the
                      player's shape — and psg.ts is what the *chip* owns, shared
                      by the two CPUs that drive an SN76489; md-chips.ts is the
@@ -900,6 +930,13 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
   src/binding/gba-bank.ts  the Game Boy Advance mixer's, and nothing like it:
                      signed 8-bit PCM read straight out of cartridge ROM, so the
                      driver lays these same bytes down rather than uploading them
+  src/binding/wsc-bank.ts  the WonderSwan's, and the third kind again: this
+                     chip reads sixty-four bytes of the console's *own RAM*, so
+                     what this produces is a page of bytes the driver copies —
+                     neither a sample block nor a stream of port writes. WS_WAVE_BASE
+                     is where they go, and it has one definition and three
+                     readers, because the binding writes the register, the
+                     renderer places the page and the memory plan reserves it
   src/binding/pce-bank.ts  the PC Engine's, and the one that is not a bank at
                      all: this chip's wave RAM is only reachable through the
                      register port, so what this file produces is *register
@@ -2645,6 +2682,16 @@ not per console.
   cannot, because its handler is in the same cartridge, so it filters on the
   _opcode_ at the address the step came from: a real arrival is a `jsr` and a
   return is an `rti`.
+- `packages/demotic/test/audio-wsc.test.ts` is the eighth machine the shared
+  battery is pointed at, and the only one whose driver has no interrupt at all.
+  What it proves that no other console's pass does is that a **tally** keeps
+  tempo: this cartridge takes none, so the driver reads the vertical-blank
+  timer's counter and pays whatever frames it finds owed, and a tick lost
+  anywhere in that chain is a schedule performed at the wrong time. It also
+  found two sixty-hertz assumptions written as arithmetic in the shared battery
+  — "a hundred and twenty frames is two seconds" is not true on a machine that
+  draws 75.47 of them — which is the same class of finding the `.test.dmt`
+  duration unit came from, one layer down.
 - `packages/demotic/test/audio-nds.test.ts` is the seventh machine the shared
   battery is pointed at, and the second whose driver is not on the console's own
   processor — but for a different reason from the Super Nintendo's, which is the
@@ -2696,6 +2743,12 @@ not per console.
   backdrop word for word. Between them they caught a packed cell read as a word
   from an odd address and an unwidened column index in the grid lookup, neither
   of which a trace can see.
+- `packages/chip/test/ws-sound.test.ts` is where this console's _chip_ is held to
+  the hardware, and two of its cases are about the thing that makes it unlike
+  every other model here: the waveforms are the console's own RAM, so the
+  packing order of the two samples in a byte is observable and a base register
+  written un-shifted plays whatever else is at that address. Neither is
+  something the register diff one layer up can see.
 - `packages/demotic/test/wsc-arith.test.ts` and `wsc-rom.test.ts` are the
   WonderSwan's pair. The first is where a new value-layer emitter is proven and
   the file to run when touching `codegen/wsc/val.ts`; two of its vectors are aimed

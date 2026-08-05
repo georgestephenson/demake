@@ -113,9 +113,9 @@ export function RomPane({
   const [sound, setSound] = useState(false);
   const [playing, setPlaying] = useState(false);
   // Whether the *running* cartridge has a chip to listen to. Every console with
-  // a backend has an audio driver but one: the WonderSwan Color's hardware has
-  // no chip model, no binding and no driver yet, so its player hands over an
-  // empty list — and a control that did nothing would be worse than none.
+  // a backend has an audio driver today, so this is true everywhere — but it is
+  // the cartridge's answer rather than an assumption, which is what made the
+  // control honest on the console that spent a release without one.
   const [audible, setAudible] = useState(true);
   // The project's own art, music and effects, as the *source* bytes the build
   // takes — the conversion happens inside the build, so the page and the CLI

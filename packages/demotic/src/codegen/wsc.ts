@@ -27,6 +27,7 @@
  *     is listening.
  */
 
+import { buildWscGameAudio } from "@demake/audio";
 import { AsmError, packWsRom, WS_CODE_SIZE, type Executor } from "@demake/core";
 
 import { getProfile } from "../profiles.js";
@@ -35,6 +36,7 @@ import { BUILTIN_TILES } from "../rom/graphics.js";
 
 import { type Analysis } from "./analyze.js";
 import type { AssetBytes } from "./art.js";
+import { bindAudio, effectIndices, trackForScene } from "./audio.js";
 import {
   buildRom,
   BuildError,
@@ -54,14 +56,10 @@ import { BANK_TILES, emitProgram, type WscEmitOptions } from "./wsc/emit.js";
 /** Bytes a program may occupy: the bank, up to the reset jump. */
 export const CODE_SIZE = WS_CODE_SIZE;
 
-/**
- * What this backend's audio binding hands the emitter.
- *
- * Present and empty, because this console has no generated driver: what a rule
- * writes is the *record* of its request, which the trace reads. `gb.ts`'s shape,
- * with the driver half absent rather than stubbed.
- */
+/** What this backend's audio binding hands the emitter. */
 interface WscAudio extends BoundAudioShape {
+  /** What the emitter needs to call the driver, where there is one. */
+  options: WscEmitOptions;
   /** The bytes a rule writes to ask for a sound; absent when none can. */
   hooks?: { driver: boolean; music: number; request: number; effects: readonly number[] };
 }
@@ -111,32 +109,65 @@ export const wscBackend: Backend<WscEmitOptions, WscAudio> = {
     );
   },
 
-  async bindAudio(program: Program): Promise<BoundAssets<WscAudio>> {
-    // No driver on this console (doc 13 §Console rollout item 4), so there is
-    // nothing to demake and nothing to play. What a program *names* still
-    // reaches the emitter, because a rule that asks for a sound writes the byte
-    // a trace reads whether or not anything is listening.
+  async bindAudio(
+    program: Program,
+    assets: AssetBytes,
+    layout: Layout,
+    executor?: Executor,
+  ): Promise<BoundAssets<WscAudio>> {
+    // The driver's state is RAM the allocator set aside for it, which it only
+    // does for a program that names audio — so a game with none reaches here
+    // with nowhere to put a driver and does not need one.
+    const state = layout.audio;
+    const bound =
+      state === null
+        ? { driver: undefined, missing: [] as readonly string[], notes: [] as readonly string[] }
+        : await bindAudio(
+            program,
+            assets,
+            { build: (tracks, effects) => buildWscGameAudio({ tracks, effects, state }) },
+            executor,
+          );
     const names = program.tracks.length > 0 || program.sounds.length > 0;
+    const driver = bound.driver;
+    const options: WscEmitOptions = driver
+      ? {
+          audio: driver,
+          effectIndices: effectIndices(program, bound),
+          sceneTracks: trackForScene(program, bound),
+        }
+      : {};
     const emit: WscAudio = {
-      present: false,
-      tracks: 0,
-      effects: 0,
+      present: driver !== undefined,
+      options,
+      tracks: driver?.stats.tracks ?? 0,
+      effects: driver?.stats.effects ?? 0,
+      // Queries, not copies: the driver is emitted during `assemble`, which has
+      // not run yet, so its sizes are still zero here (`backend.ts`
+      // §BoundAudioShape).
       get code(): number {
-        return 0;
+        return driver?.stats.code ?? 0;
       },
       get data(): number {
-        return 0;
+        return driver?.stats.data ?? 0;
       },
       get helpers(): readonly string[] {
-        return [];
+        return driver?.stats.helpers ?? [];
       },
-      rateHz: 0,
-      writesRestricted: 0,
+      rateHz: driver ? driver.stats.rate.num / driver.stats.rate.den : 0,
+      writesRestricted: driver?.stats.writesRestricted ?? 0,
       ...(names
-        ? { hooks: { driver: false, music: 0, request: 0, effects: program.sounds.map(() => -1) } }
+        ? {
+            hooks: {
+              driver: driver !== undefined,
+              music: driver?.request.music ?? 0,
+              request: driver?.request.sfx ?? 0,
+              effects: options.effectIndices ?? program.sounds.map(() => -1),
+            },
+          }
         : {}),
     };
-    return { emit, tiles: 0, missing: [], notes: [] };
+    return { emit, tiles: 0, missing: bound.missing, notes: bound.notes };
   },
 
   assemble({ program, analysis, layout, art, audio, title }): Assembled {
@@ -152,7 +183,7 @@ export const wscBackend: Backend<WscEmitOptions, WscAudio> = {
       };
     }
     try {
-      emitProgram(ctx, art);
+      emitProgram(ctx, { ...art, ...audio.options });
     } catch (error) {
       if (error instanceof AsmError) {
         throw new BuildError(
