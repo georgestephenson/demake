@@ -18,6 +18,7 @@ import {
   DemakeError,
   buildManifest,
   codegenFamilies,
+  consoleLabel,
   consoles,
   encodeManifest,
   encodeRgbaPng,
@@ -78,6 +79,7 @@ function consoleList(): ConsoleInfo[] {
   return consoles().map((spec) => ({
     id: spec.id,
     name: spec.name,
+    label: consoleLabel(spec),
     tier: spec.tier,
     width: spec.display.width,
     height: spec.display.height,

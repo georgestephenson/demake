@@ -13,6 +13,8 @@ import type { ConsoleSpec } from "./types.js";
 export const md = {
   id: "md",
   name: "Sega Mega Drive",
+  // Japan kept the Mega Drive name; America did not.
+  otherNames: ["Sega Genesis"],
   aliases: ["genesis", "megadrive", "sega-genesis"],
   tier: 1,
   display: {

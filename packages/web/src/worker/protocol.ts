@@ -98,6 +98,13 @@ export interface GenArtifactPayload {
 export interface ConsoleInfo {
   id: string;
   name: string;
+  /**
+   * Every name the console was sold under, as one string — "Sega Mega Drive /
+   * Sega Genesis" (doc 03 §Names). The picker shows this; a heading that is
+   * naming what is on screen shows `name`, because a caption is not a search.
+   * Joined by the engine, never here: the separator has one answer.
+   */
+  label: string;
   tier: 1 | 2 | 3;
   width: number;
   height: number;

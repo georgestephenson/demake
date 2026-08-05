@@ -50,7 +50,25 @@ export type StartMapping = "dedicated" | "pause-nmi" | "none";
 export interface ConsoleProfile {
   /** Matches the `ConsoleSpec` id in `@demake/core`. */
   id: string;
+  /**
+   * The short name, for a diagnostic and for the level editor's viewport chip —
+   * anywhere the console is already chosen and the space is a line of text drawn
+   * over a picture. Deliberately not the `ConsoleSpec`'s: "a runtime for Mega
+   * Drive" reads better than "a runtime for Sega Mega Drive".
+   */
   name: string;
+  /**
+   * Every name the console was sold under, as one string — "Sega Mega Drive /
+   * Sega Genesis" (doc 03 §Names). This is what a picker shows, because half
+   * these machines had two names and somebody looking for a Genesis will not
+   * find a Mega Drive.
+   *
+   * Restated here rather than joined from `@demake/core`, exactly as the screen
+   * dimensions are and for the same reason — the simulator imports nothing —
+   * and `test/profiles.test.ts` cross-checks it against `consoleLabel` so the
+   * two copies cannot drift.
+   */
+  label: string;
   /** Playfield width in cells (overscan-safe). */
   screenWidth: number;
   /** Playfield height in cells (overscan-safe). */
@@ -87,6 +105,7 @@ const PROFILES: readonly ConsoleProfile[] = [
   {
     id: "gb",
     name: "Game Boy",
+    label: "Game Boy",
     screenWidth: 20,
     screenHeight: 18,
     rawWidth: 160,
@@ -100,6 +119,7 @@ const PROFILES: readonly ConsoleProfile[] = [
   {
     id: "gbc",
     name: "Game Boy Color",
+    label: "Game Boy Color",
     screenWidth: 20,
     screenHeight: 18,
     rawWidth: 160,
@@ -118,6 +138,7 @@ const PROFILES: readonly ConsoleProfile[] = [
     // `.dmt` that fits a Game Boy fits this by construction.
     id: "megaduck",
     name: "Mega Duck",
+    label: "Mega Duck / Cougar Boy",
     screenWidth: 20,
     screenHeight: 18,
     rawWidth: 160,
@@ -131,6 +152,7 @@ const PROFILES: readonly ConsoleProfile[] = [
   {
     id: "nes",
     name: "Nintendo Entertainment System",
+    label: "Nintendo Entertainment System / Family Computer",
     // Raw frame is 32×30 cells; the overscan-safe rect in the ConsoleSpec
     // trims 8px top and bottom, leaving 28 usable rows.
     screenWidth: 32,
@@ -146,6 +168,7 @@ const PROFILES: readonly ConsoleProfile[] = [
   {
     id: "sms",
     name: "Sega Master System",
+    label: "Sega Master System",
     screenWidth: 32,
     screenHeight: 24,
     rawWidth: 256,
@@ -161,6 +184,7 @@ const PROFILES: readonly ConsoleProfile[] = [
   {
     id: "gg",
     name: "Game Gear",
+    label: "Sega Game Gear",
     screenWidth: 20,
     screenHeight: 18,
     rawWidth: 160,
@@ -174,6 +198,7 @@ const PROFILES: readonly ConsoleProfile[] = [
   {
     id: "md",
     name: "Mega Drive",
+    label: "Sega Mega Drive / Sega Genesis",
     screenWidth: 40,
     screenHeight: 28,
     rawWidth: 320,
@@ -192,6 +217,7 @@ const PROFILES: readonly ConsoleProfile[] = [
     // generous budget than it reads as beside a Game Boy's ten.
     id: "pce",
     name: "PC Engine",
+    label: "PC Engine / TurboGrafx-16",
     screenWidth: 32,
     screenHeight: 28,
     rawWidth: 256,
@@ -205,6 +231,7 @@ const PROFILES: readonly ConsoleProfile[] = [
   {
     id: "snes",
     name: "Super Nintendo",
+    label: "Super Nintendo Entertainment System / Super Famicom",
     screenWidth: 32,
     screenHeight: 28,
     rawWidth: 256,
@@ -221,6 +248,7 @@ const PROFILES: readonly ConsoleProfile[] = [
     // same thirty by twenty cells.
     id: "gba",
     name: "Game Boy Advance",
+    label: "Game Boy Advance",
     screenWidth: 30,
     screenHeight: 20,
     rawWidth: 240,
@@ -246,6 +274,7 @@ const PROFILES: readonly ConsoleProfile[] = [
     // overscan to be safe of, because an LCD shows every pixel.
     id: "nds",
     name: "Nintendo DS",
+    label: "Nintendo DS",
     screenWidth: 32,
     screenHeight: 24,
     rawWidth: 256,
@@ -268,6 +297,7 @@ const PROFILES: readonly ConsoleProfile[] = [
     // other row.
     id: "wsc",
     name: "WonderSwan Color",
+    label: "WonderSwan Color",
     screenWidth: 28,
     screenHeight: 18,
     rawWidth: 224,
@@ -289,6 +319,7 @@ const PROFILES: readonly ConsoleProfile[] = [
     // build has and how deep a pixel is, and a profile records neither.
     id: "ws",
     name: "WonderSwan",
+    label: "WonderSwan",
     screenWidth: 28,
     screenHeight: 18,
     rawWidth: 224,

@@ -12,6 +12,11 @@ const RAMP: readonly RGB8[] = [
 export const supervision = {
   id: "supervision",
   name: "Watara Supervision",
+  // The one console here whose British name does not lead. Watara built it and
+  // distributors badged it — QuickShot in the UK, Hartung and Travelmate
+  // elsewhere — so the name that leads is the manufacturer's rather than any
+  // region's, and the British badge follows it instead of displacing it.
+  otherNames: ["QuickShot Supervision"],
   aliases: ["watara", "quickshot-supervision"],
   tier: 3,
   display: { width: 160, height: 160, pixelAspect: [1, 1] },

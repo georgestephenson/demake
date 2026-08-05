@@ -9,6 +9,9 @@ import type { ConsoleSpec } from "./types.js";
 export const pce = {
   id: "pce",
   name: "PC Engine",
+  // Same HuCards, same HuC6280, a different case and a different name in
+  // America. The TurboExpress is a handheld of the same machine, not a region.
+  otherNames: ["TurboGrafx-16"],
   aliases: ["turbografx", "turbografx-16", "tg16"],
   tier: 2,
   display: { width: 256, height: 224, pixelAspect: [8, 7] },

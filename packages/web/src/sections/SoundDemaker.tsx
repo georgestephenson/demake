@@ -170,7 +170,7 @@ export function SoundDemaker({ project, path }: EditorProps) {
           >
             {consoleList.map((entry) => (
               <option key={entry.id} value={entry.id}>
-                {entry.name}
+                {entry.label}
               </option>
             ))}
           </select>

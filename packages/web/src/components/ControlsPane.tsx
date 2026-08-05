@@ -100,7 +100,7 @@ export function ControlsPane({
                 .filter((c) => c.tier === tier)
                 .map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.name}
+                    {c.label}
                   </option>
                 ))}
             </optgroup>

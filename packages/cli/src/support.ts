@@ -16,7 +16,7 @@
  * being added to a list here.
  */
 
-import { consoles, type ConsoleSpec } from "@demake/core";
+import { consoles, consoleLabel, type ConsoleSpec } from "@demake/core";
 import { audioConsoles, gameDriverRate, hasGameAudio } from "@demake/audio";
 import { familyFor } from "@demake/demotic";
 
@@ -51,6 +51,8 @@ export const EMULATOR_PROVEN: Readonly<Record<string, string>> = {
 export interface ConsoleSupport {
   id: string;
   name: string;
+  /** Every name the console was sold under, as one string (doc 03 §Names). */
+  label: string;
   tier: 1 | 2 | 3;
   family: string;
   /** `prep`/`inspect` — true for every console with a spec, which is all of them. */
@@ -113,6 +115,7 @@ export function consoleSupport(): ConsoleSupport[] {
     return {
       id: spec.id,
       name: spec.name,
+      label: consoleLabel(spec),
       tier: spec.tier,
       family: spec.codegen.family,
       prep: true,
@@ -194,7 +197,7 @@ export function supportMarkdown(): string {
     for (const row of inTier) {
       const data = row.formats.filter((format) => format !== "rom");
       const cells = [
-        row.name,
+        row.label,
         `\`${row.id}\``,
         `\`${row.family}\``,
         "yes",

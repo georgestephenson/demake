@@ -49,7 +49,7 @@ import {
   type Score,
   type SfxResult,
 } from "@demake/audio";
-import { consoles, type AudioChannelSpec, type AudioSpec } from "@demake/core";
+import { consoleLabel, consoles, type AudioChannelSpec, type AudioSpec } from "@demake/core";
 
 import { toArrangeOptions, toRenderOptions, toSfxOptions } from "../lib/audio-options.js";
 import type {
@@ -109,6 +109,7 @@ function consoleList(): AudioConsoleInfo[] {
     out.push({
       id: spec.id,
       name: spec.name,
+      label: consoleLabel(spec),
       tier: spec.tier,
       chips: [...audio.chips],
       channels: channelInfo(audio),

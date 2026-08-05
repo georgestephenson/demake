@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import { encodeRgbaPng } from "../src/image/png/encode.js";
 import { prep } from "../src/pipeline/prep.js";
 import { checkCompliantImage } from "../src/inspect/inspect.js";
-import { consoles, getConsole } from "../src/consoles/registry.js";
+import { consoles, findConsole, getConsole } from "../src/consoles/registry.js";
+import { consoleLabel, consoleNames } from "../src/consoles/names.js";
 import type { TileLayout } from "../src/consoles/types.js";
 
 const clamp = (v: number): number => (v < 0 ? 0 : v > 255 ? 255 : v | 0);
@@ -85,5 +86,47 @@ describe("console registry", () => {
     expect(getConsole("genesis").id).toBe("md");
     expect(getConsole("superfamicom").id).toBe("snes");
     expect(getConsole("turbografx").id).toBe("pce");
+  });
+});
+
+describe("console names", () => {
+  it("labels a console sold under one name with just that name", () => {
+    expect(consoleNames(getConsole("dmg"))).toEqual(["Game Boy"]);
+    expect(consoleLabel(getConsole("gba"))).toBe("Game Boy Advance");
+  });
+
+  it("labels a console sold under two with both, British first", () => {
+    expect(consoleLabel(getConsole("md"))).toBe("Sega Mega Drive / Sega Genesis");
+    expect(consoleLabel(getConsole("pce"))).toBe("PC Engine / TurboGrafx-16");
+    expect(consoleLabel(getConsole("nes"))).toBe("Nintendo Entertainment System / Family Computer");
+  });
+
+  it("never repeats a name a second region kept", () => {
+    // The deduplication is the spec's — a region that kept the name before it
+    // simply is not listed — so a repeat is a spec bug rather than something a
+    // display helper should quietly swallow.
+    for (const spec of consoles()) {
+      const names = consoleNames(spec);
+      expect([spec.id, new Set(names).size]).toEqual([spec.id, names.length]);
+    }
+  });
+
+  it("puts the console's own name first", () => {
+    for (const spec of consoles()) {
+      expect([spec.id, consoleNames(spec)[0]]).toEqual([spec.id, spec.name]);
+      expect([spec.id, consoleLabel(spec).startsWith(spec.name)]).toEqual([spec.id, true]);
+    }
+  });
+
+  it("lets a regional name be typed at the CLI", () => {
+    // A name offered in a picker that the parser then rejects is worse than not
+    // offering it, so every regional name resolves through the alias table —
+    // lowercased and hyphenated, which is the form `findConsole` takes.
+    for (const spec of consoles()) {
+      for (const name of spec.otherNames ?? []) {
+        const key = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+        expect([spec.id, name, findConsole(key)?.id]).toEqual([spec.id, name, spec.id]);
+      }
+    }
   });
 });
