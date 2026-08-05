@@ -303,10 +303,17 @@ the backend today, and either is a reason to revisit rather than to work around.
    with an SN76489 driver behind them. The encoder has no console left to buy:
    the only other Z80 machine in the matrix is the SG-1000, which is out of scope
    for games ([§above](#the-sg-1000-is-out-of-scope-for-games)).
-4. **WonderSwan Color** — *done* — then the **tiled-mono fitter**, then
-   **WonderSwan**. The mono machine's blocker is the
-   art path, not the CPU, and the fitter is an engine increment that stands on
-   its own.
+4. **WonderSwan Color** — *done* — and the **tiled-mono fitter** with it, so
+   the mono **WonderSwan** now demakes art (`pipeline/fit-mono-tiled.ts`, doc 04
+   §Special cases). That machine's blocker was the art path rather than the CPU,
+   and the fitter was an engine increment that stood on its own: a pool of eight
+   shades chosen from sixteen LCD levels, a shared backdrop, sixteen four-entry
+   palettes indexing the pool, and a per-cell choice among them — the first fit
+   in the project whose search space is small enough to enumerate rather than
+   cluster. And `demake build -c ws` then followed for the price of a
+   *description*: these two consoles are one processor and one display
+   controller, so the mono machine is a variant (`codegen/wsc/machine.ts` — four
+   entries and not one instruction) rather than a ninth backend.
 
    `demake build -c wsc` produces a playable 512 KiB cartridge and the whole
    example library traces identically on it, in the same battery every other

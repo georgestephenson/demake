@@ -66,6 +66,18 @@ export interface ColorSpec {
   bitsPerChannel?: ChannelBits;
   /** For `mono`: number of shades (4 = 2bpp DMG, 2 = 1bpp). */
   shades?: number;
+  /**
+   * For `mono`: display levels the shades are *chosen from*, where the hardware
+   * chooses.
+   *
+   * Absent on every machine whose shades are its levels — a Game Boy's four are
+   * the four its LCD has, and there is nothing to pick. A WonderSwan has sixteen
+   * levels and a pool of eight, so a fit chooses the pool as well as what indexes
+   * it: {@link shades} is how many can be on screen at once and this is how many
+   * the hardware could have offered. The distinction is the difference between a
+   * ramp and a *choice of* ramp, and only the second one needs fitting.
+   */
+  levels?: number;
   /** Console→sRGB curve for preview and emulator comparison (doc 10). */
   dac: DacModel;
 }

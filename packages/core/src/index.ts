@@ -130,6 +130,11 @@ export type { GenOptions, GenResult, GenPath } from "./codegen/gen.js";
 export type { GenArtifact, CodegenBackend, EmitOptions } from "./codegen/types.js";
 export { detectCompliant } from "./codegen/detect.js";
 export { backendFor, codegenFamilies } from "./codegen/registry.js";
+// The mono WonderSwan's pool: derived from a picture rather than stored in it,
+// because a compliant image holds the *level* a palette entry shows and not the
+// slot it came from (`pipeline/fit-mono-tiled.ts`). One definition, because
+// `demake build` has to agree with `demake gen` about which slot is which.
+export { poolFor, WS_POOL_SIZE, WS_TILE_BYTES } from "./codegen/ws.js";
 export {
   parseManifest,
   applyManifest,

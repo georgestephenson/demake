@@ -63,9 +63,22 @@ full proof loop for **all eight Tier 1 consoles**:
 Phase 5 then opened Tier 2 with the **PC Engine** and the **WonderSwan Color**,
 both riding that same loop end to end (`wla-huc6280` on the existing WLA-DX
 build and beetle-pce-fast; NASM and beetle-wswan). Doc 13 §Phase 5 records what
-blocks each remaining Tier 2 console — including that the mono WonderSwan is
-blocked on a _tiled-mono fitter_, not on a toolchain, and that its current spec
-is optimistic about what that hardware can display.
+blocks each remaining Tier 2 console.
+
+**And the mono WonderSwan demakes art now**, which took a fit path rather than a
+toolchain. That console's palette has a level of indirection nothing else in the
+matrix has: a tile is 2bpp, a cell names one of sixteen four-entry palettes, and
+each entry is a three-bit index into a **shared pool of eight shades** — itself
+chosen from the sixteen levels the panel can show. So a fit chooses four things
+where `fit-mono.ts` chooses none (the pool, the shared backdrop, each palette,
+each cell), and `pipeline/fit-mono-tiled.ts` is where. What makes it unlike
+`fit-tiled.ts` is that the problem is **small and discrete**: once the pool
+exists there are exactly seventy quartets a cell could be given, so the per-cell
+question is answered by evaluating all of them rather than by clustering toward
+one — exact rather than nearly right, deterministic, and cheaper than a single
+k-means restart. `E_SHADE_POOL` is the compliance rule that keeps the pool a
+_pool_, and it is checked rather than assumed because a fit that reached for a
+ninth level would otherwise be silently truncated.
 
 Phase 7+ then opened the **Demotic backend**: `demake build` _compiles_ a `.dmt`
 into a real 32 KiB Game Boy cartridge — SM83 machine code written for that game,
@@ -563,7 +576,9 @@ own RAM**: port `$8F` carries bits 6–13 of an address and the chip reads
 sixty-four bytes from there, so the bank is _bytes the driver copies_ rather than
 register writes it performs — the third kind of bank in the set, after a sample
 block and a stream of port writes — and `WS_WAVE_BASE` is one number with three
-readers because a second copy of it is a game whose bass plays the snare. The
+readers because a second copy of it is a game whose bass plays the snare — and it
+is at `$0300`, inside the interrupt vectors, because that is the only page free
+on both WonderSwans. The
 **clock is a tally**: this cartridge takes no interrupts anywhere, so `AudioFrame`
 reads the vertical-blank timer's _counter_ and pays whatever frames it finds owed
 — which is the frame-counting discipline every other frame-clocked console needs
@@ -572,7 +587,41 @@ the **pitch register counts the wrong way**: it is subtracted from 2048 rather
 than dividing, so a larger value is a higher note, and the spec declares the
 lattice while the binding does the subtraction.
 
-Still to come: this console's audio, the remaining Tier 2/3 consoles (each =
+**And it builds for the mono machine too, for the price of a description.**
+`demake build -c ws` produces a real WonderSwan cartridge — the _same V30MZ
+machine code_, with the art demade through `fit-mono-tiled.ts` instead of the
+RGB lattice — and the whole example library traces identically on it, plays its
+music and effects on it, and is diffed tick for tick by the same two batteries.
+It is not a ninth backend: these two consoles are one processor and one display
+controller, so this is a _variant_ on the Mega Duck's terms and what it added is
+`codegen/wsc/machine.ts` — four entries and not one instruction.
+
+Those four are worth knowing, because each is a way a cartridge can be perfect
+and dark. **There is a quarter of the memory**, and the tile bank is the top half
+of it — 512 tiles of _sixteen_ bytes at `$2000` rather than thirty-two at
+`$4000` — so every address in the plan moves and the heap is 2 KiB against 7,
+which is the NES's budget on a console with four times its screen. **A tile is
+planar 2bpp**, which is the Game Boy's format and not the Mega Drive's, so the
+built-in bank is `builtinTiles()` called rather than restated. **A palette is
+thirty-six ports rather than five hundred and twelve bytes of RAM** — four for
+the shade pool at `$1C`–`$1F` and thirty-two for the palettes at `$20`–`$3F` —
+so `emitPaletteBlock` is the one place the two renderers part company, and they
+part about the _destination_ rather than the bytes. And **the footer's
+minimum-system byte says a mono console may run this**, which is a Game Boy
+Color cartridge's `$C0` reached by different hardware and inverted.
+
+One thing about the art is this machine's rather than a restatement.
+**Every scene brings its own shade pool**, because the eight levels are a global
+choice: a picture's fit chooses them, and the objects and the font drawn over it
+ride along without being refitted, since both name pool _slots_ rather than
+levels. That is what `buildSpriteBank`'s `spread` buys — an object's three shades
+are spread across the pool by index rather than counted up from it — and it is
+why `WS_WAVE_BASE` had to move. That page has to be sixty-four-byte aligned and
+below `$4000` on _both_ machines, and the colour one's roomy gap under the tile
+bank is tiles over here; the interrupt vectors are what both have spare, because
+neither cartridge takes an interrupt anywhere.
+
+Still to come: the remaining Tier 2/3 consoles (each =
 a codegen backend, a ROM harness + toolchain, and a libretro core + DAC
 calibration), the remaining framebuffer/scanline layout paths (Lynx, GBA/NDS
 bitmap modes, 2600/7800), and the rest of the Demotic runtime story (the speed
@@ -679,7 +728,11 @@ packages/core/       @demake/core — the engine (zero platform deps; ESM; ships
   src/color/         sRGB/linear/Oklab, hardware-lattice snapping, color parsing
   src/image/         PNG codec (inflate/deflate/decode/encode), DAC models, decode dispatch
   src/consoles/      ConsoleSpec schema + one declarative spec per console (21 of them)
-  src/pipeline/      stages 0–7, the tiled fitter, mono + TMS row-pair paths, tournament
+  src/pipeline/      stages 0–7, the tiled fitter, mono + tiled-mono + TMS
+                     row-pair paths, tournament. fit-mono-tiled.ts is the one
+                     whose problem is *discrete*: a pool of eight and palettes
+                     of four leave seventy quartets a cell could be given, so it
+                     evaluates every one rather than clustering toward it
   src/pipeline/candidate.ts  one candidate, start to finish — the unit of parallel
                      work, and the content-keyed prologue memo that stops a
                      fan-out decoding its source once per candidate
@@ -726,21 +779,29 @@ packages/pce/        @demake/pce — a self-hosted PC Engine core. Its PSG is
                      addressed video RAM behind a port, a sub-palette in the
                      cell's own map entry, sixteen-pixel sprites and a sprite
                      table the chip *copies* out of video RAM once a frame
-packages/wsc/        @demake/wsc — a self-hosted WonderSwan Color core, and the
-                     only one whose display has no memory of its own: the two
-                     screen maps, the tile bank, the object table and palette RAM
-                     are addresses in the same 64 KiB the game's variables are
-                     in, so `Display` is handed the console's RAM and nothing is
-                     ever uploaded through a port. Its second background layer is
-                     a *layer* rather than a window, and colour zero is
-                     transparent on both. The CPU is written against the
+packages/wsc/        @demake/wsc — a self-hosted WonderSwan core, Color *and*
+                     mono, decided by a constructor argument the way @demake/dmg
+                     is decided by its cartridge header — because these two
+                     machines do not differ in anything a header could record.
+                     It is the only core whose display has no memory of its own:
+                     the two screen maps, the tile bank, the object table and
+                     (on the Color) palette RAM are addresses in the same memory
+                     the game's variables are in, so `Display` is handed the
+                     console's RAM and nothing is ever uploaded through a port.
+                     Its second background layer is a *layer* rather than a
+                     window, and colour zero is transparent on both. The mono
+                     machine is two lookups rather than a second renderer:
+                     planar 2bpp tiles in the top half of its 16 KiB, and a
+                     palette of four three-bit indices into a shared eight-shade
+                     pool that lives in *ports* rather than in RAM. Its sound is
+                     @demake/chip's WsSound, handed the same RAM for the same
+                     reason the display is. The CPU is written against the
                      published 8086 instruction set rather than transcribed from
                      another emulator, and its tests are driven by core's own
-                     encoder. The sound chip, the two window units, the mono and
-                     2bpp display modes and the interrupt controller are absent
-                     rather than half-implemented — this console has no audio
-                     binding and no generated driver, and a demade cartridge
-                     polls the line counter rather than taking an interrupt
+                     encoder. The two window units and the interrupt controller
+                     are absent rather than half-implemented — a demade
+                     cartridge polls the line counter rather than taking an
+                     interrupt, and its audio driver reads a timer's counter
 packages/nes/        @demake/nes — a self-hosted NES core, for the two jobs
                      @demake/dmg exists for: the conformance harnesses in Vitest
                      and (later) the page's player. Its APU is @demake/chip's
@@ -835,14 +896,19 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
                      `mos/`'s, because this console's CPU is the NES's with a
                      mapper on it
     wsc.ts, wsc-art.ts, wsc/              the V30MZ backend and its image path,
-                     and the one whose renderer writes no port at all: the screen
-                     maps, the tile bank, the object table and palette RAM are
-                     addresses in the console's own 64 KiB, so `emit.ts` copies
-                     rather than uploads. val.ts is where this machine's other
-                     fact lives — `source()`/`dest()` decide the *segment* a
-                     16.16 read means, because a table is in the cartridge and a
-                     variable is not; ops.ts is snes/ops.ts's file for the third
-                     CPU whose `abs` means something else again
+                     and *two* machines: the screen maps, the tile bank, the
+                     object table and (on the Color) palette RAM are addresses in
+                     the console's own RAM, so `emit.ts` copies rather than
+                     uploads and this renderer writes almost no port at all.
+                     wsc/machine.ts is the description that makes the mono
+                     WonderSwan a variant rather than a ninth backend, on the
+                     Mega Duck's terms — four entries, of which the interesting
+                     one is that a palette *is* a port over there. val.ts is
+                     where this machine's other fact lives — `source()`/`dest()`
+                     decide the *segment* a 16.16 read means, because a table is
+                     in the cartridge and a variable is not; ops.ts is
+                     snes/ops.ts's file for the third CPU whose `abs` means
+                     something else again
     gba.ts, gba-art.ts, gba/              the ARM backend and its image path,
                      which is *two* machines: gba/machine.ts is the description
                      that makes a Nintendo DS a variant rather than a seventh
@@ -2577,16 +2643,18 @@ run `pnpm gen:console-docs` when you land one.
    `_audio-battery.ts`'s: running the whole example library on every machine is what
    makes `Backend` a contract rather than a resemblance.
 
-**Check first whether the console is a variant rather than a machine.** Four of
+**Check first whether the console is a variant rather than a machine.** Five of
 the consoles that build games are not backends: the Game Boy Color is the Game
 Boy's machine code with a second half on the renderer, the Game Gear is the
 Master System's family with a different crop, the Mega Duck is a Game Boy whose
 I/O pins moved — a register table, an `LCDC` permutation, an entry point and a
-cartridge with no header (`core/src/asm/megaduck.ts`) — and the Nintendo DS is a
+cartridge with no header (`core/src/asm/megaduck.ts`) — the Nintendo DS is a
 Game Boy Advance's 2D engine on a bigger screen, which is five entries in
-`codegen/gba/machine.ts` and not one instruction. A variant costs a machine
-description and no instructions; if you find yourself copying an emitter, you are
-writing the wrong one of the two.
+`codegen/gba/machine.ts` and not one instruction, and the mono WonderSwan is a
+WonderSwan Color with a quarter of the memory and a quarter of the depth, which
+is four entries in `codegen/wsc/machine.ts` and not one instruction either. A
+variant costs a machine description and no instructions; if you find yourself
+copying an emitter, you are writing the wrong one of the two.
 
 **A console can be a variant for step 4 and not for the driver.** The Nintendo DS
 is the case: its game backend is a description, and its _sound_ is a whole ARM7
@@ -2682,6 +2750,14 @@ not per console.
   cannot, because its handler is in the same cartridge, so it filters on the
   _opcode_ at the address the step came from: a real arrival is a `jsr` and a
   return is an `rti`.
+- `packages/demotic/test/audio-ws.test.ts` is the ninth, and the first whose
+  console shares its _whole_ sound path with another — one chip, one binding, one
+  driver, one waveform page. So what it settles is not the driver but **where
+  that page is**: this machine has sixteen kilobytes with its tile bank in the
+  top half, so the gap the colour machine keeps the waveforms in is tiles over
+  here, and `WS_WAVE_BASE` sits inside the interrupt vectors because that is the
+  only aligned page free on both. A build that put it anywhere else produces a
+  game whose bass plays a corner of its own title screen.
 - `packages/demotic/test/audio-wsc.test.ts` is the eighth machine the shared
   battery is pointed at, and the only one whose driver has no interrupt at all.
   What it proves that no other console's pass does is that a **tally** keeps
@@ -2771,10 +2847,29 @@ not per console.
   survived the fit, and that the HUD plane's scroll registers stay at zero for
   hundreds of frames while the world plane's move — which is the claim the whole
   HUD-layer design rests on and the second time in the set it can be made at all.
+  Its last block is the **mono** machine, and every case there is one that
+  console alone can get wrong: that everything the display reads is inside
+  sixteen kilobytes, that a planar 2bpp bank arrived in the top half of them,
+  that the palettes reached _ports_ with a pool of eight distinct levels in it
+  (all zeroes is eight copies of white, which is a screen with one shade on it),
+  that a scene with a picture brings a pool of its own, and — the end-to-end
+  one — that more than three greys are on the panel, because any of the others
+  being wrong is a picture nobody can see.
   `packages/wsc/test/{cpu,display}.test.ts` sit under it: the CPU is driven by
   `core`'s own V30MZ assembler, so an encoder and a decoder that agreed with each
   other and not with the hardware would still fail against NASM, which
-  `packages/core/test/v30mz-nasm.test.ts` compares the same battery with.
+  `packages/core/test/v30mz-nasm.test.ts` compares the same battery with. The
+  display file's second block is the **mono** machine, and what it proves is
+  that a pool is a pool: two palettes naming the same entry show the same grey,
+  and moving that entry moves both — a renderer (or a fit) that treated a
+  palette entry as a _level_ passes the first half of that and fails the second.
+- `packages/core/test/fit-mono-tiled.test.ts` is the tiled-mono fit's, and its
+  load-bearing case is that a budget of one palette **is** the plain mono
+  answer, so a fit computing the per-cell choice and discarding it would score
+  the same. The rest is what a compliant PNG cannot show: that all eight pool
+  levels are spent, that entry zero is shared, and that a picture showing nine
+  distinct levels is refused by `E_SHADE_POOL` even though every cell of it is
+  uniform and the palette cover fits.
 - `packages/demotic/test/pce-arith.test.ts` and `pce-rom.test.ts` are the PC
   Engine's pair, and the first of them looks like a copy of the NES's on purpose:
   the _emitters_ are the same file, so what it proves is not the arithmetic a
@@ -2986,12 +3081,22 @@ not per console.
   prepends the rest of the 4 Mbit cartridge and patches the footer checksum
   (the sum of every byte but the two it lives in — computable only once the
   whole cartridge exists).
-- **The mono WonderSwan (`ws`) spec is knowingly optimistic** and is _not_ the
-  `wsc` family: it declares one eight-entry palette at 4bpp, but the hardware
-  has 2bpp tiles and four-entry palettes drawing from an eight-shade pool. Doing
-  it properly needs a tiled-mono fitter (doc 13 §Phase 5) — do not "fix" it by
-  pointing `ws` at the colour backend, which would emit tiles the mono display
-  controller cannot decode.
+- **The mono WonderSwan's `shades` and `levels` are different numbers, and the
+  difference is the point.** `color.shades` is 8 — how many the pool holds, so
+  how many the screen shows at once — and `color.levels` is 16, the LCD levels
+  the pool is chosen _from_. A `codes` entry holds the **level**, 0–15, not the
+  pool index, which is what lets `inspect` state "at most eight distinct ones"
+  as a rule it can check. Every other mono console leaves `levels` unset, and
+  `isMonoTiled` — not the field — is what routes a console to the tiled-mono
+  portfolio, because the deciding fact is `subPalettes.count > 1` on a mono
+  machine.
+- **And its `sharedIndex0` is real, so the fit chooses a backdrop.** Colour zero
+  is transparent on both of this console's background layers, so a pixel of
+  value 0 shows the backdrop register wherever it appears — the NES's rule
+  reached by different hardware. `fit-mono-tiled.ts` sweeps all eight pool
+  entries and solves the palette choice exactly under each, because picking the
+  backdrop by frequency first is how a fit comes to hold three usable shades on
+  hardware that has four.
 - **The PC Engine's BAT is fixed at VRAM word $0000**, so characters cannot start
   there: the harness gives the BAT 32×32 entries (words $0000–$03FF) and puts the
   first character at word $0400 — character 64 — which `cli/src/rom/pce.ts` adds

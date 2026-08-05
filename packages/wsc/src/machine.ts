@@ -49,6 +49,7 @@ import {
   SCREEN_HEIGHT,
   SCREEN_WIDTH,
   VBLANK_LINE,
+  type WsModel,
 } from "./display.js";
 
 export { SCREEN_HEIGHT, SCREEN_WIDTH };
@@ -100,12 +101,30 @@ const BANK_SRAM = 0xc1;
 const BANK_ROM0 = 0xc2;
 const BANK_ROM1 = 0xc3;
 
-/** A WonderSwan Color with a cartridge in it. */
+/**
+ * A WonderSwan with a cartridge in it — the Color model, or the mono one.
+ *
+ * Which it is comes from the constructor rather than from the cartridge, on the
+ * Mega Duck's terms: it is a fact about the hardware, and the two machines
+ * differ in three ways a program cannot change. The mono one has 16 KiB of
+ * internal RAM rather than 64; its tiles are planar 2bpp in the top half of it
+ * rather than packed 4bpp at `$4000`; and its palettes are ports holding indices
+ * into a shared shade pool rather than RGB444 words in RAM.
+ */
 export class Wsc implements Bus {
   readonly cpu = new Cpu(this);
-  /** The console's 64 KiB: a game's state and everything the display reads. */
+  /**
+   * The console's RAM: a game's state and everything the display reads.
+   *
+   * Always sixty-four kilobytes of array, because {@link Display} and
+   * {@link WsSound} are handed it and index it with sixteen-bit addresses — but
+   * on the mono machine only the first sixteen are wired, and {@link ramMask} is
+   * what makes an access to the rest land where the hardware's fourteen address
+   * lines put it rather than in memory that console does not have.
+   */
   readonly ram = new Uint8Array(0x10000);
-  readonly display = new Display(this.ram);
+  private readonly ramMask: number;
+  readonly display: Display;
   /**
    * The sound hardware, which is `@demake/chip`'s and not a second copy.
    *
@@ -149,10 +168,15 @@ export class Wsc implements Bus {
   private hCycles = 0;
   private lastLine = 0;
 
-  constructor(rom: Uint8Array) {
+  constructor(
+    rom: Uint8Array,
+    readonly model: WsModel = "wsc",
+  ) {
     if (rom.length < 0x10000 || (rom.length & (rom.length - 1)) !== 0) {
       throw new Error("wsc: a cartridge is a power of two and at least 64 KiB");
     }
+    this.ramMask = model === "ws" ? 0x3fff : 0xffff;
+    this.display = new Display(this.ram, model);
     this.rom = rom;
     this.ports[BANK_LINEAR] = 0xff;
     this.ports[BANK_SRAM] = 0xff;
@@ -191,7 +215,7 @@ export class Wsc implements Bus {
     const at = address & 0xfffff;
     const segment = at >> 16;
     const offset = at & 0xffff;
-    if (segment === 0) return this.ram[offset] as number;
+    if (segment === 0) return this.ram[offset & this.ramMask] as number;
     if (segment === 1) return this.save[offset] as number;
     return this.rom[this.romAddress(segment, offset)] as number;
   }
@@ -201,7 +225,7 @@ export class Wsc implements Bus {
     const segment = at >> 16;
     const offset = at & 0xffff;
     if (segment === 0) {
-      this.ram[offset] = value & 0xff;
+      this.ram[offset & this.ramMask] = value & 0xff;
       return;
     }
     if (segment === 1) {

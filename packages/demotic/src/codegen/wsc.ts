@@ -47,10 +47,11 @@ import {
   type BuildOptions,
   type BuiltRom,
 } from "./backend.js";
-import { WSC_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
+import { type Layout, type MemoryPlan } from "./layout.js";
 import type { ArtSettings } from "./settings.js";
 import { ART_TILES, bindWscArt } from "./wsc-art.js";
 import { WscCtx } from "./wsc/ctx.js";
+import { machineFor, WSC_MACHINE } from "./wsc/machine.js";
 import { BANK_TILES, emitProgram, type WscEmitOptions } from "./wsc/emit.js";
 
 /** Bytes a program may occupy: the bank, up to the reset jump. */
@@ -67,11 +68,11 @@ interface WscAudio extends BoundAudioShape {
 /** The WonderSwan Color's implementation of the build. */
 export const wscBackend: Backend<WscEmitOptions, WscAudio> = {
   family: "wsc",
-  consoles: ["wsc"],
+  consoles: ["wsc", "ws"],
   cartridge: "a WonderSwan cartridge's mapped bank",
 
-  extension(): string {
-    return "wsc";
+  extension(program: Program): string {
+    return program.profile.id === "ws" ? "ws" : "wsc";
   },
 
   unsupported(program: Program): string[] {
@@ -82,8 +83,10 @@ export const wscBackend: Backend<WscEmitOptions, WscAudio> = {
     return missing;
   },
 
-  memory(): MemoryPlan {
-    return WSC_MEMORY;
+  memory(program: Program): MemoryPlan {
+    // The mono machine's map is the same shape a quarter of the size, and it is
+    // the machine's answer rather than this file's (`wsc/machine.ts`).
+    return (machineFor(program.profile.id) ?? WSC_MACHINE).memory;
   },
 
   async bindArt(
@@ -92,7 +95,13 @@ export const wscBackend: Backend<WscEmitOptions, WscAudio> = {
     executor?: Executor,
     settings?: ArtSettings,
   ): Promise<BoundAssets<WscEmitOptions>> {
-    const art = await bindWscArt(program, assets, executor, settings);
+    const art = await bindWscArt(
+      program,
+      assets,
+      executor,
+      settings,
+      machineFor(program.profile.id) ?? WSC_MACHINE,
+    );
     return { emit: art.options, tiles: art.tiles, missing: art.missing };
   },
 
@@ -172,7 +181,11 @@ export const wscBackend: Backend<WscEmitOptions, WscAudio> = {
 
   assemble({ program, analysis, layout, art, audio, title }): Assembled {
     void title; // a WonderSwan footer carries no title field
-    const ctx = new WscCtx(program, analysis, layout, getProfile(program.profile.id), 0);
+    const machine = machineFor(program.profile.id);
+    if (machine === undefined) {
+      throw new BuildError("E_INTERNAL", `no WonderSwan machine for ${program.profile.id}`);
+    }
+    const ctx = new WscCtx(program, analysis, layout, getProfile(program.profile.id), machine);
     if (audio.hooks) {
       ctx.audio = {
         driver: audio.hooks.driver,
@@ -204,7 +217,7 @@ export const wscBackend: Backend<WscEmitOptions, WscAudio> = {
       );
     }
     return {
-      bytes: packWsRom(code, { minimumSystem: 1, orientation: 0x05 }),
+      bytes: packWsRom(code, { minimumSystem: machine.minimumSystem, orientation: 0x05 }),
       code: code.length,
       capacity: CODE_SIZE,
       symbols: ctx.asm.symbols(),

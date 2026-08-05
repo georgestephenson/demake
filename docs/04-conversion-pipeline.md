@@ -478,10 +478,34 @@ the merge count in the manifest; `--strict` errors instead of merging.
   reloads**: framebuffer paths reduce to Stages 3+5 with per-scanline palette
   scheduling as an optional enhancement (`--scanline-palettes`), solved greedily
   scanline-by-scanline with a palette-change budget.
-- **Mono ramps (DMG, Virtual Boy, WS, Pokémon Mini…)**: luminance mapping with
+- **Mono ramps (DMG, Virtual Boy, Pokémon Mini…)**: luminance mapping with
   auto-contrast (percentile stretch), gamma-correct 4-level (or 2-level) split,
   optional dither; ramp rendered through the platform tint (green LCD, red LED)
-  for preview.
+  for preview. `pipeline/fit-mono.ts`.
+- **A mono ramp the picture *chooses* (WonderSwan)**: one console's palette has a
+  level of indirection the rest do not, and it needs a fit path of its own
+  (`pipeline/fit-mono-tiled.ts`). A tile is 2bpp; a cell names one of sixteen
+  four-entry palettes; each entry is a three-bit index into a **shared pool of
+  eight shades**, itself chosen from the sixteen levels the panel can show. So
+  the fit chooses four things — the pool, the shared backdrop entry zero holds
+  in every palette, each palette's other three, and each cell's palette — where
+  the plain mono path chooses none.
+
+  The structure is what makes this cheap rather than another tournament. Once
+  the pool is fixed there are exactly `C(8,4) = 70` quartets a cell could be
+  given, so the per-cell question is answered by **evaluating all seventy**
+  rather than by clustering toward one: exact, deterministic, PRNG-free, and
+  less work than one k-means restart. Choosing which sixteen of the seventy the
+  picture gets is a facility-location problem at a size where greedy-then-swap
+  is effectively optimal, and the shared backdrop rides on top as an outer sweep
+  over the eight pool entries — each solved exactly under that restriction, best
+  total wins. Picking the backdrop first (by frequency, say) is how a fit comes
+  to hold three usable shades on hardware that has four.
+
+  A stored `codes` entry holds the **level**, 0–15, not the pool index — so "at
+  most `color.shades` distinct levels in the picture" is a rule `inspect` checks
+  (`E_SHADE_POOL`) rather than an encoding assumption nobody can verify. A fit
+  that reached for a ninth is caught, not silently truncated.
 
 ## Color distance — one section because it decides quality
 

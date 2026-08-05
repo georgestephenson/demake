@@ -281,6 +281,24 @@ const PROFILES: readonly ConsoleProfile[] = [
     startButton: "dedicated",
     romPath: true,
   },
+  {
+    // The same machine in monochrome: the same display at the same 75.47 Hz,
+    // the same screen, the same object budget. Everything that decides how a
+    // game *plays* is shared, which is what makes this a variant rather than a
+    // console (`codegen/wsc/machine.ts`) — the two differ in how much memory a
+    // build has and how deep a pixel is, and a profile records neither.
+    id: "ws",
+    name: "WonderSwan",
+    screenWidth: 28,
+    screenHeight: 18,
+    rawWidth: 224,
+    rawHeight: 144,
+    cellSize: 8,
+    fps: 75,
+    sprites: { total: 128, perLine: 32, hFlip: true },
+    startButton: "dedicated",
+    romPath: true,
+  },
 ];
 
 /*

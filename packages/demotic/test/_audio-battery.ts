@@ -452,6 +452,38 @@ const ALL: readonly Target[] = [
     },
   },
   {
+    // The mono machine, whose sound path is the colour machine's *entire* sound
+    // path: one chip, one binding, one driver, one waveform page at one address.
+    // So what a pass here settles is that the page is really at that address on
+    // a console with sixteen kilobytes rather than sixty-four — `WS_WAVE_BASE`
+    // is inside the interrupt vectors precisely so it can be, and a copy that
+    // landed where the colour machine's gap is would be writing into the tile
+    // bank on this one.
+    id: "ws",
+    name: "WonderSwan",
+    clockHz: WS_SOUND_CLOCK_HZ,
+    mergeReg: 0x90,
+    mergeHelper: "shared-register-merge",
+    ratio: 3072000 / 40704 / 120,
+    tag: wscChannelTag,
+    frameHz: 3072000 / 40704,
+    tickAddress: cartridgeTick,
+    async build(source, project) {
+      const { files, levels, assets } = exampleProject(project);
+      const program = compile(source, { profile: getProfile("ws"), files, levels });
+      const built = await buildWscRom(program, { assets });
+      const state = built.layout.audio as number;
+      const bound = await bindAudio(program, assets, {
+        build: (tracks, effects) =>
+          buildWscGameAudio({ tracks, effects: effects as GameEffect[], state }),
+      });
+      return { built, bound };
+    },
+    boot(rom) {
+      return wrap(new Wsc(rom, "ws"));
+    },
+  },
+  {
     id: "sms",
     name: "Master System",
     clockHz: SN76489_CLOCK_HZ,
@@ -1391,6 +1423,7 @@ export function audioSweep(target: Target): void {
       // sub-palettes is also a couple of minutes a fixture on this console, so
       // the list is what the sweep can actually afford.
       wsc: ["caves", "runner"],
+      ws: ["caves", "runner"],
     };
 
     for (const file of cases) {

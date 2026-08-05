@@ -115,7 +115,7 @@ function read32(machine: Wsc, address: number): number {
 function run(body: (ctx: WscCtx) => void, program = PROGRAM): Wsc {
   const analysis = analyze(program);
   const layout = planLayout(program, analysis, WSC_MEMORY);
-  const ctx = new WscCtx(program, analysis, layout, getProfile("wsc"), 0);
+  const ctx = new WscCtx(program, analysis, layout, getProfile("wsc"));
   const { asm } = ctx;
 
   // The processor resets into the far jump at the top of the bank and arrives
@@ -366,11 +366,11 @@ describe("the WonderSwan value layer", () => {
     // that never divides ships no divider, because nothing ever asked for one.
     const analysis = analyze(PROGRAM);
     const layout = planLayout(PROGRAM, analysis, WSC_MEMORY);
-    const plain = new WscCtx(PROGRAM, analysis, layout, getProfile("wsc"), 0);
+    const plain = new WscCtx(PROGRAM, analysis, layout, getProfile("wsc"));
     add32(plain, A, B);
     expect(plain.helperNames()).toEqual([]);
 
-    const dividing = new WscCtx(PROGRAM, analysis, layout, getProfile("wsc"), 0);
+    const dividing = new WscCtx(PROGRAM, analysis, layout, getProfile("wsc"));
     div32(dividing, A, B);
     expect(dividing.helperNames()).toContain("Div32");
   });
@@ -457,7 +457,7 @@ describe("the WonderSwan value layer", () => {
     const build = (): Uint8Array => {
       const analysis = analyze(PROGRAM);
       const layout = planLayout(PROGRAM, analysis, WSC_MEMORY);
-      const ctx = new WscCtx(PROGRAM, analysis, layout, getProfile("wsc"), 0);
+      const ctx = new WscCtx(PROGRAM, analysis, layout, getProfile("wsc"));
       mul32(ctx, A, B);
       div32(ctx, A, B);
       ctx.finish();

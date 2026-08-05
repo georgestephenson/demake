@@ -47,6 +47,7 @@ import type { ConsoleSpec, TileLayout } from "../consoles/types.js";
 
 import { makeColorSpace, type HwColor, type HwColorSpace } from "./hwcolor.js";
 import { latticeKmeans, type Points } from "./kmeans.js";
+import { isMonoTiled } from "./portfolio.js";
 import type { PaletteColor } from "./types.js";
 
 /** Default seed for the colour fit, matching `prep`'s. */
@@ -619,7 +620,14 @@ export function buildSpriteBank(
   const cutoff = options.alphaCutoff ?? 0.5;
   const opaque = options.opaque === true;
   const tiles = layout as TileLayout;
-  const declared = spec.color.shades ?? tiles.subPalettes.size;
+  // On a tiled-mono console the two numbers come apart, and taking the wrong one
+  // packs indices a tile cannot hold: `color.shades` is the *pool* — eight, on
+  // the one console that has one — while a palette holds `subPalettes.size` of
+  // them, which is what a pixel index selects between. The ramp is then spread
+  // across the pool rather than being consecutive, because those are the shades
+  // the palette entries may name (see {@link SpriteBank.shades}).
+  const spread = spec.color.shades ?? tiles.subPalettes.size;
+  const declared = isMonoTiled(spec) ? tiles.subPalettes.size : spread;
   // A caller that does not own the whole palette says so, exactly as it does for
   // sub-palettes and for tiles; the fit is then honest about what it has rather
   // than being trimmed after the fact.
@@ -636,7 +644,7 @@ export function buildSpriteBank(
   const color = spec.color.model !== "mono";
   const fit = color
     ? colorIndices(decoded, spec, tiles, usable, opaque, options)
-    : monoIndices(decoded, total, usable, opaque);
+    : monoIndices(decoded, total, usable, opaque, spread);
 
   const packing = options.packing ?? (bpp === 8 ? "linear8" : "interleaved");
   const bank: Uint8Array[] = [];
@@ -707,16 +715,29 @@ interface Fitted {
   palettes: PaletteColor[][];
 }
 
-/** The mono fit: one auto-contrast ramp across every asset in the build. */
+/**
+ * The mono fit: one auto-contrast ramp across every asset in the build.
+ *
+ * `spread` is how many hardware shades the ramp may reach — the same number as
+ * `total` on every console whose palette *is* the shade set, and larger on the
+ * one whose palette entries index a wider pool. Spreading rather than counting
+ * up is what keeps an object's contrast when four entries choose among eight
+ * shades; taking `first`, `first + 1`, `first + 2` there would draw every sprite
+ * in three adjacent greys.
+ */
 function monoIndices(
   decoded: readonly Decoded[],
   total: number,
   usable: number,
   opaque: boolean,
+  spread: number,
 ): Fitted {
   // Objects take the darkest shades; a background tile has the whole ramp.
   const first = total - usable;
-  const shades = Array.from({ length: usable }, (_, index) => first + index);
+  const last = Math.max(first, spread - 1);
+  const shades = Array.from({ length: usable }, (_, index) =>
+    usable === 1 ? last : first + Math.round((index * (last - first)) / (usable - 1)),
+  );
 
   const values: number[] = [];
   for (const entry of decoded) {

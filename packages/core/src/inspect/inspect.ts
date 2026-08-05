@@ -139,6 +139,32 @@ export function checkCompliantImage(image: CompliantImage, spec: ConsoleSpec): V
     }
   }
 
+  // A two-level palette (WonderSwan): every entry indexes a *shared pool*, so
+  // the picture as a whole may show only `color.shades` distinct levels however
+  // its palettes are arranged. The rule is the console's real constraint, and
+  // stating it here is what keeps it checkable rather than baked into an
+  // encoding — a fit that reached for a ninth level is caught, not truncated.
+  if (spec.color.model === "mono" && spec.color.levels !== undefined) {
+    const used = new Set<number>();
+    for (const pal of image.palettes) for (const c of pal.colors) used.add(c.codes[0] as number);
+    const budget = spec.color.shades ?? spec.color.levels;
+    if (used.size > budget) {
+      violations.push({
+        code: "E_SHADE_POOL",
+        message: `${used.size} distinct shades exceed the ${spec.id} pool of ${budget}`,
+      });
+    }
+    for (const code of used) {
+      if (code < 0 || code >= spec.color.levels) {
+        violations.push({
+          code: "E_OFF_LATTICE",
+          message: `shade ${code} is outside the ${spec.id} range of ${spec.color.levels}`,
+        });
+        break;
+      }
+    }
+  }
+
   // Shared index-0 backdrop (NES): color 0 of every non-empty sub-palette must be
   // the same universal backdrop, or a pixel of value 0 could not render uniformly.
   if (layout.subPalettes.sharedIndex0) {
@@ -268,6 +294,21 @@ function checkImageBytes(image: RgbaImage, spec: ConsoleSpec): Violation[] {
       code: "E_OFF_LATTICE",
       message: `colors are not all on the ${spec.id} lattice`,
     });
+  }
+
+  // The pool again (see `checkCompliantImage`), on raw bytes: the whole picture
+  // may show only `color.shades` of the `color.levels` the panel can display,
+  // whatever its cells do. Distinct colors *are* distinct levels on a mono ramp.
+  if (spec.color.model === "mono" && spec.color.levels !== undefined) {
+    const budget = spec.color.shades ?? spec.color.levels;
+    const shown = new Set<number>();
+    for (const set of cellSets) for (const key of set) shown.add(key);
+    if (shown.size > budget) {
+      violations.push({
+        code: "E_SHADE_POOL",
+        message: `${shown.size} distinct shades exceed the ${spec.id} pool of ${budget}`,
+      });
+    }
   }
 
   // Shared index-0 (NES backdrop / MD·SNES transparent): one color is shared by

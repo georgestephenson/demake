@@ -9,14 +9,19 @@
  *
  * Its pad is a handheld's: two face buttons and a Start, and the four
  * directions are the upper of the two D-pads a landscape game uses.
+ *
+ * It is both WonderSwans, and which one is the *caller's* rather than the
+ * cartridge's: these two machines differ in how much memory they have and how
+ * deep a pixel is, neither of which a header records, so the console the visitor
+ * picked is the only thing that knows (`@demake/wsc` §`WsModel`).
  */
 
 import { SCREEN_HEIGHT, SCREEN_WIDTH, Wsc, type Button as WscButton } from "@demake/wsc";
 
 import type { Player } from "./player.js";
 
-export function boot(rom: Uint8Array): Player {
-  const machine = new Wsc(rom);
+export function boot(rom: Uint8Array, consoleId = "wsc"): Player {
+  const machine = new Wsc(rom, consoleId === "ws" ? "ws" : "wsc");
   return {
     width: SCREEN_WIDTH,
     height: SCREEN_HEIGHT,

@@ -119,29 +119,6 @@ const PORT = {
   KEYPAD: 0xb5,
 } as const;
 
-/**
- * Where everything the display reads lives.
- *
- * Three of these the hardware fixes — the tile bank and palette RAM are at
- * addresses the chip decodes, and the object table has to be 512-byte aligned
- * because port `$04` addresses it in those units. The two screen maps are this
- * plan's to place, in units of 2 KiB, and they are where {@link WSC_MEMORY} says.
- */
-export const RAM = {
-  /** The world: the plane the camera scrolls. */
-  SCR1: 0x2000,
-  /** The HUD: the plane in front of it, whose scroll never moves. */
-  SCR2: 0x2800,
-  /** What a frame's objects are built into, before the blanking interval. */
-  SHADOW: 0x3000,
-  /** What the display actually reads — the shadow's destination. */
-  OAM: 0x3200,
-  /** 512 tiles of 32 bytes. */
-  TILES: 0x4000,
-  /** Sixteen palettes of sixteen RGB444 words. */
-  PALETTE: 0xfe00,
-} as const;
-
 /** Cells each screen map holds, on both axes. */
 export const MAP_W = 32;
 export const MAP_H = 32;
@@ -342,7 +319,8 @@ function defaultPalette(): Uint8Array {
 // --- boot --------------------------------------------------------------------
 
 function emitReset(ctx: WscCtx, options: WscEmitOptions): void {
-  const { asm, layout, program } = ctx;
+  const { asm, layout, program, machine } = ctx;
+  const RAM = machine.ram;
 
   asm.label("Boot");
   asm.cli();
@@ -356,7 +334,7 @@ function emitReset(ctx: WscCtx, options: WscEmitOptions): void {
   asm.movsr("ds", "ax");
   asm.movsr("es", "ax");
   asm.movsr("ss", "ax");
-  asm.movi("sp", 0x4000);
+  asm.movi("sp", machine.stackTop);
 
   // Clear everything from the heap to the top of the object table, so a game's
   // state starts from zero rather than from whatever powered up — the screen
@@ -368,8 +346,9 @@ function emitReset(ctx: WscCtx, options: WscEmitOptions): void {
   asm.rep().stosw();
 
   // Colour mode, sixteen colours a tile, packed 4bpp: chosen first, so that the
-  // tiles copied in below are decoded in the layout they were emitted in.
-  emitPort(ctx, PORT.DISP_MODE, 0xe0);
+  // tiles copied in below are decoded in the layout they were emitted in. The
+  // mono machine has one arrangement and no register to say so.
+  if (machine.dispMode !== undefined) emitPort(ctx, PORT.DISP_MODE, machine.dispMode);
   emitPort(ctx, PORT.MAP_BASE, (RAM.SCR1 >> 11) | ((RAM.SCR2 >> 11) << 4));
   emitPort(ctx, PORT.SPR_BASE, RAM.OAM >> 9);
   emitPort(ctx, PORT.SPR_FIRST, 0);
@@ -384,7 +363,7 @@ function emitReset(ctx: WscCtx, options: WscEmitOptions): void {
   emitPort(ctx, PORT.SCR2_Y, 0);
 
   emitRomCopy(ctx, label("TileBank"), RAM.TILES, options.bank?.length ?? 0);
-  emitRomCopy(ctx, label("Palette"), RAM.PALETTE, 16 * 16 * 2);
+  emitPaletteBlock(ctx, label("Palette"));
 
   // Every entity starts from its declared values, not just the entry scene's: a
   // rule may name an object in a scene the game has not reached.
@@ -466,6 +445,38 @@ function emitRomCopy(ctx: WscCtx, source: Ref, dest: number, count: number): voi
   asm.rep().movsw();
   asm.movi("ax", 0);
   asm.movsr("ds", "ax");
+}
+
+/**
+ * Put a scene's palette block where this machine keeps its palettes.
+ *
+ * The one place the two WonderSwans' renderers genuinely part company, and they
+ * part company about the *destination* rather than about the bytes: on the
+ * colour machine palettes are five hundred and twelve bytes of RAM at `$FE00`,
+ * so the block is a copy; on the mono machine they are thirty-six consecutive
+ * ports — four for the shade pool and thirty-two for the palettes — so the block
+ * is a run of `out`s. Nothing on that bus a `movs` could reach, which is why the
+ * mono path is a loop rather than a shorter copy.
+ */
+function emitPaletteBlock(ctx: WscCtx, source: Ref): void {
+  const { asm, machine } = ctx;
+  if ("ram" in machine.palette) {
+    emitRomCopy(ctx, source, machine.palette.ram, machine.palette.bytes);
+    return;
+  }
+  // `outsb` would be one instruction, but it reads `DS:SI` — so the data segment
+  // would have to point at the cartridge anyway, and a byte at a time through
+  // `al` costs two instructions and leaves the segment alone.
+  const loop = ctx.unique("palette");
+  asm.movi("si", source);
+  asm.movi("dx", machine.palette.port);
+  asm.movi("cx", machine.palette.bytes);
+  asm.label(loop);
+  asm.movm8("al", romAt("si"));
+  asm.inc("si");
+  asm.outDx8();
+  asm.inc("dx");
+  asm.loop(loop);
 }
 
 /** Put the program's seed back into the generator. */
@@ -1118,6 +1129,7 @@ function emitFullRedraw(
   options: WscEmitOptions,
 ): void {
   const { asm, layout } = ctx;
+  const RAM = ctx.machine.ram;
   // A screenful of map does not fit in one blanking interval, and the display
   // reads the map where the runtime writes it — there is no port and no shadow
   // between them — so the layers go off for the length of the redraw. It happens
@@ -1129,7 +1141,7 @@ function emitFullRedraw(
   // build's — the level tiles' and the objects' fit. Leaving palette RAM alone
   // would mean a level scene wore whichever title screen the player came from.
   const palette = options.scenePalettes?.get(scene.def.name);
-  emitRomCopy(ctx, label(palette ? scenePaletteLabel(scene) : "Palette"), RAM.PALETTE, 16 * 16 * 2);
+  emitPaletteBlock(ctx, label(palette ? scenePaletteLabel(scene) : "Palette"));
 
   const backdrop = options.backdrops?.get(scene.def.name);
   if (backdrop) {
@@ -1608,6 +1620,7 @@ function emitOam(ctx: WscCtx, scene: SceneCtx, options: WscEmitOptions): void {
  * not draw it, which is what the unsigned comparisons below are.
  */
 function needPushSprite(ctx: WscCtx): Ref {
+  const RAM = ctx.machine.ram;
   return ctx.need("PushSprite", (inner) => {
     const { asm, layout } = inner;
     const skip = inner.unique("oamOff");
@@ -1632,6 +1645,7 @@ function needPushSprite(ctx: WscCtx): Ref {
 
 /** Emit the render helpers the scene code calls. */
 export function emitRenderHelpers(ctx: WscCtx): void {
+  const RAM = ctx.machine.ram;
   const { asm, layout } = ctx;
   const QUEUE_BYTES = layout.memory.queueMax * layout.queueStride;
 
@@ -1866,4 +1880,4 @@ function emitDecimalPowers(ctx: WscCtx): void {
 }
 
 /** What the emitter re-exports for the backend and its tests. */
-export { RAM as WSC_RAM, MAP_W as WSC_MAP_W, MAP_H as WSC_MAP_H, romAbs };
+export { MAP_W as WSC_MAP_W, MAP_H as WSC_MAP_H, romAbs };

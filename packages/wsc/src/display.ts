@@ -25,11 +25,31 @@
  *     simply names the font's palette. The PC Engine's arrangement, one console
  *     over.
  *
- * Scope is what a demade cartridge uses. The two window units, the mono and
- * 2bpp display modes, the "planar" tile format and the LCD's segment icons are
- * **absent rather than half-implemented**: their registers are stored and inert,
- * and a renderer that answered plausibly for hardware nothing drives is a
- * renderer nobody is checking.
+ * ### The mono machine
+ *
+ * This controller is also the plain WonderSwan's, and the difference is two
+ * lookups rather than a second renderer — the same maps, the same object table,
+ * the same entry words, the same wrapping and the same layer order. What changes
+ * is where a pixel's *value* comes from:
+ *
+ *   - **A tile is 2bpp and planar**, sixteen bytes rather than thirty-two, and
+ *     the bank is at `$2000` rather than `$4000` — which it has to be, because
+ *     this machine has 16 KiB of RAM in total and the bank is the top half of it.
+ *   - **A palette is four three-bit indices into a shared pool**, held in ports
+ *     `$20`–`$3F` rather than in RAM, and the pool's eight four-bit LCD levels
+ *     are ports `$1C`–`$1F`. So a colour is two lookups deep, and the second one
+ *     is what every palette on the screen shares.
+ *
+ * Which machine an instance is comes from its constructor, on the Mega Duck's
+ * terms: it is a fact about the hardware rather than a setting a program can
+ * change, and a demade cartridge for one console would be perfect and unreadable
+ * on the other.
+ *
+ * Scope is what a demade cartridge uses. The two window units, the colour
+ * machine's 2bpp mode, the packed-vs-planar tile flag and the LCD's segment
+ * icons are **absent rather than half-implemented**: their registers are stored
+ * and inert, and a renderer that answered plausibly for hardware nothing drives
+ * is a renderer nobody is checking.
  *
  * Sources: WSdev wiki — Display controller, Tiles, Sprites and Palettes.
  */
@@ -80,6 +100,10 @@ export const PORT = {
   LCD_ICON: 0x15,
   VTOTAL: 0x16,
   VSYNC: 0x17,
+  /** The mono machine's shade pool: eight four-bit LCD levels, two a byte. */
+  SHADE_LUT: 0x1c,
+  /** The mono machine's sixteen palettes: four three-bit pool indices, two a byte. */
+  MONO_PALETTE: 0x20,
   /** Colour mode, tile depth and tile layout. */
   DISP_MODE: 0x60,
 } as const;
@@ -88,10 +112,21 @@ export const PORT = {
 export const TILE_BASE = 0x4000;
 export const PALETTE_BASE = 0xfe00;
 
+/**
+ * The mono machine's tile bank: the top half of its whole 16 KiB.
+ *
+ * 512 tiles of sixteen bytes, so `$2000`–`$3FFF` is all of it and a program's
+ * maps, object table and variables have the other 8 KiB between them.
+ */
+export const MONO_TILE_BASE = 0x2000;
+
 /** Expand a four-bit colour channel the way the hardware's ladder does. */
 export function expandChannel(value: number): number {
   return (value & 0xf) * 0x11;
 }
+
+/** Which WonderSwan this is — a fact about the hardware, never a setting. */
+export type WsModel = "wsc" | "ws";
 
 /** The display controller, over the console's internal RAM. */
 export class Display {
@@ -119,7 +154,10 @@ export class Display {
   private readonly sprite = new Int32Array(SCREEN_WIDTH);
   private readonly spriteFront = new Uint8Array(SCREEN_WIDTH);
 
-  constructor(private readonly ram: Uint8Array) {
+  constructor(
+    private readonly ram: Uint8Array,
+    private readonly model: WsModel = "wsc",
+  ) {
     this.regs[PORT.VTOTAL] = LINES_PER_FRAME - 1;
   }
 
@@ -133,9 +171,15 @@ export class Display {
     this.regs[port & 0xff] = value & 0xff;
   }
 
-  /** Whether this port is one of ours. */
+  /**
+   * Whether this port is one of ours.
+   *
+   * Up to `$3F`, because the mono machine's palettes and shade pool live in the
+   * port space rather than in RAM — and they exist on the colour machine too,
+   * which is what a WonderSwan Color running a WonderSwan cartridge uses.
+   */
   static owns(port: number): boolean {
-    return port <= 0x17 || port === PORT.DISP_MODE;
+    return port <= 0x3f || port === PORT.DISP_MODE;
   }
 
   /**
@@ -163,16 +207,48 @@ export class Display {
 
   /** One palette entry, as a packed `0x00RRGGBB`. */
   private color(palette: number, index: number): number {
+    if (this.model === "ws") return this.monoColor(palette, index);
     const at = PALETTE_BASE + palette * 32 + index * 2;
     const low = this.ram[at] as number;
     const high = this.ram[(at + 1) & 0xffff] as number;
     return (expandChannel(high) << 16) | (expandChannel(low >> 4) << 8) | expandChannel(low & 0x0f);
   }
 
-  /** The four-bit pixel at (`x`, `y`) of a tile, honouring its flips. */
+  /**
+   * The mono machine's colour, which is two lookups rather than one.
+   *
+   * A palette is two bytes holding four three-bit entries — a nibble each, low
+   * nibble first — and each entry indexes the **shared pool** at `$1C`–`$1F`,
+   * which holds eight four-bit LCD levels packed the same way. The level runs
+   * 0 (brightest) to 15 (darkest), so the panel value is its complement.
+   */
+  private monoColor(palette: number, index: number): number {
+    const byte = this.regs[PORT.MONO_PALETTE + palette * 2 + (index >> 1)] as number;
+    return this.poolColor(((index & 1) === 0 ? byte : byte >> 4) & 0x07);
+  }
+
+  /** One of the eight pool entries, as the grey the panel shows for it. */
+  private poolColor(shade: number): number {
+    const lut = this.regs[PORT.SHADE_LUT + (shade >> 1)] as number;
+    const level = ((shade & 1) === 0 ? lut : lut >> 4) & 0x0f;
+    const grey = 0xff - level * 0x11;
+    return (grey << 16) | (grey << 8) | grey;
+  }
+
+  /** The pixel at (`x`, `y`) of a tile, honouring its flips. */
   private tilePixel(tile: number, x: number, y: number, xflip: boolean, yflip: boolean): number {
     const column = xflip ? 7 - x : x;
     const row = yflip ? 7 - y : y;
+    if (this.model === "ws") {
+      // Planar 2bpp: a row is two bytes, one per plane, and the leftmost pixel
+      // is bit 7 of each — which is every 8-bit console in this set's format
+      // and none of the colour machine's.
+      const at = (MONO_TILE_BASE + tile * 16 + row * 2) & 0xffff;
+      const bit = 7 - column;
+      const low = ((this.ram[at] as number) >> bit) & 1;
+      const high = ((this.ram[(at + 1) & 0xffff] as number) >> bit) & 1;
+      return (high << 1) | low;
+    }
     const byte = this.ram[(TILE_BASE + tile * 32 + row * 4 + (column >> 1)) & 0xffff] as number;
     // Packed 4bpp: two pixels a byte, and the left one is the high nibble.
     return (column & 1) === 0 ? (byte >> 4) & 0x0f : byte & 0x0f;
@@ -252,8 +328,17 @@ export class Display {
   private renderLine(y: number): void {
     const control = this.regs[PORT.DISP_CTRL] as number;
     const lcdOn = ((this.regs[PORT.LCD_CTRL] as number) & 1) !== 0;
+    // The backdrop register says different things on the two machines: a
+    // palette *and* an entry on the colour one, and a bare pool index on the
+    // mono one, which has no palette to name because the pool is global.
     const backdropByte = this.regs[PORT.BACK_COLOR] as number;
-    const backdrop = lcdOn ? this.color((backdropByte >> 4) & 0x0f, backdropByte & 0x0f) : 0;
+    let backdrop = 0;
+    if (lcdOn) {
+      backdrop =
+        this.model === "ws"
+          ? this.poolColor(backdropByte & 0x07)
+          : this.color((backdropByte >> 4) & 0x0f, backdropByte & 0x0f);
+    }
 
     const bases = this.regs[PORT.MAP_BASE] as number;
     if (lcdOn && (control & 0x01) !== 0) {

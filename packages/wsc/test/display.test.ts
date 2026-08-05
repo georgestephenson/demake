@@ -20,6 +20,7 @@ import {
   CYCLES_PER_LINE,
   Display,
   LINES_PER_FRAME,
+  MONO_TILE_BASE,
   PALETTE_BASE,
   PORT,
   SPRITES_PER_LINE,
@@ -242,5 +243,136 @@ describe("the WonderSwan Color display", () => {
     display.step(CYCLES_PER_LINE * (LINES_PER_FRAME - VBLANK_LINE));
     expect(display.line).toBe(0);
     expect(display.frames).toBe(1);
+  });
+});
+
+/**
+ * The mono machine, programmed the way its cartridge programs it.
+ *
+ * The same maps, the same object table and the same entry words — which is the
+ * claim this block exists to hold. What differs is where a pixel's *value* comes
+ * from, and it is two lookups rather than one.
+ */
+function monoMachine(): { ram: Uint8Array; display: Display } {
+  const ram = new Uint8Array(0x10000);
+  const display = new Display(ram, "ws");
+  display.write(PORT.MAP_BASE, (SCR1_BASE >> 11) | ((SCR2_BASE >> 11) << 4));
+  display.write(PORT.SPR_BASE, MONO_SPRITES >> 9);
+  display.write(PORT.LCD_CTRL, 0x01);
+  display.write(PORT.DISP_CTRL, 0x07);
+  return { ram, display };
+}
+
+/** The mono machine's maps and object table live below its tile bank. */
+const MONO_SPRITES = 0x0e00;
+
+/** Load the shade pool: eight four-bit LCD levels, two a byte, low nibble first. */
+function setPool(display: Display, levels: readonly number[]): void {
+  for (let i = 0; i < 4; i += 1) {
+    display.write(
+      PORT.SHADE_LUT + i,
+      ((levels[i * 2] ?? 0) & 0xf) | (((levels[i * 2 + 1] ?? 0) & 0xf) << 4),
+    );
+  }
+}
+
+/** Load one mono palette: four three-bit pool indices, two a byte. */
+function setMonoPalette(display: Display, palette: number, entries: readonly number[]): void {
+  for (let i = 0; i < 2; i += 1) {
+    display.write(
+      PORT.MONO_PALETTE + palette * 2 + i,
+      ((entries[i * 2] ?? 0) & 7) | (((entries[i * 2 + 1] ?? 0) & 7) << 4),
+    );
+  }
+}
+
+/** Fill a planar 2bpp tile with one index. */
+function solidMonoTile(ram: Uint8Array, tile: number, index: number): void {
+  for (let row = 0; row < 8; row += 1) {
+    ram[MONO_TILE_BASE + tile * 16 + row * 2] = index & 1 ? 0xff : 0x00;
+    ram[MONO_TILE_BASE + tile * 16 + row * 2 + 1] = index & 2 ? 0xff : 0x00;
+  }
+}
+
+/** The grey the panel shows for an LCD level, which is its complement. */
+function grey(level: number): number[] {
+  const v = 0xff - level * 0x11;
+  return [v, v, v];
+}
+
+describe("the mono WonderSwan display", () => {
+  it("reads a pixel through the palette and then through the pool", () => {
+    const { ram, display } = monoMachine();
+    // Pool entry 5 holds level 12; palette 3's entry 1 names pool entry 5.
+    setPool(display, [0, 1, 2, 3, 4, 12, 6, 7]);
+    setMonoPalette(display, 3, [0, 5, 6, 7]);
+    solidMonoTile(ram, 9, 1);
+    setCell(ram, SCR1_BASE, 0, 0, 9 | (3 << 9));
+    frame(display);
+    expect(pixel(display, 2, 2)).toEqual(grey(12));
+  });
+
+  it("shares the pool between palettes, which is what makes it a pool", () => {
+    const { ram, display } = monoMachine();
+    setPool(display, [0, 15, 2, 3, 4, 5, 6, 7]);
+    // Two palettes naming the same pool entry must show the same grey, and
+    // moving the pool entry must move both — a fit that treated a palette entry
+    // as a level would pass the first half of that and fail the second.
+    setMonoPalette(display, 1, [0, 1, 2, 3]);
+    setMonoPalette(display, 2, [0, 1, 2, 3]);
+    solidMonoTile(ram, 4, 1);
+    setCell(ram, SCR1_BASE, 0, 0, 4 | (1 << 9));
+    setCell(ram, SCR1_BASE, 1, 0, 4 | (2 << 9));
+    frame(display);
+    expect(pixel(display, 2, 2)).toEqual(grey(15));
+    expect(pixel(display, 10, 2)).toEqual(grey(15));
+
+    setPool(display, [0, 4, 2, 3, 4, 5, 6, 7]);
+    frame(display);
+    expect(pixel(display, 2, 2)).toEqual(grey(4));
+    expect(pixel(display, 10, 2)).toEqual(grey(4));
+  });
+
+  it("reads a tile as planar 2bpp from the top half of its 16 KiB", () => {
+    const { ram, display } = monoMachine();
+    setPool(display, [0, 4, 8, 12, 0, 0, 0, 0]);
+    setMonoPalette(display, 0, [0, 1, 2, 3]);
+    // One row with a different index in each pair of columns: planes are two
+    // bytes, low plane first, and the leftmost pixel is bit 7 of each.
+    ram[MONO_TILE_BASE + 16 * 16] = 0b00110011;
+    ram[MONO_TILE_BASE + 16 * 16 + 1] = 0b00001111;
+    setCell(ram, SCR1_BASE, 0, 0, 16);
+    frame(display);
+    expect(pixel(display, 0, 0)).toEqual(grey(0)); // 00
+    expect(pixel(display, 2, 0)).toEqual(grey(4)); // 01
+    expect(pixel(display, 4, 0)).toEqual(grey(8)); // 10
+    expect(pixel(display, 6, 0)).toEqual(grey(12)); // 11
+  });
+
+  it("still shows the backdrop through colour zero, from a bare pool index", () => {
+    const { ram, display } = monoMachine();
+    setPool(display, [0, 1, 2, 3, 4, 5, 9, 7]);
+    setMonoPalette(display, 0, [0, 1, 2, 3]);
+    // The mono backdrop register names a pool entry and nothing else: there is
+    // no palette to select, because the pool is what every palette shares.
+    display.write(PORT.BACK_COLOR, 6);
+    solidMonoTile(ram, 1, 0);
+    setCell(ram, SCR1_BASE, 0, 0, 1);
+    frame(display);
+    expect(pixel(display, 2, 2)).toEqual(grey(9));
+  });
+
+  it("draws an object through the upper palettes, as the colour machine does", () => {
+    const { ram, display } = monoMachine();
+    setPool(display, [0, 0, 0, 0, 0, 0, 0, 14]);
+    setMonoPalette(display, 8 + 2, [0, 7, 0, 0]);
+    solidMonoTile(ram, 5, 1);
+    ram[MONO_SPRITES + 0] = 5;
+    ram[MONO_SPRITES + 1] = 2 << 1; // palette 2 of the object half
+    ram[MONO_SPRITES + 2] = 40;
+    ram[MONO_SPRITES + 3] = 60;
+    display.write(PORT.SPR_COUNT, 1);
+    frame(display);
+    expect(pixel(display, 62, 42)).toEqual(grey(14));
   });
 });

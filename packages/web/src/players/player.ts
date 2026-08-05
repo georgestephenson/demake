@@ -59,6 +59,7 @@ export const SCREENS: Readonly<Record<string, { width: number; height: number }>
   nds: { width: 256, height: 192 },
   pce: { width: 256, height: 224 },
   wsc: { width: 224, height: 144 },
+  ws: { width: 224, height: 144 },
 };
 
 /** The framebuffer a console draws into, by family and — where it differs — id. */

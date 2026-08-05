@@ -27,6 +27,7 @@ import type { Analysis } from "../analyze.js";
 import { CtxBase } from "../ctx.js";
 import type { Layout } from "../layout.js";
 
+import { WSC_MACHINE, type WsMachine } from "./machine.js";
 import { invert, type CC } from "./ops.js";
 
 /** Emits a helper's body. Called once, after the main program. */
@@ -40,6 +41,14 @@ export class WscCtx extends CtxBase<WscCtx, Asm30> {
     analysis: Analysis,
     layout: Layout,
     profile: ConsoleProfile,
+    /**
+     * Which WonderSwan this build is for.
+     *
+     * A description rather than a branch (`machine.ts`): the two machines run
+     * byte-for-byte the same instructions and differ only in where things are
+     * and how wide a tile is.
+     */
+    readonly machine: WsMachine = WSC_MACHINE,
     origin = 0,
   ) {
     super(program, analysis, layout, profile);
