@@ -3211,6 +3211,20 @@ not per console.
   offers, because asking for the same module again in the same document is
   answered from the browser's module map, which is holding the failure. A "try
   again" button there would never once have worked.
+- **And a failed module load survives a reload in WebKit but not in Chromium**,
+  which is the trap the test above is written around rather than against.
+  Reload a page whose `import()` of some URL failed, and Chromium re-requests it
+  while WebKit answers from its cache of the failure and issues **no request at
+  all** — the error comes straight back. That is not what a visitor meets, and
+  the reason is worth holding on to: the case this path exists for is a stale
+  shell, so the shell the reload fetches names a chunk with a _different_ hash
+  and there is no cached failure against it in any engine. The scenario where a
+  reload genuinely does not help is a chunk URL that fails _transiently_ and is
+  then asked for again unchanged, and nothing in JavaScript can force a
+  cache-bypassing reload to fix it. So `workbench.spec.ts` proves the section
+  loads on a fresh page rather than driving the button: pinning the reload would
+  pin the artificial half of the setup, and it is what turned that test red on
+  WebKit only.
 - **An engine imported on the UI thread is a second copy of it in the bundle.**
   A worker is a separate bundle, so `@demake/core` reached from a component is
   shipped twice — and both copies are always-loaded chunks, so the doc-07 JS

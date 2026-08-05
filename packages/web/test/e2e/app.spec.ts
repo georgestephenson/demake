@@ -142,11 +142,19 @@ test("the size control says what it is, what auto chose, and how to change it", 
   await page.getByTestId("size-screen").click();
   await expect(page.getByTestId("size-input")).toHaveValue("160x144");
 
+  // Both of these wait on a whole second conversion, and it is a far bigger one
+  // than the first: 160×144 against a Game Boy Color's lattice is the full
+  // tournament where 64×64 was a corner of it. The default expect timeout is
+  // enough on a quiet machine and was not on a loaded CI runner in WebKit, which
+  // is a slow assertion rather than a wrong one — so it is given room rather
+  // than left to flake.
   const canvas = page.getByTestId("result-canvas");
-  await expect.poll(async () => canvas.evaluate((c: HTMLCanvasElement) => c.width)).toBe(160);
+  await expect
+    .poll(async () => canvas.evaluate((c: HTMLCanvasElement) => c.width), { timeout: 90_000 })
+    .toBe(160);
   // The drawing was *re-rasterised* rather than blown up: the raster the engine
   // fitted from now covers the target instead of being the file's declared 64.
-  await expect(page.getByTestId("source-size")).toContainText("160×160");
+  await expect(page.getByTestId("source-size")).toContainText("160×160", { timeout: 90_000 });
 
   await page.getByTestId("size-auto").click();
   await expect(page.getByTestId("size-input")).toHaveValue("");
