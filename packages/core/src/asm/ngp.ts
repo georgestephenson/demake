@@ -138,6 +138,15 @@ export const NGP_PALETTE = 0x008200;
 /** Bytes one layer's sixteen four-entry palettes occupy. */
 export const NGP_PALETTE_STRIDE = 0x80;
 
+/**
+ * The eight-entry palette the backdrop and the out-of-window colour come from.
+ *
+ * One definition with two readers, because {@link NGP_BGC} and
+ * {@link NGP_CONTROL} both index it — the backdrop inside the window and the
+ * colour outside it are two selections from the same eight colours.
+ */
+export const NGP_BACKGROUND_PALETTE = 0x0083e0;
+
 /** Which display controller the machine behaves as: bit 7 clear is the Color's. */
 export const NGP_MODE = 0x0087e2;
 

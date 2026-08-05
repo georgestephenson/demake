@@ -483,6 +483,7 @@ export {
   type T9Size,
 } from "./asm/tlcs900.js";
 export {
+  NGP_BACKGROUND_PALETTE,
   NGP_BGC,
   NGP_CHARACTER_BYTES,
   NGP_CHARACTER_COUNT,

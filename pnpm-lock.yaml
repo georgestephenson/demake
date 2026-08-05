@@ -173,7 +173,7 @@ importers:
         version: link:../core
 
   packages/ngp:
-    devDependencies:
+    dependencies:
       '@demake/core':
         specifier: workspace:*
         version: link:../core
