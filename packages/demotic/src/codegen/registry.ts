@@ -83,6 +83,12 @@ const FAMILIES: readonly FamilyDescriptor[] = [
     load: async () => anyBackend((await import("./pce.js")).pceBackend),
   },
   {
+    family: "wsc",
+    consoles: ["wsc"],
+    extension: () => "wsc",
+    load: async () => anyBackend((await import("./wsc.js")).wscBackend),
+  },
+  {
     // Two machines, one emitter: a Nintendo DS's 2D engine A is a Game Boy
     // Advance's, so the second console is a machine description rather than a
     // seventh backend (`codegen/gba/machine.ts`).

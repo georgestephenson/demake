@@ -429,3 +429,38 @@ export {
   packNdsRom,
   type NdsHeaderOptions,
 } from "./asm/nds-cart.js";
+// The V30MZ's operand constructors collide with the 6502's and the 65816's for
+// the third time and are prefixed for the third reason: `abs` here is a 16-bit
+// x86 memory operand carrying an optional base register and an optional segment,
+// which is not an address mode either of those CPUs has. `codegen/wsc/ops.ts` in
+// the Demotic backend aliases them back in one place, so a call site still reads
+// like assembly and nothing can hand one CPU's operand to another's instruction.
+export {
+  abs as x86Abs,
+  at as x86At,
+  Asm30,
+  invert as x86Invert,
+  rom as x86Rom,
+  romAbs as x86RomAbs,
+  romAt as x86RomAt,
+  type Mem as X86Mem,
+  type X86AluOp,
+  type X86Base,
+  type X86CC,
+  type X86R8,
+  type X86R16,
+  type X86Seg,
+  type X86ShiftOp,
+  type X86UnaryOp,
+} from "./asm/v30mz.js";
+export {
+  packWsRom,
+  wsChecksum,
+  WS_BANK_SIZE,
+  WS_CODE_SEGMENT,
+  WS_CODE_SIZE,
+  WS_ENTRY_OFFSET,
+  WS_FOOTER_OFFSET,
+  WS_ROM_SIZE,
+  type WsCartOptions,
+} from "./asm/ws-cart.js";

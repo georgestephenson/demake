@@ -309,13 +309,16 @@ APU. So the sound button lives in the cartridge view, the preview is silent, and
 in *Preview* there is no sound control at all — which is the honest way to say
 that a simulator has nothing to play.
 
-Every console with a backend has a driver now, so the button is never withheld:
-the only thing that can take it away is a browser that will not give the page an
-`AudioContext`.
+Every console with a backend has a driver now, so the button is never withheld
+in practice — but *whether* it is offered is the cartridge's answer rather than
+an assumption: a player hands the pane its chips, and an empty list takes the
+control away rather than offering one that does nothing. The WonderSwan Color
+spent a release in exactly that state, which is why the question is asked.
 
 The ROM pane plays the cartridge's own sound, and every sample of it comes out of
 `@demake/chip`'s model of that console's chip — the Game Boy's APU, the NES's
-2A03, the SN76489 on either Sega machine, the PC Engine's six wavetables, or
+2A03, the SN76489 on either Sega machine, the PC Engine's six wavetables, the
+WonderSwan's four, or
 *both* of a Mega Drive's — six
 four-operator FM voices and four tone generators, which is the one console here
 that hands the player two chips on two clocks and has them summed. Two of them

@@ -12,7 +12,7 @@
 
 test the hero falls onto the cavern floor and stays there
 press a
-play 240 ticks
+play 4 seconds
 expect player.ydirection <= 0.05
 expect player.bottom = levelheight - 2
 
@@ -24,7 +24,7 @@ expect camera.y = levelheight - screenheight
 
 test running right scrolls the view, and never past the level
 press a
-hold right for 120 ticks
+hold right for 2 seconds
 expect camera.x > 0
 expect camera.x <= levelwidth - screenwidth
 
@@ -33,7 +33,7 @@ expect camera.x <= levelwidth - screenwidth
 -- caption is left behind in the cave is worse than neither.
 test the hud follows the camera rather than the world
 press a
-hold right for 120 ticks
+hold right for 2 seconds
 expect scoretag.x = camera.x + 1
 expect scoretag.y = camera.y + 1
 expect score.x = camera.x + 8
@@ -41,7 +41,7 @@ expect score.y = camera.y + 1
 
 test the spike pit is fatal, whichever console you fall into it on
 press a
-hold right for 300 ticks
+hold right for 5 seconds
 expect scene gameover
 
 -- The climb is a staircase of ledges two and three cells apart, so a jump that
@@ -49,16 +49,16 @@ expect scene gameover
 -- apex, which is 37 ticks after the press on every console.
 test a jump from the floor clears the first step of the climb
 press a
-play 240 ticks
+play 4 seconds
 press a
-play 40 ticks
+play 0.67 seconds
 expect player.bottom <= levelheight - 5
 
 test the hero cannot jump again in mid air
 press a
-play 240 ticks
+play 4 seconds
 press a
-play 20 ticks
+play 0.33 seconds
 press a
 play 2 ticks
 expect player.ydirection > -1
@@ -72,13 +72,13 @@ expect player.ydirection > -1
 -- same ledge on every console — so this is one climb, checked seven times.
 test a collected coin is gone for good
 press a
-play 240 ticks
-hold right for 42 ticks
+play 4 seconds
+hold right for 0.7 seconds
 press a
-play 18 ticks
-hold left for 26 ticks
-play 60 ticks
+play 0.3 seconds
+hold left for 0.43 seconds
+play 1 second
 expect score.value = 1
 expect c1.visible = 0
-play 120 ticks
+play 2 seconds
 expect score.value = 1

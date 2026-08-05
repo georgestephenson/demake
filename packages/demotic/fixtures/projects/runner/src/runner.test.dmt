@@ -14,7 +14,7 @@
 
 test the bird drifts down and to the right on its own
 press a
-play 20 ticks
+play 0.33 seconds
 expect bird1.ydirection > 0
 expect bird1.x > 1
 
@@ -42,12 +42,12 @@ expect levelheight > screenheight
 
 test an unflown bird ends up in the scenery
 press a
-play 600 ticks
+play 10 seconds
 expect scene gameover
 
 test the coin is always somewhere in the level
 press a
-play 40 ticks
+play 0.67 seconds
 expect prize1.x >= 0
 expect prize1.right <= levelwidth
 expect prize1.y >= 0

@@ -31,6 +31,15 @@ import {
 export { AudioRomError, buildGbAudioRom };
 export type { AudioRomOptions, AudioRomStats, BuiltAudioRom };
 export {
+  buildWscGameAudio,
+  resolveWscClock,
+  STOP as WSC_STOP,
+  WSC_AUDIO_BYTES,
+  type WscGameAudio,
+  type WscGameAudioInput,
+  type WscGameAudioStats,
+} from "./wsc-game.js";
+export {
   buildSpcGameAudio,
   resolveSpcClock,
   SPC_CODE_BASE,
@@ -92,6 +101,13 @@ const GAME_CLOCKS: Readonly<Record<string, "timer" | "frame">> = {
   // 1024 — and nothing else in a demade cartridge uses it, so this console gets
   // the Game Boy's clock discipline rather than the NES's.
   "huc6280-psg": "timer",
+  // The WonderSwan has two timers with interrupts and a demade cartridge takes
+  // neither: its interrupt controller vectors through the processor's own table
+  // in the first kilobyte of RAM, and a main loop that already waits for the
+  // beam gains nothing by one. The frame is the clock — and, unusually, the
+  // driver reads how many of them have passed rather than being told, because
+  // the vertical-blank timer's counter is readable (`wsc-game.ts`).
+  "ws-sound": "frame",
 };
 
 /**
@@ -166,6 +182,9 @@ const CONSOLE_RATES: Readonly<Record<string, number>> = { gba: 32768 / 256 };
  *     shared memory
  *   - `pce` — 6502 (`rom/pce-game.ts`), sharing `mos-player.ts` with the NES
  *     because a HuC6280 *is* a 6502, and clocked by that CPU's own timer
+ *   - `wsc` — V30MZ (`rom/wsc-game.ts`), and the only one whose clock is not an
+ *     interrupt at all: this cartridge takes none, so the driver reads the
+ *     vertical-blank timer's *counter* and pays whatever frames it finds owed
  *
  * Keeping it by console is what let the Game Boy Advance be absent from it for
  * as long as its ARM driver was: its four Game Boy channels are the same
@@ -185,6 +204,7 @@ const GAME_DRIVERS: readonly string[] = [
   "gba",
   "nds",
   "pce",
+  "wsc",
 ];
 
 /** Whether a `demake build` cartridge for this console can play its audio. */

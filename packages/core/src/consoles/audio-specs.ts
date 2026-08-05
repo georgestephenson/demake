@@ -843,3 +843,100 @@ export const pceAudio: AudioSpec = {
   mixing: { channels: 2, linear: true },
   docs: { sources: PCE_SOURCES },
 };
+
+const WS_SOURCES = [
+  "WSdev wiki — Sound: https://ws.nesdev.org/wiki/Sound",
+  "WSdev wiki — Timers: https://ws.nesdev.org/wiki/Timers",
+];
+
+/** The chip's own clock, which is the console's master clock undivided. */
+const WS_SOUND_CLOCK = 3072000;
+
+/**
+ * One of the four voices, which are the same hardware whatever they are used for.
+ *
+ * The pitch register is the only one of its kind in this matrix: it is
+ * *subtracted* from 2048 rather than dividing directly, so a larger value is a
+ * higher note. `PitchLattice` describes a divider, so what is declared here is
+ * the divider the hardware ends up with — one to 2048 — and `binding/wsc.ts`
+ * turns that into the register by subtracting. The lattice is the same either
+ * way; only the encoding differs, which is exactly the split doc 16 draws.
+ */
+function wsPitchedChannel(id: string, kind: "wave" | "pulse"): AudioChannelSpec {
+  return {
+    id,
+    kind,
+    chip: 0,
+    pitch: { clockHz: WS_SOUND_CLOCK, step: 32, minDivider: 1, maxDivider: 2048 },
+    // Four linear bits a side, and nothing behind them: no envelope, no global
+    // attenuator on this path. A level is a multiply rather than a table.
+    volume: { steps: 16, law: "linear" },
+    waveform: { samples: 32, bits: 4 },
+    ...(kind === "pulse" ? { duties: [0.125, 0.25, 0.5] } : {}),
+    envelope: { kind: "none" },
+    panning: "lr-level",
+  };
+}
+
+/**
+ * The WonderSwan's sound hardware, which both models share.
+ *
+ * Four wavetable channels of thirty-two four-bit samples — the PC Engine's
+ * arrangement with two fewer voices and a bit less depth, and one difference
+ * that reaches much further: the waveforms are in the console's **own RAM**,
+ * read through a base register carrying bits 6–13 of an address. There is no
+ * wave port and no sound RAM, so changing a timbre is a memory write and the
+ * bank is bytes the driver copies rather than register writes it performs
+ * (`binding/wsc-bank.ts`).
+ *
+ * Two of the four voices have something the others do not, and as on the PC
+ * Engine the schema's one `kind` per channel decides how they are declared:
+ * channel four is the noise voice because it is the only one with a shift
+ * register, and channel three is declared as the wavetable voice it is used as
+ * even though it also has the sweep. Three melodic parts and a kit, which is
+ * what an arranger wants from four voices.
+ */
+export const wsAudio: AudioSpec = {
+  chips: ["ws-sound"],
+  channels: [
+    // Pulses first, for the reason the PC Engine's spec gives: the sound demaker
+    // places a pitched gesture on the *first* pitched channel, so this is the
+    // difference between an effect borrowing a lead and an effect silencing the
+    // bass every time it fires.
+    wsPitchedChannel("pulse1", "pulse"),
+    wsPitchedChannel("pulse2", "pulse"),
+    wsPitchedChannel("wave1", "wave"),
+    {
+      id: "noise",
+      kind: "noise",
+      chip: 0,
+      volume: { steps: 16, law: "linear" },
+      // Eight *taps* rather than eight rates: the shift register is fifteen bits
+      // and the mode decides how long the sequence runs before it repeats, so
+      // the timbre is the length and the pitch is still the channel's divider.
+      noise: { periods: 8, tonalMode: false },
+      envelope: { kind: "none" },
+      panning: "lr-level",
+    },
+  ],
+  driver: {
+    // The frame, and only the frame. This console has two timers with interrupts
+    // — but its interrupt controller vectors through the processor's own table
+    // in the first kilobyte of RAM, and a cartridge whose main loop already
+    // waits for the beam gains nothing by taking one (doc 13 §Console rollout
+    // item 4). What the hardware *does* give is a vertical-blank timer whose
+    // counter is readable, so a game counts frames rather than riding them
+    // without a handler anywhere.
+    sources: ["vblank"],
+    // 3072000 / (159 × 256): 159 lines of 256 cycles, which is 75.47 Hz — the
+    // shortest frame in this matrix and the only one that is not sixty.
+    frameRate: { num: 3072000, den: 40704 },
+    writesPerTick: 96,
+  },
+  // The mapped bank is 64 KiB and the program, its art and its tables all come
+  // out of it, so a track is budgeted like a Game Boy's rather than like a
+  // cartridge's.
+  budgets: { romBytes: 12288 },
+  mixing: { channels: 2, linear: true },
+  docs: { sources: WS_SOURCES },
+};

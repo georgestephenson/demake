@@ -6,7 +6,7 @@
 -- means the same thing on both.
 
 test the title screen waits for a button
-play 120 ticks
+play 2 seconds
 expect scene title
 
 test pressing a starts the game
@@ -15,19 +15,19 @@ expect scene play
 
 test the ball serves down and to the left
 press a
-play 30 ticks
+play 0.5 seconds
 expect ball1.y > centery
 expect ball1.x < centerx
 
 test the player paddle reaches the left wall and stops there
 press a
-hold left for 300 ticks
+hold left for 5 seconds
 expect paddle1.x = 0
 expect paddle1.xdirection = 0
 
 test the player paddle reaches the right wall and stops there
 press a
-hold right for 300 ticks
+hold right for 5 seconds
 expect paddle1.right = screenwidth
 expect paddle1.xdirection = 0
 
@@ -36,19 +36,19 @@ expect paddle1.xdirection = 0
 -- That is the balance work, asserted rather than assumed.
 test a still player concedes a point and the ball returns to the middle
 press a
-play 55 ticks
+play 0.92 seconds
 expect score2.value = 1
 expect abs(ball1.y - centery) < 15vh
 expect abs(ball1.x - centerx) < 15vw
 
 test the opponent tracks the ball
 press a
-play 200 ticks
+play 3.33 seconds
 expect abs(paddle2.centerx - ball1.centerx) < 10vw
 
 test the opponent stays inside the court
 press a
-play 600 ticks
+play 10 seconds
 expect paddle2.x >= 0
 expect paddle2.right <= screenwidth
 
@@ -57,5 +57,5 @@ expect paddle2.right <= screenwidth
 -- stops the return coming back down the same line every rally.
 test the opponent aims off-centre once a rally has started
 press a
-play 200 ticks
+play 3.33 seconds
 expect abs(aim.value) > 0

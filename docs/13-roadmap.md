@@ -129,7 +129,10 @@ them now compiles games as well as pictures:
   **NASM** (the V30MZ is an 8086-compatible core, so a stock x86 assembler is
   the native tool, not an approximation) with the cartridge footer and its
   checksum packed by demake itself, and a pixel-perfect E2E against
-  beetle-wswan.
+  beetle-wswan. It is the second Tier 2 console with a **Demotic backend**:
+  `demake build -c wsc` produces a real cartridge and the whole example library
+  traces identically on it in `@demake/wsc` (§Console rollout, item 4). Sound is
+  the one gap it has left.
 
 Both march the shared image battery. The Game Gear shipped with the SMS family
 in Phase 2 and SG-1000 with the TMS9918 path.
@@ -166,7 +169,7 @@ rom` and *not* for `demake build`. Encoders pay for more than one console:
 | 68000 | built (`core/src/asm/m68k.ts`) | Mega Drive, Neo Geo |
 | 65816 | built (`core/src/asm/wdc65816.ts`) | SNES |
 | ARM | built (`core/src/asm/arm.ts`) | **GBA, NDS** — one encoder for three processors, since a DS has two |
-| V30MZ (8086) | new | WonderSwan, WonderSwan Color |
+| V30MZ (8086) | built (`core/src/asm/v30mz.ts`) — 16-bit x86, and the second encoder here with two oracles | **WonderSwan, WonderSwan Color** |
 | TLCS-900/H | new, and the largest of them | Neo Geo Pocket, NGP Color |
 | SPC700 | built (`core/src/asm/spc700.ts`) | SNES audio only |
 
@@ -300,9 +303,130 @@ the backend today, and either is a reason to revisit rather than to work around.
    with an SN76489 driver behind them. The encoder has no console left to buy:
    the only other Z80 machine in the matrix is the SG-1000, which is out of scope
    for games ([§above](#the-sg-1000-is-out-of-scope-for-games)).
-4. **WonderSwan Color**, then the **tiled-mono fitter**, then **WonderSwan**. The
-   mono machine's blocker is the art path, not the CPU, and the fitter is an
-   engine increment that stands on its own.
+4. **WonderSwan Color** — *done* — then the **tiled-mono fitter**, then
+   **WonderSwan**. The mono machine's blocker is the
+   art path, not the CPU, and the fitter is an engine increment that stands on
+   its own.
+
+   `demake build -c wsc` produces a playable 512 KiB cartridge and the whole
+   example library traces identically on it, in the same battery every other
+   console runs. **The encoder**
+   (`core/src/asm/v30mz.ts`) is 16-bit x86 and the second one here with two
+   oracles: hand-read encodings, as every encoder gets, *and* a differential
+   battery against NASM, which the display-ROM harness already provisions. It
+   earns that here for the ARM encoder's reason turned inside out — this
+   architecture packs three fields into a mod/reg/rm byte and gives a
+   displacement a length that depends on its *value*, so a register written into
+   the wrong field still decodes as an instruction. **The cartridge wrapper**
+   (`core/src/asm/ws-cart.ts`) is the other half: the program is in the last
+   64 KiB bank because that is what the processor answers segment `$F000` with
+   from reset, the entry point is a far jump at that bank's `$FFF0` because that
+   is physically where reset starts fetching, and the checksum covers every byte
+   but its own two. There is **one board**, unlike the NES's or the Mega Drive's
+   — the size byte's vocabulary starts at 4 Mbit, so this console has nothing
+   smaller to choose, the way a Game Boy ROM-only cartridge cannot move either.
+   And **`@demake/wsc`** is the ninth owned core.
+
+   The **value and expression layers** are built and proven (`codegen/wsc/val.ts`,
+   `expr.ts`, `wsc-arith.test.ts`), and the value layer is small for a reason neither 16-bit console
+   before it has. A V30MZ is sixteen bits wide, so an add is still two
+   instructions — but its ALU reaches memory on *both* sides, so a 32-bit add is
+   four instructions with no pointer and no scratch, and it has a real multiplier
+   and divider. A 16.16 multiply is **four multiplies and no loop at all**, which
+   no other backend here can say, and the two divisor shapes a game actually uses
+   are three chained divides each. The bit loop is left for a fractional divisor
+   of a cell or more, which nothing in the example library reaches, and it is
+   thirty-two iterations rather than forty-eight because such a divisor is at
+   least `1.0` and the dividend's top sixteen bits cannot produce a quotient bit.
+
+   The multiplier reaches the expression layer too, and in two places no other
+   backend has. The **generator advances with no loop**: `rng * 1664525 +
+   1013904223` is three `mul` instructions and two adds, where every other
+   backend here shifts and adds over thirty-two bits — bit-for-bit `rng.ts`
+   either way, which is what `wsc-arith.test.ts` checks against the definition
+   and against the rule that a draw advances the state even when the bounds leave
+   nothing to draw. And the **modulo a draw needs is one instruction**, so
+   `Mod16` is not a routine on this console at all.
+
+   The renderer, the rules and the emitter are built (`codegen/wsc/emit.ts`,
+   `rules.ts`, `tiles.ts`, `wsc-art.ts`), and five things about them are this
+   hardware's:
+
+   - **The HUD gets a plane of its own**, which only the Game Boy Advance has so
+     far. `SCR2` scrolls independently of `SCR1` and draws in front of it, and
+     colour zero is transparent on both, so a caption's cell can be held still
+     while the picture slides under it. The sprite HUD, the second decimal
+     renderer and the pixel-pinning argument every 8-bit console needs are absent
+     rather than reimplemented.
+   - **A cell carries its own palette** — four bits in the map word — so there is
+     no attribute table and no 16×16 block, which is the PC Engine's arrangement.
+     The split is the Game Boy Color's: seven palettes for background art and one
+     for the font, seven for objects and one for theirs, because a sprite's
+     palette field is three bits and selects among the upper eight.
+   - **The map is 32×32 against a 28×18 window**, so a scrolling scene paints its
+     leading edge where nobody is looking and both wraps are powers of two — no
+     seam to mask on either axis.
+   - **There is no video memory at all.** The screen maps, the tile bank, the
+     object table and palette RAM are addresses in the same 64 KiB the game's
+     variables are in, so nothing is ever uploaded and the object table is not a
+     shadow — the display reads it where the runtime wrote it.
+   - **The loop watches the beam**, as the Nintendo DS's does: this console's
+     interrupt controller vectors through the processor's own table, and a game
+     whose main loop waits either way gains nothing by it. That changes the day
+     this console gets an audio driver, which it has not.
+
+   What the backend cost that no predecessor did was **saying which segment a
+   read means**. `DS` is the console's RAM and `CS` is its cartridge, so a level's
+   grid, a packed picture and a pooled 16.16 constant all need a one-byte
+   override and a game's own property does not — and `val.ts` decides it from the
+   reference's own type rather than leaving each emitter to remember, because the
+   version that did not froze every game on its second tick with nothing about
+   the arithmetic wrong.
+
+   **And it has sound.** `@demake/chip`'s `WsSound` models the four wavetable
+   channels, `binding/wsc.ts` drives them, and the cartridge carries a generated
+   V30MZ driver (`rom/wsc-driver.ts`, `wsc-game.ts`) whose every register write
+   is diffed against the demakers' schedules tick for tick by the shared battery.
+   Both WonderSwans demake music and effects, because the mono machine has the
+   same sound hardware; only the *game* backend is the colour machine's.
+
+   Three things about it are this console's. The waveforms are in its **own RAM**
+   — port `$8F` names a sixty-four-byte page — so the bank is bytes the driver
+   copies rather than register writes it performs, and the address is one
+   constant the binding, the renderer and the memory plan all read. The **clock
+   is a tally**: this cartridge takes no interrupts anywhere, so the driver reads
+   the vertical-blank timer's counter and pays whatever frames it finds owed,
+   which is the frame-counting discipline every other frame-clocked console needs
+   a handler for. And the **pitch register counts up** — it is subtracted from
+   2048 — so the spec declares the lattice and the binding does the subtraction.
+
+   What is left on this console's audio is channel two's PCM voice, which is
+   stored and inert in the model and reachable by nothing above it.
+
+   **And one thing it found was not this console's** — *closed*. The display runs
+   at **75.47 Hz**, so a tick that is a frame happens seventy-five times a second,
+   which makes this the first console in the set that does not run at sixty. The
+   language was built for exactly that (doc 14 §3) and the **`.test.dmt` suites
+   were not: every script in the example library measured with `play 240 ticks`
+   and `hold right for 42 ticks`**, and `caves`' own comment stated the assumption
+   out loud — "an eleven-cell-a-second hero … takes the same ticks to reach the
+   same ledge on every console". A tick count was an absolute duration dressed as
+   a portable one, and it had been portable only because every console so far
+   shared a rate.
+
+   The test-script grammar now takes a duration in **seconds**, resolved against
+   the profile's `fps` by the runner — the same rule `speed` already runs under
+   one layer down. `ticks` stays a unit, because a step that means "one more tick"
+   should say so, and the suites keep it for the two- and eight-tick waits that
+   give a rule an edge to fire on. The conversion changed no console's behaviour:
+   two decimal places of seconds round-trips to the same tick count at sixty, and
+   every count in the library does.
+
+   It also found one assertion that was never portable and was not about the
+   rate. `quest`'s pit test asserted a power-up's value after a death *and a level
+   restart* — a second run at the same level, whose progress when the script stops
+   depends on where the first one ended. It asserts the scene now, which is what
+   its own name claims and what the restart actually is.
 5. **Atari 7800** — the encoder is free, and it buys the display-list layout path
    the image side wants anyway.
 6. **Neo Geo Pocket / Color** — one large encoder for two consoles, 12 KB of RAM,

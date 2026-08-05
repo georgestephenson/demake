@@ -68,10 +68,12 @@ import {
   buildPceGameAudio,
   buildSmsGameAudio,
   buildSpcGameAudio,
+  buildWscGameAudio,
   gbChannelOf,
   ndsChannelTag,
   nesChannelOf,
   pceChannelTag,
+  wscChannelTag,
   psgChannelTag,
   psgShadowSlot,
   PSG_STEREO_REG,
@@ -87,6 +89,7 @@ import {
   NES_CLOCK_HZ,
   SDSP_CLOCK_HZ,
   SN76489_CLOCK_HZ,
+  WS_SOUND_CLOCK_HZ,
   StreamSink,
   type SampleSink,
 } from "@demake/chip";
@@ -99,6 +102,7 @@ import { Nes } from "@demake/nes";
 import { Pce } from "@demake/pce";
 import { Sms } from "@demake/sms";
 import { Snes } from "@demake/snes";
+import { Wsc } from "@demake/wsc";
 
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
@@ -111,6 +115,7 @@ import { buildNesRom } from "../src/codegen/nes.js";
 import { buildPceRom } from "../src/codegen/pce.js";
 import { buildSmsRom } from "../src/codegen/sms.js";
 import { buildSnesRom } from "../src/codegen/snes.js";
+import { buildWscRom } from "../src/codegen/wsc.js";
 import { EXAMPLES, exampleProject, gameSource } from "./_projects.js";
 
 /** The five things this battery needs of a console, and nothing else. */
@@ -209,6 +214,14 @@ export interface Target {
    * last-value-per-register map and compare.
    */
   register?(): (write: Write) => string | null;
+  /**
+   * Frames a second, where the console does not draw sixty of them.
+   *
+   * Every machine in this set did until the WonderSwan, which draws 75.47 — so
+   * "run a hundred and twenty frames and expect two seconds of samples" was a
+   * sixty-hertz assumption written as arithmetic. Absent means sixty.
+   */
+  frameHz?: number;
 }
 
 /** What every driver agrees to hand back, which is all this file uses. */
@@ -399,6 +412,43 @@ const ALL: readonly Target[] = [
           return machine.read(machine.cpu.physical(from)) === 0x40 ? -1 : pc;
         },
       };
+    },
+  },
+  {
+    id: "wsc",
+    name: "WonderSwan Color",
+    clockHz: WS_SOUND_CLOCK_HZ,
+    // `$90` is this chip's `NR51`: four channel enables and three mode bits in
+    // one byte, so two streams both write it and the driver folds rather than
+    // stores. The fold has to reach bit 7 as well, because that is what puts
+    // channel four on its shift register.
+    mergeReg: 0x90,
+    mergeHelper: "shared-register-merge",
+    // No timer this driver can have — the cartridge takes no interrupts at all —
+    // so a tick is a frame, and a frame here is 75.47 Hz rather than sixty. The
+    // window counts are the Game Boy's 120 Hz ticks, so this is the ratio that
+    // makes each run cover the same seconds of track.
+    ratio: 3072000 / 40704 / 120,
+    // Every register is addressed by its own number, so unlike three of the
+    // chips here the tag carries no latch — it is a factory only because the
+    // contract is.
+    tag: wscChannelTag,
+    // The one console here that does not draw sixty frames a second.
+    frameHz: 3072000 / 40704,
+    tickAddress: cartridgeTick,
+    async build(source, project) {
+      const { files, levels, assets } = exampleProject(project);
+      const program = compile(source, { profile: getProfile("wsc"), files, levels });
+      const built = await buildWscRom(program, { assets });
+      const state = built.layout.audio as number;
+      const bound = await bindAudio(program, assets, {
+        build: (tracks, effects) =>
+          buildWscGameAudio({ tracks, effects: effects as GameEffect[], state }),
+      });
+      return { built, bound };
+    },
+    boot(rom) {
+      return wrap(new Wsc(rom));
     },
   },
   {
@@ -651,7 +701,7 @@ const ALL: readonly Target[] = [
 ];
 
 /** Every core answers the same five questions; this is the adapter, once. */
-function wrap(machine: Gameboy | Nes | Sms | Snes | Md | Gba | Nds | Pce): Machine {
+function wrap(machine: Gameboy | Nes | Sms | Snes | Md | Gba | Nds | Pce | Wsc): Machine {
   return {
     step: () => {
       machine.stepInstruction();
@@ -662,6 +712,10 @@ function wrap(machine: Gameboy | Nes | Sms | Snes | Md | Gba | Nds | Pce): Machi
       // begins, and the game's own is running something else entirely.
       if (machine instanceof Snes) return machine.smp.pc;
       if (machine instanceof Nds) return machine.arm7.cpu.pc;
+      // And on the one whose processor is an 8086, the register is called `ip`
+      // and it is an *offset* — the driver is in the same segment as everything
+      // else a cartridge runs, so the offset is the whole address.
+      if (machine instanceof Wsc) return machine.cpu.ip;
       return machine.cpu.pc;
     },
     tap: (listener) => {
@@ -674,7 +728,8 @@ function wrap(machine: Gameboy | Nes | Sms | Snes | Md | Gba | Nds | Pce): Machi
         machine.psgTap = (reg, value) => listener(reg, value, 1);
         return;
       }
-      if (machine instanceof Sms || machine instanceof Pce) machine.psgTap = listener;
+      if (machine instanceof Wsc) machine.soundTap = listener;
+      else if (machine instanceof Sms || machine instanceof Pce) machine.psgTap = listener;
       else if (machine instanceof Snes) machine.dspTap = listener;
       else if (machine instanceof Nds) machine.spuTap = listener;
       else machine.apuTap = listener;
@@ -1102,20 +1157,23 @@ export function audioBattery(target: Target): void {
       const machine = target.boot(built.bytes);
       const sink = new StreamSink(target.clockHz, { sampleRate: 48000, capacitySeconds: 3 });
       machine.listen(sink);
-      for (let frame = 0; frame < 120; frame += 1) machine.runFrame();
+      const FRAMES = 120;
+      for (let frame = 0; frame < FRAMES; frame += 1) machine.runFrame();
 
-      // Two seconds of frames, two seconds of samples: the chip is clocked by the
-      // same master clock the CPU counts in, and a ratio slipped in anywhere here
-      // would show up as a tempo that is not the one the arranger reported. The
-      // band is loose by a few percent because `runFrame` stops at the *next*
-      // vertical blank rather than after an exact number of clocks; a wrong ratio
-      // would miss by a factor, not by three percent.
+      // A hundred and twenty frames of the *console's* own rate, and that many
+      // seconds of samples: the chip is clocked by the same master clock the CPU
+      // counts in, and a ratio slipped in anywhere here would show up as a tempo
+      // that is not the one the arranger reported. The band is loose by a few
+      // percent because `runFrame` stops at the *next* vertical blank rather than
+      // after an exact number of clocks; a wrong ratio would miss by a factor,
+      // not by three percent.
+      const expected = FRAMES / (target.frameHz ?? 60);
       const left = new Float32Array(sink.available);
       const right = new Float32Array(sink.available);
       const count = sink.read(left, right, left.length);
       const seconds = count / 48000;
-      expect(seconds).toBeGreaterThan(1.9);
-      expect(seconds).toBeLessThan(2.2);
+      expect(seconds).toBeGreaterThan(expected * 0.95);
+      expect(seconds).toBeLessThan(expected * 1.1);
       expect(sink.dropped).toBe(0);
 
       let peak = 0;
@@ -1325,6 +1383,14 @@ export function audioSweep(target: Target): void {
       // the 48 KiB window; the shooter, which is the tightest fixture on every
       // other machine, leaves fifteen.
       pce: ["caves", "runner"],
+      // The WonderSwan keeps the same two, and for the PC Engine's reason with
+      // the numbers changed: a cartridge here is half a megabyte and only its
+      // last 64 KiB is mapped, so a game's budget is the window and the window
+      // holds its characters as well as its code. The two level games are what
+      // fill it. Demaking a 224×144 picture into seven sixteen-colour
+      // sub-palettes is also a couple of minutes a fixture on this console, so
+      // the list is what the sweep can actually afford.
+      wsc: ["caves", "runner"],
     };
 
     for (const file of cases) {

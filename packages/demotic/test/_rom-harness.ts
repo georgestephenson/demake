@@ -29,6 +29,7 @@ import { Nes, type Button as NesButton } from "@demake/nes";
 import { Pce, type Button as PceButton } from "@demake/pce";
 import { Sms, type Button as SmsButton } from "@demake/sms";
 import { Snes, type Button as SnesButton } from "@demake/snes";
+import { Wsc, type Button as WscButton } from "@demake/wsc";
 
 import { buildGbRom } from "../src/codegen/gb.js";
 import { buildGbaRom } from "../src/codegen/gba.js";
@@ -38,6 +39,7 @@ import { buildNesRom } from "../src/codegen/nes.js";
 import { buildPceRom } from "../src/codegen/pce.js";
 import { buildSmsRom } from "../src/codegen/sms.js";
 import { buildSnesRom } from "../src/codegen/snes.js";
+import { buildWscRom } from "../src/codegen/wsc.js";
 import type { BuildOptions, BuiltRom } from "../src/codegen/backend.js";
 import type { Program } from "../src/program.js";
 import { romReady, romTraceLine } from "../src/rom/trace.js";
@@ -125,6 +127,24 @@ export const pceTarget: RomTarget = {
       runFrame: () => machine.runFrame(),
       setButtons: (down) =>
         machine.setButtons(down.map((name) => map[name] ?? (name as PceButton))),
+    };
+  },
+};
+
+/**
+ * The WonderSwan Color, whose keypad is a multiplexer rather than a shift
+ * register — and whose direction pad is the X cluster, in landscape.
+ */
+export const wscTarget: RomTarget = {
+  console: "wsc",
+  build: (program, options) => buildWscRom(program, options),
+  boot: (bytes) => {
+    const machine = new Wsc(bytes);
+    return {
+      readMemory: (address, length) => machine.readMemory(address, length),
+      stepInstruction: () => machine.stepInstruction(),
+      runFrame: () => machine.runFrame(),
+      setButtons: (down) => machine.setButtons(down as WscButton[]),
     };
   },
 };

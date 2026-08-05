@@ -20,14 +20,37 @@ import type { Expr } from "../lang/ast.js";
 import { parseExpression } from "../lang/parse.js";
 import { ACTIONS, type Action } from "../program.js";
 
+/**
+ * How long a step lasts, in the unit it was written in.
+ *
+ * Unresolved on purpose: a *second* is a different number of ticks on different
+ * consoles, and the parser has no console. The runner resolves it against the
+ * profile's `fps`, which is the same place the compiler resolves a `speed`.
+ */
+export type Duration =
+  /** `240 ticks` — the simulation's own quantum, and the same count everywhere. */
+  | { unit: "ticks"; count: number }
+  /** `4 seconds` — the same *duration* everywhere, whatever the console ticks at. */
+  | { unit: "seconds"; count: number };
+
+/**
+ * A duration in ticks on a console that runs at `fps`.
+ *
+ * Rounded, because a console's rate need not divide a second's worth of them
+ * evenly. Written in ticks it is the count as given — nothing to resolve.
+ */
+export function durationTicks(duration: Duration, fps: number): number {
+  return duration.unit === "ticks" ? duration.count : Math.round(duration.count * fps);
+}
+
 /** One step in a test case. */
 export type TestStep =
-  /** `play 60 ticks` — advance with no input. */
-  | { kind: "play"; ticks: number; line: number }
+  /** `play 4 seconds` — advance with no input. */
+  | { kind: "play"; duration: Duration; line: number }
   /** `press a` — one tick held, one released, so an edge rule sees it. */
   | { kind: "press"; action: Action; line: number }
-  /** `hold left for 120 ticks` */
-  | { kind: "hold"; action: Action; ticks: number; line: number }
+  /** `hold left for 5 seconds` */
+  | { kind: "hold"; action: Action; duration: Duration; line: number }
   /** `expect <expression>` — must evaluate non-zero. */
   | { kind: "expect"; expr: Expr; source: string; line: number }
   /** `expect scene <name>` — a readable special case of the above. */
@@ -53,12 +76,29 @@ function stripComment(line: string): string {
   return (at < 0 ? line : line.slice(0, at)).trim();
 }
 
-/** Parse `<n> ticks`, tolerating the unit being left off. */
-function parseTicks(rest: string): number | undefined {
-  const match = /^(\d+)(\s+ticks?)?$/i.exec(rest.trim());
+/**
+ * Parse `<n> seconds` or `<n> ticks`, tolerating the unit being left off.
+ *
+ * **Seconds are what a script that means a duration should say.** A tick count
+ * is portable only while every console ticks at the same rate, and one does not:
+ * a WonderSwan runs at 75.47 Hz, so `hold right for 42 ticks` covers three
+ * quarters of the ground there that it covers on a Game Boy. That is the same
+ * trap `speed` avoids by being cells per *second* (doc 14 §3), arriving one
+ * layer up — and it stayed invisible for as long as every profile said sixty.
+ *
+ * Ticks are still a unit rather than a deprecation: a step that means "one more
+ * tick" means exactly that, and a bare number still reads as ticks because it
+ * always has.
+ */
+function parseDuration(rest: string): Duration | undefined {
+  const match = /^(\d+(?:\.\d+)?)(?:\s+(ticks?|seconds?))?$/i.exec(rest.trim());
   if (!match) return undefined;
-  const ticks = Number(match[1]);
-  return Number.isSafeInteger(ticks) && ticks >= 0 ? ticks : undefined;
+  const count = Number(match[1]);
+  if (!Number.isFinite(count) || count < 0) return undefined;
+  const unit = (match[2] ?? "ticks").toLowerCase();
+  if (unit.startsWith("second")) return { unit: "seconds", count };
+  // A fractional tick is not a thing the simulation has.
+  return Number.isSafeInteger(count) ? { unit: "ticks", count } : undefined;
 }
 
 /** Parse a `.test.dmt` source file. Never throws. */
@@ -114,12 +154,12 @@ export function parseTests(source: string): TestFile {
 
     switch (keyword) {
       case "play": {
-        const ticks = parseTicks(rest);
-        if (ticks === undefined) {
-          fail(line, "E_SYNTAX", "`play` takes a tick count", "e.g. `play 60 ticks`");
+        const duration = parseDuration(rest);
+        if (duration === undefined) {
+          fail(line, "E_SYNTAX", "`play` takes a duration", "e.g. `play 4 seconds`");
           break;
         }
-        current.steps.push({ kind: "play", ticks, line });
+        current.steps.push({ kind: "play", duration, line });
         break;
       }
 
@@ -145,12 +185,12 @@ export function parseTests(source: string): TestFile {
             line,
             "E_SYNTAX",
             "`hold` takes a button and a duration",
-            "e.g. `hold left for 120 ticks`",
+            "e.g. `hold left for 5 seconds`",
           );
           break;
         }
         const action = (match[1] as string).toLowerCase();
-        const ticks = parseTicks(match[2] as string);
+        const duration = parseDuration(match[2] as string);
         if (!ACTION_SET.has(action)) {
           fail(
             line,
@@ -160,11 +200,11 @@ export function parseTests(source: string): TestFile {
           );
           break;
         }
-        if (ticks === undefined) {
-          fail(line, "E_SYNTAX", "`hold` needs a tick count", "e.g. `hold left for 120 ticks`");
+        if (duration === undefined) {
+          fail(line, "E_SYNTAX", "`hold` needs a duration", "e.g. `hold left for 5 seconds`");
           break;
         }
-        current.steps.push({ kind: "hold", action: action as Action, ticks, line });
+        current.steps.push({ kind: "hold", action: action as Action, duration, line });
         break;
       }
 

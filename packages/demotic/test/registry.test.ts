@@ -20,6 +20,7 @@ import { nesBackend } from "../src/codegen/nes.js";
 import { pceBackend } from "../src/codegen/pce.js";
 import { smsBackend } from "../src/codegen/sms.js";
 import { snesBackend } from "../src/codegen/snes.js";
+import { wscBackend } from "../src/codegen/wsc.js";
 import {
   familyFor,
   hasRuntime,
@@ -39,6 +40,7 @@ const LOADED: readonly AnyBackend[] = [
   anyBackend(mdBackend),
   anyBackend(gbaBackend),
   anyBackend(pceBackend),
+  anyBackend(wscBackend),
 ];
 
 /** The smallest program that compiles, so a profile is all that varies. */
@@ -90,7 +92,6 @@ describe("the backend registry", () => {
     expect(profiles.every((profile) => runtimeConsoles.includes(profile.id))).toBe(true);
     expect(familyFor("lynx")).toBeUndefined();
     expect(hasRuntime("lynx")).toBe(false);
-
     const compiled = program("gb");
     const orphan = { ...compiled, profile: { ...compiled.profile, id: "lynx", name: "Lynx" } };
     expect(unsupportedFor(orphan)).toEqual(["a runtime for Lynx"]);

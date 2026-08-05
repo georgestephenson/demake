@@ -118,6 +118,9 @@ importers:
       '@demake/snes':
         specifier: workspace:*
         version: link:../snes
+      '@demake/wsc':
+        specifier: workspace:*
+        version: link:../wsc
 
   packages/dmg:
     dependencies:
@@ -239,6 +242,9 @@ importers:
       '@demake/snes':
         specifier: workspace:*
         version: link:../snes
+      '@demake/wsc':
+        specifier: workspace:*
+        version: link:../wsc
       preact:
         specifier: ^10.29.7
         version: 10.29.7
@@ -255,6 +261,16 @@ importers:
       vite:
         specifier: ^8.1.5
         version: 8.1.5(@types/node@24.13.3)
+
+  packages/wsc:
+    dependencies:
+      '@demake/chip':
+        specifier: workspace:*
+        version: link:../chip
+    devDependencies:
+      '@demake/core':
+        specifier: workspace:*
+        version: link:../core
 
   tools/eslint-rules: {}
 

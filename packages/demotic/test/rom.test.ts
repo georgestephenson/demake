@@ -38,6 +38,7 @@ import {
   romTrace,
   smsTarget,
   snesTarget,
+  wscTarget,
   type RomTarget,
 } from "./_rom-harness.js";
 import { gameSource, projectBytes, projectText } from "./_projects.js";
@@ -69,6 +70,7 @@ const TARGETS: readonly RomTarget[] = [
   mdTarget,
   gbaTarget,
   ndsTarget,
+  wscTarget,
 ];
 
 describe("gb ROM", async () => {
@@ -386,4 +388,15 @@ describe("what the generated code costs", async () => {
       expect(await framesPerTick(build(gameSource(file), levels))).toBeLessThan(1.2);
     });
   }
+
+  // And on the console with the shortest frame in the set. A WonderSwan draws
+  // 75.47 times a second where every other machine here draws sixty, so a tick
+  // that fits comfortably everywhere else has a fifth less time to do it in —
+  // which is why this console is the one that found a decimal renderer walking
+  // the powers of ten by subtraction on a processor that can divide.
+  it("fits a tick inside a frame for caves on the shortest frame in the set", async () => {
+    const levels = { "cavern.dmtl": projectText("caves", "levels/cavern.dmtl") };
+    const program = build(gameSource("caves"), levels, "wsc");
+    expect(await framesPerTick(program, wscTarget)).toBeLessThan(1.2);
+  });
 });

@@ -112,6 +112,11 @@ export function RomPane({
   // if it were the second is how a button comes to lie in one browser.
   const [sound, setSound] = useState(false);
   const [playing, setPlaying] = useState(false);
+  // Whether the *running* cartridge has a chip to listen to. Every console with
+  // a backend has an audio driver today, so this is true everywhere — but it is
+  // the cartridge's answer rather than an assumption, which is what made the
+  // control honest on the console that spent a release without one.
+  const [audible, setAudible] = useState(true);
   // The project's own art, music and effects, as the *source* bytes the build
   // takes — the conversion happens inside the build, so the page and the CLI
   // cannot diverge on it (doc 07 §parity). A project whose binaries are still
@@ -213,10 +218,9 @@ export function RomPane({
   const consoleId = built.consoleId ?? program?.profile.id ?? "gb";
   const family = built.family ?? "gb";
   const extension = built.extension ?? "gb";
-  // Whether the browser will give us an `AudioContext`. Every console with a
-  // backend now has a chip the cartridge's own driver plays, so this is the only
-  // question left — a control that did nothing would be worse than none.
-  const canSound = audioSupported();
+  // Whether the browser will give us an `AudioContext`, and whether this
+  // cartridge has anything to play through one.
+  const canSound = audioSupported() && audible;
   // The canvas is sized by the console, not by CSS: these are two genuinely
   // different screens (160×144 against 256×240, and not the same aspect), and a
   // buffer put into a canvas of the wrong size is silently cropped.
@@ -302,6 +306,7 @@ export function RomPane({
     void bootPlayer(rom, family, consoleId).then((booted) => {
       if (!live) return;
       machine.current = booted;
+      setAudible(booted.chips.length > 0);
       if (booted.chips.length > 0) player.current?.attach(booted.chips);
       image = context.createImageData(booted.width, booted.height);
       raf = requestAnimationFrame(frame);

@@ -10,6 +10,7 @@
  * which is why `ws` has no codegen backend and the WonderSwan **Color** is its
  * own `wsc` family rather than a sibling of this one.
  */
+import { wsAudio } from "./audio-specs.js";
 import type { ConsoleSpec, RGB8 } from "./types.js";
 const GRAY8: readonly RGB8[] = Array.from({ length: 8 }, (_, i) => {
   const v = Math.round(255 * (1 - i / 7));
@@ -32,6 +33,7 @@ export const ws = {
     tileBudget: 512,
     flip: true,
   },
+  audio: wsAudio,
   codegen: { family: "ws", formats: ["bin", "asm", "c", "rom"] },
   docs: { sources: ["WSdev — mono display (8 shades)"] },
 } satisfies ConsoleSpec;
