@@ -172,6 +172,12 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/ngp:
+    devDependencies:
+      '@demake/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/pce:
     dependencies:
       '@demake/chip':
