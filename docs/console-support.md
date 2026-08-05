@@ -25,11 +25,11 @@ columns are [doc 03](03-console-matrix.md); the plan for the empty cells is
 | Game Boy | `dmg` | `gb` | yes | `bin` `asm` `c` | RGBDS | SameBoy | `gb` | yes | 120 Hz |
 | Game Boy Advance | `gba` | `gba` | yes | `bin` `asm` `c` | GNU ARM binutils | mGBA | `gba` | yes | 128 Hz |
 | Game Boy Color | `gbc` | `gb` | yes | `bin` `asm` `c` | RGBDS | SameBoy | `gb` | yes | 120 Hz |
-| Sega Mega Drive | `md` | `md` | yes | `bin` `asm` `c` | GNU m68k binutils | genesis-plus-gx | `md` | yes | 59.92 Hz |
+| Sega Mega Drive / Sega Genesis | `md` | `md` | yes | `bin` `asm` `c` | GNU m68k binutils | genesis-plus-gx | `md` | yes | 59.92 Hz |
 | Nintendo DS | `nds` | `nds` | yes | `bin` `asm` `c` | GNU ARM binutils | DeSmuME | `gba` | yes | 120 Hz |
-| Nintendo Entertainment System | `nes` | `nes` | yes | `bin` `asm` `c` | cc65 | fceumm | `nes` | yes | 60.1 Hz |
+| Nintendo Entertainment System / Family Computer | `nes` | `nes` | yes | `bin` `asm` `c` | cc65 | fceumm | `nes` | yes | 60.1 Hz |
 | Sega Master System | `sms` | `sms` | yes | `bin` `asm` `c` | WLA-DX | genesis-plus-gx | `sms` | yes | 59.92 Hz |
-| Super Nintendo Entertainment System | `snes` | `snes` | yes | `bin` `asm` `c` | WLA-DX | snes9x | `snes` | yes | 125 Hz |
+| Super Nintendo Entertainment System / Super Famicom | `snes` | `snes` | yes | `bin` `asm` `c` | WLA-DX | snes9x | `snes` | yes | 125 Hz |
 
 ## Tier 2
 
@@ -39,7 +39,7 @@ columns are [doc 03](03-console-matrix.md); the plan for the empty cells is
 | Neo Geo | `neogeo` | `neogeo` | yes | `bin` `asm` `c` | — | — | — | — | — |
 | Neo Geo Pocket | `ngp` | `ngpc` | yes | `bin` `asm` `c` | — | — | — | — | — |
 | Neo Geo Pocket Color | `ngpc` | `ngpc` | yes | `bin` `asm` `c` | — | — | — | — | — |
-| PC Engine | `pce` | `pce` | yes | `bin` `asm` `c` | WLA-DX | beetle-pce-fast | `pce` | yes | 120 Hz |
+| PC Engine / TurboGrafx-16 | `pce` | `pce` | yes | `bin` `asm` `c` | WLA-DX | beetle-pce-fast | `pce` | yes | 120 Hz |
 | WonderSwan | `ws` | `ws` | yes | `bin` `asm` `c` | — | — | `wsc` | yes | 75.47 Hz |
 | WonderSwan Color | `wsc` | `wsc` | yes | `bin` `asm` `c` | NASM | beetle-wswan | `wsc` | yes | 75.47 Hz |
 
@@ -48,10 +48,10 @@ columns are [doc 03](03-console-matrix.md); the plan for the empty cells is
 | Console | id | family | art | data | ROM | emulator | game | music/sfx | in-game audio |
 |---|---|---|---|---|---|---|---|---|---|
 | Tiger Game.com | `gamecom` | `mono-misc` | yes | `bin` `asm` `c` | — | — | — | — | — |
-| Mega Duck | `megaduck` | `gb` | yes | `bin` `asm` `c` | — | — | `gb` | yes | 120 Hz |
+| Mega Duck / Cougar Boy | `megaduck` | `gb` | yes | `bin` `asm` `c` | — | — | `gb` | yes | 120 Hz |
 | Pokémon Mini | `pokemini` | `mono-misc` | yes | `bin` `asm` `c` | — | — | — | — | — |
 | Sega SG-1000 | `sg1000` | `sg1000` | yes | `bin` `asm` `c` | WLA-DX | genesis-plus-gx | — | yes | — |
-| Watara Supervision | `supervision` | `mono-misc` | yes | `bin` `asm` `c` | — | — | — | — | — |
+| Watara Supervision / QuickShot Supervision | `supervision` | `mono-misc` | yes | `bin` `asm` `c` | — | — | — | — | — |
 | Virtual Boy | `vb` | `vb` | yes | `bin` `asm` `c` | — | — | — | — | — |
 
 ## Totals

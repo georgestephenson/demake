@@ -389,9 +389,11 @@ export function LevelEditor({ project, path, onEdit }: EditorProps) {
             >
               {targets.length > 0 ? <option value="targets">Project targets</option> : null}
               <option value="none">None</option>
+              {/* The picker names every region, the chip drawn on the level
+                  names one: a caption over a picture is not a search. */}
               {profiles.map((one) => (
                 <option key={one.id} value={one.id}>
-                  {one.name}
+                  {one.label}
                 </option>
               ))}
             </select>

@@ -27,15 +27,29 @@ export function runConsoles(env: CliEnv, json: boolean): ExitCode {
   }
 
   const rows = list.map((spec) => formatRow(spec));
-  const header = `${pad("ID", 6)}${pad("NAME", 18)}${pad("RES", 10)}${pad("TIER", 6)}COLOR`;
+  const header =
+    `${pad("ID", 12)}${pad("NAME", 36)}${pad("RES", 10)}${pad("TIER", 6)}` +
+    `${pad("COLOR", 14)}ALSO KNOWN AS`;
   env.out(`${header}\n${rows.join("\n")}\n`);
   return EXIT.OK;
 }
 
+/**
+ * One console, one line.
+ *
+ * The regional names get a column of their own rather than being folded into
+ * NAME: only a handful of consoles have any, and joining them there would push
+ * every row of an aligned table out by the width of the longest pair for the
+ * sake of six of them.
+ */
 function formatRow(spec: ConsoleSpec): string {
   const res = `${spec.display.width}x${spec.display.height}`;
   const color = describeColor(spec);
-  return `${pad(spec.id, 6)}${pad(spec.name, 18)}${pad(res, 10)}${pad(String(spec.tier), 6)}${color}`;
+  const also = (spec.otherNames ?? []).join(", ");
+  return (
+    `${pad(spec.id, 12)}${pad(spec.name, 36)}${pad(res, 10)}${pad(String(spec.tier), 6)}` +
+    `${also === "" ? color : `${pad(color, 14)}${also}`}`
+  );
 }
 
 function describeColor(spec: ConsoleSpec): string {

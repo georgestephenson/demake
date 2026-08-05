@@ -1,4 +1,4 @@
-import { findConsole, type ConsoleSpec } from "@demake/core";
+import { consoleLabel, findConsole, type ConsoleSpec } from "@demake/core";
 import { describe, expect, it } from "vitest";
 
 import { profiles } from "../src/profiles.js";
@@ -14,6 +14,18 @@ describe("console profiles", () => {
   it("names a console the engine actually knows", () => {
     for (const profile of profiles) {
       expect(findConsole(profile.id), profile.id).toBeDefined();
+    }
+  });
+
+  it("carries the same regional label the engine builds", () => {
+    // The picker in the web app reads `label` from here rather than from
+    // `@demake/core`, because this table imports nothing. So the join — the
+    // names, their order and the separator between them — has to be checked
+    // against the one place that decides it, or a console gains a second name
+    // in the engine and keeps one name in the page.
+    for (const profile of profiles) {
+      const spec = findConsole(profile.id) as ConsoleSpec;
+      expect([profile.id, profile.label]).toEqual([profile.id, consoleLabel(spec)]);
     }
   });
 
