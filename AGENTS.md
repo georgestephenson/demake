@@ -2449,6 +2449,17 @@ that keep them from being undone. All of them come from doc 16.
   handling, a one-shot ships a stop path and a track does not. Never add a
   routine unconditionally and never prune afterwards — the same rule the Demotic
   backend runs under, and `stats.helpers` is what makes it checkable.
+- **Which is why a branch across a driver's run walk is a long branch.** That
+  walk's length _is_ the schedule — a recording body per borrowable channel, a
+  merge loop, a preemption test, each pulled or not — so the distance is data and
+  not something visible in the emitter. The SM83 player used `jr` for four of
+  them and assembled for every game in the library until one placed effects on
+  all four channels, at which point the branch was 202 bytes out of range and
+  `demake build` reported invalid code instead of the answer it owed. `jp` there,
+  `jr` only for a loop back or a skip over one instruction — the game backend's
+  rule (§Working on the console backend), which the driver is not exempt from.
+  `packages/audio/test/gb-branches.test.ts` builds the widest shape a Game Boy
+  can ask for, because the example library cannot reach it.
 - **A driver's size is a query, not a value.** The emitter is a closure the
   assembler runs, so `stats.code`, `stats.data` and `stats.helpers` are all zero
   or empty until it has — which happens in `assemble`, one step after
