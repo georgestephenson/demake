@@ -2660,6 +2660,21 @@ not per console.
   one file or every build happens twice. And `vitest --shard` is not the fix for
   this — it distributes files, so it cannot help a suite whose floor is one of
   them.
+- **A frame boundary is not a tick boundary, so never read a game's own variable
+  out of an emulated machine's RAM.** `runFrame` returns where the raster says,
+  which is anywhere in the tick — including the six instructions between the
+  camera's subtraction and the clamp that follows it, where the variable holds a
+  value the clamp is about to reject. `md-rom.test.ts` compared the VDP's scroll
+  registers against the camera read that way and was asserting about wherever
+  the boundary happened to land: it passed for months and then failed because a
+  coin four cells away moved, which shifted the tick by a few instructions.
+  Nothing about the cartridge was wrong either time. A rendering oracle wants
+  hardware state (video RAM, registers, the object table) on one side and the
+  **interpreter** on the other, which is the oracle everywhere else in the
+  project; `layout` is for _finding_ things the runtime owns and reading the
+  ones nothing is mid-way through writing. The NES, Sega, Super Nintendo, Game
+  Boy Advance and Nintendo DS oracles still take their camera out of RAM, so
+  each is a coin toss waiting to be spent.
 - **`unsupported` names language gaps, not hardware ones**, and every console's
   list is empty. It stayed empty on the Super Nintendo through the period when
   that machine had no sound, because a `.dmt` that says `music theme.mid`
