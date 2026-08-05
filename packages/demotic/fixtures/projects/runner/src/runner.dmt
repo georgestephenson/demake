@@ -42,8 +42,10 @@ create prize prize1 in play (x 12, y 14)
 create text scoretag in play (x 1, y 1, text "coins:")
 create number score in play (value 0, x 8, y 1)
 
--- A small impulse against a heavy pull: a flap, not a jump.
-when always in play then bird1.ydirection as min(bird1.ydirection + 0.09, 0.9)
+-- A small impulse against a heavy pull: a flap, not a jump. The pull is a
+-- per-tick delta, so it is written against `fps` or it is a heavier bird on a
+-- console that ticks faster.
+when always in play then bird1.ydirection as min(bird1.ydirection + 5.4 / fps, 0.9)
 
 control bird1 a (ydirection -1.2) on press
 

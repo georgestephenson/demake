@@ -289,6 +289,14 @@ tick would be a lie to the person writing the game. The number names the CPU it
 was measured on, since three frames a tick means different things on a 4 MHz
 SM83, a 1.8 MHz 6502 and a 3.6 MHz Z80.
 
+**And what a frame costs in _time_ is the console's, not a constant.** The rate
+beside that count is the frame rate divided by it, and the pane took the frame
+rate from the profile of the console the cartridge is for (`profiles.ts` §fps) —
+which is also the rate the emulator is paced at. It was one number for every
+machine while every machine ran at 60 Hz; the WonderSwan draws 75.47 times a
+second, so that number played its cartridges a fifth slow and then reported the
+rate it had slowed them to.
+
 A game the chosen console's backend cannot compile gets a message naming the
 feature instead of a cartridge that would play something else — the same refusal
 `demake build` makes, for the same reason (doc 14 §A backend gap is a build

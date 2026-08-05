@@ -10,6 +10,13 @@
 -- platforms are ledges and the shaft's sides and roof are walls. One legend
 -- character is the difference between landing on the ground and being able to
 -- climb the side of the cave.
+--
+-- The climb is a staircase and its step is the jump: five cells of rise, of
+-- which the top one is spent clearing the ledge, so a ledge four rows above the
+-- one below it is a step and a ledge six rows above it is scenery. Two rows of
+-- roof are part of that — a hero is two cells tall, so a ledge flush under the
+-- rock has nowhere to be *above*, and the last two ledges sat there for a while
+-- with the exit and a coin on them.
 
 tile #  wall    solid  rockwall.svg
 tile =  ledge   solid  stone.svg
@@ -20,10 +27,10 @@ tile .  air            air.svg
 map
 ############################################################
 #..........................................................#
+#..........................................................#
+#..........................................................#
 #.......................................................*..#
-#.......................................=====.........====.#
-#..........................................................#
-#..........................................................#
+#...................................=====.............====.#
 #.......................======.............................#
 #..........................................................#
 #..........................................................#

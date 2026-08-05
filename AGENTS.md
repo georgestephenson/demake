@@ -1315,6 +1315,35 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   the top of the tick, before anything has been collided with, so a control
   cannot ask whether there is ground underfoot — and a jump that cannot ask is a
   jump you can press forever.
+- **A delta a rule adds every tick is written against `fps`, or the game is a
+  different game on the WonderSwan.** A `speed` is cells per _second_ and the
+  compiler resolves it against the console's rate, but a rule that adds to a
+  property runs once a tick and nothing scales what it adds — so gravity written
+  as `ydirection + 0.04` falls half again as hard on a machine that ticks 75
+  times a second as on one that ticks 60. The caves' hero cleared five cells
+  everywhere and four on the WonderSwan, which stopped its climb two thirds of
+  the way up the cavern and was invisible from every other console.
+  `2.4 / fps` folds to the same constant a 60 Hz console already had, so the
+  code eleven of the twelve emit does not change by one byte. What it costs is
+  four bytes of RAM: the emitter folds a constant subexpression
+  (`codegen/expr.ts` §emitExpr) but `analyze.ts` measures the tree it was
+  handed, so the division buys an expression temporary it never uses — and would
+  pull in the divider on a game that otherwise never divides. Every fixture in
+  the library already divides, so today it is four bytes and a shifted RAM map.
+  **A duration is the same problem**: `guard.value as 120` is two seconds only on
+  a machine that ticks 60 times a second, so quest writes `2 * fps` and reads its
+  boss timer at `fps * 7 / 6`.
+- **A ledge wants three clear rows above it and a surface within four rows
+  below.** A hero is two cells tall and a jump rises five, of which the top one
+  is spent getting _above_ the ledge rather than into its side — so a ledge four
+  rows above the one below it is a step, one six rows above it is scenery, and
+  one flush under a level's roof has nowhere to be above and cannot be landed on
+  at all. The caves' exit and one of its coins sat on two of those for months:
+  drawn, demade, shipped, and reachable only by a _wall hop_ — a solid ledge
+  grants footing from its side, so a falling hero can take footing off the face
+  of one and jump again — which is a bug being exploited, not a route.
+  `level.test.ts` checks both conditions on the cavern; the horizontal reach it
+  cannot check, and the interpreter is the oracle for that.
 - **A scene's playfield is its level's size, or the screen's** (doc 14 §Levels).
   So `screenright` means the end of the _level_, object positions are level
   coordinates, and the camera is the only thing that knows where the view is —
@@ -2497,6 +2526,17 @@ that keep them from being undone. All of them come from doc 16.
   handling, a one-shot ships a stop path and a track does not. Never add a
   routine unconditionally and never prune afterwards — the same rule the Demotic
   backend runs under, and `stats.helpers` is what makes it checkable.
+- **Which is why a branch across a driver's run walk is a long branch.** That
+  walk's length _is_ the schedule — a recording body per borrowable channel, a
+  merge loop, a preemption test, each pulled or not — so the distance is data and
+  not something visible in the emitter. The SM83 player used `jr` for four of
+  them and assembled for every game in the library until one placed effects on
+  all four channels, at which point the branch was 202 bytes out of range and
+  `demake build` reported invalid code instead of the answer it owed. `jp` there,
+  `jr` only for a loop back or a skip over one instruction — the game backend's
+  rule (§Working on the console backend), which the driver is not exempt from.
+  `packages/audio/test/gb-branches.test.ts` builds the widest shape a Game Boy
+  can ask for, because the example library cannot reach it.
 - **A driver's size is a query, not a value.** The emitter is a closure the
   assembler runs, so `stats.code`, `stats.data` and `stats.helpers` are all zero
   or empty until it has — which happens in `assemble`, one step after
@@ -2699,6 +2739,21 @@ not per console.
   one file or every build happens twice. And `vitest --shard` is not the fix for
   this — it distributes files, so it cannot help a suite whose floor is one of
   them.
+- **A frame boundary is not a tick boundary, so never read a game's own variable
+  out of an emulated machine's RAM.** `runFrame` returns where the raster says,
+  which is anywhere in the tick — including the six instructions between the
+  camera's subtraction and the clamp that follows it, where the variable holds a
+  value the clamp is about to reject. `md-rom.test.ts` compared the VDP's scroll
+  registers against the camera read that way and was asserting about wherever
+  the boundary happened to land: it passed for months and then failed because a
+  coin four cells away moved, which shifted the tick by a few instructions.
+  Nothing about the cartridge was wrong either time. A rendering oracle wants
+  hardware state (video RAM, registers, the object table) on one side and the
+  **interpreter** on the other, which is the oracle everywhere else in the
+  project; `layout` is for _finding_ things the runtime owns and reading the
+  ones nothing is mid-way through writing. The NES, Sega, Super Nintendo, Game
+  Boy Advance and Nintendo DS oracles still take their camera out of RAM, so
+  each is a coin toss waiting to be spent.
 - **`unsupported` names language gaps, not hardware ones**, and every console's
   list is empty. It stayed empty on the Super Nintendo through the period when
   that machine had no sound, because a `.dmt` that says `music theme.mid`

@@ -44,15 +44,21 @@ press a
 hold right for 5 seconds
 expect scene gameover
 
--- The climb is a staircase of ledges two and three cells apart, so a jump that
--- cannot clear three cells makes most of the cavern scenery. Measured at the
--- apex, which is 37 ticks after the press on every console.
-test a jump from the floor clears the first step of the climb
+-- The climb is a staircase whose step is the jump: five cells of rise, of which
+-- the top one is spent getting *above* the ledge, so a jump that fell short of
+-- five would make most of the cavern scenery. Measured just past the apex,
+-- which is 0.625 seconds after the press on every console — gravity is a delta
+-- a rule adds every tick, so `caves.dmt` writes it against `fps` and a machine
+-- that ticks faster falls harder per second and jumps exactly as high. Written
+-- as a constant it did not: the WonderSwan cleared four cells and the climb
+-- died two thirds of the way up the cavern, on that console alone.
+test a jump from the floor clears five rows and not six
 press a
 play 4 seconds
 press a
-play 0.67 seconds
-expect player.bottom <= levelheight - 5
+play 0.625 seconds
+expect player.bottom <= levelheight - 7
+expect player.bottom > levelheight - 8
 
 test the hero cannot jump again in mid air
 press a

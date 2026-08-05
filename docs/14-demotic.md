@@ -218,6 +218,16 @@ Two rules keep this honest:
 - **Use `vmin` for anything that must stay square.** The targets do not share an
   aspect ratio, so `width 5vw, height 5vh` is square on none of them consistently.
   The compiler warns on exactly that pairing.
+- **And a rate a *rule* applies is divided by `fps`, because only `speed` is
+  resolved for you.** A `speed` is cells per second and step 4 of the tick turns
+  it into a displacement; a rule that adds to a property runs once a tick and
+  nothing scales what it adds. So gravity written as
+  `ydirection as ydirection + 0.04` is an acceleration per *tick*, which is half
+  again as strong on a console that ticks 75.47 times a second as on one that
+  ticks 60 — the caves' hero jumped five cells everywhere and four on the
+  WonderSwan, and the top of its cavern was out of reach on that console alone.
+  `2.4 / fps` says the same thing per second, folds at compile time, and is the
+  identical constant wherever `fps` is 60.
 
 None of this compromises the central split: `vw` is relative to an abstract
 playfield, not to a named console, so a `.dmt` file still knows nothing about

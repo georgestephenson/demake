@@ -26,7 +26,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 
-import { romReady, type Layout, type Program } from "@demake/demotic";
+import { findProfile, romReady, type Layout, type Program } from "@demake/demotic";
 
 import { bootPlayer, screenFor, type PadButton, type Player } from "../players/index.js";
 import { download } from "../lib/download.js";
@@ -51,8 +51,20 @@ const BUTTONS: Readonly<Record<string, PadButton>> = {
   start: "start",
 };
 
-/** Frames per second, to the accuracy anyone cares about. Both are ~60. */
-const FRAME_RATE = 59.7;
+/**
+ * How fast the machine draws, from the console's own profile.
+ *
+ * It is not a constant, and it was one: eleven of the twelve consoles that build
+ * a cartridge run their logical tick at 60 Hz and the WonderSwan runs it at 75,
+ * so a single figure paced that machine a fifth slow and then reported the
+ * number it had been paced at. `fps` is the nominal rate the simulation and the
+ * console runtime agree on (`profiles.ts`), which is also the rate a game's
+ * speeds were resolved against — so it is the right denominator for a cost
+ * measured in frames per tick, and the only place the page has to ask.
+ */
+function frameRateOf(consoleId: string): number {
+  return findProfile(consoleId)?.fps ?? 60;
+}
 
 /** What to call the machine in the page's own voice, article and all. */
 const MACHINE: Readonly<Record<string, string>> = {
@@ -64,6 +76,10 @@ const MACHINE: Readonly<Record<string, string>> = {
   gg: "a Game Gear",
   snes: "a Super Nintendo",
   md: "a Mega Drive",
+  pce: "a PC Engine",
+  gba: "a Game Boy Advance",
+  nds: "a Nintendo DS",
+  wsc: "a WonderSwan Color",
 };
 
 export function RomPane({
@@ -227,6 +243,9 @@ export function RomPane({
   // From the table rather than from the core, because the canvas has to be
   // sized before the core has finished arriving (`players/player.ts`).
   const screen = screenFor(family, consoleId);
+  // The cartridge's console decides this too: it is what the emulator is paced
+  // at and what the frame counter is reported against.
+  const frameRate = frameRateOf(consoleId);
 
   useEffect(() => {
     if (!rom || !layout) {
@@ -291,7 +310,7 @@ export function RomPane({
         // frames per tick should *look* like it needs three frames per tick.
         accumulator += Math.min(now - last, 250);
         last = now;
-        const step = 1000 / FRAME_RATE;
+        const step = 1000 / frameRate;
         let budget = 4;
         while (accumulator >= step && budget-- > 0) {
           runFrame(current);
@@ -316,7 +335,7 @@ export function RomPane({
       live = false;
       cancelAnimationFrame(raf);
     };
-  }, [rom, layout, consoleId, family, held, latched, restarts]);
+  }, [rom, layout, consoleId, family, frameRate, held, latched, restarts]);
 
   // The context outlives every ROM built in the section, and is closed once.
   useEffect(() => () => player.current?.close(), []);
@@ -408,7 +427,7 @@ export function RomPane({
           {(rom.length / 1024).toFixed(0)} KiB
           {cost === null
             ? ""
-            : ` · ${cost} frame${cost === 1 ? "" : "s"} per tick (${Math.round(FRAME_RATE / cost)} Hz)`}
+            : ` · ${cost} frame${cost === 1 ? "" : "s"} per tick (${Math.round(frameRate / cost)} Hz)`}
         </span>
       </div>
       {/* A cartridge that plays silently and does not say why reads as a bug in

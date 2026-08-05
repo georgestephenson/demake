@@ -32,6 +32,7 @@ import { Md } from "@demake/md";
 
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
+import { Sim } from "../src/sim.js";
 import { builtinMd, BUILTIN_TILES, MD_TILE_BYTES } from "../src/rom/graphics.js";
 import { bindMdArt } from "../src/codegen/md-art.js";
 import { buildMdRom, CODE_SIZE, MAX_ROM_SIZE } from "../src/codegen/md.js";
@@ -188,18 +189,31 @@ describe("the plane against the level", async () => {
   });
 
   it("scrolls by moving the picture, not the window", () => {
+    // The camera comes from the *interpreter*, and that is not a convenience.
+    //
+    // `runFrame` returns where the raster says, which is anywhere in the tick —
+    // including the six instructions between the camera's subtraction and the
+    // clamp that follows it, where the variable still holds a value the clamp is
+    // about to reject. Read out of the cartridge's own RAM this case was
+    // therefore asserting about whichever instruction the frame boundary landed
+    // on: it passed for as long as it did by luck, and broke when a coin four
+    // cells away moved the tick by a few instructions. Nothing was wrong with
+    // the cartridge either time — the camera is correct by the end of every tick
+    // — so the fix is to ask the oracle instead of racing the machine.
     const machine = play(["right"], 90);
-    // The horizontal scroll table's first word carries the negated camera; the
-    // vertical scroll RAM's first carries it directly.
-    const camera = built.layout.camera as number;
-    const cell = (offset: number): number => {
-      const bytes = machine.readMemory(camera + offset, 2);
-      return ((((bytes[0] as number) << 8) | (bytes[1] as number)) << 16) >> 16;
-    };
+    const sim = new Sim(program);
+    for (let tick = 0; tick < 4; tick += 1) sim.step({ a: true });
+    for (let tick = 0; tick < 90; tick += 1) sim.step({ right: true });
+
+    // Both registers carry *pixels*, floored out of the 16.16 camera exactly as
+    // `emitPixelsFromFixed` does it — an arithmetic shift of thirteen. The
+    // horizontal one shifts the picture right, so it carries the camera negated;
+    // the vertical one carries it directly. Both wrap at the plane's size.
+    const pixels = (value: number): number => value >> 13;
     const hscroll =
       ((machine.vdp.vram[0xb000] as number) << 8) | (machine.vdp.vram[0xb001] as number);
-    expect(hscroll).toBe((-(cell(0) * 8) & 0x3ff) as number);
-    expect(machine.vdp.vsram[0]).toBe(((cell(4) * 8) & 0xff) as number);
+    expect(hscroll).toBe(-pixels(sim.camera.x) & 0x3ff);
+    expect(machine.vdp.vsram[0]).toBe(pixels(sim.camera.y) & 0xff);
   });
 
   it("draws every visible cell from the level's own grid", () => {

@@ -15,6 +15,15 @@
  * "helpers are pulled, never pushed" discipline the rest of the ROM path runs
  * under, applied inside a routine rather than between routines.
  *
+ * **Which is why a branch over the run walk is `jp` and not `jr`.** The walk's
+ * length is the schedule's: a body per borrowable channel, a merge loop, a
+ * preemption test, each present or absent. A relative branch reaches ±128 bytes
+ * and the assembler refuses rather than wrapping, so anything jumping *across*
+ * that walk is a long branch by nature — `jr` there is a cartridge that
+ * assembles for six of the example games and not for the seventh. `jr` is kept
+ * for what it is for: a loop back to a label a few instructions up, and a skip
+ * over one.
+ *
  * Sources:
  * - Pan Docs — Audio Registers: https://gbdev.io/pandocs/Audio_Registers.html
  */
@@ -136,10 +145,10 @@ export function emitStream(asm: Asm, options: StreamOptions): string[] {
   asm.label(`${p}TickFetch`);
   asm.ldaHLI();
   asm.alu("or", "a");
-  asm.jr(`${p}TickBlock`, "z");
+  asm.jp(`${p}TickBlock`, "z");
   if (data.hasRests) {
     asm.bit(7, "a");
-    asm.jr(`${p}TickRest`, "nz");
+    asm.jp(`${p}TickRest`, "nz");
   }
   asm.ld("b", "a");
 
@@ -206,7 +215,7 @@ function emitRuns(asm: Asm, options: StreamOptions, preemptible: boolean): void 
     asm.ld("e", "a");
     asm.ldha(options.steal as number);
     asm.alu("and", "e");
-    asm.jr(`${p}TickSkip`, "nz");
+    asm.jp(`${p}TickSkip`, "nz");
     if (shadow) {
       // Ours right now, but borrowable: the chip and the copy both take it, so
       // the copy is still true the next time an effect hands the channel back.
@@ -226,7 +235,7 @@ function emitRuns(asm: Asm, options: StreamOptions, preemptible: boolean): void 
   asm.ldaHLI().staC(); // value → $FF00 + c
   asm.dec("b");
   asm.jr(`${p}TickWrite`, "nz");
-  asm.jr(`${p}TickNext`);
+  asm.jp(`${p}TickNext`);
 
   if (data.hasMerges) {
     asm.label(`${p}TickMerge`);
@@ -235,7 +244,7 @@ function emitRuns(asm: Asm, options: StreamOptions, preemptible: boolean): void 
     asm.call(options.merge as string);
     asm.dec("b");
     asm.jr(`${p}TickMerge`, "nz");
-    asm.jr(`${p}TickNext`);
+    asm.jp(`${p}TickNext`);
   }
 
   if (shadow) {
@@ -256,7 +265,7 @@ function emitRuns(asm: Asm, options: StreamOptions, preemptible: boolean): void 
       asm.staC(); // value → the copy
       asm.dec("b");
       asm.jr(label, "nz");
-      asm.jr(`${p}TickNext`);
+      asm.jp(`${p}TickNext`);
     });
   }
 
@@ -274,7 +283,7 @@ function emitRuns(asm: Asm, options: StreamOptions, preemptible: boolean): void 
         asm.ldaHLI().staC();
         asm.dec("b");
         asm.jr(label, "nz");
-        asm.jr(`${p}TickNext`);
+        asm.jp(`${p}TickNext`);
       });
     } else {
       // Nothing borrowable is ever written, so a skipped run is only stepped
@@ -289,7 +298,7 @@ function emitRuns(asm: Asm, options: StreamOptions, preemptible: boolean): void 
   asm.bit(7, "d");
   asm.jr(`${p}TickSave`, "z");
   asm.ldaHLI().ld("b", "a");
-  asm.jr(`${p}TickRun`);
+  asm.jp(`${p}TickRun`);
 }
 
 /** Every channel a run may be recorded for, as one mask. */
@@ -313,7 +322,7 @@ function perChannel(
   for (let index = 0; index < channels.length - 1; index += 1) {
     asm.ld("a", "e");
     asm.aluN("and", (channels[index] as { bit: number }).bit);
-    asm.jr(`${prefix}${index}`, "nz");
+    asm.jp(`${prefix}${index}`, "nz");
   }
   for (let index = 0; index < channels.length; index += 1) {
     const { delta } = channels[index] as { delta: number };
