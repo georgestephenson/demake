@@ -651,6 +651,27 @@ test("plays the cartridge's own APU through Web Audio", async ({ page }) => {
   await expect(toggle).toHaveText("Sound off");
 });
 
+test("reports the running machine's own frame rate, not a constant", async ({ page }) => {
+  // The counter under the screen is the measured cost of a game tick in frames,
+  // and the rate beside it is what that costs in time — so the denominator is
+  // the console's, and it was a constant. Eleven of the twelve consoles that
+  // build a cartridge tick 60 times a second and the WonderSwan ticks 75, which
+  // that constant both *paced* a fifth slow and then reported as 60 Hz.
+  test.slow();
+  await page.goto("/#section=game");
+  const canvas = page.getByTestId("rom-canvas");
+  await expect(canvas).toBeVisible();
+  await page.locator(".rom-canvas").click();
+  await page.keyboard.press("KeyZ");
+  await expect(page.getByTestId("rom-stat")).toContainText("60 Hz", { timeout: 30_000 });
+
+  await page.getByTestId("console-select").selectOption("wsc");
+  await expect(canvas).toHaveAttribute("data-console", "wsc", { timeout: 240_000 });
+  await page.locator(".rom-canvas").click();
+  await page.keyboard.press("KeyZ");
+  await expect(page.getByTestId("rom-stat")).toContainText("75 Hz", { timeout: 30_000 });
+});
+
 test("builds a level game with a camera, which the fixed engine could not", async ({ page }) => {
   await page.goto("/#section=game");
   await openProject(page, "caves");
