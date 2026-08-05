@@ -813,6 +813,56 @@ export const WSC_MEMORY: MemoryPlan = {
   loopBytes: 3,
 };
 
+/**
+ * The Neo Geo Pocket Color's plan: eleven kilobytes, and no video memory in it.
+ *
+ * The heap is `$4000` up to the boot ROM's own reservation at `$6C00`, which is
+ * every byte a cartridge may have — the display controller's registers, the two
+ * scroll maps, the object table, the palettes and the character bank are all
+ * above `$8000` and belong to the hardware, so unlike a Game Boy's or a
+ * WonderSwan's this plan competes with nothing.
+ *
+ * Two of its numbers are this console's rather than a restatement. **The object
+ * table is the hardware's own**, at `$8800`, because the display reads it where
+ * the runtime wrote it — there is no shadow and no upload, which is the
+ * WonderSwan's arrangement one console along. And **there are no interrupt
+ * bytes**, because the vertical-blank handler this console dispatches is reached
+ * through a pointer in the boot ROM's reserved page: what the handler needs is
+ * outside the allocator's reach by construction.
+ */
+export const NGPC_MEMORY: MemoryPlan = {
+  machine: "Neo Geo Pocket Color",
+  heapStart: 0x4000,
+  heapEnd: 0x6c00,
+  // The hardware's table, not a shadow of it: the chip reads these bytes
+  // directly, so writing them belongs in the blanking interval and copying them
+  // anywhere would be a second answer.
+  oamShadow: 0x8800,
+  oamEntries: 64,
+  viewW: 20,
+  viewH: 19,
+  // A queued cell is an address and a word. Sixty covers a diagonal scroll: a
+  // column of twenty and a row of twenty-one, painted in the same frame.
+  queueMax: 60,
+  plotMax: 40,
+  // Zero because this console has no generated driver yet — the day it gets one
+  // this becomes that driver's own byte count, exactly as every other console's
+  // does. A game with no audio would take none either way.
+  audioBytes: 0,
+  // A map entry is a word — nine bits of tile, four of palette, one of mono
+  // palette and two of flip — so a queued cell is a tile *and* an attribute.
+  cellAttributes: true,
+  // The vertical-blank handler's own byte is in the boot ROM's reserved page
+  // rather than the heap, so nothing an interrupt writes comes out of here.
+  interruptBytes: 0,
+  // A four-byte record pointer and a two-byte index, as on the Mega Drive and
+  // the Game Boy Advance: an address is twenty-four bits here, so a pointer that
+  // fitted in two would have to be widened at every use. In memory rather than
+  // in a register for the Z80's reason — a rule body fires between one iteration
+  // and the next and helps itself to every register there is.
+  loopBytes: 6,
+};
+
 /** Raised when a game needs more state than the machine has. */
 export class LayoutError extends Error {
   constructor(

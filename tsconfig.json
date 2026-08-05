@@ -39,6 +39,9 @@
       "path": "./packages/wsc"
     },
     {
+      "path": "./packages/ngp"
+    },
+    {
       "path": "./packages/chip"
     },
     {

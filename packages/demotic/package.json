@@ -30,9 +30,10 @@
     "@demake/md": "workspace:*",
     "@demake/nds": "workspace:*",
     "@demake/nes": "workspace:*",
+    "@demake/ngp": "workspace:*",
+    "@demake/pce": "workspace:*",
     "@demake/sms": "workspace:*",
     "@demake/snes": "workspace:*",
-    "@demake/pce": "workspace:*",
     "@demake/wsc": "workspace:*"
   },
   "publishConfig": {
