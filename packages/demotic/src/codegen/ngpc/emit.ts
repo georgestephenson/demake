@@ -307,7 +307,11 @@ export function emitProgram(ctx: NgpcCtx, options: NgpcEmitOptions = {}): void {
     const art = options.backdrops?.get(scene.def.name);
     if (art) {
       asm.label(backdropLabel(scene));
-      asm.bytes(packCells(art.map));
+      // As the art path packed it. Packing it again here encodes the *stream*
+      // as a run of literal cells, which the blit then unpacks into the plane
+      // verbatim: a title screen that boots as its own compression format
+      // (AGENTS.md §The V30MZ half, where this happened once already).
+      asm.bytes(art.map);
     }
     const palette = options.scenePalettes?.get(scene.def.name);
     if (palette) {
@@ -1162,8 +1166,12 @@ function emitFullRedraw(
 }
 
 /**
- * A packed map: literals and runs of whole *cells*, and the walk that unpacks
- * it.
+ * `XHL` = a packed map, `XDE` = where it goes; unpack it into the plane.
+ *
+ * The format is `pack.ts`'s `packCellPairs`, which two other consoles already
+ * use for the same reason this one does: an entry here is *two* bytes — the
+ * character's low byte and the byte carrying its palette, its flips and its
+ * ninth bit — so a run of identical cells has no byte runs in it at all.
  *
  * ```text
  *   $00        the end
@@ -1171,46 +1179,9 @@ function emitFullRedraw(
  *   $81..$FF   the next two bytes, (n & $7F) times
  * ```
  *
- * The unit is a cell rather than a byte because an entry here is two of them —
- * the tile's low byte and the byte carrying its palette, flips and ninth bit —
- * so a run of identical cells has no byte runs in it at all. The Sega 8-bits'
- * name table and the Mega Drive's plane pack the same way for the same reason;
- * the NES's does not, because an entry there is a single byte.
- *
- * The format is the encoder's and the decoder's business and nothing else's:
- * what is guaranteed is the bytes that reach the map.
+ * The encoding is never the contract: what is guaranteed is the bytes that
+ * reach the map, which is what `ngpc-rom.test.ts` reads back.
  */
-export function packCells(cells: Uint8Array): Uint8Array {
-  const out: number[] = [];
-  const same = (a: number, b: number): boolean =>
-    cells[a * 2] === cells[b * 2] && cells[a * 2 + 1] === cells[b * 2 + 1];
-  const total = cells.length >> 1;
-  let at_ = 0;
-  while (at_ < total) {
-    let run = 1;
-    while (run < 127 && at_ + run < total && same(at_ + run, at_)) run += 1;
-    // Two of a kind is a wash — three bytes either way — so a run has to be
-    // worth the control byte before it is taken, and pairs go through as
-    // literals.
-    if (run >= 3) {
-      out.push(0x80 | run, cells[at_ * 2] as number, cells[at_ * 2 + 1] as number);
-      at_ += run;
-      continue;
-    }
-    const start = at_;
-    while (at_ < total && at_ - start < 127) {
-      let ahead = 1;
-      while (ahead < 3 && at_ + ahead < total && same(at_ + ahead, at_)) ahead += 1;
-      if (ahead >= 3) break;
-      at_ += 1;
-    }
-    out.push(at_ - start, ...cells.subarray(start * 2, at_ * 2));
-  }
-  out.push(0x00);
-  return Uint8Array.from(out);
-}
-
-/** `XHL` = a packed map, `XDE` = where it goes; unpack it into the plane. */
 function needBlitBackdrop(ctx: NgpcCtx): Ref {
   return ctx.need("BlitBackdrop", (inner) => {
     const { asm } = inner;
