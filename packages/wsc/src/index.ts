@@ -28,8 +28,15 @@
  * nothing a demade cartridge does needs it: the main loop watches the beam, and
  * the audio driver reads the vertical-blank timer's *counter* rather than taking
  * its interrupt — so both timers are modelled as the tallies they are. The two
- * window units, channel two's PCM voice and the mono display modes are absent on
- * the same terms, and each one raises rather than answering plausibly.
+ * window units and channel two's PCM voice are absent on the same terms, and
+ * each one raises rather than answering plausibly.
+ *
+ * It is **both WonderSwans**, decided by a constructor argument the way
+ * `@demake/dmg` is decided by its cartridge header — because these two machines
+ * do not differ in anything a header could record. The mono one has 16 KiB of
+ * internal RAM rather than 64, planar 2bpp tiles in the top half of it rather
+ * than packed 4bpp at `$4000`, and palettes that are *ports* naming entries in
+ * a shared eight-shade pool rather than RGB444 words in RAM.
  *
  * Platform-pure on the same terms as `@demake/core`: no `fs`, no DOM, no wall
  * clock. Rendering produces a plain RGBA buffer; where that goes is the caller's
@@ -43,11 +50,13 @@ export {
   expandChannel,
   LINES_PER_FRAME,
   MAX_SPRITES,
+  MONO_TILE_BASE,
   PALETTE_BASE,
   PORT,
   SPRITES_PER_LINE,
   TILE_BASE,
   VBLANK_LINE,
+  type WsModel,
 } from "./display.js";
 export {
   BUTTONS,
