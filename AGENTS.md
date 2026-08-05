@@ -743,21 +743,29 @@ packages/pce/        @demake/pce — a self-hosted PC Engine core. Its PSG is
                      addressed video RAM behind a port, a sub-palette in the
                      cell's own map entry, sixteen-pixel sprites and a sprite
                      table the chip *copies* out of video RAM once a frame
-packages/wsc/        @demake/wsc — a self-hosted WonderSwan Color core, and the
-                     only one whose display has no memory of its own: the two
-                     screen maps, the tile bank, the object table and palette RAM
-                     are addresses in the same 64 KiB the game's variables are
-                     in, so `Display` is handed the console's RAM and nothing is
-                     ever uploaded through a port. Its second background layer is
-                     a *layer* rather than a window, and colour zero is
-                     transparent on both. The CPU is written against the
+packages/wsc/        @demake/wsc — a self-hosted WonderSwan core, Color *and*
+                     mono, decided by a constructor argument the way @demake/dmg
+                     is decided by its cartridge header — because these two
+                     machines do not differ in anything a header could record.
+                     It is the only core whose display has no memory of its own:
+                     the two screen maps, the tile bank, the object table and
+                     (on the Color) palette RAM are addresses in the same memory
+                     the game's variables are in, so `Display` is handed the
+                     console's RAM and nothing is ever uploaded through a port.
+                     Its second background layer is a *layer* rather than a
+                     window, and colour zero is transparent on both. The mono
+                     machine is two lookups rather than a second renderer:
+                     planar 2bpp tiles in the top half of its 16 KiB, and a
+                     palette of four three-bit indices into a shared eight-shade
+                     pool that lives in *ports* rather than in RAM. Its sound is
+                     @demake/chip's WsSound, handed the same RAM for the same
+                     reason the display is. The CPU is written against the
                      published 8086 instruction set rather than transcribed from
                      another emulator, and its tests are driven by core's own
-                     encoder. The sound chip, the two window units, the mono and
-                     2bpp display modes and the interrupt controller are absent
-                     rather than half-implemented — this console has no audio
-                     binding and no generated driver, and a demade cartridge
-                     polls the line counter rather than taking an interrupt
+                     encoder. The two window units and the interrupt controller
+                     are absent rather than half-implemented — a demade
+                     cartridge polls the line counter rather than taking an
+                     interrupt, and its audio driver reads a timer's counter
 packages/nes/        @demake/nes — a self-hosted NES core, for the two jobs
                      @demake/dmg exists for: the conformance harnesses in Vitest
                      and (later) the page's player. Its APU is @demake/chip's
@@ -2791,7 +2799,18 @@ not per console.
   `packages/wsc/test/{cpu,display}.test.ts` sit under it: the CPU is driven by
   `core`'s own V30MZ assembler, so an encoder and a decoder that agreed with each
   other and not with the hardware would still fail against NASM, which
-  `packages/core/test/v30mz-nasm.test.ts` compares the same battery with.
+  `packages/core/test/v30mz-nasm.test.ts` compares the same battery with. The
+  display file's second block is the **mono** machine, and what it proves is
+  that a pool is a pool: two palettes naming the same entry show the same grey,
+  and moving that entry moves both — a renderer (or a fit) that treated a
+  palette entry as a _level_ passes the first half of that and fails the second.
+- `packages/core/test/fit-mono-tiled.test.ts` is the tiled-mono fit's, and its
+  load-bearing case is that a budget of one palette **is** the plain mono
+  answer, so a fit computing the per-cell choice and discarding it would score
+  the same. The rest is what a compliant PNG cannot show: that all eight pool
+  levels are spent, that entry zero is shared, and that a picture showing nine
+  distinct levels is refused by `E_SHADE_POOL` even though every cell of it is
+  uniform and the palette cover fits.
 - `packages/demotic/test/pce-arith.test.ts` and `pce-rom.test.ts` are the PC
   Engine's pair, and the first of them looks like a copy of the NES's on purpose:
   the _emitters_ are the same file, so what it proves is not the arithmetic a
