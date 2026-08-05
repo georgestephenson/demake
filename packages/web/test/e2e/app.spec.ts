@@ -118,3 +118,57 @@ test("is keyboard operable and labels its controls", async ({ page }) => {
   const focused = await page.evaluate(() => document.activeElement?.tagName ?? "");
   expect(["BUTTON", "SELECT", "INPUT", "A"]).toContain(focused);
 });
+
+test("the size control says what it is, what auto chose, and how to change it", async ({
+  page,
+}) => {
+  // An SVG from the project, because a drawing is the case this row exists for:
+  // it has no pixels of its own, so a size is a *choice* and the box is the only
+  // place that choice is made.
+  await page.goto("/#file=art%2Fball.svg");
+
+  // What `auto` resolved to, in the box that changes it. A source smaller than
+  // the screen is kept at its own size, so this drawing demakes to a 64×64
+  // corner of a Game Boy — correct, surprising, and unfindable while the only
+  // thing this box said was "auto".
+  await expect(page.getByTestId("size-input")).toHaveAttribute("placeholder", "auto — 64×64");
+  await expect(page.getByTestId("source-format")).toHaveText("svg");
+  await expect(page.getByTestId("source-size")).toContainText("64×64");
+  await expect(page.getByTestId("source-size")).toContainText("vector");
+  // And no "source size" preset for a drawing: what the engine reports there is
+  // the raster it was asked for, so the button would move whenever the box did.
+  await expect(page.getByTestId("size-source")).toHaveCount(0);
+
+  await page.getByTestId("size-screen").click();
+  await expect(page.getByTestId("size-input")).toHaveValue("160x144");
+
+  const canvas = page.getByTestId("result-canvas");
+  await expect.poll(async () => canvas.evaluate((c: HTMLCanvasElement) => c.width)).toBe(160);
+  // The drawing was *re-rasterised* rather than blown up: the raster the engine
+  // fitted from now covers the target instead of being the file's declared 64.
+  await expect(page.getByTestId("source-size")).toContainText("160×160");
+
+  await page.getByTestId("size-auto").click();
+  await expect(page.getByTestId("size-input")).toHaveValue("");
+});
+
+test("demakes a JPEG, which the browser never decodes", async ({ page }) => {
+  // The engine's own decoder, in the worker, and that is the whole point: JPEG
+  // is lossy and specified only to a tolerance, so a `<canvas>` decode here and
+  // libjpeg on the command line would be two different demakes of one
+  // photograph (doc 02 §Image codecs).
+  await page.goto("/#section=art");
+  // By its accessible name: the explorer has a file input of its own, and a
+  // bare `input[type=file]` would hand this to the zip importer.
+  // The engine's own fixture rather than a copy of it: a second copy is a
+  // second answer to what the bytes are, and this one is checked against a
+  // browser's decode over there.
+  await page
+    .getByLabel("Choose an image file to convert")
+    .setInputFiles("../core/test/fixtures/pattern-q90.jpg");
+
+  await expect(page.getByTestId("source-format")).toHaveText("jpeg");
+  await expect(page.getByTestId("source-size")).toContainText("24×16");
+  await expect(page.getByTestId("error")).toHaveCount(0);
+  await expect(page.getByTestId("result-canvas")).toBeVisible();
+});

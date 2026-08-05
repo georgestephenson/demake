@@ -290,3 +290,35 @@ test("the text editor colours a Demakefile with the format's own grammar", async
   await page.getByLabel("README.md source").fill("# A heading\n\nsome *text*.\n");
   await expect(page.locator(".source-highlight [data-scope]")).toHaveCount(0);
 });
+
+test("a section whose chunk will not load says so instead of loading for ever", async ({
+  browser,
+}) => {
+  // Service workers off: with one running it fetches on the page's behalf and
+  // the route below never sees the request.
+  const context = await browser.newContext({ serviceWorkers: "block" });
+  const page = await context.newPage();
+
+  // Exactly what a tab left open across a deploy meets — the shell it is holding
+  // names hashed chunks the server has replaced — and what every lazy section
+  // did with it: nothing, for ever. Opening a `.wav` was the reported symptom,
+  // and the art demaker kept working throughout because it is in the entry
+  // chunk rather than a chunk of its own.
+  await page.route("**/SoundDemaker-*.js", (route) => route.fulfill({ status: 404, body: "" }));
+
+  await page.goto("/");
+  await page.getByTestId("explorer-file").and(page.locator('[data-path$="bounce.wav"]')).click();
+
+  await expect(page.getByTestId("section-error")).toContainText("could not be loaded");
+  await expect(page.getByTestId("section-loading")).toHaveCount(0);
+  // And the way out is offered. It is a reload and only a reload: asking for the
+  // same module again in this document is answered from the browser's module
+  // map, which is holding the failure.
+  await expect(page.getByTestId("section-reload")).toBeVisible();
+
+  await page.unroute("**/SoundDemaker-*.js");
+  await page.getByTestId("section-reload").click();
+  await expect(page.getByRole("heading", { name: "The fit" })).toBeVisible();
+
+  await context.close();
+});

@@ -145,6 +145,11 @@ describe("prep", () => {
     const report = JSON.parse(h.out());
     expect(report.output).toBe("out.png");
     expect(report.tournament.winner).toBeTruthy();
+    // What went in, as the engine decoded it. An agent reading this needs the
+    // *source* as well as the result — and for a vector source there is nowhere
+    // else to read it: measuring an `<svg>` with a host gives the CSS answer,
+    // not the raster the fit ran on.
+    expect(report.source).toEqual({ format: "png", width: 32, height: 32, vector: false });
     const decoded = decodePng(h.files.get("out.png")!);
     expect(decoded.width).toBe(32);
   });

@@ -187,6 +187,7 @@ export function App({
         onSource={setSource}
         onDemo={() => void loadDemo()}
         profile={result?.decisions.profile ?? null}
+        decoded={result?.source ?? null}
       />
       <ControlsPane
         options={options}
@@ -195,6 +196,8 @@ export function App({
         onChange={change}
         onReset={() => setOptions({ ...DEFAULT_OPTIONS })}
         sourceName={source?.name ?? "image.png"}
+        decoded={result?.source ?? null}
+        outputSize={result?.decisions.size ?? null}
         {...(editing
           ? {
               writing: {

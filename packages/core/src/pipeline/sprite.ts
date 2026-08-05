@@ -636,8 +636,13 @@ export function buildSpriteBank(
   const usable = Math.max(1, opaque ? total : total - 1);
 
   const decoded: Decoded[] = sources.map((source) => {
-    const image = decodeImage(source.bytes);
-    const sampled = sample(image, source.cellsWide * 8, source.cellsHigh * 8);
+    // The object's box in pixels is exactly what a drawing should be drawn at:
+    // a 16×16 `.svg` used for a four-cell-wide object was rasterised at 16 and
+    // then sampled up to 32, which is a blur the file never had in it. Raster
+    // sources are unaffected — their pixels are the file (`decodeImage`).
+    const box = { width: source.cellsWide * 8, height: source.cellsHigh * 8 };
+    const image = decodeImage(source.bytes, { atLeast: box });
+    const sampled = sample(image, box.width, box.height);
     return { source, sampled, ...measure(sampled, cutoff) };
   });
 

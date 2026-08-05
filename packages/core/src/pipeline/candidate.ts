@@ -23,7 +23,7 @@
 import { DemakeError } from "../errors.js";
 import { crc32 } from "../image/png/checksums.js";
 import { authorSpaceUsesRaw } from "../image/dac.js";
-import { decodeImage } from "../image/decode.js";
+import { decodeImage, detectFormat, type ImageFormat } from "../image/decode.js";
 import type { RgbaImage } from "../image/rgba.js";
 import { getConsole, withMode } from "../consoles/registry.js";
 import type { ConsoleSpec, TileLayout } from "../consoles/types.js";
@@ -45,7 +45,14 @@ import { fitMonoTiled } from "./fit-mono-tiled.js";
 import { normalize } from "./normalize.js";
 import { effortParams, type Candidate } from "./portfolio.js";
 import { remap } from "./remap.js";
-import type { CandidateScore, CompliantImage, LinImage, PrepOptions, Profile } from "./types.js";
+import type {
+  CandidateScore,
+  CompliantImage,
+  LinImage,
+  PrepOptions,
+  Profile,
+  SourceInfo,
+} from "./types.js";
 
 /** The seed every candidate's PRNG starts from when the caller names none. */
 export const DEFAULT_SEED = 0x9e3779b9;
@@ -118,6 +125,8 @@ export interface SourceAnalysis {
   readonly analysis: Analysis;
   readonly profile: Profile;
   readonly size: { w: number; h: number };
+  /** What the input turned out to be, decoded — the engine's answer, not a host's. */
+  readonly source: SourceInfo;
   /** Whether output and judging happen in raw lattice colors (doc 04 §Author space). */
   readonly useRaw: boolean;
 }
@@ -200,11 +209,46 @@ function entryFor(source: Uint8Array, options: PortablePrepOptions): CacheEntry 
   const hit = preparedCache.find((entry) => entry.key === key && sameBytes(entry.source, source));
   if (hit) return hit;
 
-  const decoded = decodeImage(source);
-  const entry: CacheEntry = { key, source, decoded, analysis: deriveAnalysis(decoded, options) };
+  // A vector source is drawn at the size the conversion is going to need rather
+  // than at whatever the file declares, because for a drawing those are not the
+  // same question — see `decodeImage`'s `atLeast`. Only an *explicit* size can
+  // ask for more than the source has, so only an explicit size is passed: the
+  // auto size never exceeds the source's own dimensions, and computing it needs
+  // the decode this would be feeding.
+  const decoded = decodeImage(
+    source,
+    options.size ? { atLeast: wanted(options, options.size) } : {},
+  );
+  const entry: CacheEntry = {
+    key,
+    source,
+    decoded,
+    analysis: deriveAnalysis(decoded, detectFormat(source), options),
+  };
   preparedCache.unshift(entry);
   if (preparedCache.length > PREPARED_CACHE_ENTRIES) preparedCache.length = PREPARED_CACHE_ENTRIES;
   return entry;
+}
+
+/**
+ * The output size an explicit `--size` resolves to, without a decode.
+ *
+ * The same call {@link deriveAnalysis} makes, hoisted because the decode wants
+ * the answer and the answer does not want the decode: `snapExplicitSize` reads
+ * the console and the requested size and nothing about the source at all.
+ *
+ * It is a floor rather than the exact raster, which is what lets one number
+ * serve all four fits: `cover` and `stretch` need the box covered, and `contain`
+ * and `pad` need less than that, so over-rendering costs a little time on two of
+ * them and quality on none.
+ */
+function wanted(
+  options: PortablePrepOptions,
+  size: { w: number; h: number },
+): { width: number; height: number } {
+  const spec = withMode(getConsole(options.console), options.mode);
+  const snapped = snapExplicitSize(size.w, size.h, spec);
+  return { width: snapped.w, height: snapped.h };
 }
 
 /** What the source is, and how big its conversion comes out. */
@@ -219,7 +263,11 @@ export function judgeReference(source: Uint8Array, options: PortablePrepOptions)
   return entry.reference;
 }
 
-function deriveAnalysis(decoded: RgbaImage, options: PortablePrepOptions): SourceAnalysis {
+function deriveAnalysis(
+  decoded: RgbaImage,
+  format: ImageFormat,
+  options: PortablePrepOptions,
+): SourceAnalysis {
   const spec = withMode(getConsole(options.console), options.mode);
   const analysis = analyze(decoded);
   const profile: Profile =
@@ -242,7 +290,19 @@ function deriveAnalysis(decoded: RgbaImage, options: PortablePrepOptions): Sourc
       ? false
       : options.rawColors === true || authorSpaceUsesRaw(spec.color.dac);
 
-  return { spec, analysis, profile, size, useRaw };
+  return {
+    spec,
+    analysis,
+    profile,
+    size,
+    source: {
+      format,
+      width: decoded.width,
+      height: decoded.height,
+      vector: format === "svg",
+    },
+    useRaw,
+  };
 }
 
 function deriveReference(

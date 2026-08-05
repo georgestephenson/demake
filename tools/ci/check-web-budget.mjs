@@ -34,9 +34,16 @@ import { gzipSync } from "node:zlib";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
+import { familyFor, runtimeFamilies } from "../../packages/demotic/dist/codegen/registry.js";
+
 const DIST = process.argv[2] ?? "packages/web/dist";
 /**
- * The ceiling, in gzipped kilobytes, over the whole site's JavaScript.
+ * The ceiling, in gzipped kilobytes, over what **one visitor** downloads.
+ *
+ * It was a ceiling over the whole site's JavaScript for most of the history
+ * below, which is what those paragraphs are arguing about; the split they kept
+ * asking for happened, and the shape is now the one this file's own header
+ * describes.
  *
  * It is close, and it moved once. The NES cost 4.6 KB gzipped end to end — a
  * second instruction set, a second emulator and a second set of hardware tables,
@@ -137,13 +144,27 @@ if (scripts.length === 0) {
  * their modules after the family, so a chunk called `gb-<hash>.js` is the Game
  * Boy's whichever of the two graphs it came out of — and both belong to the same
  * visitor's choice, which is why one list covers them.
+ *
+ * **It is that registry's list and not a copy of it**, which is the rule the rest
+ * of this repository already runs under and the one place it was not being kept.
+ * A hand-written copy sat here until the ARM handhelds landed and nobody added
+ * them to it, so `gba-*.js` and `nds-*.js` — 26.8 KB gzipped of emulator and
+ * emitter, behind an `import()` like every other core — were charged to *every*
+ * visitor for as long as the two lists disagreed. A budget that overstates itself
+ * fails the next honest change, which is exactly what it did.
+ *
+ * A chunk may also be named after a *console* rather than its family — `nds` is
+ * the case, because a Nintendo DS is a second player inside the Game Boy
+ * Advance's family (`players/index.ts`) — so the lookup asks the registry which
+ * family a console belongs to before giving up.
  */
-const FAMILIES = ["gb", "nes", "sms", "snes", "md", "pce", "wsc"];
+const FAMILIES = [...runtimeFamilies];
 
 /** The family a chunk belongs to, or null when everyone loads it. */
 function familyOf(name) {
   const base = name.slice(name.lastIndexOf("/") + 1).replace(/-[A-Za-z0-9_-]+\.js$/, "");
-  return FAMILIES.includes(base) ? base : null;
+  if (FAMILIES.includes(base)) return base;
+  return familyFor(base) ?? null;
 }
 
 let always = 0;

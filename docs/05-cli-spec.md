@@ -213,7 +213,10 @@ demake prep photo.jpg -c nes --strategy photo-lanczos-fs -o out.png
 
 - **`--json` on every command**: single JSON object on stdout (product goes to
   `-o` file in JSON mode), stable schema, versioned via `"schemaVersion"`. Includes
-  everything an agent needs to decide next steps: chosen defaults (size, mode,
+  everything an agent needs to decide next steps: what the source turned out to be
+  (`source`: format, the raster the engine decoded, and whether it was vector —
+  which is the only place a drawing's size can be read off, since a host measuring
+  one gets the CSS answer), chosen defaults (size, mode,
   dither), fit error metrics, tile merge counts, warnings, output paths — and the
   tournament scoreboard: winning strategy, per-candidate aggregate + per-metric
   scores, and disqualifications with reasons, so a follow-up run can pin

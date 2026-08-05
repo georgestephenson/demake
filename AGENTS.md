@@ -726,7 +726,14 @@ packages/core/       @demake/core — the engine (zero platform deps; ESM; ships
                      (the reference answer); `pool.ts` is the scheduling every
                      edge shares — core supplies no threads and never will
   src/color/         sRGB/linear/Oklab, hardware-lattice snapping, color parsing
-  src/image/         PNG codec (inflate/deflate/decode/encode), DAC models, decode dispatch
+  src/image/         every codec, all of them ours: PNG (inflate/deflate/decode/
+                     encode), BMP, GIF and baseline JPEG, plus DAC models and the
+                     decode dispatch. The lossless three are ours for PNG's
+                     reason; JPEG is ours for a stronger one — it is *lossy*, so
+                     the standard fixes its inverse transform only to a
+                     tolerance and two correct libraries disagree in the low
+                     bits, which across the CLI and the page is two different
+                     demakes of one photograph. WebP is absent and says so
   src/consoles/      ConsoleSpec schema + one declarative spec per console (21 of them)
   src/pipeline/      stages 0–7, the tiled fitter, mono + tiled-mono + TMS
                      row-pair paths, tournament. fit-mono-tiled.ts is the one
@@ -737,7 +744,10 @@ packages/core/       @demake/core — the engine (zero platform deps; ESM; ships
                      work, and the content-keyed prologue memo that stops a
                      fan-out decoding its source once per candidate
   src/codegen/       gen: per-family backends (gb, nes, snes, sms, md, sg1000, gba, nds, pce, wsc), detector
-  src/image/svg/     our SVG rasteriser: XML, shapes, paint, scanline fill (doc 15 step 2)
+  src/image/svg/     our SVG rasteriser: XML, shapes, paint, scanline fill (doc 15
+                     step 2). The one decoder whose *output size* is a question
+                     rather than a fact, which is what `decodeImage`'s `atLeast`
+                     is for
   src/pipeline/sprite.ts  object + tile art for games: transparency, shades or
                      sub-palettes (the colour fit decides which assets share one), dedup
   src/inspect/       compliance oracle (inspect) + fidelity judge
@@ -3033,6 +3043,33 @@ not per console.
   drops the tournament to one candidate and _is_ a quality change — profile it:
   the last time this came up the answer was a redundant scan, and removing it was
   byte-identical.
+- **A drawing has no size, so asking for a bigger one is free — but somebody has
+  to ask.** `decodeImage`'s `atLeast` is that request: an `<svg>` is rasterised
+  at whatever size its author declared, and a 64×64 file demade at 160×144 used
+  to be a 64×64 raster stretched, which is a blur the file never contained. Two
+  callers pass it and they are the two places a target size is known — an
+  explicit `--size` (`candidate.ts`; the _auto_ size can never exceed the
+  source's own dimensions, so it does not ask) and a sprite's cell box
+  (`sprite.ts`). It scales the document's declared size and never the box, so
+  the framing every later stage is written against — `--fit`, the auto size, the
+  cell box — is untouched and only the resolution moves. Every raster format
+  ignores it, because there the pixels _are_ the file.
+- **A raster decoder is held to a second implementation, never to an encoder
+  written beside it.** `packages/core/test/raster.test.ts`'s fixtures are pairs:
+  the file, and the RGBA a browser produced from those exact bytes. BMP and GIF
+  are lossless so the comparison is exact; JPEG is compared to ±2, and the bound
+  is tight on purpose — a loose one passes a decoder with the chroma upsampling
+  wrong, which is what a first attempt here had. Replicating the chroma sample
+  rather than interpolating it was **110 levels** out and still looked like a
+  photograph, which is precisely the class of wrongness a demake would turn into
+  a palette nobody could account for. Same argument as `arm-gnu.test.ts`, one
+  layer down.
+- **The one JPEG path nothing exercises is the restart interval.** No encoder
+  reachable from this repo emits `RSTn` markers, so the code that resets the
+  predictions and starts a fresh bit reader at each one is written from the
+  standard and unproven. It is the first thing to suspect if a camera JPEG comes
+  out drifting in brightness from a band partway down, and the first thing to
+  test if a fixture with restarts ever becomes available.
 - **Prep quality changes need eyes, not just numbers**: run `pnpm eval:prep`
   and look at the side-by-side sheets in `tools/prep-eval/out/`; the behavioral
   floors live in `packages/core/test/quality.test.ts`. Drop extra real-world
@@ -3152,9 +3189,21 @@ not per console.
   of anything the CLI does (a manifest shape, a symbol-name rule, a console
   summary table) is how parity dies; if the web needs it, it moves into core
   first, as `buildManifest`/`encodeManifest` did.
+- **A lazy section that does not arrive has to say so.** Every editor but the art
+  demaker is an `import()`, and a rejected one used to be dropped on the floor —
+  so the page sat on "Loading…" for ever with no message, while the art demaker
+  went on working because it is in the entry chunk. Opening a `.wav` did nothing
+  and explained nothing. The cause is ordinary rather than exotic: a tab left
+  open across a deploy is holding a shell that names hashed chunks the server has
+  replaced, so the _first_ lazy section it asks for 404s. `site.tsx` records the
+  failure per section and offers a reload — and a reload is the only thing it
+  offers, because asking for the same module again in the same document is
+  answered from the browser's module map, which is holding the failure. A "try
+  again" button there would never once have worked.
 - **An engine imported on the UI thread is a second copy of it in the bundle.**
   A worker is a separate bundle, so `@demake/core` reached from a component is
-  shipped twice — and the doc-07 JS budget is a sum precisely so that shows up.
+  shipped twice — and both copies are always-loaded chunks, so the doc-07 JS
+  budget counts both and the duplication shows up.
   The game section built its cartridge inline until the Sega backend needed the
   room; it goes through `core.worker.ts` now, which is where every path that
   touches `@demake/core` belongs anyway. What may stay on the main thread is what
@@ -3276,8 +3325,15 @@ not per console.
   something builds, and the page's `src/players/` does the same for the emulator
   cores. Chunks are matched to a family **by name**, so a module that
   has to be per-family belongs in a file named after it; anything else counts as
-  always-loaded, which fails loud rather than passing quietly. Current figures:
-  394 KB for a visitor against a 400 KB budget, 519 KB for the whole site — and
+  always-loaded, which fails loud rather than passing quietly. **The list of
+  families is `codegen/registry.ts`'s own** — `runtimeFamilies`, plus `familyFor`
+  for a chunk named after a console rather than its family, which `nds` is. It
+  used to be a copy, and the copy went stale the moment the ARM handhelds landed:
+  `gba-*.js` and `nds-*.js` are 26.8 KB gzipped of emulator and emitter behind an
+  `import()` like every other core, and they were charged to _every_ visitor for
+  as long as the two lists disagreed. A budget that overstates itself fails the
+  next honest change, which is what it did. Current figures:
+  376 KB for a visitor against a 400 KB budget, 528 KB for the whole site — and
   a new example game costs about fourteen of those kilobytes, because the page
   bundles every fixture SVG twice (raw text for the ROM build, a URL for the
   preview). Measure with a **clean** `dist`: the checker reads every `.js` it

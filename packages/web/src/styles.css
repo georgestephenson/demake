@@ -216,6 +216,17 @@ input[type="number"] {
   gap: 0.6rem;
 }
 
+/*
+ * The presets under the output-size box. They sit tight to it — the row is part
+ * of the field rather than a note after it — and the buttons wrap on a narrow
+ * pane rather than pushing the pane wider (§A grid that states its rows must
+ * state its column too).
+ */
+.size-presets {
+  margin: -0.35rem 0 0.6rem;
+  font-size: 0.82rem;
+}
+
 .check {
   display: flex;
   align-items: center;

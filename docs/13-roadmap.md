@@ -17,7 +17,8 @@ passes `--help`/`--version`/exit-code tests; npm names secured.
 
 ## Phase 1 — Engine spine + first console (GBC)
 
-- Image layer: PNG codec (ours), WASM JPEG/WebP/GIF/BMP decode, RGBA pipeline,
+- Image layer: PNG codec (ours), JPEG/GIF/BMP decode (also ours — doc 02
+  §Image codecs; WebP is still outstanding), RGBA pipeline,
   color spaces (linear/Oklab), seeded PRNG, DAC models (CGB curve first).
 - ConsoleSpec schema + `gbc` spec (+ `dmg` — nearly free and exercises mono path).
 - Pipeline stages 0–7 for tiled layouts (doc 04), generic fitter with alternating

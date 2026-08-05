@@ -9,6 +9,7 @@
  */
 
 import type { RGB8 } from "../consoles/types.js";
+import type { ImageFormat } from "../image/decode.js";
 import type { Executor } from "../parallel/jobs.js";
 
 /** A linear-light RGB working image (`data.length === width * height * 3`). */
@@ -212,6 +213,33 @@ export interface Warning {
   message: string;
 }
 
+/**
+ * What the source turned out to be, once the engine had decoded it.
+ *
+ * Reported rather than left to be guessed, because for a vector source there is
+ * nothing to guess *from*: an `<svg>` carries a coordinate system and, if its
+ * author bothered, a declared size, and a host that measures one by putting it
+ * in an `<img>` gets the CSS answer — 300×150 for a document with only a
+ * `viewBox`, which is not the raster the pipeline fitted. So the size here is
+ * the decoder's own, and `vector` says whether it was a choice or a fact.
+ */
+export interface SourceInfo {
+  /** The container the bytes turned out to be. */
+  format: ImageFormat;
+  /** The raster the pipeline actually fitted from, in pixels. */
+  width: number;
+  height: number;
+  /**
+   * Whether the source had no pixels of its own.
+   *
+   * True for SVG, where {@link width} and {@link height} are the size the
+   * rasteriser was asked for rather than a property of the file — so scaling up
+   * costs nothing and loses nothing, which is the opposite of every other format
+   * here.
+   */
+  vector: boolean;
+}
+
 /** Per-candidate judge scores (doc 04 §The judge, doc 09). */
 export interface CandidateScore {
   strategy: string;
@@ -224,6 +252,8 @@ export interface CandidateScore {
 export interface PrepResult {
   png: Uint8Array;
   image: CompliantImage;
+  /** What went in, as the engine decoded it — never as a host measured it. */
+  source: SourceInfo;
   decisions: AutoDecisions;
   stats: FitStats;
   warnings: Warning[];

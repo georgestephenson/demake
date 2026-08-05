@@ -10,7 +10,7 @@ import { useState } from "preact/hooks";
 
 import { CommandLine } from "./CommandLine.js";
 import { equivalentCommand } from "../lib/options.js";
-import type { ConsoleInfo, PrepOptionsUi } from "../worker/protocol.js";
+import type { ConsoleInfo, PrepOptionsUi, SourceInfo } from "../worker/protocol.js";
 import type { StrategyInfo } from "@demake/core";
 
 interface Props {
@@ -20,6 +20,10 @@ interface Props {
   onChange: (options: PrepOptionsUi) => void;
   onReset: () => void;
   sourceName: string;
+  /** What the engine decoded the source as, once a conversion has run. */
+  decoded: SourceInfo | null;
+  /** The size the last conversion actually produced — what `auto` resolved to. */
+  outputSize: { w: number; h: number } | null;
   /**
    * Where a changed option is going, when it is going anywhere.
    *
@@ -55,6 +59,8 @@ export function ControlsPane({
   onChange,
   onReset,
   sourceName,
+  decoded,
+  outputSize,
   writing,
 }: Props) {
   const [advanced, setAdvanced] = useState(false);
@@ -74,6 +80,7 @@ export function ControlsPane({
     );
   const active = consoles.find((c) => c.id === options.console);
   const command = equivalentCommand(options, sourceName);
+  const autoPlaceholder = outputSize === null ? "auto" : `auto — ${outputSize.w}×${outputSize.h}`;
 
   return (
     <section class="pane controls-pane" aria-labelledby="controls-heading">
@@ -124,10 +131,16 @@ export function ControlsPane({
 
       <div class="field-row">
         <label class="field">
-          <span>Size</span>
+          <span>Output size</span>
           <input
             type="text"
-            placeholder="auto"
+            // The placeholder carries the size auto *resolved to*, because "auto"
+            // alone reads as a setting with no value rather than as a number
+            // somebody may want to change. A source smaller than the screen is
+            // kept at its own size, so a 64×64 drawing demakes to a 64×64 corner
+            // of a Game Boy — correct, surprising, and invisible while the only
+            // thing this box said was "auto".
+            placeholder={autoPlaceholder}
             value={options.size}
             pattern="\d+x\d+"
             data-testid="size-input"
@@ -151,6 +164,63 @@ export function ControlsPane({
           </select>
         </label>
       </div>
+      <p class="hint size-presets" data-testid="size-presets">
+        {active ? (
+          <button
+            type="button"
+            class="link"
+            data-testid="size-screen"
+            onClick={() => set("size", `${active.width}x${active.height}`)}
+          >
+            fill the screen ({active.width}×{active.height})
+          </button>
+        ) : null}
+        {/*
+          Offered for a raster source and not for a drawing, because for a
+          drawing there is no such size to go back to: what the engine reports is
+          the raster it was *asked* for, so a "source" button here would move
+          every time the box above it did.
+        */}
+        {decoded && !decoded.vector ? (
+          <>
+            {" · "}
+            <button
+              type="button"
+              class="link"
+              data-testid="size-source"
+              onClick={() => set("size", `${decoded.width}x${decoded.height}`)}
+            >
+              source ({decoded.width}×{decoded.height})
+            </button>
+          </>
+        ) : null}
+        {options.size !== "" ? (
+          <>
+            {" · "}
+            <button
+              type="button"
+              class="link"
+              data-testid="size-auto"
+              onClick={() => set("size", "")}
+            >
+              back to auto
+            </button>
+          </>
+        ) : null}
+        {/*
+          An SVG is the case this row exists for. It has no pixels of its own, so
+          the box above is a *choice* the rasteriser is handed rather than
+          anything the file states — asking it for more costs nothing and loses
+          nothing, which is true of no other format here.
+        */}
+        {decoded?.vector ? (
+          <span data-testid="vector-note">
+            {" "}
+            — {sourceName} is vector, so a bigger size is rasterised at that size rather than scaled
+            up: there is no detail to lose.
+          </span>
+        ) : null}
+      </p>
 
       <div class="field-row">
         <label class="field">

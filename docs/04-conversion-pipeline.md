@@ -296,7 +296,18 @@ and stays small enough for the browser.
 
 ## Stage 0 — Decode & normalize
 
-- Decode to RGBA float32, un-premultiplied. Alpha handling: composite over a
+- Decode to RGBA float32, un-premultiplied. Every codec is ours (doc 02 §Image
+  codecs) — PNG, SVG, JPEG, GIF and BMP — so the same bytes go in on the command
+  line and in the browser.
+- **A vector source is rasterised at the size the conversion needs**, not at the
+  size its author declared. A drawing has no pixels of its own, so a 64×64
+  `<svg>` demade at an explicit `--size 160x144` is drawn at 160×160 rather than
+  drawn at 64 and blown up — `decodeImage`'s `atLeast`, which scales the
+  document's own declared size and so leaves `--fit` meaning exactly what it
+  meant. It is a floor, so it can serve all four fits at once: two of them need
+  less than the box and none needs more. The *auto* size never asks, because it
+  can never exceed the source's own dimensions.
+- Alpha handling: composite over a
   configurable matte (`--background '#000'`, default: checker-detect → black), or map
   to the console's transparent index when the layout has one (`--keep-transparency`).
 - Color-manage: honor embedded ICC/gAMA where present, convert to linear-light sRGB.

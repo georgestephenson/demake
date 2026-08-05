@@ -155,6 +155,7 @@ export async function runPrep(
         {
           schemaVersion: 1,
           output: emit.wroteTo,
+          source: result.source,
           decisions: result.decisions,
           stats: result.stats,
           warnings: result.warnings,
@@ -170,8 +171,10 @@ export async function runPrep(
     }
     if (verbose) {
       const d = result.decisions;
+      const s = result.source;
       env.errOut(
-        `demake: winner=${d.strategy} profile=${d.profile} size=${d.size.w}x${d.size.h} ` +
+        `demake: source=${s.format} ${s.width}x${s.height}${s.vector ? " (rasterised)" : ""} ` +
+          `winner=${d.strategy} profile=${d.profile} size=${d.size.w}x${d.size.h} ` +
           `scale=${d.scale} dither=${d.dither.alg} meanΔE=${result.stats.meanDeltaE.toFixed(4)}\n`,
       );
     }

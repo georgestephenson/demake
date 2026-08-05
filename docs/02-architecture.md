@@ -139,8 +139,35 @@ libraries (sharp). Therefore:
   an adaptive one compares a float against a threshold and can subdivide
   differently on either side of a 1-ulp difference. Anything outside the subset
   fails by name rather than rendering as nothing.
-- **JPEG / WebP / GIF / BMP**: pinned WASM codecs (the jSquash/Squoosh codec builds)
-  used identically on both platforms. WASM is bit-deterministic by spec.
+- **BMP / GIF**: pure-TS decode, for PNG's reason — both are lossless, so a
+  correct decoder is a decoder that reads the header correctly, and the work is
+  in the formats' variety rather than in their arithmetic. BMP has four DIB
+  headers, two row orders, channel masks and two run-length encodings; GIF has
+  LZW, an interlace order and a transparent index. The one decision that is not
+  the format's is **which frame of an animated GIF is the picture**: the first,
+  because a demake has one screen and compositing an animation would produce
+  something no frame of the original looked like.
+- **JPEG**: pure-TS decode, and this is where the rule earns its keep. JPEG is
+  lossy, so "decode it" has no single right answer — the standard specifies the
+  inverse transform only to a *tolerance*, and two correct libraries differ in
+  the low bits of an edge pixel. A demake fitted from the page's decode and one
+  fitted from the CLI's would then differ, and the difference would surface two
+  layers down as a palette nobody could explain. So the transform is the
+  scaled-integer IDCT with its constants written out, the colour conversion is
+  fixed-point, and the chroma upsampling is the triangle filter — the last of
+  which is *not* an aesthetic choice: replicating the chroma sample instead
+  measured up to 110 levels away from a reference decoder while still looking
+  like a photograph. Baseline sequential only. Progressive, lossless,
+  hierarchical and arithmetic-coded files are refused **by name**, because a
+  baseline decoder let loose on a progressive file produces something that looks
+  like a bad demake rather than like an error.
+- **WebP**: still absent, and absent loudly. It is VP8 — a video codec's intra
+  path — and a typed error naming it beats a guess.
+- Every one of those is held to a **second implementation** rather than to an
+  encoder written beside it (`packages/core/test/raster.test.ts`): the fixtures
+  are a file and the RGBA a browser produced from those exact bytes, exact for
+  the lossless formats and to ±2 for JPEG. That is the argument
+  `arm-gnu.test.ts` makes about an instruction encoder, one layer down.
 - **Audio (MP3 / AAC / Vorbis / Opus)**: pinned WASM decoders on the same
   reasoning; WAV/AIFF/FLAC are integer formats and get pure-TS codecs. Resampling
   is ours, never the platform's — a browser `AudioContext` resamples on its own
