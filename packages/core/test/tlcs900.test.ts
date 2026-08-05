@@ -279,6 +279,16 @@ describe("the TLCS-900/H assembler", () => {
     expect(bytes((a) => a.ex("wa", "hl"))).toEqual([0xdb, 0xb8]);
   });
 
+  it("takes a label as a full-width immediate", () => {
+    // What a table walk needs: the table's address loaded into a register, which
+    // is a four-byte immediate with a forward reference in it.
+    const asm = new Asm900(0x200000);
+    asm.ldn("xhl", "Table");
+    asm.label("Table");
+    asm.db(0x11, 0x22);
+    expect([...asm.assemble()]).toEqual([0x43, 0x05, 0x00, 0x20, 0x00, 0x11, 0x22]);
+  });
+
   it("emits three-byte pointers, because that is what an address is here", () => {
     const asm = new Asm900(0x200000);
     asm.d24("Target");
