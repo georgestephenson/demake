@@ -20,6 +20,46 @@ Numbers below are working values for planning. Phase 1 of the roadmap includes a
 documentation (e.g. Pan Docs, nesdev wiki, SNESdev wiki, Sega retro docs,
 GBATEK) and its values are locked in by emulator tests, not by this table.
 
+## Names — the same machine, sold twice
+
+Half these consoles were sold under more than one name. A Mega Drive is a
+Genesis in America, a PC Engine is a TurboGrafx-16, an NES is a Family Computer
+in Japan, a Mega Duck is a Cougar Boy in Brazil — and somebody who grew up with
+one of those names will not find the machine in a picker that only offers the
+other. So a `ConsoleSpec` carries every name the hardware was sold under, and
+every picker in the project shows all of them.
+
+**The order is British, Japanese, American, then anywhere else.** `name` is the
+first of them and `otherNames` is the rest, in that order, with a region that
+kept the previous region's name not listed a second time — which is why most
+consoles carry no `otherNames` at all and the Mega Drive carries exactly one
+(Japan kept the Mega Drive name; America did not). Deduplication is the spec's
+own job: `consoleNames` concatenates rather than filtering, and a spec that
+repeated a name is caught by `packages/core/test/consoles.test.ts` instead of
+being quietly hidden at the point of display.
+
+**One name leads that is not a region's, and it is deliberate.** The Supervision
+was built by Watara and badged by its distributors — QuickShot in the UK,
+Hartung and Travelmate elsewhere — so the name that leads is the manufacturer's
+and the British badge follows it, because leading with a distributor's badge
+would put a name almost nobody recognises at the front of the list.
+
+**The label is built in one place.** `consoleLabel` joins the names with ` / `,
+which is the separator this document's own tier tables have used since the
+matrix existed, and every surface asks for it rather than joining: the console
+pickers in the web app's four demakers, `demake consoles` (which gives the other
+regions a column of their own so the aligned table does not grow by the width of
+the longest pair), and the generated support matrix. `@demake/demotic`'s profile
+table restates the label rather than importing it, because the simulator imports
+nothing — and `packages/demotic/test/profiles.test.ts` cross-checks it against
+`consoleLabel` exactly as it already cross-checks every screen dimension.
+
+**A name a picker offers is a name the parser takes.** Every regional name
+resolves through the alias table in its hyphenated form (`sega-genesis`,
+`turbografx-16`, `family-computer`, `super-famicom`), and a test asserts it for
+all of them — offering a name the CLI then rejects would be worse than not
+offering it.
+
 ## Support — what works today
 
 **This document describes the hardware. What demake can currently *do* with each
@@ -122,6 +162,9 @@ Each console is one declarative TypeScript object, `satisfies ConsoleSpec`:
 interface ConsoleSpec {
   id: string;                    // "gbc", "nes", "md", ...
   name: string;                  // "Game Boy Color"
+  otherNames?: string[];         // "Sega Genesis" for "md" (§Names) — British,
+                                 // Japanese, American, then elsewhere; absent
+                                 // where one name served every region
   aliases: string[];             // "cgb", "gameboy-color"; "genesis" for "md"
   tier: 1 | 2 | 3;
   display: {

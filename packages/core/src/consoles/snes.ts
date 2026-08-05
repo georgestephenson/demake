@@ -13,7 +13,8 @@ import type { ConsoleSpec } from "./types.js";
 export const snes = {
   id: "snes",
   name: "Super Nintendo Entertainment System",
-  aliases: ["superfamicom", "sfc", "super-nintendo"],
+  otherNames: ["Super Famicom"],
+  aliases: ["superfamicom", "super-famicom", "sfc", "super-nintendo"],
   tier: 1,
   display: { width: 256, height: 224, pixelAspect: [8, 7] },
   color: { model: "rgb", bitsPerChannel: [5, 5, 5], dac: { kind: "linear" } },

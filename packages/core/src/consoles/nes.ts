@@ -90,7 +90,10 @@ const NES_MASTER: readonly RGB8[] = (
 export const nes = {
   id: "nes",
   name: "Nintendo Entertainment System",
-  aliases: ["famicom", "fc", "nintendo"],
+  // Japan's Family Computer, which is the same machine in a different case with
+  // the same 2C02 behind it. `famicom` is the alias people actually type.
+  otherNames: ["Family Computer"],
+  aliases: ["famicom", "family-computer", "fc", "nintendo"],
   tier: 1,
   display: {
     width: 256,

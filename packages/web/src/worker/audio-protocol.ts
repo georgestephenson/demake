@@ -52,6 +52,8 @@ export interface ChannelInfo {
 export interface AudioConsoleInfo {
   id: string;
   name: string;
+  /** Every name the console was sold under, as one string (doc 03 §Names). */
+  label: string;
   tier: 1 | 2 | 3;
   chips: string[];
   channels: ChannelInfo[];

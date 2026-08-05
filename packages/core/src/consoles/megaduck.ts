@@ -22,6 +22,9 @@ const RAMP: readonly RGB8[] = [
 export const megaduck = {
   id: "megaduck",
   name: "Mega Duck",
+  // A Mega Duck in Europe and a Cougar Boy in Brazil and much of Asia — the
+  // same Game Boy clone, badged twice.
+  otherNames: ["Cougar Boy"],
   aliases: ["cougar-boy", "mega-duck"],
   tier: 3,
   display: { width: 160, height: 144, pixelAspect: [1, 1] },

@@ -1132,6 +1132,17 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   console's support level in prose: prose drifts, and this one had (eight specs
   claimed a `rom` format with no builder behind it). Doc 03 §Support explains
   what the columns mean and what _supported_ is.
+- **A console is called every name it was sold under, and the join has one
+  answer** (doc 03 §Names). Half these machines had two — a Mega Drive is a
+  Genesis, a PC Engine is a TurboGrafx-16, an NES is a Family Computer — so a
+  spec carries `otherNames` in region order (British, Japanese, American, then
+  elsewhere, and a region that kept the previous name is not listed twice) and
+  every picker shows `consoleLabel(spec)` rather than joining the list itself.
+  Two things follow. A regional name must also be an **alias**, or a picker
+  offers a name the parser rejects, and `consoles.test.ts` checks all of them.
+  And `@demake/demotic`'s profile table restates the label because the simulator
+  imports nothing — `profiles.test.ts` cross-checks it against `consoleLabel`,
+  exactly as it already does the screen dimensions.
 - **Language changes are the maintainer's call, not the agent's.** Adding,
   removing or altering a Demotic statement, property, unit, builtin, trigger or
   diagnostic — anything in `packages/demotic/src/lang/spec.ts` — needs the
@@ -3277,7 +3288,7 @@ not per console.
   cores. Chunks are matched to a family **by name**, so a module that
   has to be per-family belongs in a file named after it; anything else counts as
   always-loaded, which fails loud rather than passing quietly. Current figures:
-  394 KB for a visitor against a 400 KB budget, 519 KB for the whole site — and
+  397 KB for a visitor against a 400 KB budget, 522 KB for the whole site — and
   a new example game costs about fourteen of those kilobytes, because the page
   bundles every fixture SVG twice (raw text for the ROM build, a URL for the
   preview). Measure with a **clean** `dist`: the checker reads every `.js` it

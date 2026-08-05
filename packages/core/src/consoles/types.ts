@@ -131,6 +131,19 @@ export type CodegenFormat = "bin" | "asm" | "c" | "rom";
 export interface ConsoleSpec {
   id: string;
   name: string;
+  /**
+   * The names the other regions used, where a region called it something else
+   * (doc 03 §Names).
+   *
+   * `name` is the first of the list and the rest follow it in region order —
+   * British, Japanese, American, then anywhere else — with a region that kept
+   * the previous region's name not listed a second time. So the Mega Drive
+   * carries one entry (an American Genesis), the PC Engine carries one (an
+   * American TurboGrafx-16), and most consoles carry none because one name
+   * served everywhere. `consoleNames`/`consoleLabel` are how a picker asks;
+   * never join this by hand, or the separator has two answers.
+   */
+  otherNames?: readonly string[];
   aliases: readonly string[];
   tier: 1 | 2 | 3;
   display: DisplaySpec;

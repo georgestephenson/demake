@@ -31,6 +31,7 @@ export type { RgbaImage } from "./image/rgba.js";
 
 // --- consoles ----------------------------------------------------------------
 export { consoles, getConsole, findConsole, withMode } from "./consoles/registry.js";
+export { consoleNames, consoleLabel } from "./consoles/names.js";
 export type {
   ConsoleSpec,
   ColorSpec,
