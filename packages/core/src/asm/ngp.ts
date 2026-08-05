@@ -184,6 +184,43 @@ export const NGP_CHARACTER_COUNT = 512;
 /** Bytes one 8×8 tile at 2bpp occupies. */
 export const NGP_CHARACTER_BYTES = 16;
 
+// --- input --------------------------------------------------------------------
+
+/**
+ * The controller byte, which the console keeps in the boot ROM's reserved page.
+ *
+ * SNK's own documentation calls it the "system lever", and every reference this
+ * project could reach agrees about *where* it is.
+ */
+export const NGP_BUTTONS = 0x006f82;
+
+/**
+ * Which bit of {@link NGP_BUTTONS} each direction and button is.
+ *
+ * **Unverified, and deliberately declared rather than hidden.** Four independent
+ * sources place the byte at `$6F82` and none of them gives its bit order, so
+ * this is the natural reading — the directions in the order a d-pad is usually
+ * numbered, then the two buttons, then Option — and not something read off a
+ * datasheet. A machine description that is wrong *and consistent* passes every
+ * test there is (AGENTS.md §Gotchas), so the risk here is real and it is exactly
+ * the kind this project refuses to leave implicit: the `@demake/ngp` core writes
+ * this byte through these same constants, so a demade cartridge and the core
+ * would agree with each other while disagreeing with the hardware.
+ *
+ * What would settle it: SNK's own development documentation, a hardware
+ * capture, or a homebrew SDK header. Until then this is the one place to change,
+ * and changing it is a one-line edit that both readers pick up.
+ */
+export const NGP_BUTTON_BITS: Readonly<Record<string, number>> = {
+  up: 0,
+  down: 1,
+  left: 2,
+  right: 3,
+  a: 4,
+  b: 5,
+  option: 6,
+};
+
 /** The visible screen, in pixels. */
 export const NGP_SCREEN_WIDTH = 160;
 export const NGP_SCREEN_HEIGHT = 152;

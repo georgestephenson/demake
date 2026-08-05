@@ -852,9 +852,11 @@ export const NGPC_MEMORY: MemoryPlan = {
   // A map entry is a word — nine bits of tile, four of palette, one of mono
   // palette and two of flip — so a queued cell is a tile *and* an attribute.
   cellAttributes: true,
-  // The vertical-blank handler's own byte is in the boot ROM's reserved page
-  // rather than the heap, so nothing an interrupt writes comes out of here.
-  interruptBytes: 0,
+  // The frame flag the vertical-blank handler sets and the main loop waits on.
+  // Its own byte rather than borrowed scratch, for the Sega's reason: a handler
+  // writes it in the middle of whatever the game was doing, and everything in
+  // `layout.scratch` is documented as valid for the length of one routine.
+  interruptBytes: 1,
   // A four-byte record pointer and a two-byte index, as on the Mega Drive and
   // the Game Boy Advance: an address is twenty-four bits here, so a pointer that
   // fitted in two would have to be widened at every use. In memory rather than
