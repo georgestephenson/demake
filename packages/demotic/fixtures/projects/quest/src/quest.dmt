@@ -208,8 +208,11 @@ sound hurt.wav on hero hits spikes, lava, screenbottom
 -- `bolt` as a class, so each one is written once and runs in whichever of the
 -- four levels is on screen.
 
-when always then hero.ydirection as min(hero.ydirection + 0.04, 0.9)
-when always then crawler.ydirection as min(crawler.ydirection + 0.04, 0.9)
+-- A rule's delta is per tick and nothing scales it, so the pull is written
+-- against `fps`: a constant falls harder on a console that ticks faster, and
+-- the jump that has to clear these ledges lands a cell short there.
+when always then hero.ydirection as min(hero.ydirection + 2.4 / fps, 0.9)
+when always then crawler.ydirection as min(crawler.ydirection + 2.4 / fps, 0.9)
 when always then footing.value as 0
 when always then onpipe.value as 0
 
@@ -300,8 +303,12 @@ when fireball hits flier then (flier.visible, fireball.visible) as (0, 0)
 -- damage --------------------------------------
 -- `hurt` is set by a collision in step 5 and spent here in step 3 of the next
 -- tick, which is why one flag serves every way of being hit.
+--
+-- `guard` counts down a tick at a time, so the two seconds it is set to are
+-- written against `fps`: a bare 120 would be a second and a half of mercy on a
+-- console that ticks faster.
 
-when always if hurt.value * (guard.value = 0) * (power.value > 0) > 0 then (power.value, guard.value) as (0, 120)
+when always if hurt.value * (guard.value = 0) * (power.value > 0) > 0 then (power.value, guard.value) as (0, 2 * fps)
 when always in play1 if hurt.value * (guard.value = 0) * (power.value = 0) > 0 then scene as play1
 when always in play2 if hurt.value * (guard.value = 0) * (power.value = 0) > 0 then scene as play2
 when always in play3 if hurt.value * (guard.value = 0) * (power.value = 0) > 0 then scene as play3
@@ -327,12 +334,15 @@ when always if lives.value < 1 then scene as lost
 
 -- the fight -----------------------------------
 
+-- `throw` counts ticks, so the two moments it is read at are written against
+-- `fps` — seven sixths of a second between bolts, and seven thirds before the
+-- count starts again, on every console rather than on a 60 Hz one.
 when always in play4 then throw.value as throw.value + 1
 when boss.x <= 40 in play4 then boss.xdirection as 1
 when boss.x >= 51 in play4 then boss.xdirection as -1
 
-when throw.value reaches 70 in play4 then (z1.visible, z1.x, z1.y) as (1, boss.x, boss.y + 1)
-when throw.value reaches 140 in play4 then (throw.value, z1.visible, z1.x, z1.y) as (0, 1, boss.x, boss.y + 1)
+when throw.value reaches fps * 7 / 6 in play4 then (z1.visible, z1.x, z1.y) as (1, boss.x, boss.y + 1)
+when throw.value reaches fps * 7 / 3 in play4 then (throw.value, z1.visible, z1.x, z1.y) as (0, 1, boss.x, boss.y + 1)
 
 when bolt hits wall, ledge, screenleft then visible as 0
 when hero hits bolt then (bolt.visible, hurt.value) as (0, 1)

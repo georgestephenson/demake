@@ -29,14 +29,14 @@ a delta a level rule adds every tick, and nothing scales what a rule adds — a
 rate, but `ydirection + 0.04` is an acceleration per tick, so a machine ticking
 75.47 times a second falls half again as hard as one ticking 60. The hero
 cleared four cells there against five everywhere else and the climb stopped two
-thirds of the way up. It is written `2.4 / fps` now, which folds at compile time
-to the constant the 60 Hz consoles already had — so no cartridge but the
-WonderSwan's changes for that reason — and the suite gained the case that says
-so, which fails on that console with the old constant.
+thirds of the way up. It is written `2.4 / fps` now, which folds to the constant
+the 60 Hz consoles already had — so the code those eleven emit does not change
+by an instruction — and the suite gained the case that says so, which fails on
+that console with the old constant.
 
 Cartridge bytes move on every console: the level's grid changed, and with it the
 packed backdrop and level tables. The caves have more room than before, not less
-(Game Boy 5114 bytes free to 5961).
-
-The platformer, quest and runner fixtures still write their gravity as a
-constant and so still jump a cell short on the WonderSwan.
+(Game Boy 5114 bytes free to 5961). The division also buys an expression
+temporary it never uses, because the emitter folds a constant subexpression and
+the analysis that sizes the temporaries does not — four bytes of RAM, and every
+address after it moves.

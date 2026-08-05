@@ -1246,10 +1246,16 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   times a second as on one that ticks 60. The caves' hero cleared five cells
   everywhere and four on the WonderSwan, which stopped its climb two thirds of
   the way up the cavern and was invisible from every other console.
-  `2.4 / fps` folds at compile time to the same constant a 60 Hz console already
-  had, so saying it portably moved no bytes on eleven of the twelve. The
-  platformer, quest and runner fixtures still write theirs as a constant and
-  jump short there.
+  `2.4 / fps` folds to the same constant a 60 Hz console already had, so the
+  code eleven of the twelve emit does not change by one byte. What it costs is
+  four bytes of RAM: the emitter folds a constant subexpression
+  (`codegen/expr.ts` §emitExpr) but `analyze.ts` measures the tree it was
+  handed, so the division buys an expression temporary it never uses — and would
+  pull in the divider on a game that otherwise never divides. Every fixture in
+  the library already divides, so today it is four bytes and a shifted RAM map.
+  **A duration is the same problem**: `guard.value as 120` is two seconds only on
+  a machine that ticks 60 times a second, so quest writes `2 * fps` and reads its
+  boss timer at `fps * 7 / 6`.
 - **A ledge wants three clear rows above it and a surface within four rows
   below.** A hero is two cells tall and a jump rises five, of which the top one
   is spent getting _above_ the ledge rather than into its side — so a ledge four
