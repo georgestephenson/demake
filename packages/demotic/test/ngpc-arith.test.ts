@@ -58,12 +58,46 @@ import {
   set32,
   sub32,
 } from "../src/codegen/ngpc/val.js";
+import { emitExpr, UNBOUND } from "../src/codegen/ngpc/expr.js";
 import { compile } from "../src/compile.js";
 import { clampFixed, div, mul, ONE } from "../src/fixed.js";
 import { getProfile } from "../src/profiles.js";
+import { draw } from "../src/rng.js";
 
 /** A program with nothing in it: all these tests need from one is a layout. */
 const PROGRAM = compile("start only\n\nscene only\n", { profile: getProfile("md") });
+
+/**
+ * A program whose one rule assigns `source`, so a test can emit that expression.
+ *
+ * Going through a compiled rule rather than hand-building an AST is what makes
+ * these tests exercise the path a game takes: constants fold where the compiler
+ * folds them, and `random` pulls the generator in the way a rule pulls it —
+ * which is also the only way, since a helper reaches the output by being asked
+ * for and never by being named.
+ */
+function programFor(source: string) {
+  return compile(
+    [
+      "start only",
+      "",
+      "scene only",
+      "",
+      "create number n in only (value 0, visible 0)",
+      "",
+      `when always then n.value as ${source}`,
+      "",
+    ].join("\n"),
+    { profile: getProfile("md") },
+  );
+}
+
+/** The expression that program's rule assigns. */
+function expressionOf(program: ReturnType<typeof programFor>) {
+  const value = program.rules[0]?.assignments[0]?.value;
+  if (!value) throw new Error("the fixture program has no assignment to read");
+  return value;
+}
 
 /** A third of a cell, as a whole 16.16 value — `ONE / 3` is not one. */
 const THIRD = Math.floor(ONE / 3);
@@ -88,10 +122,10 @@ function read32(machine: Ngp, address: number): number {
 }
 
 /** Assemble `body` into a cartridge, run it to its spin loop, hand it back. */
-function run(body: (ctx: NgpcCtx) => void): Ngp {
-  const analysis = analyze(PROGRAM);
-  const layout = planLayout(PROGRAM, analysis, NGPC_MEMORY);
-  const ctx = new NgpcCtx(PROGRAM, analysis, layout, getProfile("md"), CODE_ORIGIN);
+function run(body: (ctx: NgpcCtx) => void, program = PROGRAM): Ngp {
+  const analysis = analyze(program);
+  const layout = planLayout(program, analysis, NGPC_MEMORY);
+  const ctx = new NgpcCtx(program, analysis, layout, getProfile("md"), CODE_ORIGIN);
   const { asm } = ctx;
 
   asm.label("Start");
@@ -351,6 +385,20 @@ describe("the Neo Geo Pocket Color value layer", () => {
     ]);
   });
 
+  it("pulls in the divider only when something divides", () => {
+    // The reachability rule: a game that never divides ships no divider, because
+    // nothing ever asked for one.
+    const analysis = analyze(PROGRAM);
+    const layout = planLayout(PROGRAM, analysis, NGPC_MEMORY);
+    const plain = new NgpcCtx(PROGRAM, analysis, layout, getProfile("md"), CODE_ORIGIN);
+    add32(plain, A, B);
+    expect(plain.helperNames()).toEqual([]);
+
+    const dividing = new NgpcCtx(PROGRAM, analysis, layout, getProfile("md"), CODE_ORIGIN);
+    div32(dividing, A, B);
+    expect(dividing.helperNames()).toContain("Div32");
+  });
+
   it("emits the same bytes twice for the same program", () => {
     const build = (): Uint8Array => {
       const analysis = analyze(PROGRAM);
@@ -362,5 +410,102 @@ describe("the Neo Geo Pocket Color value layer", () => {
       return ctx.asm.assemble();
     };
     expect([...build()]).toEqual([...build()]);
+  });
+});
+
+describe("the Neo Geo Pocket Color expression layer", () => {
+  it("draws exactly what the language's generator draws", () => {
+    // `rng.ts` is the definition and every backend has to reproduce it bit for
+    // bit — a generator that disagreed would make two implementations of the
+    // same game incomparable, which is the whole reason it is in the language.
+    // Three multiplies and no loop here, and the modulo is one `div`, so this is
+    // where either would show.
+    const SEED = 1;
+    for (const [source, low, high] of [
+      ["random(0, 10)", 0, 10 * ONE],
+      ["random(3, 3)", 3 * ONE, 3 * ONE],
+      // Crossed bounds: the low one is the answer, and the state still moves.
+      ["random(5, 2)", 5 * ONE, 2 * ONE],
+      ["random(0 - 4, 4)", -4 * ONE, 4 * ONE],
+      // Floored to whole cells before anything else happens.
+      ["random(1.5, 6.25)", ONE + ONE / 2, 6 * ONE + ONE / 4],
+      ["random(0, 1000)", 0, 1000 * ONE],
+    ] as const) {
+      const program = programFor(source);
+      const expr = expressionOf(program);
+      const layout = planLayout(program, analyze(program), NGPC_MEMORY);
+      const rng = layout.rng as number;
+      const machine = run((ctx) => {
+        set32(ctx, rng, SEED);
+        emitExpr(ctx, expr, UNBOUND, OUT);
+        copy32(ctx, OUT + 4, rng);
+      }, program);
+      const want = draw(SEED, low, high);
+      expect(`${source} = ${read32(machine, OUT)}`).toBe(`${source} = ${want.value}`);
+      expect(read32(machine, OUT + 4) >>> 0).toBe(want.state);
+    }
+  });
+
+  it("advances the generator even when the bounds leave nothing to draw", () => {
+    // The rule `rng.ts` exists to state: *when* a draw happens is behaviour, so
+    // the degenerate case still moves the state.
+    const program = programFor("random(2, 2)");
+    const expr = expressionOf(program);
+    const layout = planLayout(program, analyze(program), NGPC_MEMORY);
+    const rng = layout.rng as number;
+    const machine = run((ctx) => {
+      set32(ctx, rng, 7);
+      emitExpr(ctx, expr, UNBOUND, OUT);
+      copy32(ctx, OUT + 4, rng);
+    }, program);
+    expect(read32(machine, OUT + 4) >>> 0).toBe(draw(7, 2 * ONE, 2 * ONE).state);
+  });
+
+  it("compiles the builtins the expression layer offers", () => {
+    // `abs`, `min`, `max` and `clamp` are the whole of the language's arithmetic
+    // vocabulary beyond the operators, and each is a branch this backend picks
+    // rather than an instruction the hardware has.
+    for (const [source, want] of [
+      ["abs(0 - 3)", 3 * ONE],
+      ["abs(3)", 3 * ONE],
+      ["min(2, 5)", 2 * ONE],
+      ["min(5, 2)", 2 * ONE],
+      ["min(0 - 5, 2)", -5 * ONE],
+      ["max(2, 5)", 5 * ONE],
+      ["max(5, 2)", 5 * ONE],
+      ["max(0 - 5, 0 - 2)", -2 * ONE],
+      ["clamp(7, 0, 5)", 5 * ONE],
+      ["clamp(0 - 7, 0 - 5, 5)", -5 * ONE],
+      ["clamp(3, 0, 5)", 3 * ONE],
+    ] as const) {
+      const program = programFor(source);
+      const expr = expressionOf(program);
+      const machine = run((ctx) => {
+        emitExpr(ctx, expr, UNBOUND, OUT);
+      }, program);
+      expect(`${source} = ${read32(machine, OUT)}`).toBe(`${source} = ${want}`);
+    }
+  });
+
+  it("builds a comparison's value without ever building its operands' difference", () => {
+    // A relational operator used as a *value* rather than as a test: one is
+    // `1.0` and zero is zero, which is what makes `when always ... as a < b`
+    // usable as a number.
+    for (const [source, want] of [
+      ["1 < 2", ONE],
+      ["2 < 1", 0],
+      ["2 = 2", ONE],
+      ["2 != 2", 0],
+      ["3 >= 3", ONE],
+      ["3 > 3", 0],
+      ["0 - 5 <= 0 - 5", ONE],
+    ] as const) {
+      const program = programFor(source);
+      const expr = expressionOf(program);
+      const machine = run((ctx) => {
+        emitExpr(ctx, expr, UNBOUND, OUT);
+      }, program);
+      expect(`${source} = ${read32(machine, OUT)}`).toBe(`${source} = ${want}`);
+    }
   });
 });
