@@ -68,6 +68,17 @@ builds ([doc 19](19-projects.md)).
   thing you have open>`, and the tagline is per editor: a `.dmt` is the whole
   product thesis in one line and a `.wav` is one demaker. The browser tab says
   the same thing, from the same string.
+
+  **A narrow window moves the name rather than dropping it.** The name sits in
+  the middle of the strip, which is where a desktop puts a window's title and
+  which is also where the menus are once the window is small — so below 900px
+  the engine note goes and the name flows to the right of the menus, and on a
+  phone the strip wraps and the name takes the row above them. What a phone
+  loses is the title's *position*; the tagline gives up characters to an
+  ellipsis before it gives up its row. It used to lose the tagline at 900px and
+  the name itself at 640, which left the one thing on the screen that says what
+  the site is showing nothing at all on the machine most likely to be told about
+  it in a link.
 - **The menus carry the commands**, with their accelerators: File (new, open a
   folder, import a zip, save, download a zip), Edit (undo, redo, rename, delete),
   View (the explorer, the reference), Go (go to file, the game, the Demakefile),

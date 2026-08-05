@@ -1228,10 +1228,19 @@ main.audio-layout {
  * itself never does, which is what makes the title bar and the status bar stay
  * where a window's do.
  */
+/*
+ * The column is stated for the same reason the rows are: an implicit `auto`
+ * track is sized to its widest item's *max-content*, so a toolbar or a line of
+ * code wider than a phone made the whole window that wide — the title bar and
+ * the status bar with it — and `overflow: hidden` then cut the surplus off with
+ * nothing able to scroll to it. `minmax(0, 1fr)` pins every row to the window
+ * and hands the overflow back to the regions that know how to scroll it.
+ */
 .workspace {
   height: 100dvh;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   overflow: hidden;
 }
 
@@ -1240,7 +1249,10 @@ main.audio-layout {
  * arrangement VS Code's own custom title bar uses, and the reason it can be this
  * short. The name is centred because that is where every desktop puts a window's
  * title, and it is absolutely positioned so it stays centred on the *window*
- * rather than on whatever is left between the menus and the note.
+ * rather than on whatever is left between the menus and the note. Centring is
+ * the one thing about it that a narrow window takes away: the media queries at
+ * the end of this section flow it to the right of the menus and then onto a row
+ * of its own, so what a phone loses is the *position* and not the name.
  */
 .titlebar {
   position: relative;
@@ -1282,8 +1294,8 @@ main.audio-layout {
  * The explorer's switch, at the left of the title bar — where every editor with
  * a sidebar puts one, and the one control that must survive every width: below
  * 1000px the tree opens contracted, so this is the way back to the project's
- * files. It is a square so it stays a square when the tagline and the name have
- * both gone.
+ * files. It is a square so it stays a square once the engine note has gone and
+ * the name has moved out of the middle.
  */
 .titlebar-toggle {
   flex: none;
@@ -1311,21 +1323,56 @@ main.audio-layout {
   color: var(--ink);
 }
 
-/* The label is the first thing to go when the window is too narrow for it: the
-   menus are controls. After the rules it overrides, not before — same
-   specificity, so source order is what decides. */
+/*
+ * Below 900px the engine note goes — it is the one thing in the strip nobody is
+ * looking for — and the name stops being centred. Centring is a claim on the
+ * middle of the window, and by this width the menus are already there: flowed to
+ * the right of them instead, the name and its label both survive widths where a
+ * centred title would have had to drop one or land on top of a menu. What makes
+ * that safe rather than an overlap waiting to happen is `min-width: 0` and the
+ * ellipsis under it — the label gives up characters, in order, and never pushes
+ * the strip wider than the window. After the rules it overrides, not before —
+ * same specificity, so source order is what decides.
+ */
 @media (max-width: 900px) {
-  .window-title .tagline,
   .titlebar .privacy {
     display: none;
   }
+
+  .window-title {
+    position: static;
+    transform: none;
+    margin-left: auto;
+    min-width: 0;
+    justify-content: flex-end;
+  }
+
+  .window-title .tagline {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }
 
-/* And below that the name goes too: it is centred on the *window*, so on a phone
-   it lands on top of the last menu rather than beside it. */
+/*
+ * And on a phone there is no room beside five menus for a name as well, so the
+ * strip wraps and the title takes the row above them: whole, which is what it is
+ * for, rather than truncated to its first two words or dropped altogether. Two
+ * rows is what a phone can afford and a desktop cannot — the strip is still one
+ * strip, and it is still the only chrome above the editor.
+ */
 @media (max-width: 640px) {
+  .titlebar {
+    flex-wrap: wrap;
+    row-gap: 0;
+    padding-top: 0.2rem;
+  }
+
   .window-title {
-    display: none;
+    order: -1;
+    flex-basis: 100%;
+    margin-left: 0;
+    justify-content: center;
   }
 }
 

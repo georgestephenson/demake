@@ -167,6 +167,41 @@ test("a phone-width window opens with the explorer contracted", async ({ page })
   await expect(page.locator(".explorer")).toBeVisible();
 });
 
+test("a phone-width window still says what it is", async ({ page }) => {
+  // The name and its label used to be dropped one after the other on the way
+  // down — the label below 900px and the name below 640 — because a centred
+  // title lands on top of the menus. Flowed to the right of them and then onto a
+  // row of its own, both survive, and what a phone loses is the position.
+  await page.setViewportSize({ width: 390, height: 780 });
+  await page.goto("/");
+
+  const title = page.getByTestId("window-title");
+  await expect(title).toBeVisible();
+  await expect(title.locator(".wordmark")).toBeVisible();
+  await expect(title.locator(".tagline")).toBeVisible();
+
+  // And nothing in the strip reaches past the window. This is the assertion that
+  // covers the *page* as well as the title: an implicit grid column is sized to
+  // its widest item, so a toolbar wider than a phone made the whole window that
+  // wide and `overflow: hidden` cut the surplus off with nothing to scroll to
+  // it — a title bar clipped mid-word and a status bar missing its right-hand
+  // end, on every section at once.
+  for (const part of [".workspace", ".titlebar", ".statusbar"]) {
+    const right = await page
+      .locator(part)
+      .evaluate((node) => Math.round(node.getBoundingClientRect().right));
+    expect(right).toBeLessThanOrEqual(390);
+  }
+
+  // The label is the one part allowed to be drawn shorter than what it says: it
+  // ellipsises inside the window rather than running out of it.
+  const label = await title
+    .locator(".tagline")
+    .evaluate((node) => ({ right: Math.round(node.getBoundingClientRect().right) }));
+  expect(label.right).toBeLessThanOrEqual(390);
+  await expect(title).toContainText("one source project");
+});
+
 test("go to file opens a file by typing at it", async ({ page }) => {
   await page.goto("/");
   // Wait for the app before pressing a key at it. `goto` resolves on the
