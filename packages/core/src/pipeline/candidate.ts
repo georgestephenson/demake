@@ -41,6 +41,7 @@ import { fitTms } from "./fit-tms.js";
 import { chooseAutoSize, resize, snapExplicitSize } from "./geometry.js";
 import { makeColorSpace, type HwColor, type HwColorSpace } from "./hwcolor.js";
 import { fitMono } from "./mono.js";
+import { fitMonoTiled } from "./fit-mono-tiled.js";
 import { normalize } from "./normalize.js";
 import { effortParams, type Candidate } from "./portfolio.js";
 import { remap } from "./remap.js";
@@ -277,11 +278,22 @@ function fit(
   }
   const strict = options.strict === true;
 
-  if (candidate.kind === "mono" || candidate.kind === "tms") {
+  if (candidate.kind === "mono" || candidate.kind === "mono-tiled" || candidate.kind === "tms") {
     const image =
       candidate.kind === "mono"
         ? fitMono(work, spec, candidate.dither.alg, candidate.dither.strength)
-        : fitTms(work, spec, candidate.dither.alg, candidate.dither.strength);
+        : candidate.kind === "mono-tiled"
+          ? // The one fit that chooses its own shades as well as what indexes
+            // them, so `maxSubPalettes` reaches it the way it reaches the tiled
+            // fitter — a game keeps one palette back for its font.
+            fitMonoTiled(
+              work,
+              spec,
+              candidate.dither.alg,
+              candidate.dither.strength,
+              options.maxSubPalettes,
+            )
+          : fitTms(work, spec, candidate.dither.alg, candidate.dither.strength);
     const budget = enforceBudget(image, spec, strict, options.maxTiles);
     return {
       image: budget.image,

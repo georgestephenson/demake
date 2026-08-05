@@ -61,7 +61,7 @@ where the data formats genuinely coincide.
 | `a8` | Atari 5200/8-bit | ANTIC display list + screen data + GTIA regs | MADS/cc65 |
 | `lynx` | Lynx | 4bpp framebuffer + palette (+ optional per-line reload table) | cc65 lynx target |
 | `wsc` | WonderSwan Color | 4bpp packed tiles (left pixel high nibble), screen-map words (tile/palette/bank/flip), 16 RGB444 palettes | NASM (16-bit x86 for the V30MZ); 4 Mbit cartridge packed by demake itself |
-| `ws` | WonderSwan (mono) | 2bpp tiles, screen map, shade-pool + 4-entry palettes | NASM; awaits the tiled-mono fit path (doc 13 §Phase 5) |
+| `ws` | WonderSwan (mono) | 2bpp tiles, screen map, shade-pool + 4-entry palettes | NASM (or demake's own V30MZ encoder). `prep`/`inspect` work through `pipeline/fit-mono-tiled.ts`; the native-data emitter is still to come |
 | `ngpc` | NGP/NGPC | 2bpp tiles, scroll map, palettes | Wonderful toolchain / ngpc sdk |
 | `intv` | Intellivision | GRAM cards + BACKTAB words | jzIntv as1600 |
 | `mono-misc` | Virtual Boy, Pokémon Mini, Supervision, Game.com | per-platform tile/fb formats | per-platform assemblers, validated in Tier 3 rollout |

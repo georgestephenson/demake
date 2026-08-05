@@ -20,7 +20,7 @@ import type { DitherAlg, Effort, PrepOptions, Profile, ScaleKernel } from "./typ
 /** A concrete candidate strategy. */
 export interface Candidate {
   id: string;
-  kind: "tiled" | "mono" | "tms";
+  kind: "tiled" | "mono" | "mono-tiled" | "tms";
   scale: ScaleKernel;
   dither: { alg: DitherAlg; strength: number };
   affinity: Profile;
@@ -44,6 +44,21 @@ export interface Candidate {
 /** Whether a spec uses the TMS9918 Graphics II ("row-pair") fit path. */
 export function isTms(spec: ConsoleSpec): boolean {
   return spec.layout.kind === "scanline" && spec.layout.strategy === "tms-rowpair";
+}
+
+/**
+ * Whether this console's shades are chosen *per cell* rather than once.
+ *
+ * The property is `subPalettes.count > 1` on a mono machine, and one console has
+ * it: a WonderSwan's tile is 2bpp and its cell names one of sixteen four-entry
+ * palettes, so the fit has a selection to make that `mono.ts` — which produces a
+ * single ramp every cell shares — cannot express. A pool it also chooses
+ * (`color.levels`) rides along, and is the second half of the same fact.
+ */
+export function isMonoTiled(spec: ConsoleSpec): boolean {
+  return (
+    spec.color.model === "mono" && spec.layout.kind === "tiles" && spec.layout.subPalettes.count > 1
+  );
 }
 
 const TILED_PORTFOLIO: readonly Candidate[] = [
@@ -155,6 +170,43 @@ const MONO_PORTFOLIO: readonly Candidate[] = [
   },
 ];
 
+/**
+ * The tiled-mono candidates.
+ *
+ * The mono list's three with a different fitter behind them, and deliberately
+ * the same three: what varies across a portfolio is how a picture is *scaled and
+ * dithered*, and neither of those questions changes because the palette gained a
+ * dimension. The fit itself has no restarts to vary — it is discrete and
+ * exhaustive (`fit-mono-tiled.ts`), so a fourth candidate would be a fourth copy
+ * of the same answer.
+ */
+const MONO_TILED_PORTFOLIO: readonly Candidate[] = [
+  {
+    id: "monotile-flat",
+    kind: "mono-tiled",
+    scale: "majority",
+    dither: { alg: "none", strength: 0 },
+    affinity: "art",
+    description: "Per-cell shade palettes, no dither — flat cel shading.",
+  },
+  {
+    id: "monotile-fs",
+    kind: "mono-tiled",
+    scale: "lanczos3",
+    dither: { alg: "floyd-steinberg", strength: 90 },
+    affinity: "photo",
+    description: "Per-cell shade palettes with Floyd–Steinberg diffusion.",
+  },
+  {
+    id: "monotile-bayer4",
+    kind: "mono-tiled",
+    scale: "box",
+    dither: { alg: "bayer4", strength: 80 },
+    affinity: "photo",
+    description: "Per-cell shade palettes with ordered Bayer 4×4.",
+  },
+];
+
 const TMS_PORTFOLIO: readonly Candidate[] = [
   {
     id: "tms-flat",
@@ -184,6 +236,7 @@ const TMS_PORTFOLIO: readonly Candidate[] = [
 
 /** The full candidate list for a console (for `--strategy list` / introspection). */
 export function portfolioFor(spec: ConsoleSpec): readonly Candidate[] {
+  if (isMonoTiled(spec)) return MONO_TILED_PORTFOLIO;
   if (spec.color.model === "mono") return MONO_PORTFOLIO;
   if (isTms(spec)) return TMS_PORTFOLIO;
   return TILED_PORTFOLIO;
@@ -237,7 +290,13 @@ export function buildPortfolio(
     candidates = [
       {
         id: `custom-${opts.scale ?? "auto"}-${opts.dither?.alg ?? "none"}`,
-        kind: spec.color.model === "mono" ? "mono" : isTms(spec) ? "tms" : "tiled",
+        kind: isMonoTiled(spec)
+          ? "mono-tiled"
+          : spec.color.model === "mono"
+            ? "mono"
+            : isTms(spec)
+              ? "tms"
+              : "tiled",
         scale:
           opts.scale && opts.scale !== "auto"
             ? opts.scale

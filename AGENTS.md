@@ -63,9 +63,22 @@ full proof loop for **all eight Tier 1 consoles**:
 Phase 5 then opened Tier 2 with the **PC Engine** and the **WonderSwan Color**,
 both riding that same loop end to end (`wla-huc6280` on the existing WLA-DX
 build and beetle-pce-fast; NASM and beetle-wswan). Doc 13 §Phase 5 records what
-blocks each remaining Tier 2 console — including that the mono WonderSwan is
-blocked on a _tiled-mono fitter_, not on a toolchain, and that its current spec
-is optimistic about what that hardware can display.
+blocks each remaining Tier 2 console.
+
+**And the mono WonderSwan demakes art now**, which took a fit path rather than a
+toolchain. That console's palette has a level of indirection nothing else in the
+matrix has: a tile is 2bpp, a cell names one of sixteen four-entry palettes, and
+each entry is a three-bit index into a **shared pool of eight shades** — itself
+chosen from the sixteen levels the panel can show. So a fit chooses four things
+where `fit-mono.ts` chooses none (the pool, the shared backdrop, each palette,
+each cell), and `pipeline/fit-mono-tiled.ts` is where. What makes it unlike
+`fit-tiled.ts` is that the problem is **small and discrete**: once the pool
+exists there are exactly seventy quartets a cell could be given, so the per-cell
+question is answered by evaluating all of them rather than by clustering toward
+one — exact rather than nearly right, deterministic, and cheaper than a single
+k-means restart. `E_SHADE_POOL` is the compliance rule that keeps the pool a
+_pool_, and it is checked rather than assumed because a fit that reached for a
+ninth level would otherwise be silently truncated.
 
 Phase 7+ then opened the **Demotic backend**: `demake build` _compiles_ a `.dmt`
 into a real 32 KiB Game Boy cartridge — SM83 machine code written for that game,
@@ -679,7 +692,11 @@ packages/core/       @demake/core — the engine (zero platform deps; ESM; ships
   src/color/         sRGB/linear/Oklab, hardware-lattice snapping, color parsing
   src/image/         PNG codec (inflate/deflate/decode/encode), DAC models, decode dispatch
   src/consoles/      ConsoleSpec schema + one declarative spec per console (21 of them)
-  src/pipeline/      stages 0–7, the tiled fitter, mono + TMS row-pair paths, tournament
+  src/pipeline/      stages 0–7, the tiled fitter, mono + tiled-mono + TMS
+                     row-pair paths, tournament. fit-mono-tiled.ts is the one
+                     whose problem is *discrete*: a pool of eight and palettes
+                     of four leave seventy quartets a cell could be given, so it
+                     evaluates every one rather than clustering toward it
   src/pipeline/candidate.ts  one candidate, start to finish — the unit of parallel
                      work, and the content-keyed prologue memo that stops a
                      fan-out decoding its source once per candidate
@@ -2986,12 +3003,22 @@ not per console.
   prepends the rest of the 4 Mbit cartridge and patches the footer checksum
   (the sum of every byte but the two it lives in — computable only once the
   whole cartridge exists).
-- **The mono WonderSwan (`ws`) spec is knowingly optimistic** and is _not_ the
-  `wsc` family: it declares one eight-entry palette at 4bpp, but the hardware
-  has 2bpp tiles and four-entry palettes drawing from an eight-shade pool. Doing
-  it properly needs a tiled-mono fitter (doc 13 §Phase 5) — do not "fix" it by
-  pointing `ws` at the colour backend, which would emit tiles the mono display
-  controller cannot decode.
+- **The mono WonderSwan's `shades` and `levels` are different numbers, and the
+  difference is the point.** `color.shades` is 8 — how many the pool holds, so
+  how many the screen shows at once — and `color.levels` is 16, the LCD levels
+  the pool is chosen _from_. A `codes` entry holds the **level**, 0–15, not the
+  pool index, which is what lets `inspect` state "at most eight distinct ones"
+  as a rule it can check. Every other mono console leaves `levels` unset, and
+  `isMonoTiled` — not the field — is what routes a console to the tiled-mono
+  portfolio, because the deciding fact is `subPalettes.count > 1` on a mono
+  machine.
+- **And its `sharedIndex0` is real, so the fit chooses a backdrop.** Colour zero
+  is transparent on both of this console's background layers, so a pixel of
+  value 0 shows the backdrop register wherever it appears — the NES's rule
+  reached by different hardware. `fit-mono-tiled.ts` sweeps all eight pool
+  entries and solves the palette choice exactly under each, because picking the
+  backdrop by frequency first is how a fit comes to hold three usable shades on
+  hardware that has four.
 - **The PC Engine's BAT is fixed at VRAM word $0000**, so characters cannot start
   there: the harness gives the BAT 32×32 entries (words $0000–$03FF) and puts the
   first character at word $0400 — character 64 — which `cli/src/rom/pce.ts` adds
