@@ -146,7 +146,18 @@ for (const { name, options } of CASES) {
  * the page gets them through Vite's `?raw`, which only exists inside a build,
  * and the point of the test is that both sides start from the same file.
  */
-for (const consoleId of ["gb", "nes", "sms", "snes", "md", "gba", "nds", "pce", "wsc"] as const) {
+for (const consoleId of [
+  "gb",
+  "nes",
+  "sms",
+  "snes",
+  "md",
+  "gba",
+  "nds",
+  "pce",
+  "wsc",
+  "ws",
+] as const) {
   test(`the ${consoleId} ROM the page builds is byte-identical to the CLI's`, async ({ page }) => {
     // Demaking a full-screen picture is seconds of real work and the runner is
     // shared, so the budget is the *slowest* thing this can legitimately take
