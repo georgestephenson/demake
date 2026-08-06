@@ -18,3 +18,10 @@
 *.bmp binary
 *.woff binary
 *.woff2 binary
+
+# Raw RGBA goldens: the reference half of the raster-decoder fixture pairs
+# (`packages/core/test/fixtures/`). `text=auto` above would classify these by
+# heuristic, and a heuristic is not what a byte-for-byte comparison should rest
+# on — these files really do contain CR bytes, and a checkout that turned one
+# into CRLF would fail the decoder tests with a diff nobody could explain.
+*.rgba binary

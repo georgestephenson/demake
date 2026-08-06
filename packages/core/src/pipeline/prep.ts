@@ -136,6 +136,7 @@ export async function prep(input: Uint8Array, options: PrepOptions): Promise<Pre
   return {
     png,
     image,
+    source: analysed.source,
     decisions,
     stats: {
       meanDeltaE: winner.outcome.rawMeanDeltaE,

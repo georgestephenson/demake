@@ -448,6 +448,29 @@ function viewBoxOf(root: XmlNode): { x: number; y: number; w: number; h: number 
   });
 }
 
+/**
+ * The raster {@link rasterizeSvg} would produce for this document unasked.
+ *
+ * The document's declared size when it has one, and its `viewBox` otherwise.
+ * Exported because "how big is this drawing by default" is a question a caller
+ * has to answer *before* it can decide how big to ask for — and answering it by
+ * rasterising once and looking is a full fill of the canvas thrown away.
+ * Parsing is a fraction of that.
+ */
+export function svgIntrinsicSize(text: string): { width: number; height: number } {
+  const root = parseXml(text);
+  if (root.tag !== "svg") {
+    throw new DemakeError("E_BAD_INPUT", `the root element is <${root.tag}>, not <svg>`);
+  }
+  const view = viewBoxOf(root);
+  const declaredW = number(root.attrs, "width", view.w);
+  const declaredH = number(root.attrs, "height", view.h);
+  return {
+    width: Math.max(1, Math.round(declaredW > 0 ? declaredW : view.w)),
+    height: Math.max(1, Math.round(declaredH > 0 ? declaredH : view.h)),
+  };
+}
+
 /** Rasterise an SVG document into an 8-bit RGBA raster with real alpha. */
 export function rasterizeSvg(text: string, options: RasterizeOptions = {}): RgbaImage {
   const root = parseXml(text);

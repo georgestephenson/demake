@@ -50,7 +50,11 @@ test("the title bar's tagline follows the file that is open", async ({ page }) =
   await page.goto("/");
   await page.getByTestId("explorer-file").filter({ hasText: "ball.svg" }).first().click();
   await expect(page.getByTestId("window-title")).toContainText("hardware-compliant console art");
-  expect(await page.title()).toContain("hardware-compliant console art");
+  // Polled, not read once. The title bar and the tab are one string in two
+  // places, but they are not written in the same breath — the tab is a separate
+  // effect, so a synchronous read right after the DOM assertion is a race, and
+  // one WebKit loses often enough to have been reported flaky on CI.
+  await expect.poll(() => page.title()).toContain("hardware-compliant console art");
 });
 
 test("an option permalink still opens the art demaker", async ({ page }) => {
@@ -289,4 +293,51 @@ test("the text editor colours a Demakefile with the format's own grammar", async
   await page.getByTestId("explorer-rename").press("Enter");
   await page.getByLabel("README.md source").fill("# A heading\n\nsome *text*.\n");
   await expect(page.locator(".source-highlight [data-scope]")).toHaveCount(0);
+});
+
+test("a section whose chunk will not load says so instead of loading for ever", async ({
+  browser,
+}) => {
+  // Service workers off: with one running it fetches on the page's behalf and
+  // the route below never sees the request.
+  const context = await browser.newContext({ serviceWorkers: "block" });
+  const page = await context.newPage();
+
+  // Exactly what a tab left open across a deploy meets — the shell it is holding
+  // names hashed chunks the server has replaced — and what every lazy section
+  // did with it: nothing, for ever. Opening a `.wav` was the reported symptom,
+  // and the art demaker kept working throughout because it is in the entry
+  // chunk rather than a chunk of its own.
+  await page.route("**/SoundDemaker-*.js", (route) => route.fulfill({ status: 404, body: "" }));
+
+  await page.goto("/");
+  await page.getByTestId("explorer-file").and(page.locator('[data-path$="bounce.wav"]')).click();
+
+  await expect(page.getByTestId("section-error")).toContainText("could not be loaded");
+  await expect(page.getByTestId("section-loading")).toHaveCount(0);
+  // And the way out is offered. It is a reload and only a reload: asking for the
+  // same module again in this document is answered from the browser's module
+  // map, which is holding the failure.
+  await expect(page.getByTestId("section-reload")).toBeEnabled();
+
+  // And the section loads perfectly well when its chunk is served, which is what
+  // makes a reload the right advice: the same URL, a page later.
+  //
+  // A *fresh page* rather than a click on that button, and the reason is worth
+  // knowing because it is a real difference between engines. Driving the button
+  // asks this document to import the same URL again after a reload, and the two
+  // browsers do not agree about what that means: Chromium re-requests the chunk
+  // and recovers, while WebKit answers from its cache of the *failed* load and
+  // makes no request at all — the error simply comes back. Neither is what a
+  // visitor meets, because the case this whole path exists for is a stale shell,
+  // and the shell a reload fetches names a chunk with a *different* hash. There
+  // is no failed load cached against that URL in any engine, so the reload works
+  // everywhere. Asserting it here would be asserting the artificial half of the
+  // setup. The route is this page's rather than the context's, so the new page
+  // is served the chunk as any visitor would be.
+  const after = await context.newPage();
+  await after.goto("/#file=sound%2Fbounce.wav");
+  await expect(after.getByRole("heading", { name: "The fit" })).toBeVisible();
+
+  await context.close();
 });

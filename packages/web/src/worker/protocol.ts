@@ -19,10 +19,14 @@ import type {
   FitStats,
   Job,
   JobOutcome,
+  SourceInfo,
   StrategyInfo,
   Warning,
 } from "@demake/core";
 import type { Layout, Program } from "@demake/demotic";
+
+/** Re-exported so a pane can name it without reaching into the engine package. */
+export type { SourceInfo } from "@demake/core";
 
 /** The option set the UI edits — one field per `demake prep` flag (doc 05). */
 export interface PrepOptionsUi {
@@ -65,6 +69,15 @@ export interface PrepPayload {
   raw: Surface;
   /** DAC-simulated render (what the hardware screen shows). */
   dac: Surface;
+  /**
+   * What the source turned out to be, decoded.
+   *
+   * The engine's answer rather than the page's. The source pane used to report
+   * the browser's — `naturalWidth` off an `<img>` — which for a `<svg>` carrying
+   * only a `viewBox` is 300×150 whatever the drawing says, so the one number on
+   * screen describing the input was one no part of the conversion had used.
+   */
+  source: SourceInfo;
   palettes: PaletteSwatches[];
   decisions: AutoDecisions;
   stats: FitStats;

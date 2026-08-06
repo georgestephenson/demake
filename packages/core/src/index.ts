@@ -15,7 +15,7 @@ export { CORE_VERSION } from "./version.js";
 export { DemakeError, type DemakeErrorCode } from "./errors.js";
 
 // --- data in/out -------------------------------------------------------------
-export { decodeImage, detectFormat, type ImageFormat } from "./image/decode.js";
+export { decodeImage, detectFormat, type DecodeOptions, type ImageFormat } from "./image/decode.js";
 export { encodeIndexedPng, encodeRgbaPng, type IndexedImage } from "./image/png/encode.js";
 export { decodePng, isPng, PngDecodeError } from "./image/png/decode.js";
 // The PNG codec's own primitives, public because an *edge* needs them: a project
@@ -107,6 +107,7 @@ export type {
   PaletteColor,
   CandidateScore,
   AutoDecisions,
+  SourceInfo,
   FitStats,
   Warning,
   Profile,

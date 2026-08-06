@@ -8,10 +8,10 @@
  * could possibly mean are the art ones.
  *
  * The lists below are therefore a *filter over the project*, not a statement
- * about what the engine can decode. `art` names formats `decodeImage` has no
- * codec for yet on purpose: finding the file is this module's job, and being
- * told "JPEG decoding is not available in this build" is a far better answer
- * than being told the asset is missing.
+ * about what the engine can decode. `art` names a format `decodeImage` has no
+ * codec for on purpose — WebP, at the time of writing: finding the file is this
+ * module's job, and being told "WEBP decoding is not available in this build" is
+ * a far better answer than being told the asset is missing.
  */
 
 /** The kinds of file a Demotic program can name. */

@@ -13,7 +13,8 @@ import { describe, expect, it } from "vitest";
 
 import { DemakeError } from "../src/errors.js";
 import { detectFormat, decodeImage } from "../src/image/decode.js";
-import { rasterizeSvg } from "../src/image/svg/index.js";
+import { encodeRgbaPng } from "../src/image/png/encode.js";
+import { rasterizeSvg, svgIntrinsicSize } from "../src/image/svg/index.js";
 import { parsePath } from "../src/image/svg/path.js";
 import { parseColor } from "../src/image/svg/paint.js";
 import { parseXml } from "../src/image/svg/xml.js";
@@ -182,5 +183,60 @@ describe("the decoder's SVG path", () => {
     const bytes = new TextEncoder().encode("héllo — 😀");
     const withBom = new Uint8Array([0xef, 0xbb, 0xbf, ...bytes]);
     expect(decodeUtf8(withBom)).toBe("héllo — 😀");
+  });
+});
+
+describe("asking a drawing for a bigger raster", () => {
+  // The case the art demaker's output-size box exists for. A drawing has no
+  // pixels of its own, so a 8×8 `.svg` demade at 32×32 used to be an 8×8 raster
+  // scaled up — a blur the file never contained — where the same document drawn
+  // at 32×32 has a real edge in it.
+  const source = new TextEncoder().encode(doc(`<circle cx="4" cy="4" r="3.5" fill="#ffffff"/>`));
+
+  it("reports the size it would use unasked, without rasterising", () => {
+    expect(svgIntrinsicSize(decodeUtf8(source))).toEqual({ width: 8, height: 8 });
+  });
+
+  it("draws at the requested size rather than scaling its own", () => {
+    const bigger = decodeImage(source, { atLeast: { width: 32, height: 32 } });
+    expect([bigger.width, bigger.height]).toEqual([32, 32]);
+    // An 8×8 raster stretched to 32×32 is constant within every 4×4 block,
+    // whatever the scaling kernel — there is nothing else in it to draw. The
+    // block over the circle's crown is where the real raster disagrees, because
+    // at this resolution the rim runs through it.
+    const block = [];
+    for (let y = 0; y < 4; y += 1) for (let x = 16; x < 20; x += 1) block.push(at(bigger, x, y)[3]);
+    expect(new Set(block).size).toBeGreaterThan(1);
+  });
+
+  it("leaves a source that already covers the target exactly as it was", () => {
+    // The guarantee that keeps every existing conversion byte-identical: the
+    // fixtures all demake *down* from a drawing bigger than the screen, and a
+    // request they already satisfy must not perturb the raster at all.
+    const asked = decodeImage(source, { atLeast: { width: 4, height: 4 } });
+    expect([...asked.data]).toEqual([...decodeImage(source).data]);
+  });
+
+  it("keeps the document's own aspect ratio when it scales up", () => {
+    // Only the resolution moves. Scaling to the box instead would re-letterbox
+    // the drawing, and every framing decision downstream — `--fit`, the auto
+    // size, a sprite's cell box — is written against the framing it had.
+    const wide = new TextEncoder().encode(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8" width="16" height="8">` +
+        `<rect x="0" y="0" width="8" height="8" fill="#ff0000"/></svg>`,
+    );
+    const bigger = decodeImage(wide, { atLeast: { width: 64, height: 16 } });
+    expect(bigger.width / bigger.height).toBe(2);
+    expect(bigger.width).toBeGreaterThanOrEqual(64);
+  });
+
+  it("ignores the request for a raster source, whose pixels are the file", () => {
+    const png = encodeRgbaPng(
+      2,
+      2,
+      new Uint8Array([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255]),
+    );
+    const asked = decodeImage(png, { atLeast: { width: 64, height: 64 } });
+    expect([asked.width, asked.height]).toEqual([2, 2]);
   });
 });

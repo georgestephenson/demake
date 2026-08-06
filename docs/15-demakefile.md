@@ -270,14 +270,19 @@ naming them, or none and is the missing-asset path.
 Each sprite goes through the existing image pipeline — no second implementation:
 
 1. Resolve the asset (per target, honouring `use`).
-2. Rasterise, if the source is vector. **This exists**, in
-   `packages/core/src/image/svg/`, and `decodeImage` sniffs SVG like any other
-   format. It is ours rather than the host's for the reason this step was
-   deferred over: a canvas antialiases how it likes, so two engines disagree in
-   the low bits of every edge pixel and the browser stops producing the CLI's
-   bytes. The subset is what vector art is actually drawn in — shapes, paths,
-   gradients, strokes, groups, transforms — and anything outside it fails by
-   name rather than rendering as nothing.
+2. Rasterise, if the source is vector — **at the object's own box**, which is
+   step 3's `width × 8` by `height × 8`. That is `decodeImage`'s `atLeast`, and
+   it matters because a drawing has no pixels of its own: rasterising a 16×16
+   `.svg` at 16 and then sampling it up to a four-cell object's 32 is a blur the
+   file never contained, where the same document drawn at 32 has a real edge in
+   it. A raster source ignores the request, because there the pixels are the
+   file. **This exists**, in `packages/core/src/image/svg/`, and `decodeImage`
+   sniffs SVG like any other format. It is ours rather than the host's for the
+   reason this step was deferred over: a canvas antialiases how it likes, so two
+   engines disagree in the low bits of every edge pixel and the browser stops
+   producing the CLI's bytes. The subset is what vector art is actually drawn in
+   — shapes, paths, gradients, strokes, groups, transforms — and anything outside
+   it fails by name rather than rendering as nothing.
 3. Fit it at `width × 8` by `height × 8` px for the target console — but against
    the console's **sprite** palette shape rather than its background one, where
    the two differ. Sprite index 0 is transparency, not a colour, so a Game Boy

@@ -541,15 +541,26 @@ bundled track or effect on arrival instead, so every section demos itself.
   Contrast is always set with an explicit colour, **never with opacity** — a
   translucent foreground composites against whatever is behind it, which is both
   a measured contrast failure and genuinely harder to read.
-- Budget: < 355 KB JS gzipped before WASM codecs (lazy-loaded per input format);
-  Lighthouse ≥ 95 across the board, checked in CI. The figure is a **sum over the
-  whole site** — entry chunk, all five lazy sections, both workers — which is more
-  than any one visit costs: opening the heaviest section downloads about 150 KB.
-  A sum is the honest shape for this check, because it cannot be satisfied by
-  moving code from one chunk to another, only by there being less of it. It is
-  close: a second console — a second instruction set, a second emulator, a second
-  set of hardware tables — came to 4.6 KB of it. The next thing that does not fit
+- Budget: < 400 KB JS gzipped, Lighthouse ≥ 95 across the board, checked in CI.
+  The figure is **what one visitor downloads** — everything always-loaded, plus
+  the one console family they play — and it was a sum over the whole site until
+  the site legitimately had to hold eight consoles' emitters and eight emulator
+  cores. Every image codec is counted in it, because every image codec is ours
+  and therefore in the bundle: PNG, SVG, JPEG, GIF and BMP (doc 02 §Image
+  codecs). There is nothing lazy-loaded per input format and there is no WASM.
+  It is still not satisfiable by moving code between always-loaded chunks, only
+  by there being less of it, and moving something into a per-family chunk only
+  helps if it genuinely belongs to one family. The next thing that does not fit
   should be made smaller rather than given more room.
+
+  **The list of families is the registry's, not a copy.** `runtimeFamilies` in
+  `demotic`'s `codegen/registry.ts`, plus `familyFor` for a chunk named after a
+  console rather than its family. A hand-written copy sat in the checker until
+  the ARM handhelds landed and nobody added them to it, so a Game Boy Advance
+  emulator and emitter — 26.8 KB gzipped, behind an `import()` like every other
+  core — were charged to every visitor for as long as the two lists disagreed.
+  A budget that overstates itself fails the next honest change, which is what it
+  did.
 
   **The third console is what made that rule bite, and what it bought was one
   copy of the engine.** A Sega vertical is 21 KB gzipped and none of it is fat —

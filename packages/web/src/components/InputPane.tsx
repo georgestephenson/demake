@@ -7,15 +7,25 @@
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 
 import { describeSource, type SourceImage } from "../app.js";
+import type { SourceInfo } from "../worker/protocol.js";
 
 interface Props {
   source: SourceImage | null;
   onSource: (source: SourceImage) => void;
   onDemo: () => void;
   profile: "art" | "photo" | null;
+  /**
+   * What the engine made of the bytes, once it has run.
+   *
+   * The size shown comes from here and not from the `<img>` beside it. A browser
+   * measuring an SVG reports the CSS size — 300×150 for a document carrying only
+   * a `viewBox` — which is not the raster anything downstream fitted, so the one
+   * fact on screen about the input was one no part of the conversion had used.
+   */
+  decoded: SourceInfo | null;
 }
 
-export function InputPane({ source, onSource, onDemo, profile }: Props) {
+export function InputPane({ source, onSource, onDemo, profile, decoded }: Props) {
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -59,7 +69,7 @@ export function InputPane({ source, onSource, onDemo, profile }: Props) {
           <img src={source.url} alt={`source image ${source.name}`} data-testid="source-preview" />
         ) : (
           <p class="hint">
-            Drop an image here, paste from the clipboard, or pick a file. PNG, JPEG, WebP, GIF and
+            Drop an image here, paste from the clipboard, or pick a file. SVG, PNG, JPEG, GIF and
             BMP all work.
           </p>
         )}
@@ -96,9 +106,16 @@ export function InputPane({ source, onSource, onDemo, profile }: Props) {
           </div>
           <div>
             <dt>Size</dt>
-            <dd>
-              {source.width}×{source.height}
+            <dd data-testid="source-size">
+              {decoded ? `${decoded.width}×${decoded.height}` : `${source.width}×${source.height}`}
+              {decoded?.vector ? (
+                <span class="muted-note"> · vector, rasterised at this size</span>
+              ) : null}
             </dd>
+          </div>
+          <div>
+            <dt>Format</dt>
+            <dd data-testid="source-format">{decoded ? decoded.format : "—"}</dd>
           </div>
           <div>
             <dt>Profile</dt>

@@ -62,8 +62,16 @@ const res: PrepResult = await prep(inputBytes, {
   executor?: Executor,              // where the tournament's candidates run (doc 04 §Running the tournament)
 });
 // res: { png: Uint8Array; image: CompliantImage; manifest: Manifest;
-//        decisions: AutoDecisions; stats: FitStats; warnings: Warning[];
+//        source: SourceInfo; decisions: AutoDecisions; stats: FitStats;
+//        warnings: Warning[];
 //        tournament: { winner: string; candidates: CandidateScore[] } }
+//   SourceInfo = { format: ImageFormat; width: number; height: number;
+//                  vector: boolean }
+//     What went in, as the *engine* decoded it. The size is worth having because
+//     for a vector source there is nothing to read it off: an `<svg>` measured
+//     by a host is the CSS answer, which is 300×150 for a document carrying only
+//     a `viewBox` and is not the raster anything downstream used. `vector` says
+//     whether the size was a choice or a fact.
 //   CandidateScore = { strategy: string; aggregate: number;
 //                      metrics: Record<MetricId, number>;
 //                      disqualified?: { reason: string } }

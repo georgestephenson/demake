@@ -39,7 +39,14 @@ import {
   fillBinaries,
   loadExampleBinaries,
 } from "./lib/examples.js";
-import { fileHash, isBareHash, readRoute, sectionHash, type Section } from "./lib/route.js";
+import {
+  fileHash,
+  isBareHash,
+  readRoute,
+  sectionHash,
+  SECTION_LABELS,
+  type Section,
+} from "./lib/route.js";
 import {
   addFile,
   moveFile,
@@ -137,6 +144,10 @@ function go(hash: string): void {
 export function Site() {
   const [route, setRoute] = useState(() => readRoute(location.hash));
   const [lazySections, setLazySections] = useState<Record<string, ComponentType<EditorProps>>>({});
+  // Which sections asked for their chunk and did not get it. See the loader
+  // below: a section with an entry here is showing a way out rather than a
+  // spinner it will never replace.
+  const [lazyFailed, setLazyFailed] = useState<Record<string, string>>({});
   // The project opens with its text files present and its art and audio still
   // arriving, so the editor has source to show on the first frame rather than a
   // spinner. Pong, because that is the example the site has always opened on.
@@ -226,8 +237,17 @@ export function Site() {
   // someone who came to convert an image should download none of it. Splitting
   // them out keeps the art demaker's initial payload what it was before the site
   // grew sections (doc 07 §Quality bar).
+  //
+  // **A chunk that does not arrive has to say so.** A dynamic import can reject
+  // — a tab left open across a deploy holds a shell naming hashed chunks the
+  // server has since replaced, and the first lazy section it asks for 404s — and
+  // for as long as the rejection was dropped on the floor the page sat on
+  // "Loading…" for ever, with the art demaker still working because it is in the
+  // entry chunk. So a `.wav` opened nothing and said nothing. The failure is
+  // recorded per section and shown, because the recovery (reload, and take the
+  // new shell) is one the visitor has to be told to make.
   useEffect(() => {
-    if (lazySections[section]) return;
+    if (lazySections[section] || lazyFailed[section]) return;
     const load =
       section === "game"
         ? () => import("./sections/GameDemaker.js").then((m) => m.GameDemaker)
@@ -243,15 +263,36 @@ export function Site() {
                   ? () => import("./sections/SoundDemaker.js").then((m) => m.SoundDemaker)
                   : null;
     if (!load) return;
-    void load().then((component) =>
-      setLazySections((previous) => ({
-        ...previous,
-        [section]: component as ComponentType<EditorProps>,
-      })),
+    void load().then(
+      (component) =>
+        setLazySections((previous) => ({
+          ...previous,
+          [section]: component as ComponentType<EditorProps>,
+        })),
+      (error: unknown) => {
+        // A stale shell is the likely cause, so ask the worker to look for a new
+        // one. That is what makes the reload button below fix it rather than
+        // repeat it — the browser only checks on navigation, and this tab has
+        // not navigated since before the deploy. Swallowed whole, and on purpose:
+        // this is the error path, so a browser with no service worker (or one
+        // that throws merely for asking, which private-browsing modes do) must
+        // not turn "the section failed" into a second failure with no message at
+        // all.
+        try {
+          void navigator.serviceWorker?.getRegistration().then(
+            (registration) => void registration?.update(),
+            () => {},
+          );
+        } catch {
+          /* no service worker here */
+        }
+        setLazyFailed((previous) => ({ ...previous, [section]: String(error) }));
+      },
     );
-  }, [section, lazySections]);
+  }, [section, lazySections, lazyFailed]);
 
   const Lazy = lazySections[section];
+  const failed = lazyFailed[section];
 
   // The window's own name, which is also the tab's. Kept in sync rather than
   // written twice: a browser tab that says something different from the title bar
@@ -586,10 +627,48 @@ export function Site() {
           {section !== "art" ? (
             Lazy ? (
               <Lazy {...props} />
+            ) : failed !== undefined ? (
+              <main>
+                <section class="pane">
+                  <p class="error" role="alert" data-testid="section-error">
+                    <strong>{SECTION_LABELS[section]}</strong> could not be loaded.
+                    <span class="hint">
+                      {" "}
+                      This usually means the page has been open since before the site was updated,
+                      so the part it just asked for is no longer on the server. Reloading takes the
+                      new one.
+                    </span>
+                  </p>
+                  {/*
+                    Reload and nothing else, deliberately. Asking for the same
+                    module again in this document is answered from the browser's
+                    module map, which holds the *failure* against that URL — so a
+                    "try again" button here would never once have worked, which
+                    is worse than not offering one. Everything the page can do to
+                    make the reload land on a fresh shell has already happened
+                    above: the service worker was asked to update, and it fetches
+                    `index.html` past the HTTP cache.
+                  */}
+                  <div class="row">
+                    <button
+                      type="button"
+                      data-testid="section-reload"
+                      onClick={() => location.reload()}
+                    >
+                      Reload the page
+                    </button>
+                  </div>
+                  <p class="hint">
+                    <code>{failed}</code>
+                  </p>
+                </section>
+              </main>
             ) : (
               <main>
                 <section class="pane">
-                  <p class="hint">Loading…</p>
+                  <p class="hint" data-testid="section-loading">
+                    Loading…
+                  </p>
                 </section>
               </main>
             )

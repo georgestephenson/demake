@@ -137,6 +137,7 @@ async function runPrep(
     manifest: manifestCopy.buffer,
     raw: surfaceOf(renderCompliant(result.image, false)),
     dac: surfaceOf(renderCompliant(result.image, true)),
+    source: result.source,
     palettes: swatches(result.image.palettes, false),
     decisions: result.decisions,
     stats: result.stats,
