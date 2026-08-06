@@ -653,6 +653,19 @@ And that **the palette word is BGR**, red in the low nibble, which is the
 opposite of every other RGB444 console here — the art path had it backwards and
 only the core, written from the reference first, could tell.
 
+**And it plays them.** `demake build -c ngpc` puts a **generated TLCS-900/H
+driver** in the cartridge (`packages/audio/src/rom/ngp-driver.ts`,
+`ngp-game.ts`) — the seventh processor to get one — and the whole example
+library plays its music and effects on it, diffed tick for tick by the shared
+battery. Two things about it are this machine's. The **chip has to be asked
+for**: its own bus belongs to a Z80 sound processor, so the driver writes
+`$55` and `$AA` to two bytes of the main CPU's I/O page before anything it sends
+is listened to, and `@demake/ngp` refuses every port write until both arrive.
+And **there is nothing to merge** — the fourth console here with no shared
+register and the first to have none because its hardware pans _more_ — so
+handing a borrowed channel back replays _six_ bytes rather than three, because
+both of a voice's levels are things the music stated and the effect overwrote.
+
 **And it demakes music and sound, on both Neo Geo Pockets.** `@demake/chip`
 models the T6W28: a Master System's four voices with the thing that chip is
 poorest in — **stereo that is a level rather than a switch**, two four-bit
@@ -660,10 +673,10 @@ attenuators per channel, one a side. It is the fourth console in the set with no
 shared register and the first to have none because its hardware pans _more_. Two
 write ports carry different registers (the tone periods on the left, the noise's
 own divisor on the right), so a driver that had them backwards would produce
-silence; the chip test pins that, because a register diff could not. What is
-still missing is that driver — doc 13 §The order item 6 says what it needs, and
-a cartridge without it traces identically to one that has it, because a sound
-request is a field of the trace.
+silence; the chip test pins that, because a register diff could not. The mono
+machine is on that list too, because it has the same sound hardware and a
+demaker is per-domain — so `arrange -c ngp` works on a console `build -c ngp`
+cannot target.
 
 Still to come: the remaining Tier 2/3 consoles (each =
 a codegen backend, a ROM harness + toolchain, and a libretro core + DAC
@@ -702,17 +715,15 @@ artifact _is_ the schedule.
 effect per event, one clock serving both, and the same proof one level up —
 `packages/demotic/test/_audio-battery.ts` boots a cartridge that is playing a game
 and diffs every register write against the schedules the demakers produced.
-It does that on every console the game backend builds for **that has a driver** —
-which is every one but the Neo Geo Pocket Color, whose chip is modelled and whose
-demakers work and whose cartridge is therefore silent (doc 13 §The order item 6)
-— over seven drivers
+It does that on **every** console the game backend builds for, over eight drivers
 that share only the packed format and — where the CPU is the same — the stream
 player, and below that only what the chip decides: an SM83 player on a
 programmable timer, a 6502 player on the picture's interrupt, the _same_ 6502
 player on a timer one console over, a Z80 player writing an I/O port, a 68000
 player storing a byte to an address, an SPC700 player that is not on the console's
-processor at all, and an ARM player clocked by its own sample transfer that has to
-_compute_ six of its ten voices before it can play them.
+processor at all, an ARM player clocked by its own sample transfer that has to
+_compute_ six of its ten voices before it can play them, and a TLCS-900/H player
+that has to _ask_ for its chip before anything it sends is listened to.
 
 **And both demakers are on the web** (doc 07 §The audio sections): a music
 section and a sound section over their own worker, carrying the whole
@@ -1080,6 +1091,12 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
                      nds-driver.ts/nds-game.ts are what each adds to it — a mixer
                      on one, and a whole second binary on the other, because a DS's
                      sound channels answer the ARM7 alone. One caller each so far.
+                     TLCS-900/H: ngp-driver.ts and ngp-game.ts, and the only
+                     driver that has to *ask* for its chip — a T6W28's own bus is
+                     the Z80 sound processor's, so two bytes of the main CPU's
+                     I/O page hand it over before anything else is listened to;
+                     t6w28.ts is what the *chip* owns, psg.ts's file for a part
+                     with two write ports carrying different registers.
                      V30MZ: wsc-driver.ts and wsc-game.ts, and the only driver
                      whose clock is not an interrupt — this cartridge takes none,
                      so it reads the vertical-blank timer's counter and pays what
@@ -2645,10 +2662,25 @@ a, iy` the encoder will not take. Two emitters carry a byte in an index
   — and both the cartridge and the core read it through that one declaration,
   which is precisely the shape §Gotchas warns about. It is a one-line change when
   a source turns up.
-- **There is no audio driver yet, and that is the only gap.** The chip is
-  modelled, both demakers reach it and a cartridge traces identically to one that
-  plays its music — because a sound request is a field of the trace. Doc 13
-  §The order item 6 says what the driver needs.
+- **A processor state is not a master cycle**, and the audio is what made it
+  visible. This CPU's instruction timings are in _states_ — the crystal halved —
+  and the display controller counts the crystal, so `@demake/ngp` hands the
+  display twice what the processor spent and hands the sound chip it unchanged
+  (`MASTER_PER_STATE`). Before it did, an emulated frame was twice the
+  hardware's, and nothing could see it: a trace is per tick and a tick is per
+  frame either way. A chip handed the wrong number of clocks renders at the
+  wrong speed, which is why this surfaced the day the driver landed.
+- **The sound chip has to be asked for**, which no other console in the set
+  does. On the board the T6W28's own bus belongs to a Z80 sound processor, and
+  `demake build` emits no Z80 program — so the driver writes `$55` and `$AA` to
+  two bytes of the main CPU's own I/O page and then reaches the chip through two
+  more. A cartridge that skipped them would be perfect and silent.
+- **A replay's port is a number, not an address.** `portOfSlot` answers in the
+  binding's numbering and every caller puts it through `ngpPortByte`; storing it
+  directly writes to `$0000`/`$0001`, which are two bytes of the processor's own
+  register page. That is a release that reaches nothing at all on a cartridge
+  whose every other register write is perfect — found by the battery's
+  borrowed-channel case and by nothing else.
 
 ## Working on audio
 
@@ -2958,6 +2990,16 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   ones nothing is mid-way through writing. The NES, Sega, Super Nintendo, Game
   Boy Advance and Nintendo DS oracles still take their camera out of RAM, so
   each is a coin toss waiting to be spent.
+- `packages/demotic/test/audio-ngpc.test.ts` is the tenth machine the shared
+  battery is pointed at, and the only one whose driver has to **ask for its
+  chip**: the T6W28's bus belongs to a Z80 sound processor, so a cartridge that
+  skipped the two bytes that hand it over would show an _empty_ register stream
+  rather than a wrong one — which is what makes the first assertion in that pass
+  about permission rather than about notes. It is also where a replay to the
+  wrong destination was caught: `portOfSlot` answers in the binding's port
+  numbering and the release stored to it as an address, so the borrowed channel
+  came back holding the effect's period on a cartridge whose every other write
+  was exact. Only the borrowed-channel case could see it.
 - **`unsupported` names language gaps, not hardware ones**, and every console's
   list is empty. It stayed empty on the Super Nintendo through the period when
   that machine had no sound, because a `.dmt` that says `music theme.mid`

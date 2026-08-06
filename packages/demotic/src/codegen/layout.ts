@@ -33,6 +33,7 @@
 
 import {
   GBA_AUDIO_BYTES,
+  NGP_AUDIO_BYTES,
   MD_AUDIO_BYTES,
   NDS_AUDIO_BYTES,
   NES_AUDIO_BYTES,
@@ -845,10 +846,11 @@ export const NGPC_MEMORY: MemoryPlan = {
   // column of twenty and a row of twenty-one, painted in the same frame.
   queueMax: 60,
   plotMax: 40,
-  // Zero because this console has no generated driver yet — the day it gets one
-  // this becomes that driver's own byte count, exactly as every other console's
-  // does. A game with no audio would take none either way.
-  audioBytes: 0,
+  // The TLCS-900 driver's own state: two stream positions of *longwords*, and up
+  // to six bytes a channel of the copies a borrowed channel is handed back with
+  // — three more than the Sega's, because a level here is two attenuators and
+  // the noise generator has a divisor of its own.
+  audioBytes: NGP_AUDIO_BYTES,
   // A map entry is a word — nine bits of tile, four of palette, one of mono
   // palette and two of flip — so a queued cell is a tile *and* an attribute.
   cellAttributes: true,

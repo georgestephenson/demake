@@ -32,9 +32,6 @@ export async function bootPlayer(
     case "pce":
       return (await import("./pce.js")).boot(rom);
     case "ngpc":
-      // The one console here whose player has no chip list: this core models no
-      // sound yet and `demake build` emits no driver for it, so a cartridge is
-      // genuinely silent and the pane says so by offering no control.
       return (await import("./ngpc.js")).boot(rom, consoleId);
     case "wsc":
       // Two machines behind one family again, and here the *core* is the one

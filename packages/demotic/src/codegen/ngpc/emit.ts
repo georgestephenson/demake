@@ -67,6 +67,8 @@ import {
   type Ref,
 } from "@demake/core";
 
+import { AUDIO_STOP, type NgpGameAudio } from "@demake/audio";
+
 import type { InstanceDef, RuleDef } from "../../program.js";
 import { glyphTile, OBJECT_TILE, patternTile } from "../../rom/graphics.js";
 import { isMutable } from "../analyze.js";
@@ -215,6 +217,14 @@ export interface NgpcEmitOptions {
   effectIndices?: readonly number[];
   /** Which track each scene plays, as an index into the driver's table. */
   sceneTracks?: readonly number[];
+  /**
+   * The game's audio driver, already built from its demade tracks and effects.
+   *
+   * Absent for a game with no audio, and then the cartridge is exactly what it
+   * was before this console had a driver: the rules still record what they asked
+   * for, because that is a field of the trace.
+   */
+  audio?: NgpGameAudio;
 }
 
 /**
@@ -257,7 +267,7 @@ export function emitProgram(ctx: NgpcCtx, options: NgpcEmitOptions = {}): void {
 
   emitReset(ctx, options);
   emitVint(ctx);
-  emitMainLoop(ctx);
+  emitMainLoop(ctx, options.audio !== undefined);
   emitInput(ctx);
   emitTickDispatch(ctx, scenes);
   emitSceneChange(ctx, scenes);
@@ -271,6 +281,7 @@ export function emitProgram(ctx: NgpcCtx, options: NgpcEmitOptions = {}): void {
 
   emitRenderHelpers(ctx);
   emitTileContactHelper(ctx);
+  if (options.audio) options.audio.emitCode(asm);
   ctx.finish();
 
   // --- data ------------------------------------------------------------------
@@ -318,6 +329,20 @@ export function emitProgram(ctx: NgpcCtx, options: NgpcEmitOptions = {}): void {
       asm.label(scenePaletteLabel(scene));
       asm.bytes(palette);
     }
+  }
+
+  if (options.audio) {
+    if (program.tracks.length > 0) {
+      asm.label("SceneTracks");
+      // One byte per scene: the request value that starts its track, or the one
+      // that stops the music. A table rather than a dispatch because a scene
+      // change already costs a redraw, and this is the cheapest thing in it.
+      for (const scene of scenes) {
+        const track = options.sceneTracks?.[scene.index] ?? -1;
+        asm.db(track < 0 ? AUDIO_STOP : track + 1);
+      }
+    }
+    options.audio.emitData(asm);
   }
 
   asm.label("TileBank");
@@ -429,6 +454,11 @@ function emitReset(ctx: NgpcCtx, options: NgpcEmitOptions): void {
   // The handler goes in last, so nothing above it can be interrupted, and it is
   // a *pointer in RAM* rather than a vector in the processor's own table: the
   // boot ROM owns that one and dispatches through this.
+  if (options.audio) {
+    asm.call(label("AudioInit"));
+    if (program.tracks.length > 0) asm.call(label("SceneMusic"));
+  }
+
   asm.ldn("xwa", label("Vint"));
   asm.stm(at(NGP_VECTOR_VBLANK), "xwa");
   asm.stmi(at(layout.booted), "b", 1);
@@ -537,7 +567,7 @@ function emitClearState(ctx: NgpcCtx): void {
   }
 }
 
-function emitMainLoop(ctx: NgpcCtx): void {
+function emitMainLoop(ctx: NgpcCtx, audio: boolean): void {
   const { asm } = ctx;
   const wait = ctx.unique("waitFrame");
   // The flag is cleared *after* it is seen, not before the wait: a tick that
@@ -549,6 +579,14 @@ function emitMainLoop(ctx: NgpcCtx): void {
   ctx.far("z", wait);
   asm.stmi(at(frameFlag(ctx)), "b", 0);
   asm.call(label("UploadFrame"));
+  if (audio) {
+    // The frame the loop just waited for, counted before anything else spends
+    // it — and the ticks it owes performed *outside* the blanking interval,
+    // which belongs to the picture. `AudioFrame` is not in the handler for that
+    // reason: the handler's whole job is to say the frame happened.
+    asm.call(label("AudioFrame"));
+    asm.call(label("AudioService"));
+  }
   asm.call(label("ReadInput"));
   asm.call(label("Tick"));
   asm.call(label("BuildFrame"));
@@ -619,7 +657,8 @@ function emitTickDispatch(ctx: NgpcCtx, scenes: readonly SceneCtx[]): void {
 }
 
 function emitSceneChange(ctx: NgpcCtx, scenes: readonly SceneCtx[]): void {
-  const { asm, layout } = ctx;
+  const { asm, layout, program } = ctx;
+  const audio = ctx.audio?.driver === true && program.tracks.length > 0;
   asm.label("SceneChange");
   const go = ctx.unique("changeGo");
   asm.aluMemImm("cp", at(layout.pending), "b", 0xff);
@@ -629,12 +668,27 @@ function emitSceneChange(ctx: NgpcCtx, scenes: readonly SceneCtx[]): void {
   asm.ldm("a", at(layout.pending));
   asm.stm(at(layout.scene), "a");
   asm.stmi(at(layout.pending), "b", 0xff);
+  if (audio) asm.call(label("SceneMusic"));
   asm.call(label("ResetScene"));
   emitSeedRng(ctx);
   emitClearState(ctx);
   asm.call(label("UpdateCamera"));
   asm.stmi(at(layout.redraw), "b", 1);
   asm.ret();
+
+  // Music follows the scene, so it starts where the scene does. Asking for it
+  // rather than starting it here is what keeps the request one byte: the driver
+  // is serviced from the loop, and a scene change is not where it happens.
+  if (audio) {
+    asm.label("SceneMusic");
+    asm.ldn("xwa", 0);
+    asm.ldm("a", at(layout.scene));
+    asm.ldn("xhl", label("SceneTracks"));
+    asm.alu("add", "xhl", "xwa");
+    asm.ldm("a", based("xhl"));
+    asm.stm(at(ctx.audio?.music as number), "a");
+    asm.ret();
+  }
 
   asm.label("ResetScene");
   emitSceneDispatch(

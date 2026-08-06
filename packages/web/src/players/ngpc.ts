@@ -1,13 +1,12 @@
 /**
  * The Neo Geo Pocket Color's player.
  *
- * **It has no chip list, and that is the honest answer rather than an
- * oversight.** `@demake/ngp` models no sound yet and `demake build` emits no
- * driver for this console (doc 13 §The order item 6), so a cartridge here is
- * genuinely silent — and an empty list is what says so: the pane offers no sound
- * control at all instead of one that does nothing. The day the ARM7-shaped work
- * for this machine lands (a T6W28 on the bus and a TLCS-900 driver), this is one
- * entry rather than a rewrite.
+ * Its sound is a T6W28 — a Master System's four voices with two attenuators
+ * apiece, one a side — and what plays it is the cartridge's own generated
+ * TLCS-900/H driver, through the same `StreamSink` every other console uses. The
+ * chip reaches the pane the way every other core's does, and the one thing
+ * unusual about it is invisible from here: on this machine the chip belongs to a
+ * Z80 sound processor until the cartridge asks for it.
  *
  * Its pad is a handheld's: two face buttons and an Option, which is the button
  * this console has instead of a Start — so the abstract "start" lands there,
@@ -29,7 +28,17 @@ export function boot(rom: Uint8Array, consoleId = "ngpc"): Player {
     width: SCREEN_WIDTH,
     height: SCREEN_HEIGHT,
     framebuffer: machine.framebuffer,
-    chips: [],
+    chips: [
+      {
+        get audioSink() {
+          return machine.audioSink;
+        },
+        set audioSink(sink) {
+          machine.audioSink = sink;
+        },
+        apu: machine.sound,
+      },
+    ],
     setButtons: (down) => machine.setButtons(down as NgpButton[]),
     runFrame: () => void machine.runFrame(),
     readMemory: (address, length) => machine.readMemory(address, length),

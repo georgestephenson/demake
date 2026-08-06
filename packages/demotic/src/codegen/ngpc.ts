@@ -27,6 +27,7 @@
  *     that fills it is a picture whose game has no sprites left.
  */
 
+import { buildNgpGameAudio } from "@demake/audio";
 import { AsmError, ngpRomSize, NGP_HEADER_SIZE, packNgpRom, type Executor } from "@demake/core";
 
 import { getProfile } from "../profiles.js";
@@ -35,6 +36,7 @@ import { BUILTIN_TILES } from "../rom/graphics.js";
 
 import { type Analysis } from "./analyze.js";
 import type { AssetBytes } from "./art.js";
+import { bindAudio, effectIndices, trackForScene } from "./audio.js";
 import {
   buildRom,
   BuildError,
@@ -67,6 +69,8 @@ export const CODE_SIZE = 0x200000 - NGP_HEADER_SIZE;
 interface NgpcAudio extends BoundAudioShape {
   /** What the emitter needs to call the driver, where there is one. */
   options: NgpcEmitOptions;
+  /** The bytes a rule writes to ask for a sound; absent when none can. */
+  hooks?: { driver: boolean; music: number; request: number; effects: readonly number[] };
 }
 
 /** The Neo Geo Pocket Color's implementation of the build. */
@@ -114,42 +118,76 @@ export const ngpcBackend: Backend<NgpcEmitOptions, NgpcAudio> = {
     );
   },
 
-  async bindAudio(program: Program): Promise<BoundAssets<NgpcAudio>> {
-    // No driver on this console yet (doc 13 §D4). A game that names music and
-    // effects still records what its rules asked for, because the request is a
-    // field of the trace (doc 14 §Conformance) — so a build here traces
-    // identically to one on a console that plays them, and the only difference
-    // is that nobody is listening.
+  async bindAudio(
+    program: Program,
+    assets: AssetBytes,
+    layout: Layout,
+    executor?: Executor,
+  ): Promise<BoundAssets<NgpcAudio>> {
+    // The driver's state is RAM the allocator set aside for it, which it only
+    // does for a program that names audio — so a game with none reaches here
+    // with nowhere to put a driver and does not need one.
+    const state = layout.audio;
+    const bound =
+      state === null
+        ? { driver: undefined, missing: [] as readonly string[], notes: [] as readonly string[] }
+        : await bindAudio(
+            program,
+            assets,
+            { build: (tracks, effects) => buildNgpGameAudio({ tracks, effects, state }) },
+            executor,
+          );
     const names = program.tracks.length > 0 || program.sounds.length > 0;
-    return {
-      emit: {
-        present: false,
-        options: {},
-        tracks: 0,
-        effects: 0,
-        code: 0,
-        data: 0,
-        helpers: [],
-        rateHz: 0,
-        writesRestricted: 0,
+    const driver = bound.driver;
+    const options: NgpcEmitOptions = driver
+      ? {
+          audio: driver,
+          effectIndices: effectIndices(program, bound),
+          sceneTracks: trackForScene(program, bound),
+        }
+      : {};
+    const emit: NgpcAudio = {
+      present: driver !== undefined,
+      options,
+      tracks: driver?.stats.tracks ?? 0,
+      effects: driver?.stats.effects ?? 0,
+      // Queries, not copies: the driver is emitted during `assemble`, which has
+      // not run yet, so its sizes are still zero here (`backend.ts`
+      // §BoundAudioShape).
+      get code(): number {
+        return driver?.stats.code ?? 0;
       },
-      tiles: 0,
-      missing: [],
-      notes: names ? ["this console has no audio driver yet, so the cartridge is silent"] : [],
+      get data(): number {
+        return driver?.stats.data ?? 0;
+      },
+      get helpers(): readonly string[] {
+        return driver?.stats.helpers ?? [];
+      },
+      rateHz: driver ? driver.stats.rate.num / driver.stats.rate.den : 0,
+      writesRestricted: driver?.stats.writesRestricted ?? 0,
+      ...(names
+        ? {
+            hooks: {
+              driver: driver !== undefined,
+              music: driver?.request.music ?? 0,
+              request: driver?.request.sfx ?? 0,
+              effects: options.effectIndices ?? program.sounds.map(() => -1),
+            },
+          }
+        : {}),
     };
+    return { emit, tiles: 0, missing: bound.missing, notes: bound.notes };
   },
 
   assemble({ program, analysis, layout, art, audio, title }): Assembled {
     const ctx = new NgpcCtx(program, analysis, layout, getProfile(program.profile.id), CODE_ORIGIN);
-    // The trace field is set even with no driver, so a rule that asks for a
-    // sound still says so where the conformance oracle can see it.
-    if (layout.sound !== null) {
+    if (audio.hooks) {
       ctx.audio = {
-        driver: false,
-        music: 0,
-        request: 0,
+        driver: audio.hooks.driver,
+        music: audio.hooks.music,
+        request: audio.hooks.request,
         trace: layout.sound,
-        effects: program.sounds.map(() => -1),
+        effects: audio.hooks.effects,
       };
     }
     try {

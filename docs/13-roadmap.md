@@ -437,10 +437,11 @@ the backend today, and either is a reason to revisit rather than to work around.
    its own name claims and what the restart actually is.
 5. **Atari 7800** — the encoder is free, and it buys the display-list layout path
    the image side wants anyway.
-6. **Neo Geo Pocket / Color** — **done, except the in-game audio driver.**
-   `demake build -c ngpc` produces a playable cartridge and the whole example
-   library traces identically on it; `demake arrange -c ngpc`, `sfx` and `render`
-   demake its music and effects, on the mono machine too.
+6. **Neo Geo Pocket / Color** — **done.** `demake build -c ngpc` produces a
+   playable cartridge that plays its own music and effects, and the whole example
+   library traces identically on it and is diffed tick for tick by the shared
+   audio battery; `demake arrange -c ngpc`, `sfx` and `render` demake its music
+   and effects, on the mono machine too.
 
    The audio turned out not to be free after all, and it is worth saying why,
    because the estimate above was written from the chip's family name. The T6W28
@@ -452,18 +453,21 @@ the backend today, and either is a reason to revisit rather than to work around.
    switch, which is why this is the fourth console in the set with no shared
    register and the first to have none because its hardware pans *more*.
 
-   **What is left is the driver, and it is two pieces.** `@demake/ngp` has no
-   sound at all yet — the chip answers the main CPU through I/O registers `$20`
-   and `$21` behind a `$55`/`$AA` unlock at `$38`/`$39`, and there is a whole Z80
-   sound processor beside it that a demade cartridge has no use for — so the
-   register-conformance battery has nothing to observe through. And the driver
-   itself is a TLCS-900 program: the seventh CPU to get one, on the frame rather
-   than a timer, for the Sega parts' reason (a game's two streams share one
-   interrupt with the picture, and this cartridge already takes the vertical
-   blank). Nothing about it is blocked; it is the size of `wsc-game.ts` and the
-   port split is the one thing in it that a register diff would not catch, which
-   is why `packages/chip/test/t6w28.test.ts` pins that a driver with the two
-   backwards produces *silence* rather than a wrong note.
+   The driver is the seventh CPU's, on the frame rather than a timer for the
+   Sega parts' reason (a game's two streams share one interrupt with the picture,
+   and this cartridge already takes the vertical blank). What is unlike every
+   other driver in the set is that it has to **ask for its chip**: the T6W28's own
+   bus belongs to a Z80 sound processor, so `AudioInit` writes `$55` and `$AA` to
+   two bytes of the main CPU's I/O page and then reaches the chip through two
+   more. `@demake/ngp` models the same gate, so a cartridge that skipped them is
+   perfect and silent rather than quietly working.
+
+   Building it found a timing description that was wrong and invisible. This
+   CPU's instruction timings are in *states* — the crystal halved — and the
+   display controller counts the crystal, so the core had been drawing frames at
+   half the hardware's rate. Nothing could see it: a trace is per tick and a tick
+   is per frame either way. The audio is what made it visible, because a chip
+   handed the wrong number of clocks renders at the wrong speed.
 
    One thing the binding cannot yet spend: `ChannelFrame.pan` is a pair of
    booleans, so a part reaches the chip hard left, hard right or both. The spec

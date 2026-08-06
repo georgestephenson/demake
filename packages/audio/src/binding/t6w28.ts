@@ -119,6 +119,21 @@ export function t6w28Binding(console: string, spec: AudioSpec): ChipBinding {
             before.noiseTonal !== frame.noiseTonal ||
             noiseRate(before.noisePeriod ?? 1) !== rate;
           if (changed && frame.on) {
+            // Rate 3 divides the noise's *own* register, which is the whole of
+            // what this part adds over an SN76489 — where that rate follows tone
+            // channel 2 and costs a voice. So the deepest colour writes a
+            // divisor rather than borrowing one, and the three tones stay free.
+            // It goes in front of the control byte because the control byte
+            // resets the shift register, and it is written where tone 2's period
+            // would be on the *right* port, which is the one place on this chip
+            // where a channel field names something other than its channel.
+            if (rate === NOISE_OWN_RATE) {
+              writes.push({
+                reg: T6W28_RIGHT,
+                value: 0x80 | (2 << 5) | (NOISE_DIVIDER & 0x0f),
+              });
+              writes.push({ reg: T6W28_RIGHT, value: (NOISE_DIVIDER >> 4) & 0x3f });
+            }
             writes.push({ reg: T6W28_RIGHT, value: 0xe0 | (tonal ? 0 : 0x04) | rate });
           }
           if (leftAtt !== beforeLeft) writes.push({ reg: T6W28_LEFT, value: 0xf0 | leftAtt });
@@ -178,6 +193,20 @@ export function t6w28Binding(console: string, spec: AudioSpec): ChipBinding {
     },
   };
 }
+
+/** The rate that divides the noise's own register rather than a fixed amount. */
+const NOISE_OWN_RATE = 3;
+
+/**
+ * The divisor the deepest noise colour uses.
+ *
+ * The register's widest value, which is 16 × 1023 master clocks between shifts —
+ * about 188 Hz of rattle, a full octave below what the three fixed rates reach.
+ * A constant rather than a fit, because what the demaker is choosing here is a
+ * *colour* from four and not a pitch: the frame carries an index, and the
+ * deepest one means "as deep as this chip goes".
+ */
+const NOISE_DIVIDER = 1023;
 
 /**
  * Map a noise-period index onto the chip's three fixed rates plus its own
