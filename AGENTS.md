@@ -222,11 +222,23 @@ the FM half of a track plays _through_ a sound effect instead of ducking for it.
 That is better than any four-voice console can manage, and it is the hardware's
 doing rather than the driver's.
 
-Three things the chip model does not do yet, and each is a gap rather than a
-decision (§Iron rules): the LFO's _pitch_ modulation (its amplitude modulation is
-there and exact), the SSG-EG envelope modes, and channel 3's per-operator
-frequency mode. All three are stored and inert, no binding writes them, and
-closing any is a table and a few lines.
+**The chip model is the whole chip**, and the three things that were stored and
+inert are the reason to say so. The LFO's _pitch_ modulation is applied to the
+F-number rather than to the increment, which is what makes one depth the same
+interval in every octave; SSG-EG runs the envelope four times as fast, stops it
+at half attenuation and then holds, folds or re-attacks it; and channel 3 can
+hold four F-numbers, which are **not** in slot order — `$A9`, `$AA`, `$A8` and
+the channel's own feed S1 to S4 — with a timer-driven key-on riding on top of
+the same mode bits. None of the three is reachable through a register `md.ts`
+writes, so closing them changed no cartridge's audio by a byte; the point of
+doing it first is that a binding reaching for one now gets the hardware rather
+than a shrug (§Iron rules).
+
+Two things it still does not do, and both are deliberate rather than gaps: the
+bus's **busy flag** is always clear, which is the honest answer for a model with
+no bus timing, and the **discrete chip's nine-bit operator output** is not
+distinguished from the later ASIC's — a difference between two _boards_, of
+exactly the kind `mix()` already takes per-chip gains for.
 
 **And it builds for a second machine.** `demake build -c nes` produces a real
 NROM cartridge — 6502 machine code written for the game, its art demade for a
@@ -739,11 +751,10 @@ and the Game Boy Advance have drivers, but only inside a game; the Super
 Nintendo's driver writes an `.spc` rather than a cartridge), driver backends for the remaining
 consoles (each needs a CPU encoder or a checked-in driver source, plus a core to
 prove it in), Level B sample comparison, the remaining chips (the rest of the
-handhelds), the
-three parts of the YM2612 that are stored and inert (LFO pitch modulation, SSG-EG,
-channel 3's per-operator mode), the two parts of the HuC6280's PSG that are (its
-LFO, and the direct D/A as a sample player), tracker and lossy-audio input with the
-transcription front end, and FLAC/M4A export. Read doc
+handhelds), a _demaker_ for the two sample players the chip layer now has and
+nothing above it drives (the PC Engine's direct D/A and the WonderSwan's PCM
+voice — doc 18's work rather than doc 16's), tracker and lossy-audio input with
+the transcription front end, and FLAC/M4A export. Read doc
 16 before touching any of it — several of its decisions are load-bearing and easy
 to undo by accident (§Working on audio).
 
@@ -1026,7 +1037,13 @@ packages/chip/       @demake/chip — every sound chip as a register-driven mode
                      argument is the *port*; a driver with the two backwards
                      produces silence rather than a wrong note
   src/ym2612.ts      the Mega Drive's OPN2: 6 four-operator FM voices, 8 algorithms,
-                     the hardware's own log-sine and exponential ROM tables
+                     the hardware's own log-sine and exponential ROM tables. Its
+                     LFO modulates the *F-number* rather than the increment,
+                     which is what makes one depth the same interval in every
+                     octave; SSG-EG is a fold rather than a change, so the
+                     envelope keeps counting and only its *reading* inverts; and
+                     channel 3's four F-numbers are not in slot order, which is
+                     why `SLOT3_FREQUENCY` is a table
   src/nes-apu.ts     the 2A03: volume-less triangle, non-linear mixing
   src/s-dsp.ts       the Super Nintendo's: eight sample-playing voices, BRR
                      decoding, ADSR and GAIN, and a pitch register that
@@ -1041,8 +1058,12 @@ packages/chip/       @demake/chip — every sound chip as a register-driven mode
                      wavetable — thirty-two five-bit samples of RAM apiece, which
                      is why this console's *timbre* is a boot decision and not a
                      duty bit. Volume is three attenuators in series in 1.5 dB
-                     steps, so a level is a table lookup on a sum. The LFO and the
-                     direct D/A's use as a sample player are stored and inert
+                     steps, so a level is a table lookup on a sum. Its LFO is
+                     unlike every other vibrato in the set: there is no
+                     oscillator, channel two *is* the modulator, so switching it
+                     on costs a voice and the depth is a shift on the *divider*.
+                     Direct D/A is modelled; what nothing above this file does is
+                     stream samples into it
   src/ws-sound.ts    the WonderSwan's: four channels and every one of them a
                      wavetable — thirty-two four-bit samples apiece, and the only
                      chip here whose waveforms are the *console's own RAM* rather
@@ -1050,8 +1071,12 @@ packages/chip/       @demake/chip — every sound chip as a register-driven mode
                      handed the machine's memory the way its display is. Volume
                      is four linear bits a side; the noise voice picks a *tap*
                      rather than a rate, so a drum has a colour and a pitch.
-                     Channel two's PCM voice, the Hyper Voice stage and the
-                     readable output registers are stored-and-inert or absent
+                     Channel two's PCM voice is modelled — `$90` bit 5 makes the
+                     whole of `$89` one sample and `$94` its only level — so this
+                     chip can play a recording on one of its four voices. The
+                     Hyper Voice stage is a Color addition on ports of its own
+                     and is absent; so are the readable output registers, which
+                     no reference this project could reach describes
   src/nds-spu.ts     the Nintendo DS's: sixteen channels that are sample players
                      first, six of which switch to a duty generator and two to a
                      noise register — an S-DSP and a Game Boy APU on one die, with

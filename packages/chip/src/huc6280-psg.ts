@@ -25,11 +25,24 @@
  *     thirty-two bytes and turning it back on; there is no address register, so
  *     a driver that forgot the reset would upload into the middle of a cycle.
  *
- * Deliberately absent, and each one a gap rather than a decision: the **LFO**
- * (channels one and two can modulate each other's frequency), and the
- * **direct D/A** mode's use as a sample player — the register is modelled and a
- * write to it is held, but nothing here streams into it. Both are stored and
- * inert, and closing either is a few lines.
+ * The **LFO** is here too, and it is the fourth thing worth knowing, because it
+ * is unlike every other vibrato in this package: there is no dedicated
+ * oscillator at all. Channel two *is* the modulator — its waveform, at its own
+ * divider slowed by a factor the LFO frequency register names, is added to
+ * channel one's divider — so the shape of the sweep is whatever a driver
+ * uploaded into that channel, and the two settings interact rather than
+ * combining. Two consequences fall out of that and neither is obvious.
+ * Switching the LFO on costs a *voice*, because channel two is then playing a
+ * control signal rather than a note. And the depth is a **shift on the
+ * divider**, not on the pitch, so the same setting is a wider interval on a low
+ * note than on a high one — the opposite of the YM2612's, which works on the
+ * F-number for exactly that reason.
+ *
+ * What is not here is a **sample player**, and that is a demaker's gap rather
+ * than this model's: direct D/A is implemented and a write to it is held for as
+ * long as the hardware holds it, so a binding that fed the port a stream would
+ * be heard. Nothing above this file does, which is doc 16's outstanding work
+ * and not a register this file disbelieves.
  *
  * Sources:
  * - Archaic Pixels — PSG: https://archaicpixels.com/PSG
@@ -54,6 +67,25 @@ export const HUC6280_WAVE_BITS = 5;
 /** Channels the chip has, and the first one with a noise generator. */
 export const HUC6280_PSG_CHANNELS = 6;
 export const HUC6280_FIRST_NOISE_CHANNEL = 4;
+
+/**
+ * The two channels the LFO is wired between, which the hardware fixes.
+ *
+ * Channel two modulates channel one and no other pair can be chosen — there is
+ * no routing register, which is why these are constants rather than state.
+ */
+export const LFO_TARGET = 0;
+export const LFO_MODULATOR = 1;
+
+/**
+ * The order the six channels are stepped in, with and without the LFO.
+ *
+ * Only the first two entries differ, and only when the LFO is on: the modulator
+ * has to be brought up to date before the channel that reads it, or a reload
+ * landing on the same clock as one of its steps takes the previous sample.
+ */
+const PLAIN_ORDER: readonly number[] = [0, 1, 2, 3, 4, 5];
+const LFO_ORDER: readonly number[] = [1, 0, 2, 3, 4, 5];
 
 /**
  * Amplitude for a total attenuation of `n` steps of 1.5 dB.
@@ -150,12 +182,15 @@ export class Huc6280Psg implements ChipModel {
   private globalLeft = 15;
   private globalRight = 15;
   /**
-   * The LFO's two registers: stored, readable, and inert.
+   * The LFO's two registers, and both of them do something.
    *
-   * Channels one and two can modulate each other's frequency on this chip and
-   * nothing here does it, so the writes are kept rather than dropped — a gap the
-   * model states out loud, on the same terms as the YM2612's three (AGENTS.md
-   * §Iron rules). Public so a test can say so.
+   * `$08` is how much channel two's own divider is multiplied by — zero meaning
+   * 256, which is the slowest and therefore the most vibrato-shaped setting.
+   * `$09` carries the depth in its low two bits (zero being off, and one to
+   * three shifting channel two's sample by nothing, two bits or four before it
+   * is added), and in bit 7 a *halt* that freezes the modulator where it stands
+   * rather than switching it off. Public because they are the two the chip
+   * cannot be asked to read back.
    */
   lfoFrequency = 0;
   lfoControl = 0;
@@ -266,14 +301,57 @@ export class Huc6280Psg implements ChipModel {
     }
   }
 
+  /**
+   * Whether channel two is being spent as a modulator rather than as a voice.
+   *
+   * Three things have to be true and the third is the one a driver gets wrong:
+   * a depth is selected, channel two is *running*, and the halt bit is clear.
+   * Halting is not the same as switching off — it freezes the modulator's
+   * waveform where it stands, which holds channel one at whatever detune the
+   * last sample asked for.
+   */
+  private lfoActive(): boolean {
+    if ((this.lfoControl & 0x03) === 0) return false;
+    if ((this.lfoControl & 0x80) !== 0) return false;
+    return (this.channels[LFO_MODULATOR] as Channel).enabled;
+  }
+
+  /**
+   * The clocks between one channel's waveform steps, LFO included.
+   *
+   * Two of the six answer differently while the LFO is on: the modulator runs
+   * slower by the whole of `$08`, and the channel it modulates has the
+   * modulator's current sample added to its divider. Everything else asks this
+   * and gets `divider()`.
+   */
+  private dividerOf(index: number): number {
+    const channel = this.channels[index] as Channel;
+    if ((this.lfoControl & 0x03) === 0) return divider(channel.frequency);
+    if (index === LFO_MODULATOR) {
+      return divider(channel.frequency) * (this.lfoFrequency === 0 ? 256 : this.lfoFrequency);
+    }
+    if (index !== LFO_TARGET || !this.lfoActive()) return divider(channel.frequency);
+    // Centred at sixteen, exactly as the output is: a modulator sitting at the
+    // middle of its range detunes nothing, so a flat waveform is silence here
+    // for the same reason it is silence in `levels()`.
+    const modulator = this.channels[LFO_MODULATOR] as Channel;
+    const shift = ((this.lfoControl & 0x03) - 1) << 1;
+    const sample = (modulator.wave[modulator.readIndex] as number) - 16;
+    const detuned = (channel.frequency + (sample << shift)) & 0xfff;
+    return detuned === 0 ? 4096 : detuned;
+  }
+
   /** Clocks until the next waveform step or shift-register clock. */
   private clocksToEvent(): number {
     let next = Number.MAX_SAFE_INTEGER;
-    for (const channel of this.channels) {
+    for (const [index, channel] of this.channels.entries()) {
       if (!channel.enabled) continue;
       // A channel in direct D/A mode holds its byte until the next write, so it
-      // has no event of its own at all.
-      if (!channel.dda && channel.counter > 0 && channel.counter < next) next = channel.counter;
+      // has no event of its own at all — and neither has a halted modulator,
+      // whose counter is not clocked. Leaving either in would pin every step to
+      // a counter that never moves, which is a correct render at a crawl.
+      const held = channel.dda || (index === LFO_MODULATOR && (this.lfoControl & 0x80) !== 0);
+      if (!held && channel.counter > 0 && channel.counter < next) next = channel.counter;
       if (channel.noiseEnabled && channel.noiseCounter > 0 && channel.noiseCounter < next) {
         next = channel.noiseCounter;
       }
@@ -282,12 +360,20 @@ export class Huc6280Psg implements ChipModel {
   }
 
   private advance(clocks: number): void {
-    for (const channel of this.channels) {
+    // The modulator is stepped before the channel it modulates, so a reload
+    // that lands on the same clock as one of its steps takes the sample the
+    // hardware would have had rather than the one before it.
+    const order = this.lfoActive() ? LFO_ORDER : PLAIN_ORDER;
+    for (const index of order) {
+      const channel = this.channels[index] as Channel;
       if (!channel.enabled) continue;
-      if (!channel.dda) {
+      // Halting freezes the modulator's waveform pointer without silencing it,
+      // which is the whole difference between bit 7 and clearing the depth.
+      const frozen = index === LFO_MODULATOR && (this.lfoControl & 0x80) !== 0;
+      if (!channel.dda && !frozen) {
         channel.counter -= clocks;
         while (channel.counter <= 0) {
-          channel.counter += divider(channel.frequency);
+          channel.counter += this.dividerOf(index);
           channel.readIndex = (channel.readIndex + 1) & (HUC6280_WAVE_SAMPLES - 1);
         }
       }

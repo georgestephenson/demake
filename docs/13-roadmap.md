@@ -408,8 +408,12 @@ the backend today, and either is a reason to revisit rather than to work around.
    a handler for. And the **pitch register counts up** — it is subtracted from
    2048 — so the spec declares the lattice and the binding does the subtraction.
 
-   What is left on this console's audio is channel two's PCM voice, which is
-   stored and inert in the model and reachable by nothing above it.
+   **Channel two's PCM voice is modelled** — `$90` bit 5 turns that channel into
+   a direct D/A whose sample is the whole of `$89` and whose only level is the
+   full-or-half pair in `$94`, so the hardware can play a recording on one of
+   its four voices. What is left is a *demaker* that would: nothing above the
+   chip layer streams samples into it, which is doc 18's work rather than this
+   model's.
 
    **And one thing it found was not this console's** — *closed*. The display runs
    at **75.47 Hz**, so a tick that is a frame happens seventy-five times a second,
@@ -899,8 +903,18 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     and the FM half of a track plays straight through a sound effect rather than
     ducking for it.
 
-    What is still inert in the chip model, each a gap rather than a decision: the
-    LFO's pitch modulation, SSG-EG, and channel 3's per-operator frequency mode.
+    **The chip model is complete**, which it was not when this console landed:
+    the LFO's pitch modulation, the SSG-EG envelope modes and channel 3's
+    four-pitch mode — with the timer-driven key-on that rides on it — are all
+    modelled now. None of the three is reachable through a register the binding
+    writes, so closing them changed no cartridge's audio by a byte; the reason
+    to do it before a binding wants them is that a chip with a gap in it is a
+    gap to close (AGENTS.md §Iron rules) and a binding that reaches for one now
+    gets the hardware rather than a shrug. What the model still does not do is
+    the bus's busy flag, which is honest for a model with no bus timing, and the
+    difference between the discrete chip's nine-bit operator output and the
+    later ASIC's — a *board* difference of the kind `mix()` already takes
+    per-chip gains for.
 
     The cartridge budget has no story here at all, which is itself the news:
     512 KiB against 32, and 64 KiB of work RAM against an NROM cartridge's 2. The
