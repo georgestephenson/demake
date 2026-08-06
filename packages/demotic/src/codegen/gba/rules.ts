@@ -30,7 +30,7 @@ import { armAt, armAtIdx, armImm, armReg, fitsArmImm, label, type Ref } from "@d
 import { fromInt, ONE as FIXED_ONE } from "../../fixed.js";
 import type { CAssignment, ControlDef, Edge, InstanceDef, RuleDef } from "../../program.js";
 import { ACTIONS } from "../../program.js";
-import { isMutable } from "../analyze.js";
+import { holdTargets, isMutable } from "../analyze.js";
 import { PROP_SIZE } from "../layout.js";
 import {
   boundMax,
@@ -290,88 +290,86 @@ export function emitSound(ctx: GbaCtx, rule: RuleDef): void {
 
 // --- 2. controls -------------------------------------------------------------
 
-/** Test an abstract button against one of the three input sets. */
-function emitButton(ctx: GbaCtx, set: number, action: string, skip: string): void {
+/**
+ * Test an abstract button against one of the three input sets, and jump when it
+ * is down (`set`) or when it is not (`clear`).
+ */
+function emitButton(
+  ctx: GbaCtx,
+  set: number,
+  action: string,
+  target: string,
+  when: "set" | "clear",
+): void {
   const bit = ACTIONS.indexOf(action as (typeof ACTIONS)[number]);
   ctx.asm.ldrb(A0, mem(ctx, set));
   ctx.asm.tst(A0, armImm(1 << bit));
-  ctx.far("eq", skip);
+  ctx.far(when === "set" ? "ne" : "eq", target);
+}
+
+/** Which input set a control's mode fires on. */
+function inputSet(ctx: GbaCtx, mode: ControlDef["mode"]): number {
+  const { layout } = ctx;
+  if (mode === "press") return layout.pressed;
+  return mode === "release" ? layout.released : layout.held;
 }
 
 export function emitControls(ctx: GbaCtx, scene: SceneCtx): void {
-  const { asm, layout } = ctx;
-  let holdBase = 0;
+  const { asm } = ctx;
+
+  emitHoldEdges(ctx, scene);
+
   for (const control of ctx.program.controls) {
-    const base = holdBase;
-    if (control.mode === "hold") holdBase += control.assignments.length;
     if (!inScene(ctx.program, scene, control.instanceId)) continue;
+    const skip = ctx.unique("ctlSkip");
+    emitButton(ctx, inputSet(ctx, control.mode), control.action, skip, "clear");
+    emitAssignments(ctx, control.assignments, UNBOUND);
+    asm.label(skip);
+  }
+}
 
-    // A control's own object is the fallback target for an unbound assignment,
-    // which is what the interpreter's snapshot and restore do.
-    const own = entityOf(ctx, control.instanceId);
-    const fallback: Binding = { subject: own, other: own };
+/**
+ * Save and restore the properties `on hold` controls write.
+ *
+ * One slot per property rather than per binding, and keyed on the button being
+ * *down* rather than on its press edge. `sim.ts`'s `updateHolds` is the
+ * specification and states why both of those are load-bearing.
+ */
+function emitHoldEdges(ctx: GbaCtx, scene: SceneCtx): void {
+  const { asm, layout } = ctx;
+  for (const [slot, target] of holdTargets(ctx.program).entries()) {
+    const bindings = target.controls
+      .map((index) => ctx.program.controls[index] as ControlDef)
+      .filter((control) => inScene(ctx.program, scene, control.instanceId));
+    if (bindings.length === 0) continue;
 
-    if (control.mode === "press" || control.mode === "release") {
-      const skip = ctx.unique("ctlSkip");
-      emitButton(
-        ctx,
-        control.mode === "press" ? layout.pressed : layout.released,
-        control.action,
-        skip,
-      );
-      emitAssignments(ctx, control.assignments, UNBOUND);
-      asm.label(skip);
-      continue;
+    const entity = entityOf(ctx, target.instanceId);
+    const flag = layout.holdFlags + slot;
+    const value = layout.holdValues + slot * PROP_SIZE;
+    const down = ctx.unique("holdDown");
+    const done = ctx.unique("holdDone");
+
+    for (const control of bindings) {
+      emitButton(ctx, layout.held, control.action, down, "set");
     }
 
-    // `on hold`: snapshot on the press, apply while down, restore on release.
-    const noPress = ctx.unique("holdNoPress");
-    emitButton(ctx, layout.pressed, control.action, noPress);
-    emitSnapshot(ctx, control, fallback, base);
-    asm.label(noPress);
+    // Nothing is asking for the property: put back what was saved, once.
+    loadByte(ctx, flag);
+    ctx.far("eq", done);
+    storeByte(ctx, flag, 0);
+    writeProp(ctx, entity, target.prop, value);
+    asm.b(done);
 
-    const noHold = ctx.unique("holdNoHold");
-    emitButton(ctx, layout.held, control.action, noHold);
-    emitAssignments(ctx, control.assignments, UNBOUND);
-    asm.label(noHold);
-
-    const noRelease = ctx.unique("holdNoRelease");
-    emitButton(ctx, layout.released, control.action, noRelease);
-    emitRestore(ctx, control, fallback, base);
-    asm.label(noRelease);
-  }
-}
-
-function emitSnapshot(ctx: GbaCtx, control: ControlDef, bind: Binding, base: number): void {
-  const { layout } = ctx;
-  for (const [index, assignment] of control.assignments.entries()) {
-    const target = assignment.target;
-    if (target.kind !== "prop") continue;
-    const entity = resolveEntity(ctx, target.entity, bind);
-    if (entity.kind === "none") continue;
-    const slot = layout.holdValues + (base + index) * 4;
+    // Something is: save what the property held before anything was.
+    asm.label(down);
+    loadByte(ctx, flag);
+    ctx.far("ne", done);
+    storeByte(ctx, flag, 1);
     ctx.scoped(() => {
       const current = readProp(ctx, entity, target.prop);
-      copy32(ctx, slot, current.val);
+      copy32(ctx, value, current.val);
     });
-    storeByte(ctx, layout.holdFlags + base + index, 1);
-  }
-}
-
-function emitRestore(ctx: GbaCtx, control: ControlDef, bind: Binding, base: number): void {
-  const { asm, layout } = ctx;
-  for (const [index, assignment] of control.assignments.entries()) {
-    const target = assignment.target;
-    if (target.kind !== "prop") continue;
-    const entity = resolveEntity(ctx, target.entity, bind);
-    if (entity.kind === "none") continue;
-    const skip = ctx.unique("restoreSkip");
-    loadByte(ctx, layout.holdFlags + base + index);
-    ctx.far("eq", skip);
-    storeByte(ctx, layout.holdFlags + base + index, 0);
-    const slot = layout.holdValues + (base + index) * 4;
-    writeProp(ctx, entity, target.prop, slot);
-    asm.label(skip);
+    asm.label(done);
   }
 }
 

@@ -433,7 +433,7 @@ export const STATEMENTS: readonly StatementSpec[] = [
     syntax: "control <object> <button> ( <assignments> ) on hold|press|release",
     summary: "Binds a button to property changes on one object.",
     example: "control paddle1 left (xdirection -1) on hold",
-    note: "`on hold` restores the previous value when the button comes up, so releasing leaves the object stopped. Snapshots are per binding, which is what makes overlapping presses unwind in reverse order.",
+    note: "`on hold` restores the previous value when the button comes up, so releasing leaves the object stopped. What is saved belongs to the property rather than to the binding: two buttons writing one property — `left` and `right` on a paddle — take one snapshot between them, so the later binding wins while both are down, the survivor takes over the moment either is released, and the property comes back to rest in whatever order the player lets go.",
   },
   {
     keyword: "when",
@@ -696,7 +696,7 @@ export const DIAGNOSTICS: readonly DiagnosticSpec[] = [
   {
     code: "E_DUPLICATE_CONTROL",
     severity: "error",
-    summary: "Two bindings setting one property from one button, whose `on hold` restores fight.",
+    summary: "One button setting one property twice, where the first write does nothing.",
   },
   {
     code: "E_DUPLICATE_CAMERA",

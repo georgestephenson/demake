@@ -49,6 +49,7 @@ import type {
   Action,
   CAssignment,
   CExpr,
+  ControlDef,
   Edge,
   EntityRef,
   InstanceDef,
@@ -102,6 +103,13 @@ interface RuleContext {
   other?: number;
 }
 
+/** One property `on hold` controls write, and every binding that writes it. */
+interface HoldTarget {
+  instanceId: number;
+  prop: string;
+  controls: ControlDef[];
+}
+
 const EMPTY_INPUT: InputState = {};
 
 /** The reference simulator for one compiled program on one console. */
@@ -124,7 +132,15 @@ export class Sim {
    * the target the value was on is what makes both readings work.
    */
   private reachedDelta = new Map<number, Fixed>();
-  /** Property snapshots taken when an `on hold` binding engaged. */
+  /**
+   * The properties `on hold` controls write, one entry per property.
+   *
+   * Keyed by instance and property, so left and right share the one entry they
+   * both write. `codegen/analyze.ts`'s `holdTargets` groups the same bindings
+   * the same way for the console backends.
+   */
+  private readonly holdTargets = new Map<string, HoldTarget>();
+  /** The value a property held before any of its `on hold` buttons went down. */
   private readonly holdSnapshots = new Map<string, Fixed>();
 
   private held: InputState = EMPTY_INPUT;
@@ -157,6 +173,18 @@ export class Sim {
     }
     for (const scene of program.scenes) {
       this.bySceneName.set(scene.name, scene.instanceIds);
+    }
+    for (const control of program.controls) {
+      if (control.mode !== "hold") continue;
+      for (const assignment of control.assignments) {
+        if (assignment.target.kind !== "prop") continue;
+        const instanceId = this.resolveEntity(assignment.target.entity, {}) ?? control.instanceId;
+        const prop = assignment.target.prop;
+        const key = `${instanceId}:${prop}`;
+        const target = this.holdTargets.get(key) ?? { instanceId, prop, controls: [] };
+        if (!target.controls.includes(control)) target.controls.push(control);
+        this.holdTargets.set(key, target);
+      }
     }
     this.currentScene = program.entryScene;
     this.rng = program.seed;
@@ -313,66 +341,57 @@ export class Sim {
   // --- 2. controls -----------------------------------------------------------
 
   private applyControls(): void {
-    for (const [index, control] of this.program.controls.entries()) {
-      const def = this.program.instances[control.instanceId] as InstanceDef;
-      if (def.scene !== this.currentScene) continue;
+    this.updateHolds();
 
-      const isHeld = this.held[control.action] === true;
-      const justPressed = this.pressed.has(control.action);
-      const justReleased = this.released.has(control.action);
-
+    for (const control of this.program.controls) {
+      if (!this.controlActive(control)) continue;
       switch (control.mode) {
         case "press":
-          if (justPressed) this.applyAssignments(control.assignments, {});
+          if (this.pressed.has(control.action)) this.applyAssignments(control.assignments, {});
           break;
         case "release":
-          if (justReleased) this.applyAssignments(control.assignments, {});
+          if (this.released.has(control.action)) this.applyAssignments(control.assignments, {});
           break;
-        case "hold": {
-          // Keyed per binding, not per object: two bindings on the same
-          // property must keep their own snapshots or the second press
-          // overwrites what the first press has to restore.
-          if (justPressed) this.snapshotHold(index, control.instanceId, control.assignments);
-          if (isHeld) this.applyAssignments(control.assignments, {});
-          if (justReleased) this.restoreHold(index, control.instanceId, control.assignments);
+        case "hold":
+          if (this.held[control.action] === true) this.applyAssignments(control.assignments, {});
           break;
-        }
       }
     }
   }
 
-  /**
-   * `on hold` restores the property when the button comes up. Snapshots are
-   * keyed per binding, so overlapping holds on the same property unwind in
-   * reverse order: press left, press right, release right → back to left's
-   * value, release left → back to neutral. That is the "last pressed wins"
-   * behaviour, and it falls out of the stack rather than being special-cased.
-   */
-  private snapshotHold(
-    controlIndex: number,
-    instanceId: number,
-    assignments: readonly CAssignment[],
-  ): void {
-    for (const assignment of assignments) {
-      if (assignment.target.kind !== "prop") continue;
-      const id = this.resolveEntity(assignment.target.entity, {}) ?? instanceId;
-      const key = `${controlIndex}:${id}:${assignment.target.prop}`;
-      this.holdSnapshots.set(key, this.readProp(id, assignment.target.prop));
-    }
+  /** A control runs only while the object it steers is in the running scene. */
+  private controlActive(control: ControlDef): boolean {
+    const def = this.program.instances[control.instanceId] as InstanceDef;
+    return def.scene === this.currentScene;
   }
 
-  private restoreHold(
-    controlIndex: number,
-    instanceId: number,
-    assignments: readonly CAssignment[],
-  ): void {
-    for (const assignment of assignments) {
-      if (assignment.target.kind !== "prop") continue;
-      const id = this.resolveEntity(assignment.target.entity, {}) ?? instanceId;
-      const key = `${controlIndex}:${id}:${assignment.target.prop}`;
-      const snapshot = this.holdSnapshots.get(key);
-      if (snapshot !== undefined) {
-        this.writeProp(id, assignment.target.prop, snapshot);
+  /**
+   * Save and restore the properties `on hold` controls write.
+   *
+   * A snapshot belongs to the **property**, not to the binding that took it: it
+   * is taken when the first button writing that property goes down and put back
+   * when the last one comes up. So left and right release in either order and
+   * leave the object exactly as it was before either was pressed — kept per
+   * binding, right's snapshot is whatever left had already written, and
+   * unwinding out of nesting order writes back a direction no button is asking
+   * for. It runs before any binding applies, which is also why handing over —
+   * releasing right while left is still down — costs no tick of standing still.
+   *
+   * Activity is the button being *down* rather than its press edge, because a
+   * scene entered with the button already held never saw one: that edge belonged
+   * to the scene the player pressed A on, where this control does not run. With
+   * nothing saved there was nothing to put back, and the object kept moving.
+   */
+  private updateHolds(): void {
+    for (const [key, target] of this.holdTargets) {
+      const active = target.controls.some(
+        (control) => this.held[control.action] === true && this.controlActive(control),
+      );
+      const saved = this.holdSnapshots.get(key);
+      if (active && saved === undefined) {
+        this.holdSnapshots.set(key, this.readProp(target.instanceId, target.prop));
+      } else if (!active && saved !== undefined) {
+        this.writeProp(target.instanceId, target.prop, saved);
         this.holdSnapshots.delete(key);
       }
     }

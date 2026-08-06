@@ -170,7 +170,7 @@ describe("controls", () => {
     expect(world.entity("p1")?.numbers["xdirection"]).toBe(0);
   });
 
-  it("gives the last press priority, and unwinds in order on release", () => {
+  it("resolves two buttons on one property in the order they are bound", () => {
     const world = sim(PADDLE);
     world.step({ left: true });
     world.step({ left: true, right: true });
@@ -178,6 +178,68 @@ describe("controls", () => {
 
     world.step({ left: true });
     expect(world.entity("p1")?.numbers["xdirection"]).toBe(-ONE);
+
+    world.step({});
+    expect(world.entity("p1")?.numbers["xdirection"]).toBe(0);
+  });
+
+  /**
+   * The snapshot belongs to the property, not to the binding that took it.
+   *
+   * Kept per binding, the second button to go down saves whatever the first had
+   * already written — so releasing them in the order they were pressed puts a
+   * direction back that no button is asking for, and the object slides away with
+   * nothing held. Both orders end at rest, and the property is restored once.
+   */
+  for (const [name, first, second] of [
+    ["left then right", "left", "right"],
+    ["right then left", "right", "left"],
+  ] as const) {
+    it(`comes to rest after both buttons are released, pressed ${name}`, () => {
+      for (const releaseFirst of [first, second]) {
+        const world = sim(PADDLE);
+        const held = releaseFirst === first ? second : first;
+        world.step({ [first]: true });
+        world.step({ [first]: true, [second]: true });
+        world.step({ [first]: true, [second]: true });
+
+        // Releasing one hands the property to the other within the tick, rather
+        // than standing still for one while the restore and the apply argue.
+        world.step({ [held]: true });
+        expect(world.entity("p1")?.numbers["xdirection"]).toBe(held === "left" ? -ONE : ONE);
+
+        world.step({});
+        expect(world.entity("p1")?.numbers["xdirection"]).toBe(0);
+        world.step({});
+        expect(world.entity("p1")?.numbers["xdirection"]).toBe(0);
+      }
+    });
+  }
+
+  it("restores a property held down across a scene change", () => {
+    // The press edge belonged to the title screen, where this control does not
+    // run at all — so a hold that engaged on the button being *down* is the only
+    // one with anything to put back when it comes up. Holding a direction while
+    // starting the game used to steer the player for ever.
+    const world = sim(
+      [
+        "start title",
+        "scene title",
+        "create object mark (sprite p.png)",
+        "create mark m in title (x 0, y 0)",
+        "when a pressed in title then scene as play",
+        "scene play",
+        "create object p (speed 60, sprite p.png)",
+        "create p p1 in play (x 5, y 5)",
+        "control p1 right (xdirection 1) on hold",
+      ].join("\n"),
+    );
+    world.step({ right: true });
+    world.step({ right: true, a: true });
+    expect(world.scene).toBe("play");
+
+    world.step({ right: true });
+    expect(world.entity("p1")?.numbers["xdirection"]).toBe(ONE);
 
     world.step({});
     expect(world.entity("p1")?.numbers["xdirection"]).toBe(0);
