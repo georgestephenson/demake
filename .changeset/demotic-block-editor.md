@@ -42,10 +42,23 @@ the project's own pictures, written back as the shortest name that identifies on
 The page's only contribution is the symbols, and a test fails when a statement has
 none or when one is drawn for a keyword no registry lists.
 
-**A drag is an edit.** Objects live in declaration order, which decides what is
-drawn over what and which sprite the hardware drops first past its per-scanline
-budget, so nothing here sorts, groups or tidies a file on its own. Rows also move
-from the keyboard, because native drag-and-drop has none.
+**Moving a row is an edit**, so nothing here sorts, groups or tidies a file on its
+own: objects live in declaration order, which decides what is drawn over what and
+which sprite the hardware drops first past its per-scanline budget.
+
+**And a row moves three ways, because a drag alone is the weakest of them.**
+Demotic is flat, so a drag expresses one number — which index — rather than a
+nesting the way it does in a language with sockets; it is O(distance) in a list
+that scrolls, it has no keyboard, and native drag-and-drop does not fire on touch
+at all. So the list **scrolls itself** when a drag nears an edge, without which a
+move past the visible dozen rows was impossible _with a mouse_; `Space` on the
+grip **picks a row up** for the arrows to carry, `Escape` puts it back where it
+started, and every step is announced through a live region; and **clicking the
+grip picks a destination** from a filtered list, which reaches line 3 from line 60
+in two keystrokes where dragging is O(distance) and the arrows are O(rows). The
+palette is a grid of chips and a search box for the same reason: the grid is how
+you learn what the statements are called, the box is how somebody who knows adds a
+`when` without reaching for the mouse.
 
 **And a `.test.dmt` no longer opens the game demaker.** It is a `.dmt`, and the
 router asked no further question — so a file that builds to nothing arrived with a

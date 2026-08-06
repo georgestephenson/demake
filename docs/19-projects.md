@@ -501,11 +501,19 @@ cannot come to report different numbers.
 
 ## The block editor
 
-The third view on a `.dmt`: the program as a list of blocks you drag, drop and
-fill in, instead of lines you type. Optional, and never the only way — the text
+The third view on a `.dmt`: the program as a list of blocks you fill in and
+rearrange, instead of lines you type. Optional, and never the only way — the text
 view is right there and is the *default*, and a game stays hand-written whether or
 not anyone used this. **Built** (`web/src/components/BlockEditor.tsx` over
 `web/src/lib/blocks.ts`), for a suite as well as for a game.
+
+**The fields are what it is for; the drag is not.** That is worth stating plainly,
+because "blocks you drag" describes Scratch and this is not Scratch. There, a drag
+*is* the composition — you snap a block into a socket and the gesture says what
+contains what. Demotic is flat, so a drag here expresses one number: which index.
+What the view actually buys over text is that a slot knows what may go in it, and
+can therefore show you the four scenes, the seven buttons or the project's own
+pictures. That half is a form, and a form is keyboard-operable by construction.
 
 **The language is already the right shape for it, and not by accident.** Demotic
 is one statement per line, never nested, with total per-line error recovery, and
@@ -653,10 +661,31 @@ that shape, and naming things a real game names rather than angle brackets nobod
 can run. What it names may not exist in *this* project, and that is a diagnostic
 against the new row rather than a reason to keep a second table of templates.
 
-**And a row moves from the keyboard**, because a drag is a mouse: the grip is a
-focusable button and the arrow keys nudge the row it holds. Native drag-and-drop
-has no keyboard equivalent at all, so without this the one gesture the editor
-exists for would be the one gesture some people cannot make.
+**A row moves three ways, and dragging is the weakest of them.** Not because of
+accessibility alone — that argument is real and it is not the strongest one. A
+drag is O(distance) in a list that scrolls, it has no keyboard, and native
+drag-and-drop does not fire on touch at all, so the gesture the editor was pitched
+on is unavailable on a phone and impractical past the visible dozen rows. So:
+
+- **Dragging** is direct and fastest over a few rows, and the list now **scrolls
+  itself** when the pointer nears an edge. Without that a move past the visible
+  rows was impossible *with a mouse* — the list is a fixed-height scroller, and
+  nothing carried the drag beyond it.
+- **Grab and move** is the keyboard's: `Space` on the grip picks a row up, the
+  arrows carry it, `Space` drops it, `Escape` puts it back where it was picked up
+  however far it travelled. With nothing held the arrows walk between grips, which
+  is how you reach line 60 in order to pick it up. Every step is announced through
+  a live region, because a row that moves silently has not moved as far as a
+  screen reader's user is concerned.
+- **Choosing a destination** beats both over a distance: clicking the grip opens
+  a filtered list of every place the row could go, so line 60 reaches line 3 in
+  two keystrokes. Dragging is O(distance), the arrows are O(rows), this is O(1) —
+  and it is the only one of the three that is *better* for being a form.
+
+The same argument reaches the palette, which is a grid of chips **and** a search
+box: the grid is how you find out there are thirteen statements and what they are
+called, the box is how somebody who knows that adds a `when` without reaching for
+the mouse. It is the bargain Ctrl+P strikes with the explorer, one pane along.
 
 ### What it must never carry
 
@@ -927,9 +956,10 @@ Each step is useful on its own and none of them breaks the one before.
    side channel (`demotic/src/lang/slots.ts`), the closed sets come from the
    language registry, and the project supplies the rest — sprites and backdrops
    picked as *pictures*, tracks and effects and levels as lists, scene and object
-   names as the program's own. Rows drag, and they nudge from the keyboard.
-   Expressions stay a text field, which is where §The one place it stops said they
-   would.
+   names as the program's own. A row moves three ways — dragged, carried with the
+   keyboard, or sent to a destination picked from a list — because a drag alone is
+   O(distance), silent, and absent on touch. Expressions stay a text field, which
+   is where §The one place it stops said they would.
 10. **The suite editor** — **done**: a `.test.dmt` opens §The suite editor rather
     than the game demaker, with the same two views over the file and the
     cross-console run in place of a player.

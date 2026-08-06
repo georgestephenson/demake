@@ -11,8 +11,9 @@
  *   write is what the text view shows, so the two are checked against each other
  *   rather than each against itself.
  * - **Moving a row is an edit.** Declaration order decides what is drawn over
- *   what, so a reorder has to reach the file — and it has to be reachable from
- *   the keyboard, because a drag is a mouse.
+ *   what, so a reorder has to reach the file — by all three routes, because a
+ *   drag has no keyboard, does not fire on touch, and cannot reach past the
+ *   bottom of a list that scrolls.
  */
 
 import { expect, test } from "@playwright/test";
@@ -97,22 +98,133 @@ test("writes a field straight into the file and nothing else", async ({ page }) 
   await expect.poll(async () => sourceText(page)).toBe(before.replace("start title", "start play"));
 });
 
-test("moves a row with the keyboard, because a drag is a mouse", async ({ page }) => {
+test("carries a row with the keyboard once it has been picked up", async ({ page }) => {
   await page.goto("/#section=game");
   await showBlocks(page);
 
   const before = (await sourceText(page)).split("\n");
-  // The first row is a comment in every example game; moving it down swaps it
-  // with the line under it and leaves the rest of the file alone.
-  await page.getByTestId("block-row-0").locator(".block-grip").focus();
-  await page.keyboard.press("ArrowDown");
+  const grip = page.getByTestId("block-row-0").locator(".block-grip");
+  await grip.focus();
 
+  // Arrows alone walk the list rather than moving anything: a row of controls
+  // is expected to do that, and it is how you reach line 60 to pick it up.
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(async () => sourceText(page)).toBe(before.join("\n"));
+  await expect(page.getByTestId("block-row-1").locator(".block-grip")).toBeFocused();
+
+  // Space picks the row up, and says so.
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("Space");
+  await expect(page.getByTestId("block-status")).toContainText("Line 1 picked up");
+  await expect(page.getByTestId("block-row-0")).toHaveClass(/held/);
+
+  // Now the arrows carry it, and the focus travels with the row it is holding.
+  await page.keyboard.press("ArrowDown");
   await expect
     .poll(async () => (await sourceText(page)).split("\n").slice(0, 2))
     .toEqual([before[1], before[0]]);
   await expect
     .poll(async () => (await sourceText(page)).split("\n").slice(2))
     .toEqual(before.slice(2));
+  await expect(page.getByTestId("block-row-1").locator(".block-grip")).toBeFocused();
+
+  // Escape puts it back where it was picked up, however far it travelled.
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Escape");
+  await expect.poll(async () => sourceText(page)).toBe(before.join("\n"));
+  await expect(page.getByTestId("block-status")).toContainText("Back at line 1");
+});
+
+test("moves a row a long way by choosing where it goes", async ({ page }) => {
+  await page.goto("/#section=game");
+  await showBlocks(page);
+
+  // The file's own lines, without the empty string its terminating newline
+  // leaves behind — that one is the newline, not a row.
+  const before = (await sourceText(page)).replace(/\n$/, "").split("\n");
+  // Pong is around seventy lines and the list shows a dozen, so this is the move
+  // a drag cannot make: the last row to the very top, in two keystrokes.
+  const last = before.length - 1;
+  await page
+    .getByTestId(`block-row-${String(last)}`)
+    .locator(".block-grip")
+    .click();
+  const chooser = page.getByTestId("block-moveto");
+  await expect(chooser).toBeVisible();
+
+  // Typing a line number filters to it; Enter takes the first match.
+  await chooser.locator("input").fill("1");
+  await page.keyboard.press("Enter");
+
+  const after = async (): Promise<string[]> =>
+    (await sourceText(page)).replace(/\n$/, "").split("\n");
+  await expect.poll(async () => (await after())[0]).toBe(before[last]);
+  await expect.poll(async () => (await after()).slice(1)).toEqual(before.slice(0, last));
+});
+
+test("the list scrolls itself while a drag sits near its edge", async ({ page }) => {
+  await page.goto("/#section=game");
+  await showBlocks(page, "source-view-select", "blocks");
+
+  const rows = page.getByTestId("block-rows");
+  // The list is a fixed-height scroller, which is the whole reason this matters:
+  // without the edge scrolling a drag could only ever reach the rows already on
+  // screen — with a mouse, so this was never only an accessibility gap.
+  expect(await rows.evaluate((el) => el.scrollHeight > el.clientHeight + 40)).toBe(true);
+
+  // The drag events are dispatched rather than performed, and that is deliberate:
+  // starting a *native* drag from synthesised mouse input works in Chromium and
+  // not in the other two engines, so driving it that way would test Playwright's
+  // input synthesis rather than the page. What is ours is the handler and the
+  // frame loop it starts, and that is what runs here — in all three engines.
+  await rows.evaluate((el) => {
+    const grip = el.querySelector(".block-grip") as HTMLElement;
+    grip.dispatchEvent(new DragEvent("dragstart", { bubbles: true }));
+  });
+  // A separate call, so the row list has re-rendered with a drag in progress
+  // before the next event arrives — dispatched back to back in one evaluate, the
+  // `dragover` handler would still be the closure that thinks nothing is moving.
+  await rows.evaluate((el) => {
+    const box = el.getBoundingClientRect();
+    el.dispatchEvent(
+      new DragEvent("dragover", {
+        bubbles: true,
+        cancelable: true,
+        clientY: box.bottom - 6,
+        clientX: box.left + box.width / 2,
+      }),
+    );
+  });
+
+  // It keeps going while the pointer stays there, because it is a frame loop
+  // rather than a reaction to movement — a pointer held perfectly still at the
+  // edge stops producing drag events in some browsers.
+  await expect
+    .poll(async () => rows.evaluate((el) => el.scrollTop), { timeout: 5000 })
+    .toBeGreaterThan(0);
+
+  await rows.evaluate((el) => {
+    el.dispatchEvent(new DragEvent("dragleave", { bubbles: true }));
+  });
+  const stopped = await rows.evaluate((el) => el.scrollTop);
+  await page.waitForTimeout(300);
+  expect(await rows.evaluate((el) => el.scrollTop)).toBe(stopped);
+});
+
+test("finds a statement by typing at the palette", async ({ page }) => {
+  await page.goto("/#section=game");
+  await showBlocks(page);
+
+  const before = await sourceText(page);
+  const search = page.getByTestId("block-search");
+  await search.fill("camera");
+  // The chips filter to what matches, so the grid is also the search result.
+  await expect(page.getByTestId("block-palette").locator("button")).toHaveCount(1);
+  await page.keyboard.press("Enter");
+
+  await expect.poll(async () => sourceText(page)).not.toBe(before);
+  await expect.poll(async () => sourceText(page)).toContain("camera follows");
+  await expect(search).toHaveValue("");
 });
 
 test("picks a sprite from the project's own pictures", async ({ page }) => {

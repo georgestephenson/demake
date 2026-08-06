@@ -2049,12 +2049,24 @@ main.text-layout .source-editor {
   min-width: 0;
 }
 
-/* The palette: every statement the dialect's registry lists, and no more. */
+/* The palette: every statement the dialect's registry lists, and no more —
+   as a grid you can look through and a box you can type into, because those
+   are good at opposite things. */
+.block-palette-bar {
+  display: grid;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+
+.block-search {
+  justify-self: start;
+  min-width: min(18rem, 100%);
+}
+
 .block-palette {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
-  margin-bottom: 0.6rem;
 }
 
 .block-chip {
@@ -2118,6 +2130,20 @@ main.text-layout .source-editor {
 
 .block-row.selected {
   border-color: var(--accent);
+}
+
+/* A row the keyboard has picked up. It is lifted rather than tinted, because
+   what has changed is that the arrows now move *it* rather than the focus. */
+.block-row.held {
+  border-color: var(--accent);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 30%);
+  transform: scale(1.01);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .block-row.held {
+    transform: none;
+  }
 }
 
 .block-row.block-raw {
@@ -2209,6 +2235,50 @@ main.text-layout .source-editor {
 
 .block-choice {
   max-width: 14rem;
+}
+
+/* Every place a row could go, filtered by typing — the move a drag is worst
+   at. Anchored to the row rather than the viewport, so it opens where you are
+   looking. */
+.block-moveto {
+  grid-column: 2 / -1;
+  display: grid;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+  padding: 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.block-places {
+  display: grid;
+  gap: 0.1rem;
+  max-height: 12rem;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.block-places button {
+  width: 100%;
+  padding: 0.15rem 0.3rem;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--ink);
+  font-size: 0.74rem;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.block-places button:hover,
+.block-places button:focus-visible {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 .block-remove {

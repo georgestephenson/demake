@@ -3431,11 +3431,21 @@ not per console.
   program: a newline (the language is one statement per line) and a quote (a
   Demotic string cannot contain one, since the lexer ends the literal at the
   first it meets).
-- **Dragging a row is an edit, so nothing may sort or tidy on its own.** Entities
+- **Moving a row is an edit, so nothing may sort or tidy on its own.** Entities
   live in declaration order, which decides what is drawn over what and which
   sprite the hardware drops first past its per-scanline budget; a rule's place in
   the file is its place in the tick. An editor that grouped a file by scene on
   open would be an output-byte change dressed as a view.
+- **And a drag is the weakest of the three ways to make that move.** Demotic is
+  flat, so a drag expresses one number — which index — rather than a nesting the
+  way it does in a language with sockets. It is also O(distance) in a list that
+  scrolls, has no keyboard, and does not fire on touch at all. So the row list
+  scrolls itself near an edge (without which a long move was impossible _with a
+  mouse_), `Space` on the grip picks a row up for the arrows to carry with every
+  step announced, and clicking the grip picks a destination out of a filtered
+  list — which is O(1) and the only one of the three that is better for being a
+  form. Before adding a gesture here, ask what it does for somebody with a
+  keyboard and a phone, because this one did nothing for either.
 - **A `.test.dmt` is not a game and does not open the game demaker.** `isSuite` is
   the engine's own question and `route.ts` asks it first, because a suite is a
   `.dmt` too and the longer extension is the whole distinction. It opens the suite
