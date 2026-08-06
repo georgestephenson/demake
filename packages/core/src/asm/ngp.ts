@@ -184,6 +184,45 @@ export const NGP_CHARACTER_COUNT = 512;
 /** Bytes one 8×8 tile at 2bpp occupies. */
 export const NGP_CHARACTER_BYTES = 16;
 
+// --- sound --------------------------------------------------------------------
+
+/**
+ * The two ports the main CPU writes the sound chip through.
+ *
+ * A Neo Geo Pocket has a **Z80 sound processor** beside its main one, and on the
+ * board the chip's own bus belongs to that Z80. A demade cartridge has no use
+ * for a second program, so it takes the other route the hardware provides: the
+ * main CPU's own I/O page carries the same two write addresses, gated by
+ * {@link NGP_SOUND_ENABLE} below.
+ *
+ * They carry *different registers*, which is the thing about this chip most
+ * likely to be got backwards: the left port carries the three tone periods and
+ * the right port carries the noise's own divisor and its mode, and each carries
+ * its own side's four attenuators. A driver with the two swapped produces
+ * silence rather than a wrong note.
+ *
+ * Source: MAME — `src/mame/snk/ngp.cpp`, `case 0x20: // t6w28 "right"` /
+ * `case 0x21: // t6w28 "left"`.
+ */
+export const NGP_SOUND_RIGHT = 0x000020;
+export const NGP_SOUND_LEFT = 0x000021;
+
+/**
+ * The two bytes that hand the sound chip to the main CPU.
+ *
+ * `$55` at `$38` and `$AA` at `$39`; until both are written the chip ignores
+ * anything the main CPU sends it, because the Z80 is meant to own it. Two bytes
+ * at boot is the whole of what a cartridge with no sound program has to do.
+ */
+export const NGP_SOUND_ENABLE = 0x000038;
+export const NGP_SOUND_ENABLE_HIGH = 0x000039;
+export const NGP_SOUND_ENABLE_VALUE = 0x55;
+export const NGP_SOUND_ENABLE_HIGH_VALUE = 0xaa;
+
+/** The eight-bit D/A converters, one a side. Nothing here drives them. */
+export const NGP_DAC_RIGHT = 0x000022;
+export const NGP_DAC_LEFT = 0x000023;
+
 // --- input --------------------------------------------------------------------
 
 /**

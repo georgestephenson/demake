@@ -28,8 +28,15 @@
  * description that is wrong *and consistent* passes every test there is. It is
  * one line to change when a source turns up, and both readers pick it up.
  *
- * The sound processor, its four kilobytes and the on-chip timers are absent
- * rather than half-implemented, and each is a gap rather than a decision.
+ * **The sound chip is here and the sound *processor* is not**, which is the
+ * hardware offering two routes and a demade cartridge taking the simpler one.
+ * On the board the T6W28's own bus belongs to a Z80 that runs its own program;
+ * the main CPU can also reach the chip through two bytes of its own I/O page,
+ * once it has written the pair that hands it over. `demake build` emits no Z80
+ * program, so it takes that route and this machine models it — the four
+ * kilobytes the two processors share are ordinary RAM here, and the Z80 that
+ * would read them is absent rather than half-implemented, as are the on-chip
+ * timers and DMA.
  */
 
 import {
@@ -43,13 +50,30 @@ import {
   NGP_Z80_RAM,
   NGP_BUTTON_BITS,
   NGP_BUTTONS,
+  NGP_SOUND_ENABLE,
+  NGP_SOUND_ENABLE_HIGH,
+  NGP_SOUND_ENABLE_HIGH_VALUE,
+  NGP_SOUND_ENABLE_VALUE,
+  NGP_SOUND_LEFT,
+  NGP_SOUND_RIGHT,
 } from "@demake/core";
+import { T6w28, T6W28_LEFT, T6W28_RIGHT, type SampleSink } from "@demake/chip";
 
 import { Tlcs900, type Bus } from "./cpu.js";
 import { Display, VIDEO_SIZE, type NgpModel } from "./display.js";
 
 /** Bytes of RAM the sound processor and the main CPU share. */
 const SOUND_RAM_SIZE = 0x1000;
+
+/**
+ * Master clocks in one processor state.
+ *
+ * The TLCS-900/H's system clock is the crystal halved and its instruction
+ * timings are in *states* of that clock, while the display controller counts the
+ * crystal itself — so this is the ratio between the two, and the reason
+ * {@link Ngp.step} multiplies for one of them and not the other.
+ */
+const MASTER_PER_STATE = 2;
 
 /**
  * Where a cartridge's stack starts.
@@ -89,6 +113,48 @@ export class Ngp implements Bus {
 
   /** The processor's own on-chip register page at `$0000`. */
   readonly io = new Uint8Array(0x100);
+
+  /** The sound chip, which the main CPU reaches through two I/O bytes. */
+  readonly sound = new T6w28();
+
+  /**
+   * Whether the main CPU has taken the sound chip from the Z80.
+   *
+   * Both bytes of the unlock, and until they are there a write to either port
+   * does nothing — which is the hardware's own arrangement rather than a guard
+   * this model invented, and the reason a cartridge's boot writes two bytes it
+   * would otherwise have no reason to.
+   */
+  private get soundEnabled(): boolean {
+    return (
+      this.io[NGP_SOUND_ENABLE] === NGP_SOUND_ENABLE_VALUE &&
+      this.io[NGP_SOUND_ENABLE_HIGH] === NGP_SOUND_ENABLE_HIGH_VALUE
+    );
+  }
+
+  /**
+   * Every write the sound chip receives, reported rather than intercepted.
+   *
+   * The audio conformance oracle's entire interface to the machine (doc 16 §The
+   * proof, Level A). It observes rather than intercepts — the write still
+   * reaches the chip — because an oracle that changed what the hardware saw
+   * would be testing itself.
+   *
+   * The register it reports is `@demake/chip`'s numbering, which is the
+   * numbering a `ChipScript` carries: the *port*, because on this chip that is
+   * what a register number is. An oracle that saw only the byte could not tell
+   * a left-hand attenuator from a right-hand one.
+   */
+  soundTap: ((reg: number, value: number) => void) | undefined = undefined;
+
+  /**
+   * Where the chip's samples go, when anything is listening.
+   *
+   * Left unset the chip still receives every write and keeps its state; it is
+   * only *rendered* when a sink is attached, so the conformance suites pay
+   * nothing for hardware they never listen to.
+   */
+  audioSink: SampleSink | undefined = undefined;
 
   /** The cartridge, as it answers from `$200000`. */
   rom: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
@@ -182,11 +248,27 @@ export class Ngp implements Bus {
       this.ram[at - NGP_RAM] = byte;
       return;
     }
-    if (at < 0x100) this.io[at] = byte;
+    if (at >= 0x100) return;
+    this.io[at] = byte;
+    if (at !== NGP_SOUND_RIGHT && at !== NGP_SOUND_LEFT) return;
+    if (!this.soundEnabled) return;
+    const port = at === NGP_SOUND_LEFT ? T6W28_LEFT : T6W28_RIGHT;
+    this.sound.write(port, byte);
+    this.soundTap?.(port, byte);
   }
 
   /**
-   * Run one instruction and give the display what it cost.
+   * Run one instruction and give the display and the chip what it cost.
+   *
+   * **A processor state is not a master cycle**, and this is the one place on
+   * this machine where the difference is visible. A TLCS-900/H's own unit is the
+   * *state* — its system clock, which is the 6.144 MHz crystal halved — and
+   * {@link Tlcs900.step} counts those, because that is what the instruction
+   * timings in the datasheet are in. The display controller counts the crystal:
+   * 515 of them a line and 199 lines a frame, which is what puts this console at
+   * 59.95 Hz. So the display is handed twice what the processor spent, and the
+   * sound chip is handed it unchanged — the chip runs at the crystal halved too,
+   * so it and the processor are the one pair on this board whose clocks agree.
    *
    * When the beam reaches the first blanked line the vertical-blank handler is
    * called if one has been installed — which the reference says cannot be
@@ -194,13 +276,14 @@ export class Ngp implements Bus {
    * enable.
    */
   step(): number {
-    const cycles = this.cpu.step();
-    if (this.display.step(cycles)) {
+    const states = this.cpu.step();
+    if (this.audioSink) this.sound.run(states, this.audioSink);
+    if (this.display.step(states * MASTER_PER_STATE)) {
       this.frames += 1;
       const handler = this.vector(NGP_VECTOR_VBLANK);
       if (handler !== 0) this.cpu.interrupt(handler);
     }
-    return cycles;
+    return states;
   }
 
   /** Run one instruction and clock the display with what it cost. */
