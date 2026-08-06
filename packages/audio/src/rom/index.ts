@@ -7,17 +7,19 @@
  * cartridge that played a different arrangement from the preview would make the
  * schedule oracle report a divergence three layers from its cause.
  *
- * One family builds a *cartridge of its own* today, the Game Boy. Two more CPUs
- * have drivers — the NES's in `nes-game.ts`, the Sega 8-bits' in `sms-game.ts` —
- * but only inside a game, because that is what a cartridge whose only job is one
- * track would need next and not what a game needed. What any of them costs is not
- * hidden: a register encoder (which the binding already is), a driver emitter for
- * its CPU, and a core to prove it in — see doc 16 §The proof.
+ * Two families build a *cartridge of their own* today: the Game Boy and the NES.
+ * The rest have drivers but only inside a game, because that is what a game
+ * needed and a cartridge whose only job is one track is a different caller.
+ * What any of them costs is no longer an estimate: the stream player belongs to
+ * the *processor* and already exists for six of them, so what a console adds is
+ * a boot sequence, a clock and a cartridge wrapper — which is the whole of the
+ * difference between `gb.ts` and `nes.ts`.
  */
 
 import { getConsole } from "@demake/core";
 
 import type { ChipScript } from "../chipscript.js";
+import { bindingFor } from "../binding/registry.js";
 import { SFX_RATE_HZ } from "../sfx/index.js";
 
 import {
@@ -28,7 +30,9 @@ import {
   type BuiltAudioRom,
 } from "./gb.js";
 
-export { AudioRomError, buildGbAudioRom };
+import { buildNesAudioRom } from "./nes.js";
+
+export { AudioRomError, buildGbAudioRom, buildNesAudioRom };
 export type { AudioRomOptions, AudioRomStats, BuiltAudioRom };
 export {
   buildWscGameAudio,
@@ -65,7 +69,24 @@ export {
  * four Game Boy channels are the same `gb-apu`, and an SM83 cartridge is no use
  * to it. A driver is a CPU's, so the machine is what decides.
  */
-const DRIVERS: Readonly<Record<string, "gb">> = { dmg: "gb", gbc: "gb", gb: "gb" };
+const DRIVERS: Readonly<Record<string, AudioRomFamily>> = {
+  dmg: "gb",
+  gbc: "gb",
+  gb: "gb",
+  nes: "nes",
+};
+
+/**
+ * The driver families a standalone cartridge can be built with.
+ *
+ * The PC Engine is the obvious next one and is deliberately not here yet: its
+ * stream player is already the NES's (`mos-player.ts` belongs to the
+ * *processor*), so what it needs is a boot sequence that maps its own hardware
+ * page, the timer its clock rides on, and a HuCard wrapper — and a backend that
+ * built without being proven in `@demake/pce` would be exactly the silent
+ * difference AGENTS.md §Iron rules refuses.
+ */
+export type AudioRomFamily = "gb" | "nes";
 
 /**
  * The clock a *game's* driver rides on each chip that has one.
@@ -239,7 +260,7 @@ export function gameAudioConsoles(): readonly string[] {
 /** Console ids `--format rom` can build an audio cartridge for. */
 export function audioRomConsoles(): string[] {
   const out: string[] = [];
-  for (const id of ["dmg", "gbc", "gb"]) {
+  for (const id of Object.keys(DRIVERS)) {
     try {
       if (romFamily(id)) out.push(id);
     } catch {
@@ -250,9 +271,12 @@ export function audioRomConsoles(): string[] {
 }
 
 /** The driver family a console's audio hardware resolves to, or `undefined`. */
-function romFamily(consoleId: string): "gb" | undefined {
+function romFamily(consoleId: string): AudioRomFamily | undefined {
   return getConsole(consoleId).audio === undefined ? undefined : DRIVERS[consoleId];
 }
+
+/** The file a built cartridge takes, which the console rather than the chip decides. */
+const SUFFIXES: Readonly<Record<string, string>> = { gbc: ".gbc", nes: ".nes" };
 
 /**
  * Build a cartridge that plays this schedule on its own console.
@@ -264,19 +288,24 @@ function romFamily(consoleId: string): "gb" | undefined {
 export function buildAudioRom(
   script: ChipScript,
   options: AudioRomOptions = {},
-): BuiltAudioRom & { family: "gb"; suffix: string } {
+): BuiltAudioRom & { family: AudioRomFamily; suffix: string } {
   const spec = getConsole(script.console);
   const family = romFamily(spec.id);
-  if (family !== "gb") {
+  if (family === undefined) {
     throw new AudioRomError(
       "E_DRIVER_UNSUPPORTED",
-      `there is no audio driver backend for ${spec.name} yet`,
-      "the Game Boy family is the one that boots today (doc 16 §The proof); `demake render` plays any console's schedule exactly.",
+      `there is no standalone audio driver backend for ${spec.name} yet`,
+      `${audioRomConsoles().join(", ")} boot today (doc 16 §The proof); ` +
+        "`demake render` plays any console's schedule exactly, and `demake build` " +
+        "puts one in a game on every console with a driver.",
     );
   }
-  const built = buildGbAudioRom(script, options);
+  const built =
+    family === "gb"
+      ? buildGbAudioRom(script, options)
+      : buildNesAudioRom(script, bindingFor(spec.id).spec.driver.frameRate, options);
   // A Game Boy Color cartridge with no CGB flag is a DMG cartridge, and the APU
   // is the same on both — so the suffix follows the console the user asked for
   // rather than anything in the header.
-  return { ...built, family, suffix: spec.id === "gbc" ? ".gbc" : ".gb" };
+  return { ...built, family, suffix: SUFFIXES[spec.id] ?? ".gb" };
 }

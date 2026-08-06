@@ -1333,7 +1333,7 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     than compounding. Outstanding: tracker ingest, `bin`/`asm`/`c` emit, driver
     backends beyond the Game Boy, and the listening sheets the judge weights get
     frozen against.
-  - **A2.5 — the driver and the proof** *(done for the `gb` family)*: `demake gen
+  - **A2.5 — the driver and the proof** *(done for the `gb` family and the NES)*: `demake gen
     <schedule> --format rom` generates an SM83 driver *for this schedule* — rests
     pulled only if it rests, an order walk only if it has one, a stop path only
     for a one-shot — packs the schedule into deduplicated blocks behind an order
@@ -1344,10 +1344,30 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     a track and a one-shot exercise different halves of the driver.
 
     This is the point at which the audio domain reaches the shape the image
-    domain has — constrain → fit → emit → prove on emulated hardware — for one
-    family. Level B (sample comparison against a third-party core, via the
-    libretro harness's audio callback) and the other consoles' drivers are what
-    remain.
+    domain has — constrain → fit → emit → prove on emulated hardware.
+
+    **The NES is the second family**, and it is what turned "what does another
+    console cost" from an estimate into a measurement. Nothing about the *player*
+    moved: `rom/mos-player.ts` belongs to the processor and a game already used
+    it, so the whole of `rom/nes.ts` is the three things a console decides for
+    itself. The **clock is the picture's**, because this CPU has no timer a
+    driver can have without burning the DMC channel — so where `gb.ts` picks
+    between a timer and the frame, here there is nothing to pick and a schedule
+    fitted to anything else is refused by name. **There is no entry point**, only
+    a vector: the last six bytes of the image are what makes the cartridge boot,
+    stamped after assembly because they are addresses of labels inside it. And
+    **the picture hardware has to be quietened and then waited for**, because a
+    cartridge whose only job is sound still owns it.
+
+    The board is elastic on the language backend's terms — an NROM-128 when the
+    schedule fits one — and the proof is the Game Boy's run in `@demake/nes`: the
+    same `it.each(audioRomConsoles())` battery, plus a one-shot per console,
+    because where a stream *ends* is the order walk's business and that walk is
+    the processor's rather than the machine's.
+
+    What each remaining console costs is now the same three things over one
+    shared walk. Level B (sample comparison against a third-party core, via the
+    libretro harness's audio callback) is the other thing that remains.
   - **A3 — `sfx`** *(built for WAV; the Game Boy boots)*: eight gesture families, the class gate,
     deterministic coordinate descent with every candidate rendered through the
     chip model, and the placement contract each effect declares. A single effect

@@ -19,13 +19,20 @@
  */
 
 import { Gameboy } from "@demake/dmg";
+import { Nes } from "@demake/nes";
 
 import type { ChipScript, TickWrites } from "../src/chipscript.js";
 import { buildAudioRom, type AudioRomOptions } from "../src/rom/index.js";
 
+/** What a core has to offer for a schedule to be read back out of it. */
+interface TappedMachine {
+  stepInstruction(): unknown;
+  readonly cpu: { pc: number };
+}
+
 /** A ROM that can be stepped one driver tick at a time. */
 export class AudioRomRunner {
-  readonly machine: Gameboy;
+  readonly machine: TappedMachine;
   readonly rom: Uint8Array;
   private readonly tickAddress: number;
   private current: { reg: number; value: number }[] | undefined;
@@ -36,10 +43,22 @@ export class AudioRomRunner {
     const tick = built.symbols.get("Tick");
     if (tick === undefined) throw new Error("the driver defined no Tick symbol");
     this.tickAddress = tick;
-    this.machine = new Gameboy(built.bytes);
-    this.machine.apuTap = (reg, value) => {
+    const push = (reg: number, value: number): void => {
       this.current?.push({ reg, value });
     };
+    // The core is the console's, and the tap is the window each of them offers
+    // on the chip it owns. Both models *are* `@demake/chip`'s, so this is a
+    // window on the same object the schedule was fitted against rather than on
+    // a second implementation of it.
+    if (built.family === "nes") {
+      const machine = new Nes(built.bytes);
+      machine.apuTap = push;
+      this.machine = machine;
+    } else {
+      const machine = new Gameboy(built.bytes);
+      machine.apuTap = push;
+      this.machine = machine;
+    }
   }
 
   /**

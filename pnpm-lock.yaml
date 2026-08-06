@@ -57,6 +57,9 @@ importers:
       '@demake/gba':
         specifier: workspace:*
         version: link:../gba
+      '@demake/nes':
+        specifier: workspace:*
+        version: link:../nes
       '@demake/snes':
         specifier: workspace:*
         version: link:../snes

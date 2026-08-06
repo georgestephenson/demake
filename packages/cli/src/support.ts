@@ -17,7 +17,7 @@
  */
 
 import { consoles, consoleLabel, type ConsoleSpec } from "@demake/core";
-import { audioConsoles, gameDriverRate, hasGameAudio } from "@demake/audio";
+import { audioConsoles, audioRomConsoles, gameDriverRate, hasGameAudio } from "@demake/audio";
 import { familyFor } from "@demake/demotic";
 
 import { romBuilderFor } from "./rom/registry.js";
@@ -69,6 +69,16 @@ export interface ConsoleSupport {
   audio: boolean;
   /** The rate a game's embedded audio driver ticks at here, when a driver exists. */
   gameAudioHz?: number;
+  /**
+   * Whether `demake gen <schedule> --format rom` builds a cartridge of its own.
+   *
+   * A different question from the one beside it, and the pair is why this is a
+   * column rather than a sentence: a Master System's cartridges play music
+   * inside a *game* and there is no standalone player for that CPU, while every
+   * console here that has one has the other. Stating that in prose is what the
+   * `--format rom` claim in eight console specs did before this table existed.
+   */
+  audioRom: boolean;
 }
 
 /**
@@ -127,6 +137,7 @@ export function consoleSupport(): ConsoleSupport[] {
       // binding registry rather than the spec: a console can have its hardware
       // described before anything encodes for it.
       audio: audioConsoles().includes(spec.id),
+      audioRom: audioRomConsoles().includes(spec.id),
       ...((): { gameAudioHz?: number } => {
         const hz = gameAudio(spec, game);
         return hz === undefined ? {} : { gameAudioHz: hz };
@@ -182,6 +193,7 @@ export function supportMarkdown(): string {
     "| **emulator** | The ROM's framebuffer is compared against the DAC reference byte for byte in a headless core (doc 10). This is what *supported* means here. |",
     "| **game** | `demake build` compiles a `.dmt` into a cartridge for this console, proven against the reference interpreter tick for tick. |",
     "| **music/sfx** | `demake arrange`, `demake sfx` and `demake render` demake audio for this console's sound hardware. |",
+    "| **audio ROM** | `demake gen <schedule> --format rom` builds a cartridge whose only job is that schedule. |",
     "| **in-game audio** | A generated driver plays that audio inside a `demake build` cartridge, at this tick rate. |",
   );
   out.push("");
@@ -191,8 +203,8 @@ export function supportMarkdown(): string {
     out.push(`## Tier ${tier}`);
     out.push("");
     out.push(
-      "| Console | id | family | art | data | ROM | emulator | game | music/sfx | in-game audio |",
-      "|---|---|---|---|---|---|---|---|---|---|",
+      "| Console | id | family | art | data | ROM | emulator | game | music/sfx | audio ROM | in-game audio |",
+      "|---|---|---|---|---|---|---|---|---|---|---|",
     );
     for (const row of inTier) {
       const data = row.formats.filter((format) => format !== "rom");
@@ -206,6 +218,7 @@ export function supportMarkdown(): string {
         cell(row.emulator),
         cell(row.game === undefined ? undefined : `\`${row.game}\``),
         row.audio ? "yes" : "—",
+        row.audioRom ? "yes" : "—",
         cell(row.gameAudioHz === undefined ? undefined : `${round(row.gameAudioHz)} Hz`),
       ];
       out.push(`| ${cells.join(" | ")} |`);
@@ -220,7 +233,7 @@ export function supportMarkdown(): string {
     `- **${rows.length}** consoles have a spec, so all ${rows.length} do art.`,
     `- **${rows.filter((row) => row.toolchain).length}** build a display ROM; **${proven}** of those are proven pixel-perfect in an emulator.`,
     `- **${games}** compile a Demotic game.`,
-    `- **${rows.filter((row) => row.audio).length}** demake music and sound effects; **${rows.filter((row) => row.gameAudioHz).length}** play it from inside a game.`,
+    `- **${rows.filter((row) => row.audio).length}** demake music and sound effects; **${rows.filter((row) => row.gameAudioHz).length}** play it from inside a game, and **${rows.filter((row) => row.audioRom).length}** build a cartridge whose only job is one schedule.`,
   );
   out.push("");
   return out.join("\n");

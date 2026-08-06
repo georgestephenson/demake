@@ -345,15 +345,39 @@ describe("demake gen — a chip schedule into a cartridge", () => {
     expect(env.stderr).toMatch(/arranged for dmg, not nes/);
   });
 
-  it("names the console that has no driver backend yet, rather than emitting silence", async () => {
+  it("builds a bootable NROM cartridge from the schedule", async () => {
     const env = makeEnv({ "band.mid": bandMidi(140, 1) });
     await arranged(env, "nes");
     const code = await run(
-      ["gen", "song.json", "-c", "nes", "--format", "rom", "-o", "x.nes"],
+      ["gen", "song.json", "-c", "nes", "--format", "rom", "-o", "song.nes", "--json"],
+      env,
+    );
+    expect(code).toBe(0);
+    const rom = env.written["song.nes"]!;
+    expect(rom).toBeDefined();
+    expect(String.fromCharCode(...rom.subarray(0, 3))).toBe("NES");
+    const report = JSON.parse(env.stdout) as {
+      console: string;
+      stats: { data: number; ticks: number; helpers: string[]; ratePpmError: number };
+    };
+    expect(report.console).toBe("nes");
+    expect(report.stats.ticks).toBeGreaterThan(0);
+    expect(report.stats.ratePpmError).toBe(0);
+    expect(report.stats.helpers).toContain("tick");
+  });
+
+  it("names the console that has no driver backend yet, rather than emitting silence", async () => {
+    // A Master System is the case worth naming: its cartridges play music inside
+    // a *game* and there is no standalone player for a Z80, so a builder that
+    // fell back to silence would make the two look like the same support.
+    const env = makeEnv({ "band.mid": bandMidi(140, 1) });
+    await arranged(env, "sms");
+    const code = await run(
+      ["gen", "song.json", "-c", "sms", "--format", "rom", "-o", "x.sms"],
       env,
     );
     expect(code).not.toBe(0);
-    expect(env.stderr).toMatch(/no audio driver backend/);
+    expect(env.stderr).toMatch(/no standalone audio driver backend/);
   });
 
   it("says which formats a schedule has, instead of emitting an image artifact", async () => {

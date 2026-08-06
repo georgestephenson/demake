@@ -716,8 +716,11 @@ whose spec names two chips.
 
 `demake gen <schedule> -c dmg --format rom` then turns that schedule into a real
 32 KiB cartridge, with an SM83 driver **generated for it** — no fixed player, no
-checked-in harness, no toolchain — and **doc 16's Level A proof runs in
-`pnpm test`**: the ROM boots in `@demake/dmg`, whose APU is now `@demake/chip`'s,
+checked-in harness, no toolchain — and `-c nes` does the same on an NROM board,
+which is what turned "what does a second console cost" into a measurement: the
+stream player is the _processor's_ and moved not at all, so `rom/nes.ts` is a
+boot sequence, a clock and a cartridge wrapper and nothing else. And **doc 16's
+Level A proof runs in `pnpm test`**: the ROM boots in `@demake/dmg`, whose APU is now `@demake/chip`'s,
 and every register write it makes is diffed against the `ChipScript` tick for
 tick, with no tolerance (`packages/audio/test/rom.test.ts`). That is the audio
 counterpart of the pixel-perfect emulator E2E, and it is sharper, because the
@@ -746,9 +749,14 @@ four pinned byte-identical to the CLI's by
 `packages/web/test/e2e/determinism.spec.ts`.
 
 Still to come for audio: `bin`/`asm`/`c` emit, a _standalone_ audio cartridge for
-anything but the Game Boy (the NES, the PC Engine, the Sega 8-bits, the Mega Drive
-and the Game Boy Advance have drivers, but only inside a game; the Super
-Nintendo's driver writes an `.spc` rather than a cartridge), driver backends for the remaining
+the consoles that still have none — the Game Boy and the **NES** build one today
+and the PC Engine, the Sega 8-bits, the Mega Drive, the WonderSwans, the Neo Geo
+Pocket Color and both ARM handhelds have drivers only inside a game, while the
+Super Nintendo's writes an `.spc` rather than a cartridge. What each of them
+costs is no longer an estimate: the stream player belongs to the _processor_ and
+is already written, so a console adds a boot sequence, a clock and a cartridge
+wrapper, which is the whole of the difference between `rom/gb.ts` and
+`rom/nes.ts`. Also: driver backends for the remaining
 consoles (each needs a CPU encoder or a checked-in driver source, plus a core to
 prove it in), Level B sample comparison, the remaining chips (the rest of the
 handhelds), a _demaker_ for the two sample players the chip layer now has and
@@ -1104,9 +1112,14 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
                      a generated driver per CPU (doc 16). SM83: one stream player
                      (gb-driver.ts), two callers — the cartridge (gb.ts) and the
                      driver a game embeds (gb-game.ts). 6502: mos-player.ts, which
-                     is the *processor's* rather than either machine's, and two
-                     callers — nes-game.ts and pce-game.ts, because a HuC6280 is a
-                     6502 with a mapper; Z80: sms-driver.ts and sms-game.ts; 68000:
+                     is the *processor's* rather than either machine's, and three
+                     callers — the cartridge (nes.ts) and the drivers two games
+                     embed (nes-game.ts, pce-game.ts), because a HuC6280 is a
+                     6502 with a mapper. nes.ts is the second standalone
+                     cartridge in the set and the measurement of what a third
+                     costs: the player moved not at all, so what it owns is a
+                     boot sequence, a clock and a cartridge wrapper;
+                     Z80: sms-driver.ts and sms-game.ts; 68000:
                      md-driver.ts and md-game.ts; SPC700: spc-driver.ts and
                      spc-game.ts, and it is one of the two that do not run on the
                      console's own processor — what it builds is a block to

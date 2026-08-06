@@ -17,7 +17,13 @@
 
 import { describe, expect, it } from "vitest";
 
-import { GB_HEADER_OFFSETS, GB_ROM_SIZE } from "@demake/core";
+import {
+  GB_HEADER_OFFSETS,
+  GB_ROM_SIZE,
+  NES_CHR_SIZE,
+  NES_HEADER_SIZE,
+  NES_PRG_SIZES,
+} from "@demake/core";
 
 import { arrangeScore } from "../src/arrange/index.js";
 import type { ChipScript } from "../src/chipscript.js";
@@ -79,12 +85,61 @@ describe("gb audio cartridge", () => {
   });
 
   it("refuses a console it has no driver for, rather than shipping silence", () => {
-    const script = arrangeScore(parseMidi(bandFixture()), { console: "nes" }).script;
-    expect(() => buildAudioRom(script)).toThrow(/no audio driver backend/);
+    // A Master System has a driver *inside a game* and none of its own, which is
+    // the distinction this refusal exists to keep: `demake build -c sms` puts
+    // music in a cartridge and `demake gen --format rom` cannot, and a builder
+    // that fell back to silence would make the two look the same.
+    const script = arrangeScore(parseMidi(bandFixture()), { console: "sms" }).script;
+    expect(() => buildAudioRom(script)).toThrow(/no standalone audio driver backend/);
   });
 
-  it("names the Game Boy consoles it can build for", () => {
-    expect(audioRomConsoles()).toEqual(expect.arrayContaining(["dmg", "gbc"]));
+  it("names the consoles it can build for", () => {
+    expect(audioRomConsoles()).toEqual(expect.arrayContaining(["dmg", "gbc", "nes"]));
+  });
+});
+
+describe("nes audio cartridge", () => {
+  const built = () => buildAudioRom(trackFor("nes"));
+
+  it("is an NROM cartridge on the smallest board that holds the track", () => {
+    const { bytes, stats, family, suffix } = built();
+    expect(family).toBe("nes");
+    expect(suffix).toBe(".nes");
+    expect(String.fromCharCode(...bytes.subarray(0, 3))).toBe("NES");
+    expect(bytes[3]).toBe(0x1a);
+    // Mapper zero, and the program on one of the two boards NROM shipped as.
+    expect(bytes[7]! & 0xf0).toBe(0);
+    expect(bytes[6]! & 0xf0).toBe(0);
+    const prg = (bytes[4] as number) * 0x4000;
+    expect(NES_PRG_SIZES).toContain(prg);
+    expect(bytes.length).toBe(NES_HEADER_SIZE + prg + NES_CHR_SIZE);
+    expect(stats.free).toBeGreaterThanOrEqual(0);
+  });
+
+  it("boots from a vector rather than an entry point", () => {
+    // There is no fixed entry address on this CPU, so the last six bytes of the
+    // image are what makes the cartridge run at all — and a builder that left
+    // them zero would produce something that jumps into the padding.
+    const { bytes, symbols } = built();
+    const prg = (bytes[4] as number) * 0x4000;
+    const at = NES_HEADER_SIZE + prg - 6;
+    const read = (index: number) =>
+      (bytes[at + index * 2] as number) | ((bytes[at + index * 2 + 1] as number) << 8);
+    expect(read(0)).toBe(symbols.get("Nmi"));
+    expect(read(1)).toBe(symbols.get("Reset"));
+    expect(read(2)).toBe(symbols.get("Irq"));
+    // Every vector inside the window the board is mapped at, which is what says
+    // the small board's program was assembled at the origin its mirror needs.
+    for (const index of [0, 1, 2]) expect(read(index)).toBeGreaterThanOrEqual(0x8000);
+  });
+
+  it("refuses a schedule whose clock is not the frame", () => {
+    // This CPU has no timer a driver can have without burning the DMC channel,
+    // so a schedule fitted to anything else is a bug in the timing fit and is
+    // named rather than rounded to something playable.
+    const script = trackFor("nes");
+    const timed = { ...script, driver: { ...script.driver, source: "timer" as const } };
+    expect(() => buildAudioRom(timed)).toThrow(/has no 'timer' clock/);
   });
 });
 
@@ -102,6 +157,18 @@ describe("Level A — the ROM writes exactly the schedule", async () => {
     expect(
       firstDivergence(script.ticks.slice(0, wanted), captureRomWrites(script, wanted)),
     ).toBeNull();
+  });
+
+  it("plays a demade sound effect tick for tick on the NES too", async () => {
+    // The other half of the driver: a one-shot has to end in silence rather than
+    // repeat, and a suite that ran only tracks would pass with the stop path
+    // broken. Worth having per console rather than once, because where a stream
+    // *ends* is the order walk's business and that walk is the processor's.
+    const script = (await demakeSfx(blipWav(), { console: "nes" })).script;
+    expect(script.loopTick).toBe(-1);
+    const captured = captureRomWrites(script, script.ticks.length + 20);
+    expect(firstDivergence(script.ticks, captured.slice(0, script.ticks.length))).toBeNull();
+    expect(captured.slice(script.ticks.length + 1).flatMap((tick) => tick.writes)).toEqual([]);
   });
 
   it("plays a demade sound effect tick for tick", async () => {
