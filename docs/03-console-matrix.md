@@ -88,9 +88,17 @@ that is a column with a dash in it, and the plan for filling those in is
 Three shorthands recur in the generated table and are worth stating once:
 
 - **A family is a codegen backend, not a console.** The Game Gear rides `sms`,
-  the Mega Duck rides `gb`, the Neo Geo Pocket pair share `ngpc`. A console
-  arrives cheaply exactly when its family already exists, which is why the
-  rollout order in doc 13 is grouped by instruction set rather than by tier.
+  the Mega Duck rides `gb`, the Nintendo DS rides `gba`. A console arrives
+  cheaply exactly when its family already exists, which is why the rollout order
+  in doc 13 is grouped by instruction set rather than by tier.
+
+  The two Neo Geo Pockets are the counter-example, and they are worth the
+  sentence: they share a display controller and a processor and they do **not**
+  share a family, because a data backend emits palettes — and a palette here is
+  sixteen four-entry RGB444 sets per layer where the mono machine has one
+  eight-entry table of shade numbers. The mono WonderSwan is the same story
+  (`ws` against `wsc`). Sharing a family is about the *bytes*, not about the
+  silicon.
 - **`rom` is withheld, not missing, in one case.** The Mega Duck's *data*
   formats are the Game Boy's exactly, so it shares the `gb` family for
   `bin`/`asm`/`c` — but its display program is not the Game Boy's, so the spec
