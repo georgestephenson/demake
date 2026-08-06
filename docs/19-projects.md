@@ -249,6 +249,7 @@ shape — *one file, two or three views of it*:
 | File | Editor | Views |
 |---|---|---|
 | `.dmt` | the game editor | **text**, **blocks** (§The block editor), **preview**, and the cartridge |
+| `.test.dmt` | the suite editor | **text**, **blocks**, and the run (§The suite editor) |
 | `.dmtl` | the level editor | **text**, **map**, or side by side |
 | `.svg` `.png` | the art demaker | source, options, result — as today |
 | `.mid` | the music demaker | source, options, arrangement, listen — as today |
@@ -458,12 +459,53 @@ be painting something no build will produce. _The read-only composition view is
 the one part of this section not yet built_; the chunks are ordinary levels and
 edit like any other today.
 
+## The suite editor
+
+**A `.test.dmt` is not a game, and it used to open the game demaker.** It is a
+`.dmt`, and the router asked no further question — so a file that builds to
+nothing arrived with a console picker, a cartridge and a playable preview around
+it, none of which it has anything to do with. A suite is a program *about* a
+game.
+
+So it has an editor of its own (`web/src/sections/TestEditor.tsx`), with two
+halves and no player:
+
+- **The suite**, as text or as blocks — the same two views a game gets, over the
+  same component, because the two grammars differ and the *rows* do not.
+- **The run**: every case against every console at once, which is the whole point
+  of writing one (doc 14 §Testing a game). A suite that only ever ran on a Game
+  Boy would be checking mechanics; running the same relative assertions on twelve
+  playfields is what checks balance.
+
+**It says which game it is about, and links to it.** The pairing is `gameFor` —
+`suiteFor` read the other way, by name first and falling back to the project's own
+entry point, both in the engine so an editor opening a suite and a CLI running one
+cannot disagree about what it is asserting against. A project with no game in it
+is told so rather than given a Run button that quietly does nothing.
+
+**What is wrong with the game shows here too**, marked as the game's and carrying
+no line, because a case that cannot run has two possible causes and only one of
+them is in the file on screen.
+
+**The `.test.dmt` grammar has a registry of its own**
+(`demotic/src/testing/spec.ts`), separate from `lang/spec.ts` for the reason the
+two are separate languages: folding `play` into the table of things a game can say
+would put a statement in the language reference that no game may use. It is what
+the palette is generated from, and what the parser's own "statements are …" hint
+is built from.
+
+**The game section keeps its *Run tests* button.** Running a suite is a thing you
+do *while* changing the game, and walking to another file to press a button is
+not — and both callers go through one `runSuite` (`web/src/lib/suite.ts`), so they
+cannot come to report different numbers.
+
 ## The block editor
 
 The third view on a `.dmt`: the program as a list of blocks you drag, drop and
 fill in, instead of lines you type. Optional, and never the only way — the text
-view is right there, and a game stays hand-written whether or not anyone used
-this.
+view is right there and is the *default*, and a game stays hand-written whether or
+not anyone used this. **Built** (`web/src/components/BlockEditor.tsx` over
+`web/src/lib/blocks.ts`), for a suite as well as for a game.
 
 **The language is already the right shape for it, and not by accident.** Demotic
 is one statement per line, never nested, with total per-line error recovery, and
@@ -495,10 +537,29 @@ Every source line is a row, and there are four kinds:
   it, and never rewritten. The parser already recovers per line, so a broken line
   is one broken row rather than a document the editor refuses to open.
 
-**A row nobody touched is emitted byte-identical.** Only edited rows are
-re-rendered from the model. That is stronger than a round-trip property and it is
-what makes the editor safe to open a hand-written file with: it cannot reformat,
-requote, reorder or re-space anything you did not ask it to.
+**A row nobody touched is emitted byte-identical.** In fact it is sharper than
+that, because nothing is re-rendered from a model at all: **every operation is a
+splice.** Setting a field rewrites the bytes of one slot, dragging a row moves one
+line, and the rest of the file is the bytes that were already there. So the editor
+cannot reformat, requote, reorder or re-space anything you did not ask it to —
+not because it is careful, but because it never writes anything else.
+
+**Where a slot is comes from the parser.** `parse()` and `parseTests()` each keep a
+side channel of `StatementSpan`s (`demotic/src/lang/slots.ts`): the keyword the
+registry spells it with, the statement's extent, and a `SourceSlot` per editable
+part saying what may go in it. It is the lexer's own habit one phase along — `lex()`
+keeps comment ranges the parser has no use for so the highlighter needs no second
+scanner, and this keeps slots the *compiler* has no use for so an editor needs no
+second parser. The alternative is a page-side walk over the same tokens deciding
+the same things again, which is the duplication doc 07 forbids for conversion logic,
+and it would be wrong the first time a statement changed shape.
+
+Two properties make the side channel safe to edit through, and
+`demotic/test/slots.test.ts` checks both against **every `.dmt` in the
+repository** rather than against samples: slots are in source order and never
+overlap, and reassembling a statement from its slots and the text between them
+gives the line back byte for byte. A line whose slots did not tile it would show
+as the text it could not read, which is the safe failure rather than a wrong edit.
 
 ### The palette is generated, and so are the choices
 
@@ -511,9 +572,22 @@ statements**, which is the same iron rule the highlighter is held to.
 
 **The symbols are the page's.** Grammar in the engine, theme in the stylesheet
 (doc 07): the engine names no colour and it names no icon either. The page keys a
-symbol off each registry keyword, and a `spec.test.ts`-shaped check fails when a
-statement has none — so the registry can grow without the palette going quietly
-blank, and the engine still knows nothing about how it is drawn.
+symbol off each registry keyword (`web/src/components/StatementSymbol.tsx`), and
+`web/test/symbols.test.ts` fails when a statement has none *and* when a symbol is
+drawn for a keyword no registry lists — so the registry can grow without the
+palette going quietly blank, and a removed statement cannot leave a picture behind
+advertising something the parser rejects. They are drawn as paths rather than
+written as emoji, because an emoji is a different picture and often a different
+*size* in every font on every platform, which in a column of rows is the one thing
+that reads as broken.
+
+**A closed set comes from the registry too.** Buttons, sides and compass headings
+are `BUTTONS`, `SIDES` and `DIRECTIONS`; the grammar's own connective words —
+`hits`/`touches`, `pressed`/`released`, `hold`/`press`/`release`, `wide`/`tall` —
+are `SLOT_CHOICES` beside the slot kinds they belong to, and every one of them is
+checked against `KEYWORDS`, so a picker cannot offer a word the reference does not
+document. The parser reads the same list it offers: `CONTROL_MODES` *is*
+`SLOT_CHOICES.mode`.
 
 **And every field offers only what exists**, which is what the project model
 unlocks and the reason this editor belongs in this document rather than doc 07:
@@ -525,6 +599,7 @@ unlocks and the reason this editor belongs in this document rather than doc 07:
 | `sound` | the project's effects | a list you can play |
 | `level … from` | the project's levels | the map, drawn |
 | object and scene names | the program's own `create` and `scene` lines | a list |
+| tile names | the legends of the project's own `.dmtl` files | a list |
 | buttons, directions, functions, constants, units | `BUTTONS`, `DIRECTIONS`, `FUNCTIONS`, `CONSTANTS`, `UNITS` | a list, with the registry's summary |
 | properties | `PROPERTIES`, filtered by context | a list |
 
@@ -572,7 +647,16 @@ phase is declaration order.
 So the editor treats a drag as an edit like any other, and it **never sorts,
 groups or tidies a file on its own**. Grouping by scene is a *view* filter that
 changes no line. A palette drop inserts at the drop point, which is the main
-gesture the whole thing exists for.
+gesture the whole thing exists for, and it inserts the registry's own `example`
+for that statement — already there for the reference page, always a statement of
+that shape, and naming things a real game names rather than angle brackets nobody
+can run. What it names may not exist in *this* project, and that is a diagnostic
+against the new row rather than a reason to keep a second table of templates.
+
+**And a row moves from the keyboard**, because a drag is a mouse: the grip is a
+focusable button and the arrow keys nudge the row it holds. Native drag-and-drop
+has no keyboard equivalent at all, so without this the one gesture the editor
+exists for would be the one gesture some people cannot make.
 
 ### What it must never carry
 
@@ -836,9 +920,19 @@ Each step is useful on its own and none of them breaks the one before.
    tiles with (`web/src/lib/tiles.ts`), which is the no-second-implementation
    rule applied to a tile on screen. A `stream` composition is still not shown;
    the chunks it draws from are ordinary levels and edit like any other.
-9. **The block editor**: last, because it wants everything above it — the
-   registry-generated palette is free, but a field that offers you the project's
-   sprites as pictures needs the project.
+9. **The block editor** — **done**: one row per source line over a text-surgical
+   model (`web/src/lib/blocks.ts`) where every operation is a splice, so a row
+   nobody touched is byte-identical by construction. The palette is `STATEMENTS`
+   (or `TEST_STATEMENTS` for a suite), the fields come from the parsers' own slot
+   side channel (`demotic/src/lang/slots.ts`), the closed sets come from the
+   language registry, and the project supplies the rest — sprites and backdrops
+   picked as *pictures*, tracks and effects and levels as lists, scene and object
+   names as the program's own. Rows drag, and they nudge from the keyboard.
+   Expressions stay a text field, which is where §The one place it stops said they
+   would.
+10. **The suite editor** — **done**: a `.test.dmt` opens §The suite editor rather
+    than the game demaker, with the same two views over the file and the
+    cross-console run in place of a player.
 
 ## Not in v1
 

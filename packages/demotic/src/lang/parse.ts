@@ -34,14 +34,25 @@ import type {
   Unit,
 } from "./ast.js";
 import { lex, type LexNote, type Token } from "./lex.js";
-import { FUNCTION_ARITY, UNIT_NAMES } from "./spec.js";
+import { SLOT_CHOICES, type SlotKind, type SourceSlot, type StatementSpan } from "./slots.js";
+import { FUNCTION_ARITY, STRING_PROPS, UNIT_NAMES } from "./spec.js";
 
 /** Result of a parse: statements plus any recovered syntax errors. */
 export interface ParseResult extends ParsedProgram {
   diagnostics: readonly Diagnostic[];
+  /**
+   * Where each statement's editable parts are (`slots.ts`).
+   *
+   * A side channel nothing in the compiler reads, kept so a block editor can
+   * offer a field per slot without walking the tokens a second time. Only
+   * statements that parsed are here: a line the parser recovered from has a
+   * diagnostic instead, and an editor shows it as the text it could not read.
+   */
+  spans: readonly StatementSpan[];
 }
 
-const CONTROL_MODES = new Set<string>(["hold", "press", "release"]);
+// One list, and the picker a block editor draws reads the same one.
+const CONTROL_MODES = new Set<string>(SLOT_CHOICES.mode ?? []);
 
 // Units and builtins come from the language registry, so the lexer cannot
 // accept something the reference does not document (AGENTS.md §Iron rules).
@@ -75,6 +86,18 @@ class ParseFailure extends Error {
 class Cursor {
   private pos = 0;
 
+  /**
+   * Where the last token consumed ended.
+   *
+   * An expression's extent is not a token — it is everything the Pratt parser
+   * happened to take — so the only way to record its span is to note where the
+   * cursor stood before and where it stands after.
+   */
+  private consumed = 0;
+
+  /** Editable parts, in the order they were consumed, which is source order. */
+  readonly slots: SourceSlot[] = [];
+
   constructor(private readonly tokens: readonly Token[]) {}
 
   peek(offset = 0): Token {
@@ -83,8 +106,31 @@ class Cursor {
 
   next(): Token {
     const token = this.peek();
-    if (token.kind !== "eof") this.pos += 1;
+    if (token.kind !== "eof") {
+      this.pos += 1;
+      this.consumed = token.end;
+    }
     return token;
+  }
+
+  /** The offset one past the last consumed token. */
+  end(): number {
+    return this.consumed;
+  }
+
+  /** Record one token as an editable part. */
+  mark(kind: SlotKind, token: Token, prop?: string): void {
+    this.markRange(kind, token.line, token.start, token.end, prop);
+  }
+
+  /** Record a range as an editable part — an expression, or part of a token. */
+  markRange(kind: SlotKind, line: number, start: number, end: number, prop?: string): void {
+    this.slots.push({ kind, line, start, end, ...(prop === undefined ? {} : { prop }) });
+  }
+
+  /** Forget slots recorded past a mark, for a statement that then failed. */
+  rewindSlots(to: number): void {
+    this.slots.length = to;
   }
 
   atEnd(): boolean {
@@ -161,6 +207,69 @@ function describe(token: Token): string {
   return `'${token.raw}'`;
 }
 
+/**
+ * Consume an identifier and record what may go in its place.
+ *
+ * Every reference in the language goes through this rather than through
+ * `expectIdent` directly, so "what kind of thing is this word" is answered once,
+ * where the grammar already knows, instead of again in an editor.
+ */
+function ident(cursor: Cursor, what: string, kind: SlotKind): Token {
+  const token = cursor.expectIdent(what);
+  cursor.mark(kind, token);
+  return token;
+}
+
+/** Parse an expression and record its whole extent as one editable part. */
+function expression(cursor: Cursor, prop?: string): Expr {
+  const first = cursor.peek();
+  const expr = parseExpr(cursor, 0);
+  markValue(cursor, first, expr, prop);
+  return expr;
+}
+
+/**
+ * Record a value, narrowing the slot where the property says what it is.
+ *
+ * The registry already declares that `sprite` holds an asset and `text` holds a
+ * string (`STRING_PROPS`), so a value that is exactly one token of that shape
+ * gets the slot that offers the right thing — a picture list, a text box — and
+ * everything else stays an expression, which is the honest answer for the one
+ * part of Demotic that nests (doc 19 §The one place it stops).
+ *
+ * A quoted value's slot covers its **contents**, not its quotes: they are
+ * punctuation the author should not have to retype, and a field that let one be
+ * dropped would turn an edit into `E_UNTERMINATED_STRING`.
+ */
+function markValue(cursor: Cursor, first: Token, expr: Expr, prop?: string): void {
+  const end = cursor.end();
+  const line = first.line;
+  const held = prop === undefined ? undefined : STRING_PROPS[prop];
+  const lone = first.end === end;
+
+  if (expr.kind === "string" && lone && (held === "text" || held === "asset")) {
+    const quote = first.raw[0] as string;
+    const closed = first.raw.length > 1 && first.raw.endsWith(quote);
+    const inside = end - (closed ? 1 : 0);
+    cursor.markRange(held === "asset" ? "art" : "string", line, first.start + 1, inside, prop);
+    return;
+  }
+  if (expr.kind === "name" && lone) {
+    if (held === "asset") {
+      cursor.markRange("art", line, first.start, end, prop);
+      return;
+    }
+    // `direction southwest` is write-only sugar for a pair of directions
+    // (`spec.ts` §DIRECTIONS), so the only thing that belongs here is a compass
+    // heading — which makes it a list rather than a name to remember.
+    if (prop === "direction") {
+      cursor.markRange("direction", line, first.start, end, prop);
+      return;
+    }
+  }
+  cursor.markRange("expression", line, first.start, end, prop);
+}
+
 /** The units a numeric literal may carry, for a hint. */
 const UNIT_LIST = [...UNITS].sort().join(", ");
 
@@ -197,12 +306,18 @@ export function parse(source: string): ParseResult {
   const { tokens, notes } = lex(source);
   const cursor = new Cursor(tokens);
   const statements: Stmt[] = [];
+  const spans: StatementSpan[] = [];
   const diagnostics: Diagnostic[] = notes.map(noteDiagnostic);
 
   cursor.skipBlankLines();
   while (!cursor.atEnd()) {
+    const first = cursor.peek();
+    // Where this statement's slots begin, so a line that fails halfway leaves
+    // none behind: a row an editor cannot read must show the text it could not
+    // read, never a form built from the half of it that parsed.
+    const mark = cursor.slots.length;
     try {
-      const statement = parseStatement(cursor);
+      const { statement, keyword, keywordEnd } = parseStatement(cursor);
       if (!cursor.atStatementEnd()) {
         throw cursor.fail(
           "E_SYNTAX",
@@ -211,8 +326,17 @@ export function parse(source: string): ParseResult {
         );
       }
       statements.push(statement);
+      spans.push({
+        keyword,
+        line: first.line,
+        start: first.start,
+        end: cursor.end(),
+        keywordEnd,
+        slots: cursor.slots.slice(mark),
+      });
     } catch (error) {
       if (!(error instanceof ParseFailure)) throw error;
+      cursor.rewindSlots(mark);
       diagnostics.push(error.diagnostic);
     }
     cursor.skipLine();
@@ -222,40 +346,66 @@ export function parse(source: string): ParseResult {
   // Lexer notes are collected up front, so sort back into source order — a list
   // that jumps from line 40 to line 3 reads as two unrelated failures.
   diagnostics.sort((a, b) => a.line - b.line);
-  return { statements, diagnostics };
+  return { statements, diagnostics, spans };
 }
 
-function parseStatement(cursor: Cursor): Stmt {
+/**
+ * One statement, and the registry's own spelling of what it is.
+ *
+ * The keyword is returned rather than derived from the statement's `kind`
+ * afterwards, because two of them share a first word and only the parser knows
+ * which branch it took: `create object` declares a class and `create` makes one.
+ * A caller that had to work that out again would be keeping a second list of
+ * statements, which is what `STATEMENTS` exists to make unnecessary.
+ */
+function parseStatement(cursor: Cursor): {
+  statement: Stmt;
+  keyword: string;
+  keywordEnd: number;
+} {
   const token = cursor.peek();
   if (token.kind !== "ident") {
     throw cursor.fail("E_SYNTAX", `expected a statement keyword but found ${describe(token)}`);
   }
+  /** One-word statements: the keyword is the token the switch is looking at. */
+  const one = (statement: Stmt, keyword: string) => ({
+    statement,
+    keyword,
+    keywordEnd: token.end,
+  });
 
   switch (token.value) {
     case "start":
-      return parseStart(cursor);
+      return one(parseStart(cursor), "start");
     case "scene":
-      return parseScene(cursor);
+      return one(parseScene(cursor), "scene");
     case "level":
-      return parseLevelStatement(cursor);
+      return one(parseLevelStatement(cursor), "level");
     case "stream":
-      return parseStream(cursor);
+      return one(parseStream(cursor), "stream");
     case "seed":
-      return parseSeed(cursor);
+      return one(parseSeed(cursor), "seed");
     case "camera":
-      return parseCamera(cursor);
+      return one(parseCamera(cursor), "camera");
     case "backdrop":
-      return parseBackdrop(cursor);
+      return one(parseBackdrop(cursor), "backdrop");
     case "music":
-      return parseMusic(cursor);
+      return one(parseMusic(cursor), "music");
     case "sound":
-      return parseSound(cursor);
-    case "create":
-      return parseCreate(cursor);
+      return one(parseSound(cursor), "sound");
+    case "create": {
+      const declares = cursor.peek(1);
+      const object = declares.kind === "ident" && declares.value === "object";
+      return {
+        statement: parseCreate(cursor),
+        keyword: object ? "create object" : "create",
+        keywordEnd: object ? declares.end : token.end,
+      };
+    }
     case "control":
-      return parseControl(cursor);
+      return one(parseControl(cursor), "control");
     case "when":
-      return parseWhen(cursor);
+      return one(parseWhen(cursor), "when");
     default:
       throw cursor.fail(
         "E_UNKNOWN_STATEMENT",
@@ -268,14 +418,14 @@ function parseStatement(cursor: Cursor): Stmt {
 function parseStart(cursor: Cursor): Stmt {
   const line = cursor.peek().line;
   cursor.next();
-  const scene = cursor.expectIdent("a scene name");
+  const scene = ident(cursor, "a scene name", "scene");
   return { kind: "start", scene: scene.value, line };
 }
 
 function parseScene(cursor: Cursor): Stmt {
   const line = cursor.peek().line;
   cursor.next();
-  const name = cursor.expectIdent("a scene name");
+  const name = ident(cursor, "a scene name", "scene-name");
   return { kind: "scene", name: name.value, line };
 }
 
@@ -283,13 +433,13 @@ function parseScene(cursor: Cursor): Stmt {
 function parseLevelStatement(cursor: Cursor): Stmt {
   const line = cursor.peek().line;
   cursor.next();
-  const name = cursor.expectIdent("a level name");
+  const name = ident(cursor, "a level name", "name");
   let scene: string | undefined;
-  if (cursor.eatKeyword("in")) scene = cursor.expectIdent("a scene name").value;
+  if (cursor.eatKeyword("in")) scene = ident(cursor, "a scene name", "scene").value;
   if (!cursor.eatKeyword("from")) {
     throw cursor.fail("E_SYNTAX", "a level needs a file", "e.g. `level cavern from cavern.dmtl`");
   }
-  const file = cursor.expectIdent("a .dmtl filename");
+  const file = ident(cursor, "a .dmtl filename", "level");
   return { kind: "level", name: name.value, ...(scene ? { scene } : {}), file: file.raw, line };
 }
 
@@ -297,9 +447,9 @@ function parseLevelStatement(cursor: Cursor): Stmt {
 function parseStream(cursor: Cursor): Stmt {
   const line = cursor.peek().line;
   cursor.next();
-  const name = cursor.expectIdent("a level name");
+  const name = ident(cursor, "a level name", "name");
   let scene: string | undefined;
-  if (cursor.eatKeyword("in")) scene = cursor.expectIdent("a scene name").value;
+  if (cursor.eatKeyword("in")) scene = ident(cursor, "a scene name", "scene").value;
   if (!cursor.eatKeyword("from")) {
     throw cursor.fail(
       "E_SYNTAX",
@@ -310,7 +460,7 @@ function parseStream(cursor: Cursor): Stmt {
 
   const files: string[] = [];
   do {
-    files.push(cursor.expectIdent("a .dmtl filename").raw);
+    files.push(ident(cursor, "a .dmtl filename", "level").raw);
   } while (cursor.eatPunct(","));
 
   const count = cursor.peek();
@@ -321,15 +471,18 @@ function parseStream(cursor: Cursor): Stmt {
       "e.g. `stream course from gap.dmtl, pipe.dmtl 20 wide`",
     );
   }
+  cursor.mark("number", count);
   cursor.next();
 
   // The axis is stated rather than inferred from the chunks' shape: a stack of
   // square chunks is ambiguous, and a game that reads "20 wide" says which way
   // it scrolls without the reader measuring anything.
+  const laid = cursor.peek();
   const axis = cursor.eatKeyword("wide") ? "wide" : cursor.eatKeyword("tall") ? "tall" : undefined;
   if (!axis) {
     throw cursor.fail("E_SYNTAX", "a stream is laid out `wide` or `tall`");
   }
+  cursor.mark("axis", laid);
 
   return {
     kind: "stream",
@@ -350,6 +503,7 @@ function parseSeed(cursor: Cursor): Stmt {
   if (value.kind !== "number") {
     throw cursor.fail("E_SYNTAX", `expected a whole number but found ${describe(value)}`);
   }
+  cursor.mark("number", value);
   cursor.next();
   return { kind: "seed", value: Math.trunc(Number(value.value)), line };
 }
@@ -361,9 +515,9 @@ function parseCamera(cursor: Cursor): Stmt {
   if (!cursor.eatKeyword("follows")) {
     throw cursor.fail("E_SYNTAX", "a camera follows something", "e.g. `camera follows player`");
   }
-  const target = cursor.expectIdent("an object name");
+  const target = ident(cursor, "an object name", "entity");
   let scene: string | undefined;
-  if (cursor.eatKeyword("in")) scene = cursor.expectIdent("a scene name").value;
+  if (cursor.eatKeyword("in")) scene = ident(cursor, "a scene name", "scene").value;
   return { kind: "camera", target: target.value, ...(scene ? { scene } : {}), line };
 }
 
@@ -371,9 +525,9 @@ function parseCamera(cursor: Cursor): Stmt {
 function parseBackdrop(cursor: Cursor): Stmt {
   const line = cursor.peek().line;
   cursor.next();
-  const file = cursor.expectIdent("an image filename");
+  const file = ident(cursor, "an image filename", "art");
   let scene: string | undefined;
-  if (cursor.eatKeyword("in")) scene = cursor.expectIdent("a scene name").value;
+  if (cursor.eatKeyword("in")) scene = ident(cursor, "a scene name", "scene").value;
   return { kind: "backdrop", file: file.raw, ...(scene ? { scene } : {}), line };
 }
 
@@ -381,9 +535,9 @@ function parseBackdrop(cursor: Cursor): Stmt {
 function parseMusic(cursor: Cursor): Stmt {
   const line = cursor.peek().line;
   cursor.next();
-  const file = cursor.expectIdent("a music filename");
+  const file = ident(cursor, "a music filename", "music");
   let scene: string | undefined;
-  if (cursor.eatKeyword("in")) scene = cursor.expectIdent("a scene name").value;
+  if (cursor.eatKeyword("in")) scene = ident(cursor, "a scene name", "scene").value;
   return { kind: "music", file: file.raw, ...(scene ? { scene } : {}), line };
 }
 
@@ -397,7 +551,7 @@ function parseMusic(cursor: Cursor): Stmt {
 function parseSound(cursor: Cursor): Stmt {
   const line = cursor.peek().line;
   cursor.next();
-  const file = cursor.expectIdent("a sound filename");
+  const file = ident(cursor, "a sound filename", "sound");
   if (!cursor.eatKeyword("on")) {
     throw cursor.fail(
       "E_SYNTAX",
@@ -408,10 +562,10 @@ function parseSound(cursor: Cursor): Stmt {
   const event = parseEvent(cursor);
 
   let scene: string | undefined;
-  if (cursor.eatKeyword("in")) scene = cursor.expectIdent("a scene name").value;
+  if (cursor.eatKeyword("in")) scene = ident(cursor, "a scene name", "scene").value;
 
   let guard: Expr | undefined;
-  if (cursor.eatKeyword("if")) guard = parseExpr(cursor, 0);
+  if (cursor.eatKeyword("if")) guard = expression(cursor);
 
   return {
     kind: "sound",
@@ -428,16 +582,16 @@ function parseCreate(cursor: Cursor): Stmt {
   cursor.next();
 
   if (cursor.eatKeyword("object")) {
-    const name = cursor.expectIdent("a class name");
+    const name = ident(cursor, "a class name", "name");
     const props = parsePropList(cursor);
     return { kind: "class", name: name.value, props, line };
   }
 
-  const className = cursor.expectIdent("a class name");
-  const name = cursor.expectIdent("an instance name");
+  const className = ident(cursor, "a class name", "class");
+  const name = ident(cursor, "an instance name", "name");
   let scene: string | undefined;
   if (cursor.eatKeyword("in")) {
-    scene = cursor.expectIdent("a scene name").value;
+    scene = ident(cursor, "a scene name", "scene").value;
   }
   const props = parsePropList(cursor);
   return {
@@ -453,8 +607,8 @@ function parseCreate(cursor: Cursor): Stmt {
 function parseControl(cursor: Cursor): Stmt {
   const line = cursor.peek().line;
   cursor.next();
-  const entity = cursor.expectIdent("an entity name");
-  const action = cursor.expectIdent("a button name");
+  const entity = ident(cursor, "an entity name", "entity");
+  const action = ident(cursor, "a button name", "button");
   const assignments = parseAssignmentList(cursor);
 
   let mode: ControlMode = "hold";
@@ -467,6 +621,7 @@ function parseControl(cursor: Cursor): Stmt {
         "use `on hold`, `on press`, or `on release`",
       );
     }
+    cursor.mark("mode", word);
     mode = word.value as ControlMode;
   }
 
@@ -489,12 +644,12 @@ function parseWhen(cursor: Cursor): Stmt {
 
   let scene: string | undefined;
   if (cursor.eatKeyword("in")) {
-    scene = cursor.expectIdent("a scene name").value;
+    scene = ident(cursor, "a scene name", "scene").value;
   }
 
   let guard: Expr | undefined;
   if (cursor.eatKeyword("if")) {
-    guard = parseExpr(cursor, 0);
+    guard = expression(cursor);
   }
 
   if (!cursor.eatKeyword("then")) {
@@ -534,10 +689,12 @@ function parseEvent(cursor: Cursor): Event {
   ) {
     const level = second.value === "touches";
     cursor.next();
+    cursor.mark("entity", first);
     cursor.next();
+    cursor.mark("verb", second);
     const others: string[] = [];
     do {
-      others.push(cursor.expectIdent("something to collide with").value);
+      others.push(ident(cursor, "something to collide with", "entity").value);
     } while (cursor.eatPunct(","));
     // `from above, left` narrows the rule to contacts resolved on those sides.
     // It is parsed here rather than as part of the target list because a target
@@ -546,7 +703,7 @@ function parseEvent(cursor: Cursor): Event {
     const sides: string[] = [];
     if (cursor.eatKeyword("from")) {
       do {
-        sides.push(cursor.expectIdent("a side: above, below, left or right").value);
+        sides.push(ident(cursor, "a side: above, below, left or right", "side").value);
       } while (cursor.eatPunct(","));
     }
     return { kind: "hits", subject: first.value, others, level, sides };
@@ -559,13 +716,15 @@ function parseEvent(cursor: Cursor): Event {
     (second.value === "pressed" || second.value === "released")
   ) {
     cursor.next();
+    cursor.mark("button", first);
     cursor.next();
+    cursor.mark("edge", second);
     return { kind: "input", action: first.value, edge: second.value };
   }
 
-  const left = parseExpr(cursor, 0);
+  const left = expression(cursor);
   if (cursor.eatKeyword("reaches")) {
-    const right = parseExpr(cursor, 0);
+    const right = expression(cursor);
     return { kind: "reaches", left, right };
   }
   return { kind: "predicate", test: left };
@@ -589,18 +748,20 @@ function parsePairs(cursor: Cursor): Prop[] {
       lines.push(token.line);
       if (token.kind === "ident" && token.value in FUNCTIONS && cursor.peek(1).value === "(") {
         names.push(undefined);
-        values.push(parseExpr(cursor, 0));
+        values.push(expression(cursor));
       } else if (token.kind === "ident" && isBareColumn(cursor)) {
         cursor.next();
+        cursor.mark("property", token);
         names.push(token.value);
         values.push(undefined);
       } else if (token.kind === "ident") {
         cursor.next();
+        cursor.mark("property", token);
         names.push(token.value);
-        values.push(parseExpr(cursor, 0));
+        values.push(expression(cursor, propertyOf(token.value)));
       } else {
         names.push(undefined);
-        values.push(parseExpr(cursor, 0));
+        values.push(expression(cursor));
       }
     } while (cursor.eatPunct(","));
   }
@@ -635,7 +796,7 @@ function parsePairs(cursor: Cursor): Prop[] {
     return name;
   });
 
-  const provided = parseValueList(cursor);
+  const provided = parseValueList(cursor, columns);
   if (provided.length !== columns.length) {
     throw cursor.fail(
       "E_ARITY",
@@ -705,19 +866,40 @@ function isCall(name: string, cursor: Cursor): boolean {
   return name in FUNCTIONS && cursor.atPunct("(");
 }
 
-/** Parse the value side of `as`: either `( a, b )` or a single bare expression. */
-function parseValueList(cursor: Cursor): Expr[] {
-  if (!cursor.atPunct("(")) return [parseExpr(cursor, 0)];
+/**
+ * Parse the value side of `as`: either `( a, b )` or a single bare expression.
+ *
+ * `columns` is the name list from before the `as`, and it is passed in only so a
+ * value's slot can say which property it sets — `(x, sprite) as (4, ball.svg)`
+ * offers a picture in the second field for the same reason `(sprite ball.svg)`
+ * does. It is positional and may run short, which is the arity error the caller
+ * reports; a value past the end simply has no property to name.
+ */
+function parseValueList(cursor: Cursor, columns: readonly string[] = []): Expr[] {
+  if (!cursor.atPunct("(")) return [expression(cursor, propertyOf(columns[0]))];
 
   cursor.expectPunct("(");
   const values: Expr[] = [];
   if (!cursor.atPunct(")")) {
     do {
-      values.push(parseExpr(cursor, 0));
+      values.push(expression(cursor, propertyOf(columns[values.length])));
     } while (cursor.eatPunct(","));
   }
   cursor.expectPunct(")");
   return values;
+}
+
+/**
+ * The property a target names: `paddle2.xdirection` is `xdirection`.
+ *
+ * What a value slot needs is the *property*, because that is what `PROPERTIES`
+ * is keyed by — the object in front of the dot decides whose it is, which is a
+ * question for `compile.ts` rather than for the field an editor draws.
+ */
+function propertyOf(name: string | undefined): string | undefined {
+  if (name === undefined) return undefined;
+  const dot = name.lastIndexOf(".");
+  return dot < 0 ? name : name.slice(dot + 1);
 }
 
 function parsePropList(cursor: Cursor): Prop[] {
@@ -738,6 +920,7 @@ function parseAssignmentList(cursor: Cursor): Assignment[] {
 
   if (!cursor.atPunct("(")) {
     const name = cursor.expectIdent("a property to set");
+    cursor.mark("property", name);
     if (!cursor.eatKeyword("as")) {
       throw cursor.fail(
         "E_SYNTAX",
@@ -745,7 +928,12 @@ function parseAssignmentList(cursor: Cursor): Assignment[] {
         "without brackets a rule sets exactly one property: `then speed as 0`",
       );
     }
-    return [{ target: splitTarget(name.value, name.line), value: parseExpr(cursor, 0) }];
+    return [
+      {
+        target: splitTarget(name.value, name.line),
+        value: expression(cursor, propertyOf(name.value)),
+      },
+    ];
   }
 
   return parsePairs(cursor).map((pair) => ({

@@ -34,14 +34,15 @@ images are only one kind (doc 01 §Scope):
 
 | Section | Opens for | What it does | State |
 |---|---|---|---|
-| **demotic game demaker** | `.dmt` | write a game, play it on any console, run its `.test.dmt` suite | live |
+| **demotic game demaker** | `.dmt` | write a game as text or as blocks, play it on any console | live |
+| **demotic suite editor** | `.test.dmt` | the assertions about a game, run on every console at once | live (doc 19) |
 | **art demaker** | `.svg` `.png` `.jpg` … | the image pipeline described below | live |
 | **music demaker** | `.mid` | tracks → chip music (docs 16, 17) | live |
 | **sound demaker** | `.wav` | effects → chip sound (docs 16, 18) | live |
 | **level editor** | `.dmtl` | draw a room, see it at every console's viewport | live (doc 19) |
 | **text editor** | `Demakefile`, `.md`, `.trace`, … | the project's other files, as text | live |
 | **demotic reference** | — | the language, generated from the registry | live |
-| **block editor** | `.dmt` | a program as draggable blocks instead of typed lines | planned (doc 19) |
+| **block editor** | `.dmt` `.test.dmt` | a program as draggable blocks instead of typed lines — a *view* inside the two editors above, not a section of its own | live (doc 19) |
 
 **A section is not something you choose; it is what the open file is.** Clicking
 `ball.svg` opens the art demaker because a `.svg` *is* art. The route is
@@ -158,6 +159,18 @@ and the same state on the target's real 8×8 grid with over-limit scanlines shad
 red — the product thesis in one control. **Game** is the editable source with
 per-line diagnostics, and a *Run tests* button that runs the `.test.dmt` suite
 against every console at once and reports the tally.
+
+**Game shows the source as text, as blocks, or side by side** (doc 19 §The block
+editor). Text is the default and the claim is why: a whole game is sixty readable
+lines, and a visitor who arrives at a form cannot see that. Blocks are the
+alternative — one line per row, a symbol per statement, a field per slot and a
+grip to drag — and neither view is authoritative, because the file is.
+
+**A `.test.dmt` opens the suite editor instead**, which is the same two views over
+the suite plus the run, and no player at all. It is a `.dmt`, so it used to open
+this section: a file that builds to nothing, handed a console picker, a cartridge
+and a playable preview. What a suite needs on screen is the game it is about and
+whether its claims hold on every console.
 
 The simulator runs on the main thread, not in the engine worker: a tick is a few
 hundred integer operations on a handful of entities, so the round trip would cost

@@ -859,6 +859,11 @@ packages/gba/        @demake/gba — a self-hosted Game Boy Advance core: an
                      instructions of ours rather than Nintendo's BIOS
 packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs 14, 15)
   src/lang/          lex → parse → flat statement AST (one statement per line, no nesting)
+  src/lang/slots.ts  where a statement's editable parts are, and what may go in
+                     each — the parsers' side channel, kept for the block editor
+                     the way `lex.ts` keeps comment ranges for the highlighter.
+                     Nothing in the compiler reads it, and the one rule that
+                     matters is that slots tile the statement they describe
   src/lang/highlight.ts  TextMate scopes for `.dmt` source — the registry's words,
                      the lexer's boundaries, and no colours (those are the page's).
                      Its `Scope` union is the repo's whole scope vocabulary, not
@@ -873,7 +878,10 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
   src/sim.ts         the reference interpreter — the semantic definition of the language
   src/level/         .dmtl levels: parse, camera + tile collision, `stream` composition
   src/rng.ts         the game's seeded generator — one definition, shared build and run
-  src/testing/       .test.dmt: assertions run against every console at once
+  src/testing/       .test.dmt: assertions run against every console at once, and
+                     spec.ts — that grammar's own registry, separate from
+                     lang/spec.ts because they are separate languages: a `play`
+                     in the language reference is a statement no game may use
   src/trace.ts       state traces: the cross-implementation conformance oracle
   src/rom/           the console hand-off: table format, expression bytecode, the
                      built-in tile bank and the trace readers
@@ -1043,7 +1051,11 @@ packages/web/        the site (doc 07): a window — title bar, menus, explorer,
                      *file* rather than demaking one — over lib/dmtl.ts and over
                      nothing at all respectively, since a text editor is a
                      textarea and whichever of the engine's grammars fits
-  src/components/    the art panes, plus the chrome every section sits inside:
+  src/components/    the art panes, the block editor (BlockEditor.tsx over
+                     lib/blocks.ts, one component for both `.dmt` grammars) and
+                     its symbols (StatementSymbol.tsx — the one thing about a
+                     statement the engine does not decide), plus the chrome every
+                     section sits inside:
                      Explorer.tsx (the tree, and the only place a file is created,
                      renamed, moved or deleted), MenuBar.tsx (the menus *and* the
                      keybindings, from one array), QuickOpen.tsx (Ctrl+P) and
@@ -1056,6 +1068,10 @@ packages/web/        the site (doc 07): a window — title bar, menus, explorer,
                      safe to import eagerly: an interface and each console's
                      framebuffer size, pinned against the cores' own constants
   src/lib/           option records ⇄ engine options ⇄ equivalent command line,
+                     blocks.ts (a `.dmt` as rows you can drag, where every edit is
+                     a splice — the dmtl.ts bargain one file type along) and
+                     suite.ts (running a `.test.dmt` on every console, one
+                     implementation and two callers),
                      the bundled example projects, and audio-player.ts (playback
                      only). project.ts is the folder the whole page is about;
                      dmtl.ts edits a level as *text* (never a parsed model, so a
@@ -3396,6 +3412,35 @@ not per console.
   also what keeps the language out of the chunks that only need a box to type in.
   A file with no grammar is drawn plain rather than approximated with a regular
   expression — that is the forbidden second implementation for a smaller prize.
+- **And it never decides what part of a statement means.** The block editor's
+  fields come from `parse()`'s and `parseTests()`' own `spans` — the parser
+  already knew that the word after `backdrop` is a picture and the word after
+  `in` is a scene, and `lang/slots.ts` is that decision kept rather than made
+  twice. The same seam the highlighter runs on, one phase along. Two properties
+  hold it up and `demotic/test/slots.test.ts` checks both against every `.dmt` in
+  the repository: slots are in source order and never overlap, and a statement
+  reassembled from its slots and the text between them is byte-identical. A line
+  whose slots did not tile it shows as the text it could not read, which is the
+  safe failure — a _wrong_ slot would be an editor rewriting the wrong bytes.
+- **A block edit is a splice, never a re-emit.** `web/src/lib/blocks.ts` sets one
+  slot's range, moves one line, inserts one line — so a row nobody touched comes
+  back byte-identical because nothing rewrote it, not because something was
+  careful. That is `dmtl.ts`'s bargain with a level one file type along, and it
+  is what makes the editor safe to open a hand-written game with. Two characters
+  are taken out of a value on the way and both would otherwise change the
+  program: a newline (the language is one statement per line) and a quote (a
+  Demotic string cannot contain one, since the lexer ends the literal at the
+  first it meets).
+- **Dragging a row is an edit, so nothing may sort or tidy on its own.** Entities
+  live in declaration order, which decides what is drawn over what and which
+  sprite the hardware drops first past its per-scanline budget; a rule's place in
+  the file is its place in the tick. An editor that grouped a file by scene on
+  open would be an output-byte change dressed as a view.
+- **A `.test.dmt` is not a game and does not open the game demaker.** `isSuite` is
+  the engine's own question and `route.ts` asks it first, because a suite is a
+  `.dmt` too and the longer extension is the whole distinction. It opens the suite
+  editor: the same two views over the file, the cross-console run, and no console
+  picker, no cartridge and no preview — it builds to nothing.
 - **The web JS budget is what one visitor downloads, not what the site is.**
   `pnpm check:web-budget` charges every chunk once _except_ the per-console ones,
   of which it charges only the largest family — because a visitor plays one
@@ -3413,7 +3458,7 @@ not per console.
   `import()` like every other core, and they were charged to _every_ visitor for
   as long as the two lists disagreed. A budget that overstates itself fails the
   next honest change, which is what it did. Current figures:
-  377 KB for a visitor against a 400 KB budget, 529 KB for the whole site — and
+  385 KB for a visitor against a 400 KB budget, 537 KB for the whole site — and
   a new example game costs about fourteen of those kilobytes, because the page
   bundles every fixture SVG twice (raw text for the ROM build, a URL for the
   preview). Measure with a **clean** `dist`: the checker reads every `.js` it
