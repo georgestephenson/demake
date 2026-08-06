@@ -312,6 +312,29 @@ const PROFILES: readonly ConsoleProfile[] = [
     romPath: true,
   },
   {
+    // **The smallest playfield in the table** — twenty cells by nineteen, which
+    // is a Game Boy's screen a column narrower and three rows taller. An LCD, so
+    // there is no overscan to be safe of and the raw frame is the playfield.
+    id: "ngpc",
+    name: "Neo Geo Pocket Color",
+    label: "Neo Geo Pocket Color",
+    screenWidth: 20,
+    screenHeight: 19,
+    rawWidth: 160,
+    rawHeight: 152,
+    cellSize: 8,
+    fps: 60,
+    // **Sixty-four objects a line, which is the whole table.** No other console
+    // here can say that: every one of them draws fewer objects on a scanline
+    // than it holds entries for, so a row of sprites is clipped somewhere. It is
+    // 8×8 only and there is no 8×16, so a wide object costs its width in entries
+    // — but it can never be cut off mid-line, which is what makes the count the
+    // only thing to reason about.
+    sprites: { total: 64, perLine: 64, hFlip: true },
+    startButton: "dedicated",
+    romPath: true,
+  },
+  {
     // The same machine in monochrome: the same display at the same 75.47 Hz,
     // the same screen, the same object budget. Everything that decides how a
     // game *plays* is shared, which is what makes this a variant rather than a

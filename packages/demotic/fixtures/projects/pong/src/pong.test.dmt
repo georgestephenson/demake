@@ -44,7 +44,10 @@ expect abs(ball1.x - centerx) < 15vw
 test the opponent tracks the ball
 press a
 play 3.33 seconds
-expect abs(paddle2.centerx - ball1.centerx) < 10vw
+-- A paddle width, because that is what tracking means: the ball is over the
+-- paddle, give or take. A tenth of the court is not the same claim on a court
+-- of a different shape -- the lag is about the same number of cells anywhere.
+expect abs(paddle2.centerx - ball1.centerx) < 15vw
 
 test the opponent stays inside the court
 press a

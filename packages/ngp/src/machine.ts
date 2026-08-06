@@ -19,13 +19,24 @@
  *     and the processor writes to it directly with no port and no upload, so the
  *     array this machine allocates is the same one {@link Display} reads.
  *
- * **Input is absent rather than half-implemented.** The controller status byte's
- * bit layout is not in either hardware reference this project could reach, and a
- * machine description that is wrong *and consistent* passes every test there is
- * (AGENTS.md §Gotchas) — so there is no button register here at all, and adding
- * one is a matter of pinning it against a source rather than of writing code.
- * The sound processor, its four kilobytes and the on-chip timers are absent on
- * the same terms.
+ * **Input goes through the one description, and that description is
+ * unverified.** The controller byte's address is confirmed by every reference
+ * this project could reach and its *bit order* is in none of them, so
+ * `NGP_BUTTON_BITS` writes it down as a guess rather than hiding it — and this
+ * core writes the byte through those same constants a cartridge reads it
+ * through. That is exactly the shape AGENTS.md §Gotchas warns about: a machine
+ * description that is wrong *and consistent* passes every test there is. It is
+ * one line to change when a source turns up, and both readers pick it up.
+ *
+ * **The sound chip is here and the sound *processor* is not**, which is the
+ * hardware offering two routes and a demade cartridge taking the simpler one.
+ * On the board the T6W28's own bus belongs to a Z80 that runs its own program;
+ * the main CPU can also reach the chip through two bytes of its own I/O page,
+ * once it has written the pair that hands it over. `demake build` emits no Z80
+ * program, so it takes that route and this machine models it — the four
+ * kilobytes the two processors share are ordinary RAM here, and the Z80 that
+ * would read them is absent rather than half-implemented, as are the on-chip
+ * timers and DMA.
  */
 
 import {
@@ -37,13 +48,32 @@ import {
   NGP_VECTOR_VBLANK,
   NGP_VIDEO,
   NGP_Z80_RAM,
+  NGP_BUTTON_BITS,
+  NGP_BUTTONS,
+  NGP_SOUND_ENABLE,
+  NGP_SOUND_ENABLE_HIGH,
+  NGP_SOUND_ENABLE_HIGH_VALUE,
+  NGP_SOUND_ENABLE_VALUE,
+  NGP_SOUND_LEFT,
+  NGP_SOUND_RIGHT,
 } from "@demake/core";
+import { T6w28, T6W28_LEFT, T6W28_RIGHT, type SampleSink } from "@demake/chip";
 
 import { Tlcs900, type Bus } from "./cpu.js";
 import { Display, VIDEO_SIZE, type NgpModel } from "./display.js";
 
 /** Bytes of RAM the sound processor and the main CPU share. */
 const SOUND_RAM_SIZE = 0x1000;
+
+/**
+ * Master clocks in one processor state.
+ *
+ * The TLCS-900/H's system clock is the crystal halved and its instruction
+ * timings are in *states* of that clock, while the display controller counts the
+ * crystal itself — so this is the ratio between the two, and the reason
+ * {@link Ngp.step} multiplies for one of them and not the other.
+ */
+const MASTER_PER_STATE = 2;
 
 /**
  * Where a cartridge's stack starts.
@@ -54,6 +84,22 @@ const SOUND_RAM_SIZE = 0x1000;
  * `XSP` in its first instructions.
  */
 export const DEFAULT_STACK = NGP_RAM_RESERVED;
+
+/**
+ * Keys, as the language names them.
+ *
+ * Seven, which is doc 14's portable floor — and the seventh is Option, because
+ * this console has no separate Start and Option is the button a game pauses on.
+ */
+export const BUTTONS = ["left", "right", "up", "down", "a", "b", "start"] as const;
+
+/** One key. */
+export type Button = (typeof BUTTONS)[number];
+
+/** Which bit of the controller byte each abstract key is, once. */
+const KEY_BITS: readonly number[] = BUTTONS.map(
+  (button) => NGP_BUTTON_BITS[button === "start" ? "option" : button] ?? 0,
+);
 
 export class Ngp implements Bus {
   /** Twelve kilobytes at `$4000`, of which the top kilobyte is the boot ROM's. */
@@ -68,6 +114,48 @@ export class Ngp implements Bus {
   /** The processor's own on-chip register page at `$0000`. */
   readonly io = new Uint8Array(0x100);
 
+  /** The sound chip, which the main CPU reaches through two I/O bytes. */
+  readonly sound = new T6w28();
+
+  /**
+   * Whether the main CPU has taken the sound chip from the Z80.
+   *
+   * Both bytes of the unlock, and until they are there a write to either port
+   * does nothing — which is the hardware's own arrangement rather than a guard
+   * this model invented, and the reason a cartridge's boot writes two bytes it
+   * would otherwise have no reason to.
+   */
+  private get soundEnabled(): boolean {
+    return (
+      this.io[NGP_SOUND_ENABLE] === NGP_SOUND_ENABLE_VALUE &&
+      this.io[NGP_SOUND_ENABLE_HIGH] === NGP_SOUND_ENABLE_HIGH_VALUE
+    );
+  }
+
+  /**
+   * Every write the sound chip receives, reported rather than intercepted.
+   *
+   * The audio conformance oracle's entire interface to the machine (doc 16 §The
+   * proof, Level A). It observes rather than intercepts — the write still
+   * reaches the chip — because an oracle that changed what the hardware saw
+   * would be testing itself.
+   *
+   * The register it reports is `@demake/chip`'s numbering, which is the
+   * numbering a `ChipScript` carries: the *port*, because on this chip that is
+   * what a register number is. An oracle that saw only the byte could not tell
+   * a left-hand attenuator from a right-hand one.
+   */
+  soundTap: ((reg: number, value: number) => void) | undefined = undefined;
+
+  /**
+   * Where the chip's samples go, when anything is listening.
+   *
+   * Left unset the chip still receives every write and keeps its state; it is
+   * only *rendered* when a sink is attached, so the conformance suites pay
+   * nothing for hardware they never listen to.
+   */
+  audioSink: SampleSink | undefined = undefined;
+
   /** The cartridge, as it answers from `$200000`. */
   rom: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
 
@@ -78,8 +166,27 @@ export class Ngp implements Bus {
   /** Frames completed since the machine was loaded. */
   frames = 0;
 
-  constructor(readonly model: NgpModel = "ngpc") {
+  /** Which keys are down, as the controller byte the cartridge will read. */
+  private held = 0;
+
+  /**
+   * Load a cartridge, if one is given.
+   *
+   * Which Neo Geo Pocket this is is *not* a header's decision: these two
+   * machines differ in nothing a cartridge could record, so the caller names it
+   * — the WonderSwan's arrangement, one console along.
+   */
+  constructor(
+    rom?: Uint8Array,
+    readonly model: NgpModel = "ngpc",
+  ) {
     this.display = new Display(model, this.video);
+    if (rom) this.load(rom);
+  }
+
+  /** The picture, as RGBA. */
+  get framebuffer(): Uint8ClampedArray {
+    return this.display.framebuffer;
   }
 
   /**
@@ -95,6 +202,8 @@ export class Ngp implements Bus {
     this.video.fill(0);
     this.io.fill(0);
     this.frames = 0;
+    // The keys survive a reload, because a harness sets them before it boots.
+    this.write(NGP_BUTTONS, this.held);
     const entry =
       (rom[NGP_ENTRY_OFFSET] as number) |
       ((rom[NGP_ENTRY_OFFSET + 1] as number) << 8) |
@@ -139,11 +248,27 @@ export class Ngp implements Bus {
       this.ram[at - NGP_RAM] = byte;
       return;
     }
-    if (at < 0x100) this.io[at] = byte;
+    if (at >= 0x100) return;
+    this.io[at] = byte;
+    if (at !== NGP_SOUND_RIGHT && at !== NGP_SOUND_LEFT) return;
+    if (!this.soundEnabled) return;
+    const port = at === NGP_SOUND_LEFT ? T6W28_LEFT : T6W28_RIGHT;
+    this.sound.write(port, byte);
+    this.soundTap?.(port, byte);
   }
 
   /**
-   * Run one instruction and give the display what it cost.
+   * Run one instruction and give the display and the chip what it cost.
+   *
+   * **A processor state is not a master cycle**, and this is the one place on
+   * this machine where the difference is visible. A TLCS-900/H's own unit is the
+   * *state* — its system clock, which is the 6.144 MHz crystal halved — and
+   * {@link Tlcs900.step} counts those, because that is what the instruction
+   * timings in the datasheet are in. The display controller counts the crystal:
+   * 515 of them a line and 199 lines a frame, which is what puts this console at
+   * 59.95 Hz. So the display is handed twice what the processor spent, and the
+   * sound chip is handed it unchanged — the chip runs at the crystal halved too,
+   * so it and the processor are the one pair on this board whose clocks agree.
    *
    * When the beam reaches the first blanked line the vertical-blank handler is
    * called if one has been installed — which the reference says cannot be
@@ -151,19 +276,65 @@ export class Ngp implements Bus {
    * enable.
    */
   step(): number {
-    const cycles = this.cpu.step();
-    if (this.display.step(cycles)) {
+    const states = this.cpu.step();
+    if (this.audioSink) this.sound.run(states, this.audioSink);
+    if (this.display.step(states * MASTER_PER_STATE)) {
       this.frames += 1;
       const handler = this.vector(NGP_VECTOR_VBLANK);
       if (handler !== 0) this.cpu.interrupt(handler);
     }
-    return cycles;
+    return states;
   }
 
-  /** Run until the next frame has been completed. */
-  runFrame(limit = 400_000): void {
+  /** Run one instruction and clock the display with what it cost. */
+  stepInstruction(): number {
+    return this.step();
+  }
+
+  /** Run until the next frame boundary, and return the frame index. */
+  runFrame(limit = 4_000_000): number {
     const target = this.frames + 1;
-    for (let step = 0; step < limit && this.frames < target; step += 1) this.step();
+    let guard = 0;
+    while (this.frames < target) {
+      this.step();
+      // A runtime that hangs must fail a harness rather than the process.
+      if ((guard += 1) > limit) throw new Error("ngp: no frame after 4M instructions");
+    }
+    return this.frames;
+  }
+
+  /**
+   * Set which keys are down.
+   *
+   * The byte lives in the boot ROM's reserved page rather than behind a port, so
+   * "the controller" on this machine is four bytes of RAM somebody else's
+   * firmware would have written — which is why this is a plain store and why the
+   * bit numbers come from the one description both sides read.
+   */
+  setButtons(down: Iterable<Button>): void {
+    let mask = 0;
+    for (const button of down) {
+      const index = BUTTONS.indexOf(button as Button);
+      if (index >= 0) mask |= 1 << (KEY_BITS[index] as number);
+    }
+    this.held = mask;
+    this.write(NGP_BUTTONS, mask);
+  }
+
+  /**
+   * Read `length` bytes of the machine's address space — the trace reader's
+   * window.
+   *
+   * Through the bus rather than out of the RAM array, because on this console a
+   * plan's addresses are the machine's: work RAM at `$4000`, the display's own
+   * memory at `$8000` and the cartridge at `$200000` are all things a caller may
+   * legitimately want to look at, and one of them is not an array this class
+   * owns.
+   */
+  readMemory(address: number, length: number): Uint8Array {
+    const out = new Uint8Array(length);
+    for (let index = 0; index < length; index += 1) out[index] = this.read(address + index);
+    return out;
   }
 
   /** Read one of the boot ROM's dispatch pointers out of RAM. */

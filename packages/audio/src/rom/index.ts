@@ -90,6 +90,12 @@ const GAME_CLOCKS: Readonly<Record<string, "timer" | "frame">> = {
   // frame. A driver on it would perform the schedule correctly and play it
   // unevenly, which is worse than a coarser clock.
   sn76489: "frame",
+  // The T6W28's console has 8-bit timers the processor can have, and
+  // `t6w28Binding.fitRate` will offer them to a *standalone* track. A game
+  // cannot have one for the reason every frame-clocked console here gives: its
+  // two streams share one clock with the picture, and the vertical blank is what
+  // a demade cartridge already takes.
+  t6w28: "frame",
   // The YM2612 *has* a programmable timer, and `mdBinding.fitRate` will offer it
   // to a standalone track. A game cannot have it: on this board the chip's
   // interrupt line goes to the Z80, not to the 68000, so a game's driver would
@@ -185,6 +191,10 @@ const CONSOLE_RATES: Readonly<Record<string, number>> = { gba: 32768 / 256 };
  *   - `wsc` — V30MZ (`rom/wsc-game.ts`), and the only one whose clock is not an
  *     interrupt at all: this cartridge takes none, so the driver reads the
  *     vertical-blank timer's *counter* and pays whatever frames it finds owed
+ *   - `ngpc` — TLCS-900/H (`rom/ngp-game.ts`), and the only one that has to
+ *     *ask* for its chip: the T6W28's own bus belongs to a Z80 sound processor,
+ *     so the driver writes two bytes of the main CPU's I/O page before anything
+ *     it sends is listened to
  *
  * Keeping it by console is what let the Game Boy Advance be absent from it for
  * as long as its ARM driver was: its four Game Boy channels are the same
@@ -209,6 +219,11 @@ const GAME_DRIVERS: readonly string[] = [
   // same ports, same waveform page in the same place (`binding/wsc-bank.ts`) —
   // so the driver is one driver and this is one more console for it.
   "ws",
+  // The Neo Geo Pocket Color, whose driver is the seventh CPU's. The mono
+  // machine is *not* here and it is not an oversight: it has the same sound
+  // hardware and the same driver would run on it, but `demake build` has no
+  // backend for that console, and this list is about what a *cartridge* can do.
+  "ngpc",
 ];
 
 /** Whether a `demake build` cartridge for this console can play its audio. */

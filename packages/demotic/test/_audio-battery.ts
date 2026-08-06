@@ -65,6 +65,7 @@ import {
   buildMdGameAudio,
   buildNdsGameAudio,
   buildNesGameAudio,
+  buildNgpGameAudio,
   buildPceGameAudio,
   buildSmsGameAudio,
   buildSpcGameAudio,
@@ -76,6 +77,8 @@ import {
   wscChannelTag,
   psgChannelTag,
   psgShadowSlot,
+  t6w28ChannelTag,
+  t6w28ShadowSlot,
   PSG_STEREO_REG,
   sdspChannelTag,
   type ChannelTag,
@@ -89,6 +92,7 @@ import {
   NES_CLOCK_HZ,
   SDSP_CLOCK_HZ,
   SN76489_CLOCK_HZ,
+  T6W28_CLOCK_HZ,
   WS_SOUND_CLOCK_HZ,
   StreamSink,
   type SampleSink,
@@ -99,6 +103,7 @@ import { Gba, ROM_BASE } from "@demake/gba";
 import { Md } from "@demake/md";
 import { Nds } from "@demake/nds";
 import { Nes } from "@demake/nes";
+import { Ngp } from "@demake/ngp";
 import { Pce } from "@demake/pce";
 import { Sms } from "@demake/sms";
 import { Snes } from "@demake/snes";
@@ -112,6 +117,7 @@ import { buildGbaRom } from "../src/codegen/gba.js";
 import { buildGbRom } from "../src/codegen/gb.js";
 import { buildMdRom } from "../src/codegen/md.js";
 import { buildNesRom } from "../src/codegen/nes.js";
+import { buildNgpcRom } from "../src/codegen/ngpc.js";
 import { buildPceRom } from "../src/codegen/pce.js";
 import { buildSmsRom } from "../src/codegen/sms.js";
 import { buildSnesRom } from "../src/codegen/snes.js";
@@ -520,6 +526,39 @@ const ALL: readonly Target[] = [
     },
   },
   {
+    id: "ngpc",
+    name: "Neo Geo Pocket Color",
+    clockHz: T6W28_CLOCK_HZ,
+    // The fourth console in the set with nothing to merge, and the first to have
+    // none because its hardware pans *more*: a level a side per channel rather
+    // than one shared byte of enables, so there is no register two streams could
+    // erase each other's half of.
+    register: t6w28Register,
+    mergeReg: null,
+    mergeHelper: "stereo-merge",
+    ratio: 0.5,
+    tag: t6w28ChannelTag,
+    tickAddress: cartridgeTick,
+    async build(source, project) {
+      const { files, levels, assets } = exampleProject(project);
+      const program = compile(source, {
+        profile: getProfile("ngpc"),
+        files,
+        levels,
+      });
+      const built = await buildNgpcRom(program, { assets });
+      const state = built.layout.audio as number;
+      const bound = await bindAudio(program, assets, {
+        build: (tracks, effects) =>
+          buildNgpGameAudio({ tracks, effects: effects as GameEffect[], state }),
+      });
+      return { built, bound };
+    },
+    boot(rom) {
+      return wrap(new Ngp(rom));
+    },
+  },
+  {
     id: "snes",
     name: "Super Nintendo",
     clockHz: SDSP_CLOCK_HZ,
@@ -733,7 +772,7 @@ const ALL: readonly Target[] = [
 ];
 
 /** Every core answers the same five questions; this is the adapter, once. */
-function wrap(machine: Gameboy | Nes | Sms | Snes | Md | Gba | Nds | Pce | Wsc): Machine {
+function wrap(machine: Gameboy | Nes | Sms | Snes | Md | Gba | Nds | Pce | Wsc | Ngp): Machine {
   return {
     step: () => {
       machine.stepInstruction();
@@ -760,7 +799,7 @@ function wrap(machine: Gameboy | Nes | Sms | Snes | Md | Gba | Nds | Pce | Wsc):
         machine.psgTap = (reg, value) => listener(reg, value, 1);
         return;
       }
-      if (machine instanceof Wsc) machine.soundTap = listener;
+      if (machine instanceof Wsc || machine instanceof Ngp) machine.soundTap = listener;
       else if (machine instanceof Sms || machine instanceof Pce) machine.psgTap = listener;
       else if (machine instanceof Snes) machine.dspTap = listener;
       else if (machine instanceof Nds) machine.spuTap = listener;
@@ -889,6 +928,20 @@ function mdRegister(): (write: Write) => string | null {
     }
     return `0:fm:${latched[half]}`;
   };
+}
+
+/**
+ * A register on the T6W28, which is a *port* and a byte together.
+ *
+ * The SN76489's problem with a second port in it: this chip has no register
+ * numbers either, and here the same byte means two different things depending on
+ * which of the two addresses it went to. So the name carries both — which is
+ * exactly what makes "the channel came back holding the music's own registers"
+ * checkable at all, because a left-hand attenuation and a right-hand one are
+ * indistinguishable by value.
+ */
+function t6w28Register(): (write: Write) => string | null {
+  return (write) => `${write.chip ?? 0}:t6w28:${t6w28ShadowSlot(write.reg, write.value)}`;
 }
 
 function psgRegister(): (write: Write) => string | null {
@@ -1423,6 +1476,15 @@ export function audioSweep(target: Target): void {
       // sub-palettes is also a couple of minutes a fixture on this console, so
       // the list is what the sweep can actually afford.
       wsc: ["caves", "runner"],
+      // The Neo Geo Pocket Color keeps one, and unlike every entry above it the
+      // reason is not the budget: a cartridge here is four megabits against a
+      // game's seventeen kilobytes, so there is no overflow for the assertion to
+      // catch. What the sweep still buys is the Mega Drive's and the Nintendo
+      // DS's — that the driver's reported sizes are *real* rather than the zero
+      // they hold before `assemble` — and one fixture says that as well as
+      // seven. The shooter, because a budget can only ever decide a cartridge
+      // already near the edge and it is the nearest this console has.
+      ngpc: ["shooter"],
       ws: ["caves", "runner"],
     };
 

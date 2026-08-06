@@ -437,9 +437,44 @@ the backend today, and either is a reason to revisit rather than to work around.
    its own name claims and what the restart actually is.
 5. **Atari 7800** — the encoder is free, and it buys the display-list layout path
    the image side wants anyway.
-6. **Neo Geo Pocket / Color** — one large encoder for two consoles, 12 KB of RAM,
-   hardware scroll, and near-free audio: the NGP's T6W28 is an SN76489
-   derivative, which `@demake/chip` already models.
+6. **Neo Geo Pocket / Color** — **done.** `demake build -c ngpc` produces a
+   playable cartridge that plays its own music and effects, and the whole example
+   library traces identically on it and is diffed tick for tick by the shared
+   audio battery; `demake arrange -c ngpc`, `sfx` and `render` demake its music
+   and effects, on the mono machine too.
+
+   The audio turned out not to be free after all, and it is worth saying why,
+   because the estimate above was written from the chip's family name. The T6W28
+   is an SN76489 derivative in its *register format* and in nothing else that
+   matters to a driver: it has **two write ports carrying different registers**
+   (each side's four attenuators, the tone periods on the left port and the
+   noise's on the right), so it is a second chip model rather than a flag on
+   `Sn76489` — and its stereo is a *level* per channel where a Game Gear's is a
+   switch, which is why this is the fourth console in the set with no shared
+   register and the first to have none because its hardware pans *more*.
+
+   The driver is the seventh CPU's, on the frame rather than a timer for the
+   Sega parts' reason (a game's two streams share one interrupt with the picture,
+   and this cartridge already takes the vertical blank). What is unlike every
+   other driver in the set is that it has to **ask for its chip**: the T6W28's own
+   bus belongs to a Z80 sound processor, so `AudioInit` writes `$55` and `$AA` to
+   two bytes of the main CPU's I/O page and then reaches the chip through two
+   more. `@demake/ngp` models the same gate, so a cartridge that skipped them is
+   perfect and silent rather than quietly working.
+
+   Building it found a timing description that was wrong and invisible. This
+   CPU's instruction timings are in *states* — the crystal halved — and the
+   display controller counts the crystal, so the core had been drawing frames at
+   half the hardware's rate. Nothing could see it: a trace is per tick and a tick
+   is per frame either way. The audio is what made it visible, because a chip
+   handed the wrong number of clocks renders at the wrong speed.
+
+   One thing the binding cannot yet spend: `ChannelFrame.pan` is a pair of
+   booleans, so a part reaches the chip hard left, hard right or both. The spec
+   says `lr-level` because that is what the hardware does (AGENTS.md §Iron
+   rules), and closing it is a continuous pan in the arranger — which would also
+   be the first thing in this project to make a *stereo image* an arranging
+   decision rather than a channel property.
 7. **Supervision**, **Lynx**, **Neo Geo** — each gated on something structural
    (RAM, a BIOS-free core, a sprite-only renderer). Worth doing once a framebuffer
    renderer exists for one of them.

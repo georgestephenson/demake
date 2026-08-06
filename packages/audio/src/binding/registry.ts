@@ -18,6 +18,7 @@ import { nesBinding } from "./nes.js";
 import { pceBinding } from "./pce.js";
 import { wscBinding } from "./wsc.js";
 import { psgBinding } from "./psg.js";
+import { t6w28Binding } from "./t6w28.js";
 import { sdspBinding } from "./sdsp.js";
 import type { ChipBinding } from "./types.js";
 
@@ -77,6 +78,8 @@ export function bindingFor(consoleId: string): ChipBinding {
       return pceBinding(spec.id, audio);
     case "ws-sound":
       return wscBinding(spec.id, audio);
+    case "t6w28":
+      return t6w28Binding(spec.id, audio);
     default:
       throw new UnsupportedConsoleError(
         spec.id,

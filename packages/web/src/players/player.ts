@@ -60,6 +60,8 @@ export const SCREENS: Readonly<Record<string, { width: number; height: number }>
   pce: { width: 256, height: 224 },
   wsc: { width: 224, height: 144 },
   ws: { width: 224, height: 144 },
+  ngpc: { width: 160, height: 152 },
+  ngp: { width: 160, height: 152 },
 };
 
 /** The framebuffer a console draws into, by family and — where it differs — id. */

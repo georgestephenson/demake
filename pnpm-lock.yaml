@@ -177,6 +177,9 @@ importers:
 
   packages/ngp:
     dependencies:
+      '@demake/chip':
+        specifier: workspace:*
+        version: link:../chip
       '@demake/core':
         specifier: workspace:*
         version: link:../core
@@ -242,6 +245,9 @@ importers:
       '@demake/nes':
         specifier: workspace:*
         version: link:../nes
+      '@demake/ngp':
+        specifier: workspace:*
+        version: link:../ngp
       '@demake/pce':
         specifier: workspace:*
         version: link:../pce

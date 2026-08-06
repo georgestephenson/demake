@@ -21,6 +21,8 @@ export default defineConfig({
       "@demake/gba": fileURLToPath(new URL("./packages/gba/src/index.ts", import.meta.url)),
       "@demake/nds": fileURLToPath(new URL("./packages/nds/src/index.ts", import.meta.url)),
       "@demake/pce": fileURLToPath(new URL("./packages/pce/src/index.ts", import.meta.url)),
+      "@demake/wsc": fileURLToPath(new URL("./packages/wsc/src/index.ts", import.meta.url)),
+      "@demake/ngp": fileURLToPath(new URL("./packages/ngp/src/index.ts", import.meta.url)),
       "@demake/chip": fileURLToPath(new URL("./packages/chip/src/index.ts", import.meta.url)),
       "@demake/audio": fileURLToPath(new URL("./packages/audio/src/index.ts", import.meta.url)),
     },

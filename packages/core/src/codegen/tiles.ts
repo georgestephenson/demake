@@ -168,6 +168,33 @@ export function packPacked4(grid: Uint8Array, tileW: number, tileH: number): Uin
 }
 
 /**
+ * Pack a `tileW*tileH` index grid as **two-bit pixels in a little-endian
+ * halfword a row** — the Neo Geo Pocket's K1GE/K2GE character format. An 8×8
+ * tile is sixteen bytes.
+ *
+ * A row is one sixteen-bit value with the *leftmost* pixel in the highest two
+ * bits, stored low byte first — so the first byte of a row holds its right-hand
+ * four pixels and the second its left-hand four, which is the one thing about
+ * this layout worth stating twice. It is not a bitplane arrangement like
+ * {@link packPlanar}'s 2bpp and not a nibble one like {@link packPacked4}'s: a
+ * pixel's two bits are adjacent, which is what makes it a third packer rather
+ * than a flag on one of the others.
+ */
+export function packPacked2Word(grid: Uint8Array, tileW: number, tileH: number): Uint8Array {
+  const perRow = tileW >> 2;
+  const out = new Uint8Array(tileH * perRow);
+  for (let y = 0; y < tileH; y += 1) {
+    for (let x = 0; x < tileW; x += 1) {
+      // The high byte of the halfword comes first in pixel order and second in
+      // memory, so the byte a pixel lands in counts down from the right.
+      const byte = y * perRow + (perRow - 1 - (x >> 2));
+      out[byte] = (out[byte] as number) | ((grid[y * tileW + x]! & 3) << (6 - (x & 3) * 2));
+    }
+  }
+  return out;
+}
+
+/**
  * Pack a `tileW*tileH` index grid into **row-major packed nibbles, low nibble
  * first** — the GBA / Nintendo DS 2D-engine 4bpp tile layout. Same byte count as
  * {@link packPacked4} (32 bytes for an 8×8 tile) but the opposite nibble order:

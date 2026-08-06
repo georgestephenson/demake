@@ -155,6 +155,16 @@ function commandWriter(
       return (data, reg, value) => {
         data.push(0xbc, (reg - 0x80) & 0xff, value & 0xff);
       };
+    case "t6w28":
+      // VGM carries this part as a *pair* of SN76489s, which is what it is:
+      // 0x50 is the first chip's data port and 0x30 the second's, and the header
+      // flags the pair as a T6W28 rather than as two independent chips. The
+      // schedule's register is the port, so the mapping is one comparison —
+      // right on the first, left on the second, which is the order the flag
+      // implies.
+      return (data, reg, value) => {
+        data.push(reg === 1 ? 0x30 : 0x50, value & 0xff);
+      };
     case "ym2612":
       // 0x52/0x53 are the two halves of the chip's bus, and each carries an
       // address *and* a datum — so the model's four ports pair up into two
@@ -195,6 +205,13 @@ function writeClock(view: DataView, chip: string | undefined): void {
       break;
     case "sn76489":
       view.setUint32(0x0c, 3579545, true);
+      break;
+    case "t6w28":
+      // The SN76489 field again, because that is the family — with bit 31 set to
+      // say the pair is one T6W28 and bit 30 to say there are two of them. A
+      // player that ignored the flags would give this a Master System's stereo,
+      // which is the one thing about this chip that is not an SN76489's.
+      view.setUint32(0x0c, (3072000 | 0x8000_0000 | 0x4000_0000) >>> 0, true);
       break;
     case "nes-apu":
       view.setUint32(0x84, 1789773, true);

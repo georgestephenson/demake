@@ -31,7 +31,8 @@ export type ChipId =
   | "gba-pcm"
   | "nds-spu"
   | "huc6280-psg"
-  | "ws-sound";
+  | "ws-sound"
+  | "t6w28";
 
 /** A single write to a chip register, in the chip's own address space. */
 export interface RegisterWrite {

@@ -3,6 +3,7 @@
  * 2bpp with 16 small sub-palettes of 4 (shared transparent 0) — a GBC-like fit
  * with many tiny palettes.
  */
+import { ngpAudio } from "./audio-specs.js";
 import type { ConsoleSpec } from "./types.js";
 export const ngpc = {
   id: "ngpc",
@@ -22,5 +23,6 @@ export const ngpc = {
     flip: true,
   },
   codegen: { family: "ngpc", formats: ["bin", "asm", "c", "rom"] },
+  audio: ngpAudio,
   docs: { sources: ["NeoGeo Pocket dev wiki — K1GE video (RGB444, 2bpp tiles)"] },
 } satisfies ConsoleSpec;

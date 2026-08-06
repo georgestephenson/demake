@@ -184,6 +184,82 @@ export const NGP_CHARACTER_COUNT = 512;
 /** Bytes one 8×8 tile at 2bpp occupies. */
 export const NGP_CHARACTER_BYTES = 16;
 
+// --- sound --------------------------------------------------------------------
+
+/**
+ * The two ports the main CPU writes the sound chip through.
+ *
+ * A Neo Geo Pocket has a **Z80 sound processor** beside its main one, and on the
+ * board the chip's own bus belongs to that Z80. A demade cartridge has no use
+ * for a second program, so it takes the other route the hardware provides: the
+ * main CPU's own I/O page carries the same two write addresses, gated by
+ * {@link NGP_SOUND_ENABLE} below.
+ *
+ * They carry *different registers*, which is the thing about this chip most
+ * likely to be got backwards: the left port carries the three tone periods and
+ * the right port carries the noise's own divisor and its mode, and each carries
+ * its own side's four attenuators. A driver with the two swapped produces
+ * silence rather than a wrong note.
+ *
+ * Source: MAME — `src/mame/snk/ngp.cpp`, `case 0x20: // t6w28 "right"` /
+ * `case 0x21: // t6w28 "left"`.
+ */
+export const NGP_SOUND_RIGHT = 0x000020;
+export const NGP_SOUND_LEFT = 0x000021;
+
+/**
+ * The two bytes that hand the sound chip to the main CPU.
+ *
+ * `$55` at `$38` and `$AA` at `$39`; until both are written the chip ignores
+ * anything the main CPU sends it, because the Z80 is meant to own it. Two bytes
+ * at boot is the whole of what a cartridge with no sound program has to do.
+ */
+export const NGP_SOUND_ENABLE = 0x000038;
+export const NGP_SOUND_ENABLE_HIGH = 0x000039;
+export const NGP_SOUND_ENABLE_VALUE = 0x55;
+export const NGP_SOUND_ENABLE_HIGH_VALUE = 0xaa;
+
+/** The eight-bit D/A converters, one a side. Nothing here drives them. */
+export const NGP_DAC_RIGHT = 0x000022;
+export const NGP_DAC_LEFT = 0x000023;
+
+// --- input --------------------------------------------------------------------
+
+/**
+ * The controller byte, which the console keeps in the boot ROM's reserved page.
+ *
+ * SNK's own documentation calls it the "system lever", and every reference this
+ * project could reach agrees about *where* it is.
+ */
+export const NGP_BUTTONS = 0x006f82;
+
+/**
+ * Which bit of {@link NGP_BUTTONS} each direction and button is.
+ *
+ * **Unverified, and deliberately declared rather than hidden.** Four independent
+ * sources place the byte at `$6F82` and none of them gives its bit order, so
+ * this is the natural reading — the directions in the order a d-pad is usually
+ * numbered, then the two buttons, then Option — and not something read off a
+ * datasheet. A machine description that is wrong *and consistent* passes every
+ * test there is (AGENTS.md §Gotchas), so the risk here is real and it is exactly
+ * the kind this project refuses to leave implicit: the `@demake/ngp` core writes
+ * this byte through these same constants, so a demade cartridge and the core
+ * would agree with each other while disagreeing with the hardware.
+ *
+ * What would settle it: SNK's own development documentation, a hardware
+ * capture, or a homebrew SDK header. Until then this is the one place to change,
+ * and changing it is a one-line edit that both readers pick up.
+ */
+export const NGP_BUTTON_BITS: Readonly<Record<string, number>> = {
+  up: 0,
+  down: 1,
+  left: 2,
+  right: 3,
+  a: 4,
+  b: 5,
+  option: 6,
+};
+
 /** The visible screen, in pixels. */
 export const NGP_SCREEN_WIDTH = 160;
 export const NGP_SCREEN_HEIGHT = 152;
