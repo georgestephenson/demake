@@ -41,6 +41,8 @@ import {
   perTick,
   ruleInScene,
   sceneIndexOf,
+  SIDE_BITS,
+  sideMask,
   subjectBindings,
   type Binding,
   type EntityAddr,
@@ -810,42 +812,8 @@ function needSeparatePair(ctx: MdCtx): Ref {
   return ctx.need("SeparatePair", (inner) => {
     const { asm, layout } = inner;
     const a = layout.pairA as number;
-    const b = layout.pairB as number;
-    const work = layout.pairWork as number;
-    const xPush = work;
-    const yPush = work + 4;
-    const near = work + 8;
-    const far = work + 12;
-
-    const axis = (pos: string, size: string, push: number): void => {
-      // near = a.pos + a.size - b.pos ; far = b.pos + b.size - a.pos
-      copy32(inner, near, boxProp(a, pos));
-      add32(inner, near, boxProp(a, size));
-      sub32(inner, near, boxProp(b, pos));
-      copy32(inner, far, boxProp(b, pos));
-      add32(inner, far, boxProp(b, size));
-      sub32(inner, far, boxProp(a, pos));
-      const takeFar = inner.unique("sepFar");
-      const done = inner.unique("sepDone");
-      branchLess32(inner, near, far, takeFar, false);
-      copy32(inner, push, near);
-      neg32(inner, push);
-      asm.bra(done);
-      asm.label(takeFar);
-      copy32(inner, push, far);
-      asm.label(done);
-    };
-
-    axis("x", "width", xPush);
-    axis("y", "height", yPush);
-
-    // |xPush| < |yPush| decides the axis.
-    copy32(inner, near, xPush);
-    abs32(inner, near);
-    copy32(inner, far, yPush);
-    abs32(inner, far);
     const useY = inner.unique("sepUseY");
-    branchLess32(inner, near, far, useY, false);
+    const { xPush, yPush } = emitPairPushes(inner, useY);
     add32(inner, boxProp(a, "x"), xPush);
     clamp32(inner, boxProp(a, "x"));
     asm.rts();
@@ -854,6 +822,105 @@ function needSeparatePair(ctx: MdCtx): Ref {
     clamp32(inner, boxProp(a, "y"));
     asm.rts();
   });
+}
+
+/**
+ * The push along each axis, branching to `useY` when the y axis is shallower.
+ *
+ * The half of separation that *decides*, split out from the half that applies —
+ * because `from above` and the push that follows it are the same arithmetic read
+ * twice (`level/scene.ts` §contactOf), and two copies of it could disagree.
+ */
+function emitPairPushes(ctx: MdCtx, useY: string): { xPush: number; yPush: number } {
+  const { asm, layout } = ctx;
+  const a = layout.pairA as number;
+  const b = layout.pairB as number;
+  const work = layout.pairWork as number;
+  const xPush = work;
+  const yPush = work + 4;
+  const near = work + 8;
+  const far = work + 12;
+
+  const axis = (pos: string, size: string, push: number): void => {
+    // near = a.pos + a.size - b.pos ; far = b.pos + b.size - a.pos
+    copy32(ctx, near, boxProp(a, pos));
+    add32(ctx, near, boxProp(a, size));
+    sub32(ctx, near, boxProp(b, pos));
+    copy32(ctx, far, boxProp(b, pos));
+    add32(ctx, far, boxProp(b, size));
+    sub32(ctx, far, boxProp(a, pos));
+    const takeFar = ctx.unique("sepFar");
+    const done = ctx.unique("sepDone");
+    branchLess32(ctx, near, far, takeFar, false);
+    copy32(ctx, push, near);
+    neg32(ctx, push);
+    asm.bra(done);
+    asm.label(takeFar);
+    copy32(ctx, push, far);
+    asm.label(done);
+  };
+
+  axis("x", "width", xPush);
+  axis("y", "height", yPush);
+
+  // |xPush| < |yPush| decides the axis.
+  copy32(ctx, near, xPush);
+  abs32(ctx, near);
+  copy32(ctx, far, yPush);
+  abs32(ctx, far);
+  branchLess32(ctx, near, far, useY, false);
+  return { xPush, yPush };
+}
+
+/**
+ * `d0` = the {@link SIDE_BITS} bit for the side the staged pair sits on.
+ *
+ * Pulled only by a rule that says `from`, so a game without one ships none of
+ * it — and a routine of its own rather than a return value bolted onto
+ * `SeparatePair`, because the interpreter asks *before* the rule body runs and
+ * separates *after* it (`sim.ts` §resolveCollisions). It answers in `d0` for
+ * `OverlapPair`'s reason: that is the register a `moveq` sets the flags of.
+ */
+function needContactSide(ctx: MdCtx): Ref {
+  return ctx.need("ContactSide", (inner) => {
+    const { asm } = inner;
+    const useY = inner.unique("sideUseY");
+    const { xPush, yPush } = emitPairPushes(inner, useY);
+    const negative = inner.unique("sideNeg");
+    const below = inner.unique("sideBelow");
+    // A whole 16.16 value is one long here, so a `tst.l` is the sign test.
+    asm.tst("l", at(xPush));
+    inner.far("mi", negative);
+    asm.moveq(SIDE_BITS["right"] as number, 0);
+    asm.rts();
+    asm.label(negative);
+    asm.moveq(SIDE_BITS["left"] as number, 0);
+    asm.rts();
+    asm.label(useY);
+    asm.tst("l", at(yPush));
+    inner.far("pl", below);
+    asm.moveq(SIDE_BITS["above"] as number, 0);
+    asm.rts();
+    asm.label(below);
+    asm.moveq(SIDE_BITS["below"] as number, 0);
+    asm.rts();
+  });
+}
+
+/**
+ * Skip the whole contact when the staged pair is not on a side the rule named.
+ *
+ * The narrowing reaches the separation and the contact bit as well as the
+ * firing: a side the rule did not name is a contact that never happened, so it
+ * pushes nothing apart and records nothing either (`sim.ts` §resolveCollisions).
+ * A rule with no `from` emits not one instruction.
+ */
+function emitSideGate(ctx: MdCtx, sides: readonly string[], skip: string): void {
+  const mask = sideMask(sides);
+  if (mask === 0) return;
+  ctx.asm.jsr(needContactSide(ctx));
+  ctx.asm.andi("b", mask, eaD(0));
+  ctx.far("eq", skip);
 }
 
 /**
@@ -973,6 +1040,7 @@ function emitPairLoop(
   emitStageBoxPtr(ctx, "b");
   asm.jsr(needOverlapPair(ctx));
   ctx.far("eq", next);
+  emitSideGate(ctx, event.sides, next);
 
   const afterFire = ctx.unique("pairFired");
   if (!event.level) emitContactBitPtr(ctx, table, "seen", afterFire);
@@ -1166,6 +1234,7 @@ export function emitCollisions(ctx: MdCtx, scene: SceneCtx): void {
         emitStageBox(ctx, otherBase, "b");
         asm.jsr(needOverlapPair(ctx));
         ctx.far("eq", skip);
+        emitSideGate(ctx, event.sides, skip);
         const afterFire = ctx.unique("otherFired");
         if (!event.level) emitContactSeen(ctx, bit, afterFire);
         emitFire(ctx, rule, { subject, other: entityOf(ctx, otherId) });

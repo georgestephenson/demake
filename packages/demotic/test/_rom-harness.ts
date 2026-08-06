@@ -289,6 +289,32 @@ export const ndsTarget: RomTarget = {
 };
 
 /** A booted ROM, ready to be stepped a tick at a time. */
+/**
+ * Every console with a backend, over the same batteries.
+ *
+ * One list rather than one per suite, because "the same battery on every
+ * machine" is what makes `Backend` a contract rather than a resemblance (doc 14
+ * §Runtime model) — and a second list is a list a new console gets added to
+ * once. It lives beside the targets themselves so a file that wants all of them
+ * imports rather than restates.
+ */
+export const TARGETS: readonly RomTarget[] = [
+  gbTarget,
+  gbcTarget,
+  megaduckTarget,
+  nesTarget,
+  pceTarget,
+  ngpcTarget,
+  smsTarget,
+  ggTarget,
+  snesTarget,
+  mdTarget,
+  gbaTarget,
+  ndsTarget,
+  wscTarget,
+  wsTarget,
+];
+
 export class RomRunner {
   readonly machine: RomMachine;
   readonly layout: Layout;

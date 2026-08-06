@@ -48,6 +48,8 @@ import {
   perTick,
   ruleInScene,
   sceneIndexOf,
+  SIDE_BITS,
+  sideMask,
   subjectBindings,
   type SceneCtx,
 } from "./shape.js";
@@ -629,44 +631,9 @@ function needSeparatePair(ctx: Ctx): string {
   ctx.need(name, (inner) => {
     const { asm, layout } = inner;
     const a = layout.pairA as number;
-    const b = layout.pairB as number;
-    const work = layout.pairWork as number;
-    const xPush = work;
-    const yPush = work + 4;
-    const near = work + 8;
-    const far = work + 12;
-
-    const axis = (pos: string, size: string, push: number): void => {
-      // near = a.pos + a.size - b.pos ; far = b.pos + b.size - a.pos
-      copy32(inner, near, boxProp(a, pos));
-      add32(inner, near, boxProp(a, size));
-      sub32(inner, near, boxProp(b, pos));
-      copy32(inner, far, boxProp(b, pos));
-      add32(inner, far, boxProp(b, size));
-      sub32(inner, far, boxProp(a, pos));
-      const takeFar = inner.unique("sepFar");
-      const done = inner.unique("sepDone");
-      less32(inner, near, far);
-      asm.jp(takeFar, "nc");
-      copy32(inner, push, near);
-      neg32(inner, push);
-      asm.jp(done);
-      asm.label(takeFar);
-      copy32(inner, push, far);
-      asm.label(done);
-    };
-
-    axis("x", "width", xPush);
-    axis("y", "height", yPush);
-
-    // |xPush| < |yPush| decides the axis.
-    copy32(inner, near, xPush);
-    emitAbs(inner, near);
-    copy32(inner, far, yPush);
-    emitAbs(inner, far);
+    const { xPush, yPush } = emitPairPushes(inner);
     const useY = inner.unique("sepUseY");
     const done = inner.unique("sepApplied");
-    less32(inner, near, far);
     asm.jp(useY, "nc");
     add32(inner, boxProp(a, "x"), xPush);
     clamp32(inner, boxProp(a, "x"));
@@ -675,6 +642,95 @@ function needSeparatePair(ctx: Ctx): string {
     add32(inner, boxProp(a, "y"), yPush);
     clamp32(inner, boxProp(a, "y"));
     asm.label(done);
+    asm.ret();
+  });
+  return name;
+}
+
+/**
+ * The push along each axis, and the carry saying which of the two is shallower.
+ *
+ * The half of separation that *decides*, split out from the half that applies —
+ * because `from above` and the push that follows it are the same arithmetic read
+ * twice (`level/scene.ts` §contactOf), and two copies of it could disagree. On
+ * return the carry is set when `|xPush| < |yPush|`, which is the x axis winning.
+ */
+function emitPairPushes(ctx: Ctx): { xPush: number; yPush: number } {
+  const { asm, layout } = ctx;
+  const a = layout.pairA as number;
+  const b = layout.pairB as number;
+  const work = layout.pairWork as number;
+  const xPush = work;
+  const yPush = work + 4;
+  const near = work + 8;
+  const far = work + 12;
+
+  const axis = (pos: string, size: string, push: number): void => {
+    // near = a.pos + a.size - b.pos ; far = b.pos + b.size - a.pos
+    copy32(ctx, near, boxProp(a, pos));
+    add32(ctx, near, boxProp(a, size));
+    sub32(ctx, near, boxProp(b, pos));
+    copy32(ctx, far, boxProp(b, pos));
+    add32(ctx, far, boxProp(b, size));
+    sub32(ctx, far, boxProp(a, pos));
+    const takeFar = ctx.unique("sepFar");
+    const done = ctx.unique("sepDone");
+    less32(ctx, near, far);
+    asm.jp(takeFar, "nc");
+    copy32(ctx, push, near);
+    neg32(ctx, push);
+    asm.jp(done);
+    asm.label(takeFar);
+    copy32(ctx, push, far);
+    asm.label(done);
+  };
+
+  axis("x", "width", xPush);
+  axis("y", "height", yPush);
+
+  // |xPush| < |yPush| decides the axis.
+  copy32(ctx, near, xPush);
+  emitAbs(ctx, near);
+  copy32(ctx, far, yPush);
+  emitAbs(ctx, far);
+  less32(ctx, near, far);
+  return { xPush, yPush };
+}
+
+/**
+ * `A` = the {@link SIDE_BITS} bit for the side the staged pair sits on.
+ *
+ * Pulled only by a rule that says `from`, so a game without one ships none of
+ * it — and it is a routine of its own rather than a return value bolted onto
+ * `SeparatePair`, because the interpreter asks *before* the rule body runs and
+ * separates *after* it (`sim.ts` §resolveCollisions). Sharing
+ * {@link emitPairPushes} is what keeps the two answers the same arithmetic.
+ */
+function needContactSide(ctx: Ctx): string {
+  const name = "ContactSide";
+  ctx.need(name, (inner) => {
+    const { asm } = inner;
+    const { xPush, yPush } = emitPairPushes(inner);
+    const useY = inner.unique("sideUseY");
+    const negative = inner.unique("sideNeg");
+    asm.jp(useY, "nc");
+    asm.lda(xPush + 3);
+    asm.bit(7, "a");
+    asm.jp(negative, "nz");
+    asm.ldn("a", SIDE_BITS["right"] as number);
+    asm.ret();
+    asm.label(negative);
+    asm.ldn("a", SIDE_BITS["left"] as number);
+    asm.ret();
+    asm.label(useY);
+    const below = inner.unique("sideBelow");
+    asm.lda(yPush + 3);
+    asm.bit(7, "a");
+    asm.jp(below, "z");
+    asm.ldn("a", SIDE_BITS["above"] as number);
+    asm.ret();
+    asm.label(below);
+    asm.ldn("a", SIDE_BITS["below"] as number);
     asm.ret();
   });
   return name;
@@ -862,6 +918,15 @@ export function emitCollisions(ctx: Ctx, scene: SceneCtx): void {
         asm.call(needOverlapPair(ctx));
         asm.alu("or", "a");
         asm.jp(skip, "z");
+        // `from above` narrows the whole contact and not only the firing: a
+        // side the rule did not name is a contact that never happened, so it
+        // takes no separation and records no bit either (`sim.ts` §resolveCollisions).
+        const mask = sideMask(event.sides);
+        if (mask !== 0) {
+          asm.call(needContactSide(ctx));
+          asm.aluN("and", mask);
+          asm.jp(skip, "z");
+        }
         const bit = bitBase + event.edges.length + otherIndex;
         const afterFire = ctx.unique("otherFired");
         if (!event.level) emitContactSeen(ctx, bit, afterFire);

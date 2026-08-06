@@ -34,6 +34,8 @@ import type {
   SceneDef,
 } from "../program.js";
 
+import { SIDES } from "../lang/spec.js";
+
 import { isMutable, type Analysis } from "./analyze.js";
 import { type Layout, PROP_SIZE, PROP_SLOT } from "./layout.js";
 
@@ -302,6 +304,36 @@ export function nearMargins(
   const y = Math.max(...(height as number[]));
   // The margin goes in a byte and a sane object is nowhere near that big.
   return x > 120 || y > 120 ? undefined : { x, y };
+}
+
+/**
+ * One bit per side, in the language registry's own order.
+ *
+ * A `from` clause is a *set* of sides, so the runtime answers with the one side
+ * a contact resolved on and the compiler hands down a mask — which makes the
+ * whole test one `and` and one branch on every console, whatever its
+ * instruction set. Taken from {@link SIDES} rather than written out, because a
+ * fifth side would otherwise be a number two files apart.
+ *
+ * The encoding is the *contract* between this file and eight `ContactSide`
+ * routines: each of them returns exactly one of these bits, and none of them may
+ * choose its own numbering.
+ */
+export const SIDE_BITS: Readonly<Record<string, number>> = Object.fromEntries(
+  SIDES.map((side, index) => [side.name, 1 << index]),
+);
+
+/**
+ * The mask a `from` clause compiles to, or zero for a rule that has none.
+ *
+ * Zero means *any side*, which is what every rule written before `from` existed
+ * means — so a caller tests for zero to decide whether to emit a gate at all,
+ * and a rule without the clause pays nothing.
+ */
+export function sideMask(sides: readonly string[]): number {
+  let mask = 0;
+  for (const side of sides) mask |= SIDE_BITS[side] ?? 0;
+  return mask;
 }
 
 /**

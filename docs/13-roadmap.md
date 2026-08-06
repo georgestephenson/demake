@@ -1148,7 +1148,26 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     a chip, and whose relative level is a fact about the board.
   - **D6 — language growth**, driven by fixtures beyond Pong. Levels, tiles, a
     scrolling camera, `stream`-composed courses and a seeded `random` have
-    landed (doc 14 §Levels, §Composed levels, §Randomness). What is left:
+    landed (doc 14 §Levels, §Composed levels, §Randomness).
+
+    **`from <side>` builds now**, and it was the language's one entry in
+    `unsupportedFor` — a clause the interpreter honoured and no cartridge did,
+    so a program using it previewed, traced, and then refused to become a ROM.
+    It is closed on all eight backends at once, because the gap was in the
+    emitters as a group rather than a difference between them. What made it
+    affordable is that the answer was already being computed: separating an
+    overlap means choosing an axis and a direction, and *that choice is the
+    side*, so each backend's separation was split into a part that decides and a
+    part that applies and the new routine is the decision read out as a bit
+    rather than a push. Both halves of the contact model are covered — an object
+    pair and a level cell — and the narrowing skips the **whole** contact rather
+    than only the firing, which is what the interpreter does and what stops a
+    cartridge separating out of a contact it never had. Every existing cartridge
+    is byte-identical, because the routine is pulled and no fixture said `from`
+    before this landed; `platformer` says it now, where landing and bonking are
+    two rules naming two sides instead of one rule and a velocity test.
+
+    What is left:
     runtime spawn, a tile layer that can *change* — a door that opens, a block
     that breaks — which needs a way to name a cell, and a camera with more than
     "follow". Scrolling is also where per-scanline sprite pressure bites, so the

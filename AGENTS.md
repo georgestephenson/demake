@@ -1580,10 +1580,19 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   from a landing and not from a platform's edge. The side and the separation are
   one decision (`level/scene.ts` §contactOf: choosing the shallower axis and a
   direction _is_ choosing the side), so a rule and the push that follows it
-  cannot disagree. **No backend emits the side test yet**, and `unsupportedFor`
-  names it, so a program using `from` previews and traces but will not build a
-  cartridge; closing that is one routine per backend, splitting the existing pair
-  separation into a part that decides and a part that applies.
+  cannot disagree — which is why every backend now emits **one** piece of
+  arithmetic for both. Separation was split into a part that _decides_
+  (`emitPairPushes`, `emitTilePushes`) and a part that _applies_, and
+  `ContactSide` / `emitTileSide` are the decision read out as a {@link
+  SIDE_BITS} bit instead of a push. Three things about the shape are worth
+  keeping. The bit numbering is `shape.ts`'s and comes from the language
+  registry, so a rule compiles to one `and` and one branch on every console and
+  no backend picks its own encoding. The gate is placed so a side the rule did
+  not name skips the **whole** contact — no fire, no separation, no contact bit
+  — because that is what the interpreter's `continue` does, and a cartridge that
+  separated anyway would drift a tick later. And it is _pulled_: a game with no
+  `from` in it emits not one instruction, which is what kept every existing
+  cartridge byte-identical when this landed.
 - **Without `from`, a contact still says nothing**, which is what shaped `quest`.
   An `else` that stops a rise belongs on a rule naming only tiles that are
   overhead, or it cancels a jump every time the hero brushes the edge of the
@@ -1592,7 +1601,9 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   `quest`'s levels make every landing surface one cell thick with `bedrock`
   underneath, and its pits six cells wide, because a hero two cells tall catches
   the far lip of anything narrower instead of falling clear. Those are geometry
-  standing in for a rule, and they can be rules once the backends catch up.
+  standing in for a rule, and they are rules now that the backends have caught
+  up — `platformer` is the one that says so, where landing and bonking are two
+  rules naming two sides rather than one rule and a velocity test.
 - **The examples are the shop window: keep them spare** (doc 14 §The example
   library). The web app shows a game's source beside the cartridge it built, and
   the claim is that a whole game is sixty lines — an example whose commentary
@@ -3079,6 +3090,19 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   which byte was which would not survive running the library. It also checks the Duck's cartridge _fails_ on a Game
   Boy — identical traces are also what a register map that had quietly become the
   identity would produce.
+- `packages/demotic/test/collision-sides.test.ts` runs the same battery for
+  `from <side>`, which the example library reaches on one console's worth of
+  geometry and this reaches on all four sides of both kinds of contact. Two
+  things about the program it builds are load-bearing and easy to undo. **Every
+  probe starts already overlapping**, because a probe that had to travel would
+  arrive on a different tick on every machine — the screens differ fourfold in
+  area and the tick rates by a quarter — and a case that never arrives compares
+  zero with zero and passes. And **the wrong-side rule is written first**: a
+  contact the clause admits is also separated, so a rule written after one that
+  fired finds the boxes already pushed apart and stays silent whether or not it
+  was narrowed, which reads as a pass on a backend that never looked at the
+  clause. Reordering those two lines is what turned it from vacuous into the
+  thing that caught the emitters.
 - `packages/demotic/test/ngpc-rom.test.ts` is the Neo Geo Pocket Color's
   rendering oracle, and every case is one that produces a cartridge which ticks
   perfectly and shows nothing: the entry address the boot ROM reads out of the
