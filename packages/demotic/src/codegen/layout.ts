@@ -982,7 +982,12 @@ export interface Layout {
   contactBytes: number;
   /** Per-rule contact numbering. */
   contactRanges: ReadonlyMap<number, ContactRange>;
-  /** `on hold` snapshots: four bytes then a validity byte, per binding slot. */
+  /**
+   * `on hold` snapshots: four bytes then an engaged byte, per *property* an
+   * `on hold` control writes (`analyze.ts`'s `holdTargets`). Per property rather
+   * than per binding because `left` and `right` write one `xdirection` between
+   * them, and what a release puts back is what it held before either was down.
+   */
   holdValues: number;
   holdFlags: number;
   /** `reaches` history: four bytes then a validity byte, per rule that needs it. */

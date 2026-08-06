@@ -52,6 +52,23 @@ function build(source: string, levels?: Record<string, string>, consoleId = "gb"
 }
 
 /**
+ * How many distinct colours a finished frame shows.
+ *
+ * One means the screen is blank: an LCD that was never switched on holds a
+ * uniform framebuffer, so this distinguishes "drew something" from "drew
+ * nothing" without pinning what was drawn.
+ */
+function shadesShown(frame: Uint8ClampedArray): number {
+  const seen = new Set<number>();
+  for (let at = 0; at < frame.length; at += 4) {
+    seen.add(
+      (frame[at] as number) | ((frame[at + 1] as number) << 8) | ((frame[at + 2] as number) << 16),
+    );
+  }
+  return seen.size;
+}
+
+/**
  * Every console with a backend, over the same batteries.
  *
  * One list rather than one per `describe`, because "the same battery on every
@@ -104,7 +121,12 @@ describe("gb ROM", async () => {
 describe("ROM conformance across the example library", async () => {
   const cases: readonly (readonly [string, string, Record<string, string>?])[] = [
     ["pong", "1:a,90:,90:left,120:right"],
-    ["breakout", "30:,20:a,50:,60:left,60:right,80:"],
+    // Both directions at once, released in the order they were pressed rather
+    // than the order that unwinds neatly — and `a` pressed with one of them
+    // already down, so the play scene is entered holding a button whose press
+    // edge belonged to the title screen. Both are `on hold` snapshots taken and
+    // put back, which no other tape here exercises.
+    ["breakout", "30:,20:a+right,30:right,20:,60:left,30:left+right,30:right,80:"],
     ["platformer", "20:,15:a,40:right,20:a+right,60:right,45:"],
     ["dodger", "20:,20:a,60:left,60:right,40:"],
     ["shooter", "20:,20:a,40:left,20:a,60:right,40:"],
@@ -198,25 +220,29 @@ describe("ROM conformance across the example library", async () => {
   it("builds a Mega Duck cartridge that a Game Boy could not run", async () => {
     // The guard the test above cannot be: identical traces are also what a map
     // that had quietly become the identity would produce, since the same wrong
-    // map would then be used to build the ROM *and* to route its writes. So
-    // boot the Duck's cartridge on the wrong machine and require it to fail —
-    // its stores land on registers that do nothing there, so it never leaves
-    // the title screen and never reaches the tick the tape asks for.
+    // map would then be used to build the ROM *and* to route its writes. So boot
+    // the Duck's cartridge on the wrong machine and require the screen to stay
+    // off — this console's `LCDC` is at $FF10, which is a sound register over
+    // there, so nothing a Duck cartridge stores ever tells a Game Boy to switch
+    // its display on.
+    //
+    // The *screen* rather than the trace, because a demade game's state is
+    // arithmetic on the pad: the tick runs correctly wherever the display writes
+    // land, so whether a trace diverges depends on where stray stores happen to
+    // fall, and that moves whenever the RAM map does. It said what this test
+    // means for exactly as long as pong's happened to hit something load-bearing.
     const program = build(gameSource("pong"), undefined, "megaduck");
-    const frames = tape(PONG_TAPE);
-    const onDuck = await romTrace(program, frames, {}, megaduckTarget);
-    // *How* it fails is not the guarantee and must not be pinned: where its
-    // writes land on a Game Boy decides whether the game merely plays wrongly or
-    // stops reaching the end of a tick at all, and that is a function of the
-    // memory map — so a change that moves one address can move it between the
-    // two. What is guaranteed is that this cartridge is not a Game Boy's.
-    const onGameboy = await romTrace(program, frames, {}, gbTarget).catch(
-      (error: unknown) => `did not run: ${String(error)}`,
-    );
-    expect(onGameboy).not.toBe(onDuck);
+    const { bytes } = await buildGbRom(program, { title: "PONG" });
+    const onDuck = new Gameboy(bytes, "megaduck");
+    const onGameboy = new Gameboy(bytes, "gameboy");
+    for (let frame = 0; frame < 120; frame += 1) {
+      onDuck.runFrame();
+      onGameboy.runFrame();
+    }
+    expect(shadesShown(onDuck.framebuffer)).toBeGreaterThan(1);
+    expect(shadesShown(onGameboy.framebuffer)).toBe(1);
     // And the cartridge carries no header for a Game Boy to read: the title
     // field is this game's own code, not "PONG", and there is no CGB flag.
-    const { bytes } = await buildGbRom(program, { title: "PONG" });
     expect(String.fromCharCode(...bytes.subarray(0x134, 0x138))).not.toBe("PONG");
     expect(bytes[HEADER_OFFSETS.cgb]).not.toBe(0xc0);
     // It begins with the jump past the interrupt vectors that $0000 must hold.

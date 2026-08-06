@@ -1357,7 +1357,7 @@ export function audioSweep(target: Target): void {
      *
      * | console | free bytes |
      * | --- | --- |
-     * | `gb` | shooter 2114, caves 5948, runner 6455, dodger 8676, breakout 10575, pong 12653, platformer 14380 |
+     * | `gb` | shooter 2182, caves 6016, runner 6455, dodger 8744, breakout 10643, pong 12721, platformer 14448 |
      * | `sms` | caves 19648, runner 20982, shooter 23602, dodger 25301, breakout 25695, pong 27477, platformer 28386 |
      * | `nes` | caves 10586, runner 11205, shooter 13457, breakout 14285, pong 14582, dodger 14692, platformer 18037 |
      *

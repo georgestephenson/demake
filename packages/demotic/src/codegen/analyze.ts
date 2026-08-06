@@ -67,8 +67,55 @@ export interface Analysis {
   maxDepth: number;
   /** Most assignments any single rule or control applies at once. */
   maxAssignments: number;
-  /** `on hold` bindings, in the order slots are allocated. */
+  /** Properties `on hold` controls write, in the order slots are allocated. */
   holdSlots: number;
+}
+
+/** One property `on hold` controls write, and every binding that writes it. */
+export interface HoldTarget {
+  /** The instance the property belongs to. */
+  instanceId: number;
+  prop: string;
+  /** Indices into `program.controls` of the hold bindings that write it. */
+  controls: readonly number[];
+}
+
+/**
+ * The properties `on hold` controls write, one entry per property.
+ *
+ * A snapshot belongs to the **property**, not to the binding that took it, and
+ * that is the whole reason this list exists. Left and right both write
+ * `xdirection`, so "the value before the button went down" means the value
+ * before *either* went down — taken per binding, right's snapshot is whatever
+ * left had already written, and releasing the two out of nesting order writes a
+ * direction back that no button is asking for. Grouping the bindings here is
+ * also what lets a release ask whether any *other* button still wants the
+ * property, so handing over is immediate rather than a tick of standing still.
+ *
+ * A control's assignments run with its own object bound as both subject and
+ * other, so every entity reference resolves to an instance without a layout.
+ */
+export function holdTargets(program: Program): HoldTarget[] {
+  const slots: HoldTarget[] = [];
+  const byKey = new Map<string, HoldTarget>();
+  for (const [index, control] of program.controls.entries()) {
+    if (control.mode !== "hold") continue;
+    for (const assignment of control.assignments) {
+      const target = assignment.target;
+      if (target.kind !== "prop") continue;
+      const instanceId = target.entity.kind === "instance" ? target.entity.id : control.instanceId;
+      const key = `${instanceId}:${target.prop}`;
+      let slot = byKey.get(key);
+      if (slot === undefined) {
+        slot = { instanceId, prop: target.prop, controls: [] };
+        byKey.set(key, slot);
+        slots.push(slot);
+      }
+      const bindings = slot.controls as number[];
+      if (!bindings.includes(index)) bindings.push(index);
+    }
+  }
+  return slots;
 }
 
 /** Everything a rule can bind as its subject, given the compile-time lists. */
@@ -236,11 +283,7 @@ export function analyze(program: Program): Analysis {
     else if (instance.strings["sprite"] !== undefined) usesSprites = true;
   }
 
-  // Speeds always divide by the frame rate, which is a whole number of ticks,
-  // so the cheap cell divider is needed whenever anything can move.
-  const holdSlots = program.controls
-    .filter((control) => control.mode === "hold")
-    .reduce((total, control) => total + control.assignments.length, 0);
+  const holdSlots = holdTargets(program).length;
 
   return {
     writes,

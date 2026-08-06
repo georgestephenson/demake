@@ -1321,6 +1321,18 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   rule (step 3), set by the collision or tile phase (steps 5–6), read by an edge
   rule (step 7). Writing the three rules in the wrong phase is the way to get a
   flag that is always false.
+- **An `on hold` snapshot belongs to the property, not to the binding, and the
+  hold engages on the button being _down_.** Both halves are what make `left` and
+  `right` on one paddle behave: the value saved is the one the property held
+  before _either_ went down, so releasing them in the order they were pressed
+  cannot write back a direction nothing is asking for, and the survivor takes the
+  property over within the tick rather than after a frame of standing still. And
+  a scene entered with a direction already held never saw that press — the edge
+  belonged to the scene the player left, where the control does not run — so an
+  engage keyed on the edge saves nothing and restores nothing, which is a hero
+  who keeps walking into the wall after the button is up. `sim.ts`'s
+  `updateHolds` is the specification and `codegen/analyze.ts`'s `holdTargets`
+  groups the bindings the eight backends share a slot between.
 - **A jump needs a `when a pressed if` rule, not a `control`.** Controls run at
   the top of the tick, before anything has been collided with, so a control
   cannot ask whether there is ground underfoot — and a jump that cannot ask is a
@@ -1406,7 +1418,7 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   tables, the looped collision pairs and the grouped integrator won it back, and
   it now has 13457 bytes free. `OVER_BUDGET` is empty as a result, and the
   emptiness is the record. The tightest cartridge in the library is the Game
-  Boy's shooter at 2177 bytes free — that is where a budget regression shows
+  Boy's shooter at 2182 bytes free — that is where a budget regression shows
   first, which is why the Game Boys sweep the whole library and the NES sweeps
   two. And a Game Boy is the tightest for a reason that is now structural rather
   than incidental: it is the one console whose cartridge cannot grow (§Iron

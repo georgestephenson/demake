@@ -448,8 +448,24 @@ NES.
 `start` is the one entry that is not portable in practice: the Master System has no
 Start button, and pause is a console-mounted switch wired to the NMI line. The
 compiler warns rather than failing, because the mapping is legitimate; it just is
-not a face button. Simultaneous opposing input resolves last-pressed-wins, which
-falls out of `on hold` keeping a snapshot per binding rather than per property.
+not a face button.
+
+**Simultaneous opposing input resolves in binding order**, and what a release
+restores is decided per _property_. `on hold` saves the value a property held
+before any of its buttons went down and puts it back when the last of them comes
+up, so a paddle bound to both `left` and `right` moves in whichever of the two
+was declared later while both are down, hands over the instant one is released,
+and comes to rest when neither is — in whatever order the player lets go. Kept
+per _binding_ instead, the second button to go down saves whatever the first had
+already written, and releasing them in the order they were pressed writes back a
+direction nothing is asking for: the paddle slides off with the pad untouched.
+
+**A hold engages on the button being down, not on its press edge**, which is what
+makes a scene entered with a direction already held behave. That press happened
+in the scene the player left, where the control does not run at all, so an edge
+is an event this binding never saw — and with nothing saved there is nothing to
+put back when the button comes up. Holding right on a game-over screen and
+pressing `a` used to steer the new game's hero into the wall for ever.
 
 ### Levels, tiles and the camera
 
