@@ -242,6 +242,9 @@ importers:
       '@demake/nes':
         specifier: workspace:*
         version: link:../nes
+      '@demake/ngp':
+        specifier: workspace:*
+        version: link:../ngp
       '@demake/pce':
         specifier: workspace:*
         version: link:../pce

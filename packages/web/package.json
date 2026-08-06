@@ -22,11 +22,12 @@
     "@demake/md": "workspace:*",
     "@demake/nds": "workspace:*",
     "@demake/nes": "workspace:*",
+    "@demake/ngp": "workspace:*",
+    "@demake/pce": "workspace:*",
     "@demake/sms": "workspace:*",
     "@demake/snes": "workspace:*",
-    "preact": "^10.29.7",
-    "@demake/pce": "workspace:*",
-    "@demake/wsc": "workspace:*"
+    "@demake/wsc": "workspace:*",
+    "preact": "^10.29.7"
   },
   "devDependencies": {
     "@lhci/cli": "^0.15.1",

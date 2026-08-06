@@ -2913,7 +2913,7 @@ gaining an in-game driver.** The Neo Geo Pocket Color is the case, and the four
 columns are what make it sayable: `arrange -c ngpc` demakes its music, `build -c
 ngpc` produces a cartridge that traces identically to one that plays it, and the
 in-game-audio column says `—` because `GAME_DRIVERS` does not list it. That last
-list is the fourth registry the support matrix reads and it is keyed by *console*
+list is the fourth registry the support matrix reads and it is keyed by _console_
 rather than by chip, precisely so that describing hardware cannot claim a driver
 (§Iron rules — what each console supports is derived, never written down).
 
