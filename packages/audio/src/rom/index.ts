@@ -7,15 +7,23 @@
  * cartridge that played a different arrangement from the preview would make the
  * schedule oracle report a divergence three layers from its cause.
  *
- * Four families build a *cartridge of their own* today: the Game Boy, the NES,
- * the PC Engine and the Sega 8-bits. The rest have drivers but only inside a
- * game, because that is what a game needed and a cartridge whose only job is one
- * track is a different caller. What any of them costs is no longer an estimate:
- * the stream player belongs to the *processor* and already exists for six of
- * them, so what a console adds is a boot sequence, a clock and a cartridge
- * wrapper — which is the whole of the difference between `gb.ts`, `nes.ts`,
- * `pce.ts` and `sms.ts`, two of which share a player and one of which covers two
- * machines.
+ * Five families build a *cartridge of their own* today: the Game Boy, the NES,
+ * the PC Engine, the Sega 8-bits and the Mega Drive. The rest have drivers but
+ * only inside a game, because that is what a game needed and a cartridge whose
+ * only job is one track is a different caller. What any of them costs is no
+ * longer an estimate: the stream player belongs to the *processor* and already
+ * exists for six of them, so what a console adds is a boot sequence, a clock and
+ * a cartridge wrapper — which is the whole of the difference between `gb.ts`,
+ * `nes.ts`, `pce.ts`, `sms.ts` and `md.ts`, two of which share a player and one
+ * of which covers two machines.
+ *
+ * **A standalone cartridge is not a game with the game taken out**, and the last
+ * of them is where that stops being a turn of phrase. On the Mega Drive a game
+ * can only have the frame, because the FM chip's timer interrupt goes to the Z80
+ * and a game polling it would be reading the status byte once per pass of a loop
+ * that is also running a game. A cartridge whose loop does nothing else polls it
+ * every few microseconds, so it keeps the timer's rate exactly — which is why
+ * `resolveMdClock` and `resolveMdAudioClock` refuse *opposite* sources.
  */
 
 import { getConsole } from "@demake/core";
@@ -34,9 +42,17 @@ import {
 
 import { buildNesAudioRom } from "./nes.js";
 import { buildPceAudioRom } from "./pce.js";
+import { buildMdAudioRom } from "./md.js";
 import { buildSmsAudioRom } from "./sms.js";
 
-export { AudioRomError, buildGbAudioRom, buildNesAudioRom, buildPceAudioRom, buildSmsAudioRom };
+export {
+  AudioRomError,
+  buildGbAudioRom,
+  buildMdAudioRom,
+  buildNesAudioRom,
+  buildPceAudioRom,
+  buildSmsAudioRom,
+};
 export type { AudioRomOptions, AudioRomStats, BuiltAudioRom };
 export {
   buildWscGameAudio,
@@ -81,17 +97,18 @@ const DRIVERS: Readonly<Record<string, AudioRomFamily>> = {
   pce: "pce",
   sms: "sms",
   gg: "sms",
+  md: "md",
 };
 
 /**
  * The driver families a standalone cartridge can be built with.
  *
- * Four, over three stream players: the NES and the PC Engine share
+ * Five, over four stream players: the NES and the PC Engine share
  * `mos-player.ts` because a HuC6280 *is* a 6502, and the two Sega 8-bits share
  * `sms-driver.ts` because a Game Gear *is* a Master System — so what a family is
  * here is a boot sequence, a clock and a cartridge wrapper rather than a driver.
  */
-export type AudioRomFamily = "gb" | "nes" | "pce" | "sms";
+export type AudioRomFamily = "gb" | "nes" | "pce" | "sms" | "md";
 
 /**
  * The clock a *game's* driver rides on each chip that has one.
@@ -122,12 +139,14 @@ const GAME_CLOCKS: Readonly<Record<string, "timer" | "frame">> = {
   // two streams share one clock with the picture, and the vertical blank is what
   // a demade cartridge already takes.
   t6w28: "frame",
-  // The YM2612 *has* a programmable timer, and `mdBinding.fitRate` will offer it
-  // to a standalone track. A game cannot have it: on this board the chip's
-  // interrupt line goes to the Z80, not to the 68000, so a game's driver would
-  // have to poll the status byte from its main loop — which is a clock whose
-  // rate is the loop's rather than the timer's, and therefore not a clock at
-  // all. The picture's interrupt is the one this CPU actually gets.
+  // The YM2612 *has* a programmable timer, and `mdBinding.fitRate` offers it to a
+  // standalone track — which `rom/md.ts` now takes, so this entry is genuinely
+  // about a game rather than about the hardware. On this board the chip's
+  // interrupt line goes to the Z80, not to the 68000, so a driver has to poll the
+  // status byte from its main loop. A cartridge whose loop does nothing else
+  // polls it every few microseconds and keeps the timer's rate exactly; a game's
+  // loop is also running a game, so what it would keep is the loop's rate. The
+  // picture's interrupt is the one *this* caller actually gets.
   ym2612: "frame",
   // The HuC6280 has a timer of its own — seven bits of reload at master ÷ 3 ÷
   // 1024 — and nothing else in a demade cartridge uses it, so this console gets
@@ -287,6 +306,7 @@ const SUFFIXES: Readonly<Record<string, string>> = {
   pce: ".pce",
   sms: ".sms",
   gg: ".gg",
+  md: ".md",
 };
 
 /**
@@ -318,7 +338,9 @@ export function buildAudioRom(
         ? buildNesAudioRom(script, bindingFor(spec.id).spec.driver.frameRate, options)
         : family === "sms"
           ? buildSmsAudioRom(script, options)
-          : buildPceAudioRom(script, options);
+          : family === "md"
+            ? buildMdAudioRom(script, options)
+            : buildPceAudioRom(script, options);
   // A Game Boy Color cartridge with no CGB flag is a DMG cartridge, and the APU
   // is the same on both — so the suffix follows the console the user asked for
   // rather than anything in the header.

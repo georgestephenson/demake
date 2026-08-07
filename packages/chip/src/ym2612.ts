@@ -693,11 +693,26 @@ export class Ym2612 implements ChipModel {
     return (this.timerBFlag ? 0x02 : 0) | (this.timerAFlag ? 0x01 : 0);
   }
 
-  run(clocks: number, sink: SampleSink): void {
+  /**
+   * Run the chip for `clocks` master cycles, rendering into `sink` if given.
+   *
+   * **The sink is optional because a timer is not audio.** Every other chip in
+   * this set is write-only, so a model that only advanced while somebody was
+   * listening was indistinguishable from one that always did. This chip has a
+   * status byte the bus can *read* — two timer overflow flags — and a driver
+   * whose clock is timer A polls exactly that. So a console must clock this chip
+   * whether or not anything is rendering, and the cost of doing so is the point
+   * of the split: without a sink the run costs the same per sample and produces
+   * nothing, which is the chip running with the speakers unplugged rather than
+   * the chip stopped.
+   */
+  run(clocks: number, sink?: SampleSink): void {
     let remaining = clocks;
     while (remaining > 0) {
-      const step = Math.min(remaining, sink.clocksUntilSampleBoundary(), this.clocksToSample);
-      sink.add(this.outLeft, this.outRight, step);
+      const step = sink
+        ? Math.min(remaining, sink.clocksUntilSampleBoundary(), this.clocksToSample)
+        : Math.min(remaining, this.clocksToSample);
+      sink?.add(this.outLeft, this.outRight, step);
       this.clocksToSample -= step;
       remaining -= step;
       if (this.clocksToSample <= 0) {

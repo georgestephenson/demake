@@ -347,7 +347,15 @@ export class Md implements Bus {
     }
     // The FM chip shares the 68000's divider exactly, so this one has no
     // remainder to carry: one CPU cycle is one chip clock.
-    if (this.ymSink) this.ym.run(cycles, this.ymSink);
+    //
+    // And it runs whether or not anything is listening, which the PSG above does
+    // not. The difference is that this chip can be *read*: its status byte
+    // carries the two timer overflow flags, and a standalone audio cartridge's
+    // clock is timer A polled from the main loop (`audio/src/rom/md.ts`). Gating
+    // the run on a sink would make that cartridge hang forever waiting for a
+    // timer that only ticks when somebody has plugged in speakers — which is a
+    // model of the speakers rather than of the chip.
+    this.ym.run(cycles, this.ymSink);
     return cycles;
   }
 

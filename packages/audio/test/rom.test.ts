@@ -23,6 +23,9 @@ import {
   NES_CHR_SIZE,
   NES_HEADER_SIZE,
   NES_PRG_SIZES,
+  mdChecksum,
+  MD_CHECKSUM_START,
+  MD_ROM_SIZES,
   PCE_BANK_SIZE,
   PCE_ROM_SIZES,
   segaChecksum,
@@ -60,6 +63,15 @@ import {
  * order walk — which is exactly what looping exercises.
  */
 const TICKS = 600;
+
+/**
+ * The 68000's clock, which is the master clock over seven.
+ *
+ * Here rather than imported because `@demake/md` exposes a frame's worth of
+ * cycles and not the rate itself, and the one case that needs it is measuring a
+ * timer period in CPU cycles.
+ */
+const MD_CPU_HZ = 53693175 / 7;
 
 /** A short decaying blip, as a WAV — the sound demaker's input. */
 function blipWav(): Uint8Array {
@@ -101,17 +113,19 @@ describe("gb audio cartridge", () => {
   });
 
   it("refuses a console it has no driver for, rather than shipping silence", () => {
-    // A Mega Drive has a driver *inside a game* and none of its own, which is
-    // the distinction this refusal exists to keep: `demake build -c md` puts
-    // music in a cartridge and `demake gen --format rom` cannot, and a builder
-    // that fell back to silence would make the two look the same.
-    const script = arrangeScore(parseMidi(bandFixture()), { console: "md" }).script;
+    // A Super Nintendo has a driver *inside a game* and none of its own, which
+    // is the distinction this refusal exists to keep: `demake build -c snes`
+    // puts music in a cartridge and `demake gen --format rom` cannot, and a
+    // builder that fell back to silence would make the two look the same. It is
+    // also the near miss — `demake arrange -c snes` writes an `.spc`, which is
+    // the same driver and the same schedule in a RAM image rather than a board.
+    const script = arrangeScore(parseMidi(bandFixture()), { console: "snes" }).script;
     expect(() => buildAudioRom(script)).toThrow(/no standalone audio driver backend/);
   });
 
   it("names the consoles it can build for", () => {
     expect(audioRomConsoles()).toEqual(
-      expect.arrayContaining(["dmg", "gbc", "nes", "pce", "sms", "gg"]),
+      expect.arrayContaining(["dmg", "gbc", "nes", "pce", "sms", "gg", "md"]),
     );
   });
 });
@@ -187,7 +201,7 @@ describe("pce audio cartridge", () => {
     expect(boot).toEqual(
       bindingFor("pce")
         .init()
-        .map((write) => ({ reg: write.reg, value: write.value })),
+        .map((write) => ({ reg: write.reg, value: write.value, chip: write.chip ?? 0 })),
     );
     // And the schedule the ROM promises is the one with those writes taken off.
     expect(script.ticks[0]!.writes.length).toBeGreaterThan(boot.length);
@@ -316,6 +330,115 @@ describe("sms audio cartridge", () => {
     // And it still plays, which is the half a layout check cannot see.
     const { expected, actual } = captureAgainstRom(dense, 120);
     expect(firstDivergence(expected, actual)).toBeNull();
+  });
+});
+
+describe("md audio cartridge", () => {
+  const built = () => buildAudioRom(trackFor("md"));
+
+  it("is a cartridge on the smallest board this console shipped that holds it", () => {
+    const { bytes, stats, family, suffix } = built();
+    expect(family).toBe("md");
+    expect(suffix).toBe(".md");
+    expect(MD_ROM_SIZES).toContain(bytes.length);
+    expect(String.fromCharCode(...bytes.subarray(0x100, 0x110))).toBe("SEGA MEGA DRIVE ");
+    expect(stats.free).toBeGreaterThanOrEqual(0);
+    // The checksum covers everything from `$200`, so it can only be computed
+    // once the image exists — and a builder that wrote it first would leave a
+    // cartridge the boot ROM rejects.
+    const sum = ((bytes[0x18e] as number) << 8) | (bytes[0x18f] as number);
+    expect(sum).toBe(mdChecksum(bytes));
+  });
+
+  it("assembles where the cartridge puts it, not at zero", () => {
+    // Every absolute reference in this program — the order list, the boot table,
+    // each `jsr` — is resolved at assembly time, and the code does not start at
+    // the origin: the vectors and the header come first. A build assembled at
+    // zero has a perfect symbol table and jumps two hundred bytes short of
+    // everything, which is a cartridge that boots and executes its own title.
+    const { bytes, symbols } = built();
+    const long = (at: number): number =>
+      (((bytes[at] as number) << 24) |
+        ((bytes[at + 1] as number) << 16) |
+        ((bytes[at + 2] as number) << 8) |
+        (bytes[at + 3] as number)) >>>
+      0;
+    const reset = symbols.get("Reset") as number;
+    expect(reset).toBe(MD_CHECKSUM_START);
+    // The first two longs of the image are the only part of a cartridge the
+    // hardware reads without being asked: the stack, then where to start.
+    expect(long(0)).toBe(0xfffffe);
+    expect(long(4)).toBe(reset);
+    expect(symbols.get("AudioBoot")).toBeGreaterThan(reset);
+  });
+
+  it("performs the chip's initialisation before it starts the clock", () => {
+    // Two claims in one, and the second is this console's alone. The chip's own
+    // initialisation is performed from a table at boot — so the schedule the ROM
+    // promises is shorter than the one it was handed — and it *has* to be,
+    // because that initialisation writes `$27`, which is the timer control
+    // register the driver's clock lives in. Left at the head of the stream, tick
+    // 0 would stop the timer that was about to deliver tick 1.
+    const script = trackFor("md");
+    const runner = new AudioRomRunner(script);
+    const boot = runner.captureBoot();
+    const init = bindingFor("md").init();
+    expect(boot.slice(0, init.length)).toEqual(
+      init.map((write) => ({ reg: write.reg, value: write.value, chip: write.chip ?? 0 })),
+    );
+    // The timer is programmed after the table, and nothing else follows it.
+    const after = boot.slice(init.length).filter((write) => write.chip === 0);
+    expect(after.map((write) => write.value)).toEqual([
+      0x24,
+      (73 >> 2) & 0xff,
+      0x25,
+      73 & 0x03,
+      0x27,
+      0x05,
+      0x27,
+      0x15,
+    ]);
+    // And no tick may touch `$27` again, which is what the strip buys.
+    for (const tick of runner.performed.ticks) {
+      let latched = -1;
+      for (const write of tick.writes) {
+        if ((write.chip ?? 0) !== 0) continue;
+        if ((write.reg & 1) === 0) latched = write.value;
+        else expect(latched).not.toBe(0x27);
+      }
+    }
+  });
+
+  it("keeps the timer's rate rather than the loop's", () => {
+    // The claim this console's whole clock rests on, and the one a register diff
+    // cannot make: a *game* here can only ride the frame, because polling the FM
+    // chip's timer from a loop that is also running a game gives the loop's
+    // rate. A cartridge whose loop does nothing else polls every few
+    // microseconds, so what it keeps is the timer's — measured in CPU cycles,
+    // against the period the schedule's own reload asks for.
+    const script = trackFor("md");
+    const runner = new AudioRomRunner(script);
+    const at = (runner as unknown as { tickAddress: number }).tickAddress;
+    const machine = runner.machine as unknown as { stepInstruction(): number; cpu: { pc: number } };
+    const spans: number[] = [];
+    let cycles = 0;
+    while (spans.length < 12) {
+      cycles += machine.stepInstruction();
+      if (machine.cpu.pc === at) {
+        spans.push(cycles);
+        cycles = 0;
+      }
+    }
+    const period = MD_CPU_HZ / (script.driver.rate.num / script.driver.rate.den);
+    // Everything after the boot span is a timer period, to within one poll of
+    // the status byte — which is what "the drift is bounded by one poll" means.
+    for (const span of spans.slice(2)) expect(Math.abs(span - period)).toBeLessThan(200);
+  });
+
+  it("refuses a schedule whose clock is not the timer", () => {
+    const script = trackFor("md");
+    const framed = { ...script, driver: { ...script.driver, source: "vblank" as const } };
+    expect(() => buildAudioRom(framed)).toThrow(/has no 'vblank' clock/);
   });
 });
 

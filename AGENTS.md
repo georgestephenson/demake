@@ -716,15 +716,23 @@ whose spec names two chips.
 
 `demake gen <schedule> -c dmg --format rom` then turns that schedule into a real
 32 KiB cartridge, with an SM83 driver **generated for it** — no fixed player, no
-checked-in harness, no toolchain — and `-c nes`, `-c pce`, `-c sms` and `-c gg` do
-the same on an NROM board, a HuCard and a flat Sega cartridge, which is what
-turned "what does another console cost"
+checked-in harness, no toolchain — and `-c nes`, `-c pce`, `-c sms`, `-c gg` and
+`-c md` do the same on an NROM board, a HuCard, a flat Sega cartridge and a
+one-megabit Mega Drive board, which is what turned "what does another console cost"
 into a measurement: the stream player is the _processor's_ and moved not at all
 between them, so each is a boot sequence, a clock and a cartridge wrapper
-and nothing else. The last of them reused a player written for a _game_ and
+and nothing else. The fourth reused a player written for a _game_ and
 changed it in one place — an emitter that can lay packed data either side of a
 hole, because this console's cartridge header is sixteen bytes inside its own
-address space. And **doc 16's Level A proof runs in `pnpm test`**: the ROM boots in `@demake/dmg`, whose APU is now `@demake/chip`'s,
+address space. The fifth changed nothing at all, and is where **a standalone
+cartridge stops being a game with the game taken out**: its clock is the FM
+chip's own timer, which a _game_ on that console cannot have, because the timer's
+interrupt goes to the Z80 and a game polling the status byte would be reading it
+once per pass of a loop that is also running a game. A loop that does nothing
+else polls it every few microseconds and keeps the timer's rate exactly — so
+`resolveMdClock` and `resolveMdAudioClock` refuse _opposite_ sources, which is
+the sharpest statement in the set of what a caller is (§The 68000 half).
+And **doc 16's Level A proof runs in `pnpm test`**: the ROM boots in `@demake/dmg`, whose APU is now `@demake/chip`'s,
 and every register write it makes is diffed against the `ChipScript` tick for
 tick, with no tolerance (`packages/audio/test/rom.test.ts`). That is the audio
 counterpart of the pixel-perfect emulator E2E, and it is sharper, because the
@@ -753,18 +761,22 @@ four pinned byte-identical to the CLI's by
 `packages/web/test/e2e/determinism.spec.ts`.
 
 Still to come for audio: `bin`/`asm`/`c` emit, a _standalone_ audio cartridge for
-the consoles that still have none — the Game Boy, the **NES**, the **PC Engine**
-and both **Sega 8-bits** build one today, and the Mega Drive, the WonderSwans,
+the consoles that still have none — the Game Boy, the **NES**, the **PC Engine**,
+both **Sega 8-bits** and the **Mega Drive** build one today, and the WonderSwans,
 the Neo Geo Pocket Color and both ARM handhelds have drivers only inside a game,
 while the Super Nintendo's writes an `.spc` rather than a cartridge. What each of
 them costs is no longer an estimate but a measurement: the stream player belongs
 to the _processor_ and is already written, so a console adds a boot sequence, a
 clock and a cartridge wrapper and nothing else — which is why the third of them
-reused the second's player unchanged and the fourth reused a _game's_. What the
-fourth also did was find the bill for a clock nobody had ever had to keep: the
-Sega binding would fit a rate to the VDP's line interrupt, and that interrupt
-fires only inside the active display, so the first cartridge to ride one would
-have played at half the rate it declared (§The Z80 half). Also: driver backends for the remaining
+reused the second's player unchanged, the fourth reused a _game's_, and the fifth
+changed not one instruction of one. What the last two did was find, twice, the
+bill for a clock nobody had ever had to keep. The Sega binding would fit a rate
+to the VDP's line interrupt, and that interrupt fires only inside the active
+display, so the first cartridge to ride one would have played at half the rate it
+declared (§The Z80 half). And the Mega Drive's core only advanced its FM chip
+when something was listening to the speakers — which is invisible for a
+write-only chip and fatal for one whose _timer_ a driver polls, so the first
+cartridge to ride that would have spun for ever (§The 68000 half). Also: driver backends for the remaining
 consoles (each needs a CPU encoder or a checked-in driver source, plus a core to
 prove it in), Level B sample comparison, the remaining chips (the rest of the
 handhelds), a _demaker_ for the two sample players the chip layer now has and
@@ -945,13 +957,21 @@ packages/snes/       @demake/snes — a self-hosted Super Nintendo core: a 65816
                      boot ROM of *ours* that speaks the documented upload
                      handshake rather than transcribing Nintendo's. Its S-DSP is
                      @demake/chip's, not a second one
-packages/md/         @demake/md — a self-hosted Mega Drive core: a 68000, a VDP and
-                     the SN76489 at $C00011 (@demake/chip's, not a second copy),
-                     for the two jobs the other three cores exist for. The FM half
-                     is deliberately absent: it is a second processor with a
-                     YM2612 beside it and `demake build` emits neither, so an FM
-                     write reaches a Z80 bus that answers as RAM — which is what
-                     the hardware does to a 68000-only program
+packages/md/         @demake/md — a self-hosted Mega Drive core, and the only one
+                     with *two* sound chips: the SN76489 at $C00011 and the
+                     YM2612 at $A04000, both @demake/chip's rather than second
+                     copies, with a tap each — and the FM one reports the bus
+                     *port* rather than a decoded register, because that is what
+                     a schedule's register number is on this machine. The FM chip
+                     runs whether or not a sample sink is attached, which the PSG
+                     does not, and the difference is that this one can be *read*:
+                     its status byte carries the timer overflow flags, and a
+                     standalone audio cartridge's clock is timer A polled from
+                     the main loop. Gating it on a sink would be a model of the
+                     speakers rather than of the chip. The Z80 is absent — a
+                     second processor `demake build` emits no program for — so
+                     its RAM answers as RAM, which is what the hardware does to a
+                     68000-only program
 packages/gba/        @demake/gba — a self-hosted Game Boy Advance core: an
                      ARM7TDMI in ARM state, a mode-0 2D engine with four
                      background layers and 128 objects, DMA, timers, and both
@@ -1144,7 +1164,17 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
                      section past it, which is what the game backend does because
                      there the code fills that region, would make the larger
                      board unreachable); 68000:
-                     md-driver.ts and md-game.ts; SPC700: spc-driver.ts and
+                     md-driver.ts with two callers, a game (md-game.ts) and the
+                     fifth standalone cartridge (md.ts) — and the pair is where
+                     what a *caller* is gets sharpest, because their two
+                     `resolve…Clock`s refuse opposite sources: on this board the
+                     FM timer's interrupt goes to the Z80, so a game has to poll
+                     it from a loop that is also running a game and gets the
+                     loop's rate, while a cartridge whose loop does nothing else
+                     gets the timer's. md.ts is also the only one whose *clock
+                     register is on the chip it is playing*, which is why it
+                     strips the boot prefix — the binding's own `$27 = 0` would
+                     otherwise switch off the timer mid-stream; SPC700: spc-driver.ts and
                      spc-game.ts, and it is one of the two that do not run on the
                      console's own processor — what it builds is a block to
                      *upload*. ARM is two consoles and therefore three files:
@@ -2479,6 +2509,30 @@ most of the value layer stops being a problem and three new ones appear.
   the program — tens of kilobytes away in a real game. Inside the driver the same
   call is a `bsr`, because there the distance is a few hundred bytes and visible
   in one file.
+- **A standalone audio cartridge here has a clock a game cannot have, and that is
+  a fact about the caller rather than about the hardware.** The YM2612's timer A
+  is a real programmable clock, but on this board its interrupt line goes to the
+  Z80 — so a driver has to _poll_ the status byte. A game polls it once per pass
+  of a loop that is also running a game, which keeps the loop's rate and not the
+  timer's; a cartridge whose loop does nothing else polls every few microseconds
+  and keeps the timer's exactly, with the drift bounded by one poll rather than
+  by one frame. `resolveMdClock` (`md-game.ts`) and `resolveMdAudioClock`
+  (`md.ts`) therefore refuse **opposite** sources, and each says which caller it
+  is. Two things follow that no other console needs. The overflow is
+  acknowledged with the run bit still set, so the counter is never reloaded and
+  the poll's own latency cannot accumulate. And the boot prefix _has_ to be
+  stripped — the binding's initialisation writes `$27 = 0`, which is the timer
+  control register, so left at the head of the stream tick 0 would switch off the
+  clock that was about to deliver tick 1. That is the third distinct reason a
+  console strips its boot prefix, after "stop an effect powering the chip up
+  again" and "make tick 0 packable at all".
+- **The FM chip's timers are bus-visible state, so `@demake/md` clocks it whether
+  or not anything is listening.** Every other chip in the set is write-only,
+  which made "advance only when a sample sink is attached" indistinguishable from
+  "always advance" — until a driver's clock became a register a cartridge _reads_.
+  `packages/md/test/sound.test.ts` is the one place that property is pinned, and
+  the symptom it exists to catch is a cartridge that spins for ever on a flag
+  nothing can set. The PSG keeps the old arrangement, because nothing can read it.
 
 ### The ARM half
 
@@ -3372,6 +3426,17 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   larger board reachable: 32 KiB is this cartridge's floor and 48 its ceiling,
   and between them is a sixteen-byte header _inside_ the address space, so the
   test checks that no packed block overlaps it.
+  **The Mega Drive block measures the same thing against the timer**, and adds
+  the two this console alone can get wrong: that the program was assembled where
+  the cartridge _puts_ it (a build assembled at zero has a perfect symbol table
+  and jumps two hundred bytes short of everything, which is a cartridge that
+  boots and executes its own title), and that no tick writes `$27` — the register
+  the clock lives in — which is what stripping the boot prefix buys.
+  It is also the console that made the harness's tick attribution honest: a group
+  used to run from one `Tick` entry to the next, which is only the same thing as
+  "the writes this tick made" while nothing writes the chip _between_ ticks. Here
+  the timer acknowledge does, so a driver may name a `TickEnd` label — no
+  instruction, so the ROM is unchanged — and the group closes there instead.
 - The game-audio conformance suite (`packages/demotic/test/_audio-battery.ts`, run
   from `audio-<id>.test.ts`) is
   doc 16's Level A for a cartridge that is also playing a game, **on every console

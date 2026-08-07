@@ -410,13 +410,41 @@ describe("demake gen — a chip schedule into a cartridge", () => {
     expect(report.stats.helpers).toContain("vblank-clock");
   });
 
-  it("names the console that has no driver backend yet, rather than emitting silence", async () => {
-    // A Mega Drive is the case worth naming: its cartridges play music inside a
-    // *game* and there is no standalone player for a 68000, so a builder that
-    // fell back to silence would make the two look like the same support.
+  it("builds a bootable Mega Drive cartridge from the schedule", async () => {
     const env = makeEnv({ "band.mid": bandMidi(140, 1) });
     await arranged(env, "md");
-    const code = await run(["gen", "song.json", "-c", "md", "--format", "rom", "-o", "x.md"], env);
+    const code = await run(
+      ["gen", "song.json", "-c", "md", "--format", "rom", "-o", "song.md", "--json"],
+      env,
+    );
+    expect(code).toBe(0);
+    const rom = env.written["song.md"]!;
+    expect(rom).toBeDefined();
+    expect(String.fromCharCode(...rom.subarray(0x100, 0x110))).toBe("SEGA MEGA DRIVE ");
+    const report = JSON.parse(env.stdout) as {
+      console: string;
+      stats: { ticks: number; helpers: string[]; ratePpmError: number };
+    };
+    expect(report.console).toBe("md");
+    expect(report.stats.ticks).toBeGreaterThan(0);
+    expect(report.stats.ratePpmError).toBe(0);
+    // This console's clock is the FM chip's own timer, and its initialisation is
+    // performed from a table — the one console that pulls in both.
+    expect(report.stats.helpers).toContain("timer-clock");
+    expect(report.stats.helpers).toContain("boot-table");
+  });
+
+  it("names the console that has no driver backend yet, rather than emitting silence", async () => {
+    // A Super Nintendo is the case worth naming: its cartridges play music
+    // inside a *game* and `demake arrange -c snes` writes an `.spc`, which is a
+    // RAM image rather than a board — so a builder that fell back to silence
+    // would make three different levels of support look like one.
+    const env = makeEnv({ "band.mid": bandMidi(140, 1) });
+    await arranged(env, "snes");
+    const code = await run(
+      ["gen", "song.json", "-c", "snes", "--format", "rom", "-o", "x.sfc"],
+      env,
+    );
     expect(code).not.toBe(0);
     expect(env.stderr).toMatch(/no standalone audio driver backend/);
   });

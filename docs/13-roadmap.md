@@ -1411,11 +1411,16 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     the Nintendo DS's SPU each have a chip model, a
     binding and a generated driver — 6502, Z80, SPC700, 68000 and ARM twice — and
     `demake build` puts music and
-    effects in the cartridge with doc 16's Level A proof over all of them. Four of
+    effects in the cartridge with doc 16's Level A proof over all of them. Five of
     them now also build a *standalone* audio cartridge — `demake gen … --format
-    rom` reaches the Game Boy, the NES, the PC Engine and both Sega 8-bits — and
-    the rest do not, because a cartridge whose only job is one track is what a
-    later caller needed and not what a game did. The Super Nintendo is
+    rom` reaches the Game Boy, the NES, the PC Engine, both Sega 8-bits and the
+    Mega Drive — and the rest do not, because a cartridge whose only job is one
+    track is what a later caller needed and not what a game did. That last one is
+    where the difference between the two callers stops being a matter of
+    packaging: on that board the FM chip's timer interrupt goes to the Z80, so a
+    driver polls the status byte, and a game's loop is also running a game while a
+    standalone cartridge's does nothing else. The same hardware is a usable clock
+    for one and not for the other. The Super Nintendo is
     the near miss: `demake arrange -c snes` writes an `.spc`, which is the same
     driver and the same schedules in the format that console's own players read,
     but it is a RAM image rather than a cartridge. The SN76489 is also the

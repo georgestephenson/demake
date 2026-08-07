@@ -19,12 +19,27 @@
  */
 
 import { Gameboy } from "@demake/dmg";
+import { Md } from "@demake/md";
 import { Nes } from "@demake/nes";
 import { Pce } from "@demake/pce";
 import { Sms } from "@demake/sms";
 
 import type { ChipScript, TickWrites } from "../src/chipscript.js";
+import { PSG_CHIP, YM_CHIP } from "../src/rom/md-chips.js";
 import { buildAudioRom, type AudioRomOptions } from "../src/rom/index.js";
+
+/**
+ * One write, as a tap reports it.
+ *
+ * `chip` is what the Mega Drive needs and every other console answers zero to:
+ * that board has two devices, so a register number identifies nothing on its own
+ * — `$25` is the FM chip's timer reload and the PSG's one write port at once.
+ */
+interface Capture {
+  reg: number;
+  value: number;
+  chip: number;
+}
 
 /** What a core has to offer for a schedule to be read back out of it. */
 interface TappedMachine {
@@ -47,7 +62,22 @@ export class AudioRomRunner {
    */
   readonly performed: ChipScript;
   private readonly tickAddress: number;
-  private current: { reg: number; value: number }[] | undefined;
+  /**
+   * Where a tick *ends*, when the driver says so.
+   *
+   * Absent on every console whose driver writes nothing to the chip between two
+   * ticks, which was all of them until the Mega Drive: there the clock is the
+   * FM chip's own timer, so acknowledging an overflow is a write to the same
+   * device the schedule addresses, and it happens after one tick and before the
+   * next. Grouping from entry to entry would file it under the tick before it —
+   * two writes the schedule does not have, reported as a driver bug.
+   *
+   * The label costs the cartridge nothing, which is what keeps the rule that the
+   * ROM under test is the ROM that ships: no instruction is added to make this
+   * observable, only a name for one that was already there.
+   */
+  private readonly endAddress: number | undefined;
+  private current: Capture[] | undefined;
 
   constructor(script: ChipScript, options: AudioRomOptions = {}) {
     const built = buildAudioRom(script, options);
@@ -56,8 +86,11 @@ export class AudioRomRunner {
     const tick = built.symbols.get("Tick");
     if (tick === undefined) throw new Error("the driver defined no Tick symbol");
     this.tickAddress = tick;
-    const push = (reg: number, value: number): void => {
-      this.current?.push({ reg, value });
+    this.endAddress = built.symbols.get("TickEnd");
+    // `chip` defaults to zero, which every single-chip console's schedule also
+    // says — so only the Mega Drive's tap passes one and nothing else changes.
+    const push = (reg: number, value: number, chip = 0): void => {
+      this.current?.push({ reg, value, chip });
     };
     // The core is the console's, and the tap is the window each of them offers
     // on the chip it owns. Both models *are* `@demake/chip`'s, so this is a
@@ -70,6 +103,16 @@ export class AudioRomRunner {
     } else if (built.family === "pce") {
       const machine = new Pce(built.bytes);
       machine.psgTap = push;
+      this.machine = machine;
+    } else if (built.family === "md") {
+      // The only console here with *two* chips, so the tap is two taps — and the
+      // FM one reports the bus *port* rather than a decoded register, because
+      // that is what the schedule's own register number is on this machine.
+      // Which chip a write addressed is part of what has to match: `$25` is the
+      // FM chip's timer reload and the PSG's one write port at once.
+      const machine = new Md(built.bytes);
+      machine.ymTap = (port, value) => push(port, value, YM_CHIP);
+      machine.psgTap = (reg, value) => push(reg, value, PSG_CHIP);
       this.machine = machine;
     } else if (built.family === "sms") {
       // Which *Sega* it comes up as is the cartridge's own region nibble, never
@@ -93,8 +136,8 @@ export class AudioRomRunner {
    * through empty wavetables, which is a cartridge that is perfect in a register
    * diff and silent on the machine.
    */
-  captureBoot(): { reg: number; value: number }[] {
-    const writes: { reg: number; value: number }[] = [];
+  captureBoot(): Capture[] {
+    const writes: Capture[] = [];
     this.current = writes;
     let guard = 0;
     while (this.machine.cpu.pc !== this.tickAddress) {
@@ -115,13 +158,15 @@ export class AudioRomRunner {
    * missing in a way that looks like a driver bug.
    */
   capture(count: number): TickWrites[] {
-    const groups: { reg: number; value: number }[][] = [];
+    const groups: Capture[][] = [];
     let guard = 0;
     while (groups.length <= count) {
       this.machine.stepInstruction();
       if (this.machine.cpu.pc === this.tickAddress) {
         this.current = [];
         groups.push(this.current);
+      } else if (this.machine.cpu.pc === this.endAddress) {
+        this.current = undefined;
       }
       guard += 1;
       if (guard > 200_000_000) throw new Error("audio rom: the driver stopped ticking");
@@ -176,8 +221,8 @@ export function firstDivergence(
     for (let index = 0; index < want.length; index += 1) {
       const a = want[index]!;
       const b = got[index]!;
-      if (a.reg !== b.reg || a.value !== b.value) {
-        return `tick ${tick}, write ${index}: expected ${hex(a.reg)}=${hex(a.value)}, the ROM wrote ${hex(b.reg)}=${hex(b.value)}`;
+      if (a.reg !== b.reg || a.value !== b.value || (a.chip ?? 0) !== (b.chip ?? 0)) {
+        return `tick ${tick}, write ${index}: expected ${show([a])}, the ROM wrote ${show([b])}`;
       }
     }
   }
@@ -188,6 +233,8 @@ function hex(value: number): string {
   return `$${value.toString(16).padStart(2, "0").toUpperCase()}`;
 }
 
-function show(writes: readonly { reg: number; value: number }[]): string {
-  return writes.map((w) => `${hex(w.reg)}=${hex(w.value)}`).join(" ");
+function show(writes: readonly { reg: number; value: number; chip?: number }[]): string {
+  return writes
+    .map((w) => `${w.chip ? `chip${w.chip}:` : ""}${hex(w.reg)}=${hex(w.value)}`)
+    .join(" ");
 }

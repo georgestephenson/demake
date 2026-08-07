@@ -51,8 +51,8 @@ sidecar, WAV and cartridge are byte-identical to the CLI's (doc 07 §The audio
 sections), and the ROM pane plays whichever chip the running cartridge has. What
 is not built: the remaining chips (the handhelds), a *standalone* audio cartridge
 for the consoles that still have none (the Game Boy, the **NES**, the **PC
-Engine** and both **Sega 8-bits** build one; every other console with a driver
-plays it only from inside a game, and
+Engine**, both **Sega 8-bits** and the **Mega Drive** build one; every other
+console with a driver plays it only from inside a game, and
 [`console-support.md`](console-support.md)'s **audio ROM** column is where that
 is stated rather than here), driver backends for the remaining consoles,
 `bin`/`asm`/`c` emit, Level B sample comparison, and the lossy encoders.
@@ -655,6 +655,18 @@ effect gets: music barely notices it (row placement is absolute, so the tempo is
 exact at any rate), an effect notices it twice — a long one packs to fewer bytes,
 and eight milliseconds is still twice as fine as the sixty-hertz tick the
 machine's own games drove their drivers with.
+
+**And on one console it is the *caller's* answer rather than the console's.** The
+Mega Drive is the exception that makes the rule legible. Its YM2612 has a real
+programmable timer, but on that board the timer's interrupt line goes to the Z80
+rather than to the 68000 — so a driver has to poll the status byte, and what the
+poll's period is depends entirely on what else the loop is doing. A game polls it
+once per pass of a loop that is also running a game, and what it would keep is
+the loop's rate; a *standalone* cartridge's loop does nothing else, polls every
+few microseconds, and keeps the timer's rate with the drift bounded by one poll.
+So `resolveMdClock` and `resolveMdAudioClock` refuse **opposite** sources, and
+`GAME_CLOCKS` marks this chip `frame` while `mdBinding.fitRate` goes on offering
+the timer. Neither is wrong; they are answers to different questions.
 
 **And *which* interrupt is the console's answer, not the game's.** The NES has no
 general-purpose timer a driver can have without burning the DMC channel, so its
