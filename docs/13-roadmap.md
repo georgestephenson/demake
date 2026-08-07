@@ -1451,6 +1451,34 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     and a toolchain-free proof) or pair generated data with a checked-in driver
     source for a stock assembler (as the image harnesses do). Level A also needs
     a core we own or one that exposes scripted register access.
+  - **A5.5 — hardware the models describe and no demaker reaches** *(open)*: the
+    iron rule is that a demaker spends the whole machine, and the chip layer has
+    now run ahead of the bindings. None of this is a *correctness* gap — every
+    cartridge performs exactly the schedule its demaker produced, and the
+    schedule is exactly what the model would render — but each line is expression
+    the hardware offers and nothing asks for. Closing one changes output bytes on
+    the consoles it touches, so each needs re-baselined goldens and a `minor`.
+
+    | Hardware | Modelled | Spent by a demaker |
+    | --- | --- | --- |
+    | YM2612 LFO (vibrato and tremolo) | yes | no — `binding/md.ts` writes `$22 = 0` and every channel's sensitivity nibble as zero |
+    | YM2612 SSG-EG envelope modes | yes | no — those registers are never written |
+    | YM2612 channel 3's four-pitch mode | yes | no — `$27`'s mode bits are always zero |
+    | HuC6280 LFO | yes | no — the LFO registers appear only in `binding/pce.ts`'s channel *tag*, never in a write |
+    | WonderSwan channel 2's PCM voice | yes | no — nothing above the chip layer drives it |
+    | PC Engine direct D/A | yes | no — likewise |
+
+    **The first line is the one to do first, and it is bigger than the FM chip.**
+    Nothing anywhere in `@demake/audio` produces vibrato *at all* — not through a
+    chip LFO, and not through per-tick pitch writes on the consoles that have no
+    LFO to use. A period arranger uses it constantly, so this is an arranger
+    question (doc 17) before it is a binding one: where the depth comes from (a
+    source's own modulation controller? its articulation, the way
+    `binding/fm-patch.ts` already reads one?), whether it is a per-part decision
+    or a per-note one, and what it costs a four-channel console in schedule bytes
+    when it has to be written rather than switched on. The last two lines are
+    doc 18's rather than doc 17's — a sample player wants a *sound* demaker
+    pointed at it, not an arranger.
   - **A6 — the surfaces** *(Demotic done)*: the Demotic integration is settled
     and built — `music` and `sound` are in the language, every example game has
     a theme and effects, and the cartridge the page hands you is byte-identical

@@ -779,9 +779,19 @@ write-only chip and fatal for one whose _timer_ a driver polls, so the first
 cartridge to ride that would have spun for ever (§The 68000 half). Also: driver backends for the remaining
 consoles (each needs a CPU encoder or a checked-in driver source, plus a core to
 prove it in), Level B sample comparison, the remaining chips (the rest of the
-handhelds), a _demaker_ for the two sample players the chip layer now has and
-nothing above it drives (the PC Engine's direct D/A and the WonderSwan's PCM
-voice — doc 18's work rather than doc 16's), tracker and lossy-audio input with
+handhelds), and — the one that is an _iron-rule_ gap rather than a missing
+feature — **hardware the chip layer models and no binding reaches** (doc 13
+§A5.5). Six lines of it: the YM2612's LFO, its SSG-EG modes and its channel-3
+four-pitch mode, the HuC6280's LFO, and the two sample players nothing above
+the chip layer drives (the PC Engine's direct D/A and the WonderSwan's PCM
+voice — doc 18's work rather than doc 16's). None of it is a correctness
+problem: every cartridge performs exactly the schedule its demaker produced, and
+the models were completed _before_ any binding wanted them, so closing those gaps
+changed no cartridge's audio by a byte. It is expression the hardware offers and
+nothing asks for, which is the rule a demaker spends the whole machine pointing
+the other way. The first line is also the biggest and is the _arranger's_ rather
+than a binding's: nothing in `@demake/audio` produces vibrato at all, by any
+route. Also: tracker and lossy-audio input with
 the transcription front end, and FLAC/M4A export. Read doc
 16 before touching any of it — several of its decisions are load-bearing and easy
 to undo by accident (§Working on audio).
