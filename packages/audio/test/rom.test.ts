@@ -25,7 +25,15 @@ import {
   NES_PRG_SIZES,
   PCE_BANK_SIZE,
   PCE_ROM_SIZES,
+  segaChecksum,
+  SMS_FLAT_ROM_SIZES,
+  SMS_HEADER_OFFSET,
+  SMS_HEADER_SIZE,
+  SMS_IRQ_VECTOR,
+  SMS_NMI_VECTOR,
+  SMS_ROM_SIZE,
 } from "@demake/core";
+import { FRAME_CYCLES, Sms } from "@demake/sms";
 
 import { arrangeScore } from "../src/arrange/index.js";
 import { bindingFor } from "../src/binding/registry.js";
@@ -93,16 +101,18 @@ describe("gb audio cartridge", () => {
   });
 
   it("refuses a console it has no driver for, rather than shipping silence", () => {
-    // A Master System has a driver *inside a game* and none of its own, which is
-    // the distinction this refusal exists to keep: `demake build -c sms` puts
+    // A Mega Drive has a driver *inside a game* and none of its own, which is
+    // the distinction this refusal exists to keep: `demake build -c md` puts
     // music in a cartridge and `demake gen --format rom` cannot, and a builder
     // that fell back to silence would make the two look the same.
-    const script = arrangeScore(parseMidi(bandFixture()), { console: "sms" }).script;
+    const script = arrangeScore(parseMidi(bandFixture()), { console: "md" }).script;
     expect(() => buildAudioRom(script)).toThrow(/no standalone audio driver backend/);
   });
 
   it("names the consoles it can build for", () => {
-    expect(audioRomConsoles()).toEqual(expect.arrayContaining(["dmg", "gbc", "nes"]));
+    expect(audioRomConsoles()).toEqual(
+      expect.arrayContaining(["dmg", "gbc", "nes", "pce", "sms", "gg"]),
+    );
   });
 });
 
@@ -187,6 +197,125 @@ describe("pce audio cartridge", () => {
     const script = trackFor("pce");
     const framed = { ...script, driver: { ...script.driver, source: "vblank" as const } };
     expect(() => buildAudioRom(framed)).toThrow(/has no 'vblank' clock/);
+  });
+});
+
+describe("sms audio cartridge", () => {
+  it("stamps a header inside the image rather than around it", () => {
+    const { bytes, family, suffix } = buildAudioRom(trackFor("sms"));
+    expect(family).toBe("sms");
+    expect(suffix).toBe(".sms");
+    expect(SMS_FLAT_ROM_SIZES).toContain(bytes.length);
+    expect(String.fromCharCode(...bytes.subarray(SMS_HEADER_OFFSET, SMS_HEADER_OFFSET + 8))).toBe(
+      "TMR SEGA",
+    );
+    // The checksum covers everything *before* the header, which is what lets it
+    // be written into the region it does not cover — so a builder that stamped
+    // it first, or appended the header instead of overwriting, fails here.
+    const sum = segaChecksum(bytes);
+    expect(bytes[SMS_HEADER_OFFSET + 10]).toBe(sum & 0xff);
+    expect(bytes[SMS_HEADER_OFFSET + 11]).toBe((sum >> 8) & 0xff);
+  });
+
+  it("declares which of the two machines it is", () => {
+    // Not decoration: `@demake/sms` reads this nibble to decide whether it is a
+    // Game Gear, exactly as `@demake/dmg` reads the CGB flag — so a Game Gear
+    // cartridge stamped as a Master System would pass the tick diff below while
+    // playing on the wrong console, with its stereo latch reaching nothing.
+    const region = (script: ChipScript) =>
+      (buildAudioRom(script).bytes[SMS_HEADER_OFFSET + 15] as number) >> 4;
+    expect(region(trackFor("sms"))).toBe(4); // an exported Master System
+    expect(region(trackFor("gg"))).toBe(7); // an international Game Gear
+    expect(new Sms(buildAudioRom(trackFor("gg")).bytes).gameGear).toBe(true);
+  });
+
+  it("places its handlers at the addresses the CPU goes to", () => {
+    // There is no vector table on this machine: the Z80 resets to `$0000` and
+    // takes a maskable interrupt to `$0038` in mode 1, so these three routines
+    // are not pointed at — they are *placed*, by padding the image out to them.
+    // A build that emitted them in a different order would still assemble.
+    const { bytes, symbols } = buildAudioRom(trackFor("sms"));
+    expect(symbols.get("Boot")).toBe(0);
+    expect(symbols.get("Irq")).toBe(SMS_IRQ_VECTOR);
+    expect(symbols.get("Nmi")).toBe(SMS_NMI_VECTOR);
+    // `$0066` is the Pause button's, and this cartridge has nothing to do with
+    // it — but padding there would be *run* the first time somebody pressed it.
+    expect(bytes[SMS_NMI_VECTOR]).toBe(0xed);
+    expect(bytes[SMS_NMI_VECTOR + 1]).toBe(0x45); // retn
+  });
+
+  it("ticks once a frame, which is what acknowledging the interrupt buys", () => {
+    // The failure this exists to catch is invisible to a register diff: a
+    // handler that did not read the VDP's status byte would leave the interrupt
+    // pending, re-enter the moment `ei` ran, and perform the whole schedule in a
+    // few frames — every write correct, in order, and at ten thousand times the
+    // tempo. So the assertion is about the *spacing*, in CPU cycles.
+    const script = trackFor("sms");
+    const built = buildAudioRom(script);
+    const machine = new Sms(built.bytes);
+    const at = built.symbols.get("Tick") as number;
+    const spans: number[] = [];
+    let cycles = 0;
+    while (spans.length < 12) {
+      cycles += machine.stepInstruction();
+      if (machine.cpu.pc === at) {
+        spans.push(cycles);
+        cycles = 0;
+      }
+    }
+    // The first span is the boot, which is shorter; every one after it is a
+    // frame, to within the instruction the interrupt happened to land on.
+    for (const span of spans.slice(2)) expect(Math.abs(span - FRAME_CYCLES)).toBeLessThan(200);
+  });
+
+  it("refuses a schedule whose clock is not the frame", () => {
+    // This VDP reloads its line counter outside the active display, so the rates
+    // its line interrupt appears to offer are not a tempo a driver can hold.
+    const script = trackFor("sms");
+    const timed = { ...script, driver: { ...script.driver, source: "timer" as const } };
+    expect(() => buildAudioRom(timed)).toThrow(/has no 'timer' clock/);
+  });
+
+  it("takes the larger board by stepping the data over the header", () => {
+    // The elastic-cartridge rule, and on this console it needs a mechanism: the
+    // header is sixteen bytes *inside* the address space, so a schedule too big
+    // for 32 KiB has to lay its blocks either side of the hole. Padding the
+    // whole data section past `$7FF0` instead — which is what the game backend
+    // does, because there the code is what fills that region — would throw away
+    // thirty-two kilobytes and make the larger board unreachable: every schedule
+    // big enough to need it would also be too big for what was left.
+    let seed = 1;
+    const draw = (): number => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) >> 16;
+    const dense: ChipScript = {
+      ...trackFor("sms"),
+      // Distinct writes every tick, so nothing rests and nothing dedups.
+      ticks: Array.from({ length: 9000 }, () => ({
+        writes: [
+          { reg: 0, value: 0x90 | (draw() & 0x0f) },
+          { reg: 0, value: draw() & 0x3f },
+        ],
+      })),
+      loopTick: 0,
+    };
+    const built = buildAudioRom(dense);
+    expect(built.bytes.length).toBeGreaterThan(SMS_ROM_SIZE);
+    expect(SMS_FLAT_ROM_SIZES).toContain(built.bytes.length);
+    expect(built.stats.free).toBeGreaterThanOrEqual(0);
+
+    // No block may overlap the header, or `packSegaRom` stamps eight bytes of
+    // "TMR SEGA" into the middle of the music.
+    const data = packScript(dense, { port: () => 0x7f });
+    for (let block = 0; block < data.blocks.length; block += 1) {
+      const at = built.symbols.get(`Block0_${block}`) as number;
+      const end = at + (data.blocks[block] as Uint8Array).length;
+      const clear = end <= SMS_HEADER_OFFSET || at >= SMS_HEADER_OFFSET + SMS_HEADER_SIZE;
+      expect(`block ${block} at $${at.toString(16)}..$${end.toString(16)}: ${clear}`).toContain(
+        "true",
+      );
+    }
+    // And it still plays, which is the half a layout check cannot see.
+    const { expected, actual } = captureAgainstRom(dense, 120);
+    expect(firstDivergence(expected, actual)).toBeNull();
   });
 });
 

@@ -63,6 +63,9 @@ importers:
       '@demake/pce':
         specifier: workspace:*
         version: link:../pce
+      '@demake/sms':
+        specifier: workspace:*
+        version: link:../sms
       '@demake/snes':
         specifier: workspace:*
         version: link:../snes

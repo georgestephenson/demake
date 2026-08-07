@@ -829,13 +829,15 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     channel selection with it.
 
     The clock is the other thing this console decided for itself. `psgBinding`
-    will fit a rate to the VDP's line interrupt, and for a *game* that is the
-    wrong answer — the line counter is reloaded on every scanline outside the
-    active display, so a line interrupt every N lines fires a handful of times
-    inside the picture and then not at all until the next frame. A game's driver
-    therefore rides the frame at 59.92 Hz, like the NES's and for the same kind of
-    reason, and `fitRate` now treats the frame as the candidate every other clock
-    has to beat rather than as a fallback for when none is in range.
+    would fit a rate to the VDP's line interrupt, and that is the wrong answer for
+    a *game* — the line counter is reloaded on every scanline outside the active
+    display, so a line interrupt every N lines fires a handful of times inside the
+    picture and then not at all until the next frame. A game's driver therefore
+    rides the frame at 59.92 Hz, like the NES's and for the same kind of reason.
+    The candidate survived for standalone tracks on the grounds that only a game
+    shares its clock with the picture; the standalone cartridge below is what
+    showed that reasoning to be wrong, and it is gone from the binding and from
+    the spec.
     **The Mega Drive is the fifth console, and it is the first 16-bit one.**
     `demake build -c md` produces a real Mega Drive cartridge — 68000 machine code
     written for the game, vector table, header and word checksum, art demade into
@@ -1409,11 +1411,11 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     the Nintendo DS's SPU each have a chip model, a
     binding and a generated driver — 6502, Z80, SPC700, 68000 and ARM twice — and
     `demake build` puts music and
-    effects in the cartridge with doc 16's Level A proof over all of them. What
-    none of them
-    has yet is a *standalone* audio cartridge — `demake gen … --format rom` is
-    still the Game Boy's alone — because a cartridge whose only job is one track is
-    what the next caller needs and not what a game needed. The Super Nintendo is
+    effects in the cartridge with doc 16's Level A proof over all of them. Four of
+    them now also build a *standalone* audio cartridge — `demake gen … --format
+    rom` reaches the Game Boy, the NES, the PC Engine and both Sega 8-bits — and
+    the rest do not, because a cartridge whose only job is one track is what a
+    later caller needed and not what a game did. The Super Nintendo is
     the near miss: `demake arrange -c snes` writes an `.spc`, which is the same
     driver and the same schedules in the format that console's own players read,
     but it is a RAM image rather than a cartridge. The SN76489 is also the

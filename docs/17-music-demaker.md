@@ -351,8 +351,11 @@ approximately wherever the hardware has a usable timer.
 The mechanism: pick rows-per-beat `R` (4, 6, 8, 12 or 24, from the source's
 smallest meaningful subdivision), which fixes the required driver rate at
 `BPM × R / 60` ticks per second, then pick the timer divisor that produces it.
-Most targets can: the Game Boy's timer, the NES's DMC/frame IRQ, the SMS's VDP
-line interrupt, the SPC700's timers, the YM2612's timer A. The residual is
+Most targets can: the Game Boy's timer, the NES's DMC/frame IRQ, the HuC6280's
+timer, the SPC700's timers, the YM2612's timer A. The Sega 8-bits are the ones
+that cannot, and their VDP's line interrupt is why not rather than how — it fires
+only inside the active display (doc 16 §*Which* interrupt), so those two ride the
+frame and take the groove table below. The residual is
 reported in **parts per million**, and it is typically single-digit.
 
 Where the driver must ride vblank, the row length becomes a **groove table** —

@@ -21,6 +21,7 @@
 import { Gameboy } from "@demake/dmg";
 import { Nes } from "@demake/nes";
 import { Pce } from "@demake/pce";
+import { Sms } from "@demake/sms";
 
 import type { ChipScript, TickWrites } from "../src/chipscript.js";
 import { buildAudioRom, type AudioRomOptions } from "../src/rom/index.js";
@@ -68,6 +69,13 @@ export class AudioRomRunner {
       this.machine = machine;
     } else if (built.family === "pce") {
       const machine = new Pce(built.bytes);
+      machine.psgTap = push;
+      this.machine = machine;
+    } else if (built.family === "sms") {
+      // Which *Sega* it comes up as is the cartridge's own region nibble, never
+      // an argument — the same rule `@demake/dmg` follows for its header, so a
+      // Game Gear build is played on a Game Gear because it says it is one.
+      const machine = new Sms(built.bytes);
       machine.psgTap = push;
       this.machine = machine;
     } else {

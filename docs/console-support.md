@@ -29,14 +29,14 @@ columns are [doc 03](03-console-matrix.md); the plan for the empty cells is
 | Sega Mega Drive / Sega Genesis | `md` | `md` | yes | `bin` `asm` `c` | GNU m68k binutils | genesis-plus-gx | `md` | yes | — | 59.92 Hz |
 | Nintendo DS | `nds` | `nds` | yes | `bin` `asm` `c` | GNU ARM binutils | DeSmuME | `gba` | yes | — | 120 Hz |
 | Nintendo Entertainment System / Family Computer | `nes` | `nes` | yes | `bin` `asm` `c` | cc65 | fceumm | `nes` | yes | yes | 60.1 Hz |
-| Sega Master System | `sms` | `sms` | yes | `bin` `asm` `c` | WLA-DX | genesis-plus-gx | `sms` | yes | — | 59.92 Hz |
+| Sega Master System | `sms` | `sms` | yes | `bin` `asm` `c` | WLA-DX | genesis-plus-gx | `sms` | yes | yes | 59.92 Hz |
 | Super Nintendo Entertainment System / Super Famicom | `snes` | `snes` | yes | `bin` `asm` `c` | WLA-DX | snes9x | `snes` | yes | — | 125 Hz |
 
 ## Tier 2
 
 | Console | id | family | art | data | ROM | emulator | game | music/sfx | audio ROM | in-game audio |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Sega Game Gear | `gg` | `sms` | yes | `bin` `asm` `c` | WLA-DX | genesis-plus-gx | `sms` | yes | — | 59.92 Hz |
+| Sega Game Gear | `gg` | `sms` | yes | `bin` `asm` `c` | WLA-DX | genesis-plus-gx | `sms` | yes | yes | 59.92 Hz |
 | Neo Geo | `neogeo` | `neogeo` | yes | `bin` `asm` `c` | — | — | — | — | — | — |
 | Neo Geo Pocket | `ngp` | `ngp` | yes | `bin` `asm` `c` | — | — | — | yes | — | — |
 | Neo Geo Pocket Color | `ngpc` | `ngpc` | yes | `bin` `asm` `c` | — | — | `ngpc` | yes | — | 59.95 Hz |
@@ -60,4 +60,4 @@ columns are [doc 03](03-console-matrix.md); the plan for the empty cells is
 - **21** consoles have a spec, so all 21 do art.
 - **12** build a display ROM; **12** of those are proven pixel-perfect in an emulator.
 - **14** compile a Demotic game.
-- **16** demake music and sound effects; **14** play it from inside a game, and **4** build a cartridge whose only job is one schedule.
+- **16** demake music and sound effects; **14** play it from inside a game, and **6** build a cartridge whose only job is one schedule.

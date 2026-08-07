@@ -7,14 +7,15 @@
  * cartridge that played a different arrangement from the preview would make the
  * schedule oracle report a divergence three layers from its cause.
  *
- * Three families build a *cartridge of their own* today: the Game Boy, the NES
- * and the PC Engine. The rest have drivers but only inside a game, because that
- * is what a game needed and a cartridge whose only job is one track is a
- * different caller. What any of them costs is no longer an estimate: the stream
- * player belongs to the *processor* and already exists for six of them, so what
- * a console adds is a boot sequence, a clock and a cartridge wrapper — which is
- * the whole of the difference between `gb.ts`, `nes.ts` and `pce.ts`, and the
- * last two share their player.
+ * Four families build a *cartridge of their own* today: the Game Boy, the NES,
+ * the PC Engine and the Sega 8-bits. The rest have drivers but only inside a
+ * game, because that is what a game needed and a cartridge whose only job is one
+ * track is a different caller. What any of them costs is no longer an estimate:
+ * the stream player belongs to the *processor* and already exists for six of
+ * them, so what a console adds is a boot sequence, a clock and a cartridge
+ * wrapper — which is the whole of the difference between `gb.ts`, `nes.ts`,
+ * `pce.ts` and `sms.ts`, two of which share a player and one of which covers two
+ * machines.
  */
 
 import { getConsole } from "@demake/core";
@@ -33,8 +34,9 @@ import {
 
 import { buildNesAudioRom } from "./nes.js";
 import { buildPceAudioRom } from "./pce.js";
+import { buildSmsAudioRom } from "./sms.js";
 
-export { AudioRomError, buildGbAudioRom, buildNesAudioRom, buildPceAudioRom };
+export { AudioRomError, buildGbAudioRom, buildNesAudioRom, buildPceAudioRom, buildSmsAudioRom };
 export type { AudioRomOptions, AudioRomStats, BuiltAudioRom };
 export {
   buildWscGameAudio,
@@ -77,16 +79,19 @@ const DRIVERS: Readonly<Record<string, AudioRomFamily>> = {
   gb: "gb",
   nes: "nes",
   pce: "pce",
+  sms: "sms",
+  gg: "sms",
 };
 
 /**
  * The driver families a standalone cartridge can be built with.
  *
- * Three, over two stream players: the NES and the PC Engine share `mos-player.ts`
- * because a HuC6280 *is* a 6502, so what a family is here is a boot sequence, a
- * clock and a cartridge wrapper rather than a driver.
+ * Four, over three stream players: the NES and the PC Engine share
+ * `mos-player.ts` because a HuC6280 *is* a 6502, and the two Sega 8-bits share
+ * `sms-driver.ts` because a Game Gear *is* a Master System — so what a family is
+ * here is a boot sequence, a clock and a cartridge wrapper rather than a driver.
  */
-export type AudioRomFamily = "gb" | "nes" | "pce";
+export type AudioRomFamily = "gb" | "nes" | "pce" | "sms";
 
 /**
  * The clock a *game's* driver rides on each chip that has one.
@@ -276,7 +281,13 @@ function romFamily(consoleId: string): AudioRomFamily | undefined {
 }
 
 /** The file a built cartridge takes, which the console rather than the chip decides. */
-const SUFFIXES: Readonly<Record<string, string>> = { gbc: ".gbc", nes: ".nes", pce: ".pce" };
+const SUFFIXES: Readonly<Record<string, string>> = {
+  gbc: ".gbc",
+  nes: ".nes",
+  pce: ".pce",
+  sms: ".sms",
+  gg: ".gg",
+};
 
 /**
  * Build a cartridge that plays this schedule on its own console.
@@ -305,7 +316,9 @@ export function buildAudioRom(
       ? buildGbAudioRom(script, options)
       : family === "nes"
         ? buildNesAudioRom(script, bindingFor(spec.id).spec.driver.frameRate, options)
-        : buildPceAudioRom(script, options);
+        : family === "sms"
+          ? buildSmsAudioRom(script, options)
+          : buildPceAudioRom(script, options);
   // A Game Boy Color cartridge with no CGB flag is a DMG cartridge, and the APU
   // is the same on both — so the suffix follows the console the user asked for
   // rather than anything in the header.

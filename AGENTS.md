@@ -716,11 +716,15 @@ whose spec names two chips.
 
 `demake gen <schedule> -c dmg --format rom` then turns that schedule into a real
 32 KiB cartridge, with an SM83 driver **generated for it** — no fixed player, no
-checked-in harness, no toolchain — and `-c nes` and `-c pce` do the same on an
-NROM board and a HuCard, which is what turned "what does another console cost"
+checked-in harness, no toolchain — and `-c nes`, `-c pce`, `-c sms` and `-c gg` do
+the same on an NROM board, a HuCard and a flat Sega cartridge, which is what
+turned "what does another console cost"
 into a measurement: the stream player is the _processor's_ and moved not at all
-between those two, so each is a boot sequence, a clock and a cartridge wrapper
-and nothing else. And **doc 16's Level A proof runs in `pnpm test`**: the ROM boots in `@demake/dmg`, whose APU is now `@demake/chip`'s,
+between them, so each is a boot sequence, a clock and a cartridge wrapper
+and nothing else. The last of them reused a player written for a _game_ and
+changed it in one place — an emitter that can lay packed data either side of a
+hole, because this console's cartridge header is sixteen bytes inside its own
+address space. And **doc 16's Level A proof runs in `pnpm test`**: the ROM boots in `@demake/dmg`, whose APU is now `@demake/chip`'s,
 and every register write it makes is diffed against the `ChipScript` tick for
 tick, with no tolerance (`packages/audio/test/rom.test.ts`). That is the audio
 counterpart of the pixel-perfect emulator E2E, and it is sharper, because the
@@ -749,14 +753,18 @@ four pinned byte-identical to the CLI's by
 `packages/web/test/e2e/determinism.spec.ts`.
 
 Still to come for audio: `bin`/`asm`/`c` emit, a _standalone_ audio cartridge for
-the consoles that still have none — the Game Boy, the **NES** and the **PC
-Engine** build one today, and the Sega 8-bits, the Mega Drive, the WonderSwans,
+the consoles that still have none — the Game Boy, the **NES**, the **PC Engine**
+and both **Sega 8-bits** build one today, and the Mega Drive, the WonderSwans,
 the Neo Geo Pocket Color and both ARM handhelds have drivers only inside a game,
 while the Super Nintendo's writes an `.spc` rather than a cartridge. What each of
 them costs is no longer an estimate but a measurement: the stream player belongs
 to the _processor_ and is already written, so a console adds a boot sequence, a
 clock and a cartridge wrapper and nothing else — which is why the third of them
-reused the second's player unchanged. Also: driver backends for the remaining
+reused the second's player unchanged and the fourth reused a _game's_. What the
+fourth also did was find the bill for a clock nobody had ever had to keep: the
+Sega binding would fit a rate to the VDP's line interrupt, and that interrupt
+fires only inside the active display, so the first cartridge to ride one would
+have played at half the rate it declared (§The Z80 half). Also: driver backends for the remaining
 consoles (each needs a CPU encoder or a checked-in driver source, plus a core to
 prove it in), Level B sample comparison, the remaining chips (the rest of the
 handhelds), a _demaker_ for the two sample players the chip layer now has and
@@ -1125,7 +1133,17 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
                      format's run count holds, so on this console the strip is
                      what makes a schedule packable rather than merely what stops
                      an effect powering the chip up again;
-                     Z80: sms-driver.ts and sms-game.ts; 68000:
+                     Z80: sms-driver.ts with two callers, a game (sms-game.ts)
+                     and the fourth standalone cartridge (sms.ts) — which is one
+                     file for *two* machines, because a Game Gear is a Master
+                     System whose stereo latch is a write like any other, and the
+                     only one whose data has a *hole* in it: this console's
+                     header is sixteen bytes inside the address space, so the
+                     larger board lays its blocks either side of $7FF0 and
+                     `DataHole` is where that is decided (padding the whole data
+                     section past it, which is what the game backend does because
+                     there the code fills that region, would make the larger
+                     board unreachable); 68000:
                      md-driver.ts and md-game.ts; SPC700: spc-driver.ts and
                      spc-game.ts, and it is one of the two that do not run on the
                      console's own processor — what it builds is a block to
@@ -2233,12 +2251,15 @@ is the game.
   property that makes that safe — every run opens with a latch byte — is checked
   by `checkLatchDiscipline` rather than assumed. Get it wrong and the symptom is a
   note on the wrong voice several ticks later.
-- **The frame is the driver's clock, and the line interrupt is not.** This VDP
-  reloads its line counter on every scanline outside the active display, so an
-  interrupt programmed for every N lines fires a handful of times inside the
-  picture and then not at all until the next frame. `psgBinding.fitRate` will
-  still offer those rates to a _standalone_ track; a game asks `gameDriverRate`
-  and gets 59.92 Hz.
+- **The frame is the driver's clock, and the line interrupt is not — on either
+  kind of cartridge.** This VDP reloads its line counter on every scanline
+  outside the active display, so an interrupt programmed for every 65 lines
+  fires twice inside the picture and then not at all for seventy lines: two
+  ticks a frame, in a burst, out of the four the rate claims. `psgBinding.fitRate`
+  used to offer those rates to a _standalone_ track on the grounds that only a
+  game shares its clock with the picture, which is the wrong reason — the reload
+  is the hardware's and does not care who is asking. It offers the frame and
+  nothing else now, and the spec's `driver.sources` says so.
 - **A Master System has no register two streams share.** Four attenuation latches,
   four channels, nothing carrying more than one of them — so no merge routine is
   emitted at all. The Game Gear's stereo latch is `NR51`'s exact shape and brings
@@ -2850,8 +2871,11 @@ that keep them from being undone. All of them come from doc 16.
   would tick twice at the top of a frame and then not at all for sixteen
   milliseconds, which is a schedule performed correctly and heard wrongly. And
   never trust a clock a `fitRate` will _offer_ without asking what the hardware
-  does with it: the Sega VDP's line interrupt fits beautifully and fires only
-  inside the active display.
+  does with it: the Sega VDP's line interrupt fit beautifully, fired only inside
+  the active display, and was performed at half the rate it declared — which
+  nothing noticed for as long as nothing consumed it, because a game asks
+  `gameDriverRate` and the first standalone Sega cartridge did not exist. Both
+  the candidate and the spec entry behind it are gone.
 - **A frame-clocked console counts frames rather than riding them.** The handler
   increments a byte (capped, so a stalled tab does not come back owing hundreds of
   ticks) and the main loop performs what it says. Doing the tick inside the
@@ -3334,10 +3358,20 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   this file can only be the first.
 - The audio ROM conformance suite (`packages/audio/test/rom.test.ts`) is its
   counterpart for sound, and doc 16 §The proof's Level A: it builds a cartridge
-  from an arranged track and from a demade effect, boots each in `@demake/dmg`,
-  and diffs the register writes the APU receives against the `ChipScript`, tick
-  for tick. Ticks are attributed by watching the driver's `Tick` symbol, so
+  from an arranged track and from a demade effect, boots each in the console's
+  own core, and diffs the register writes the chip receives against the
+  `ChipScript`, tick for tick, on every console `audioRomConsoles()` names. Ticks
+  are attributed by watching the driver's `Tick` symbol, so
   nothing is added to the ROM to make it observable. Also toolchain-free.
+  **The Sega block is where a wrong _tempo_ is caught**, which is the one thing a
+  register diff cannot see: a handler that did not read the VDP's status byte
+  would leave the interrupt pending, re-enter the moment `ei` ran, and perform
+  the whole schedule in a few frames — every write correct, in order, and at ten
+  thousand times the speed. So that case measures the CPU cycles between two
+  `Tick` arrivals and asserts a frame. Its other case is the one that made the
+  larger board reachable: 32 KiB is this cartridge's floor and 48 its ceiling,
+  and between them is a sixteen-byte header _inside_ the address space, so the
+  test checks that no packed block overlaps it.
 - The game-audio conformance suite (`packages/demotic/test/_audio-battery.ts`, run
   from `audio-<id>.test.ts`) is
   doc 16's Level A for a cartridge that is also playing a game, **on every console

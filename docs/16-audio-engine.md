@@ -50,9 +50,9 @@ The web app's audio sections are live over the same engine, the browser's `.vgm`
 sidecar, WAV and cartridge are byte-identical to the CLI's (doc 07 §The audio
 sections), and the ROM pane plays whichever chip the running cartridge has. What
 is not built: the remaining chips (the handhelds), a *standalone* audio cartridge
-for the consoles that still have none (the Game Boy, the **NES** and the **PC
-Engine** build one; every other console with a driver plays it only from inside a
-game, and
+for the consoles that still have none (the Game Boy, the **NES**, the **PC
+Engine** and both **Sega 8-bits** build one; every other console with a driver
+plays it only from inside a game, and
 [`console-support.md`](console-support.md)'s **audio ROM** column is where that
 is stated rather than here), driver backends for the remaining consoles,
 `bin`/`asm`/`c` emit, Level B sample comparison, and the lossy encoders.
@@ -666,15 +666,26 @@ correctly and heard wrongly. `gameDriverRate` is where that is decided, in the
 package that owns the drivers, because it is a fact about the code that has to
 keep the rate rather than about the game asking for one.
 
-The Sega 8-bits reach the same answer by a different route, and it is worth
-recording because their spec says otherwise. `AudioSpec` lists `line-irq` among
-their clock sources and `psgBinding.fitRate` will happily return a rate a long way
-above the frame — but the VDP's line counter is **reloaded on every scanline
-outside the active display**, so an interrupt programmed for every N lines fires a
-handful of times inside the picture and then not at all until the next frame.
-That is a usable raster effect and not a tempo. A game's driver therefore rides
-the frame at 59.92 Hz, and `fitRate` treats the frame as the candidate every other
-clock has to beat rather than as a fallback for when none is in range.
+The Sega 8-bits reach the same answer by a different route, and theirs is the one
+worth recording, because for a long time the spec said otherwise. These consoles
+have a second interrupt and it looks like a timer: the VDP's line counter fires
+every (N+1) scanlines, which offers a far finer set of rates than the frame does.
+It is not a clock. The counter is **reloaded on every scanline outside the active
+display**, so an interrupt programmed for every 65 lines fires twice inside the
+picture and then not at all for seventy lines — two ticks a frame, in a burst, out
+of the four the rate claims. A schedule fitted to 241.53 Hz is performed at
+119.85: half speed, lurching once a frame, against a tempo requirement that says
+timing error must not accumulate.
+
+`AudioSpec` listed `line-irq` among their clock sources and `psgBinding.fitRate`
+would return one of those rates for any request above the frame. Nothing consumed
+it — a game asks `gameDriverRate` and gets the frame — so the promise went unpaid
+for as long as there was nobody to pay it, and the first standalone Sega cartridge
+(`rom/sms.ts`) is what asked. Both are gone now. Listing a clock there is not
+describing hardware the machine has; it is describing one it does not, and the
+distinction matters precisely because the iron rule runs the other way — a demaker
+spends the whole machine, so a spec that overstates one is the one kind of
+narrowing that is a bug rather than a gap.
 
 The frame is also *counted* rather than ridden directly, on both frame-clocked
 machines: the handler increments a byte and the main loop performs whatever it

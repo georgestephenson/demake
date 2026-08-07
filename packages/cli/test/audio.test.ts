@@ -387,16 +387,36 @@ describe("demake gen — a chip schedule into a cartridge", () => {
     expect(report.stats.helpers).toContain("boot-table");
   });
 
-  it("names the console that has no driver backend yet, rather than emitting silence", async () => {
-    // A Master System is the case worth naming: its cartridges play music inside
-    // a *game* and there is no standalone player for a Z80, so a builder that
-    // fell back to silence would make the two look like the same support.
+  it("builds a bootable Sega cartridge from the schedule", async () => {
     const env = makeEnv({ "band.mid": bandMidi(140, 1) });
-    await arranged(env, "sms");
+    await arranged(env, "gg");
     const code = await run(
-      ["gen", "song.json", "-c", "sms", "--format", "rom", "-o", "x.sms"],
+      ["gen", "song.json", "-c", "gg", "--format", "rom", "-o", "song.gg", "--json"],
       env,
     );
+    expect(code).toBe(0);
+    const rom = env.written["song.gg"]!;
+    expect(rom).toBeDefined();
+    // The header is sixteen bytes *inside* the image rather than a wrapper round
+    // it, so a builder that appended it would produce a file no console maps.
+    expect(String.fromCharCode(...rom.subarray(0x7ff0, 0x7ff8))).toBe("TMR SEGA");
+    const report = JSON.parse(env.stdout) as {
+      console: string;
+      stats: { ticks: number; helpers: string[]; ratePpmError: number };
+    };
+    expect(report.console).toBe("gg");
+    expect(report.stats.ticks).toBeGreaterThan(0);
+    expect(report.stats.ratePpmError).toBe(0);
+    expect(report.stats.helpers).toContain("vblank-clock");
+  });
+
+  it("names the console that has no driver backend yet, rather than emitting silence", async () => {
+    // A Mega Drive is the case worth naming: its cartridges play music inside a
+    // *game* and there is no standalone player for a 68000, so a builder that
+    // fell back to silence would make the two look like the same support.
+    const env = makeEnv({ "band.mid": bandMidi(140, 1) });
+    await arranged(env, "md");
+    const code = await run(["gen", "song.json", "-c", "md", "--format", "rom", "-o", "x.md"], env);
     expect(code).not.toBe(0);
     expect(env.stderr).toMatch(/no standalone audio driver backend/);
   });
