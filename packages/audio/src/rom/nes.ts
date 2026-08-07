@@ -212,6 +212,9 @@ export function buildNesAudioRom(
     // no short one and the header's count is what a reader believes.
     bytes: packInesRom(prg, new Uint8Array(NES_CHR_SIZE), { mirroring: "vertical" }),
     symbols: built.asm.symbols(),
+    // Nothing is stripped here either: this chip's initialisation is a handful
+    // of writes and the schedule's own first tick performs them.
+    performed: script,
     stats: {
       code: built.dataStart - nesPrgOrigin(size),
       data: built.code.length - (built.dataStart - nesPrgOrigin(size)),

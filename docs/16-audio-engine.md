@@ -50,8 +50,9 @@ The web app's audio sections are live over the same engine, the browser's `.vgm`
 sidecar, WAV and cartridge are byte-identical to the CLI's (doc 07 §The audio
 sections), and the ROM pane plays whichever chip the running cartridge has. What
 is not built: the remaining chips (the handhelds), a *standalone* audio cartridge
-for the consoles that still have none (the Game Boy and the **NES** build one;
-every other console with a driver plays it only from inside a game, and
+for the consoles that still have none (the Game Boy, the **NES** and the **PC
+Engine** build one; every other console with a driver plays it only from inside a
+game, and
 [`console-support.md`](console-support.md)'s **audio ROM** column is where that
 is stated rather than here), driver backends for the remaining consoles,
 `bin`/`asm`/`c` emit, Level B sample comparison, and the lossy encoders.

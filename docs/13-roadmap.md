@@ -1333,7 +1333,7 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     than compounding. Outstanding: tracker ingest, `bin`/`asm`/`c` emit, driver
     backends beyond the Game Boy, and the listening sheets the judge weights get
     frozen against.
-  - **A2.5 — the driver and the proof** *(done for the `gb` family and the NES)*: `demake gen
+  - **A2.5 — the driver and the proof** *(done for the `gb` family, the NES and the PC Engine)*: `demake gen
     <schedule> --format rom` generates an SM83 driver *for this schedule* — rests
     pulled only if it rests, an order walk only if it has one, a stop path only
     for a one-shot — packs the schedule into deduplicated blocks behind an order
@@ -1364,6 +1364,27 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     same `it.each(audioRomConsoles())` battery, plus a one-shot per console,
     because where a stream *ends* is the order walk's business and that walk is
     the processor's rather than the machine's.
+
+    **The PC Engine is the third, and it is the measurement rather than the
+    claim.** Its player is the NES's — literally the same file, because a
+    HuC6280 *is* a 6502 — so `rom/pce.ts` is the same three things with different
+    answers: a **timer** rather than the frame, a register base at `$0800` in the
+    hardware page the boot code maps, and a program that **is not where it was
+    assembled**, since reset maps only bank 0 at `$E000` and the boot stub is
+    emitted last and swapped into it.
+
+    It also added the one thing neither predecessor needs. This chip's wave RAM
+    is reachable only through the register port, so five waveforms is a hundred
+    and sixty writes and tick 0 arrives with more writes in it than the packed
+    format's run count can hold — the **boot strip** is what makes the schedule
+    packable here, rather than merely what stops an effect powering the chip up
+    again. `BuiltAudioRom` therefore carries a `performed` schedule, the same
+    field and the same reason every game driver in that directory has one, and
+    the proof diffs against *that*: what the driver promises, not what the caller
+    handed it. A second assertion covers the half no tick diff can see — that the
+    waveforms reached the chip before the clock started, because a cartridge that
+    skipped the table would be exact in a register diff and silent on the
+    machine.
 
     What each remaining console costs is now the same three things over one
     shared walk. Level B (sample comparison against a third-party core, via the

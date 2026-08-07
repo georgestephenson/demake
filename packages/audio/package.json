@@ -30,6 +30,7 @@
     "@demake/dmg": "workspace:*",
     "@demake/gba": "workspace:*",
     "@demake/nes": "workspace:*",
+    "@demake/pce": "workspace:*",
     "@demake/snes": "workspace:*"
   }
 }

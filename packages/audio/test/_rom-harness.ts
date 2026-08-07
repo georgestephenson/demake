@@ -20,6 +20,7 @@
 
 import { Gameboy } from "@demake/dmg";
 import { Nes } from "@demake/nes";
+import { Pce } from "@demake/pce";
 
 import type { ChipScript, TickWrites } from "../src/chipscript.js";
 import { buildAudioRom, type AudioRomOptions } from "../src/rom/index.js";
@@ -34,12 +35,23 @@ interface TappedMachine {
 export class AudioRomRunner {
   readonly machine: TappedMachine;
   readonly rom: Uint8Array;
+  /**
+   * The schedule this ROM promises, which is what a capture must be diffed
+   * against.
+   *
+   * Not always the one that went in: a console whose chip is initialised from a
+   * table at boot performs those writes before the first tick, so its tick 0 is
+   * shorter than the demaker's. Comparing against the input there would be
+   * asking the driver for writes it correctly made somewhere else.
+   */
+  readonly performed: ChipScript;
   private readonly tickAddress: number;
   private current: { reg: number; value: number }[] | undefined;
 
   constructor(script: ChipScript, options: AudioRomOptions = {}) {
     const built = buildAudioRom(script, options);
     this.rom = built.bytes;
+    this.performed = built.performed;
     const tick = built.symbols.get("Tick");
     if (tick === undefined) throw new Error("the driver defined no Tick symbol");
     this.tickAddress = tick;
@@ -54,11 +66,36 @@ export class AudioRomRunner {
       const machine = new Nes(built.bytes);
       machine.apuTap = push;
       this.machine = machine;
+    } else if (built.family === "pce") {
+      const machine = new Pce(built.bytes);
+      machine.psgTap = push;
+      this.machine = machine;
     } else {
       const machine = new Gameboy(built.bytes);
       machine.apuTap = push;
       this.machine = machine;
     }
+  }
+
+  /**
+   * Every write the ROM makes before its first tick.
+   *
+   * The boot half, which no capture of ticks can see: a console that uploads
+   * waveforms at boot and then skipped the upload would play the right notes
+   * through empty wavetables, which is a cartridge that is perfect in a register
+   * diff and silent on the machine.
+   */
+  captureBoot(): { reg: number; value: number }[] {
+    const writes: { reg: number; value: number }[] = [];
+    this.current = writes;
+    let guard = 0;
+    while (this.machine.cpu.pc !== this.tickAddress) {
+      this.machine.stepInstruction();
+      guard += 1;
+      if (guard > 10_000_000) throw new Error("audio rom: the driver never reached its first tick");
+    }
+    this.current = undefined;
+    return writes;
   }
 
   /**
@@ -92,6 +129,22 @@ export function captureRomWrites(
   options: AudioRomOptions = {},
 ): TickWrites[] {
   return new AudioRomRunner(script, options).capture(count);
+}
+
+/**
+ * A schedule and the writes its own ROM made, ready to be diffed.
+ *
+ * One call rather than two, because the two have to come from the same build:
+ * asking for the ticks and the capture separately is how a console that strips
+ * a boot prefix comes to be compared against the schedule it was handed.
+ */
+export function captureAgainstRom(
+  script: ChipScript,
+  count: number,
+  options: AudioRomOptions = {},
+): { expected: readonly TickWrites[]; actual: readonly TickWrites[] } {
+  const runner = new AudioRomRunner(script, options);
+  return { expected: runner.performed.ticks.slice(0, count), actual: runner.capture(count) };
 }
 
 /**

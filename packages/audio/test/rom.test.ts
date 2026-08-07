@@ -23,16 +23,24 @@ import {
   NES_CHR_SIZE,
   NES_HEADER_SIZE,
   NES_PRG_SIZES,
+  PCE_BANK_SIZE,
+  PCE_ROM_SIZES,
 } from "@demake/core";
 
 import { arrangeScore } from "../src/arrange/index.js";
+import { bindingFor } from "../src/binding/registry.js";
 import type { ChipScript } from "../src/chipscript.js";
 import { parseMidi } from "../src/score/midi.js";
 import { demakeSfx } from "../src/sfx/index.js";
 import { encodeWav } from "../src/encode/wav.js";
 import { audioRomConsoles, buildAudioRom, packScript } from "../src/rom/index.js";
 import { bandFixture, scaleFixture } from "./_fixtures.js";
-import { AudioRomRunner, captureRomWrites, firstDivergence } from "./_rom-harness.js";
+import {
+  AudioRomRunner,
+  captureAgainstRom,
+  captureRomWrites,
+  firstDivergence,
+} from "./_rom-harness.js";
 
 /**
  * Ticks each case is proven over.
@@ -143,12 +151,55 @@ describe("nes audio cartridge", () => {
   });
 });
 
+describe("pce audio cartridge", () => {
+  const built = () => buildAudioRom(trackFor("pce"));
+
+  it("is a HuCard whose boot bank is the one reset maps", () => {
+    const { bytes, family, suffix } = built();
+    expect(family).toBe("pce");
+    expect(suffix).toBe(".pce");
+    expect(PCE_ROM_SIZES).toContain(bytes.length);
+    // Reset takes its address from the last two bytes of bank 0, and the boot
+    // stub is assembled at `$E000` — so a build that wrote the window's halves
+    // in the obvious order would point this into the packed schedule.
+    const reset =
+      (bytes[PCE_BANK_SIZE - 2] as number) | ((bytes[PCE_BANK_SIZE - 1] as number) << 8);
+    expect(reset).toBe(0xe000 + 0); // the first instruction of the boot stub
+  });
+
+  it("uploads the waveforms before the clock starts", () => {
+    // The failure this exists to catch is a cartridge that is perfect in a
+    // register diff and silent on the machine: this chip's wave RAM is only
+    // reachable through the register port, so a build that skipped the boot
+    // table would play every note through an empty wavetable.
+    const script = trackFor("pce");
+    const boot = new AudioRomRunner(script).captureBoot();
+    expect(boot).toEqual(
+      bindingFor("pce")
+        .init()
+        .map((write) => ({ reg: write.reg, value: write.value })),
+    );
+    // And the schedule the ROM promises is the one with those writes taken off.
+    expect(script.ticks[0]!.writes.length).toBeGreaterThan(boot.length);
+  });
+
+  it("refuses a schedule whose clock is not the timer", () => {
+    const script = trackFor("pce");
+    const framed = { ...script, driver: { ...script.driver, source: "vblank" as const } };
+    expect(() => buildAudioRom(framed)).toThrow(/has no 'vblank' clock/);
+  });
+});
+
 describe("Level A — the ROM writes exactly the schedule", async () => {
   it.each(audioRomConsoles())("plays an arranged track tick for tick on %s", (consoleId) => {
     const script = trackFor(consoleId);
     const wanted = Math.min(TICKS, script.ticks.length);
-    const actual = captureRomWrites(script, wanted);
-    expect(firstDivergence(script.ticks.slice(0, wanted), actual)).toBeNull();
+    // Against what the ROM *promises* rather than what it was handed, which is
+    // the same distinction every game driver's `performed` makes: a console that
+    // uploads its waveforms at boot has a shorter tick 0 than the demaker gave
+    // it, and the writes are not missing — they happened before the clock did.
+    const { expected, actual } = captureAgainstRom(script, wanted);
+    expect(firstDivergence(expected, actual)).toBeNull();
   });
 
   it("plays a monophonic track tick for tick", () => {
@@ -159,24 +210,24 @@ describe("Level A — the ROM writes exactly the schedule", async () => {
     ).toBeNull();
   });
 
-  it("plays a demade sound effect tick for tick on the NES too", async () => {
-    // The other half of the driver: a one-shot has to end in silence rather than
-    // repeat, and a suite that ran only tracks would pass with the stop path
-    // broken. Worth having per console rather than once, because where a stream
-    // *ends* is the order walk's business and that walk is the processor's.
-    const script = (await demakeSfx(blipWav(), { console: "nes" })).script;
-    expect(script.loopTick).toBe(-1);
-    const captured = captureRomWrites(script, script.ticks.length + 20);
-    expect(firstDivergence(script.ticks, captured.slice(0, script.ticks.length))).toBeNull();
-    expect(captured.slice(script.ticks.length + 1).flatMap((tick) => tick.writes)).toEqual([]);
-  });
-
-  it("plays a demade sound effect tick for tick", async () => {
-    const script = (await demakeSfx(blipWav(), { console: "dmg" })).script;
-    expect(script.loopTick).toBe(-1);
-    const actual = captureRomWrites(script, script.ticks.length);
-    expect(firstDivergence(script.ticks, actual)).toBeNull();
-  });
+  it.each(audioRomConsoles())(
+    "plays a demade sound effect tick for tick on %s, and then stops",
+    async (consoleId) => {
+      // The other half of the driver, and worth having per console rather than
+      // once: a one-shot has to end in silence rather than repeat, and where a
+      // stream *ends* is the order walk's business — which is the processor's,
+      // so two consoles sharing a player still have their own boot and clock in
+      // front of it. A suite that ran only tracks would pass with the stop path
+      // broken on any of them.
+      const script = (await demakeSfx(blipWav(), { console: consoleId })).script;
+      expect(script.loopTick).toBe(-1);
+      const runner = new AudioRomRunner(script);
+      const captured = runner.capture(runner.performed.ticks.length + 20);
+      const total = runner.performed.ticks.length;
+      expect(firstDivergence(runner.performed.ticks, captured.slice(0, total))).toBeNull();
+      expect(captured.slice(total + 1).flatMap((tick) => tick.writes)).toEqual([]);
+    },
+  );
 
   it("returns to the loop point instead of running off the end", () => {
     const script = arrangeScore(parseMidi(scaleFixture()), { console: "dmg" }).script;

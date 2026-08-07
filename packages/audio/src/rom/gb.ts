@@ -71,6 +71,18 @@ export interface BuiltAudioRom {
   bytes: Uint8Array;
   /** Every label the driver defined — the map the conformance harness reads. */
   symbols: ReadonlyMap<string, number>;
+  /**
+   * The schedule as the ROM will really perform it (doc 16 §The proof).
+   *
+   * The same object that went in on most consoles, and *not* the same one on any
+   * console whose chip is initialised from a table at boot: those writes are
+   * performed once rather than at the head of the stream, so tick 0 is shorter
+   * than the one the demaker produced. Stating it is what keeps the proof a
+   * comparison against what the driver promises rather than against what the
+   * caller happened to hand it — the same field, and the same reason, every
+   * game driver in this directory carries.
+   */
+  performed: ChipScript;
   stats: AudioRomStats;
 }
 
@@ -228,6 +240,9 @@ export function buildGbAudioRom(script: ChipScript, options: AudioRomOptions = {
   return {
     bytes: rom,
     symbols: asm.symbols(),
+    // Nothing is stripped on this console: the schedule's own first tick is the
+    // chip's power-up, and the driver performs it as an ordinary tick.
+    performed: script,
     stats: {
       code: dataStart,
       data: code.length - dataStart,

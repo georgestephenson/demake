@@ -366,6 +366,27 @@ describe("demake gen — a chip schedule into a cartridge", () => {
     expect(report.stats.helpers).toContain("tick");
   });
 
+  it("builds a bootable HuCard from the schedule", async () => {
+    const env = makeEnv({ "band.mid": bandMidi(140, 1) });
+    await arranged(env, "pce");
+    const code = await run(
+      ["gen", "song.json", "-c", "pce", "--format", "rom", "-o", "song.pce", "--json"],
+      env,
+    );
+    expect(code).toBe(0);
+    const rom = env.written["song.pce"]!;
+    expect(rom).toBeDefined();
+    const report = JSON.parse(env.stdout) as {
+      console: string;
+      stats: { ticks: number; helpers: string[]; ratePpmError: number };
+    };
+    expect(report.console).toBe("pce");
+    expect(report.stats.ticks).toBeGreaterThan(0);
+    // This console's chip is initialised from a table at boot, which is the one
+    // helper neither Game Boy nor NES cartridge pulls in.
+    expect(report.stats.helpers).toContain("boot-table");
+  });
+
   it("names the console that has no driver backend yet, rather than emitting silence", async () => {
     // A Master System is the case worth naming: its cartridges play music inside
     // a *game* and there is no standalone player for a Z80, so a builder that
