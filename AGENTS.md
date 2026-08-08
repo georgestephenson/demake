@@ -16,8 +16,8 @@ real emulator, compared pixel for pixel):
 | --------------------- | ------ | ----------------------------------------------------------------------------- |
 | art (images)          | 03–06  | working, ten consoles proven on hardware                                      |
 | game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on fifteen consoles |
-| music (`arrange`)     | 16, 17 | MIDI → chip music, fourteen consoles — and a Game Boy ROM that plays it       |
-| sound (`sfx`)         | 16, 18 | WAV → chip effects, fourteen consoles — same ROM, same proof                  |
+| music (`arrange`)     | 16, 17 | MIDI → chip music, seventeen consoles — and a Game Boy ROM that plays it      |
+| sound (`sfx`)         | 16, 18 | WAV → chip effects, seventeen consoles — same ROM, same proof                 |
 
 The four are not four tools that share a repo any more: a `.dmt` says
 `music theme.mid` and `sound bounce.wav on ball hits paddle`, and `demake build`
@@ -690,6 +690,57 @@ machine is on that list too, because it has the same sound hardware and a
 demaker is per-domain — so `arrange -c ngp` works on a console `build -c ngp`
 cannot target.
 
+**And it demakes music and sound for the Neo Geo, which is fourteen voices on one
+die.** `@demake/chip` models the whole YM2610 — four four-operator FM channels,
+three squares with a shared noise generator, six fixed-rate ADPCM sample channels
+and one variable-rate one — and `binding/neogeo.ts` drives all of it, so
+`arrange -c neogeo`, `sfx` and `render` produce a `.vgm` carrying the chip's own
+commands _and_ both of its sample ROMs as data blocks. Four things about it are
+worth knowing and none is a predecessor restated.
+
+**The FM section is a YM2612, and that is the hardware rather than a shortcut.**
+The register map says so out loud: `$30`–`$B6` is addressed at per-channel offsets
+**1 and 2** on each port with offset 0 absent, and `$28` names the four channels
+`001`, `010`, `101`, `110` — a six-channel part with 1 and 4 removed. The sample
+rate agrees, 8 MHz over 144. So `Ym2612` _is_ that section and `FM_SLOT` is
+`[1, 2, 4, 5]`, which is the check rather than the convention: running those four
+through the shared key-on encoding reproduces the documented codes exactly. What
+`ym2610.ts` owes is **refusing** what the OPNB does not have — the LFO, the DAC and
+both missing channels — because a model that plays six voices on four-voice
+hardware sounds right here and silent on the board.
+
+**The percussion is a recording, and it is the first in the matrix that is.**
+Six voices playing 4-bit ADPCM at a fixed 18518.5 Hz, so `binding/neogeo-bank.ts`
+is the fourth kind of bank in the set and the first that is _two_ ROMs in two
+codecs — drums for A, single-cycle waveforms for the one sample voice that has a
+pitch. Both encoders run the decoders' own arithmetic, because the two codecs are
+not one: **A wraps a twelve-bit accumulator** (so an overdriven drum folds rather
+than flattening) and **B clamps a sixteen-bit one** with a step that scales by a
+multiplier. A shared decoder would be wrong in both directions at once.
+
+**There is no shared register, for two reasons at once.** The SSG mixer at `$07` is
+the one byte three channels share and it is written _once_ at boot — tone on, noise
+off — because a note here is silenced by its own level; and the ADPCM key-on byte
+is a **pulse**, acting on the voices its mask names and leaving the rest alone,
+which is the Super Nintendo's `KON` on completely different hardware. Six consoles
+now emit no merge routine and this is the first whose reason is two.
+
+**The clock is a timer and only a timer**, because this is the only console in the
+matrix whose sound processor cannot see the picture: the Z80 takes an IRQ from the
+chip's own timers and an NMI when the 68000 sends it a byte, and the vertical blank
+reaches the 68000 alone. So `fitRate` has no frame candidate to beat — the only one
+in the set that does not — and timer A puts 120 Hz on count 463, which is 119.99 Hz.
+
+Two things it does not reach and both are recorded (doc 13 §A5.5). The SSG's
+**noise** is refused on purpose: with six sample voices playing real drums, putting
+a hi-hat on a shift register is spending the machine downwards. And **five of the
+six drum voices sit idle**, which is an _arranger_ gap rather than a binding one —
+`plan.ts` gives one part one channel and a General MIDI drum track is one part, a
+question no console before this one could raise.
+
+What this console still has no in-game driver for is the Z80 (§How to add a
+console — the answer is per step, not per console).
+
 Still to come: the remaining Tier 2/3 consoles (each =
 a codegen backend, a ROM harness + toolchain, and a libretro core + DAC
 calibration), the remaining framebuffer/scanline layout paths (Lynx, GBA/NDS
@@ -700,11 +751,11 @@ work doc 14 §Runtime model names).
 [16](docs/16-audio-engine.md), [17](docs/17-music-demaker.md),
 [18](docs/18-sound-demaker.md)): `@demake/chip` models the Game Boy APU, the
 SN76489, the NES 2A03, the YM2612, the Super Nintendo's S-DSP, the Nintendo DS's
-SPU, the HuC6280's wavetable PSG, the WonderSwan's and the Neo Geo Pocket's
-T6W28; `@demake/audio`
+SPU, the HuC6280's wavetable PSG, the WonderSwan's, the Neo Geo Pocket's
+T6W28 and the Neo Geo's whole YM2610; `@demake/audio`
 holds both demakers; and `demake arrange`, `demake sfx` and `demake render` work
 for `dmg`, `gbc`, `megaduck`, `nes`, `sms`, `gg`, `sg1000`, `snes`, `md`, `gba`,
-`nds`, `pce`, both WonderSwans and both Neo Geo Pockets — the mono machine included, because it has the
+`nds`, `pce`, `neogeo`, both WonderSwans and both Neo Geo Pockets — the mono machine included, because it has the
 same sound hardware and a demaker is per-domain, so `arrange -c ws` works on a
 console `build -c ws` cannot target. A
 track becomes a `.vgm` plus a WAV that is exactly what the schedule produces — or,
@@ -1110,6 +1161,20 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
 packages/chip/       @demake/chip — every sound chip as a register-driven model (doc 16)
   src/gb-apu.ts      Game Boy APU: 2 pulse + wave + noise, envelopes, panning
   src/sn76489.ts     the SMS/GG/SG-1000/MD PSG: no envelopes, ~109 Hz pitch floor
+  src/ym2610.ts      the Neo Geo's whole sound system: four four-operator FM
+                     channels, three squares, six fixed-rate ADPCM sample voices
+                     and one variable-rate one. Its FM section *is* ym2612.ts —
+                     OPNB and OPN2 are one core, and the register map says so:
+                     offsets 1 and 2 with 0 absent, and key-on codes 001, 010,
+                     101, 110. So what this file owes is refusing what the OPNB
+                     lacks. Its two ADPCM codecs are not one — A wraps a
+                     twelve-bit accumulator and B clamps a sixteen-bit one — and
+                     its run loop steps to the nearest event over all four
+                     sections, which is why Ym2612 and Ym2610Ssg each say when
+                     they will next move
+  src/ym2610-ssg.ts  that chip's tone generator, a file of its own because it is
+                     a separate generator: its own divider, its own register file
+                     at $00-$0D and none of the FM core's arithmetic
   src/t6w28.ts       the Neo Geo Pocket's: that chip's four voices with *two*
                      four-bit attenuators each, one a side — the only stereo in
                      the set that is a level rather than a switch, and the reason
@@ -1179,7 +1244,13 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
                      is where a timbre is *searched* rather than selected;
                      t6w28.ts is the one whose `BoundWrite.reg` is a *port*
                      rather than a register number, because that chip has two of
-                     them and they carry different things
+                     them and they carry different things; neogeo.ts is four
+                     encoders under one `encode` and the second FM console, so
+                     the FM half is fm-patch.ts's called rather than restated and
+                     what it supplies is a channel map and a clock. fm-patch.ts
+                     is where the *shared* FM encoding lives — the patch and
+                     pitch writes, the F-number at a given sample rate, and total
+                     level — because two consoles run that core
   src/timing.ts      absolute row placement: the tempo guarantee lives here
   src/sfx/           gesture families, class gate, hardware-in-the-loop fitting
   src/rom/           the console hand-off: schedule packing (data.ts, shared) +
@@ -1250,6 +1321,14 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
   src/binding/gba-bank.ts  the Game Boy Advance mixer's, and nothing like it:
                      signed 8-bit PCM read straight out of cartridge ROM, so the
                      driver lays these same bytes down rather than uploading them
+  src/binding/neogeo-bank.ts  the Neo Geo's, and the fourth kind again — *two*
+                     ROMs in two codecs, because that chip's two sample sections
+                     do not share a decoder. Drums for ADPCM-A (which has no
+                     pitch, so a recording is the only thing it can usefully be)
+                     and single-cycle waveforms for ADPCM-B (whose rate is a
+                     phase increment). Both encoders run the decoders' own
+                     arithmetic, which is the only way a search over sixteen
+                     codes lands on what was intended
   src/binding/wsc-bank.ts  the WonderSwan's, and the third kind again: this
                      chip reads sixty-four bytes of the console's *own RAM*, so
                      what this produces is a page of bytes the driver copies —
