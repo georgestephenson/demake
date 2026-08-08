@@ -39,6 +39,7 @@
  * half-step, which is a fact about the whole palette rather than about any
  * colour in it, and `@demake/neogeo` records why it is left unmodelled.
  */
+import { neogeoAudio } from "./audio-specs.js";
 import type { ConsoleSpec } from "./types.js";
 export const neogeo = {
   id: "neogeo",
@@ -60,6 +61,7 @@ export const neogeo = {
     flip: true,
   },
   codegen: { family: "neogeo", formats: ["bin", "asm", "c"] },
+  audio: neogeoAudio,
   docs: {
     sources: [
       "Neo Geo Development Wiki — Sprites: https://wiki.neogeodev.org/index.php?title=Sprites",
