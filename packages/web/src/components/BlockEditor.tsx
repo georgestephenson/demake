@@ -872,22 +872,27 @@ function StatementRow({
         if (part.kind === "glue") return <Glue key={index} text={part.text} />;
         if (part.kind === "add") {
           const list = row.span.lists[part.list] as SourceList;
-          // "another" only where there is one already: an empty clause is a
-          // control that writes the *first*, and a rule with no `from` in it
-          // reading "add another side" is a rule the label describes wrongly.
-          const what = `${list.items.length === 0 ? "a" : "another"} ${nounFor(list)}`;
+          // An **empty** clause names what it would write, and a clause with
+          // items in it does not. Two reasons, and the first is that the label
+          // would otherwise be wrong: a rule with no `from` reading "add another
+          // side" describes a list it does not have. The second is that a
+          // collision rule has *two* lists, so a rule with no `from` puts two
+          // bare ⊕s next to each other — identical circles meaning different
+          // things, which is the one arrangement a symbol cannot carry.
+          const empty = list.items.length === 0;
+          const what = `${empty ? "a" : "another"} ${nounFor(list)}`;
           return (
             <button
               key={index}
               type="button"
-              class="block-arity block-add"
+              class={`block-arity block-add${empty ? " block-add-first" : ""}`}
               data-list={String(part.list)}
               tabIndex={tabbable ? 0 : -1}
               title={`Add ${what}`}
               aria-label={`Add ${what} to line ${String(row.line)}`}
               onClick={() => onAdd(part.list)}
             >
-              +
+              +{empty ? <span>{nounFor(list)}</span> : null}
             </button>
           );
         }

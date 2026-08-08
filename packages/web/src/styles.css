@@ -2325,6 +2325,17 @@ main.text-layout .source-editor {
   margin-left: -0.15rem;
 }
 
+/* A clause with nothing in it names what it would write. A collision rule has
+   two lists, so one with no `from` puts two ⊕s side by side — identical circles
+   meaning different things, which is the one arrangement a symbol cannot carry
+   on its own. */
+.block-add-first {
+  width: auto;
+  gap: 0.2rem;
+  padding: 0 0.35rem;
+  border-radius: 0.6rem;
+}
+
 /* A string's slot covers the *contents* of the literal, so the quotes are the
    editor's to draw — printed as glue they came out as debris at the end of a
    wrapped line. */
