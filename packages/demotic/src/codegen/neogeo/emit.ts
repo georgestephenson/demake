@@ -320,11 +320,16 @@ function emitReset(ctx: M68kCtx): void {
  * The vertical interrupt: acknowledge, kick the watchdog, say the frame
  * happened.
  *
- * **The acknowledge writes all three source bits rather than the one.** Clearing
- * a flag that is not set is a no-op, and getting the bit wrong is the failure the
- * Sega audio suite exists to catch — an interrupt left pending re-enters the
+ * **The acknowledge writes all three source bits rather than the one**, which is
+ * what commercial cartridges do and not a hedge. Vertical blank is bit 2 of
+ * `REG_IRQACK` (bit 4 is IRQ1, bit 1 is IRQ3), so `#4` would do — but clearing a
+ * flag that is not set is a no-op, and getting the bit wrong is the failure the
+ * Sega audio suite exists to catch: an interrupt left pending re-enters the
  * moment the mask drops, and the whole game runs thousands of times too fast
- * with every write correct. Acking the lot cannot be wrong in that direction.
+ * with every write correct. `#7` cannot be wrong in that direction.
+ *
+ * Source: NeoGeo Development Wiki — 68k interrupts.
+ *   https://wiki.neogeodev.org/index.php?title=68k_interrupts
  *
  * The watchdog is kicked here because here is the one routine that runs whatever
  * the main loop is doing.

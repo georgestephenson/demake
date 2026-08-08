@@ -17,7 +17,7 @@ zone.
 Nothing could have caught this except a cartridge. The LSPC's own tests write
 `vram` directly, so they never went through the port; a trace says nothing about
 pixels; and the emitter was correct throughout. What found it was the rendering
-oracle asking whether a caption had *arrived*, then following the value from the
+oracle asking whether a caption had _arrived_, then following the value from the
 emitter to the bus one step at a time — `PokeFix` reached with the right glyph in
 `d0`, 1725 writes landing in the fix range, and zero of them present afterwards.
 `packages/neogeo/test/lspc.test.ts` now writes through the port for exactly this.
