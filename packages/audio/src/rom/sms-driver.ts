@@ -36,7 +36,36 @@
 import { AsmZ80, label } from "@demake/core";
 
 import { RUN, type DriverData } from "./data.js";
-import { PSG_SHADOW } from "./psg.js";
+import { PSG_SHADOW, PSG_STEREO_REG } from "./psg.js";
+
+/**
+ * The chip's one write port, and the Game Gear's stereo latch beside it.
+ *
+ * Here rather than in `psg.ts` because a *port* is this processor's business:
+ * the same chip on a Mega Drive is an address in the 68000's memory map, so
+ * nothing about these two numbers is the SN76489's. The sound chip answers on
+ * either half of `$40`–`$7F`; `$7F` is what the Sega 8-bit game backend's own
+ * boot code uses and what every published example uses, so the driver uses it
+ * too. The stereo latch is a separate device at `$06` and only exists on the
+ * handheld.
+ */
+export const PSG_PORT = { psg: 0x7f, stereo: 0x06 } as const;
+
+/**
+ * How a schedule's register number reaches the packed data.
+ *
+ * The port, because a Z80 writes a chip with `out (c), a` and the packed byte is
+ * what lands in `c`. One byte either way — the same one the Game Boy spends on a
+ * high-RAM offset — and the write loop pays nothing to translate.
+ *
+ * One definition with two callers, on the one-declaration rule: a game's driver
+ * (`sms-game.ts`) and a standalone cartridge (`sms.ts`) pack the same schedules
+ * for the same write loop, and a second copy is a cartridge whose stereo image
+ * is written to the sound chip.
+ */
+export function psgPortOf(reg: number): number {
+  return reg === PSG_STEREO_REG ? PSG_PORT.stereo : PSG_PORT.psg;
+}
 
 /**
  * Where a stream keeps its position, in work RAM.
@@ -431,6 +460,24 @@ function emitReadEntry(asm: AsmZ80): void {
 }
 
 /**
+ * A region of the image the data must not be laid across.
+ *
+ * This console's cartridge header is sixteen bytes *inside* the address space
+ * rather than a wrapper around it, so a block that ran through `$7FF0` would be
+ * stamped over by `packSegaRom` and played back as eight bytes of "TMR SEGA".
+ * The order list and the blocks are all addressed by label, so stepping over the
+ * hole costs nothing but the gap in front of it — but only if the step happens
+ * at a boundary, which is why this is the emitter's business rather than the
+ * caller's (`sms.ts` §the header is sixteen bytes inside the image).
+ */
+export interface DataHole {
+  /** First byte that may not be written. */
+  from: number;
+  /** First byte after the hole. */
+  to: number;
+}
+
+/**
  * Emit a stream's packed data, and return the label its order list starts at.
  *
  * The order list comes first so a caller can point at it without knowing how many
@@ -441,15 +488,23 @@ export function emitStreamData(
   prefix: string,
   index: number,
   data: DriverData,
+  hole?: DataHole,
 ): string {
   const orderLabel = `${prefix}Order${index}`;
   const blockLabel = (block: number) => `${prefix}Block${index}_${block}`;
+  /** Step over the hole when the next `bytes` bytes would run into it. */
+  const clear = (bytes: number): void => {
+    if (hole && asm.pc < hole.from && asm.pc + bytes > hole.from) asm.padTo(hole.to);
+  };
+  clear(data.order.length * 2 + 2);
   asm.label(orderLabel);
   for (const block of data.order) asm.dw(label(blockLabel(block)));
   asm.dw(0x0000);
   for (let block = 0; block < data.blocks.length; block += 1) {
+    const body = data.blocks[block] as Uint8Array;
+    clear(body.length);
     asm.label(blockLabel(block));
-    asm.bytes(data.blocks[block] as Uint8Array);
+    asm.bytes(body);
   }
   return orderLabel;
 }

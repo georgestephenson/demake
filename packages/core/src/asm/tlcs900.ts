@@ -1367,6 +1367,11 @@ export class Asm900 {
     }
     return Uint8Array.from(this.code);
   }
+
+  /** Every label and its address — the map a profiler or a harness reads. */
+  symbols(): ReadonlyMap<string, number> {
+    return new Map(this.labels);
+  }
 }
 
 /** A 1..8 count, where eight is spelled zero. */

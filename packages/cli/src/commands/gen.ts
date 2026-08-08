@@ -200,9 +200,9 @@ async function runAudioGen(
     );
   }
 
-  let built: ReturnType<typeof buildAudioRom>;
+  let built: Awaited<ReturnType<typeof buildAudioRom>>;
   try {
-    built = buildAudioRom(script, { title: titleFor(output ?? source) });
+    built = await buildAudioRom(script, { title: titleFor(output ?? source) });
   } catch (error) {
     if (error instanceof AudioRomError) {
       throw new CliError(EXIT.FAILURE, error.code, error.message, error.hint);

@@ -789,10 +789,10 @@ class Compiler {
         );
       }
 
-      // `on hold` snapshots the value it overwrites and restores it on release,
-      // per binding. Two bindings on one button writing one property therefore
-      // snapshot each other, and which value comes back depends on the order
-      // they unwind in — a bug that only shows up on the *second* press.
+      // One button setting one property twice is one of the two writes doing
+      // nothing, exactly as `E_DUPLICATE_PROP` is for a property list — and with
+      // `on hold` the loser is also a snapshot nothing will ever restore, since
+      // the two bindings engage and release on the same edge.
       let repeated = false;
       for (const assignment of statement.assignments) {
         const key = `${instance.id} ${statement.action} ${statement.mode} ${

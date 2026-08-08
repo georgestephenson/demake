@@ -29,12 +29,39 @@
  *     actually stores to — the same reason the SN76489's `write` takes its one
  *     port rather than a register number.
  *
- * **What is not modelled, and each is a gap rather than a decision** (AGENTS.md
- * §Iron rules — a demaker spends the whole machine): the LFO's *pitch*
- * modulation (its amplitude modulation is here and exact), the SSG-EG envelope
- * modes, and channel 3's per-operator frequency mode. All three are stored and
- * inert, no binding in this project writes them, and closing any of them is a
- * table and a few lines rather than a redesign.
+ * **The whole chip is here.** The three things that were stored and inert — the
+ * LFO's *pitch* modulation, the SSG-EG envelope modes, and channel 3's
+ * per-operator frequency mode — are modelled, and none of them is reachable by
+ * writing a register this project's binding does not write. So a demake sounds
+ * exactly as it did (`$22` is written once, with the LFO off, and `$90`, `$A8`
+ * and `$27`'s top two bits are never written at all), and a binding that reaches
+ * for one of them from now on gets the hardware rather than a shrug. Three of
+ * this chip's habits are worth knowing before touching any of them:
+ *
+ *   - **Pitch modulation is applied to the F-number, not to the increment.**
+ *     A depth and an LFO step choose a signed offset *per F-number bit*, so the
+ *     same vibrato is a different number of increment units at every pitch —
+ *     which is what makes it a constant interval in cents rather than in hertz.
+ *     {@link LFO_PM_OUTPUT} is the measured table and {@link LFO_PM_TABLE} the
+ *     128 × 8 × 32 expansion of it that a sample actually indexes.
+ *   - **SSG-EG runs the envelope four times as fast and folds it.** Decay,
+ *     sustain and release step by four and stop at half attenuation rather than
+ *     full, and the mode's low three bits say what happens when they get there:
+ *     hold, invert, or restart the attack. Inverting is a *reading* of the
+ *     envelope rather than a change to it, which is why {@link attenuationOf}
+ *     exists and why the stored attenuation is untouched by it.
+ *   - **Channel 3 can hold four pitches, and they are not in slot order.** The
+ *     three extra F-numbers at `$A8`-`$AA` feed S3, S1 and S2 in that order,
+ *     with S4 keeping the channel's own — so a table is the honest way to write
+ *     it down and {@link SLOT3_FREQUENCY} is that table.
+ *
+ * What this model still does not do is the **bus's busy flag** (see
+ * {@link Ym2612.read}) and the difference between the discrete and integrated
+ * chips' output stages: the discrete YM2612 quantises each operator's output to
+ * nine bits and the ASIC in a later Mega Drive does not, which is a ladder
+ * effect on quiet notes rather than a note at the wrong pitch. Both are
+ * deliberate: the first is honest for a model with no bus timing, and the second
+ * is a *board* difference of the kind `mix()` already takes per-chip gains for.
  *
  * Sources:
  * - Sega — YM2612 application manual (register map, key-on slot order, F-number)
@@ -259,6 +286,157 @@ const LFO_PERIOD: readonly number[] = [108, 77, 71, 67, 62, 44, 8, 5];
 /** How far the LFO's amplitude sweep is shifted down, by the two-bit AMS. */
 const AMS_SHIFT: readonly number[] = [8, 3, 1, 0];
 
+/**
+ * The LFO's amplitude output while the LFO is switched off.
+ *
+ * Not zero: the hardware parks the sweep at its quiet end rather than at its
+ * loud one, so an operator with AM enabled and the LFO disabled is attenuated
+ * rather than left alone. Nothing in this project enables AM, so the number is
+ * unreachable today and is here to be right rather than to be spent.
+ */
+const LFO_AM_PARKED = 126;
+
+/**
+ * Pitch modulation, per F-number bit, by depth and by an eighth of the sweep.
+ *
+ * The measured table, and the one genuinely surprising thing about vibrato on
+ * this chip: the offset is not a function of the F-number but a *sum over its
+ * bits*, seven rows of eight depths of eight steps. Reading it that way is what
+ * makes the modulation proportional to the pitch — bit 10 contributes sixty-four
+ * times what bit 4 does at the same depth — so one PMS setting is the same
+ * interval in every octave, which a fixed offset in increment units would not be.
+ *
+ * Rows are bits 4 through 10 of the F-number; bits 0-3 contribute nothing at any
+ * depth, which is why the table starts at bit 4 and why a channel's index into
+ * it is seven bits rather than eleven.
+ *
+ * Source: Nemesis' YM2610/YM2612 measurements, the table every accurate OPN
+ * model carries.
+ */
+const LFO_PM_OUTPUT: readonly (readonly number[])[] = [
+  // F-number bit 4
+  [0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 1, 1, 1, 1],
+  // F-number bit 5
+  [0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 1, 1, 1, 1],
+  [0, 0, 1, 1, 2, 2, 2, 3],
+  // F-number bit 6
+  [0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 1],
+  [0, 0, 0, 0, 1, 1, 1, 1],
+  [0, 0, 1, 1, 2, 2, 2, 3],
+  [0, 0, 2, 3, 4, 4, 5, 6],
+  // F-number bit 7
+  [0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 1, 1],
+  [0, 0, 0, 0, 1, 1, 1, 1],
+  [0, 0, 0, 1, 1, 1, 1, 2],
+  [0, 0, 1, 1, 2, 2, 2, 3],
+  [0, 0, 2, 3, 4, 4, 5, 6],
+  [0, 0, 4, 6, 8, 8, 10, 12],
+  // F-number bit 8
+  [0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 1, 1, 1, 1],
+  [0, 0, 0, 1, 1, 1, 2, 2],
+  [0, 0, 1, 1, 2, 2, 3, 3],
+  [0, 0, 1, 2, 2, 2, 3, 4],
+  [0, 0, 2, 3, 4, 4, 5, 6],
+  [0, 0, 4, 6, 8, 8, 10, 12],
+  [0, 0, 8, 12, 16, 16, 20, 24],
+  // F-number bit 9
+  [0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 2, 2, 2, 2],
+  [0, 0, 0, 2, 2, 2, 4, 4],
+  [0, 0, 2, 2, 4, 4, 6, 6],
+  [0, 0, 2, 4, 4, 4, 6, 8],
+  [0, 0, 4, 6, 8, 8, 10, 12],
+  [0, 0, 8, 12, 16, 16, 20, 24],
+  [0, 0, 16, 24, 32, 32, 40, 48],
+  // F-number bit 10
+  [0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 4, 4, 4, 4],
+  [0, 0, 0, 4, 4, 4, 8, 8],
+  [0, 0, 4, 4, 8, 8, 12, 12],
+  [0, 0, 4, 8, 8, 8, 12, 16],
+  [0, 0, 8, 12, 16, 16, 20, 24],
+  [0, 0, 16, 24, 32, 32, 40, 48],
+  [0, 0, 32, 48, 64, 64, 80, 96],
+];
+
+/** F-number bits the modulation table has a row for, and depths and steps. */
+const PM_BITS = 7;
+const PM_DEPTHS = 8;
+const PM_STEPS = 32;
+
+/**
+ * Every pitch offset, indexed by `fnum7 * 256 + depth * 32 + step`.
+ *
+ * {@link LFO_PM_OUTPUT} holds a *quarter* of the sweep, so the other three are
+ * this one mirrored and negated — the same economy {@link LOGSIN} makes, and for
+ * the same reason. Summing the bits once at load rather than seven times a
+ * sample is what keeps a vibrato patch as cheap as a plain one.
+ */
+const LFO_PM_TABLE: Int16Array = buildLfoPmTable();
+
+function buildLfoPmTable(): Int16Array {
+  const table = new Int16Array(128 * PM_DEPTHS * PM_STEPS);
+  for (let depth = 0; depth < PM_DEPTHS; depth += 1) {
+    for (let fnum = 0; fnum < 128; fnum += 1) {
+      for (let step = 0; step < 8; step += 1) {
+        let value = 0;
+        for (let bit = 0; bit < PM_BITS; bit += 1) {
+          if ((fnum & (1 << bit)) === 0) continue;
+          value += (LFO_PM_OUTPUT[bit * PM_DEPTHS + depth] as readonly number[])[step] as number;
+        }
+        const base = fnum * PM_DEPTHS * PM_STEPS + depth * PM_STEPS;
+        table[base + step] = value;
+        table[base + (step ^ 7) + 8] = value;
+        table[base + step + 16] = -value;
+        table[base + (step ^ 7) + 24] = -value;
+      }
+    }
+  }
+  return table;
+}
+
+/**
+ * Which of channel 3's four F-numbers each slot takes, in signal order.
+ *
+ * `$A8`, `$A9` and `$AA` are three extra F-numbers, and they do *not* land on
+ * S1, S2 and S3 in that order: S1 takes `$A9`, S2 takes `$AA`, S3 takes `$A8`,
+ * and S4 keeps the channel's own from `$A2`. Which is a permutation nobody would
+ * guess and every accurate model carries, so it is a table rather than three
+ * lines of arithmetic. `-1` is "the channel's own".
+ */
+const SLOT3_FREQUENCY: readonly number[] = [1, 2, 0, -1];
+
+/**
+ * `$27`'s top two bits: what channel 3 is doing.
+ *
+ * Zero is one pitch for the whole voice and every other value is four, so the
+ * frequency question is "not normal" rather than a match. Only `2` also runs
+ * CSM, where timer A strikes the voice rather than a driver — which is why that
+ * one has a name and `1` and `3` do not.
+ */
+const CH3_NORMAL = 0;
+const CH3_CSM = 2;
+
 /** One four-operator voice's worth of operator state. */
 interface Operator {
   // --- registers -------------------------------------------------------------
@@ -274,6 +452,7 @@ interface Operator {
   /** Attenuation the decay hands over to the sustain rate at. */
   sustainLevel: number;
   amEnable: boolean;
+  /** `$90`: bit 3 arms SSG-EG, bits 0-2 say hold, invert and attack-again. */
   ssgEg: number;
 
   // --- state -----------------------------------------------------------------
@@ -282,6 +461,21 @@ interface Operator {
   increment: number;
   state: "off" | "attack" | "decay" | "sustain" | "release";
   attenuation: number;
+  /**
+   * SSG-EG's output inversion, as the 0 or 4 the mode bit is compared against.
+   *
+   * Kept in the bit's own position rather than as a boolean so the test against
+   * `ssgEg & 0x04` is the equality it reads as, which is how the hardware's two
+   * inversions — the mode's and the running one — cancel.
+   */
+  ssgInvert: number;
+  /**
+   * Whether the driver has this operator keyed on.
+   *
+   * Only CSM reads it: an automatic key-on must not silence a slot a driver is
+   * holding, and an ordinary key-on is a retrigger whatever this says.
+   */
+  key: boolean;
   /** The last two outputs, which is what feedback averages. */
   out1: number;
   out2: number;
@@ -297,12 +491,31 @@ interface Channel {
   /** The block and F-number high bits, held until the low byte lands. */
   latch: number;
   keyCode: number;
+  /** The phase increment before detune and multiple, which those two scale. */
+  base: number;
   left: boolean;
   right: boolean;
   ams: number;
   fms: number;
   /** What each slot produced this sample, for the modulation wiring. */
   slotOut: number[];
+  /** Scratch for a sample's four phase increments, so PM allocates nothing. */
+  increments: number[];
+}
+
+/**
+ * One pitch, in the three forms the chip wants it in.
+ *
+ * A channel has one of these and channel 3 in its special mode has four, which
+ * is the whole of what that mode is. The block and F-number are kept beside the
+ * increment because pitch modulation works on *them* rather than on it.
+ */
+interface Frequency {
+  fnum: number;
+  block: number;
+  keyCode: number;
+  /** The phase increment before detune and multiple, which those two scale. */
+  base: number;
 }
 
 /**
@@ -324,7 +537,32 @@ export class Ym2612 implements ChipModel {
   private lfoFrequency = 0;
   private lfoCounter = 0;
   private lfoTimer = 0;
-  private lfoAm = 0;
+  private lfoAm = LFO_AM_PARKED;
+  /** The sweep as pitch modulation sees it: a quarter the resolution AM gets. */
+  private lfoPm = 0;
+
+  /**
+   * What `$27`'s top two bits say channel 3 is doing, and the pitches it holds.
+   *
+   * The three extra F-numbers are the chip's rather than the channel's, because
+   * they are written through registers that name no channel — `$A8`-`$AA` sit
+   * where channel 4's would if the first half of the bus had one.
+   */
+  private ch3Mode = CH3_NORMAL;
+  private readonly ch3: Frequency[] = [
+    { fnum: 0, block: 0, keyCode: 0, base: 0 },
+    { fnum: 0, block: 0, keyCode: 0, base: 0 },
+    { fnum: 0, block: 0, keyCode: 0, base: 0 },
+  ];
+  private ch3Latch = 0;
+  /**
+   * CSM's key-on, as the two-sample shift register it has to be.
+   *
+   * Timer A's overflow keys channel 3 on and the *next* sample keys it off
+   * again, unless the timer overflowed a second time first — so a one-shot flag
+   * would either hold the note for ever or never let it sound.
+   */
+  private csmKey = 0;
 
   private dacEnabled = false;
   private dacSample = 0;
@@ -357,11 +595,13 @@ export class Ym2612 implements ChipModel {
         block: 0,
         latch: 0,
         keyCode: 0,
+        base: 0,
         left: true,
         right: true,
         ams: 0,
         fms: 0,
         slotOut: [0, 0, 0, 0],
+        increments: [0, 0, 0, 0],
       });
     }
     this.reset();
@@ -375,11 +615,13 @@ export class Ym2612 implements ChipModel {
       channel.block = 0;
       channel.latch = 0;
       channel.keyCode = 0;
+      channel.base = 0;
       channel.left = true;
       channel.right = true;
       channel.ams = 0;
       channel.fms = 0;
       channel.slotOut = [0, 0, 0, 0];
+      channel.increments = [0, 0, 0, 0];
       for (let slot = 0; slot < OPERATORS; slot += 1) {
         channel.operators[slot] = newOperator();
       }
@@ -390,7 +632,17 @@ export class Ym2612 implements ChipModel {
     this.lfoFrequency = 0;
     this.lfoCounter = 0;
     this.lfoTimer = 0;
-    this.lfoAm = 0;
+    this.lfoAm = LFO_AM_PARKED;
+    this.lfoPm = 0;
+    this.ch3Mode = CH3_NORMAL;
+    for (const frequency of this.ch3) {
+      frequency.fnum = 0;
+      frequency.block = 0;
+      frequency.keyCode = 0;
+      frequency.base = 0;
+    }
+    this.ch3Latch = 0;
+    this.csmKey = 0;
     this.dacEnabled = false;
     this.dacSample = 0;
     this.timerAPeriod = 0;
@@ -441,11 +693,46 @@ export class Ym2612 implements ChipModel {
     return (this.timerBFlag ? 0x02 : 0) | (this.timerAFlag ? 0x01 : 0);
   }
 
-  run(clocks: number, sink: SampleSink): void {
+  /**
+   * Whether either timer is counting, which is the only state a bus can read.
+   *
+   * A console asks this to decide whether the chip has to be clocked at all when
+   * nothing is rendering ({@link run}). It is not a fact about the audio: a chip
+   * with both timers stopped and no sink attached is a chip whose every change
+   * is invisible.
+   */
+  get timersRunning(): boolean {
+    return this.timerARunning || this.timerBRunning;
+  }
+
+  /**
+   * Run the chip for `clocks` master cycles, rendering into `sink` if given.
+   *
+   * **The sink is optional because a timer is not audio.** Every other chip in
+   * this set is write-only, so a model that only advanced while somebody was
+   * listening was indistinguishable from one that always did. This chip has a
+   * status byte the bus can *read* — two timer overflow flags — and a driver
+   * whose clock is timer A polls exactly that, so a console has to clock this
+   * chip with the speakers unplugged.
+   *
+   * What it does *not* have to do is clock it when nothing at all is observable,
+   * which is why {@link timersRunning} is exposed beside this. A demade game
+   * never programmes either timer — `binding/md.ts` writes `$27 = 0` at boot and
+   * never again — so on that caller the whole simulation is dead weight, and it
+   * is a fifth of the Mega Drive audio battery's budget rather than a rounding
+   * error. The consequence to know: with no sink and no timer, the envelopes and
+   * phases stop where they were, so a sink attached *later* resumes a chip whose
+   * audio state is stale. Nothing here does that — every console attaches its
+   * sink before it runs — and the alternative is paying for six four-operator
+   * voices nobody can hear.
+   */
+  run(clocks: number, sink?: SampleSink): void {
     let remaining = clocks;
     while (remaining > 0) {
-      const step = Math.min(remaining, sink.clocksUntilSampleBoundary(), this.clocksToSample);
-      sink.add(this.outLeft, this.outRight, step);
+      const step = sink
+        ? Math.min(remaining, sink.clocksUntilSampleBoundary(), this.clocksToSample)
+        : Math.min(remaining, this.clocksToSample);
+      sink?.add(this.outLeft, this.outRight, step);
       this.clocksToSample -= step;
       remaining -= step;
       if (this.clocksToSample <= 0) {
@@ -466,13 +753,21 @@ export class Ym2612 implements ChipModel {
     }
     const index = address & 3;
     if (index === 3) return; // no fourth channel per half
-    const channel = this.channels[half * 3 + index] as Channel;
-    if (address < 0xa0) {
-      const slot = SLOT_OF_REGISTER[(address >> 2) & 3] as number;
-      this.writeOperator(channel.operators[slot] as Operator, channel, address & 0xf0, value);
+    // `$A8`-`$AE` sit where a fourth channel's F-number would and belong to
+    // channel 3's four-pitch mode instead. Only the first half of the bus has
+    // them; the second half's copies do nothing, exactly as the globals do.
+    if (address >= 0xa8 && address <= 0xae) {
+      if (half === 0) this.writeSlot3(address, index, value);
       return;
     }
-    this.writeChannel(channel, address, value);
+    const channelIndex = half * 3 + index;
+    const channel = this.channels[channelIndex] as Channel;
+    if (address < 0xa0) {
+      const slot = SLOT_OF_REGISTER[(address >> 2) & 3] as number;
+      this.writeOperator(channel, channelIndex, slot, address & 0xf0, value);
+      return;
+    }
+    this.writeChannel(channel, channelIndex, address, value);
   }
 
   private writeGlobal(address: number, value: number): void {
@@ -481,8 +776,13 @@ export class Ym2612 implements ChipModel {
         this.lfoEnabled = (value & 0x08) !== 0;
         this.lfoFrequency = value & 0x07;
         if (!this.lfoEnabled) {
+          // Switching the LFO off *holds* the sweep rather than freeing it:
+          // pitch modulation parks at the centre and amplitude modulation at
+          // the quiet end, which is why the two constants differ.
+          this.lfoTimer = 0;
           this.lfoCounter = 0;
-          this.lfoAm = 0;
+          this.lfoAm = LFO_AM_PARKED;
+          this.lfoPm = 0;
         }
         return;
       case 0x24:
@@ -524,9 +824,33 @@ export class Ym2612 implements ChipModel {
     this.timerBEnabled = (value & 0x08) !== 0;
     if ((value & 0x10) !== 0) this.timerAFlag = false;
     if ((value & 0x20) !== 0) this.timerBFlag = false;
-    // Bits 6-7 select channel 3's per-operator frequency mode, which this model
-    // does not implement (see the file header). Stored nowhere rather than
-    // stored and disbelieved.
+    const mode = (value >> 6) & 0x03;
+    // Leaving CSM releases whatever its last automatic key-on is still holding.
+    // Without this a driver that turned the mode off mid-note would leave one of
+    // channel 3's operators sounding with nothing able to key it off.
+    if (this.ch3Mode === CH3_CSM && mode !== CH3_CSM) this.csmKeyOff();
+    this.ch3Mode = mode;
+    this.refreshChannel(2);
+  }
+
+  /**
+   * Channel 3's three extra F-numbers.
+   *
+   * Their high byte has a latch of its own, separate from the one every other
+   * channel shares — so a driver may leave a block half-written in `$A4` and
+   * still set one of these, and the two must not see each other's.
+   */
+  private writeSlot3(address: number, index: number, value: number): void {
+    if ((address & 0x0c) === 0x0c) {
+      this.ch3Latch = value & 0x3f;
+      return;
+    }
+    const frequency = this.ch3[index] as Frequency;
+    frequency.fnum = ((this.ch3Latch & 0x07) << 8) | (value & 0xff);
+    frequency.block = (this.ch3Latch >> 3) & 0x07;
+    frequency.keyCode = keyCodeOf(frequency.block, frequency.fnum);
+    frequency.base = (frequency.fnum << frequency.block) >> 1;
+    this.refreshChannel(2);
   }
 
   /**
@@ -539,22 +863,32 @@ export class Ym2612 implements ChipModel {
   private writeKey(value: number): void {
     const within = value & 0x03;
     if (within === 3) return;
-    const channel = this.channels[((value & 0x04) !== 0 ? 3 : 0) + within] as Channel;
+    const channelIndex = ((value & 0x04) !== 0 ? 3 : 0) + within;
+    const channel = this.channels[channelIndex] as Channel;
     for (let bit = 0; bit < OPERATORS; bit += 1) {
-      const operator = channel.operators[SLOT_OF_REGISTER[bit] as number] as Operator;
-      if ((value & (0x10 << bit)) !== 0) keyOn(operator, channel.keyCode);
-      else keyOff(operator);
+      const slot = SLOT_OF_REGISTER[bit] as number;
+      const operator = channel.operators[slot] as Operator;
+      if ((value & (0x10 << bit)) !== 0) {
+        keyOn(operator, this.frequencyOf(channel, channelIndex, slot).keyCode);
+      } else keyOff(operator);
     }
   }
 
-  private writeOperator(operator: Operator, channel: Channel, group: number, value: number): void {
+  private writeOperator(
+    channel: Channel,
+    channelIndex: number,
+    slot: number,
+    group: number,
+    value: number,
+  ): void {
+    const operator = channel.operators[slot] as Operator;
     switch (group) {
       case 0x30:
         operator.detune = (value >> 4) & 0x07;
         // Stored doubled so that "multiple 0" — which means one half — is a
         // shift rather than a special case in the increment.
         operator.multiple = (value & 0x0f) === 0 ? 1 : (value & 0x0f) * 2;
-        this.refreshIncrement(channel, operator);
+        setIncrement(operator, this.frequencyOf(channel, channelIndex, slot));
         return;
       case 0x40:
         operator.totalLevel = value & 0x7f;
@@ -577,6 +911,9 @@ export class Ym2612 implements ChipModel {
         operator.releaseRate = value & 0x0f;
         return;
       case 0x90:
+        // Only bit 3 arms the mode, so a driver may leave a shape in the low
+        // bits with SSG-EG off and nothing happens — which is what makes this
+        // register safe to write unconditionally.
         operator.ssgEg = value & 0x0f;
         return;
       default:
@@ -584,7 +921,12 @@ export class Ym2612 implements ChipModel {
     }
   }
 
-  private writeChannel(channel: Channel, address: number, value: number): void {
+  private writeChannel(
+    channel: Channel,
+    channelIndex: number,
+    address: number,
+    value: number,
+  ): void {
     const group = address & 0xfc;
     if (group === 0xa4) {
       // The high bits wait for the low byte, so that a note change is one
@@ -596,7 +938,8 @@ export class Ym2612 implements ChipModel {
       channel.fnum = ((channel.latch & 0x07) << 8) | (value & 0xff);
       channel.block = (channel.latch >> 3) & 0x07;
       channel.keyCode = keyCodeOf(channel.block, channel.fnum);
-      for (const operator of channel.operators) this.refreshIncrement(channel, operator);
+      channel.base = (channel.fnum << channel.block) >> 1;
+      this.refreshChannel(channelIndex);
       return;
     }
     if (group === 0xb0) {
@@ -611,15 +954,32 @@ export class Ym2612 implements ChipModel {
       channel.fms = value & 0x07;
       return;
     }
-    // `$A8`-`$AE` are channel 3's per-operator frequencies; see the file header.
+    // `$A8`-`$AE` never reach here: `writeRegister` sends them to `writeSlot3`.
   }
 
-  private refreshIncrement(channel: Channel, operator: Operator): void {
-    const base = (channel.fnum << channel.block) >> 1;
-    const table = DETUNE[operator.detune & 0x03] as readonly number[];
-    const offset = table[channel.keyCode] as number;
-    const detuned = (operator.detune & 0x04) !== 0 ? base - offset : base + offset;
-    operator.increment = ((detuned & 0x1ffff) * operator.multiple) >> 1;
+  /**
+   * The pitch a slot is played at, which is the channel's except on channel 3.
+   *
+   * In that channel's special mode three of its operators take an F-number of
+   * their own, so *this* is what a phase increment, a detune lookup and an
+   * envelope rate are all keyed on — and asking it in one place is what stops
+   * the three from ever disagreeing about which note is sounding.
+   */
+  private frequencyOf(channel: Channel, channelIndex: number, slot: number): Frequency {
+    if (channelIndex !== 2 || this.ch3Mode === CH3_NORMAL) return channel;
+    const which = SLOT3_FREQUENCY[slot] as number;
+    return which < 0 ? channel : (this.ch3[which] as Frequency);
+  }
+
+  /** Recompute every increment a channel's four operators step by. */
+  private refreshChannel(channelIndex: number): void {
+    const channel = this.channels[channelIndex] as Channel;
+    for (let slot = 0; slot < OPERATORS; slot += 1) {
+      setIncrement(
+        channel.operators[slot] as Operator,
+        this.frequencyOf(channel, channelIndex, slot),
+      );
+    }
   }
 
   // --- synthesis ---------------------------------------------------------------
@@ -629,6 +989,7 @@ export class Ym2612 implements ChipModel {
     this.stepLfo();
     this.stepEnvelopes();
     this.stepTimers();
+    this.stepSsgEg();
 
     let left = 0;
     let right = 0;
@@ -642,7 +1003,7 @@ export class Ym2612 implements ChipModel {
             // the sign-extension it looks like. Scaled to fill the same range a
             // voice reaches, because on this chip it genuinely does.
             (this.dacSample - 0x80) * 64
-          : this.channelOutput(channel);
+          : this.channelOutput(channel, index);
       // The hardware sums four carriers into a fourteen-bit accumulator and
       // clips there rather than at the mixer, which is audible on a loud patch.
       const clipped = value > 8191 ? 8191 : value < -8192 ? -8192 : value;
@@ -655,8 +1016,9 @@ export class Ym2612 implements ChipModel {
   }
 
   /** One voice: run its four operators through the algorithm's wiring. */
-  private channelOutput(channel: Channel): number {
+  private channelOutput(channel: Channel, channelIndex: number): number {
     const algorithm = ALGORITHMS[channel.algorithm] as (typeof ALGORITHMS)[number];
+    this.phaseSteps(channel, channelIndex);
     let output = 0;
     for (let slot = 0; slot < OPERATORS; slot += 1) {
       const operator = channel.operators[slot] as Operator;
@@ -672,7 +1034,7 @@ export class Ym2612 implements ChipModel {
           modulation += (channel.slotOut[source] as number) >> 1;
         }
       }
-      let attenuation = operator.attenuation + (operator.totalLevel << 3);
+      let attenuation = attenuationOf(operator) + (operator.totalLevel << 3);
       if (operator.amEnable) attenuation += this.lfoAm >> (AMS_SHIFT[channel.ams] as number);
       const value = operatorOutput(
         (operator.phase >> 10) + modulation,
@@ -683,10 +1045,49 @@ export class Ym2612 implements ChipModel {
         operator.out2 = operator.out1;
         operator.out1 = value;
       }
-      operator.phase = (operator.phase + operator.increment) & 0xfffff;
+      operator.phase = (operator.phase + (channel.increments[slot] as number)) & 0xfffff;
       if ((algorithm.carriers & (1 << slot)) !== 0) output += value;
     }
     return output;
+  }
+
+  /**
+   * What each of a voice's four operators steps its phase by this sample.
+   *
+   * The cached increment, unless the LFO is sweeping this channel's pitch — in
+   * which case the offset goes on the *F-number* and the whole increment is
+   * rebuilt, because a modulation applied to the increment instead would be a
+   * fixed number of hertz and therefore a different interval in every octave.
+   * The block and the key code are deliberately left alone: the hardware does
+   * not re-derive them, so a vibrato cannot change an envelope rate or push a
+   * note into the next octave's detune row.
+   */
+  private phaseSteps(channel: Channel, channelIndex: number): void {
+    for (let slot = 0; slot < OPERATORS; slot += 1) {
+      const operator = channel.operators[slot] as Operator;
+      if (!this.lfoEnabled || channel.fms === 0) {
+        channel.increments[slot] = operator.increment;
+        continue;
+      }
+      const frequency = this.frequencyOf(channel, channelIndex, slot);
+      const offset = LFO_PM_TABLE[
+        ((frequency.fnum >> 4) & 0x7f) * (PM_DEPTHS * PM_STEPS) +
+          channel.fms * PM_STEPS +
+          this.lfoPm
+      ] as number;
+      if (offset === 0) {
+        channel.increments[slot] = operator.increment;
+        continue;
+      }
+      // The sweep is applied at one more bit of precision than the F-number
+      // has, which is what lets the shallowest depth be less than one step.
+      const modulated = (((frequency.fnum << 1) + offset) & 0xfff) << frequency.block;
+      const table = DETUNE[operator.detune & 0x03] as readonly number[];
+      const detune = table[frequency.keyCode] as number;
+      const base = modulated >> 2;
+      const detuned = (operator.detune & 0x04) !== 0 ? base - detune : base + detune;
+      channel.increments[slot] = ((detuned & 0x1ffff) * operator.multiple) >> 1;
+    }
   }
 
   private stepLfo(): void {
@@ -700,6 +1101,9 @@ export class Ym2612 implements ChipModel {
     const magnitude =
       (this.lfoCounter & 0x40) !== 0 ? this.lfoCounter & 0x3f : (this.lfoCounter & 0x3f) ^ 0x3f;
     this.lfoAm = magnitude * 2;
+    // Pitch modulation reads the same counter two bits coarser, so its sweep is
+    // thirty-two steps where the amplitude one is a hundred and twenty-eight.
+    this.lfoPm = this.lfoCounter >> 2;
   }
 
   /**
@@ -714,21 +1118,71 @@ export class Ym2612 implements ChipModel {
     if (this.envelopeTimer < 3) return;
     this.envelopeTimer = 0;
     this.envelopeCounter = (this.envelopeCounter + 1) & 0xfffff;
-    for (const channel of this.channels) {
-      for (const operator of channel.operators) {
-        stepEnvelope(operator, channel.keyCode, this.envelopeCounter);
+    for (let index = 0; index < CHANNELS; index += 1) {
+      const channel = this.channels[index] as Channel;
+      for (let slot = 0; slot < OPERATORS; slot += 1) {
+        stepEnvelope(
+          channel.operators[slot] as Operator,
+          this.frequencyOf(channel, index, slot).keyCode,
+          this.envelopeCounter,
+        );
+      }
+    }
+  }
+
+  /**
+   * Take whatever SSG-EG does when an envelope reaches its half-way point.
+   *
+   * This is the whole of what makes the mode a *loop* rather than a fast decay,
+   * and it is checked every sample rather than only when the envelope steps —
+   * because an operator whose attack is running can invert on any of them.
+   * Every branch is behind bit 3, so an operator that never armed the mode
+   * costs one test.
+   */
+  private stepSsgEg(): void {
+    for (let index = 0; index < CHANNELS; index += 1) {
+      const channel = this.channels[index] as Channel;
+      for (let slot = 0; slot < OPERATORS; slot += 1) {
+        const operator = channel.operators[slot] as Operator;
+        if ((operator.ssgEg & 0x08) === 0) continue;
+        if (operator.attenuation < 0x200) continue;
+        if (operator.state === "off" || operator.state === "release") continue;
+        if ((operator.ssgEg & 0x01) !== 0) {
+          // Hold: the envelope stops where it is, at whichever end the mode's
+          // invert bit says. Setting the flag rather than toggling it is what
+          // makes "hold" hold instead of alternating.
+          if ((operator.ssgEg & 0x02) !== 0) operator.ssgInvert = 4;
+          if (operator.state !== "attack" && operator.ssgInvert === (operator.ssgEg & 0x04)) {
+            operator.attenuation = MAX_ATTENUATION;
+          }
+          continue;
+        }
+        // Loop: either fold the output over or restart the wave, and then take
+        // the attack again — which is a key-on the driver never asked for, and
+        // is why this mode can make an envelope into an oscillator.
+        if ((operator.ssgEg & 0x02) !== 0) operator.ssgInvert ^= 4;
+        else operator.phase = 0;
+        if (operator.state !== "attack") {
+          restartAttack(operator, this.frequencyOf(channel, index, slot).keyCode);
+        }
       }
     }
   }
 
   private stepTimers(): void {
+    // CSM's key-off is owed a sample after its key-on, so the shift happens
+    // before timer A is stepped rather than after — a second overflow inside
+    // one sample would otherwise cancel the note it had just started.
+    this.csmKey <<= 1;
     if (this.timerARunning) {
       this.timerACounter -= 1;
       if (this.timerACounter <= 0) {
         this.timerACounter += 1024 - this.timerAPeriod;
         if (this.timerAEnabled) this.timerAFlag = true;
+        if (this.ch3Mode === CH3_CSM) this.csmKeyOn();
       }
     }
+    if ((this.csmKey & 2) !== 0) this.csmKeyOff();
     if (!this.timerBRunning) return;
     this.timerBPrescale += 1;
     if (this.timerBPrescale < 16) return;
@@ -738,6 +1192,34 @@ export class Ym2612 implements ChipModel {
       this.timerBCounter += 256 - this.timerBPeriod;
       if (this.timerBEnabled) this.timerBFlag = true;
     }
+  }
+
+  /**
+   * Channel 3's automatic key-on, which timer A rather than a driver performs.
+   *
+   * CSM exists so a program can re-strike one voice at an exact rate without
+   * touching the bus — speech, on the machines this core was sold into. An
+   * operator the driver is *itself* holding is left alone, because a key-off a
+   * sample later would otherwise cut a note nobody released.
+   */
+  private csmKeyOn(): void {
+    const channel = this.channels[2] as Channel;
+    for (let slot = 0; slot < OPERATORS; slot += 1) {
+      const operator = channel.operators[slot] as Operator;
+      if (operator.key) continue;
+      operator.phase = 0;
+      operator.ssgInvert = 0;
+      restartAttack(operator, this.frequencyOf(channel, 2, slot).keyCode);
+    }
+    this.csmKey = 1;
+  }
+
+  private csmKeyOff(): void {
+    const channel = this.channels[2] as Channel;
+    for (const operator of channel.operators) {
+      if (!operator.key) keyOff(operator);
+    }
+    this.csmKey = 0;
   }
 }
 
@@ -775,9 +1257,60 @@ function newOperator(): Operator {
     increment: 0,
     state: "off",
     attenuation: MAX_ATTENUATION,
+    ssgInvert: 0,
+    key: false,
     out1: 0,
     out2: 0,
   };
+}
+
+/**
+ * The increment an operator steps its phase by, from a pitch and its own two
+ * scalings.
+ *
+ * Detune is added in the accumulator's own units and wraps in seventeen bits,
+ * which is the hardware's overflow rather than a clamp — a detuned note near the
+ * top of the range really does come back round.
+ */
+function setIncrement(operator: Operator, frequency: Frequency): void {
+  const table = DETUNE[operator.detune & 0x03] as readonly number[];
+  const offset = table[frequency.keyCode] as number;
+  const detuned =
+    (operator.detune & 0x04) !== 0 ? frequency.base - offset : frequency.base + offset;
+  operator.increment = ((detuned & 0x1ffff) * operator.multiple) >> 1;
+}
+
+/**
+ * The attenuation an operator is heard at, which SSG-EG can turn upside down.
+ *
+ * The inversion is a *reading* and not a state change: the envelope keeps
+ * counting up either way, and what changes is whether the chip subtracts it from
+ * half scale before the exponential lookup. Two inversions cancel, which is what
+ * the mode's own bit and the running flag being compared rather than or-ed is
+ * for.
+ */
+function attenuationOf(operator: Operator): number {
+  if ((operator.ssgEg & 0x08) === 0) return operator.attenuation;
+  if (operator.ssgInvert === (operator.ssgEg & 0x04)) return operator.attenuation;
+  return (0x200 - operator.attenuation) & MAX_ATTENUATION;
+}
+
+/**
+ * Begin an attack from wherever the envelope stands, without silencing first.
+ *
+ * Shared by an ordinary key-on, SSG-EG's loop and CSM's automatic strike,
+ * because all three are the same event on this chip: the attack is skipped
+ * outright at the fastest rate, which is what makes a percussive patch land on
+ * the sample it was asked for rather than one later.
+ */
+function restartAttack(operator: Operator, keyCode: number): void {
+  if (effectiveRate(operator.attackRate, operator.keyScale, keyCode) < 62) {
+    operator.state =
+      operator.attenuation <= 0 ? (operator.sustainLevel === 0 ? "sustain" : "decay") : "attack";
+    return;
+  }
+  operator.attenuation = 0;
+  operator.state = operator.sustainLevel === 0 ? "sustain" : "decay";
 }
 
 /**
@@ -817,6 +1350,8 @@ function keyCodeOf(block: number, fnum: number): number {
 
 /** Start an operator's attack, from wherever its envelope had reached. */
 function keyOn(operator: Operator, keyCode: number): void {
+  operator.key = true;
+  operator.ssgInvert = 0;
   if (operator.state !== "off" && operator.state !== "release") {
     // A retrigger restarts the attack without silencing first, which is the
     // difference between a re-struck note and a new one.
@@ -836,8 +1371,20 @@ function keyOn(operator: Operator, keyCode: number): void {
 }
 
 function keyOff(operator: Operator): void {
-  if (operator.state === "off") return;
+  operator.key = false;
+  if (operator.state === "off" || operator.state === "release") return;
   operator.state = "release";
+  if ((operator.ssgEg & 0x08) === 0) return;
+  // An SSG-EG release counts down from what the listener was *hearing*, so an
+  // envelope that was being read upside down is folded the right way up first —
+  // and one already past half scale has nowhere to fall and stops here.
+  if (operator.ssgInvert !== (operator.ssgEg & 0x04)) {
+    operator.attenuation = (0x200 - operator.attenuation) & MAX_ATTENUATION;
+  }
+  if (operator.attenuation >= 0x200) {
+    operator.attenuation = MAX_ATTENUATION;
+    operator.state = "off";
+  }
 }
 
 /** `2 * rate + keyScaling`, offset past the rows that never move. */
@@ -886,6 +1433,14 @@ function stepEnvelope(operator: Operator, keyCode: number, counter: number): voi
       return;
     }
     case "decay": {
+      if ((operator.ssgEg & 0x08) !== 0) {
+        // Four times the step, and a stop at *half* attenuation rather than
+        // full: the top half of the range is where the loop lives, so a decay
+        // that ran into it would take the fold away.
+        if (operator.attenuation < 0x200) operator.attenuation += increment * 4;
+        if (operator.attenuation >= operator.sustainLevel) operator.state = "sustain";
+        return;
+      }
       operator.attenuation += increment;
       if (operator.attenuation >= operator.sustainLevel) {
         operator.attenuation = operator.sustainLevel;
@@ -893,11 +1448,31 @@ function stepEnvelope(operator: Operator, keyCode: number, counter: number): voi
       }
       return;
     }
+    case "sustain": {
+      if ((operator.ssgEg & 0x08) !== 0) {
+        if (operator.attenuation < 0x200) operator.attenuation += increment * 4;
+        return;
+      }
+      operator.attenuation += increment;
+      // Reaching silence in the sustain phase is not a state change, which is
+      // verified hardware behaviour rather than an omission: a key-off from
+      // here still has to run the release rate.
+      if (operator.attenuation >= MAX_ATTENUATION) operator.attenuation = MAX_ATTENUATION;
+      return;
+    }
     default: {
+      if ((operator.ssgEg & 0x08) !== 0) {
+        if (operator.attenuation < 0x200) operator.attenuation += increment * 4;
+        if (operator.attenuation >= 0x200) {
+          operator.attenuation = MAX_ATTENUATION;
+          operator.state = "off";
+        }
+        return;
+      }
       operator.attenuation += increment;
       if (operator.attenuation >= MAX_ATTENUATION) {
         operator.attenuation = MAX_ATTENUATION;
-        operator.state = operator.state === "release" ? "off" : "sustain";
+        operator.state = "off";
       }
       return;
     }

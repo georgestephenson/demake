@@ -258,13 +258,99 @@ describe("the WonderSwan's sound hardware", () => {
     expect(WS_SOUND_CHANNELS).toBe(4);
   });
 
-  it("keeps the voice register it does not play", () => {
-    // Channel two's PCM mode is a gap rather than a decision, so the writes are
-    // stored and inert and a test says so (AGENTS.md §Iron rules).
+  it("keeps the voice's two registers where a caller can read them", () => {
     const chip = new WsSound();
     chip.write(REG.CONTROL, 0x20);
     chip.write(REG.VOICE_VOLUME, 0x0c);
     expect(chip.voiceEnabled).toBe(true);
     expect(chip.voiceVolume).toBe(0x0c);
+  });
+});
+
+/**
+ * Channel two's PCM voice, which is the one thing on this chip that is not a
+ * wavetable.
+ *
+ * The cases below are the ways a model can hold the registers and still be
+ * wrong: reading `$89` as two nibbles when the mode bit says it is one byte,
+ * mistaking which bit of a level pair is full and which is half, and leaving the
+ * waveform playing underneath the sample. Each is silent-in-a-different-way
+ * rather than merely quieter, which is why they are separate tests.
+ */
+describe("the WonderSwan's PCM voice", () => {
+  /** Turn channel two into a voice and hand it one sample byte. */
+  function voice(sample: number, level: number): RegisterWrite[] {
+    return [
+      { reg: REG.OUTPUT, value: 0x11 },
+      { reg: REG.VOICE_VOLUME, value: level },
+      { reg: REG.CH2_VOLUME, value: sample },
+      // Bit 5 is the mode and bit 1 is the channel's own enable: the voice needs
+      // both, because the mode does not turn the channel on.
+      { reg: REG.CONTROL, value: 0x20 | 0x02 },
+    ];
+  }
+
+  /** The level a held sample settles at, as a signed fraction of full scale. */
+  function levelOf(sample: number, level: number, side = 0): number {
+    const pcm = renderSchedule(new WsSound(), hold(voice(sample, level), 20), RATE);
+    const samples = pcm.channels[side] as Float32Array;
+    // A held byte is a step, so the DC blocker takes it back to zero — the
+    // amplitude is in the transient, and the first sample after the write is
+    // where the step's own height is still intact.
+    let peak = 0;
+    for (let index = 0; index < samples.length; index += 1) {
+      if (Math.abs(samples[index] as number) > Math.abs(peak)) peak = samples[index] as number;
+    }
+    return peak;
+  }
+
+  it("plays the whole of `$89` as one sample rather than two volume nibbles", () => {
+    // `$FF` is two nibbles of fifteen to a wavetable channel and full positive
+    // deflection to a voice, and `$00` is silence to one and full negative
+    // deflection to the other — so a model reading the wrong one gets the sign
+    // of half the waveform backwards rather than the level slightly wrong.
+    expect(levelOf(0xff, 0x0f)).toBeGreaterThan(0.05);
+    expect(levelOf(0x00, 0x0f)).toBeLessThan(-0.05);
+    // And the midpoint is silence, which is the same convention the wavetable
+    // path uses and the reason a voice at rest does not click.
+    expect(Math.abs(levelOf(0x80, 0x0f))).toBeLessThan(0.005);
+  });
+
+  it("reads each level pair as full-or-half rather than as a number", () => {
+    const full = levelOf(0xff, 0x0f);
+    // Within the left pair, `$8` is the full bit alone and `$4` the half bit
+    // alone — so `$8` is louder than `$4`, which is the opposite of reading the
+    // field as a two-bit level where the larger number would be the quieter.
+    expect(levelOf(0xff, 0x08)).toBeCloseTo(full, 2);
+    expect(levelOf(0xff, 0x04)).toBeCloseTo(full / 2, 1);
+    expect(levelOf(0xff, 0x00)).toBeCloseTo(0, 3);
+  });
+
+  it("levels the two sides independently, from opposite ends of the register", () => {
+    // Left is the high pair and right the low one, so a driver that swapped them
+    // would put a voice on the wrong speaker and nothing else would change.
+    const leftOnly = 0x0c;
+    expect(levelOf(0xff, leftOnly, 0)).toBeGreaterThan(0.05);
+    expect(Math.abs(levelOf(0xff, leftOnly, 1))).toBeLessThan(0.005);
+    const rightOnly = 0x03;
+    expect(Math.abs(levelOf(0xff, rightOnly, 0))).toBeLessThan(0.005);
+    expect(levelOf(0xff, rightOnly, 1)).toBeGreaterThan(0.05);
+  });
+
+  it("silences the waveform underneath rather than mixing it in", () => {
+    // The channel is still clocked — its pointer moves, so switching the mode
+    // off resumes where the waveform would have been — but nothing it reads is
+    // heard while the voice is on. A model that added both would play a tone
+    // through every sample the voice held.
+    const chip = new WsSound({ ram: ramWith(1, SQUARE) });
+    const writes: RegisterWrite[] = [
+      { reg: REG.WAVE_BASE, value: WAVE_BASE >> 6 },
+      { reg: REG.CH2_FREQ_LOW, value: 1830 & 0xff },
+      { reg: REG.CH2_FREQ_HIGH, value: (1830 >> 8) & 0x07 },
+      ...voice(0x80, 0x0f),
+    ];
+    const pcm = renderSchedule(chip, hold(writes, 40), RATE);
+    // A midpoint sample is silence; the square underneath it is not.
+    expect(rms(pcm.channels[0] as Float32Array, pcm.sampleRate >> 4)).toBeLessThan(0.002);
   });
 });

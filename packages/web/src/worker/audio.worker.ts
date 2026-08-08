@@ -335,10 +335,10 @@ async function runSfx(request: AudioWorkerRequest & { kind: "sfx" }): Promise<Sf
   };
 }
 
-function buildArtifact(
+async function buildArtifact(
   entry: Held,
   request: AudioWorkerRequest & { kind: "artifact" },
-): AudioArtifact {
+): Promise<AudioArtifact> {
   switch (request.what) {
     case "manifest":
       return { name: `${request.stem}.json`, bytes: bytesPayload(entry.manifest) };
@@ -351,7 +351,7 @@ function buildArtifact(
         bytes: bytesPayload(encodeWav(render(entry.script, request.render))),
       };
     case "rom": {
-      const built = buildAudioRom(entry.script, { title: request.title });
+      const built = await buildAudioRom(entry.script, { title: request.title });
       return { name: `${request.stem}${built.suffix}`, bytes: bytesPayload(built.bytes) };
     }
   }
@@ -432,7 +432,7 @@ self.addEventListener("message", async (event: MessageEvent<AudioWorkerRequest>)
         return;
       }
       case "artifact": {
-        const artifact = buildArtifact(heldFor(request.token), request);
+        const artifact = await buildArtifact(heldFor(request.token), request);
         post({ id: request.id, ok: true, kind: "artifact", artifact }, [artifact.bytes]);
         return;
       }

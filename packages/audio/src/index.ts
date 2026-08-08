@@ -97,7 +97,6 @@ export {
 export {
   audioRomConsoles,
   buildAudioRom,
-  buildGbAudioRom,
   packScript,
   AudioRomError,
   PackError,
@@ -162,6 +161,25 @@ export {
   type SmsGameAudioInput,
   type SmsGameAudioStats,
 } from "./rom/sms-game.js";
+export { t6w28Binding } from "./binding/t6w28.js";
+export {
+  t6w28AttenuationOff,
+  t6w28ChannelTag,
+  t6w28ShadowSlot,
+  T6W28_CHANNELS,
+  T6W28_LEFT,
+  T6W28_RIGHT,
+  T6W28_SHADOW,
+  T6W28_SHADOW_BYTES,
+} from "./rom/t6w28.js";
+export {
+  buildNgpGameAudio,
+  resolveNgpClock,
+  NGP_AUDIO_BYTES,
+  type NgpGameAudio,
+  type NgpGameAudioInput,
+  type NgpGameAudioStats,
+} from "./rom/ngp-game.js";
 export { wscBinding, wscChannelTag, wsWaveforms, WSC_SHARED_REG } from "./binding/wsc.js";
 export {
   buildWscGameAudio,

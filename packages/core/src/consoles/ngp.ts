@@ -3,6 +3,7 @@
  * grayscale shades. Same mono path as WonderSwan; the color model differs from
  * the NGPC sibling (`ngpc`).
  */
+import { ngpAudio } from "./audio-specs.js";
 import type { ConsoleSpec, RGB8 } from "./types.js";
 const GRAY8: readonly RGB8[] = Array.from({ length: 8 }, (_, i) => {
   const v = Math.round(255 * (1 - i / 7));
@@ -25,6 +26,12 @@ export const ngp = {
     tileBudget: 384,
     flip: true,
   },
-  codegen: { family: "ngpc", formats: ["bin", "asm", "c", "rom"] },
+  // Its **own** family, not the Color's, on the WonderSwan's terms: these two
+  // machines share a display controller and a processor, but a palette here is
+  // three-bit shade numbers in an eight-entry lookup table and there is one of
+  // them, where a Color has sixteen four-entry RGB444 palettes per layer. A data
+  // backend emits palettes, so there is nothing for the two to share.
+  codegen: { family: "ngp", formats: ["bin", "asm", "c", "rom"] },
+  audio: ngpAudio,
   docs: { sources: ["NeoGeo Pocket dev wiki — K1GE mono video (8 shades)"] },
 } satisfies ConsoleSpec;

@@ -50,6 +50,11 @@ const CONSOLES = [
   // works on a console `build -c ws` cannot target.
   "ws",
   "wsc",
+  // And both Neo Geo Pockets, for the same reason: one chip, one binding, and a
+  // demaker is per-domain — so `arrange -c ngp` works on a console the mono
+  // machine's *video* path has not reached.
+  "ngp",
+  "ngpc",
 ];
 
 describe("ingest", () => {
@@ -339,13 +344,13 @@ describe("the console registry", () => {
     expect(audioConsoles().sort()).toEqual([...CONSOLES].sort());
   });
 
-  // The Neo Geo Pocket Color, which is now the nearest console with a video spec
-  // and no audio in it — the Game Boy Advance had that job until its own spec
-  // landed, then the Nintendo DS, then the PC Engine, then the WonderSwan. What
-  // this wants is a console whose sound hardware has no model yet, and Tier 2 is
-  // where those are.
+  // The Virtual Boy, which is now the nearest console with a video spec and no
+  // audio in it — the Game Boy Advance had that job until its own spec landed,
+  // then the Nintendo DS, then the PC Engine, then the WonderSwan, then the Neo
+  // Geo Pocket Color. What this wants is a console whose sound hardware has no
+  // model yet, and Tier 2 and 3 are where those are.
   it("explains a console it cannot demake", () => {
-    expect(() => bindingFor("ngpc")).toThrow(/no audio spec yet/);
+    expect(() => bindingFor("vb")).toThrow(/no audio spec yet/);
   });
 });
 

@@ -222,11 +222,23 @@ the FM half of a track plays _through_ a sound effect instead of ducking for it.
 That is better than any four-voice console can manage, and it is the hardware's
 doing rather than the driver's.
 
-Three things the chip model does not do yet, and each is a gap rather than a
-decision (§Iron rules): the LFO's _pitch_ modulation (its amplitude modulation is
-there and exact), the SSG-EG envelope modes, and channel 3's per-operator
-frequency mode. All three are stored and inert, no binding writes them, and
-closing any is a table and a few lines.
+**The chip model is the whole chip**, and the three things that were stored and
+inert are the reason to say so. The LFO's _pitch_ modulation is applied to the
+F-number rather than to the increment, which is what makes one depth the same
+interval in every octave; SSG-EG runs the envelope four times as fast, stops it
+at half attenuation and then holds, folds or re-attacks it; and channel 3 can
+hold four F-numbers, which are **not** in slot order — `$A9`, `$AA`, `$A8` and
+the channel's own feed S1 to S4 — with a timer-driven key-on riding on top of
+the same mode bits. None of the three is reachable through a register `md.ts`
+writes, so closing them changed no cartridge's audio by a byte; the point of
+doing it first is that a binding reaching for one now gets the hardware rather
+than a shrug (§Iron rules).
+
+Two things it still does not do, and both are deliberate rather than gaps: the
+bus's **busy flag** is always clear, which is the honest answer for a model with
+no bus timing, and the **discrete chip's nine-bit operator output** is not
+distinguished from the later ASIC's — a difference between two _boards_, of
+exactly the kind `mix()` already takes per-chip gains for.
 
 **And it builds for a second machine.** `demake build -c nes` produces a real
 NROM cartridge — 6502 machine code written for the game, its art demade for a
@@ -621,6 +633,63 @@ below `$4000` on _both_ machines, and the colour one's roomy gap under the tile
 bank is tiles over here; the interrupt vectors are what both have spare, because
 neither cartridge takes an interrupt anywhere.
 
+**And it builds for a Neo Geo Pocket Color.** `demake build -c ngpc` produces a
+real four-megabit flash cartridge — TLCS-900/H machine code written for the game,
+art demade into 2bpp characters across fifteen four-colour palettes — and the
+whole example library traces identically on it, in the same battery, at the same
+one frame per tick. This is the ninth backend, the tenth processor, and the
+widest one in the set: thirty-two-bit registers over a twenty-four-bit space, so
+a 16.16 value is a register and the only two routines this console pulls in are
+the multiply and the divide.
+
+Three things about it are worth knowing and none is a predecessor restated. **The
+operand prefix comes before the opcode**, which is the one genuinely unusual
+thing about this architecture and the reason `@demake/core`'s decoder is two
+stages — a prefix byte names an operand _and its size_, and the opcode after it
+says what to do. **A conditional branch never has to be inverted**, because this
+is the only processor here with both a long conditional relative branch and a
+conditional absolute jump, so `ctx.far` and `ctx.farJump` are each one
+instruction where three other backends invert a condition over a jump. And **an
+interrupt handler is a pointer in RAM**: the boot ROM owns the processor's own
+vector table and dispatches through one of its own, so a cartridge installs a
+vertical-blank handler by writing four bytes.
+
+The renderer is the WonderSwan's arrangement one console along — **there is no
+video memory at all**, so the tile bank reaches the display by one `ldir` and a
+cell is one store — with a 32×32 map against a 20×19 window on a plane that is
+exactly 256 pixels square, which makes the scroll registers _be_ the wrap. What
+is this console's alone is that **a palette block belongs to a layer**: sixteen
+four-colour palettes for the objects and sixteen for each scroll plane, so a
+picture and its sprites can never compete for one and there is no split to force.
+And that **the palette word is BGR**, red in the low nibble, which is the
+opposite of every other RGB444 console here — the art path had it backwards and
+only the core, written from the reference first, could tell.
+
+**And it plays them.** `demake build -c ngpc` puts a **generated TLCS-900/H
+driver** in the cartridge (`packages/audio/src/rom/ngp-driver.ts`,
+`ngp-game.ts`) — the seventh processor to get one — and the whole example
+library plays its music and effects on it, diffed tick for tick by the shared
+battery. Two things about it are this machine's. The **chip has to be asked
+for**: its own bus belongs to a Z80 sound processor, so the driver writes
+`$55` and `$AA` to two bytes of the main CPU's I/O page before anything it sends
+is listened to, and `@demake/ngp` refuses every port write until both arrive.
+And **there is nothing to merge** — the fourth console here with no shared
+register and the first to have none because its hardware pans _more_ — so
+handing a borrowed channel back replays _six_ bytes rather than three, because
+both of a voice's levels are things the music stated and the effect overwrote.
+
+**And it demakes music and sound, on both Neo Geo Pockets.** `@demake/chip`
+models the T6W28: a Master System's four voices with the thing that chip is
+poorest in — **stereo that is a level rather than a switch**, two four-bit
+attenuators per channel, one a side. It is the fourth console in the set with no
+shared register and the first to have none because its hardware pans _more_. Two
+write ports carry different registers (the tone periods on the left, the noise's
+own divisor on the right), so a driver that had them backwards would produce
+silence; the chip test pins that, because a register diff could not. The mono
+machine is on that list too, because it has the same sound hardware and a
+demaker is per-domain — so `arrange -c ngp` works on a console `build -c ngp`
+cannot target.
+
 Still to come: the remaining Tier 2/3 consoles (each =
 a codegen backend, a ROM harness + toolchain, and a libretro core + DAC
 calibration), the remaining framebuffer/scanline layout paths (Lynx, GBA/NDS
@@ -631,10 +700,11 @@ work doc 14 §Runtime model names).
 [16](docs/16-audio-engine.md), [17](docs/17-music-demaker.md),
 [18](docs/18-sound-demaker.md)): `@demake/chip` models the Game Boy APU, the
 SN76489, the NES 2A03, the YM2612, the Super Nintendo's S-DSP, the Nintendo DS's
-SPU, the HuC6280's wavetable PSG and the WonderSwan's; `@demake/audio`
+SPU, the HuC6280's wavetable PSG, the WonderSwan's and the Neo Geo Pocket's
+T6W28; `@demake/audio`
 holds both demakers; and `demake arrange`, `demake sfx` and `demake render` work
 for `dmg`, `gbc`, `megaduck`, `nes`, `sms`, `gg`, `sg1000`, `snes`, `md`, `gba`,
-`nds`, `pce` and both WonderSwans — the mono machine included, because it has the
+`nds`, `pce`, both WonderSwans and both Neo Geo Pockets — the mono machine included, because it has the
 same sound hardware and a demaker is per-domain, so `arrange -c ws` works on a
 console `build -c ws` cannot target. A
 track becomes a `.vgm` plus a WAV that is exactly what the schedule produces — or,
@@ -646,8 +716,23 @@ whose spec names two chips.
 
 `demake gen <schedule> -c dmg --format rom` then turns that schedule into a real
 32 KiB cartridge, with an SM83 driver **generated for it** — no fixed player, no
-checked-in harness, no toolchain — and **doc 16's Level A proof runs in
-`pnpm test`**: the ROM boots in `@demake/dmg`, whose APU is now `@demake/chip`'s,
+checked-in harness, no toolchain — and `-c nes`, `-c pce`, `-c sms`, `-c gg` and
+`-c md` do the same on an NROM board, a HuCard, a flat Sega cartridge and a
+one-megabit Mega Drive board, which is what turned "what does another console cost"
+into a measurement: the stream player is the _processor's_ and moved not at all
+between them, so each is a boot sequence, a clock and a cartridge wrapper
+and nothing else. The fourth reused a player written for a _game_ and
+changed it in one place — an emitter that can lay packed data either side of a
+hole, because this console's cartridge header is sixteen bytes inside its own
+address space. The fifth changed nothing at all, and is where **a standalone
+cartridge stops being a game with the game taken out**: its clock is the FM
+chip's own timer, which a _game_ on that console cannot have, because the timer's
+interrupt goes to the Z80 and a game polling the status byte would be reading it
+once per pass of a loop that is also running a game. A loop that does nothing
+else polls it every few microseconds and keeps the timer's rate exactly — so
+`resolveMdClock` and `resolveMdAudioClock` refuse _opposite_ sources, which is
+the sharpest statement in the set of what a caller is (§The 68000 half).
+And **doc 16's Level A proof runs in `pnpm test`**: the ROM boots in `@demake/dmg`, whose APU is now `@demake/chip`'s,
 and every register write it makes is diffed against the `ChipScript` tick for
 tick, with no tolerance (`packages/audio/test/rom.test.ts`). That is the audio
 counterpart of the pixel-perfect emulator E2E, and it is sharper, because the
@@ -657,14 +742,15 @@ artifact _is_ the schedule.
 effect per event, one clock serving both, and the same proof one level up —
 `packages/demotic/test/_audio-battery.ts` boots a cartridge that is playing a game
 and diffs every register write against the schedules the demakers produced.
-It does that on **every** console the game backend builds for, over seven drivers
+It does that on **every** console the game backend builds for, over eight drivers
 that share only the packed format and — where the CPU is the same — the stream
 player, and below that only what the chip decides: an SM83 player on a
 programmable timer, a 6502 player on the picture's interrupt, the _same_ 6502
 player on a timer one console over, a Z80 player writing an I/O port, a 68000
 player storing a byte to an address, an SPC700 player that is not on the console's
-processor at all, and an ARM player clocked by its own sample transfer that has to
-_compute_ six of its ten voices before it can play them.
+processor at all, an ARM player clocked by its own sample transfer that has to
+_compute_ six of its ten voices before it can play them, and a TLCS-900/H player
+that has to _ask_ for its chip before anything it sends is listened to.
 
 **And both demakers are on the web** (doc 07 §The audio sections): a music
 section and a sound section over their own worker, carrying the whole
@@ -675,16 +761,38 @@ four pinned byte-identical to the CLI's by
 `packages/web/test/e2e/determinism.spec.ts`.
 
 Still to come for audio: `bin`/`asm`/`c` emit, a _standalone_ audio cartridge for
-anything but the Game Boy (the NES, the PC Engine, the Sega 8-bits, the Mega Drive
-and the Game Boy Advance have drivers, but only inside a game; the Super
-Nintendo's driver writes an `.spc` rather than a cartridge), driver backends for the remaining
+the consoles that still have none — the Game Boy, the **NES**, the **PC Engine**,
+both **Sega 8-bits** and the **Mega Drive** build one today, and the WonderSwans,
+the Neo Geo Pocket Color and both ARM handhelds have drivers only inside a game,
+while the Super Nintendo's writes an `.spc` rather than a cartridge. What each of
+them costs is no longer an estimate but a measurement: the stream player belongs
+to the _processor_ and is already written, so a console adds a boot sequence, a
+clock and a cartridge wrapper and nothing else — which is why the third of them
+reused the second's player unchanged, the fourth reused a _game's_, and the fifth
+changed not one instruction of one. What the last two did was find, twice, the
+bill for a clock nobody had ever had to keep. The Sega binding would fit a rate
+to the VDP's line interrupt, and that interrupt fires only inside the active
+display, so the first cartridge to ride one would have played at half the rate it
+declared (§The Z80 half). And the Mega Drive's core only advanced its FM chip
+when something was listening to the speakers — which is invisible for a
+write-only chip and fatal for one whose _timer_ a driver polls, so the first
+cartridge to ride that would have spun for ever (§The 68000 half). Also: driver backends for the remaining
 consoles (each needs a CPU encoder or a checked-in driver source, plus a core to
 prove it in), Level B sample comparison, the remaining chips (the rest of the
-handhelds), the
-three parts of the YM2612 that are stored and inert (LFO pitch modulation, SSG-EG,
-channel 3's per-operator mode), the two parts of the HuC6280's PSG that are (its
-LFO, and the direct D/A as a sample player), tracker and lossy-audio input with the
-transcription front end, and FLAC/M4A export. Read doc
+handhelds), and — the one that is an _iron-rule_ gap rather than a missing
+feature — **hardware the chip layer models and no binding reaches** (doc 13
+§A5.5). Six lines of it: the YM2612's LFO, its SSG-EG modes and its channel-3
+four-pitch mode, the HuC6280's LFO, and the two sample players nothing above
+the chip layer drives (the PC Engine's direct D/A and the WonderSwan's PCM
+voice — doc 18's work rather than doc 16's). None of it is a correctness
+problem: every cartridge performs exactly the schedule its demaker produced, and
+the models were completed _before_ any binding wanted them, so closing those gaps
+changed no cartridge's audio by a byte. It is expression the hardware offers and
+nothing asks for, which is the rule a demaker spends the whole machine pointing
+the other way. The first line is also the biggest and is the _arranger's_ rather
+than a binding's: nothing in `@demake/audio` produces vibrato at all, by any
+route. Also: tracker and lossy-audio input with
+the transcription front end, and FLAC/M4A export. Read doc
 16 before touching any of it — several of its decisions are load-bearing and easy
 to undo by accident (§Working on audio).
 
@@ -692,9 +800,10 @@ to undo by accident (§Working on audio).
 
 ```
 packages/core/       @demake/core — the engine (zero platform deps; ESM; ships types)
-  src/asm/           the SM83, 6502, HuC6280, Z80, 65816, SPC700, 68000, ARM and
-                     V30MZ assemblers + the GB, iNES, Sega, LoROM, Mega Drive,
-                     GBA, DS and WonderSwan cartridge wrappers —
+  src/asm/           the SM83, 6502, HuC6280, Z80, 65816, SPC700, 68000, ARM,
+                     V30MZ and TLCS-900/H assemblers + the GB, iNES, Sega, LoROM,
+                     Mega Drive, GBA, DS, WonderSwan and Neo Geo Pocket
+                     cartridge wrappers —
                      shared by the Demotic game backends and the audio drivers, so
                      no backend owns the encoder for its own CPU. megaduck.ts is
                      the Mega Duck's I/O map, here because three things read it
@@ -780,6 +889,25 @@ packages/nds/        @demake/nds — a self-hosted Nintendo DS core, and the onl
                      the second screen, interrupts (on both processors) and every
                      ARM7 peripheral that is not the sound are absent rather than
                      half-implemented, and each raises
+packages/ngp/        @demake/ngp — a self-hosted Neo Geo Pocket core, mono *and*
+                     Color, decided by a constructor argument the way @demake/wsc
+                     is. Its display has no memory of its own, on that core's
+                     terms — the registers, the palettes, the two scroll maps,
+                     the object table and the character bank are one region of
+                     the same address space the variables are in — and its
+                     renderer is per scanline: a per-line object list, a per-line
+                     resolved palette cache, and one map entry and one character
+                     row per eight pixels. The *boot ROM is ours*, on
+                     @demake/snes's terms: read the entry address out of the
+                     header, point the stack, jump, and dispatch the vertical
+                     blank through the pointer a cartridge writes into RAM. The
+                     CPU is written against the published instruction set and
+                     driven in its tests by core's own encoder — and on it **the
+                     operand comes before the opcode**, which is why the decoder
+                     is two stages. Sound, the Z80 sound processor and the
+                     on-chip timers and DMA are absent rather than
+                     half-implemented, and the first of those is the only thing
+                     between this console and an in-game audio driver
 packages/pce/        @demake/pce — a self-hosted PC Engine core. Its PSG is
                      @demake/chip's Huc6280Psg, not a second one, and `psgTap`
                      is the window doc 16's Level A proof reads through. The CPU
@@ -839,13 +967,21 @@ packages/snes/       @demake/snes — a self-hosted Super Nintendo core: a 65816
                      boot ROM of *ours* that speaks the documented upload
                      handshake rather than transcribing Nintendo's. Its S-DSP is
                      @demake/chip's, not a second one
-packages/md/         @demake/md — a self-hosted Mega Drive core: a 68000, a VDP and
-                     the SN76489 at $C00011 (@demake/chip's, not a second copy),
-                     for the two jobs the other three cores exist for. The FM half
-                     is deliberately absent: it is a second processor with a
-                     YM2612 beside it and `demake build` emits neither, so an FM
-                     write reaches a Z80 bus that answers as RAM — which is what
-                     the hardware does to a 68000-only program
+packages/md/         @demake/md — a self-hosted Mega Drive core, and the only one
+                     with *two* sound chips: the SN76489 at $C00011 and the
+                     YM2612 at $A04000, both @demake/chip's rather than second
+                     copies, with a tap each — and the FM one reports the bus
+                     *port* rather than a decoded register, because that is what
+                     a schedule's register number is on this machine. The FM chip
+                     runs whether or not a sample sink is attached, which the PSG
+                     does not, and the difference is that this one can be *read*:
+                     its status byte carries the timer overflow flags, and a
+                     standalone audio cartridge's clock is timer A polled from
+                     the main loop. Gating it on a sink would be a model of the
+                     speakers rather than of the chip. The Z80 is absent — a
+                     second processor `demake build` emits no program for — so
+                     its RAM answers as RAM, which is what the hardware does to a
+                     68000-only program
 packages/gba/        @demake/gba — a self-hosted Game Boy Advance core: an
                      ARM7TDMI in ARM state, a mode-0 2D engine with four
                      background layers and 128 objects, DMA, timers, and both
@@ -927,6 +1063,16 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
                      in the cartridge and a variable is not; ops.ts is
                      snes/ops.ts's file for the third CPU whose `abs` means
                      something else again
+    ngpc.ts, ngpc-art.ts, ngpc/           the TLCS-900/H backend and its image
+                     path, and the one whose renderer writes almost nothing at
+                     all: there is no video memory, so the tile bank is one
+                     `ldir` and a cell is one store. ctx.ts is the shortest in
+                     the set — this is the only processor here with both a long
+                     conditional branch and a conditional absolute jump, so
+                     neither `far` nor `farJump` has a condition to invert.
+                     emit.ts's `mapWord` is the PC Engine's and the WonderSwan's
+                     shape a third time: nine bits of character and four of
+                     palette, so there is no attribute table anywhere in it
     gba.ts, gba-art.ts, gba/              the ARM backend and its image path,
                      which is *two* machines: gba/machine.ts is the description
                      that makes a Nintendo DS a variant rather than a seventh
@@ -936,8 +1082,22 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
 packages/chip/       @demake/chip — every sound chip as a register-driven model (doc 16)
   src/gb-apu.ts      Game Boy APU: 2 pulse + wave + noise, envelopes, panning
   src/sn76489.ts     the SMS/GG/SG-1000/MD PSG: no envelopes, ~109 Hz pitch floor
+  src/t6w28.ts       the Neo Geo Pocket's: that chip's four voices with *two*
+                     four-bit attenuators each, one a side — the only stereo in
+                     the set that is a level rather than a switch, and the reason
+                     this console has no shared register at all. Two write ports
+                     carry different registers (tone periods on the left, the
+                     noise's own divisor on the right), so `write`'s first
+                     argument is the *port*; a driver with the two backwards
+                     produces silence rather than a wrong note
   src/ym2612.ts      the Mega Drive's OPN2: 6 four-operator FM voices, 8 algorithms,
-                     the hardware's own log-sine and exponential ROM tables
+                     the hardware's own log-sine and exponential ROM tables. Its
+                     LFO modulates the *F-number* rather than the increment,
+                     which is what makes one depth the same interval in every
+                     octave; SSG-EG is a fold rather than a change, so the
+                     envelope keeps counting and only its *reading* inverts; and
+                     channel 3's four F-numbers are not in slot order, which is
+                     why `SLOT3_FREQUENCY` is a table
   src/nes-apu.ts     the 2A03: volume-less triangle, non-linear mixing
   src/s-dsp.ts       the Super Nintendo's: eight sample-playing voices, BRR
                      decoding, ADSR and GAIN, and a pitch register that
@@ -952,8 +1112,12 @@ packages/chip/       @demake/chip — every sound chip as a register-driven mode
                      wavetable — thirty-two five-bit samples of RAM apiece, which
                      is why this console's *timbre* is a boot decision and not a
                      duty bit. Volume is three attenuators in series in 1.5 dB
-                     steps, so a level is a table lookup on a sum. The LFO and the
-                     direct D/A's use as a sample player are stored and inert
+                     steps, so a level is a table lookup on a sum. Its LFO is
+                     unlike every other vibrato in the set: there is no
+                     oscillator, channel two *is* the modulator, so switching it
+                     on costs a voice and the depth is a shift on the *divider*.
+                     Direct D/A is modelled; what nothing above this file does is
+                     stream samples into it
   src/ws-sound.ts    the WonderSwan's: four channels and every one of them a
                      wavetable — thirty-two four-bit samples apiece, and the only
                      chip here whose waveforms are the *console's own RAM* rather
@@ -961,8 +1125,12 @@ packages/chip/       @demake/chip — every sound chip as a register-driven mode
                      handed the machine's memory the way its display is. Volume
                      is four linear bits a side; the noise voice picks a *tap*
                      rather than a rate, so a drum has a colour and a pitch.
-                     Channel two's PCM voice, the Hyper Voice stage and the
-                     readable output registers are stored-and-inert or absent
+                     Channel two's PCM voice is modelled — `$90` bit 5 makes the
+                     whole of `$89` one sample and `$94` its only level — so this
+                     chip can play a recording on one of its four voices. The
+                     Hyper Voice stage is a Color addition on ports of its own
+                     and is absent; so are the readable output registers, which
+                     no reference this project could reach describes
   src/nds-spu.ts     the Nintendo DS's: sixteen channels that are sample players
                      first, six of which switch to a duty generator and two to a
                      noise register — an S-DSP and a Game Boy APU on one die, with
@@ -980,17 +1148,51 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
   src/arrange/       assignment, exchange refinement, and the schedule compiler
   src/binding/       per-console register encoders + the driver-rate fits.
                      md.ts is the one that drives two chips at once; fm-patch.ts
-                     is where a timbre is *searched* rather than selected
+                     is where a timbre is *searched* rather than selected;
+                     t6w28.ts is the one whose `BoundWrite.reg` is a *port*
+                     rather than a register number, because that chip has two of
+                     them and they carry different things
   src/timing.ts      absolute row placement: the tempo guarantee lives here
   src/sfx/           gesture families, class gate, hardware-in-the-loop fitting
   src/rom/           the console hand-off: schedule packing (data.ts, shared) +
                      a generated driver per CPU (doc 16). SM83: one stream player
                      (gb-driver.ts), two callers — the cartridge (gb.ts) and the
                      driver a game embeds (gb-game.ts). 6502: mos-player.ts, which
-                     is the *processor's* rather than either machine's, and two
-                     callers — nes-game.ts and pce-game.ts, because a HuC6280 is a
-                     6502 with a mapper; Z80: sms-driver.ts and sms-game.ts; 68000:
-                     md-driver.ts and md-game.ts; SPC700: spc-driver.ts and
+                     is the *processor's* rather than either machine's, and three
+                     callers — the cartridge (nes.ts) and the drivers two games
+                     embed (nes-game.ts, pce-game.ts), because a HuC6280 is a
+                     6502 with a mapper. nes.ts and pce.ts are the second and
+                     third standalone cartridges in the set and the measurement
+                     of what a fourth costs: the player moved not at all between
+                     them, so what each owns is a boot sequence, a clock and a
+                     cartridge wrapper. pce.ts is also the only one that *has* to
+                     strip the boot prefix — five waveforms is a hundred and
+                     sixty writes through the register port, more than the packed
+                     format's run count holds, so on this console the strip is
+                     what makes a schedule packable rather than merely what stops
+                     an effect powering the chip up again;
+                     Z80: sms-driver.ts with two callers, a game (sms-game.ts)
+                     and the fourth standalone cartridge (sms.ts) — which is one
+                     file for *two* machines, because a Game Gear is a Master
+                     System whose stereo latch is a write like any other, and the
+                     only one whose data has a *hole* in it: this console's
+                     header is sixteen bytes inside the address space, so the
+                     larger board lays its blocks either side of $7FF0 and
+                     `DataHole` is where that is decided (padding the whole data
+                     section past it, which is what the game backend does because
+                     there the code fills that region, would make the larger
+                     board unreachable); 68000:
+                     md-driver.ts with two callers, a game (md-game.ts) and the
+                     fifth standalone cartridge (md.ts) — and the pair is where
+                     what a *caller* is gets sharpest, because their two
+                     `resolve…Clock`s refuse opposite sources: on this board the
+                     FM timer's interrupt goes to the Z80, so a game has to poll
+                     it from a loop that is also running a game and gets the
+                     loop's rate, while a cartridge whose loop does nothing else
+                     gets the timer's. md.ts is also the only one whose *clock
+                     register is on the chip it is playing*, which is why it
+                     strips the boot prefix — the binding's own `$27 = 0` would
+                     otherwise switch off the timer mid-stream; SPC700: spc-driver.ts and
                      spc-game.ts, and it is one of the two that do not run on the
                      console's own processor — what it builds is a block to
                      *upload*. ARM is two consoles and therefore three files:
@@ -999,6 +1201,12 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
                      nds-driver.ts/nds-game.ts are what each adds to it — a mixer
                      on one, and a whole second binary on the other, because a DS's
                      sound channels answer the ARM7 alone. One caller each so far.
+                     TLCS-900/H: ngp-driver.ts and ngp-game.ts, and the only
+                     driver that has to *ask* for its chip — a T6W28's own bus is
+                     the Z80 sound processor's, so two bytes of the main CPU's
+                     I/O page hand it over before anything else is listened to;
+                     t6w28.ts is what the *chip* owns, psg.ts's file for a part
+                     with two write ports carrying different registers.
                      V30MZ: wsc-driver.ts and wsc-game.ts, and the only driver
                      whose clock is not an interrupt — this cartridge takes none,
                      so it reads the vertical-blank timer's counter and pays what
@@ -1337,6 +1545,18 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   rule (step 3), set by the collision or tile phase (steps 5–6), read by an edge
   rule (step 7). Writing the three rules in the wrong phase is the way to get a
   flag that is always false.
+- **An `on hold` snapshot belongs to the property, not to the binding, and the
+  hold engages on the button being _down_.** Both halves are what make `left` and
+  `right` on one paddle behave: the value saved is the one the property held
+  before _either_ went down, so releasing them in the order they were pressed
+  cannot write back a direction nothing is asking for, and the survivor takes the
+  property over within the tick rather than after a frame of standing still. And
+  a scene entered with a direction already held never saw that press — the edge
+  belonged to the scene the player left, where the control does not run — so an
+  engage keyed on the edge saves nothing and restores nothing, which is a hero
+  who keeps walking into the wall after the button is up. `sim.ts`'s
+  `updateHolds` is the specification and `codegen/analyze.ts`'s `holdTargets`
+  groups the bindings the eight backends share a slot between.
 - **A jump needs a `when a pressed if` rule, not a `control`.** Controls run at
   the top of the tick, before anything has been collided with, so a control
   cannot ask whether there is ground underfoot — and a jump that cannot ask is a
@@ -1422,7 +1642,7 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   tables, the looped collision pairs and the grouped integrator won it back, and
   it now has 13457 bytes free. `OVER_BUDGET` is empty as a result, and the
   emptiness is the record. The tightest cartridge in the library is the Game
-  Boy's shooter at 2177 bytes free — that is where a budget regression shows
+  Boy's shooter at 2182 bytes free — that is where a budget regression shows
   first, which is why the Game Boys sweep the whole library and the NES sweeps
   two. And a Game Boy is the tightest for a reason that is now structural rather
   than incidental: it is the one console whose cartridge cannot grow (§Iron
@@ -1453,10 +1673,19 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   from a landing and not from a platform's edge. The side and the separation are
   one decision (`level/scene.ts` §contactOf: choosing the shallower axis and a
   direction _is_ choosing the side), so a rule and the push that follows it
-  cannot disagree. **No backend emits the side test yet**, and `unsupportedFor`
-  names it, so a program using `from` previews and traces but will not build a
-  cartridge; closing that is one routine per backend, splitting the existing pair
-  separation into a part that decides and a part that applies.
+  cannot disagree — which is why every backend now emits **one** piece of
+  arithmetic for both. Separation was split into a part that _decides_
+  (`emitPairPushes`, `emitTilePushes`) and a part that _applies_, and
+  `ContactSide` / `emitTileSide` are the decision read out as a {@link
+  SIDE_BITS} bit instead of a push. Three things about the shape are worth
+  keeping. The bit numbering is `shape.ts`'s and comes from the language
+  registry, so a rule compiles to one `and` and one branch on every console and
+  no backend picks its own encoding. The gate is placed so a side the rule did
+  not name skips the **whole** contact — no fire, no separation, no contact bit
+  — because that is what the interpreter's `continue` does, and a cartridge that
+  separated anyway would drift a tick later. And it is _pulled_: a game with no
+  `from` in it emits not one instruction, which is what kept every existing
+  cartridge byte-identical when this landed.
 - **Without `from`, a contact still says nothing**, which is what shaped `quest`.
   An `else` that stops a rise belongs on a rule naming only tiles that are
   overhead, or it cancels a jump every time the hero brushes the edge of the
@@ -1465,7 +1694,9 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   `quest`'s levels make every landing surface one cell thick with `bedrock`
   underneath, and its pits six cells wide, because a hero two cells tall catches
   the far lip of anything narrower instead of falling clear. Those are geometry
-  standing in for a rule, and they can be rules once the backends catch up.
+  standing in for a rule, and they are rules now that the backends have caught
+  up — `platformer` is the one that says so, where landing and bonking are two
+  rules naming two sides rather than one rule and a velocity test.
 - **The examples are the shop window: keep them spare** (doc 14 §The example
   library). The web app shows a game's source beside the cartridge it built, and
   the claim is that a whole game is sixty lines — an example whose commentary
@@ -2076,12 +2307,15 @@ is the game.
   property that makes that safe — every run opens with a latch byte — is checked
   by `checkLatchDiscipline` rather than assumed. Get it wrong and the symptom is a
   note on the wrong voice several ticks later.
-- **The frame is the driver's clock, and the line interrupt is not.** This VDP
-  reloads its line counter on every scanline outside the active display, so an
-  interrupt programmed for every N lines fires a handful of times inside the
-  picture and then not at all until the next frame. `psgBinding.fitRate` will
-  still offer those rates to a _standalone_ track; a game asks `gameDriverRate`
-  and gets 59.92 Hz.
+- **The frame is the driver's clock, and the line interrupt is not — on either
+  kind of cartridge.** This VDP reloads its line counter on every scanline
+  outside the active display, so an interrupt programmed for every 65 lines
+  fires twice inside the picture and then not at all for seventy lines: two
+  ticks a frame, in a burst, out of the four the rate claims. `psgBinding.fitRate`
+  used to offer those rates to a _standalone_ track on the grounds that only a
+  game shares its clock with the picture, which is the wrong reason — the reload
+  is the hardware's and does not care who is asking. It offers the frame and
+  nothing else now, and the spec's `driver.sources` says so.
 - **A Master System has no register two streams share.** Four attenuation latches,
   four channels, nothing carrying more than one of them — so no merge routine is
   emitted at all. The Game Gear's stereo latch is `NR51`'s exact shape and brings
@@ -2301,6 +2535,45 @@ most of the value layer stops being a problem and three new ones appear.
   the program — tens of kilobytes away in a real game. Inside the driver the same
   call is a `bsr`, because there the distance is a few hundred bytes and visible
   in one file.
+- **A standalone audio cartridge here has a clock a game cannot have, and that is
+  a fact about the caller rather than about the hardware.** The YM2612's timer A
+  is a real programmable clock, but on this board its interrupt line goes to the
+  Z80 — so a driver has to _poll_ the status byte. A game polls it once per pass
+  of a loop that is also running a game, which keeps the loop's rate and not the
+  timer's; a cartridge whose loop does nothing else polls every few microseconds
+  and keeps the timer's exactly, with the drift bounded by one poll rather than
+  by one frame. `resolveMdClock` (`md-game.ts`) and `resolveMdAudioClock`
+  (`md.ts`) therefore refuse **opposite** sources, and each says which caller it
+  is. Two things follow that no other console needs. The overflow is
+  acknowledged with the run bit still set, so the counter is never reloaded and
+  the poll's own latency cannot accumulate. And the boot prefix _has_ to be
+  stripped — the binding's initialisation writes `$27 = 0`, which is the timer
+  control register, so left at the head of the stream tick 0 would switch off the
+  clock that was about to deliver tick 1. That is the third distinct reason a
+  console strips its boot prefix, after "stop an effect powering the chip up
+  again" and "make tick 0 packable at all".
+- **The FM chip's timers are bus-visible state, so `@demake/md` clocks it when
+  anything can _observe_ it.** Every other chip in the set is write-only, which
+  made "advance only when a sample sink is attached" indistinguishable from
+  "always advance" — until a driver's clock became a register a cartridge
+  _reads_. Two things can observe this one: a sink, and a running timer
+  (`Ym2612.timersRunning`), and the condition is both rather than either.
+  Gating on the sink alone leaves a standalone cartridge spinning for ever on a
+  flag nothing can set; gating on nothing charges every _game_ for six
+  four-operator voices no test can hear, because a demade game programmes no
+  timer at all — and that is not a rounding error, it is a fifth of the Mega
+  Drive audio battery's time budget and it turned CI red on the slower of two
+  Node versions. `packages/md/test/sound.test.ts` pins the property; the PSG
+  keeps the old arrangement, because nothing can read it.
+- **And that battery's cases state their own timeout, because one console's
+  binding is a _search_.** `BUILDS_TIMEOUT` in `_audio-battery.ts` is 120 s
+  against a default of 20, and the Mega Drive is why: its timbre is searched
+  hardware-in-the-loop rather than selected (`binding/fm-patch.ts`), so
+  `arrangeScore` takes **8685 ms** on the shooter's theme there against **9 ms**
+  on a Master System. That case was spending nineteen of its twenty seconds
+  inside a search that is the design working, which is a coin toss on a loaded
+  runner rather than a signal. Before optimising anything that battery does,
+  check whether what you are looking at is the FM search.
 
 ### The ARM half
 
@@ -2481,6 +2754,105 @@ what is done to it.
   because that is physically where the processor starts fetching — and `free` is
   measured against that rather than against the file.
 
+### The TLCS-900/H half
+
+`demake build -c ngpc` builds a playable Neo Geo Pocket Color cartridge, and the
+whole example library traces identically on it. This is the widest processor in
+the set — thirty-two-bit registers over a twenty-four-bit address space — and
+almost everything below is a consequence of one fact about how it is _encoded_
+rather than of what it can compute.
+
+- **The operand prefix comes before the opcode.** That is the single unusual
+  thing about this architecture and it is why `@demake/core`'s decoder is two
+  stages: a byte with bit 7 set names a register or a memory form _and the size
+  of the operand_, and the opcode after it says what to do with it. So a
+  destination prefix carries no size and a source prefix does, and an emitter
+  that hands one where the other is wanted assembles something that decodes.
+- **A conditional branch never has to be inverted.** This is the only processor
+  in the set with both a long conditional relative branch and a conditional
+  _absolute_ jump, so `ctx.far` is a `jrl` — three bytes, ±32 KiB, which covers
+  any routine — and `ctx.farJump` is a `jp cc` reaching the whole space in five.
+  The 6502, the Z80 and the V30MZ all invert a condition over an unconditional
+  jump for the long case; here there is nothing to invert.
+- **A shift is one to sixteen, so widening by shifting is two instructions.**
+  `exts` sign-extends a word into its long in one, which is what a 16.16 cell
+  conversion wants — `sll 16` / `sra 19` is a shift count this assembler refuses
+  rather than an instruction that quietly does something else.
+- **The index registers have no byte name.** `XIX`, `XIY` and `XIZ` are nameable
+  at thirty-two and sixteen bits and not at eight, so a byte held in one comes
+  down through `XWA` — `ld xwa, xiy` and then `A` — rather than through a `ld
+a, iy` the encoder will not take. Two emitters carry a byte in an index
+  register across arithmetic for exactly this reason: the object builder's
+  palette and the tile walk's legend index.
+- **The program is not addressed where it was assembled from.** The cartridge
+  answers the bus at `$200000` and the header is a _region_ in front of the
+  image rather than bytes woven into it, so a build assembles at `$200040` and
+  `packNgpRom` stamps the sixty-four bytes ahead of it. There is no reset vector:
+  the boot ROM reads a 24-bit entry field out of the header and jumps to it.
+- **An interrupt handler is a pointer in RAM.** The processor has a vector table
+  and the boot ROM owns it, dispatching through a table of its own — so a
+  cartridge installs a vertical-blank handler by writing four bytes at `$6FCC`,
+  and `$6C00`–`$6FFF` is the boot ROM's and may not be allocated over.
+- **There is no video memory.** The two scroll maps, the character bank, the
+  object table and the palettes are ordinary addresses in the same space the
+  variables are in, so the tile bank reaches the display by one `ldir`, a palette
+  block is a second, and a cell is one store. The WonderSwan's arrangement, and
+  it deletes about a third of what the Mega Drive's emitter is.
+- **The map is 32×32 against a 20×19 window and the plane is exactly 256 pixels
+  on both axes**, so the scroll registers _are_ the wrap: a scrolling scene
+  paints its leading edge where nobody is looking, and neither the Master
+  System's seam mask nor the Mega Drive's `and` exists here.
+- **A cell carries its own palette**, four bits of its map word, so there is no
+  attribute table and no 16×16 block — the PC Engine's arrangement. Fifteen of
+  the sixteen are the art's and the sixteenth is the font's, on _each layer_,
+  because this controller keeps a block of sixteen palettes per layer rather than
+  one pool: a picture and its sprites can never compete for one.
+- **The palette word is BGR, not RGB.** Red is the low nibble and blue the high
+  one, which is the opposite of every other RGB444 console in the set. The image
+  backend and the art path had it the other way round and it was caught only
+  because `@demake/ngp` had been written from the reference first — an encoder
+  and a renderer that agreed with each other would have drawn every picture in
+  exactly the wrong colours and passed every byte comparison there is.
+- **A row of a character is a little-endian halfword**, leftmost pixel in the
+  highest two bits, so the _first_ byte of a row holds its right-hand four
+  pixels. That is `packPacked2Word` and the `packed2` sprite packing, a packer of
+  its own rather than a flag on the planar one.
+- **Priority is what hides an object**, and there is no link field. Sixty-four
+  fixed entries of four bytes; an entry the frame did not use has its flags byte
+  cleared. And the per-line budget is the whole table — sixty-four — which no
+  other 8-bit console here can say, so a wide object costs entries and can never
+  be clipped mid-line.
+- **The map a picture is packed into is packed by the art path, not the
+  emitter.** The PC Engine's rule and the WonderSwan's, and this backend broke it
+  once: `emit.ts` had a byte-for-byte copy of `pack.ts`'s `packCellPairs` and ran
+  it over a map the art path had already packed, so the blit unpacked a title
+  screen into the plane as its own compression format.
+- **The controller byte's bit layout is unverified and says so.** `$6F82` is
+  confirmed by every reference this project could reach and its bit order is in
+  none of them, so `NGP_BUTTON_BITS` writes down the natural reading as a _guess_
+  — and both the cartridge and the core read it through that one declaration,
+  which is precisely the shape §Gotchas warns about. It is a one-line change when
+  a source turns up.
+- **A processor state is not a master cycle**, and the audio is what made it
+  visible. This CPU's instruction timings are in _states_ — the crystal halved —
+  and the display controller counts the crystal, so `@demake/ngp` hands the
+  display twice what the processor spent and hands the sound chip it unchanged
+  (`MASTER_PER_STATE`). Before it did, an emulated frame was twice the
+  hardware's, and nothing could see it: a trace is per tick and a tick is per
+  frame either way. A chip handed the wrong number of clocks renders at the
+  wrong speed, which is why this surfaced the day the driver landed.
+- **The sound chip has to be asked for**, which no other console in the set
+  does. On the board the T6W28's own bus belongs to a Z80 sound processor, and
+  `demake build` emits no Z80 program — so the driver writes `$55` and `$AA` to
+  two bytes of the main CPU's own I/O page and then reaches the chip through two
+  more. A cartridge that skipped them would be perfect and silent.
+- **A replay's port is a number, not an address.** `portOfSlot` answers in the
+  binding's numbering and every caller puts it through `ngpPortByte`; storing it
+  directly writes to `$0000`/`$0001`, which are two bytes of the processor's own
+  register page. That is a release that reaches nothing at all on a cartridge
+  whose every other register write is perfect — found by the battery's
+  borrowed-channel case and by nothing else.
+
 ## Working on audio
 
 The spine, both demakers and four CPUs' drivers are built; these are the rules
@@ -2594,8 +2966,11 @@ that keep them from being undone. All of them come from doc 16.
   would tick twice at the top of a frame and then not at all for sixteen
   milliseconds, which is a schedule performed correctly and heard wrongly. And
   never trust a clock a `fitRate` will _offer_ without asking what the hardware
-  does with it: the Sega VDP's line interrupt fits beautifully and fires only
-  inside the active display.
+  does with it: the Sega VDP's line interrupt fit beautifully, fired only inside
+  the active display, and was performed at half the rate it declared — which
+  nothing noticed for as long as nothing consumed it, because a game asks
+  `gameDriverRate` and the first standalone Sega cartridge did not exist. Both
+  the candidate and the spec entry behind it are gone.
 - **A frame-clocked console counts frames rather than riding them.** The handler
   increments a byte (capped, so a stalled tab does not come back owing hundreds of
   ticks) and the main loop performs what it says. Doing the tick inside the
@@ -2739,6 +3114,15 @@ program, because the sound registers answer a processor the game cannot reach.
 Ask the four questions separately — the answer to "is this a variant" is per step,
 not per console.
 
+**And a console can gain a chip model, both demakers and a game backend without
+gaining an in-game driver.** The Neo Geo Pocket Color is the case, and the four
+columns are what make it sayable: `arrange -c ngpc` demakes its music, `build -c
+ngpc` produces a cartridge that traces identically to one that plays it, and the
+in-game-audio column says `—` because `GAME_DRIVERS` does not list it. That last
+list is the fourth registry the support matrix reads and it is keyed by _console_
+rather than by chip, precisely so that describing hardware cannot claim a driver
+(§Iron rules — what each console supports is derived, never written down).
+
 ## Testing truths
 
 - `pnpm test` runs the Vitest unit suite locally with no Docker. Most of it is
@@ -2780,6 +3164,16 @@ not per console.
   ones nothing is mid-way through writing. The NES, Sega, Super Nintendo, Game
   Boy Advance and Nintendo DS oracles still take their camera out of RAM, so
   each is a coin toss waiting to be spent.
+- `packages/demotic/test/audio-ngpc.test.ts` is the tenth machine the shared
+  battery is pointed at, and the only one whose driver has to **ask for its
+  chip**: the T6W28's bus belongs to a Z80 sound processor, so a cartridge that
+  skipped the two bytes that hand it over would show an _empty_ register stream
+  rather than a wrong one — which is what makes the first assertion in that pass
+  about permission rather than about notes. It is also where a replay to the
+  wrong destination was caught: `portOfSlot` answers in the binding's port
+  numbering and the release stored to it as an address, so the borrowed channel
+  came back holding the effect's period on a cartridge whose every other write
+  was exact. Only the borrowed-channel case could see it.
 - **`unsupported` names language gaps, not hardware ones**, and every console's
   list is empty. It stayed empty on the Super Nintendo through the period when
   that machine had no sound, because a `.dmt` that says `music theme.mid`
@@ -2812,8 +3206,9 @@ not per console.
 - The Demotic ROM conformance suite (`packages/demotic/test/rom.test.ts`) builds
   a cartridge from each fixture game **for every console with a backend** — both
   Game Boys, the Mega Duck, the NES, both Sega 8-bits, the Super Nintendo, the
-  Mega Drive, the Game Boy Advance, the Nintendo DS, the PC Engine and the
-  WonderSwan Color — and runs it in the matching self-hosted core, asserting the
+  Mega Drive, the Game Boy Advance, the Nintendo DS, the PC Engine, both
+  WonderSwans and the Neo Geo Pocket Color — and runs it in the matching
+  self-hosted core, asserting the
   trace
   matches the reference interpreter tick for tick. No toolchain, no emulator
   install, so it runs everywhere `pnpm test` does. Running the same battery on
@@ -2827,9 +3222,38 @@ not per console.
   bits agrees too — every routine there is a different program from the one the
   8-bit consoles share — and the WonderSwan Color that an emitter which has to
   name a _segment_ on every read still reads the same values, which is the one
-  question no console before it could ask. It also checks the Duck's cartridge _fails_ on a Game
+  question no console before it could ask, and the Neo Geo Pocket Color that a
+  processor whose _operand prefix comes before the opcode_ still assembles the
+  same program — an encoder and a decoder that agreed with each other about
+  which byte was which would not survive running the library. It also checks the Duck's cartridge _fails_ on a Game
   Boy — identical traces are also what a register map that had quietly become the
   identity would produce.
+- `packages/demotic/test/collision-sides.test.ts` runs the same battery for
+  `from <side>`, which the example library reaches on one console's worth of
+  geometry and this reaches on all four sides of both kinds of contact. Two
+  things about the program it builds are load-bearing and easy to undo. **Every
+  probe starts already overlapping**, because a probe that had to travel would
+  arrive on a different tick on every machine — the screens differ fourfold in
+  area and the tick rates by a quarter — and a case that never arrives compares
+  zero with zero and passes. And **the wrong-side rule is written first**: a
+  contact the clause admits is also separated, so a rule written after one that
+  fired finds the boxes already pushed apart and stays silent whether or not it
+  was narrowed, which reads as a pass on a backend that never looked at the
+  clause. Reordering those two lines is what turned it from vacuous into the
+  thing that caught the emitters.
+- `packages/demotic/test/ngpc-rom.test.ts` is the Neo Geo Pocket Color's
+  rendering oracle, and every case is one that produces a cartridge which ticks
+  perfectly and shows nothing: the entry address the boot ROM reads out of the
+  header (there is no reset vector on this machine), the character bank and the
+  palettes arriving in the display's own memory (no port, so nothing about the
+  arrival is observable but the bytes), the plane against the level's own grid
+  before and after the camera has travelled, and the objects a frame did not use
+  having their priority cleared — which is the only way to hide one here. Its
+  picture case compares against the _art path's own packed map_ rather than
+  against a threshold, because the two ways that goes wrong — the window's stride
+  instead of the hardware's, and packing a map that was already packed — both
+  present as art running past the last visible column and neither is visible in
+  a count. Both were found by writing it.
 - `packages/demotic/test/audio-pce.test.ts` is the second console to run
   `mos-player.ts`, so what it proves that `audio-nes.test.ts` does not is the
   _machine_ around those instructions: a different register base, a clock that is
@@ -3029,10 +3453,31 @@ not per console.
   this file can only be the first.
 - The audio ROM conformance suite (`packages/audio/test/rom.test.ts`) is its
   counterpart for sound, and doc 16 §The proof's Level A: it builds a cartridge
-  from an arranged track and from a demade effect, boots each in `@demake/dmg`,
-  and diffs the register writes the APU receives against the `ChipScript`, tick
-  for tick. Ticks are attributed by watching the driver's `Tick` symbol, so
+  from an arranged track and from a demade effect, boots each in the console's
+  own core, and diffs the register writes the chip receives against the
+  `ChipScript`, tick for tick, on every console `audioRomConsoles()` names. Ticks
+  are attributed by watching the driver's `Tick` symbol, so
   nothing is added to the ROM to make it observable. Also toolchain-free.
+  **The Sega block is where a wrong _tempo_ is caught**, which is the one thing a
+  register diff cannot see: a handler that did not read the VDP's status byte
+  would leave the interrupt pending, re-enter the moment `ei` ran, and perform
+  the whole schedule in a few frames — every write correct, in order, and at ten
+  thousand times the speed. So that case measures the CPU cycles between two
+  `Tick` arrivals and asserts a frame. Its other case is the one that made the
+  larger board reachable: 32 KiB is this cartridge's floor and 48 its ceiling,
+  and between them is a sixteen-byte header _inside_ the address space, so the
+  test checks that no packed block overlaps it.
+  **The Mega Drive block measures the same thing against the timer**, and adds
+  the two this console alone can get wrong: that the program was assembled where
+  the cartridge _puts_ it (a build assembled at zero has a perfect symbol table
+  and jumps two hundred bytes short of everything, which is a cartridge that
+  boots and executes its own title), and that no tick writes `$27` — the register
+  the clock lives in — which is what stripping the boot prefix buys.
+  It is also the console that made the harness's tick attribution honest: a group
+  used to run from one `Tick` entry to the next, which is only the same thing as
+  "the writes this tick made" while nothing writes the chip _between_ ticks. Here
+  the timer acknowledge does, so a driver may name a `TickEnd` label — no
+  instruction, so the ROM is unchanged — and the group closes there instead.
 - The game-audio conformance suite (`packages/demotic/test/_audio-battery.ts`, run
   from `audio-<id>.test.ts`) is
   doc 16's Level A for a cartridge that is also playing a game, **on every console
@@ -3472,7 +3917,17 @@ not per console.
   something builds, and the page's `src/players/` does the same for the emulator
   cores. Chunks are matched to a family **by name**, so a module that
   has to be per-family belongs in a file named after it; anything else counts as
-  always-loaded, which fails loud rather than passing quietly. **The list of
+  always-loaded, which fails loud rather than passing quietly. **There is a third
+  place that has to stay split, and it is `@demake/audio`'s `rom/index.ts`**:
+  `buildAudioRom` reaches each console's cartridge builder through an `import()`
+  for the same reason, because behind each one is a whole CPU's assembler. It
+  was five static imports until the Sega and Mega Drive cartridges landed and
+  put the Z80 and the 68000 in every visitor's bundle — which is what the budget
+  is for. Splitting it took the _Game Boy's_ driver out of there too, where it
+  had been since that feature existed: 328 KB for a visitor against 369 before.
+  The shared shape a dispatch has to name lives in `rom/artifact.ts` and owns no
+  assembler, because importing `BuiltAudioRom` from `gb.ts` would drag that
+  family back in and quietly undo the whole thing. **The list of
   families is `codegen/registry.ts`'s own** — `runtimeFamilies`, plus `familyFor`
   for a chunk named after a console rather than its family, which `nds` is. It
   used to be a copy, and the copy went stale the moment the ARM handhelds landed:
@@ -3480,7 +3935,7 @@ not per console.
   `import()` like every other core, and they were charged to _every_ visitor for
   as long as the two lists disagreed. A budget that overstates itself fails the
   next honest change, which is what it did. Current figures:
-  385 KB for a visitor against a 400 KB budget, 537 KB for the whole site — and
+  380 KB for a visitor against a 400 KB budget, 598 KB for the whole site — and
   a new example game costs about fourteen of those kilobytes, because the page
   bundles every fixture SVG twice (raw text for the ROM build, a URL for the
   preview). Measure with a **clean** `dist`: the checker reads every `.js` it

@@ -29,6 +29,7 @@ import {
   emitRuleTileTable,
   GRID_EMPTY,
   ruleTileTableLabel,
+  SIDE_BITS,
   tileAtLabel,
   tileSlot,
   type LevelData,
@@ -337,50 +338,11 @@ function emitLess16Signed(ctx: Ctx, a: number, b: number, target: string): void 
  * would teleport a walking object over a wall it merely brushed.
  */
 export function emitTileSeparate(ctx: Ctx, base: number): void {
-  const { asm, layout } = ctx;
-  const col = layout.words + W.tileCol * 2;
-  const row = layout.words + W.tileRow * 2;
-
+  const { asm } = ctx;
   ctx.scoped(() => {
-    const cellX = ctx.pushTemp();
-    const cellY = ctx.pushTemp();
-    const near = ctx.pushTemp();
-    const far = ctx.pushTemp();
-    const pushX = ctx.pushTemp();
-    const pushY = ctx.pushTemp();
-
-    cellToFixed(ctx, col, cellX);
-    cellToFixed(ctx, row, cellY);
-
-    const axis = (pos: string, size: string, cell: number, push: number): void => {
-      // near = pos + size - cell ; far = (cell + 1) - pos
-      copy32(ctx, near, base + propOffset(pos));
-      add32(ctx, near, base + propOffset(size));
-      sub32(ctx, near, cell);
-      copy32(ctx, far, cell);
-      add32(ctx, far, ctx.constant(fromInt(1)));
-      sub32(ctx, far, base + propOffset(pos));
-      const takeFar = ctx.unique("tsepFar");
-      const done = ctx.unique("tsepDone");
-      less32(ctx, near, far);
-      asm.jp(takeFar, "nc");
-      copy32(ctx, push, near);
-      neg32(ctx, push);
-      asm.jp(done);
-      asm.label(takeFar);
-      copy32(ctx, push, far);
-      asm.label(done);
-    };
-    axis("x", "width", cellX, pushX);
-    axis("y", "height", cellY, pushY);
-
-    copy32(ctx, near, pushX);
-    absAt(ctx, near);
-    copy32(ctx, far, pushY);
-    absAt(ctx, far);
+    const { pushX, pushY } = emitTilePushes(ctx, base);
     const useY = ctx.unique("tsepUseY");
     const applied = ctx.unique("tsepApplied");
-    less32(ctx, near, far);
     asm.jp(useY, "nc");
     add32(ctx, base + propOffset("x"), pushX);
     clamp32(ctx, base + propOffset("x"));
@@ -390,6 +352,98 @@ export function emitTileSeparate(ctx: Ctx, base: number): void {
     clamp32(ctx, base + propOffset("y"));
     asm.label(applied);
   });
+}
+
+/**
+ * `A` = the {@link SIDE_BITS} bit for the side of the cell the object sat on.
+ *
+ * The tile half of `from`, and the same split the pair path makes: this decides
+ * and {@link emitTileSeparate} applies, both off {@link emitTilePushes}, so a
+ * rule that takes footing from a landing cannot disagree with the push that
+ * follows it. Emitted inline rather than pulled as a routine because the cell it
+ * is asked about lives in the walk's own render words, which a call would have
+ * to be handed anyway.
+ */
+export function emitTileSide(ctx: Ctx, base: number): void {
+  const { asm } = ctx;
+  ctx.scoped(() => {
+    const { pushX, pushY } = emitTilePushes(ctx, base);
+    const useY = ctx.unique("tsideUseY");
+    const negative = ctx.unique("tsideNeg");
+    const below = ctx.unique("tsideBelow");
+    const done = ctx.unique("tsideDone");
+    asm.jp(useY, "nc");
+    asm.lda(pushX + 3);
+    asm.bit(7, "a");
+    asm.jp(negative, "nz");
+    asm.ldn("a", SIDE_BITS["right"] as number);
+    asm.jp(done);
+    asm.label(negative);
+    asm.ldn("a", SIDE_BITS["left"] as number);
+    asm.jp(done);
+    asm.label(useY);
+    asm.lda(pushY + 3);
+    asm.bit(7, "a");
+    asm.jp(below, "z");
+    asm.ldn("a", SIDE_BITS["above"] as number);
+    asm.jp(done);
+    asm.label(below);
+    asm.ldn("a", SIDE_BITS["below"] as number);
+    asm.label(done);
+  });
+}
+
+/**
+ * The push out of the walk's current cell along each axis, and which is
+ * shallower.
+ *
+ * The other box is a one-cell square at integer coordinates, which is the only
+ * thing that makes this a different function from the pair version rather than a
+ * call to it. On return the carry is set when the x axis is the shallower one,
+ * and the two temporaries live for as long as the caller's scope.
+ */
+function emitTilePushes(ctx: Ctx, base: number): { pushX: number; pushY: number } {
+  const { asm, layout } = ctx;
+  const col = layout.words + W.tileCol * 2;
+  const row = layout.words + W.tileRow * 2;
+  const cellX = ctx.pushTemp();
+  const cellY = ctx.pushTemp();
+  const near = ctx.pushTemp();
+  const far = ctx.pushTemp();
+  const pushX = ctx.pushTemp();
+  const pushY = ctx.pushTemp();
+
+  cellToFixed(ctx, col, cellX);
+  cellToFixed(ctx, row, cellY);
+
+  const axis = (pos: string, size: string, cell: number, push: number): void => {
+    // near = pos + size - cell ; far = (cell + 1) - pos
+    copy32(ctx, near, base + propOffset(pos));
+    add32(ctx, near, base + propOffset(size));
+    sub32(ctx, near, cell);
+    copy32(ctx, far, cell);
+    add32(ctx, far, ctx.constant(fromInt(1)));
+    sub32(ctx, far, base + propOffset(pos));
+    const takeFar = ctx.unique("tsepFar");
+    const done = ctx.unique("tsepDone");
+    less32(ctx, near, far);
+    asm.jp(takeFar, "nc");
+    copy32(ctx, push, near);
+    neg32(ctx, push);
+    asm.jp(done);
+    asm.label(takeFar);
+    copy32(ctx, push, far);
+    asm.label(done);
+  };
+  axis("x", "width", cellX, pushX);
+  axis("y", "height", cellY, pushY);
+
+  copy32(ctx, near, pushX);
+  absAt(ctx, near);
+  copy32(ctx, far, pushY);
+  absAt(ctx, far);
+  less32(ctx, near, far);
+  return { pushX, pushY };
 }
 
 /** Widen a signed 16-bit cell coordinate into 16.16. */

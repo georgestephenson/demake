@@ -57,6 +57,18 @@ importers:
       '@demake/gba':
         specifier: workspace:*
         version: link:../gba
+      '@demake/md':
+        specifier: workspace:*
+        version: link:../md
+      '@demake/nes':
+        specifier: workspace:*
+        version: link:../nes
+      '@demake/pce':
+        specifier: workspace:*
+        version: link:../pce
+      '@demake/sms':
+        specifier: workspace:*
+        version: link:../sms
       '@demake/snes':
         specifier: workspace:*
         version: link:../snes
@@ -177,6 +189,9 @@ importers:
 
   packages/ngp:
     dependencies:
+      '@demake/chip':
+        specifier: workspace:*
+        version: link:../chip
       '@demake/core':
         specifier: workspace:*
         version: link:../core
@@ -242,6 +257,9 @@ importers:
       '@demake/nes':
         specifier: workspace:*
         version: link:../nes
+      '@demake/ngp':
+        specifier: workspace:*
+        version: link:../ngp
       '@demake/pce':
         specifier: workspace:*
         version: link:../pce

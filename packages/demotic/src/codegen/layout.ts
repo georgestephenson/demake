@@ -33,6 +33,7 @@
 
 import {
   GBA_AUDIO_BYTES,
+  NGP_AUDIO_BYTES,
   MD_AUDIO_BYTES,
   NDS_AUDIO_BYTES,
   NES_AUDIO_BYTES,
@@ -845,16 +846,19 @@ export const NGPC_MEMORY: MemoryPlan = {
   // column of twenty and a row of twenty-one, painted in the same frame.
   queueMax: 60,
   plotMax: 40,
-  // Zero because this console has no generated driver yet — the day it gets one
-  // this becomes that driver's own byte count, exactly as every other console's
-  // does. A game with no audio would take none either way.
-  audioBytes: 0,
+  // The TLCS-900 driver's own state: two stream positions of *longwords*, and up
+  // to six bytes a channel of the copies a borrowed channel is handed back with
+  // — three more than the Sega's, because a level here is two attenuators and
+  // the noise generator has a divisor of its own.
+  audioBytes: NGP_AUDIO_BYTES,
   // A map entry is a word — nine bits of tile, four of palette, one of mono
   // palette and two of flip — so a queued cell is a tile *and* an attribute.
   cellAttributes: true,
-  // The vertical-blank handler's own byte is in the boot ROM's reserved page
-  // rather than the heap, so nothing an interrupt writes comes out of here.
-  interruptBytes: 0,
+  // The frame flag the vertical-blank handler sets and the main loop waits on.
+  // Its own byte rather than borrowed scratch, for the Sega's reason: a handler
+  // writes it in the middle of whatever the game was doing, and everything in
+  // `layout.scratch` is documented as valid for the length of one routine.
+  interruptBytes: 1,
   // A four-byte record pointer and a two-byte index, as on the Mega Drive and
   // the Game Boy Advance: an address is twenty-four bits here, so a pointer that
   // fitted in two would have to be widened at every use. In memory rather than
@@ -982,7 +986,12 @@ export interface Layout {
   contactBytes: number;
   /** Per-rule contact numbering. */
   contactRanges: ReadonlyMap<number, ContactRange>;
-  /** `on hold` snapshots: four bytes then a validity byte, per binding slot. */
+  /**
+   * `on hold` snapshots: four bytes then an engaged byte, per *property* an
+   * `on hold` control writes (`analyze.ts`'s `holdTargets`). Per property rather
+   * than per binding because `left` and `right` write one `xdirection` between
+   * them, and what a release puts back is what it held before either was down.
+   */
   holdValues: number;
   holdFlags: number;
   /** `reaches` history: four bytes then a validity byte, per rule that needs it. */

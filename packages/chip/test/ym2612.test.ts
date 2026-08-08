@@ -293,3 +293,276 @@ describe("the chip's own clock", () => {
     expect(Math.round(CHIP_RATE)).toBe(53267);
   });
 });
+
+/**
+ * The three things that used to be stored and inert.
+ *
+ * Each of them is reachable only through a register this project's binding does
+ * not write, so nothing above these tests exercises them — which is exactly why
+ * they are here. A model that kept the writes and ignored them would pass every
+ * other case in this file.
+ */
+
+/**
+ * How much a tone's period wobbles, as a fraction of its own length.
+ *
+ * The right measurement for vibrato and the wrong one for everything else: a
+ * windowed pitch is quantised by how many cycles fit in the window, which at
+ * these frequencies is coarser than the sweep being looked for. Successive
+ * zero crossings are not — one sample of jitter in a hundred is well under a
+ * per-cent, and the deepest setting this chip has is several.
+ */
+function periodWobble(samples: Float32Array, from: number, to: number): number {
+  const crossings: number[] = [];
+  let previous = samples[from] ?? 0;
+  for (let index = from + 1; index < to; index += 1) {
+    const current = samples[index] as number;
+    if (previous <= 0 && current > 0) crossings.push(index);
+    previous = current;
+  }
+  if (crossings.length < 8) return 0;
+  const periods: number[] = [];
+  for (let index = 1; index < crossings.length; index += 1) {
+    periods.push((crossings[index] as number) - (crossings[index - 1] as number));
+  }
+  const mean = periods.reduce((sum, value) => sum + value, 0) / periods.length;
+  return (Math.max(...periods) - Math.min(...periods)) / mean;
+}
+
+describe("the LFO's pitch modulation", () => {
+  /** A sine on channel 1 with the LFO running and a given depth. */
+  function vibrato(depth: number, block = 4): { reg: number; value: number }[] {
+    return [
+      ...reg(0x22, 0x08), // LFO on, slowest sweep
+      ...beforeKeyOn(sineOnChannel1(1083, block), reg(0xb4, 0xc0 | depth)),
+    ];
+  }
+
+  it("moves the pitch when a depth is set, and not when it is zero", () => {
+    // The whole of what "stored and inert" used to mean: the register was
+    // written and the note came out at exactly its F-number's pitch, for ever.
+    const flat = periodWobble(play(vibrato(0), 90), 4800, 40000);
+    const swept = periodWobble(play(vibrato(7), 90), 4800, 40000);
+    expect(flat).toBeLessThan(0.03);
+    expect(swept).toBeGreaterThan(0.06);
+  });
+
+  it("is proportional to the pitch, which is what makes it an interval", () => {
+    // The offset is summed over the F-number's *bits*, so the same depth is the
+    // same number of cents at every pitch rather than the same number of hertz.
+    // A model that added a fixed increment would fail this and nothing else.
+    const low = periodWobble(play(vibrato(7, 3), 90), 4800, 40000);
+    const high = periodWobble(play(vibrato(7, 5), 90), 4800, 40000);
+    expect(low).toBeGreaterThan(0.06);
+    // Two octaves apart, and the *relative* swing is within a third of itself —
+    // a fixed-increment model would differ by a factor of four.
+    expect(high / low).toBeGreaterThan(0.7);
+    expect(high / low).toBeLessThan(1.4);
+  });
+
+  it("holds the sweep still while the LFO is off", () => {
+    // Switching the LFO off parks pitch modulation at the centre rather than
+    // freeing it, so a channel with a depth set plays its written pitch — which
+    // is the state every cartridge this project builds leaves the chip in.
+    const samples = play(
+      [...reg(0x22, 0x00), ...beforeKeyOn(sineOnChannel1(1083, 4), reg(0xb4, 0xc7))],
+      90,
+    );
+    expect(periodWobble(samples, 4800, 40000)).toBeLessThan(0.03);
+  });
+});
+
+describe("SSG-EG", () => {
+  /**
+   * A patch whose envelope decays to silence, so the mode has something to
+   * reach.
+   *
+   * Everything SSG-EG does happens at *half* attenuation, which an ordinary
+   * envelope passes straight through — so the only patch that can show it is one
+   * that would otherwise have gone quiet.
+   */
+  function withSsg(mode: number): { reg: number; value: number }[] {
+    return beforeKeyOn(sineOnChannel1(1083, 4), [
+      ...reg(0x60, 0x1f), // decay as fast as the chip can
+      ...reg(0x80, 0xff), // sustain at full attenuation, fastest release
+      ...reg(0x90, mode),
+    ]);
+  }
+
+  it("restarts the attack rather than stopping, when it is a loop", () => {
+    // Mode `$08` is the looping one: reaching half attenuation begins the attack
+    // again, so a patch that would have decayed to nothing is still sounding at
+    // the end of the render. That is the mode turning an envelope into an
+    // oscillator, which no other setting on this chip can do.
+    const once = play(withSsg(0x00), 90);
+    const looped = play(withSsg(0x08), 90);
+    const late = Math.floor(once.length * 0.5);
+    expect(peak(once, late)).toBeLessThan(0.002);
+    expect(peak(looped, late)).toBeGreaterThan(0.01);
+  });
+
+  it("runs the envelope four times as fast, and stops it at half scale", () => {
+    // Both halves of the same fact, and only together: armed, the operator
+    // steps by four and gives up at `$200` rather than `$3FF`. Measured against
+    // the identical patch with bit 3 clear that is about four times sooner —
+    // not the eight the two numbers suggest, because a tone falls under the
+    // threshold well before full attenuation. Stepping by one and stopping at
+    // half would be no sooner at all, which is the margin this is sized for.
+    const rate = 0x14; // slow enough that both decays fit inside the render
+    const silenceAt = (mode: number): number => {
+      const samples = play(
+        beforeKeyOn(sineOnChannel1(1083, 4), [
+          ...reg(0x60, rate),
+          ...reg(0x80, 0xff),
+          ...reg(0x90, mode),
+        ]),
+        90,
+      );
+      for (let index = samples.length - 1; index >= 0; index -= 1) {
+        if (Math.abs(samples[index] as number) > 0.002) return index;
+      }
+      return 0;
+    };
+    const armed = silenceAt(0x09); // hold, so it stops rather than looping
+    const plain = silenceAt(0x01); // the same shape with the mode bit clear
+    expect(armed).toBeGreaterThan(0);
+    expect(armed * 3).toBeLessThan(plain);
+  });
+
+  it("holds the envelope where it lands when the hold bit is set", () => {
+    // Mode `$09` is hold with no inversion, which parks the operator silent —
+    // and it must stay silent rather than looping, because the difference
+    // between hold and loop is bit 0 alone. A model that treated the low bits as
+    // one number would loop here.
+    const samples = play(withSsg(0x09), 90);
+    const late = Math.floor(samples.length * 0.5);
+    expect(peak(samples, late)).toBeLessThan(0.002);
+  });
+
+  it("does nothing at all unless bit 3 is set", () => {
+    // The low three bits are a shape and bit 3 is the arming, so a driver may
+    // leave a shape in the register with the mode off — which is what makes it
+    // safe to write unconditionally and why every other test here can ignore it.
+    const off = play(withSsg(0x07), 90);
+    const armed = play(withSsg(0x00), 90);
+    expect(peak(off)).toBeCloseTo(peak(armed), 5);
+  });
+});
+
+describe("channel 3's per-operator frequencies", () => {
+  /**
+   * The same bare sine, on channel 3 rather than channel 1.
+   *
+   * Only S1 is audible, which is what makes the note that comes out name the
+   * register that reached it — the other three slots would otherwise blur four
+   * pitches into one measurement.
+   */
+  function sineOnChannel3(fnum: number, block: number): { reg: number; value: number }[] {
+    const writes: { reg: number; value: number }[] = [];
+    writes.push(...reg(0xb2, 0x07)); // algorithm 7, no feedback
+    writes.push(...reg(0xb6, 0xc0)); // both speakers
+    for (let slot = 0; slot < 4; slot += 1) {
+      const at = slot * 4 + 2;
+      writes.push(...reg(0x30 + at, 0x01));
+      writes.push(...reg(0x40 + at, slot === 0 ? 0x00 : 0x7f));
+      writes.push(...reg(0x50 + at, 0x1f));
+      writes.push(...reg(0x60 + at, 0x00));
+      writes.push(...reg(0x70 + at, 0x00));
+      writes.push(...reg(0x80 + at, 0x0f));
+    }
+    writes.push(...reg(0xa6, (block << 3) | ((fnum >> 8) & 7)));
+    writes.push(...reg(0xa2, fnum & 0xff));
+    writes.push(...reg(0x28, 0xf2)); // key on all four slots of channel 3
+    return writes;
+  }
+
+  /** Set one of the three extra F-numbers, high byte first. */
+  function slotPitch(register: number, fnum: number, block: number) {
+    return [...reg(register + 4, (block << 3) | ((fnum >> 8) & 7)), ...reg(register, fnum & 0xff)];
+  }
+
+  /** What the audible operator's note comes out as, under a given mode. */
+  function heard(mode: number): number {
+    const writes = [
+      ...reg(0x27, mode),
+      ...slotPitch(0xa8, 1083, 3), // S3's, an octave down
+      ...slotPitch(0xa9, 1083, 5), // S1's, an octave up
+      ...sineOnChannel3(1083, 4), // and the channel's own, in the middle
+    ];
+    return frequencyOf(play(writes, 60), 48000, 4800, 24000);
+  }
+
+  it("gives S1 the F-number at `$A9`, not the one at `$A8`", () => {
+    // The permutation is the whole of what a model can get wrong here, and it is
+    // silent about it: every slot still plays, at the wrong three pitches. Three
+    // registers an octave apart is what makes the answer readable.
+    const measured = heard(0x40);
+    expect(measured).toBeGreaterThan(840);
+    expect(measured).toBeLessThan(920);
+  });
+
+  it("leaves the channel's own F-number in charge until the mode is on", () => {
+    const measured = heard(0x00);
+    expect(measured).toBeGreaterThan(420);
+    expect(measured).toBeLessThan(460);
+  });
+
+  it("keeps a latch of its own, separate from every other channel's", () => {
+    // `$AC` and `$A4` are two different high-byte latches, so a driver may leave
+    // one half-written and set the other. Sharing them would put channel 3's
+    // slots on whatever block was written for some other channel — here, four
+    // octaves up rather than one down.
+    const writes = [
+      ...reg(0x27, 0x40),
+      ...reg(0xad, (3 << 3) | ((1083 >> 8) & 7)), // S1's block, through `$AC`'s latch
+      ...reg(0xa4, (7 << 3) | ((1083 >> 8) & 7)), // and a wild one through `$A4`'s
+      ...reg(0xa9, 1083 & 0xff),
+      ...sineOnChannel3(1083, 4),
+    ];
+    const measured = frequencyOf(play(writes, 60), 48000, 4800, 24000);
+    expect(measured).toBeGreaterThan(205);
+    expect(measured).toBeLessThan(235);
+  });
+});
+
+describe("CSM", () => {
+  it("strikes channel 3 from timer A rather than from a driver", () => {
+    // The mode exists so a program can re-strike one voice at an exact rate
+    // without touching the bus, and it is the one place on this chip where a
+    // note begins with no key-on write at all. A model that ignored `$27`'s top
+    // bits would be silent here and correct everywhere else.
+    const patch = (mode: number): { reg: number; value: number }[] => {
+      const writes: { reg: number; value: number }[] = [];
+      writes.push(...reg(0xb2, 0x07)); // channel 3, algorithm 7
+      writes.push(...reg(0xb6, 0xc0));
+      for (let slot = 0; slot < 4; slot += 1) {
+        const at = slot * 4 + 2;
+        writes.push(...reg(0x30 + at, 0x01));
+        writes.push(...reg(0x40 + at, slot === 0 ? 0x00 : 0x7f));
+        writes.push(...reg(0x50 + at, 0x1f)); // instant attack
+        writes.push(...reg(0x60 + at, 0x08)); // and a decay, so a strike is heard
+        writes.push(...reg(0x70 + at, 0x00));
+        writes.push(...reg(0x80 + at, 0xf0));
+      }
+      writes.push(...reg(0xa6, (4 << 3) | ((1083 >> 8) & 7)));
+      writes.push(...reg(0xa2, 1083 & 0xff));
+      // CSM is the four-pitch mode with a timer on top, so the three extra
+      // F-numbers have to be set as well — a voice struck by the timer with
+      // `$A8`-`$AA` left at zero would key on and hold a phase that never moves.
+      for (const register of [0xa8, 0xa9, 0xaa]) {
+        writes.push(...reg(register + 4, (4 << 3) | ((1083 >> 8) & 7)));
+        writes.push(...reg(register, 1083 & 0xff));
+      }
+      // Timer A at about 300 Hz, enabled and running — and no key-on anywhere.
+      writes.push(...reg(0x24, 0xd8));
+      writes.push(...reg(0x25, 0x00));
+      writes.push(...reg(0x27, mode | 0x05));
+      return writes;
+    };
+    expect(peak(play(patch(0x80), 60))).toBeGreaterThan(0.005);
+    // The same registers with the mode bits clear: nothing ever keys the voice,
+    // so a model that struck on the timer regardless would pass the first
+    // assertion and fail this one.
+    expect(peak(play(patch(0x40), 60))).toBeLessThan(0.0005);
+  });
+});

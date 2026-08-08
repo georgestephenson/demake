@@ -192,9 +192,17 @@ function psgAudio(options: {
       },
     ],
     driver: {
-      sources: ["line-irq", "vblank"],
+      // **The frame, and nothing else.** These consoles have a second interrupt
+      // and it looks like a timer — the VDP's line counter fires every (N+1)
+      // scanlines — but the counter is *reloaded on every line outside the
+      // active display*, so an interrupt programmed for every 65 lines fires
+      // twice inside the picture and then not at all for seventy lines. That is
+      // a raster effect and not a tempo: a schedule fitted to the rate it
+      // appears to offer runs at half speed and lurches once a frame. Listing it
+      // here is not describing hardware the machine has, it is describing a
+      // clock it does not, which is why there is no `timerRange` either.
+      sources: ["vblank"],
       frameRate: options.frameRate,
-      timerRange: [50, 500],
       writesPerTick: 32,
     },
     budgets: { romBytes: 16384 },
@@ -202,6 +210,12 @@ function psgAudio(options: {
     docs: { sources: PSG_SOURCES },
   };
 }
+
+const NGP_SOURCES = [
+  "MAME — src/devices/sound/t6w28.cpp (the two ports, the register split, the volume curve)",
+  "higan — component/audio/t6w28 (the same split, independently)",
+  "MAME — src/mame/snk/ngp.cpp: T6W28 at 6.144 MHz / 2, screen 515x199",
+];
 
 const SNES_SOURCES = [
   "SNESdev Wiki — S-DSP: https://snes.nesdev.org/wiki/S-DSP",
@@ -491,6 +505,63 @@ const SMS_FRAME_RATE = { num: 3579545, den: 59736 };
 export const smsAudio: AudioSpec = psgAudio({ stereo: false, frameRate: SMS_FRAME_RATE });
 export const ggAudio: AudioSpec = psgAudio({ stereo: true, frameRate: SMS_FRAME_RATE });
 export const sg1000Audio: AudioSpec = psgAudio({ stereo: false, frameRate: SMS_FRAME_RATE });
+
+/**
+ * The Neo Geo Pocket's T6W28: an SN76489 whose stereo is a *level*.
+ *
+ * Three tones and a noise channel, the same four-bit attenuation in 2 dB steps
+ * — and then two of those attenuators per channel, one a side, which is the
+ * whole of what this part adds and the reason `panning` is `lr-level` here where
+ * a Game Gear's is `lr-enable`. A part can sit anywhere across the image instead
+ * of hard left, hard right or both.
+ *
+ * Two other things follow from the hardware and reach the arranger.
+ *
+ * The **noise has a period register of its own**, so its four rates are three
+ * fixed divisors and one that divides that register — where an SN76489's fourth
+ * rate follows tone channel 2 and costs a voice. `tonalMode` is still true,
+ * because the periodic mode is still there; what is different is that reaching
+ * below the tone floor is free.
+ *
+ * And the **clock is the console's crystal halved**, 3.072 MHz rather than the
+ * Sega parts' 3.579545, so the pitch lattice is its own and a note that fits a
+ * Master System exactly does not fit here.
+ *
+ * The frame rate is the display's: 6.144 MHz over 199 lines of 515, which is
+ * 59.95 Hz — and a cartridge that takes the vertical blank gets that rather than
+ * sixty. The processor's own timers are the other source, and they are what a
+ * driver above the frame rate would ride.
+ */
+export const ngpAudio: AudioSpec = (() => {
+  const pitch = { clockHz: 3072000, step: 32, minDivider: 1, maxDivider: 1023 };
+  const volume = PSG_VOLUME;
+  const panning = "lr-level" as const;
+  return {
+    chips: ["t6w28"],
+    channels: [
+      { id: "tone1", kind: "pulse", chip: 0, pitch, volume, panning },
+      { id: "tone2", kind: "pulse", chip: 0, pitch, volume, panning },
+      { id: "tone3", kind: "pulse", chip: 0, pitch, volume, panning },
+      {
+        id: "noise",
+        kind: "noise",
+        chip: 0,
+        volume,
+        noise: { periods: 4, tonalMode: true },
+        panning,
+      },
+    ],
+    driver: {
+      sources: ["timer", "vblank"],
+      frameRate: { num: 6144000, den: 199 * 515 },
+      timerRange: [50, 500],
+      writesPerTick: 32,
+    },
+    budgets: { romBytes: 16384 },
+    mixing: { channels: 2, linear: true },
+    docs: { sources: NGP_SOURCES },
+  };
+})();
 
 /** The YM2612's clock on an NTSC Mega Drive: the master clock divided by seven. */
 const YM2612_CLOCK = 7670453;

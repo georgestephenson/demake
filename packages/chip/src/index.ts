@@ -17,6 +17,7 @@
 import { GbApu } from "./gb-apu.js";
 import { GbaPcm } from "./gba-pcm.js";
 import { Huc6280Psg } from "./huc6280-psg.js";
+import { T6w28 } from "./t6w28.js";
 import { WsSound } from "./ws-sound.js";
 import { NdsSpu } from "./nds-spu.js";
 import { NesApu } from "./nes-apu.js";
@@ -76,6 +77,7 @@ export {
   WS_WAVE_SAMPLES,
   type WsSoundOptions,
 } from "./ws-sound.js";
+export { T6w28, T6W28_CLOCK_HZ, T6W28_LEFT, T6W28_RIGHT } from "./t6w28.js";
 export { Sn76489, SN76489_CLOCK_HZ } from "./sn76489.js";
 export { NesApu, NES_CLOCK_HZ } from "./nes-apu.js";
 export { Ym2612, YM2612_CLOCK_HZ } from "./ym2612.js";
@@ -126,6 +128,10 @@ export function createChip(
       });
     case "sn76489":
       return new Sn76489(options);
+    case "t6w28":
+      // The SN76489's Toshiba cousin, and its stereo is a *level* rather than a
+      // switch — so it takes no `stereo` option: there is nothing to enable.
+      return new T6w28();
     case "huc6280-psg":
       return new Huc6280Psg();
     case "ws-sound":

@@ -30,7 +30,7 @@ import { armAt, armAtIdx, armImm, armReg, fitsArmImm, label, type Ref } from "@d
 import { fromInt, ONE as FIXED_ONE } from "../../fixed.js";
 import type { CAssignment, ControlDef, Edge, InstanceDef, RuleDef } from "../../program.js";
 import { ACTIONS } from "../../program.js";
-import { isMutable } from "../analyze.js";
+import { holdTargets, isMutable } from "../analyze.js";
 import { PROP_SIZE } from "../layout.js";
 import {
   boundMax,
@@ -41,6 +41,8 @@ import {
   perTick,
   ruleInScene,
   sceneIndexOf,
+  SIDE_BITS,
+  sideMask,
   subjectBindings,
   type Binding,
   type EntityAddr,
@@ -73,6 +75,7 @@ import {
   copy32,
   div32,
   imm,
+  load,
   loadHalf,
   loadHalfSigned,
   mem,
@@ -290,88 +293,86 @@ export function emitSound(ctx: GbaCtx, rule: RuleDef): void {
 
 // --- 2. controls -------------------------------------------------------------
 
-/** Test an abstract button against one of the three input sets. */
-function emitButton(ctx: GbaCtx, set: number, action: string, skip: string): void {
+/**
+ * Test an abstract button against one of the three input sets, and jump when it
+ * is down (`set`) or when it is not (`clear`).
+ */
+function emitButton(
+  ctx: GbaCtx,
+  set: number,
+  action: string,
+  target: string,
+  when: "set" | "clear",
+): void {
   const bit = ACTIONS.indexOf(action as (typeof ACTIONS)[number]);
   ctx.asm.ldrb(A0, mem(ctx, set));
   ctx.asm.tst(A0, armImm(1 << bit));
-  ctx.far("eq", skip);
+  ctx.far(when === "set" ? "ne" : "eq", target);
+}
+
+/** Which input set a control's mode fires on. */
+function inputSet(ctx: GbaCtx, mode: ControlDef["mode"]): number {
+  const { layout } = ctx;
+  if (mode === "press") return layout.pressed;
+  return mode === "release" ? layout.released : layout.held;
 }
 
 export function emitControls(ctx: GbaCtx, scene: SceneCtx): void {
-  const { asm, layout } = ctx;
-  let holdBase = 0;
+  const { asm } = ctx;
+
+  emitHoldEdges(ctx, scene);
+
   for (const control of ctx.program.controls) {
-    const base = holdBase;
-    if (control.mode === "hold") holdBase += control.assignments.length;
     if (!inScene(ctx.program, scene, control.instanceId)) continue;
+    const skip = ctx.unique("ctlSkip");
+    emitButton(ctx, inputSet(ctx, control.mode), control.action, skip, "clear");
+    emitAssignments(ctx, control.assignments, UNBOUND);
+    asm.label(skip);
+  }
+}
 
-    // A control's own object is the fallback target for an unbound assignment,
-    // which is what the interpreter's snapshot and restore do.
-    const own = entityOf(ctx, control.instanceId);
-    const fallback: Binding = { subject: own, other: own };
+/**
+ * Save and restore the properties `on hold` controls write.
+ *
+ * One slot per property rather than per binding, and keyed on the button being
+ * *down* rather than on its press edge. `sim.ts`'s `updateHolds` is the
+ * specification and states why both of those are load-bearing.
+ */
+function emitHoldEdges(ctx: GbaCtx, scene: SceneCtx): void {
+  const { asm, layout } = ctx;
+  for (const [slot, target] of holdTargets(ctx.program).entries()) {
+    const bindings = target.controls
+      .map((index) => ctx.program.controls[index] as ControlDef)
+      .filter((control) => inScene(ctx.program, scene, control.instanceId));
+    if (bindings.length === 0) continue;
 
-    if (control.mode === "press" || control.mode === "release") {
-      const skip = ctx.unique("ctlSkip");
-      emitButton(
-        ctx,
-        control.mode === "press" ? layout.pressed : layout.released,
-        control.action,
-        skip,
-      );
-      emitAssignments(ctx, control.assignments, UNBOUND);
-      asm.label(skip);
-      continue;
+    const entity = entityOf(ctx, target.instanceId);
+    const flag = layout.holdFlags + slot;
+    const value = layout.holdValues + slot * PROP_SIZE;
+    const down = ctx.unique("holdDown");
+    const done = ctx.unique("holdDone");
+
+    for (const control of bindings) {
+      emitButton(ctx, layout.held, control.action, down, "set");
     }
 
-    // `on hold`: snapshot on the press, apply while down, restore on release.
-    const noPress = ctx.unique("holdNoPress");
-    emitButton(ctx, layout.pressed, control.action, noPress);
-    emitSnapshot(ctx, control, fallback, base);
-    asm.label(noPress);
+    // Nothing is asking for the property: put back what was saved, once.
+    loadByte(ctx, flag);
+    ctx.far("eq", done);
+    storeByte(ctx, flag, 0);
+    writeProp(ctx, entity, target.prop, value);
+    asm.b(done);
 
-    const noHold = ctx.unique("holdNoHold");
-    emitButton(ctx, layout.held, control.action, noHold);
-    emitAssignments(ctx, control.assignments, UNBOUND);
-    asm.label(noHold);
-
-    const noRelease = ctx.unique("holdNoRelease");
-    emitButton(ctx, layout.released, control.action, noRelease);
-    emitRestore(ctx, control, fallback, base);
-    asm.label(noRelease);
-  }
-}
-
-function emitSnapshot(ctx: GbaCtx, control: ControlDef, bind: Binding, base: number): void {
-  const { layout } = ctx;
-  for (const [index, assignment] of control.assignments.entries()) {
-    const target = assignment.target;
-    if (target.kind !== "prop") continue;
-    const entity = resolveEntity(ctx, target.entity, bind);
-    if (entity.kind === "none") continue;
-    const slot = layout.holdValues + (base + index) * 4;
+    // Something is: save what the property held before anything was.
+    asm.label(down);
+    loadByte(ctx, flag);
+    ctx.far("ne", done);
+    storeByte(ctx, flag, 1);
     ctx.scoped(() => {
       const current = readProp(ctx, entity, target.prop);
-      copy32(ctx, slot, current.val);
+      copy32(ctx, value, current.val);
     });
-    storeByte(ctx, layout.holdFlags + base + index, 1);
-  }
-}
-
-function emitRestore(ctx: GbaCtx, control: ControlDef, bind: Binding, base: number): void {
-  const { asm, layout } = ctx;
-  for (const [index, assignment] of control.assignments.entries()) {
-    const target = assignment.target;
-    if (target.kind !== "prop") continue;
-    const entity = resolveEntity(ctx, target.entity, bind);
-    if (entity.kind === "none") continue;
-    const skip = ctx.unique("restoreSkip");
-    loadByte(ctx, layout.holdFlags + base + index);
-    ctx.far("eq", skip);
-    storeByte(ctx, layout.holdFlags + base + index, 0);
-    const slot = layout.holdValues + (base + index) * 4;
-    writeProp(ctx, entity, target.prop, slot);
-    asm.label(skip);
+    asm.label(done);
   }
 }
 
@@ -857,42 +858,8 @@ function needSeparatePair(ctx: GbaCtx): Ref {
   return ctx.need("SeparatePair", (inner) => {
     const { asm, layout } = inner;
     const a = layout.pairA as number;
-    const b = layout.pairB as number;
-    const work = layout.pairWork as number;
-    const xPush = work;
-    const yPush = work + 4;
-    const near = work + 8;
-    const far = work + 12;
-
-    const axis = (pos: string, size: string, push: number): void => {
-      // near = a.pos + a.size - b.pos ; far = b.pos + b.size - a.pos
-      copy32(inner, near, at(boxProp(a, pos)));
-      add32(inner, near, at(boxProp(a, size)));
-      sub32(inner, near, at(boxProp(b, pos)));
-      copy32(inner, far, at(boxProp(b, pos)));
-      add32(inner, far, at(boxProp(b, size)));
-      sub32(inner, far, at(boxProp(a, pos)));
-      const takeFar = inner.unique("sepFar");
-      const done = inner.unique("sepDone");
-      branchLess32(inner, at(near), at(far), takeFar, false);
-      copy32(inner, push, at(near));
-      neg32(inner, push);
-      asm.b(done);
-      asm.label(takeFar);
-      copy32(inner, push, at(far));
-      asm.label(done);
-    };
-
-    axis("x", "width", xPush);
-    axis("y", "height", yPush);
-
-    // |xPush| < |yPush| decides the axis.
-    copy32(inner, near, at(xPush));
-    abs32(inner, near);
-    copy32(inner, far, at(yPush));
-    abs32(inner, far);
     const useY = inner.unique("sepUseY");
-    branchLess32(inner, at(near), at(far), useY, false);
+    const { xPush, yPush } = emitPairPushes(inner, useY);
     add32(inner, boxProp(a, "x"), at(xPush));
     clamp32(inner, boxProp(a, "x"));
     asm.ret();
@@ -902,6 +869,108 @@ function needSeparatePair(ctx: GbaCtx): Ref {
     asm.ret();
     asm.ltorg();
   });
+}
+
+/**
+ * The push along each axis, branching to `useY` when the y axis is shallower.
+ *
+ * The half of separation that *decides*, split out from the half that applies —
+ * because `from above` and the push that follows it are the same arithmetic read
+ * twice (`level/scene.ts` §contactOf), and two copies of it could disagree.
+ */
+function emitPairPushes(ctx: GbaCtx, useY: string): { xPush: number; yPush: number } {
+  const { asm, layout } = ctx;
+  const a = layout.pairA as number;
+  const b = layout.pairB as number;
+  const work = layout.pairWork as number;
+  const xPush = work;
+  const yPush = work + 4;
+  const near = work + 8;
+  const far = work + 12;
+
+  const axis = (pos: string, size: string, push: number): void => {
+    // near = a.pos + a.size - b.pos ; far = b.pos + b.size - a.pos
+    copy32(ctx, near, at(boxProp(a, pos)));
+    add32(ctx, near, at(boxProp(a, size)));
+    sub32(ctx, near, at(boxProp(b, pos)));
+    copy32(ctx, far, at(boxProp(b, pos)));
+    add32(ctx, far, at(boxProp(b, size)));
+    sub32(ctx, far, at(boxProp(a, pos)));
+    const takeFar = ctx.unique("sepFar");
+    const done = ctx.unique("sepDone");
+    branchLess32(ctx, at(near), at(far), takeFar, false);
+    copy32(ctx, push, at(near));
+    neg32(ctx, push);
+    asm.b(done);
+    asm.label(takeFar);
+    copy32(ctx, push, at(far));
+    asm.label(done);
+  };
+
+  axis("x", "width", xPush);
+  axis("y", "height", yPush);
+
+  // |xPush| < |yPush| decides the axis.
+  copy32(ctx, near, at(xPush));
+  abs32(ctx, near);
+  copy32(ctx, far, at(yPush));
+  abs32(ctx, far);
+  branchLess32(ctx, at(near), at(far), useY, false);
+  return { xPush, yPush };
+}
+
+/**
+ * `r0` = the {@link SIDE_BITS} bit for the side the staged pair sits on.
+ *
+ * Pulled only by a rule that says `from`, so a game without one ships none of
+ * it — and a routine of its own rather than a return value bolted onto
+ * `SeparatePair`, because the interpreter asks *before* the rule body runs and
+ * separates *after* it (`sim.ts` §resolveCollisions). The pool is flushed past
+ * the last return, which is the one placement that never falls through into it.
+ */
+function needContactSide(ctx: GbaCtx): Ref {
+  return ctx.need("ContactSide", (inner) => {
+    const { asm } = inner;
+    const useY = inner.unique("sideUseY");
+    const { xPush, yPush } = emitPairPushes(inner, useY);
+    const negative = inner.unique("sideNeg");
+    const below = inner.unique("sideBelow");
+    // A 16.16 value is a register here, so its sign is a compare against zero.
+    load(inner, A0, at(xPush));
+    asm.cmp(A0, armImm(0));
+    inner.far("lt", negative);
+    asm.mov(A0, armImm(SIDE_BITS["right"] as number));
+    asm.ret();
+    asm.label(negative);
+    asm.mov(A0, armImm(SIDE_BITS["left"] as number));
+    asm.ret();
+    asm.label(useY);
+    load(inner, A0, at(yPush));
+    asm.cmp(A0, armImm(0));
+    inner.far("ge", below);
+    asm.mov(A0, armImm(SIDE_BITS["above"] as number));
+    asm.ret();
+    asm.label(below);
+    asm.mov(A0, armImm(SIDE_BITS["below"] as number));
+    asm.ret();
+    asm.ltorg();
+  });
+}
+
+/**
+ * Skip the whole contact when the staged pair is not on a side the rule named.
+ *
+ * The narrowing reaches the separation and the contact bit as well as the
+ * firing: a side the rule did not name is a contact that never happened, so it
+ * pushes nothing apart and records nothing either (`sim.ts` §resolveCollisions).
+ * A rule with no `from` emits not one instruction.
+ */
+function emitSideGate(ctx: GbaCtx, sides: readonly string[], skip: string): void {
+  const mask = sideMask(sides);
+  if (mask === 0) return;
+  ctx.asm.bl(needContactSide(ctx));
+  ctx.asm.tst(A0, armImm(mask));
+  ctx.far("eq", skip);
 }
 
 /**
@@ -1030,6 +1099,7 @@ function emitPairLoop(
   emitStageBoxPtr(ctx, "b");
   asm.bl(needOverlapPair(ctx));
   ctx.far("eq", next);
+  emitSideGate(ctx, event.sides, next);
 
   const afterFire = ctx.unique("pairFired");
   if (!event.level) emitContactBitPtr(ctx, table, "seen", afterFire);
@@ -1223,6 +1293,7 @@ export function emitCollisions(ctx: GbaCtx, scene: SceneCtx): void {
         emitStageBox(ctx, otherBase, "b");
         asm.bl(needOverlapPair(ctx));
         ctx.far("eq", skip);
+        emitSideGate(ctx, event.sides, skip);
         const afterFire = ctx.unique("otherFired");
         if (!event.level) emitContactSeen(ctx, bit, afterFire);
         emitFire(ctx, rule, { subject, other: entityOf(ctx, otherId) });

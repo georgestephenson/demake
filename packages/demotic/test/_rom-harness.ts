@@ -26,6 +26,7 @@ import { Gba, type Button as GbaButton } from "@demake/gba";
 import { Nds, type Button as NdsButton } from "@demake/nds";
 import { Md, type Button as MdButton } from "@demake/md";
 import { Nes, type Button as NesButton } from "@demake/nes";
+import { Ngp, type Button as NgpButton } from "@demake/ngp";
 import { Pce, type Button as PceButton } from "@demake/pce";
 import { Sms, type Button as SmsButton } from "@demake/sms";
 import { Snes, type Button as SnesButton } from "@demake/snes";
@@ -36,6 +37,7 @@ import { buildGbaRom } from "../src/codegen/gba.js";
 import type { Layout } from "../src/codegen/layout.js";
 import { buildMdRom } from "../src/codegen/md.js";
 import { buildNesRom } from "../src/codegen/nes.js";
+import { buildNgpcRom } from "../src/codegen/ngpc.js";
 import { buildPceRom } from "../src/codegen/pce.js";
 import { buildSmsRom } from "../src/codegen/sms.js";
 import { buildSnesRom } from "../src/codegen/snes.js";
@@ -172,6 +174,24 @@ export const wsTarget: RomTarget = {
   },
 };
 
+/**
+ * The Neo Geo Pocket Color, whose "start" is Option — the one button on this
+ * pad that is neither a direction nor an action, and the one a game pauses on.
+ */
+export const ngpcTarget: RomTarget = {
+  console: "ngpc",
+  build: (program, options) => buildNgpcRom(program, options),
+  boot: (bytes) => {
+    const machine = new Ngp(bytes);
+    return {
+      readMemory: (address, length) => machine.readMemory(address, length),
+      stepInstruction: () => machine.stepInstruction(),
+      runFrame: () => machine.runFrame(),
+      setButtons: (down) => machine.setButtons(down as NgpButton[]),
+    };
+  },
+};
+
 export const smsTarget: RomTarget = {
   console: "sms",
   build: (program, options) => buildSmsRom(program, options),
@@ -269,6 +289,32 @@ export const ndsTarget: RomTarget = {
 };
 
 /** A booted ROM, ready to be stepped a tick at a time. */
+/**
+ * Every console with a backend, over the same batteries.
+ *
+ * One list rather than one per suite, because "the same battery on every
+ * machine" is what makes `Backend` a contract rather than a resemblance (doc 14
+ * §Runtime model) — and a second list is a list a new console gets added to
+ * once. It lives beside the targets themselves so a file that wants all of them
+ * imports rather than restates.
+ */
+export const TARGETS: readonly RomTarget[] = [
+  gbTarget,
+  gbcTarget,
+  megaduckTarget,
+  nesTarget,
+  pceTarget,
+  ngpcTarget,
+  smsTarget,
+  ggTarget,
+  snesTarget,
+  mdTarget,
+  gbaTarget,
+  ndsTarget,
+  wscTarget,
+  wsTarget,
+];
+
 export class RomRunner {
   readonly machine: RomMachine;
   readonly layout: Layout;

@@ -62,31 +62,16 @@ import {
   PSG_STEREO_REG,
 } from "./psg.js";
 import { clampByte, MAX_PENDING, pack, rateHz, restrict, shapeOf, stripBoot } from "./shared.js";
-import { emitStream, emitStreamData, type SmsStreamState } from "./sms-driver.js";
+import {
+  emitStream,
+  emitStreamData,
+  psgPortOf,
+  PSG_PORT,
+  type SmsStreamState,
+} from "./sms-driver.js";
 
 /** The value that stops the music, rather than starting a track. */
 export const STOP = 0xff;
-
-/**
- * The chip's one write port, and the Game Gear's stereo latch beside it.
- *
- * The sound chip answers on either half of `$40`–`$7F`; `$7F` is what the Sega
- * 8-bit backend's own boot code uses and what every published example uses, so
- * the driver uses it too. The stereo latch is a separate device at `$06` and only
- * exists on the handheld.
- */
-const PORT = { psg: 0x7f, stereo: 0x06 } as const;
-
-/**
- * How a schedule's register number reaches the packed data.
- *
- * The port, because a Z80 writes a chip with `out (c), a` and the packed byte is
- * what lands in `c`. One byte either way — the same one the Game Boy spends on a
- * high-RAM offset — and the write loop pays nothing to translate.
- */
-function portOf(reg: number): number {
-  return reg === PSG_STEREO_REG ? PORT.stereo : PORT.psg;
-}
 
 /** What the game hands the driver builder. */
 export interface SmsGameAudioInput {
@@ -231,10 +216,10 @@ export function buildSmsGameAudio(input: SmsGameAudioInput): SmsGameAudio {
   const packOptions = shared
     ? {
         channelOf: psgChannelTag,
-        port: portOf,
+        port: psgPortOf,
         ...(stereo ? { mergeRegs: new Set([PSG_STEREO_REG]) } : {}),
       }
-    : { port: portOf };
+    : { port: psgPortOf };
 
   let restricted = 0;
   const tracks = input.tracks.map((script) => stripBoot(script, boot));
@@ -490,7 +475,7 @@ function emitInit(
   asm.label("AudioInit");
   for (const write of boot) {
     asm.ldn("a", write.value);
-    asm.outN(portOf(write.reg));
+    asm.outN(psgPortOf(write.reg));
   }
 
   asm.alu("xor", "a");
@@ -744,11 +729,11 @@ function emitRelease(
       // nothing to say in front of them.
       for (const slot of (copies[index] as { slots: readonly number[] }).slots) {
         asm.lda(shadowAt(index) + slot);
-        asm.outN(PORT.psg);
+        asm.outN(PSG_PORT.psg);
       }
     } else {
       asm.ldn("a", psgAttenuationOff(channel));
-      asm.outN(PORT.psg);
+      asm.outN(PSG_PORT.psg);
     }
     asm.label(skip);
   }
@@ -768,7 +753,7 @@ function emitSilence(asm: AsmZ80): void {
   asm.label("AudioSilence");
   for (let channel = 0; channel < 4; channel += 1) {
     asm.ldn("a", psgAttenuationOff(channel));
-    asm.outN(PORT.psg);
+    asm.outN(PSG_PORT.psg);
   }
   asm.ret();
 }
@@ -809,6 +794,6 @@ function emitStereoMerge(asm: AsmZ80, state: Layout): void {
   asm.lda(state.stereoMusic);
   asm.alu("and", "c");
   asm.alu("or", "e");
-  asm.outN(PORT.stereo);
+  asm.outN(PSG_PORT.stereo);
   asm.ret();
 }

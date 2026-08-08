@@ -61,9 +61,11 @@ when player hits screenleft, screenright then xdirection as 0
 when player hits screentop then ydirection as 0
 when player touches screenbottom then (ydirection, footing.value) as (0, 1)
 
--- Landing and bonking, in one rule. `touches`, not
--- `hits`: resting contact is not an event.
-when player touches ledge if player.ydirection >= 0 then (ydirection, footing.value) as (0, 1) else ydirection as 0
+-- Landing and bonking, told apart by the side the
+-- contact resolved on. `touches`, not `hits`:
+-- resting contact is not an event.
+when player touches ledge from above then (ydirection, footing.value) as (0, 1)
+when player touches ledge from below then ydirection as 0
 
 -- A jump needs a rule, not a `control`: controls run
 -- before collisions, so they cannot ask for footing.

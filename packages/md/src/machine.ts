@@ -347,7 +347,17 @@ export class Md implements Bus {
     }
     // The FM chip shares the 68000's divider exactly, so this one has no
     // remainder to carry: one CPU cycle is one chip clock.
-    if (this.ymSink) this.ym.run(cycles, this.ymSink);
+    //
+    // And it runs when anything can *observe* it running, which the PSG above
+    // cannot offer at all. Two things can: a sample sink, and a timer — this
+    // chip's status byte carries the two overflow flags, and a standalone audio
+    // cartridge's clock is timer A polled from the main loop
+    // (`audio/src/rom/md.ts`). Gating this on the sink alone would leave that
+    // cartridge waiting for ever on a timer that only ticks when somebody has
+    // plugged in speakers, which is a model of the speakers rather than of the
+    // chip. Gating it on nothing would charge every *game* for six four-operator
+    // voices no test can hear, because a demade game programmes no timer at all.
+    if (this.ymSink || this.ym.timersRunning) this.ym.run(cycles, this.ymSink);
     return cycles;
   }
 

@@ -184,7 +184,8 @@ export interface SpriteOptions {
  * everything above it — the fit, the dedup, the asset run — is identical, and
  * "which byte layout does this hardware read" is the only question that differs.
  */
-export type Packing = "interleaved" | "grouped" | "planar" | "packed4" | "pairs" | "linear8";
+export type Packing =
+  "interleaved" | "grouped" | "planar" | "packed4" | "packed2" | "pairs" | "linear8";
 
 /** A downscaled sprite in linear light, with straight alpha kept separate. */
 interface Sampled {
@@ -338,14 +339,16 @@ function stretch(light: number, lo: number, span: number, steps: number): number
 /**
  * Pack one 8×8 block of colour indices, in the console's own bitplane layout.
  *
- * Four layouts, one picture. `interleaved` puts the two planes byte by byte
+ * One picture, several layouts. `interleaved` puts the two planes byte by byte
  * down the rows, which is what the Game Boy addresses; `grouped` stores the
  * whole low plane then the whole high plane, which is the NES's character
  * format; `planar` writes every plane of a row before moving on, which is what
  * the Sega VDP reads. `packed4` is not a bitplane layout at all — it is two
  * pixels a byte, left pixel in the high nibble, which is what the Mega Drive's
- * VDP and the ARM consoles' 2D engines read. Which one a console wants is the
- * hardware's business and not the art's.
+ * VDP and the ARM consoles' 2D engines read — and `packed2` is that idea two
+ * bits wide with a row as a little-endian halfword, which is the Neo Geo
+ * Pocket's. Which one a console wants is the hardware's business and not the
+ * art's.
  */
 function packTile(
   indices: Uint8Array,
@@ -370,6 +373,20 @@ function packTile(
         const high = indices[(originY + row) * width + originX + column] as number;
         const low = indices[(originY + row) * width + originX + column + 1] as number;
         bytes[row * 4 + (column >> 1)] = ((high & 0x0f) << 4) | (low & 0x0f);
+      }
+    }
+    return bytes;
+  }
+  // `packed2` is the same idea two bits wide, but a row is a little-endian
+  // *halfword* rather than a run of bytes — so the leftmost pixel is in the
+  // highest bits of a value whose low byte is stored first, and the byte a pixel
+  // lands in counts down from the right-hand end of the row.
+  if (packing === "packed2") {
+    for (let row = 0; row < 8; row += 1) {
+      for (let column = 0; column < 8; column += 1) {
+        const value = indices[(originY + row) * width + originX + column] as number;
+        const at = row * 2 + (1 - (column >> 2));
+        bytes[at] = (bytes[at] as number) | ((value & 3) << (6 - (column & 3) * 2));
       }
     }
     return bytes;

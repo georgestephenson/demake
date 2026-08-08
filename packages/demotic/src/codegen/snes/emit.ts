@@ -62,6 +62,7 @@ import {
   sceneContexts,
   sceneIndexOf,
   scrolls,
+  sideMask,
   tileCellsCacheable,
   type SceneCtx,
   type SpriteArt,
@@ -88,6 +89,7 @@ import {
   emitRuleTileTable,
   emitTileAt,
   emitTileSeparate,
+  emitTileSide,
   emitTilesUnder,
   GRID_EMPTY,
   inc16,
@@ -1123,6 +1125,17 @@ function emitTileRules(ctx: SnesCtx, scene: SceneCtx, level: LevelData): void {
         loadTableByte(ctx, ruleTileTableLabel(rule, level));
         ctx.far("eq", next);
 
+        // A side the rule did not name is a contact that never happened: it
+        // does not fire and it is not recorded either, so next tick's "was this
+        // seen before" answers as the interpreter's does (`sim.ts`
+        // §resolveTiles). Separation is unaffected — what can hold an object up
+        // is not what a rule asked about.
+        const mask = sideMask(event.sides);
+        if (mask !== 0) {
+          emitTileSide(ctx, base);
+          asm.and(imm16(mask));
+          ctx.far("eq", next);
+        }
         emitCellId(ctx);
         emitRecordContact(ctx);
         if (!event.level) {

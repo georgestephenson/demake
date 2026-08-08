@@ -345,15 +345,108 @@ describe("demake gen — a chip schedule into a cartridge", () => {
     expect(env.stderr).toMatch(/arranged for dmg, not nes/);
   });
 
-  it("names the console that has no driver backend yet, rather than emitting silence", async () => {
+  it("builds a bootable NROM cartridge from the schedule", async () => {
     const env = makeEnv({ "band.mid": bandMidi(140, 1) });
     await arranged(env, "nes");
     const code = await run(
-      ["gen", "song.json", "-c", "nes", "--format", "rom", "-o", "x.nes"],
+      ["gen", "song.json", "-c", "nes", "--format", "rom", "-o", "song.nes", "--json"],
+      env,
+    );
+    expect(code).toBe(0);
+    const rom = env.written["song.nes"]!;
+    expect(rom).toBeDefined();
+    expect(String.fromCharCode(...rom.subarray(0, 3))).toBe("NES");
+    const report = JSON.parse(env.stdout) as {
+      console: string;
+      stats: { data: number; ticks: number; helpers: string[]; ratePpmError: number };
+    };
+    expect(report.console).toBe("nes");
+    expect(report.stats.ticks).toBeGreaterThan(0);
+    expect(report.stats.ratePpmError).toBe(0);
+    expect(report.stats.helpers).toContain("tick");
+  });
+
+  it("builds a bootable HuCard from the schedule", async () => {
+    const env = makeEnv({ "band.mid": bandMidi(140, 1) });
+    await arranged(env, "pce");
+    const code = await run(
+      ["gen", "song.json", "-c", "pce", "--format", "rom", "-o", "song.pce", "--json"],
+      env,
+    );
+    expect(code).toBe(0);
+    const rom = env.written["song.pce"]!;
+    expect(rom).toBeDefined();
+    const report = JSON.parse(env.stdout) as {
+      console: string;
+      stats: { ticks: number; helpers: string[]; ratePpmError: number };
+    };
+    expect(report.console).toBe("pce");
+    expect(report.stats.ticks).toBeGreaterThan(0);
+    // This console's chip is initialised from a table at boot, which is the one
+    // helper neither Game Boy nor NES cartridge pulls in.
+    expect(report.stats.helpers).toContain("boot-table");
+  });
+
+  it("builds a bootable Sega cartridge from the schedule", async () => {
+    const env = makeEnv({ "band.mid": bandMidi(140, 1) });
+    await arranged(env, "gg");
+    const code = await run(
+      ["gen", "song.json", "-c", "gg", "--format", "rom", "-o", "song.gg", "--json"],
+      env,
+    );
+    expect(code).toBe(0);
+    const rom = env.written["song.gg"]!;
+    expect(rom).toBeDefined();
+    // The header is sixteen bytes *inside* the image rather than a wrapper round
+    // it, so a builder that appended it would produce a file no console maps.
+    expect(String.fromCharCode(...rom.subarray(0x7ff0, 0x7ff8))).toBe("TMR SEGA");
+    const report = JSON.parse(env.stdout) as {
+      console: string;
+      stats: { ticks: number; helpers: string[]; ratePpmError: number };
+    };
+    expect(report.console).toBe("gg");
+    expect(report.stats.ticks).toBeGreaterThan(0);
+    expect(report.stats.ratePpmError).toBe(0);
+    expect(report.stats.helpers).toContain("vblank-clock");
+  });
+
+  it("builds a bootable Mega Drive cartridge from the schedule", async () => {
+    const env = makeEnv({ "band.mid": bandMidi(140, 1) });
+    await arranged(env, "md");
+    const code = await run(
+      ["gen", "song.json", "-c", "md", "--format", "rom", "-o", "song.md", "--json"],
+      env,
+    );
+    expect(code).toBe(0);
+    const rom = env.written["song.md"]!;
+    expect(rom).toBeDefined();
+    expect(String.fromCharCode(...rom.subarray(0x100, 0x110))).toBe("SEGA MEGA DRIVE ");
+    const report = JSON.parse(env.stdout) as {
+      console: string;
+      stats: { ticks: number; helpers: string[]; ratePpmError: number };
+    };
+    expect(report.console).toBe("md");
+    expect(report.stats.ticks).toBeGreaterThan(0);
+    expect(report.stats.ratePpmError).toBe(0);
+    // This console's clock is the FM chip's own timer, and its initialisation is
+    // performed from a table — the one console that pulls in both.
+    expect(report.stats.helpers).toContain("timer-clock");
+    expect(report.stats.helpers).toContain("boot-table");
+  });
+
+  it("names the console that has no driver backend yet, rather than emitting silence", async () => {
+    // A Super Nintendo is the case worth naming: its cartridges play music
+    // inside a *game* and `demake arrange -c snes` writes an `.spc`, which is a
+    // RAM image rather than a board — so a builder that fell back to silence
+    // would make three different levels of support look like one.
+    const env = makeEnv({ "band.mid": bandMidi(140, 1) });
+    await arranged(env, "snes");
+    const code = await run(
+      ["gen", "song.json", "-c", "snes", "--format", "rom", "-o", "x.sfc"],
       env,
     );
     expect(code).not.toBe(0);
-    expect(env.stderr).toMatch(/no audio driver backend/);
+    expect(env.stderr).toMatch(/no standalone audio driver backend/);
   });
 
   it("says which formats a schedule has, instead of emitting an image artifact", async () => {
