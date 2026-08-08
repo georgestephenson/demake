@@ -16,6 +16,7 @@
     { "path": "../gba/tsconfig.json" },
     { "path": "../md/tsconfig.json" },
     { "path": "../nds/tsconfig.json" },
+    { "path": "../neogeo/tsconfig.json" },
     { "path": "../nes/tsconfig.json" },
     { "path": "../ngp/tsconfig.json" },
     { "path": "../pce/tsconfig.json" },

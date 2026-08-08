@@ -118,6 +118,9 @@ importers:
       '@demake/nds':
         specifier: workspace:*
         version: link:../nds
+      '@demake/neogeo':
+        specifier: workspace:*
+        version: link:../neogeo
       '@demake/nes':
         specifier: workspace:*
         version: link:../nes
