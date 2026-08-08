@@ -149,11 +149,16 @@ function packPalette(
   sprites: readonly { codes: readonly number[] }[],
 ): Uint16Array {
   const words = new Uint16Array(256 * 16);
-  // The reference colour, which the hardware requires to be black.
-  words[0] = 0x8000;
+  // The font's ramp, from entry *one*. Entry zero of every palette is the
+  // transparent index and is never rendered — but palette zero's entry zero is
+  // also `$400000`, which the hardware requires to be pure black because the
+  // video output uses it as its reference. Writing the ramp from index 0 put an
+  // ordinary encoded black there instead, which is a different word.
   for (const [index, codes] of systemRamp().entries()) {
+    if (index === 0) continue;
     words[SYSTEM_PALETTE * 16 + index] = encodeColour(codes);
   }
+  words[0] = 0x8000;
   let next = ART_PALETTE0;
   for (const group of art) {
     for (const colours of group) {
