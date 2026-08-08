@@ -463,7 +463,11 @@ function emitMoveLoop(ctx: M68kCtx, ids: readonly number[]): boolean {
  * For an instance the compiler named it is the property's own address and the
  * close is nothing, so the unrolled form is byte-for-byte what it always was.
  */
-function openProp(ctx: M68kCtx, entity: EntityAddr, prop: string): { addr: Ref; close: () => void } {
+function openProp(
+  ctx: M68kCtx,
+  entity: EntityAddr,
+  prop: string,
+): { addr: Ref; close: () => void } {
   if (entity.kind === "const") {
     return { addr: entity.base + propOffset(prop), close: () => undefined };
   }
@@ -646,7 +650,12 @@ function emitContactBitPtr(
 }
 
 /** The byte-and-mask tables one contact bit per entry needs. */
-function emitContactTables(ctx: M68kCtx, table: string, bits: readonly number[], suffix = ""): void {
+function emitContactTables(
+  ctx: M68kCtx,
+  table: string,
+  bits: readonly number[],
+  suffix = "",
+): void {
   ctx.data((data) => {
     data.label(`${table}Byte${suffix}`);
     data.db(...bits.map((bit) => bit >> 3));

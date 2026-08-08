@@ -10,7 +10,7 @@ AGENTS.md is explicit about what that means: if you find yourself copying a
 function from one backend into another, that function is in the wrong place —
 move it, do not duplicate it. This is the same extraction `codegen/mos/` got when
 the PC Engine arrived beside the NES, and it lands for the same reason and with
-the same dividing line. What moved is everything that is the *processor's*; what
+the same dividing line. What moved is everything that is the _processor's_; what
 stayed is `md/emit.ts`, which is the renderer and the only thing a Mega Drive
 backend now owns.
 

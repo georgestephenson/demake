@@ -242,7 +242,12 @@ function emitBinary(
   return { addr: target, temp: into === undefined };
 }
 
-function emitCall(ctx: M68kCtx, expr: CExpr & { kind: "call" }, bind: Binding, into?: number): Slot {
+function emitCall(
+  ctx: M68kCtx,
+  expr: CExpr & { kind: "call" },
+  bind: Binding,
+  into?: number,
+): Slot {
   const { asm } = ctx;
   const target = into ?? ctx.pushTemp();
   const args = expr.args;
@@ -351,7 +356,12 @@ export function emitCompare(
  * was emitted and the caller can drop the branch — and, for `never`, the whole
  * body behind it.
  */
-export function emitTest(ctx: M68kCtx, expr: CExpr, bind: Binding, falseTarget: string): TestVerdict {
+export function emitTest(
+  ctx: M68kCtx,
+  expr: CExpr,
+  bind: Binding,
+  falseTarget: string,
+): TestVerdict {
   const constant = fold(expr);
   if (constant !== undefined) return constant !== 0 ? "always" : "never";
 

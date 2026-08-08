@@ -133,7 +133,12 @@ export function emitTileAt(ctx: M68kCtx, data: LevelData): void {
  * boundary is not in that cell — which matches how object overlap already works,
  * so an object resting against a wall is touching it and not inside it.
  */
-export function emitTilesUnder(ctx: M68kCtx, base: number, data: LevelData, body: () => void): void {
+export function emitTilesUnder(
+  ctx: M68kCtx,
+  base: number,
+  data: LevelData,
+  body: () => void,
+): void {
   const { asm, layout } = ctx;
   const w = layout.words;
   const firstCol = w + W.firstCol * 2;
@@ -322,7 +327,11 @@ export function emitTileSide(ctx: M68kCtx, base: number): void {
  * thing that makes this a different function from the pair version rather than a
  * call to it. The two temporaries live for as long as the caller's scope.
  */
-function emitTilePushes(ctx: M68kCtx, base: number, useY: string): { pushX: number; pushY: number } {
+function emitTilePushes(
+  ctx: M68kCtx,
+  base: number,
+  useY: string,
+): { pushX: number; pushY: number } {
   const { asm, layout } = ctx;
   const col = layout.words + W.tileCol * 2;
   const row = layout.words + W.tileRow * 2;

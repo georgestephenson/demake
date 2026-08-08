@@ -177,6 +177,15 @@ importers:
         specifier: workspace:*
         version: link:../gba
 
+  packages/neogeo:
+    dependencies:
+      '@demake/core':
+        specifier: workspace:*
+        version: link:../core
+      '@demake/md':
+        specifier: workspace:*
+        version: link:../md
+
   packages/nes:
     dependencies:
       '@demake/chip':
