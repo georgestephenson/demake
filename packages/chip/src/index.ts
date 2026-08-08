@@ -23,6 +23,7 @@ import { NdsSpu } from "./nds-spu.js";
 import { NesApu } from "./nes-apu.js";
 import { SDsp } from "./s-dsp.js";
 import { Sn76489 } from "./sn76489.js";
+import { Ym2610Ssg } from "./ym2610-ssg.js";
 import { Ym2612 } from "./ym2612.js";
 import type { ChipId, ChipModel } from "./types.js";
 import type { GbaSample } from "./gba-pcm.js";
@@ -80,6 +81,7 @@ export {
 export { T6w28, T6W28_CLOCK_HZ, T6W28_LEFT, T6W28_RIGHT } from "./t6w28.js";
 export { Sn76489, SN76489_CLOCK_HZ } from "./sn76489.js";
 export { NesApu, NES_CLOCK_HZ } from "./nes-apu.js";
+export { SSG_DIVIDER, SSG_REGISTERS, YM2610_CLOCK_HZ, Ym2610Ssg } from "./ym2610-ssg.js";
 export { Ym2612, YM2612_CLOCK_HZ } from "./ym2612.js";
 export {
   SDsp,
@@ -143,6 +145,8 @@ export function createChip(
       return new NesApu();
     case "ym2612":
       return new Ym2612();
+    case "ym2610-ssg":
+      return new Ym2610Ssg();
     case "gba-pcm":
       // A mixer with no waveforms renders silence, for the same reason a sample
       // player with empty RAM does.
