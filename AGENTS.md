@@ -1900,6 +1900,19 @@ packages/demotic/test/rom.test.ts` builds every fixture game and diffs raw
   optimisation over a pure function and must never become one that changes
   bytes. The web app's ROM pane says "demaking…" and stays live while it happens,
   because a tab that silently stopped for five seconds looks broken.
+- **And every art module memoises, so a new one is not finished until it does.**
+  All eight keep the same pair of caches, because the argument is the console's
+  only in its numbers: a picture is a tournament and the callers ask for the same
+  one over and over. `nes-art.ts` was the one that did not, and it cost 98
+  seconds in a single test file — a fixture built four times over is four whole
+  fits of the same two pictures. Two things about the key. **The budget is in
+  it** on any console that shares a bank out (the NES, the Mega Drive, the Game
+  Boy Advance): what a picture may spend is what the ones before it left, so the
+  same bytes at different room are two different fits and a key that dropped it
+  would hand the second one the first one's pixels. And **the executor is not**,
+  for the reason `convertBackdrop` states — which is what `_fanout.ts` builds
+  spread-first to work around, so a battery that warmed the cache the other way
+  round would compare two cache hits and pass without a candidate ever running.
 - **A build is a fan-out, and the order things are _interned_ is not the order
   they are demade in.** `buildRom` demakes art and audio at the same time
   (`allSettled`, so art's error still wins), and the Game Boy converts a scene's
