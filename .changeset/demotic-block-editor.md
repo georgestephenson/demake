@@ -32,6 +32,26 @@ scanner. Two properties hold it up and are checked against every `.dmt` in the
 repository: slots are in source order and never overlap, and a statement
 reassembled from its slots and the text between them is byte-identical.
 
+**And a statement's arity is editable, not just its parts.** A slot describes a
+statement of fixed shape and half the grammar is not that shape: `when ball hits
+paddle1, paddle2` has as many targets as the author wrote, a property list as many
+entries, a `stream` as many chunks. Drawing only the parts already in the file is
+an editor in which a rule's arity was decided by whoever typed the line first, so
+`spans` carry a `SourceList` per repeating clause and each one gets a ⊕ at its end
+and a ⊖ after every item it may lose. Four things about it are the design (doc 19
+§A statement's arity is editable too). A list _contains_ slots rather than
+replacing them, so the tiling property above is untouched. An **absent** clause is
+a list with no items rather than no list, so a rule with no `from` can still be
+narrowed to a side and a `create` with no brackets can still be given a property —
+the opener brings the word or the brackets with it, and dropping the last item
+takes them back out. The strings are the **grammar's**, because ` from above` is
+the language's spelling of that edit and a page that spelled it itself would be a
+second statement of the syntax — and a property list's template is computed from
+the list it is going into, since `E_DUPLICATE_PROP` makes a fixed one an error on
+the row it was just added to. And the positional `(x, y) as (8, 4)` is **one** list
+written as two halves that the language refuses to let drift apart (`E_ARITY`), so
+one press grows both.
+
 **Every list is generated.** The palette is `STATEMENTS`, so a statement added to
 the registry appears the day it lands; the closed sets are `BUTTONS`, `SIDES`,
 `DIRECTIONS` and a new `SLOT_CHOICES`, every word of which is checked against

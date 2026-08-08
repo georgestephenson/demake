@@ -2285,6 +2285,46 @@ main.text-layout .source-editor {
   max-width: 7.5rem;
 }
 
+/* An item of a list, wrapped only so the editor can find the one it has just
+   added and put the caret in it. `contents`, so a row lays out exactly as it did
+   before there were lists. */
+.block-item {
+  display: contents;
+}
+
+/* The arity of a list, made editable: ⊕ at the end of a clause, ⊖ after each
+   item it may take away. Small and quiet — they sit *inside* a statement, so a
+   row of them at button weight would read as the loudest thing on the line. */
+.block-arity {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--bg);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.72rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.block-arity:hover,
+.block-arity:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+
+/* Tucked against the item it removes, so which one it means is a matter of
+   looking rather than counting. */
+.block-drop {
+  margin-left: -0.15rem;
+}
+
 /* A string's slot covers the *contents* of the literal, so the quotes are the
    editor's to draw — printed as glue they came out as debris at the end of a
    wrapped line. */

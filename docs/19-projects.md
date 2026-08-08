@@ -569,6 +569,58 @@ overlap, and reassembling a statement from its slots and the text between them
 gives the line back byte for byte. A line whose slots did not tile it would show
 as the text it could not read, which is the safe failure rather than a wrong edit.
 
+### A statement's arity is editable too
+
+Slots describe a statement of **fixed shape** — here are its parts, here is what
+may go in each — and half the grammar is not that shape. `when ball hits paddle1,
+paddle2` has as many targets as the author wrote; a property list has as many
+entries; `stream course from gap.dmtl, pipe.dmtl` has as many chunks. An editor
+built on slots alone draws exactly the parts already in the file and offers no way
+to a further one, which is a rule whose arity was decided by whoever typed the
+line first. That was the state this shipped in and it is the thing that made the
+whole view feel like a viewer.
+
+So the side channel has a second half: a `SourceList` per repeating clause, with
+each item's range, the extent of the clause, and the three strings an edit writes
+— what goes between two items, what a new item says, and what an *empty* clause
+says when it gains its first. A ⊕ at the end of each clause and a ⊖ after each
+item it may lose are the whole interface. Four things about it are load-bearing.
+
+**A list contains slots rather than replacing them.** Every item's own parts are
+still in `slots`, in source order, so the tiling property above is untouched and
+the reassembly test still means what it meant. What a list adds is the arithmetic
+— where each item is, where the clause begins, what separates two items — which is
+exactly what "add one" and "take one out" need and nothing more.
+
+**An absent clause is a list with no items, not a missing list.** `when hero
+touches ledge` has a side list whose start and end are the same point, just after
+`ledge`, and whose opener is ` from above` — so the ⊕ writes the clause *and the
+word that introduces it*, and dropping its last side takes the word back out.
+Without that, `from` would only ever be editable in a rule that already had one.
+The same fact gives `create ball ball1` a property list, so the first property
+brings its own brackets.
+
+**The strings belong to the grammar, not to the page.** ` from above` is the
+language's spelling of an empty side clause gaining a side, and a page that spelled
+it itself would be a second, disagreeing statement of the syntax — the rule the
+palette's templates already run under. It goes further for a property list, because
+that list has rules of its own: a name may not repeat (`E_DUPLICATE_PROP`) and some
+properties are `createOnly`, so the template is **computed from the list it is going
+into** — the first free property at its own default, which parses, compiles and
+changes nothing until somebody types in it. A fixed `visible 1` was the first
+attempt and it is `E_DUPLICATE_PROP` on the row it was just added to.
+
+**The positional `as` is one list written as two halves, and they move together.**
+`(x, y) as (8, 4)` is two bracketed lists that the language refuses to let drift
+apart — `E_ARITY` is what it calls that — so the two `SourceList`s carry each
+other's index and one edit grows or shrinks both. Only the first half draws the
+controls: two ⊕s that did the same thing would read as two different things.
+
+Where the grammar needs an item, there is no ⊖ on the last one — a rule with
+nothing to hit is not a rule, and deleting the row is what the × beside it is for.
+`min` is the caller's rather than the clause's, which is why a `create`'s property
+list can go down to none and a rule's assignment list cannot.
+
 ### The palette is generated, and so are the choices
 
 **Every block the palette offers comes from `STATEMENTS`.** The registry already
