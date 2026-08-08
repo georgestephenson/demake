@@ -16,7 +16,12 @@
  * being added to a list here.
  */
 
-import { consoles, consoleLabel, type ConsoleSpec } from "@demake/core";
+import {
+  backendFor as codegenBackendFor,
+  consoles,
+  consoleLabel,
+  type ConsoleSpec,
+} from "@demake/core";
 import { audioConsoles, audioRomConsoles, gameDriverRate, hasGameAudio } from "@demake/audio";
 import { familyFor } from "@demake/demotic";
 
@@ -118,7 +123,14 @@ export function consoleSupport(): ConsoleSupport[] {
     // A builder is necessary and not sufficient: the Mega Duck rides the `gb`
     // family for its data and still withholds `rom`, because its display program
     // is not the Game Boy's. The spec's own `formats` is what `gen` gates on.
-    const declared = spec.codegen.formats;
+    //
+    // And a *codegen family* is necessary before any of them: `gen` raises
+    // `E_UNSUPPORTED_FAMILY` for a console whose family has no backend, whatever
+    // format was asked for, so a spec that declares `bin` for one is declaring
+    // something no invocation can reach. Six of them did — every console that
+    // has a spec and no backend behind it — which is the same overstatement the
+    // `rom` filter below already existed to catch, one column to the left.
+    const declared = codegenBackendFor(spec.codegen.family) ? spec.codegen.formats : [];
     const builder = declared.includes("rom") ? romBuilderFor(spec) : undefined;
     const formats = declared.filter((format) => format !== "rom" || builder !== undefined);
     const game = gameFamily(spec);

@@ -37,8 +37,8 @@ columns are [doc 03](03-console-matrix.md); the plan for the empty cells is
 | Console | id | family | art | data | ROM | emulator | game | music/sfx | audio ROM | in-game audio |
 |---|---|---|---|---|---|---|---|---|---|---|
 | Sega Game Gear | `gg` | `sms` | yes | `bin` `asm` `c` | WLA-DX | genesis-plus-gx | `sms` | yes | yes | 59.92 Hz |
-| Neo Geo | `neogeo` | `neogeo` | yes | `bin` `asm` `c` | — | — | — | — | — | — |
-| Neo Geo Pocket | `ngp` | `ngp` | yes | `bin` `asm` `c` | — | — | — | yes | — | — |
+| Neo Geo | `neogeo` | `neogeo` | yes | — | — | — | — | — | — | — |
+| Neo Geo Pocket | `ngp` | `ngp` | yes | — | — | — | — | yes | — | — |
 | Neo Geo Pocket Color | `ngpc` | `ngpc` | yes | `bin` `asm` `c` | — | — | `ngpc` | yes | — | 59.95 Hz |
 | PC Engine / TurboGrafx-16 | `pce` | `pce` | yes | `bin` `asm` `c` | WLA-DX | beetle-pce-fast | `pce` | yes | yes | 120 Hz |
 | WonderSwan | `ws` | `ws` | yes | `bin` `asm` `c` | — | — | `wsc` | yes | — | 75.47 Hz |
@@ -48,12 +48,12 @@ columns are [doc 03](03-console-matrix.md); the plan for the empty cells is
 
 | Console | id | family | art | data | ROM | emulator | game | music/sfx | audio ROM | in-game audio |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Tiger Game.com | `gamecom` | `mono-misc` | yes | `bin` `asm` `c` | — | — | — | — | — | — |
+| Tiger Game.com | `gamecom` | `mono-misc` | yes | — | — | — | — | — | — | — |
 | Mega Duck / Cougar Boy | `megaduck` | `gb` | yes | `bin` `asm` `c` | — | — | `gb` | yes | — | 120 Hz |
-| Pokémon Mini | `pokemini` | `mono-misc` | yes | `bin` `asm` `c` | — | — | — | — | — | — |
+| Pokémon Mini | `pokemini` | `mono-misc` | yes | — | — | — | — | — | — | — |
 | Sega SG-1000 | `sg1000` | `sg1000` | yes | `bin` `asm` `c` | WLA-DX | genesis-plus-gx | — | yes | — | — |
-| Watara Supervision / QuickShot Supervision | `supervision` | `mono-misc` | yes | `bin` `asm` `c` | — | — | — | — | — | — |
-| Virtual Boy | `vb` | `vb` | yes | `bin` `asm` `c` | — | — | — | — | — | — |
+| Watara Supervision / QuickShot Supervision | `supervision` | `mono-misc` | yes | — | — | — | — | — | — | — |
+| Virtual Boy | `vb` | `vb` | yes | — | — | — | — | — | — | — |
 
 ## Totals
 
