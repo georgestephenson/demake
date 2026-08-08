@@ -13,37 +13,31 @@
  * keeps, or from the project's own files. The page's contribution is the symbols
  * (`StatementSymbol.tsx`) and the layout.
  *
- * **Moving a row is an edit, not a rearrangement.** Entities live in declaration
- * order, so moving a `create` changes what is drawn over what and which sprite the
- * hardware drops first past its per-scanline budget; a rule's place in the file is
- * its place in the tick. Nothing here sorts, groups or tidies on its own, and a row
- * nobody touched is emitted byte-identical (`lib/blocks.ts`).
+ * **The fields are what it is for.** Not the drag — "blocks you drag" describes
+ * Scratch, where a drag *is* the composition, and Demotic is flat, so a drag here
+ * expresses one number: which index. What this view buys over text is that a slot
+ * knows what may go in it, and can therefore show you the four scenes, the seven
+ * buttons or the project's own pictures. That half is a form, and a form works
+ * from a keyboard by construction.
  *
- * **A drag is one of three ways to move a row, and the weakest.** In a nesting
- * language a drag *is* the composition — you snap a block into a socket and the
- * gesture says what contains what. Demotic is flat, so a drag here expresses a
- * single number: which index. That is worth having and it is not worth relying
- * on, because a gesture has no keyboard, native drag-and-drop does not fire on
- * touch at all, and a drag can only reach as far as the list is tall. So the row
- * moves three ways and each is best at something different:
+ * **A row moves three ways**, because a drag alone is O(distance), has no
+ * keyboard, and does not fire on touch at all: drag it (the list scrolls itself
+ * near an edge), pick it up with Space and steer with the arrows, or press Enter
+ * on the grip and choose a destination from a filtered list — which is O(1) and
+ * the only one of the three that is better for being a form.
  *
- * - **Dragging** is direct and fastest over a few rows. The list scrolls itself
- *   when the pointer nears an edge, without which a move past the visible dozen
- *   would be impossible — with a mouse, which is the point: that was never only an
- *   accessibility gap.
- * - **Grab and move** is the keyboard's: Space picks a row up, the arrows carry
- *   it, Space drops it and Escape puts it back where it started. Every step is
- *   announced, because a row that moves silently under a screen reader has not
- *   moved as far as its user is concerned.
- * - **Choosing a destination** is the one that beats both over a long distance:
- *   clicking the grip opens a filtered list of every place the row could go, so
- *   line 60 reaches line 3 in two keystrokes. Dragging is O(distance) and the
- *   arrows are O(rows); this is O(1).
+ * **One tab stop, not one per control.** Rows are a roving-tabindex list: Tab
+ * reaches the row you were last on, the arrows walk between rows, and only that
+ * row puts its own fields in the tab order. Every control of every row being
+ * tabbable put 352 stops between a seventy-line game and whatever came after it,
+ * which is a worse barrier than the one the keyboard moves were added to remove.
  *
- * **It offers; it does not validate.** Diagnostics are `check()`'s and the
- * parser's, shown against the rows they name. A field that decided for itself
- * what was legal would be a second front end, and it would be wrong the first time
- * the language changed.
+ * **A problem is shown where it is.** A diagnostic sits against its own row, a row
+ * that has one is marked, the count above the list leads to the first, and
+ * anything naming no row at all — the *game's* errors, when a suite is open — goes
+ * at the top rather than being dropped. `check()` and the parser decide what is
+ * wrong; this only decides where to put it (doc 19 §It offers; it does not
+ * validate).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
@@ -63,11 +57,13 @@ import {
   insertRow,
   moveRow,
   paletteFor,
+  problemsOf,
   propertyOf,
   read,
   removeRow,
   rowsOf,
   setSlot,
+  slotValue,
   templateFor,
   vocabularyOf,
   type Dialect,
@@ -76,6 +72,7 @@ import {
   type Vocabulary,
 } from "../lib/blocks.js";
 import { filesOfKind, fileUrl, levelSources, projectFiles, type Project } from "../lib/project.js";
+import { useDismiss } from "./popover.js";
 import { StatementSymbol } from "./StatementSymbol.js";
 
 /** What is being dragged: a row of the file, or a statement from the palette. */
@@ -98,6 +95,11 @@ function speed(inside: number): number {
   return Math.max(1, Math.ceil(SCROLL_STEP * (1 - Math.max(0, inside) / SCROLL_EDGE)));
 }
 
+/** `1 error`, `2 errors` — the one line that reads badly inlined. */
+function count(n: number, thing: string): string {
+  return `${String(n)} ${thing}${n === 1 ? "" : "s"}`;
+}
+
 export function BlockEditor({
   text,
   dialect,
@@ -116,22 +118,34 @@ export function BlockEditor({
   // Where a drop would land: an index in the row list, the length meaning "at
   // the end". Held in state because it is what draws the insertion line.
   const [over, setOver] = useState<number | null>(null);
-  const [selected, setSelected] = useState<number | null>(null);
+  // The row everything else is relative to: where the palette inserts, where the
+  // arrows start, and whose fields are in the tab order. *Any* focus inside a row
+  // makes it the active one, so tabbing to a field and then adding a statement
+  // puts the statement where you are looking.
+  const [active, setActive] = useState(0);
   const [held, setHeld] = useState<Held | null>(null);
   // Which row's destination list is open, if any.
   const [moving, setMoving] = useState<number | null>(null);
-  // What a screen reader is told. Moving a row is invisible without it.
-  const [said, setSaid] = useState("");
+  // What a screen reader is told. Moving a row is invisible without it, and the
+  // counter is what makes the *same* message announce twice — pressing the key
+  // again at the end of the list has to say so again.
+  const [said, setSaid] = useState({ text: "", n: 0 });
   // Where the keyboard should be once the rows have been redrawn.
   const [chasing, setChasing] = useState<number | null>(null);
 
   const list = useRef<HTMLOListElement | null>(null);
+  const grips = useRef(new Map<number, HTMLButtonElement>());
   const velocity = useRef(0);
   const frame = useRef(0);
+
+  const announce = useCallback((message: string) => {
+    setSaid((was) => ({ text: message, n: was.n + 1 }));
+  }, []);
 
   const files = useMemo(() => projectFiles(project), [project]);
   const reading = useMemo(() => read(text, dialect), [text, dialect]);
   const rows = useMemo(() => rowsOf(text, reading), [text, reading]);
+  const problems = useMemo(() => problemsOf(diagnostics, rows.length), [diagnostics, rows.length]);
 
   // Tile names come from the project's levels, because `when hero touches ledge`
   // names a tile in a `.dmtl` legend and not anything the `.dmt` declares.
@@ -144,15 +158,8 @@ export function BlockEditor({
   }, [project]);
   const vocabulary = useMemo(() => vocabularyOf(text, reading, tiles), [text, reading, tiles]);
 
-  const byLine = useMemo(() => {
-    const map = new Map<number, Diagnostic[]>();
-    for (const one of diagnostics) {
-      const at = map.get(one.line);
-      if (at) at.push(one);
-      else map.set(one.line, [one]);
-    }
-    return map;
-  }, [diagnostics]);
+  // A file that shrank under the cursor must not leave it pointing past the end.
+  const anchor = Math.max(0, Math.min(active, rows.length - 1));
 
   // --- the list scrolls itself while a drag is near its edge ------------------
 
@@ -205,10 +212,10 @@ export function BlockEditor({
         onChange(moveRow(text, dragging.from, at));
         // Follow the row: the thing you just moved is the thing you are looking
         // at, and losing it in a long file is the whole cost of a mis-drop.
-        setSelected(at > dragging.from ? at - 1 : at);
+        setActive(at > dragging.from ? at - 1 : at);
       } else {
         onChange(insertRow(text, at, templateFor(dragging.spec)));
-        setSelected(at);
+        setActive(at);
       }
       endDrag();
     },
@@ -217,17 +224,24 @@ export function BlockEditor({
 
   // --- and the keyboard picks a row up and carries it -------------------------
 
+  /** Put the keyboard on a row's grip, scrolling the list to it if need be. */
+  const focusRow = useCallback((index: number) => {
+    const grip = grips.current.get(index);
+    grip?.scrollIntoView({ block: "nearest" });
+    grip?.focus();
+  }, []);
+
   /** Put the row at `from` in front of the row at `before`, and say so. */
   const place = useCallback(
     (from: number, before: number, note: string) => {
       onChange(moveRow(text, from, before));
       const landed = Math.max(0, Math.min(rows.length - 1, before > from ? before - 1 : before));
-      setSelected(landed);
+      setActive(landed);
       setChasing(landed);
-      setSaid(note.replace("%", String(landed + 1)));
+      announce(note.replace("%", String(landed + 1)));
       return landed;
     },
-    [text, rows.length, onChange],
+    [text, rows.length, onChange, announce],
   );
 
   const carry = useCallback(
@@ -235,24 +249,24 @@ export function BlockEditor({
       if (!held) return;
       const to = held.at + by;
       if (to < 0 || to >= rows.length) {
-        setSaid(by === -1 ? "Already the first line." : "Already the last line.");
+        announce(by === -1 ? "Already the first line." : "Already the last line.");
         return;
       }
       const landed = place(held.at, by === 1 ? to + 1 : to, `Line % of ${String(rows.length)}.`);
       setHeld({ at: landed, from: held.from });
     },
-    [held, rows.length, place],
+    [held, rows.length, place, announce],
   );
 
   const release = useCallback(() => {
     if (!held) return;
-    setSaid(
+    announce(
       held.at === held.from
         ? `Line ${String(held.at + 1)} put down where it was.`
         : `Dropped at line ${String(held.at + 1)}.`,
     );
     setHeld(null);
-  }, [held]);
+  }, [held, announce]);
 
   /** Escape: the row goes back where it was picked up, however far it travelled. */
   const abandon = useCallback(() => {
@@ -260,48 +274,83 @@ export function BlockEditor({
     if (held.at !== held.from) {
       place(held.at, held.from > held.at ? held.from + 1 : held.from, "Back at line %.");
     } else {
-      setSaid(`Line ${String(held.at + 1)} put down where it was.`);
+      announce(`Line ${String(held.at + 1)} put down where it was.`);
     }
     setHeld(null);
-  }, [held, place]);
+  }, [held, place, announce]);
 
   // The rows are drawn by position, so a row that moved left its grip behind:
   // without this, pressing the key twice would march two rows past each other
   // instead of moving one.
   useEffect(() => {
     if (chasing === null) return;
-    const grip = document.querySelector<HTMLElement>(
-      `[data-testid="block-row-${String(chasing)}"] .block-grip`,
-    );
-    grip?.focus();
+    focusRow(chasing);
     setChasing(null);
-  }, [chasing, rows]);
+  }, [chasing, rows, focusRow]);
 
   const insert = useCallback(
     (spec: StatementSpec) => {
-      const at = selected === null ? rows.length : selected + 1;
+      const at = rows.length === 0 ? 0 : anchor + 1;
       onChange(insertRow(text, at, templateFor(spec)));
-      setSelected(at);
-      setSaid(`Added ${spec.keyword} at line ${String(at + 1)}.`);
+      setActive(at);
+      announce(`Added ${spec.keyword} at line ${String(at + 1)}.`);
     },
-    [selected, rows.length, text, onChange],
+    [anchor, rows.length, text, onChange, announce],
   );
+
+  /** Take a field's value, and say so if the language would not hold it. */
+  const write = useCallback(
+    (slot: SourceSlot, value: string) => {
+      if (slotValue(value) !== value) {
+        announce("Quotes and line breaks cannot go inside a statement, so they were removed.");
+      }
+      onChange(setSlot(text, slot, value));
+    },
+    [text, onChange, announce],
+  );
+
+  const firstProblem = problems.rowsWithErrors[0];
 
   return (
     <div class="block-editor" data-testid="block-editor">
-      <Palette
-        dialect={dialect}
-        onPick={insert}
-        onDrag={(spec) => setDragging({ kind: "new", spec })}
-        onDragEnd={endDrag}
-      />
+      <Palette dialect={dialect} onPick={insert} onDrag={setDragging} onDragEnd={endDrag} />
 
-      {/* Every move is announced. A drag is its own feedback and this is the
-          rest of it: the arrows move a row several lines in a second, and a
-          screen reader that said nothing would be describing a file that had
-          silently stopped being the one it read out. */}
+      {/* What is wrong, counted, with a way to the first one. A row scrolled out
+          of view is a problem you cannot see, and a list of line numbers under
+          the editor is the text view's answer rather than this one's. */}
+      {problems.errors + problems.warnings > 0 ? (
+        <p class="block-problems" data-testid="block-problems">
+          <span class={problems.errors > 0 ? "diag-error" : "diag-warning"}>
+            {problems.errors > 0 ? count(problems.errors, "error") : ""}
+            {problems.errors > 0 && problems.warnings > 0 ? ", " : ""}
+            {problems.warnings > 0 ? count(problems.warnings, "warning") : ""}
+          </span>
+          {firstProblem === undefined ? null : (
+            <button
+              type="button"
+              data-testid="block-goto-problem"
+              onClick={() => focusRow(firstProblem)}
+            >
+              Go to the first
+            </button>
+          )}
+        </p>
+      ) : null}
+
+      {/* Every move is announced. A drag is its own feedback and this is the rest
+          of it: the arrows move a row several lines in a second, and a screen
+          reader that said nothing would be describing a file that had silently
+          stopped being the one it read out. */}
       <p class="visually-hidden" role="status" aria-live="polite" data-testid="block-status">
-        {said}
+        {said.text}
+        {/* An invisible pair of states, so saying the same thing twice is still
+            two changes to the region and therefore two announcements. */}
+        {said.n % 2 === 0 ? "" : " "}
+      </p>
+
+      <p class="visually-hidden" id="block-move-help">
+        Press Space to pick this line up and steer it with the arrow keys, or Enter to choose where
+        it goes. It can also be dragged.
       </p>
 
       <ol
@@ -322,153 +371,196 @@ export function BlockEditor({
           drop(over ?? rows.length);
         }}
       >
-        {rows.map((row, index) => (
-          <li
-            key={row.line}
-            class={`block-row block-${row.kind}${selected === index ? " selected" : ""}${
-              held?.at === index ? " held" : ""
-            }${over === index ? " drop-before" : ""}${
-              over === rows.length && index === rows.length - 1 ? " drop-after" : ""
-            }`}
-            data-testid={`block-row-${String(index)}`}
-            data-keyword={row.kind === "statement" ? row.keyword : undefined}
-            onDragOver={(event) => {
-              if (!dragging) return;
-              event.preventDefault();
-              // Top half drops in front of this row, bottom half behind it —
-              // which is what makes the last position reachable at all.
-              const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
-              setOver(event.clientY < box.top + box.height / 2 ? index : index + 1);
-            }}
-            onClick={() => setSelected(index)}
-          >
-            <button
-              type="button"
-              class="block-grip"
-              draggable
-              aria-label={`Line ${String(row.line)}: move it`}
-              aria-pressed={held?.at === index}
-              aria-expanded={moving === index}
-              title="Drag to move it, click to choose where it goes, or press Space to pick it up"
-              onDragStart={(event) => {
-                setDragging({ kind: "row", from: index });
-                setSelected(index);
-                event.dataTransfer?.setData("text/plain", row.text);
-                if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
-              }}
-              onDragEnd={endDrag}
-              onClick={(event) => {
-                // The click is the *destination list*: dragging is what a mouse
-                // does with a grip, so a plain click is free for the thing a drag
-                // is worst at.
-                event.stopPropagation();
-                setSelected(index);
-                setMoving((open) => (open === index ? null : index));
-              }}
-              onKeyDown={(event) => {
-                if (event.key === " " || event.key === "Enter") {
-                  event.preventDefault();
-                  if (held) release();
-                  else {
-                    setHeld({ at: index, from: index });
-                    setSelected(index);
-                    setSaid(
-                      `Line ${String(index + 1)} picked up. Arrow keys move it, Enter drops it, Escape puts it back.`,
-                    );
-                  }
-                  return;
-                }
-                if (event.key === "Escape" && held) {
-                  event.preventDefault();
-                  abandon();
-                  return;
-                }
-                if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-                event.preventDefault();
-                const by = event.key === "ArrowUp" ? -1 : 1;
-                // Holding a row, the arrows carry it; holding nothing, they walk
-                // the list — which is what a row of controls is expected to do
-                // and how you reach line 60 in order to pick it up.
-                if (held) carry(by);
-                else setChasing(Math.max(0, Math.min(rows.length - 1, index + by)));
-              }}
-              onBlur={(event) => {
-                // Carrying a row moves the focus with it, so only focus leaving
-                // the list entirely counts as putting it down.
-                const next = event.relatedTarget as Node | null;
-                if (held && !list.current?.contains(next)) release();
-              }}
-            >
-              <svg viewBox="0 0 8 16" width="8" height="16" aria-hidden="true" focusable="false">
-                <path
-                  d="M2 4h.01M6 4h.01M2 8h.01M6 8h.01M2 12h.01M6 12h.01"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                />
-              </svg>
-            </button>
-
-            <span class="block-line">{row.line}</span>
-
-            <div class="block-body">
-              {row.kind === "statement" ? (
-                <StatementRow
-                  row={row}
-                  text={text}
-                  files={files}
-                  project={project}
-                  vocabulary={vocabulary}
-                  onChange={onChange}
-                />
-              ) : row.kind === "blank" ? (
-                <span class="block-note">&nbsp;</span>
-              ) : (
-                <input
-                  class="block-text"
-                  aria-label={row.kind === "comment" ? "Comment" : "Line the parser could not read"}
-                  value={row.text}
-                  onChange={(event) => {
-                    const value = (event.target as HTMLInputElement).value;
-                    onChange(replaceLine(text, index, value));
-                  }}
-                />
-              )}
-            </div>
-
-            <button
-              type="button"
-              class="block-remove"
-              aria-label={`Delete line ${String(row.line)}`}
-              onClick={() => {
-                onChange(removeRow(text, index));
-                setSelected(null);
-                setSaid(`Deleted line ${String(row.line)}.`);
-              }}
-            >
-              ×
-            </button>
-
-            {moving === index ? (
-              <MoveTo
-                rows={rows}
-                from={index}
-                onClose={() => setMoving(null)}
-                onMove={(before) => {
-                  setMoving(null);
-                  place(index, before, "Moved to line %.");
-                }}
-              />
-            ) : null}
-
-            {(byLine.get(row.line) ?? []).map((one, at) => (
+        {/* Diagnostics that name no row in this file — which is how a suite says
+            the *game* under it will not compile. At the top rather than dropped:
+            a suite that can never pass, with nothing on screen saying why, is the
+            worst of the places to put it. */}
+        {problems.loose.length > 0 ? (
+          <li class="block-row block-loose" data-testid="block-loose">
+            {problems.loose.map((one, at) => (
               <p key={at} class={one.severity === "error" ? "diag-error" : "diag-warning"}>
                 <strong>{one.code}</strong> {one.message}
                 {one.hint ? <span class="diag-hint"> — {one.hint}</span> : null}
               </p>
             ))}
           </li>
-        ))}
+        ) : null}
+
+        {rows.map((row, index) => {
+          const mine = problems.byRow.get(index) ?? [];
+          const worst = mine.some((one) => one.severity === "error")
+            ? " has-error"
+            : mine.length > 0
+              ? " has-warning"
+              : "";
+          // Only the row you are on puts its own controls in the tab order.
+          const here = index === anchor;
+          return (
+            <li
+              key={row.line}
+              class={`block-row block-${row.kind}${here ? " active" : ""}${
+                held?.at === index ? " held" : ""
+              }${worst}${over === index ? " drop-before" : ""}${
+                over === rows.length && index === rows.length - 1 ? " drop-after" : ""
+              }`}
+              data-testid={`block-row-${String(index)}`}
+              data-keyword={row.kind === "statement" ? row.keyword : undefined}
+              onFocusCapture={() => setActive(index)}
+              onDragOver={(event) => {
+                if (!dragging) return;
+                event.preventDefault();
+                // Top half drops in front of this row, bottom half behind it —
+                // which is what makes the last position reachable at all.
+                const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
+                setOver(event.clientY < box.top + box.height / 2 ? index : index + 1);
+              }}
+              onClick={() => setActive(index)}
+            >
+              <button
+                type="button"
+                class="block-grip"
+                draggable
+                ref={(element) => {
+                  if (element) grips.current.set(index, element as HTMLButtonElement);
+                  else grips.current.delete(index);
+                }}
+                tabIndex={here ? 0 : -1}
+                aria-label={`Move line ${String(row.line)}`}
+                aria-describedby="block-move-help"
+                aria-haspopup="dialog"
+                aria-expanded={moving === index}
+                title="Drag to move it, Enter to choose where it goes, Space to pick it up"
+                onDragStart={(event) => {
+                  setDragging({ kind: "row", from: index });
+                  setActive(index);
+                  event.dataTransfer?.setData("text/plain", row.text);
+                  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+                }}
+                onDragEnd={endDrag}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setActive(index);
+                  setMoving((open) => (open === index ? null : index));
+                }}
+                onKeyDown={(event) => {
+                  // Space picks up, Enter chooses a destination. Two keys for two
+                  // moves, rather than one key that means whichever of them you
+                  // were not expecting.
+                  if (event.key === " ") {
+                    event.preventDefault();
+                    if (held) release();
+                    else {
+                      setHeld({ at: index, from: index });
+                      setActive(index);
+                      announce(
+                        `Line ${String(index + 1)} picked up. Arrow keys move it, Space drops it, Escape puts it back.`,
+                      );
+                    }
+                    return;
+                  }
+                  if (event.key === "Enter" && !held) {
+                    event.preventDefault();
+                    setMoving((open) => (open === index ? null : index));
+                    return;
+                  }
+                  if (event.key === "Escape" && held) {
+                    event.preventDefault();
+                    abandon();
+                    return;
+                  }
+                  if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+                  event.preventDefault();
+                  const by = event.key === "ArrowUp" ? -1 : 1;
+                  // Holding a row, the arrows carry it; holding nothing, they
+                  // walk the list — which is what a row of controls is expected
+                  // to do, and how you reach line 60 in order to pick it up.
+                  if (held) carry(by);
+                  else focusRow(Math.max(0, Math.min(rows.length - 1, index + by)));
+                }}
+                onBlur={(event) => {
+                  // Carrying a row moves the focus with it, so only focus leaving
+                  // the list entirely counts as putting it down.
+                  const next = event.relatedTarget as Node | null;
+                  if (held && !list.current?.contains(next)) release();
+                }}
+              >
+                <svg viewBox="0 0 8 16" width="8" height="16" aria-hidden="true" focusable="false">
+                  <path
+                    d="M2 4h.01M6 4h.01M2 8h.01M6 8h.01M2 12h.01M6 12h.01"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                  />
+                </svg>
+              </button>
+
+              <span class="block-line">{row.line}</span>
+
+              <div class="block-body">
+                {row.kind === "statement" ? (
+                  <StatementRow
+                    row={row}
+                    files={files}
+                    project={project}
+                    vocabulary={vocabulary}
+                    tabbable={here}
+                    onWrite={write}
+                  />
+                ) : row.kind === "blank" ? (
+                  <span class="block-note">&nbsp;</span>
+                ) : (
+                  <input
+                    class="block-text"
+                    tabIndex={here ? 0 : -1}
+                    aria-label={
+                      row.kind === "comment" ? "Comment" : "Line the parser could not read"
+                    }
+                    value={row.text}
+                    onChange={(event) => {
+                      const value = (event.target as HTMLInputElement).value;
+                      onChange(replaceLine(text, index, value));
+                    }}
+                  />
+                )}
+              </div>
+
+              <button
+                type="button"
+                class="block-remove"
+                tabIndex={here ? 0 : -1}
+                aria-label={`Delete line ${String(row.line)}`}
+                onClick={() => {
+                  onChange(removeRow(text, index));
+                  announce(`Deleted line ${String(row.line)}.`);
+                }}
+              >
+                ×
+              </button>
+
+              {moving === index ? (
+                <MoveTo
+                  rows={rows}
+                  from={index}
+                  onClose={() => {
+                    setMoving(null);
+                    focusRow(index);
+                  }}
+                  onMove={(before) => {
+                    setMoving(null);
+                    place(index, before, "Moved to line %.");
+                  }}
+                />
+              ) : null}
+
+              {mine.map((one, at) => (
+                <p key={at} class={one.severity === "error" ? "diag-error" : "diag-warning"}>
+                  <strong>{one.code}</strong> {one.message}
+                  {one.hint ? <span class="diag-hint"> — {one.hint}</span> : null}
+                </p>
+              ))}
+            </li>
+          );
+        })}
 
         {/* A file with nothing in it still needs somewhere to drop the first
             statement, and a row list with no rows has nowhere. */}
@@ -488,8 +580,9 @@ export function BlockEditor({
 
       <p class="hint">
         One block is one line, and moving one is an <em>edit</em>: objects are drawn in the order
-        they are created, and a rule runs where it sits in the file. Drag a row by its grip, click
-        the grip to choose where it goes, or press <kbd>Space</kbd> on it and steer with the arrows.
+        they are created, and a rule runs where it sits in the file. <kbd>Tab</kbd> reaches the row
+        you were last on and the arrows walk between rows; on a row&rsquo;s grip, <kbd>Space</kbd>{" "}
+        picks it up to steer and <kbd>Enter</kbd> chooses where it goes.
       </p>
     </div>
   );
@@ -515,6 +608,10 @@ function replaceLine(text: string, index: number, value: string): string {
  * A destination is *in front of* a row, plus the end — the same vocabulary
  * `insertRow` and `moveRow` take, so nothing here has to reason about whether
  * removing the row first shifts the target.
+ *
+ * It expands the row rather than floating over it, and that is not taste: the
+ * list is an `overflow: auto` scroller, and an absolutely positioned panel inside
+ * one is clipped by it the moment the row it belongs to is near the bottom.
  */
 function MoveTo({
   rows,
@@ -528,13 +625,15 @@ function MoveTo({
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
+  const panel = useRef<HTMLDivElement | null>(null);
   const input = useRef<HTMLInputElement | null>(null);
-  // The popover exists to be typed into, so it takes the caret when it opens —
-  // the explorer's own quick-open does the same thing for the same reason.
+  // It exists to be typed into, so it takes the caret when it opens — the
+  // explorer's own quick-open does the same thing for the same reason.
   useEffect(() => input.current?.focus(), []);
+  useDismiss(panel, true, onClose);
 
   const places = useMemo(() => {
-    const all: { before: number; label: string }[] = [];
+    const all: { before: number; line: number; label: string }[] = [];
     for (let before = 0; before <= rows.length; before += 1) {
       // The two that would not move it: in front of itself, and in front of
       // whatever follows it. Offering a move that does nothing is offering a
@@ -543,6 +642,7 @@ function MoveTo({
       const row = rows[before];
       all.push({
         before,
+        line: row?.line ?? rows.length + 1,
         label:
           row === undefined
             ? "at the end"
@@ -559,26 +659,26 @@ function MoveTo({
     // row, which is how you say "before the rule about the paddle".
     return places.filter(
       (place) =>
-        String((rows[place.before]?.line ?? rows.length + 1) as number).startsWith(wanted) ||
-        place.label.toLowerCase().includes(wanted),
+        String(place.line).startsWith(wanted) || place.label.toLowerCase().includes(wanted),
     );
-  }, [places, query, rows]);
+  }, [places, query]);
 
   return (
-    <div class="block-moveto" data-testid="block-moveto">
+    <div
+      class="block-moveto"
+      ref={panel}
+      role="dialog"
+      aria-label="Choose where this line goes"
+      data-testid="block-moveto"
+    >
       <input
         class="block-field"
         ref={input}
-        aria-label={`Move line ${String(rows[from]?.line ?? from + 1)} — type a line number or part of a row`}
+        aria-label="Type a line number, or part of a row"
         placeholder="line number, or part of a row"
         value={query}
         onInput={(event) => setQuery((event.target as HTMLInputElement).value)}
         onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            event.preventDefault();
-            onClose();
-            return;
-          }
           if (event.key !== "Enter") return;
           event.preventDefault();
           const first = shown[0];
@@ -623,7 +723,7 @@ function Palette({
 }: {
   dialect: Dialect;
   onPick: (spec: StatementSpec) => void;
-  onDrag: (spec: StatementSpec) => void;
+  onDrag: (dragging: Dragging) => void;
   onDragEnd: () => void;
 }) {
   const [query, setQuery] = useState("");
@@ -668,7 +768,7 @@ function Palette({
             data-keyword={spec.keyword}
             title={`${spec.syntax}\n\n${spec.summary}`}
             onDragStart={(event) => {
-              onDrag(spec);
+              onDrag({ kind: "new", spec });
               event.dataTransfer?.setData("text/plain", spec.example);
               if (event.dataTransfer) event.dataTransfer.effectAllowed = "copy";
             }}
@@ -687,18 +787,18 @@ function Palette({
 /** One statement: its symbol, its keyword, and a field per slot. */
 function StatementRow({
   row,
-  text,
   files,
   project,
   vocabulary,
-  onChange,
+  tabbable,
+  onWrite,
 }: {
   row: Extract<Row, { kind: "statement" }>;
-  text: string;
   files: readonly string[];
   project: Project;
   vocabulary: Vocabulary;
-  onChange: (next: string) => void;
+  tabbable: boolean;
+  onWrite: (slot: SourceSlot, value: string) => void;
 }) {
   return (
     <>
@@ -715,16 +815,29 @@ function StatementRow({
             files={files}
             project={project}
             vocabulary={vocabulary}
-            onChange={(value) => onChange(setSlot(text, part.slot as SourceSlot, value))}
+            tabbable={tabbable}
+            onChange={(value) => onWrite(part.slot as SourceSlot, value)}
           />
         ) : (
-          <span key={index} class="block-glue">
-            {part.text.trim()}
-          </span>
+          <Glue key={index} text={part.text} />
         ),
       )}
     </>
   );
+}
+
+/**
+ * The grammar's own words between two fields — `in`, `then`, a bracket, a comma.
+ *
+ * Shown rather than hidden, because a rule whose `then` had been replaced by a
+ * layout convention would read as a different statement from the one in the file.
+ * The exception is a quote: a string's slot covers the *contents* of the literal,
+ * so the quotes belong to the field that draws them, and printed here they came
+ * out as debris at the end of a wrapped line.
+ */
+function Glue({ text }: { text: string }) {
+  const shown = text.replace(/["']/g, "").trim();
+  return shown === "" ? null : <span class="block-glue">{shown}</span>;
 }
 
 /** The words a slot may hold, when the answer is a list rather than free text. */
@@ -750,6 +863,7 @@ function Field({
   files,
   project,
   vocabulary,
+  tabbable,
   onChange,
 }: {
   part: Part;
@@ -757,6 +871,7 @@ function Field({
   files: readonly string[];
   project: Project;
   vocabulary: Vocabulary;
+  tabbable: boolean;
   onChange: (value: string) => void;
 }) {
   const kind = assetKindOf(slot.kind);
@@ -767,6 +882,7 @@ function Field({
         value={part.text}
         files={files}
         project={project}
+        tabbable={tabbable}
         onChange={onChange}
       />
     );
@@ -778,6 +894,7 @@ function Field({
       <select
         class="block-field block-choice"
         data-slot={slot.kind}
+        tabIndex={tabbable ? 0 : -1}
         aria-label={labelFor(slot)}
         value={part.text}
         onChange={(event) => onChange((event.target as HTMLSelectElement).value)}
@@ -796,10 +913,11 @@ function Field({
     );
   }
 
-  return (
+  const box = (
     <input
       class="block-field"
       data-slot={slot.kind}
+      tabIndex={tabbable ? 0 : -1}
       aria-label={labelFor(slot)}
       inputMode={slot.kind === "number" ? "decimal" : undefined}
       size={Math.max(3, Math.min(40, part.text.length + 1))}
@@ -807,6 +925,8 @@ function Field({
       onChange={(event) => onChange((event.target as HTMLInputElement).value)}
     />
   );
+  // The quotes the glue no longer prints, drawn around the field they belong to.
+  return slot.kind === "string" ? <span class="block-quoted">{box}</span> : box;
 }
 
 /**
@@ -838,24 +958,35 @@ function AssetField({
   value,
   files,
   project,
+  tabbable,
   onChange,
 }: {
   kind: "art" | "music" | "sound" | "level";
   value: string;
   files: readonly string[];
   project: Project;
+  tabbable: boolean;
   onChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const panel = useRef<HTMLSpanElement | null>(null);
+  const button = useRef<HTMLButtonElement | null>(null);
   const paths = useMemo(() => filesOfKind(project, kind), [project, kind]);
   const names = useMemo(() => paths.map((path) => shortestName(path, files)), [paths, files]);
   const current = paths[names.indexOf(value)];
+
+  const close = useCallback(() => {
+    setOpen(false);
+    button.current?.focus();
+  }, []);
+  useDismiss(panel, open, close);
 
   if (kind !== "art") {
     return (
       <select
         class="block-field block-choice"
         data-slot={kind}
+        tabIndex={tabbable ? 0 : -1}
         aria-label={`The ${kind} this names`}
         value={value}
         onChange={(event) => onChange((event.target as HTMLSelectElement).value)}
@@ -871,11 +1002,14 @@ function AssetField({
   }
 
   return (
-    <span class="block-art">
+    <span class="block-art" ref={panel}>
       <button
         type="button"
         class="block-field block-thumb"
+        ref={button}
         data-slot="art"
+        tabIndex={tabbable ? 0 : -1}
+        aria-haspopup="dialog"
         aria-expanded={open}
         aria-label={`Art: ${value}`}
         onClick={() => setOpen((on) => !on)}
@@ -884,9 +1018,17 @@ function AssetField({
         <span>{value}</span>
       </button>
       {open ? (
-        <div class="block-gallery" data-testid="block-gallery">
+        // In the flow rather than floating: the row list is an `overflow: auto`
+        // scroller, and an absolutely positioned panel inside one is clipped by
+        // it as soon as the row it belongs to is near the bottom.
+        <span
+          class="block-gallery"
+          role="dialog"
+          aria-label="Pictures in this project"
+          data-testid="block-gallery"
+        >
           {paths.length === 0 ? (
-            <p class="hint">This project has no pictures in it yet.</p>
+            <span class="hint">This project has no pictures in it yet.</span>
           ) : (
             paths.map((path, index) => {
               const name = names[index] as string;
@@ -898,7 +1040,7 @@ function AssetField({
                   title={path}
                   onClick={() => {
                     onChange(name);
-                    setOpen(false);
+                    close();
                   }}
                 >
                   <img src={fileUrl(project, path)} alt="" />
@@ -907,7 +1049,7 @@ function AssetField({
               );
             })
           )}
-        </div>
+        </span>
       ) : null}
     </span>
   );

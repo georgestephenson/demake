@@ -24,12 +24,15 @@ import {
   joinRows,
   moveRow,
   paletteFor,
+  problemsOf,
   read,
   removeRow,
   rowsOf,
   setSlot,
+  slotValue,
   splitRows,
   templateFor,
+  vocabularyOf,
   type Row,
 } from "../src/lib/blocks.js";
 
@@ -207,5 +210,80 @@ describe("dialects", () => {
   it("tells a suite from a game by the one thing that distinguishes them", () => {
     expect(dialectOf("src/pong.dmt")).toBe("game");
     expect(dialectOf("src/pong.test.dmt")).toBe("suite");
+  });
+});
+
+describe("what a program calls things", () => {
+  const source = [
+    "scene title",
+    "scene play",
+    "create object ball (width 1 cell)",
+    "create ball ball1 in play (x 0)",
+  ].join("\n");
+
+  it("offers a program its own names, read off the rows rather than a compile", () => {
+    const vocabulary = vocabularyOf(source, read(source, "game"), ["ledge"]);
+    expect(vocabulary.scenes).toEqual(["play", "title"]);
+    // `number` and `text` are classes every program has without declaring them.
+    expect(vocabulary.classes).toEqual(["ball", "number", "text"]);
+    expect(vocabulary.instances).toEqual(["ball1"]);
+    // Whatever a collision may name: objects, classes, a level's tiles, and the
+    // screen edges the language supplies.
+    expect(vocabulary.entities).toContain("ledge");
+    expect(vocabulary.entities).toContain("screenleft");
+    expect(vocabulary.entities).toContain("ball1");
+  });
+
+  it("still offers them while a line below is half-typed", () => {
+    // The whole reason it reads the spans rather than a compile: a file being
+    // edited does not compile every second keystroke, and a dropdown that
+    // emptied itself mid-word is a dropdown nobody can use.
+    const broken = `${source}\ncreate ball`;
+    expect(vocabularyOf(broken, read(broken, "game")).scenes).toEqual(["play", "title"]);
+  });
+});
+
+describe("where a problem goes", () => {
+  const diagnostics = [
+    { severity: "error", code: "E_ONE", message: "on the first row", line: 1 },
+    { severity: "warning", code: "W_TWO", message: "on the second", line: 2 },
+    { severity: "error", code: "E_TWO", message: "also the second", line: 2 },
+    { severity: "error", code: "E_GAME", message: "about another file", line: 0 },
+    { severity: "error", code: "E_PAST", message: "past the end", line: 99 },
+  ] as const;
+
+  it("sorts each diagnostic onto the row it names", () => {
+    const problems = problemsOf(diagnostics, 3);
+    expect([...(problems.byRow.get(0) ?? [])].map((one) => one.code)).toEqual(["E_ONE"]);
+    expect([...(problems.byRow.get(1) ?? [])].map((one) => one.code)).toEqual(["W_TWO", "E_TWO"]);
+    expect(problems.byRow.has(2)).toBe(false);
+  });
+
+  it("keeps the ones that name no row rather than dropping them", () => {
+    // This is how a suite says the *game* under it will not compile — a real
+    // reason it can never pass, naming no row in the file on screen.
+    const problems = problemsOf(diagnostics, 3);
+    expect(problems.loose.map((one) => one.code)).toEqual(["E_GAME", "E_PAST"]);
+    expect(problems.errors).toBe(4);
+    expect(problems.warnings).toBe(1);
+  });
+
+  it("names the rows an error is on, in order, for `go to the first`", () => {
+    expect(problemsOf(diagnostics, 3).rowsWithErrors).toEqual([0, 1]);
+    // A row with only a warning is not one of them.
+    const warned = [{ severity: "warning", code: "W", message: "", line: 3 }] as const;
+    expect(problemsOf(warned, 3).rowsWithErrors).toEqual([]);
+  });
+});
+
+describe("what a field may write", () => {
+  it("takes out what would change the program rather than the value", () => {
+    // A newline would split a statement across two lines, and the language is
+    // one statement per line; a quote would close a string it is inside of.
+    expect(slotValue("press a\nto play")).toBe("press a to play");
+    expect(slotValue('go", visible 0')).toBe("go, visible 0");
+    // And it is exported so the editor can *see* that it did something, rather
+    // than a character silently vanishing as it is typed.
+    expect(slotValue("press a")).toBe("press a");
   });
 });

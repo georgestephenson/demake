@@ -248,8 +248,8 @@ shape — *one file, two or three views of it*:
 
 | File | Editor | Views |
 |---|---|---|
-| `.dmt` | the game editor | **text**, **blocks** (§The block editor), **preview**, and the cartridge |
-| `.test.dmt` | the suite editor | **text**, **blocks**, and the run (§The suite editor) |
+| `.dmt` | the game editor | **text** or **blocks** (§The block editor), beside the preview and the cartridge |
+| `.test.dmt` | the suite editor | **text** or **blocks**, beside the run (§The suite editor) |
 | `.dmtl` | the level editor | **text**, **map**, or side by side |
 | `.svg` `.png` | the art demaker | source, options, result — as today |
 | `.mid` | the music demaker | source, options, arrangement, listen — as today |
@@ -687,6 +687,37 @@ box: the grid is how you find out there are thirteen statements and what they ar
 called, the box is how somebody who knows that adds a `when` without reaching for
 the mouse. It is the bargain Ctrl+P strikes with the explorer, one pane along.
 
+### One tab stop per row, not one per control
+
+Rows are a **roving-tabindex list**: Tab reaches the row you were last on, the
+arrows walk between rows, and only that row puts its own fields in the tab order.
+Any focus inside a row makes it the active one, so tabbing to a field and then
+adding a statement puts the statement where you are looking.
+
+The alternative is what it replaced, and the number is the argument: every control
+of every row being tabbable put **352 tab stops** between a seventy-line game and
+whatever came after it. That is a worse barrier for a keyboard than the drag ever
+was, and it was introduced in the same change that added the keyboard moves — so
+"is it operable" has to be asked about the *whole* pane and not about the gesture
+being worked on.
+
+### A problem is shown where it is
+
+Not in a list underneath naming line numbers you then go and count to. That is the
+text view's answer, and a graphical view has a better one:
+
+- **Against its own row**, under the fields, with the row marked down its left
+  edge — red for an error, amber for a warning.
+- **Counted above the list**, with a button to the first one, because a row
+  scrolled out of view is a problem you cannot see.
+- **At the top of the list when it names no row**, which is how the suite editor
+  reports that the *game* under it will not compile. That is a real reason a suite
+  can never pass and it names no line in the file on screen; dropping it left a
+  suite that always failed with nothing anywhere saying why.
+
+Which problems exist is `check()`'s and the parser's; all this decides is where to
+put them (§It offers; it does not validate).
+
 ### What it must never carry
 
 **No hardware option ever appears in a block**, because none can appear in a
@@ -958,8 +989,10 @@ Each step is useful on its own and none of them breaks the one before.
    picked as *pictures*, tracks and effects and levels as lists, scene and object
    names as the program's own. A row moves three ways — dragged, carried with the
    keyboard, or sent to a destination picked from a list — because a drag alone is
-   O(distance), silent, and absent on touch. Expressions stay a text field, which
-   is where §The one place it stops said they would.
+   O(distance), silent, and absent on touch; rows are a roving-tabindex list, so
+   the editor can be tabbed past; and a diagnostic is shown against its own row.
+   Expressions stay a text field, which is where §The one place it stops said they
+   would.
 10. **The suite editor** — **done**: a `.test.dmt` opens §The suite editor rather
     than the game demaker, with the same two views over the file and the
     cross-console run in place of a player.

@@ -63,9 +63,25 @@ export function runSuite(
   return { results, cases, failed, skipped, report: formatResults(results) };
 }
 
-/** The one-line verdict, which is what a status bar has room for. */
+/**
+ * The one-line verdict, which is what a status bar has room for.
+ *
+ * The skipped consoles are named *here* rather than appended by the caller,
+ * because when none of them ran the two halves said the same thing twice —
+ * "nothing ran, the game did not compile for any console — 13 consoles the game
+ * does not compile for".
+ */
 export function summarise(run: SuiteRun): string {
-  if (run.results.length === 0) return "nothing ran — the game did not compile for any console";
+  if (run.results.length === 0) {
+    return "nothing ran: the game does not compile for any console";
+  }
   const consoles = `${String(run.results.length)} console${run.results.length === 1 ? "" : "s"}`;
-  return `${String(run.cases - run.failed)}/${String(run.cases)} cases passed across ${consoles}`;
+  const skipped =
+    run.skipped === 0 ? "" : ` — ${String(run.skipped)} more the game does not compile for`;
+  return `${String(run.cases - run.failed)}/${String(run.cases)} cases passed across ${consoles}${skipped}`;
+}
+
+/** Whether a run is something to celebrate, which "nothing ran" is not. */
+export function passed(run: SuiteRun): boolean {
+  return run.results.length > 0 && run.failed === 0;
 }

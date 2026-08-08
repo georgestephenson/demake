@@ -53,12 +53,37 @@ that scrolls, it has no keyboard, and native drag-and-drop does not fire on touc
 at all. So the list **scrolls itself** when a drag nears an edge, without which a
 move past the visible dozen rows was impossible _with a mouse_; `Space` on the
 grip **picks a row up** for the arrows to carry, `Escape` puts it back where it
-started, and every step is announced through a live region; and **clicking the
-grip picks a destination** from a filtered list, which reaches line 3 from line 60
-in two keystrokes where dragging is O(distance) and the arrows are O(rows). The
-palette is a grid of chips and a search box for the same reason: the grid is how
-you learn what the statements are called, the box is how somebody who knows adds a
-`when` without reaching for the mouse.
+started, and every step is announced through a live region; and `Enter` on the
+grip **chooses a destination** from a filtered list, which reaches line 3 from
+line 60 in two keystrokes where dragging is O(distance) and the arrows are
+O(rows). The palette is a grid of chips and a search box for the same reason: the
+grid is how you learn what the statements are called, the box is how somebody who
+knows adds a `when` without reaching for the mouse.
+
+**One tab stop per row, not one per control.** A row of fields per line is a tab
+stop per field unless something stops it, and Pong came to 352 of them — a worse
+barrier for a keyboard than the drag those keyboard moves were added to replace.
+Rows are a roving-tabindex list now: Tab reaches the row you were last on, the
+arrows walk between rows, and only that row puts its fields in the tab order. Any
+focus inside a row makes it the active one, which is also what decides where a new
+statement lands — before, a keyboard could move a row precisely and could not
+choose where an added one went.
+
+**A problem is shown where it is.** Against its own row and under its fields, with
+the row marked down its left edge; counted above the list with a button to the
+first, because a row scrolled out of view is a problem you cannot see; and, when
+it names no row at all, at the top of the list rather than nowhere — which is how
+the suite editor reports that the _game_ under it will not compile. That last one
+was silently dropped, so a suite that could never pass showed nothing anywhere
+saying why. A list of line numbers under the editor is the text view's answer; a
+graphical view that borrowed it would be asking you to count lines in a thing that
+has none to count.
+
+**There is no side-by-side.** Two views of one file earn a split screen when they
+show different things, the way the level editor's map does beside the legend that
+names its tiles. These two show the same thing twice, in a pane that also holds a
+console — so the split bought a second copy of the source at half the width and
+doubled the controls between the reader and the rest of the page.
 
 **And a `.test.dmt` no longer opens the game demaker.** It is a `.dmt`, and the
 router asked no further question — so a file that builds to nothing arrived with a

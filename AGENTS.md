@@ -3446,6 +3446,18 @@ not per console.
   list — which is O(1) and the only one of the three that is better for being a
   form. Before adding a gesture here, ask what it does for somebody with a
   keyboard and a phone, because this one did nothing for either.
+- **A block editor shows a problem where the problem is.** A diagnostic goes
+  against its own row, the row is marked, the count above the list leads to the
+  first, and one that names no row — the _game's_, when a suite is open — goes at
+  the top rather than nowhere. A list of line numbers under the editor is the text
+  view's answer; a graphical view that borrowed it would be asking you to count
+  lines in a thing that has no line numbers to count.
+- **A row of controls per line is a tab stop per control unless something stops
+  it.** Pong is 352 of them, which is a worse barrier for a keyboard than the drag
+  the keyboard moves were added to replace — so the rows are a roving-tabindex
+  list: Tab reaches the active row, the arrows walk between rows, and only the
+  active row's fields are in the tab order. Any focus inside a row makes it
+  active, which is also what decides where a new statement lands.
 - **A `.test.dmt` is not a game and does not open the game demaker.** `isSuite` is
   the engine's own question and `route.ts` asks it first, because a suite is a
   `.dmt` too and the longer extension is the whole distinction. It opens the suite

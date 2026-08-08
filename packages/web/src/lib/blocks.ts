@@ -187,18 +187,78 @@ function partsOf(text: string, span: StatementSpan, lineEnd: number): readonly P
 }
 
 /**
- * Write a value into one slot, and change nothing else in the file.
+ * What a field may actually put in a slot.
  *
- * Two things are taken out of the value on the way, and both are cases where
- * keeping it would turn one edit into a different program. A newline would split
- * a statement across two lines, and the language is one statement per line. A
- * quote would close a string it is inside of — and a Demotic string cannot
- * contain one at all, since the lexer ends the literal at the first it meets, so
- * there is nothing to escape it with.
+ * Two characters are taken out, and both are cases where keeping them would turn
+ * one edit into a different program. A newline would split a statement across two
+ * lines, and the language is one statement per line. A quote would close a string
+ * it is inside of — and a Demotic string cannot contain one at all, since the
+ * lexer ends the literal at the first it meets, so there is nothing to escape it
+ * with.
+ *
+ * It is exported so a caller can see that it *did* something. Silently dropping a
+ * character somebody typed is the kind of small wrongness that reads as the
+ * keyboard being broken; the editor compares and says so.
  */
+export function slotValue(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").replace(/["']/g, "");
+}
+
+/** Write a value into one slot, and change nothing else in the file. */
 export function setSlot(text: string, slot: SourceSlot, value: string): string {
-  const safe = value.replace(/[\r\n]+/g, " ").replace(/["']/g, "");
-  return text.slice(0, slot.start) + safe + text.slice(slot.end);
+  return text.slice(0, slot.start) + slotValue(value) + text.slice(slot.end);
+}
+
+/**
+ * Diagnostics, sorted onto the rows they are about.
+ *
+ * A block editor's answer to "what is wrong" is **where** it is wrong: the
+ * message belongs against the row, not in a list underneath that names a line
+ * number you then have to go and count to. So this splits them.
+ *
+ * `loose` is the remainder, and it is not an edge case — it is how the suite
+ * editor reports that the *game* will not compile, which is a real reason a suite
+ * can never pass and which names no row in the file on screen. Anything left
+ * without a row is shown at the top of the list rather than dropped, because a
+ * diagnostic nothing displays is worse than one displayed in the wrong place.
+ */
+export interface Problems {
+  /** Diagnostics against a row, keyed by its index in the row list. */
+  byRow: ReadonlyMap<number, readonly Diagnostic[]>;
+  /** Diagnostics naming no row in this file. */
+  loose: readonly Diagnostic[];
+  /** Row indices with an error, in order — what "go to the next problem" walks. */
+  rowsWithErrors: readonly number[];
+  errors: number;
+  warnings: number;
+}
+
+/** Sort `diagnostics` onto `rowCount` rows. */
+export function problemsOf(diagnostics: readonly Diagnostic[], rowCount: number): Problems {
+  const byRow = new Map<number, Diagnostic[]>();
+  const loose: Diagnostic[] = [];
+  let errors = 0;
+  let warnings = 0;
+
+  for (const one of diagnostics) {
+    if (one.severity === "error") errors += 1;
+    else warnings += 1;
+    const index = one.line - 1;
+    if (index < 0 || index >= rowCount) {
+      loose.push(one);
+      continue;
+    }
+    const at = byRow.get(index);
+    if (at) at.push(one);
+    else byRow.set(index, [one]);
+  }
+
+  const rowsWithErrors = [...byRow.entries()]
+    .filter(([, list]) => list.some((one) => one.severity === "error"))
+    .map(([index]) => index)
+    .sort((a, b) => a - b);
+
+  return { byRow, loose, rowsWithErrors, errors, warnings };
 }
 
 /**

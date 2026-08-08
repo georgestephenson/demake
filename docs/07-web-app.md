@@ -160,14 +160,17 @@ red — the product thesis in one control. **Game** is the editable source with
 per-line diagnostics, and a *Run tests* button that runs the `.test.dmt` suite
 against every console at once and reports the tally.
 
-**Game shows the source as text, as blocks, or side by side** (doc 19 §The block
-editor). Text is the default and the claim is why: a whole game is sixty readable
-lines, and a visitor who arrives at a form cannot see that. Blocks are the
-alternative — one line per row, a symbol per statement, a field per slot — and
-neither view is authoritative, because the file is. A row moves by being dragged,
-by being picked up with `Space` and carried on the arrows, or by having its
-destination chosen from a filtered list; the language is flat, so a drag here
-expresses one number rather than a nesting, and it is the weakest of the three.
+**Game shows the source as text or as blocks** (doc 19 §The block editor), and
+not both at once — two views of one file earn a split screen when they show
+different things, and these show the same thing twice inside a pane that also
+holds a console. Text is the default and the claim is why: a whole game is sixty
+readable lines, and a visitor who arrives at a form cannot see that. Blocks are
+the alternative — one line per row, a symbol per statement, a field per slot,
+diagnostics against the rows they are about — and neither view is authoritative,
+because the file is. A row moves by being dragged, by being picked up with `Space`
+and carried on the arrows, or by having its destination chosen from a filtered
+list; the language is flat, so a drag here expresses one number rather than a
+nesting, and it is the weakest of the three.
 
 **A `.test.dmt` opens the suite editor instead**, which is the same two views over
 the suite plus the run, and no player at all. It is a `.dmt`, so it used to open

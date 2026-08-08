@@ -38,7 +38,7 @@ import { SourceEditor } from "../components/SourceEditor.js";
 import { dialectOf } from "../lib/blocks.js";
 import { fileHash } from "../lib/route.js";
 import { levelSources, projectFiles, readText } from "../lib/project.js";
-import { runSuite, summarise, type SuiteRun } from "../lib/suite.js";
+import { passed, runSuite, summarise, type SuiteRun } from "../lib/suite.js";
 import { VIEWS, type SourceView } from "../lib/views.js";
 import type { EditorProps } from "../site.js";
 
@@ -164,25 +164,22 @@ export function TestEditor({ project, path, onEdit }: EditorProps) {
           )}
         </div>
 
-        <div class="source-views" data-view={view}>
-          {view !== "text" ? (
-            <BlockEditor
-              text={draft}
-              dialect={dialectOf(openPath)}
-              project={project}
-              diagnostics={diagnostics}
-              onChange={setDraft}
-            />
-          ) : null}
-          {view !== "blocks" ? (
-            <SourceEditor
-              value={draft}
-              onInput={setDraft}
-              label="Demotic test suite"
-              spans={highlight(draft)}
-            />
-          ) : null}
-        </div>
+        {view === "blocks" ? (
+          <BlockEditor
+            text={draft}
+            dialect={dialectOf(openPath)}
+            project={project}
+            diagnostics={diagnostics}
+            onChange={setDraft}
+          />
+        ) : (
+          <SourceEditor
+            value={draft}
+            onInput={setDraft}
+            label="Demotic test suite"
+            spans={highlight(draft)}
+          />
+        )}
 
         {view === "text" ? (
           <div class="game-diagnostics">
@@ -212,14 +209,11 @@ export function TestEditor({ project, path, onEdit }: EditorProps) {
         ) : (
           <>
             <p
-              class={run.failed === 0 ? "suite-pass" : "suite-fail"}
+              class={passed(run) ? "suite-pass" : "suite-fail"}
               role="status"
               data-testid="suite-summary"
             >
               {summarise(run)}
-              {run.skipped > 0
-                ? ` — ${String(run.skipped)} console${run.skipped === 1 ? "" : "s"} the game does not compile for`
-                : ""}
             </p>
             <pre class="game-status" data-testid="suite-report">
               {run.report}
