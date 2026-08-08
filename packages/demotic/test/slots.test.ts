@@ -173,6 +173,104 @@ describe("statement slots", () => {
   });
 });
 
+/**
+ * The other half of the side channel: the parts of a statement that repeat.
+ *
+ * A slot describes a statement of fixed shape, and half the grammar is not that
+ * shape — `when ball hits a, b, c` has as many targets as the author wrote. The
+ * properties here are what make a list safe to *edit* through, and the second is
+ * the one that is easy to get subtly wrong: an item's range has to contain the
+ * slots inside it exactly, or removing the item leaves half a field behind.
+ */
+describe("statement lists", () => {
+  /** Check a list against the statement it belongs to. */
+  function encloses(source: string, span: StatementSpan): void {
+    for (const list of span.lists) {
+      expect(list.start).toBeGreaterThanOrEqual(span.start);
+      expect(list.end).toBeLessThanOrEqual(span.end);
+      expect(list.line).toBe(span.line);
+      let at = list.start;
+      for (const item of list.items) {
+        // In order, inside the clause, and never overlapping the one before.
+        expect(item.start).toBeGreaterThanOrEqual(at);
+        expect(item.end).toBeGreaterThan(item.start);
+        expect(item.end).toBeLessThanOrEqual(list.end);
+        // And an item is made of whole slots: at least one starts and ends in it.
+        const held = span.slots.filter((slot) => slot.start >= item.start && slot.end <= item.end);
+        expect(held.length, source.slice(item.start, item.end)).toBeGreaterThan(0);
+        at = item.end;
+      }
+      // A pairing is mutual and names a list of this same statement.
+      if (list.pair === undefined) continue;
+      const twin = span.lists[list.pair];
+      expect(twin).toBeDefined();
+      expect((twin as { pair?: number }).pair).toBe(span.lists.indexOf(list));
+      expect((twin as { items: unknown[] }).items).toHaveLength(list.items.length);
+    }
+  }
+
+  it("records the lists in a collision rule, and the one that is not there", () => {
+    const source = "when hero touches ledge, wall from above then ydirection as 0";
+    const [span] = parse(source).spans;
+    const lists = (span as StatementSpan).lists;
+    expect(
+      lists.map((list) => [list.kind, list.items.map((i) => source.slice(i.start, i.end))]),
+    ).toEqual([
+      ["entity", ["ledge", "wall"]],
+      ["side", ["above"]],
+    ]);
+    // The side clause starts before `from`, so removing its last side takes the
+    // word with it rather than leaving `from` with nothing after it.
+    expect(source.slice(lists[1]?.start ?? 0, lists[1]?.end ?? 0)).toBe(" from above");
+  });
+
+  it("gives a rule with no `from` an empty side list to grow", () => {
+    const source = "when hero touches ledge then ydirection as 0";
+    const [span] = parse(source).spans;
+    const sides = (span as StatementSpan).lists.find((list) => list.kind === "side");
+    expect(sides?.items).toEqual([]);
+    expect(sides?.start).toBe(sides?.end);
+    expect(source.slice(0, sides?.start)).toBe("when hero touches ledge");
+    expect(sides?.opener).toBe(" from above");
+  });
+
+  it("pairs the two halves of a positional `as`", () => {
+    const source = "create ball ball1 (x, sprite) as (4, ball.svg)";
+    const [span] = parse(source).spans;
+    const lists = (span as StatementSpan).lists;
+    expect(lists).toHaveLength(2);
+    expect(lists[0]?.pair).toBe(1);
+    expect(lists[1]?.pair).toBe(0);
+    encloses(source, span as StatementSpan);
+  });
+
+  it("fills a new property entry with one the list does not already set", () => {
+    // `noDuplicates` is what makes this necessary: a fixed template would be
+    // `E_DUPLICATE_PROP` on every list that already named it.
+    const taken = parse("create object ball (x 1, y 2)").spans[0] as StatementSpan;
+    expect(taken.lists[0]?.template).toBe("width 1");
+    const free = parse("create object ball (sprite ball.svg)").spans[0] as StatementSpan;
+    expect(free.lists[0]?.template).toBe("x 0");
+  });
+
+  it("encloses its slots, in every example game", () => {
+    for (const name of EXAMPLES) {
+      for (const path of sourcesOf(name).filter((p) => !p.endsWith(".test.dmt"))) {
+        const source = projectText(name, path);
+        for (const span of parse(source).spans) encloses(source, span);
+      }
+    }
+  });
+
+  it("leaves no lists behind on a line it could not read", () => {
+    // The same rewind slots get: a row an editor cannot read must offer nothing,
+    // never a control built from the half of the line that parsed.
+    const result = parse("when hero hits ledge then y as 0\nwhen hero hits\nbackdrop title.svg");
+    expect(result.spans.map((span) => span.keyword)).toEqual(["when", "backdrop"]);
+    expect(result.spans[1]?.lists).toEqual([]);
+  });
+});
+
 describe("slot choices", () => {
   it("takes a set the registry already holds from the registry", () => {
     expect(SLOT_CHOICES.button).toEqual(BUTTONS.map((one) => one.name));

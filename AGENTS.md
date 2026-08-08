@@ -999,7 +999,10 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
                      each — the parsers' side channel, kept for the block editor
                      the way `lex.ts` keeps comment ranges for the highlighter.
                      Nothing in the compiler reads it, and the one rule that
-                     matters is that slots tile the statement they describe
+                     matters is that slots tile the statement they describe.
+                     `SourceList` is the half a slot cannot say: which parts of
+                     a statement *repeat*, so a rule can be given a third target
+                     rather than only the two somebody already typed
   src/lang/highlight.ts  TextMate scopes for `.dmt` source — the registry's words,
                      the lexer's boundaries, and no colours (those are the page's).
                      Its `Scope` union is the repo's whole scope vocabulary, not
@@ -3867,6 +3870,22 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   reassembled from its slots and the text between them is byte-identical. A line
   whose slots did not tile it shows as the text it could not read, which is the
   safe failure — a _wrong_ slot would be an editor rewriting the wrong bytes.
+- **A slot describes a statement of fixed shape, and half the grammar is not that
+  shape.** `when ball hits a, b, c` has as many targets as the author wrote, so
+  `SourceList` records the repetition the parser already walked — each item's
+  range, the clause's extent, and the three strings an edit writes. Four things
+  about it are load-bearing (doc 19 §A statement's arity is editable too). A list
+  _contains_ slots rather than replacing them, so the tiling property is
+  untouched. An **absent** clause is a list with no items rather than no list, so
+  `from above` and a `create`'s first `(…)` are reachable at all — the opener
+  brings the word or the brackets with it, and dropping the last item takes them
+  back out. The strings are the **grammar's**: a page that spelled ` from above`
+  itself would be a second statement of the syntax, and a property list's template
+  is computed from the list it is going into, because `E_DUPLICATE_PROP` makes a
+  fixed one an error on the row it was just added to. And the positional
+  `(x, y) as (8, 4)` is **one** list written as two halves that the language
+  refuses to let drift (`E_ARITY`), so they carry each other's index and one edit
+  moves both.
 - **A block edit is a splice, never a re-emit.** `web/src/lib/blocks.ts` sets one
   slot's range, moves one line, inserts one line — so a row nobody touched comes
   back byte-identical because nothing rewrote it, not because something was

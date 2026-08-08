@@ -34,8 +34,15 @@ import type {
   Unit,
 } from "./ast.js";
 import { lex, type LexNote, type Token } from "./lex.js";
-import { SLOT_CHOICES, type SlotKind, type SourceSlot, type StatementSpan } from "./slots.js";
-import { FUNCTION_ARITY, STRING_PROPS, UNIT_NAMES } from "./spec.js";
+import {
+  SLOT_CHOICES,
+  type SlotKind,
+  type SourceList,
+  type SourceRange,
+  type SourceSlot,
+  type StatementSpan,
+} from "./slots.js";
+import { FUNCTION_ARITY, PROPERTIES, STRING_PROPS, UNIT_NAMES } from "./spec.js";
 
 /** Result of a parse: statements plus any recovered syntax errors. */
 export interface ParseResult extends ParsedProgram {
@@ -73,6 +80,36 @@ const PRECEDENCE: Record<BinaryOp, number> = {
   "/": 3,
 };
 
+/**
+ * What an entry added to a property list may say, best first.
+ *
+ * A list's template has to respect the list's own rules, and property lists have
+ * two: a name may not appear twice (`E_DUPLICATE_PROP`), and some properties may
+ * only be set where the object is created. So the template is *computed from the
+ * list it is going into* — the first free property, set to its own default,
+ * which is an entry that parses, compiles and changes nothing about the game
+ * until somebody types in it.
+ *
+ * Numeric properties only: an asset one would need a filename this program may
+ * not have, and the honest empty value for it is `""`, which is a picture
+ * nothing can demake rather than a property nobody has got to yet.
+ */
+const FILLERS: readonly { name: string; value: string; entry: string }[] = PROPERTIES.filter(
+  (property) => property.kind === "number" && !property.derived && property.default !== undefined,
+)
+  .sort((a, b) => Number(a.createOnly ?? false) - Number(b.createOnly ?? false))
+  .map((property) => ({
+    name: property.name,
+    value: String(property.default),
+    entry: `${property.name} ${String(property.default)}`,
+  }));
+
+/** The first property `taken` does not already name — as `noDuplicates` reads it. */
+function filler(taken: readonly (string | undefined)[]): (typeof FILLERS)[number] {
+  const used = new Set(taken);
+  return FILLERS.find((one) => !used.has(one.name)) ?? (FILLERS[0] as (typeof FILLERS)[number]);
+}
+
 /** Signals a statement-level parse failure; caught by the recovery loop. */
 class ParseFailure extends Error {
   constructor(
@@ -97,6 +134,9 @@ class Cursor {
 
   /** Editable parts, in the order they were consumed, which is source order. */
   readonly slots: SourceSlot[] = [];
+
+  /** The repeating parts, likewise (`slots.ts` §SourceList). */
+  readonly lists: SourceList[] = [];
 
   constructor(private readonly tokens: readonly Token[]) {}
 
@@ -128,9 +168,22 @@ class Cursor {
     this.slots.push({ kind, line, start, end, ...(prop === undefined ? {} : { prop }) });
   }
 
+  /** Record a repeating part, and answer where it went. */
+  list(record: SourceList): number {
+    this.lists.push(record);
+    return this.lists.length - 1;
+  }
+
+  /** Say that two lists are two halves of one thing (`(x, y) as (8, 4)`). */
+  pairUp(left: number, right: number): void {
+    (this.lists[left] as SourceList).pair = right;
+    (this.lists[right] as SourceList).pair = left;
+  }
+
   /** Forget slots recorded past a mark, for a statement that then failed. */
-  rewindSlots(to: number): void {
+  rewindSlots(to: number, lists: number): void {
     this.slots.length = to;
+    this.lists.length = lists;
   }
 
   atEnd(): boolean {
@@ -316,6 +369,7 @@ export function parse(source: string): ParseResult {
     // none behind: a row an editor cannot read must show the text it could not
     // read, never a form built from the half of it that parsed.
     const mark = cursor.slots.length;
+    const listMark = cursor.lists.length;
     try {
       const { statement, keyword, keywordEnd } = parseStatement(cursor);
       if (!cursor.atStatementEnd()) {
@@ -333,10 +387,15 @@ export function parse(source: string): ParseResult {
         end: cursor.end(),
         keywordEnd,
         slots: cursor.slots.slice(mark),
+        // A pairing is recorded while parsing, so it names a position in the
+        // whole file's list; rebased here, so a span is readable on its own.
+        lists: cursor.lists
+          .slice(listMark)
+          .map((one) => (one.pair === undefined ? one : { ...one, pair: one.pair - listMark })),
       });
     } catch (error) {
       if (!(error instanceof ParseFailure)) throw error;
-      cursor.rewindSlots(mark);
+      cursor.rewindSlots(mark, listMark);
       diagnostics.push(error.diagnostic);
     }
     cursor.skipLine();
@@ -459,9 +518,25 @@ function parseStream(cursor: Cursor): Stmt {
   }
 
   const files: string[] = [];
+  const chunks: SourceRange[] = [];
   do {
-    files.push(ident(cursor, "a .dmtl filename", "level").raw);
+    const chunk = ident(cursor, "a .dmtl filename", "level");
+    files.push(chunk.raw);
+    chunks.push({ start: chunk.start, end: chunk.end });
   } while (cursor.eatPunct(","));
+  cursor.list({
+    kind: "level",
+    line,
+    start: (chunks[0] as SourceRange).start,
+    end: cursor.end(),
+    items: chunks,
+    separator: ", ",
+    template: "chunk.dmtl",
+    opener: "chunk.dmtl",
+    // A stream with nothing to draw from is not a stream, and the syntax error
+    // it would produce names the number after it rather than the missing chunk.
+    min: 1,
+  });
 
   const count = cursor.peek();
   if (count.kind !== "number") {
@@ -583,7 +658,7 @@ function parseCreate(cursor: Cursor): Stmt {
 
   if (cursor.eatKeyword("object")) {
     const name = ident(cursor, "a class name", "name");
-    const props = parsePropList(cursor);
+    const props = parsePropList(cursor, line);
     return { kind: "class", name: name.value, props, line };
   }
 
@@ -593,7 +668,7 @@ function parseCreate(cursor: Cursor): Stmt {
   if (cursor.eatKeyword("in")) {
     scene = ident(cursor, "a scene name", "scene").value;
   }
-  const props = parsePropList(cursor);
+  const props = parsePropList(cursor, line);
   return {
     kind: "instance",
     className: className.value,
@@ -693,19 +768,55 @@ function parseEvent(cursor: Cursor): Event {
     cursor.next();
     cursor.mark("verb", second);
     const others: string[] = [];
+    const targets: SourceRange[] = [];
     do {
-      others.push(ident(cursor, "something to collide with", "entity").value);
+      const other = ident(cursor, "something to collide with", "entity");
+      others.push(other.value);
+      targets.push({ start: other.start, end: other.end });
     } while (cursor.eatPunct(","));
+    cursor.list({
+      kind: "entity",
+      line: first.line,
+      start: (targets[0] as SourceRange).start,
+      end: cursor.end(),
+      items: targets,
+      separator: ", ",
+      // A screen edge is the one target every program has without declaring it,
+      // so a target added before it has been chosen still names something real.
+      template: "screenleft",
+      opener: "screenleft",
+      min: 1,
+    });
+
     // `from above, left` narrows the rule to contacts resolved on those sides.
     // It is parsed here rather than as part of the target list because a target
     // and a side are different vocabularies, and `from` is what separates them —
     // the same word `level ... from <file>` already uses for "drawn from".
+    //
+    // The clause is optional, so its list starts *before* `from` and is empty
+    // when there is none: adding its first side writes ` from above` and dropping
+    // its last takes the same six characters back out.
+    const clause = cursor.end();
     const sides: string[] = [];
+    const narrowing: SourceRange[] = [];
     if (cursor.eatKeyword("from")) {
       do {
-        sides.push(ident(cursor, "a side: above, below, left or right", "side").value);
+        const side = ident(cursor, "a side: above, below, left or right", "side");
+        sides.push(side.value);
+        narrowing.push({ start: side.start, end: side.end });
       } while (cursor.eatPunct(","));
     }
+    cursor.list({
+      kind: "side",
+      line: first.line,
+      start: clause,
+      end: cursor.end(),
+      items: narrowing,
+      separator: ", ",
+      template: "above",
+      opener: " from above",
+      min: 0,
+    });
     return { kind: "hits", subject: first.value, others, level, sides };
   }
 
@@ -734,13 +845,19 @@ function parseEvent(cursor: Cursor): Event {
  * Parse `( ... )` in either the named or the positional-`as` shape, returning
  * name/value pairs. Shared by `create` (properties) and `when`/`control`
  * (assignments), which differ only in how the names are later resolved.
+ *
+ * `min` is how few entries the *caller's* statement allows, which the two do not
+ * agree about: a class with no properties is a class, and a rule that sets
+ * nothing is a rule that does nothing. It reaches an editor as the point below
+ * which it stops offering to take an entry away.
  */
-function parsePairs(cursor: Cursor): Prop[] {
-  cursor.expectPunct("(");
+function parsePairs(cursor: Cursor, min: number): Prop[] {
+  const open = cursor.expectPunct("(");
 
   const names: (string | undefined)[] = [];
   const values: (Expr | undefined)[] = [];
   const lines: number[] = [];
+  const entries: SourceRange[] = [];
 
   if (!cursor.atPunct(")")) {
     do {
@@ -763,11 +880,29 @@ function parsePairs(cursor: Cursor): Prop[] {
         names.push(undefined);
         values.push(expression(cursor));
       }
+      // An entry is a name *and* its value, so both move together: they are one
+      // assignment written in two words, not two things that happen to be
+      // adjacent.
+      entries.push({ start: token.start, end: cursor.end() });
     } while (cursor.eatPunct(","));
   }
-  cursor.expectPunct(")");
+  const close = cursor.expectPunct(")");
 
   if (!cursor.eatKeyword("as")) {
+    const spare = filler(names).entry;
+    cursor.list({
+      kind: "property",
+      line: open.line,
+      // Inside the brackets, so an empty list is `()` with somewhere to put the
+      // first entry and a full one has the brackets left alone.
+      start: open.end,
+      end: close.start,
+      items: entries,
+      separator: ", ",
+      template: spare,
+      opener: spare,
+      min,
+    });
     return noDuplicates(
       cursor,
       names.map((name, index) => {
@@ -796,7 +931,26 @@ function parsePairs(cursor: Cursor): Prop[] {
     return name;
   });
 
-  const provided = parseValueList(cursor, columns);
+  const spare = filler(columns);
+  const written = cursor.list({
+    kind: "property",
+    line: open.line,
+    start: open.end,
+    end: close.start,
+    items: entries,
+    separator: ", ",
+    template: spare.name,
+    opener: spare.name,
+    // One name and one value is `x as 8` with brackets round it; nothing before
+    // `as` is a form the language has no reading for.
+    min: 1,
+  });
+
+  const before = cursor.lists.length;
+  const provided = parseValueList(cursor, columns, spare.value);
+  // The bracketed value list is the other half of the same assignment list. The
+  // bare form (`x as 8`) records none, and there is nothing to pair it with.
+  if (cursor.lists.length > before) cursor.pairUp(written, before);
   if (provided.length !== columns.length) {
     throw cursor.fail(
       "E_ARITY",
@@ -875,17 +1029,32 @@ function isCall(name: string, cursor: Cursor): boolean {
  * does. It is positional and may run short, which is the arity error the caller
  * reports; a value past the end simply has no property to name.
  */
-function parseValueList(cursor: Cursor, columns: readonly string[] = []): Expr[] {
+function parseValueList(cursor: Cursor, columns: readonly string[] = [], fill = "0"): Expr[] {
   if (!cursor.atPunct("(")) return [expression(cursor, propertyOf(columns[0]))];
 
-  cursor.expectPunct("(");
+  const open = cursor.expectPunct("(");
   const values: Expr[] = [];
+  const written: SourceRange[] = [];
   if (!cursor.atPunct(")")) {
     do {
+      const from = cursor.peek().start;
       values.push(expression(cursor, propertyOf(columns[values.length])));
+      written.push({ start: from, end: cursor.end() });
     } while (cursor.eatPunct(","));
   }
-  cursor.expectPunct(")");
+  const close = cursor.expectPunct(")");
+  cursor.list({
+    kind: "expression",
+    line: open.line,
+    start: open.end,
+    end: close.start,
+    items: written,
+    separator: ", ",
+    // The same default the name half chose, so the two stay one assignment.
+    template: fill,
+    opener: fill,
+    min: 1,
+  });
   return values;
 }
 
@@ -902,9 +1071,34 @@ function propertyOf(name: string | undefined): string | undefined {
   return dot < 0 ? name : name.slice(dot + 1);
 }
 
-function parsePropList(cursor: Cursor): Prop[] {
-  if (cursor.atStatementEnd()) return [];
-  return parsePairs(cursor);
+/**
+ * A `create`'s properties, which it may have none of.
+ *
+ * The empty case still records a list — items and all zero of them — because
+ * `create ball` gaining its first property is the same operation as
+ * `create ball (x 4)` gaining its second, and a statement that offered the one
+ * and not the other would be an editor in which whether an object can be given a
+ * sprite depends on whether it already has one.
+ */
+function parsePropList(cursor: Cursor, line: number): Prop[] {
+  if (cursor.atStatementEnd()) {
+    const at = cursor.end();
+    const spare = filler([]).entry;
+    cursor.list({
+      kind: "property",
+      line,
+      start: at,
+      end: at,
+      items: [],
+      separator: ", ",
+      template: spare,
+      // The brackets come with the first entry, since there are none yet.
+      opener: ` (${spare})`,
+      min: 0,
+    });
+    return [];
+  }
+  return parsePairs(cursor, 0);
 }
 
 /**
@@ -936,7 +1130,9 @@ function parseAssignmentList(cursor: Cursor): Assignment[] {
     ];
   }
 
-  return parsePairs(cursor).map((pair) => ({
+  // A rule that assigns nothing is a rule that does nothing, so the last
+  // assignment stays: deleting the rule is what the row's own × is for.
+  return parsePairs(cursor, 1).map((pair) => ({
     target: splitTarget(pair.name, pair.line),
     value: pair.value,
   }));

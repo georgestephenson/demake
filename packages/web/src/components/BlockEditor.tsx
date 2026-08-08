@@ -47,11 +47,14 @@ import {
   shortestName,
   SLOT_CHOICES,
   type Diagnostic,
+  type SlotKind,
+  type SourceList,
   type SourceSlot,
   type StatementSpec,
 } from "@demake/demotic";
 
 import {
+  addItem,
   assetKindOf,
   assignableProperties,
   insertRow,
@@ -60,6 +63,7 @@ import {
   problemsOf,
   propertyOf,
   read,
+  removeItem,
   removeRow,
   rowsOf,
   setSlot,
@@ -132,6 +136,13 @@ export function BlockEditor({
   const [said, setSaid] = useState({ text: "", n: 0 });
   // Where the keyboard should be once the rows have been redrawn.
   const [chasing, setChasing] = useState<number | null>(null);
+  // And where it should be after a list has grown: the item that was just added,
+  // which does not exist until the file has been reparsed.
+  const [chasingItem, setChasingItem] = useState<{
+    line: number;
+    list: number;
+    item: number;
+  } | null>(null);
 
   const list = useRef<HTMLOListElement | null>(null);
   const grips = useRef(new Map<number, HTMLButtonElement>());
@@ -288,6 +299,19 @@ export function BlockEditor({
     setChasing(null);
   }, [chasing, rows, focusRow]);
 
+  // Likewise for a list that just grew: the new item is a field that did not
+  // exist when the button was pressed, so it is found by where it landed.
+  useEffect(() => {
+    if (chasingItem === null) return;
+    const at = rows.findIndex((row) => row.line === chasingItem.line);
+    const item = list.current?.querySelector(
+      `[data-testid="block-row-${String(at)}"] [data-item="${String(chasingItem.list)}:${String(chasingItem.item)}"]`,
+    );
+    const field = item?.querySelector<HTMLElement>("input, select, button, textarea");
+    field?.focus();
+    setChasingItem(null);
+  }, [chasingItem, rows]);
+
   const insert = useCallback(
     (spec: StatementSpec) => {
       const at = rows.length === 0 ? 0 : anchor + 1;
@@ -305,6 +329,38 @@ export function BlockEditor({
         announce("Quotes and line breaks cannot go inside a statement, so they were removed.");
       }
       onChange(setSlot(text, slot, value));
+    },
+    [text, onChange, announce],
+  );
+
+  /**
+   * Give a statement one more of whatever repeats in it, and go and stand in it.
+   *
+   * The new item says something the grammar accepts (`screenleft`, `visible 1`)
+   * and is almost never what was meant, so the caret lands there: adding a target
+   * and then having to find it is two operations where the point of the ⊕ was
+   * that it is one.
+   */
+  const grow = useCallback(
+    (row: Extract<Row, { kind: "statement" }>, index: number) => {
+      const list = row.span.lists[index];
+      if (list === undefined) return;
+      onChange(addItem(text, row.span, index));
+      setChasingItem({ line: row.line, list: index, item: list.items.length });
+      // What it says as well as that it happened: the caret is about to land in
+      // a field holding a word nobody chose, and hearing which one is the point.
+      const wrote = (list.items.length === 0 ? list.opener : list.template).trim();
+      announce(`Added ${wrote} to line ${String(row.line)}.`);
+    },
+    [text, onChange, announce],
+  );
+
+  const shrink = useCallback(
+    (row: Extract<Row, { kind: "statement" }>, index: number, item: number) => {
+      const list = row.span.lists[index];
+      if (list === undefined) return;
+      onChange(removeItem(text, row.span, index, item));
+      announce(`Removed ${nounFor(list)} ${String(item + 1)} from line ${String(row.line)}.`);
     },
     [text, onChange, announce],
   );
@@ -505,6 +561,8 @@ export function BlockEditor({
                     vocabulary={vocabulary}
                     tabbable={here}
                     onWrite={write}
+                    onAdd={(which) => grow(row, which)}
+                    onDrop={(which, item) => shrink(row, which, item)}
                   />
                 ) : row.kind === "blank" ? (
                   <span class="block-note">&nbsp;</span>
@@ -792,6 +850,8 @@ function StatementRow({
   vocabulary,
   tabbable,
   onWrite,
+  onAdd,
+  onDrop,
 }: {
   row: Extract<Row, { kind: "statement" }>;
   files: readonly string[];
@@ -799,6 +859,8 @@ function StatementRow({
   vocabulary: Vocabulary;
   tabbable: boolean;
   onWrite: (slot: SourceSlot, value: string) => void;
+  onAdd: (list: number) => void;
+  onDrop: (list: number, item: number) => void;
 }) {
   return (
     <>
@@ -806,8 +868,51 @@ function StatementRow({
         <StatementSymbol keyword={row.keyword} />
         {row.keyword}
       </span>
-      {row.parts.map((part, index) =>
-        part.slot ? (
+      {row.parts.map((part, index) => {
+        if (part.kind === "glue") return <Glue key={index} text={part.text} />;
+        if (part.kind === "add") {
+          const list = row.span.lists[part.list] as SourceList;
+          // An **empty** clause names what it would write, and a clause with
+          // items in it does not. Two reasons, and the first is that the label
+          // would otherwise be wrong: a rule with no `from` reading "add another
+          // side" describes a list it does not have. The second is that a
+          // collision rule has *two* lists, so a rule with no `from` puts two
+          // bare ⊕s next to each other — identical circles meaning different
+          // things, which is the one arrangement a symbol cannot carry.
+          const empty = list.items.length === 0;
+          const what = `${empty ? "a" : "another"} ${nounFor(list)}`;
+          return (
+            <button
+              key={index}
+              type="button"
+              class={`block-arity block-add${empty ? " block-add-first" : ""}`}
+              data-list={String(part.list)}
+              tabIndex={tabbable ? 0 : -1}
+              title={`Add ${what}`}
+              aria-label={`Add ${what} to line ${String(row.line)}`}
+              onClick={() => onAdd(part.list)}
+            >
+              +{empty ? <span>{nounFor(list)}</span> : null}
+            </button>
+          );
+        }
+        if (part.kind === "drop") {
+          const list = row.span.lists[part.list] as SourceList;
+          return (
+            <button
+              key={index}
+              type="button"
+              class="block-arity block-drop"
+              tabIndex={tabbable ? 0 : -1}
+              title={`Remove this ${nounFor(list)}`}
+              aria-label={`Remove ${nounFor(list)} ${String(part.item + 1)} from line ${String(row.line)}`}
+              onClick={() => onDrop(part.list, part.item)}
+            >
+              −
+            </button>
+          );
+        }
+        const field = (
           <Field
             key={index}
             part={part}
@@ -816,14 +921,46 @@ function StatementRow({
             project={project}
             vocabulary={vocabulary}
             tabbable={tabbable}
-            onChange={(value) => onWrite(part.slot as SourceSlot, value)}
+            onChange={(value) => onWrite(part.slot, value)}
           />
-        ) : (
-          <Glue key={index} text={part.text} />
-        ),
-      )}
+        );
+        if (part.in === undefined) return field;
+        // A list item is wrapped so the editor can find the one it has just
+        // added and put the caret in it. `display: contents`, so the row lays
+        // out exactly as it did before there were lists.
+        return (
+          <span
+            key={index}
+            class="block-item"
+            data-item={`${String(part.in.list)}:${String(part.in.item)}`}
+          >
+            {field}
+          </span>
+        );
+      })}
     </>
   );
+}
+
+/**
+ * What one item of a list is called, which is the one thing about it the engine
+ * does not decide.
+ *
+ * `SlotKind` is the parser's vocabulary — `entity`, `expression` — and reading
+ * "add another expression" on a rule that sets two properties is reading the
+ * compiler's name for something the author calls a value. Same division as
+ * `StatementSymbol`.
+ */
+const LIST_NOUNS: Readonly<Partial<Record<SlotKind, string>>> = {
+  entity: "target",
+  side: "side",
+  property: "property",
+  expression: "value",
+  level: "chunk",
+};
+
+function nounFor(list: SourceList): string {
+  return LIST_NOUNS[list.kind] ?? list.kind;
 }
 
 /**
@@ -866,7 +1003,7 @@ function Field({
   tabbable,
   onChange,
 }: {
-  part: Part;
+  part: Extract<Part, { kind: "slot" }>;
   slot: SourceSlot;
   files: readonly string[];
   project: Project;

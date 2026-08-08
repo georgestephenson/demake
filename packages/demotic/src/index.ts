@@ -41,7 +41,14 @@ export {
 export { parse, type ParseResult } from "./lang/parse.js";
 export { lex, type Comment, type Token, type TokenKind } from "./lang/lex.js";
 export { highlight, type HighlightSpan, type Scope } from "./lang/highlight.js";
-export { SLOT_CHOICES, type SlotKind, type SourceSlot, type StatementSpan } from "./lang/slots.js";
+export {
+  SLOT_CHOICES,
+  type SlotKind,
+  type SourceList,
+  type SourceRange,
+  type SourceSlot,
+  type StatementSpan,
+} from "./lang/slots.js";
 export type * from "./lang/ast.js";
 export {
   findProfile,
