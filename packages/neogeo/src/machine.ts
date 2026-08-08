@@ -26,10 +26,13 @@
  *     the level 6 a Mega Drive uses. Autovector `N` lives at `$60 + N × 4`, and
  *     that arithmetic is the whole difference.
  *
- * **The Z80 sound processor is absent rather than half-implemented**, as are the
- * memory card, the calendar and the shrinking hardware. `demake build` emits no
- * Z80 program, and a chip nothing drives modelled badly is worse than a chip
- * nothing drives.
+ * **The Z80 sound processor is a whole second computer with its own ROM**, and it
+ * is in `sound.ts` rather than here for the same reason `@demake/snes`'s S-SMP is
+ * in a file of its own: nothing about it is on this bus. The 68000 reaches it
+ * through exactly one byte — a store to `REG_SOUND` at `$320000`, which the
+ * hardware latches and turns into a non-maskable interrupt over there — and reads
+ * one byte back at `$320001`. The memory card, the calendar and the sprite
+ * shrinking hardware are still absent rather than half-implemented.
  *
  * Sources:
  * - Neo Geo Development Wiki — Memory mapped registers:
@@ -43,6 +46,7 @@ import { NEO_CONTAINER_HEADER, unpackNeoCharacters, unpackNeoFix } from "@demake
 import { M68k, type Bus } from "@demake/md";
 
 import { FRAME_HEIGHT, Lspc, type Frame, type LspcOptions } from "./lspc.js";
+import { Sound } from "./sound.js";
 
 /** The 68000's clock. */
 export const CPU_HZ = 12_000_000;
@@ -59,6 +63,9 @@ export const WORK_RAM_SIZE = 0x10000;
 
 /** Palette RAM, one bank visible at a time. */
 export const PALETTE_BASE = 0x400000;
+
+/** The one byte the 68000 sends the sound processor, and the one it reads back. */
+export const REG_SOUND = 0x320000;
 
 /** Where the cartridge's header lives, and the entry the boot hand-off uses. */
 export const HEADER_BASE = 0x100;
@@ -96,7 +103,7 @@ export const SYSTEM_BUTTONS = { start: 0x01, select: 0x02 } as const;
 
 export type Button = keyof typeof BUTTONS | keyof typeof SYSTEM_BUTTONS;
 
-/** What a cartridge is: three ROMs the hardware reads from different buses. */
+/** What a cartridge is: ROMs the hardware reads from different buses. */
 export interface Cartridge {
   /** The 68000's program. */
   program: Uint8Array;
@@ -104,6 +111,12 @@ export interface Cartridge {
   characters: Uint8Array;
   /** Fix layer tile pixels, one byte a pixel, 64 bytes an 8×8 tile. */
   fixCharacters: Uint8Array;
+  /** The Z80's program, which is a *different processor's* ROM on its own bus. */
+  sound: Uint8Array;
+  /** The ADPCM-A sample ROM the six fixed-rate voices read. */
+  samplesA: Uint8Array;
+  /** The ADPCM-B sample ROM the one variable-rate voice reads. */
+  samplesB: Uint8Array;
 }
 
 /**
@@ -133,7 +146,13 @@ export function loadNeo(image: Uint8Array): Cartridge {
   const program = image.subarray(at, at + pSize);
   at += pSize;
   const s = image.subarray(at, at + sSize);
-  at += sSize + mSize + v1Size + v2Size;
+  at += sSize;
+  const m = image.subarray(at, at + mSize);
+  at += mSize;
+  const v1 = image.subarray(at, at + v1Size);
+  at += v1Size;
+  const v2 = image.subarray(at, at + v2Size);
+  at += v2Size;
   const c = image.subarray(at, at + cSize);
 
   // The pair is interleaved a byte at a time, odd ROM at even offsets.
@@ -148,6 +167,11 @@ export function loadNeo(image: Uint8Array): Cartridge {
     program,
     characters: unpackNeoCharacters(c1, c2),
     fixCharacters: unpackNeoFix(s),
+    // The other three are read as they lie: a Z80 program and two ADPCM ROMs are
+    // bytes on somebody else's bus, with no packing anywhere in them.
+    sound: m,
+    samplesA: v1,
+    samplesB: v2,
   };
 }
 
@@ -160,6 +184,7 @@ export function loadNeo(image: Uint8Array): Cartridge {
 export class Neogeo implements Bus {
   readonly cpu: M68k;
   readonly lspc: Lspc;
+  readonly sound: Sound;
   readonly ram = new Uint8Array(WORK_RAM_SIZE);
 
   /** Frames completed since reset — the speed measurement's clock. */
@@ -182,6 +207,7 @@ export class Neogeo implements Bus {
       fixCharacters: cartridge.fixCharacters,
     };
     this.lspc = new Lspc(options);
+    this.sound = new Sound(cartridge.sound, cartridge.samplesA, cartridge.samplesB);
     this.cpu = new M68k(this);
     this.boot();
   }
@@ -238,6 +264,9 @@ export class Neogeo implements Bus {
     }
     if (at === 0x300000) return (~this.buttons & 0xff) >>> 0;
     if (at === 0x380000) return (~this.systemButtons & 0xff) >>> 0;
+    // The odd half of `REG_SOUND` is what the sound processor replied with; the
+    // even half is not a readable register at all.
+    if (at === REG_SOUND + 1) return this.sound.reply;
     if (at >= PALETTE_BASE && at < PALETTE_BASE + 0x2000) {
       const word = this.readPalette((at - PALETTE_BASE) >> 1);
       return (at & 1) === 0 ? word >> 8 : word & 0xff;
@@ -275,6 +304,13 @@ export class Neogeo implements Bus {
     // The watchdog. Any value, and the address is the odd half of `$300000`.
     if (at === 0x300001) {
       this.watchdog = 0;
+      return;
+    }
+    // One byte to the sound processor, which the hardware latches and turns into
+    // a non-maskable interrupt over there. That is the whole request protocol —
+    // no handshake, no waiting, and a game that asks for a track pays one store.
+    if (at === REG_SOUND) {
+      this.sound.send(byte);
       return;
     }
     // System control: byte writes, and the address *is* the command.
@@ -315,6 +351,7 @@ export class Neogeo implements Bus {
       return;
     }
     if (at === 0x300000) this.watchdog = 0;
+    if (at === REG_SOUND) this.sound.send(word >> 8);
     if (at >= 0x3a0000 && at <= 0x3a001f) this.write8(at | 1, word & 0xff);
   }
 
@@ -344,6 +381,10 @@ export class Neogeo implements Bus {
   /** One instruction, and whatever the raster did while it ran. */
   stepInstruction(): number {
     const cycles = this.cpu.step();
+    // The other processor runs on the same wall clock and on nothing this one
+    // can see, so it is advanced by the cycles this instruction spent rather
+    // than by a frame: its own tick is the sound chip's timer.
+    this.sound.run(cycles);
     this.lineCycles += cycles;
     while (this.lineCycles >= CYCLES_PER_LINE) {
       this.lineCycles -= CYCLES_PER_LINE;

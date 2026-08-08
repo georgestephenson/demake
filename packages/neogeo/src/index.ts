@@ -69,6 +69,7 @@ export {
   LINES_PER_FRAME,
   Neogeo,
   PALETTE_BASE,
+  REG_SOUND,
   SYSTEM_BUTTONS,
   USER_ENTRY,
   VBLANK_LEVEL,
@@ -79,3 +80,12 @@ export {
   type Button,
   type Cartridge,
 } from "./machine.js";
+export {
+  Sound,
+  FIXED_WINDOW,
+  SOUND_PORT,
+  SOUND_RAM_BASE,
+  SOUND_RAM_SIZE,
+  YM_HZ,
+  Z80_HZ,
+} from "./sound.js";
