@@ -178,6 +178,33 @@ describe("a strip is a column of a tilemap", () => {
   });
 });
 
+describe("the VRAM port", () => {
+  it("reaches the fix map, which a masked address does not", () => {
+    // **Regression.** VRAM is `$8800` words — not a power of two — so
+    // `address & (VRAM_WORDS - 1)` is not a wrap: `$737A & $87FF` is `$037A`.
+    // That folded every write to the fix layer down into the middle of SCB1,
+    // which is a caption written perfectly and landing in the tile numbers of a
+    // strip nobody was looking at. The port is the only way a program reaches
+    // VRAM, so nothing that writes `vram` directly can catch this.
+    const lspc = new Lspc({ characters: new Uint8Array(256), fixCharacters: new Uint8Array(64) });
+    lspc.address = FIX_MAP + 0x37a;
+    lspc.modulo = 1;
+    lspc.writeData(0x1234);
+    expect(lspc.vram[FIX_MAP + 0x37a]).toBe(0x1234);
+    expect(lspc.vram[0x037a]).toBe(0);
+    // And the address register still steps by the modulo.
+    expect(lspc.address).toBe(FIX_MAP + 0x37b);
+  });
+
+  it("drops a write past the end of VRAM rather than folding it back in", () => {
+    const lspc = new Lspc({ characters: new Uint8Array(256), fixCharacters: new Uint8Array(64) });
+    lspc.address = 0x9000;
+    lspc.writeData(0xbeef);
+    expect(lspc.vram.some((word) => word !== 0)).toBe(false);
+    expect(lspc.readData()).toBe(0);
+  });
+});
+
 describe("sprite priority", () => {
   it("draws a higher-numbered sprite in front of a lower one", () => {
     // Two strips at the same place, different colours. The wiki is explicit that

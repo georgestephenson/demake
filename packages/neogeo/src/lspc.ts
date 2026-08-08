@@ -246,14 +246,32 @@ export class Lspc {
     this.frame = new Uint8ClampedArray(FRAME_WIDTH * FRAME_HEIGHT * 4);
   }
 
-  /** Read the word the address port points at. Does not auto-increment. */
+  /**
+   * Read the word the address port points at. Does not auto-increment.
+   *
+   * Bounds-checked rather than masked, for the reason {@link writeData} gives.
+   */
   readData(): number {
-    return this.vram[this.address & (VRAM_WORDS - 1)] ?? 0;
+    return this.address < VRAM_WORDS ? (this.vram[this.address] ?? 0) : 0;
   }
 
-  /** Write through the data port; the modulo is applied afterwards. */
+  /**
+   * Write through the data port; the modulo is applied afterwards.
+   *
+   * **The address is bounds-checked, not masked.** VRAM here is `$8800` words —
+   * 64 KiB plus a 4 KiB upper zone — which is *not* a power of two, so
+   * `address & (VRAM_WORDS - 1)` is not a wrap at all: it clears bits rather
+   * than reducing modulo, and `$737A & $87FF` is `$037A`. That folded every
+   * write to the fix map, which lives at `$7000`, down into the middle of the
+   * sprite control block — a caption written perfectly and landing in the tile
+   * numbers of a strip nobody was looking at.
+   *
+   * The address register is sixteen bits and the hardware decodes nothing above
+   * the upper zone, so out of range is dropped. Masking a non-power-of-two size
+   * is the kind of thing that looks like a wrap and is not.
+   */
   writeData(value: number): void {
-    this.vram[this.address & (VRAM_WORDS - 1)] = value & 0xffff;
+    if (this.address < VRAM_WORDS) this.vram[this.address] = value & 0xffff;
     this.address = (this.address + this.modulo) & 0xffff;
   }
 

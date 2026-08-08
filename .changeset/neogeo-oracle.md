@@ -22,6 +22,6 @@ Two cases are `it.todo` and say why. Objects and captions are staged by
 `emitObjects` and `PokeFix`, and both routines are reached — the VRAM address
 port is left pointing inside the fix map, so the addressing is running — but the
 words that arrive are zero. That is exactly the class of bug this file exists for
-and exactly the class a trace cannot report, because an object's *position* is
-state and its *drawing* is not. Recorded rather than deleted, so the gap is
+and exactly the class a trace cannot report, because an object's _position_ is
+state and its _drawing_ is not. Recorded rather than deleted, so the gap is
 visible and the cases are ready when the value is.

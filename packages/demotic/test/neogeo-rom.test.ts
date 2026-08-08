@@ -45,6 +45,8 @@ import {
   PLANE_ROWS,
   PLANE_SPRITE0,
   PLANE_STRIPS,
+  FIX_VIEW_H,
+  FIX_VIEW_W,
   SYSTEM_PALETTE,
 } from "../src/codegen/neogeo/machine.js";
 import { compile } from "../src/compile.js";
@@ -158,26 +160,42 @@ describe("the plane", () => {
     expect(OBJECT_SPRITE0).toBeGreaterThan(PLANE_SPRITE0 + PLANE_STRIPS - 1);
   });
 
-  // **Known defect, and this is the oracle earning its place.** Trace
-  // conformance passes on all eight fixtures, so the game the cartridge plays is
-  // exactly the interpreter's — but no object strip is staged with a height, so
-  // nothing the runtime draws reaches the sprite list. `emitObjects` builds the
-  // shadow and `UploadFrame` walks it; one of the two is not doing what it says,
-  // and a trace can never tell because an object's *position* is state and its
-  // *drawing* is not. Same for the fix layer below.
-  it.todo("stages this frame's objects into the shadow and uploads them");
+  it("stages this frame's objects into the shadow and uploads them", () => {
+    const machine = boot(built.bytes, bootedAt);
+    // Into the play scene, where the objects are: the title screen has none, so
+    // a probe that never pressed a button would find an empty sprite list and
+    // call it a bug. It was mine, the first time.
+    machine.setButtons(["a"]);
+    for (let frame = 0; frame < 8; frame += 1) machine.runFrame();
+    machine.setButtons([]);
+    for (let frame = 0; frame < 8; frame += 1) machine.runFrame();
+    let used = 0;
+    for (let strip = OBJECT_SPRITE0; strip < OBJECT_SPRITE0 + 64; strip += 1) {
+      if (decodeScb3(machine.lspc.vram[SCB3 + strip] ?? 0).height > 0) used += 1;
+    }
+    expect(used).toBeGreaterThan(0);
+  });
 });
 
 describe("the fix layer", () => {
   const built = withArt;
   const bootedAt = built.layout.booted;
 
-  // The same defect as the objects above: `PokeFix` runs — the VRAM address port
-  // is left pointing inside the fix map, so the routine is reached and computes a
-  // cell — but the word it writes is zero. Recorded rather than deleted, because
-  // the addressing is the thing this console is easiest to get wrong and the case
-  // is ready the moment the value reaching `d0` is right.
-  it.todo("writes captions column-major, not transposed");
+  it("writes captions column-major, not transposed", () => {
+    const machine = boot(built.bytes, bootedAt);
+    for (let frame = 0; frame < 4; frame += 1) machine.runFrame();
+    // The check is on the *addressing*. A transposed HUD would write cells at
+    // `row × 40 + column`; the column-major reading puts a caption's own cells
+    // where this looks, and the two disagree for anything off the diagonal.
+    let written = 0;
+    for (let column = 0; column < FIX_VIEW_W; column += 1) {
+      for (let row = 0; row < FIX_VIEW_H; row += 1) {
+        const entry = machine.lspc.vram[FIX_MAP + column * FIX_ROWS + row] ?? 0;
+        if ((entry & 0x0fff) !== 0) written += 1;
+      }
+    }
+    expect(written).toBeGreaterThan(0);
+  });
 
   it("draws its glyphs in the reserved palette", () => {
     const machine = boot(built.bytes, bootedAt);
