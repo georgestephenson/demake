@@ -64,6 +64,7 @@ export {
   CYCLES_PER_LINE,
   FRAME_CYCLES,
   HEADER_BASE,
+  loadNeo,
   LINES_PER_FRAME,
   Neogeo,
   PALETTE_BASE,

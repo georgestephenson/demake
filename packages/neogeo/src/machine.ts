@@ -39,6 +39,7 @@
  * - Neo Geo Development Wiki — Watchdog: https://wiki.neogeodev.org/index.php?title=Watchdog
  */
 
+import { NEO_CONTAINER_HEADER, unpackNeoCharacters, unpackNeoFix } from "@demake/core";
 import { M68k, type Bus } from "@demake/md";
 
 import { FRAME_HEIGHT, Lspc, type Frame, type LspcOptions } from "./lspc.js";
@@ -103,6 +104,51 @@ export interface Cartridge {
   characters: Uint8Array;
   /** Fix layer tile pixels, one byte a pixel, 64 bytes an 8×8 tile. */
   fixCharacters: Uint8Array;
+}
+
+/**
+ * Split a `.neo` container into the regions the hardware reads.
+ *
+ * The graphics arrive **packed** and are decoded here rather than being handed
+ * over ready-made, which is deliberate: `packNeoCharacters` has a
+ * right-half-before-left block order that a core reading decoded pixels would
+ * never exercise, so a cartridge this project writes is only proven to carry
+ * hardware bytes if something unpacks them the hardware's way. The encoders are
+ * pinned independently by hand-computed offsets in
+ * `packages/core/test/neo-cart.test.ts`; this is the other half of that.
+ */
+export function loadNeo(image: Uint8Array): Cartridge {
+  const view = new DataView(image.buffer, image.byteOffset, image.byteLength);
+  if (String.fromCharCode(image[0] ?? 0, image[1] ?? 0, image[2] ?? 0) !== "NEO") {
+    throw new Error("not a .neo cartridge: the container's magic is missing");
+  }
+  const pSize = view.getUint32(0x04, true);
+  const sSize = view.getUint32(0x08, true);
+  const mSize = view.getUint32(0x0c, true);
+  const v1Size = view.getUint32(0x10, true);
+  const v2Size = view.getUint32(0x14, true);
+  const cSize = view.getUint32(0x18, true);
+
+  let at = NEO_CONTAINER_HEADER;
+  const program = image.subarray(at, at + pSize);
+  at += pSize;
+  const s = image.subarray(at, at + sSize);
+  at += sSize + mSize + v1Size + v2Size;
+  const c = image.subarray(at, at + cSize);
+
+  // The pair is interleaved a byte at a time, odd ROM at even offsets.
+  const half = c.length >> 1;
+  const c1 = new Uint8Array(half);
+  const c2 = new Uint8Array(half);
+  for (let index = 0; index < half; index += 1) {
+    c1[index] = c[index * 2] ?? 0;
+    c2[index] = c[index * 2 + 1] ?? 0;
+  }
+  return {
+    program,
+    characters: unpackNeoCharacters(c1, c2),
+    fixCharacters: unpackNeoFix(s),
+  };
 }
 
 /**
