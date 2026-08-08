@@ -16,7 +16,8 @@
  *   - **The sticky bit chains a strip to the one before it.** A sticky sprite
  *     takes the previous sprite's Y and height and is drawn immediately to its
  *     right, so a plane's twenty-one strips carry *one* position between them:
- *     scrolling is a write to sprite 0's SCB3 and SCB4 and nothing else. No
+ *     scrolling is a write to the anchor strip's SCB3 and SCB4 and nothing
+ *     else. No
  *     other console in the set has a scroll that cheap, and none has a seam
  *     either, because the plane is 336 pixels against a 320-pixel screen.
  *   - **Tiles are not in VRAM.** VRAM holds tile *numbers*; the pixels are read
@@ -30,11 +31,13 @@
  *     HUD and the pixel-pinning argument every 8-bit console in the set needs
  *     are absent here the way they are on a Game Boy Advance.
  *
- * **Two descriptions here are unverified and say so**, on the
+ * **One description here is still unverified and says so**, on the
  * `NGP_BUTTON_BITS` precedent (AGENTS.md §Gotchas): a machine description that
- * is wrong *and* consistent passes every test there is, so the guesses are
- * written down rather than hidden. They are {@link SPRITE_ORDER_FRONT_TO_BACK}
- * and the dark bit's role in {@link expandColor}, and each is one line to change.
+ * is wrong *and* consistent passes every test there is, so the guess is written
+ * down rather than hidden. It is the dark bit's role in {@link expandColor}.
+ * {@link SPRITE_ORDER_FRONT_TO_BACK} used to be the other, and being a named
+ * constant is what made correcting it a one-line change when the reference
+ * turned out to say the opposite of the guess.
  *
  * Sources:
  * - Neo Geo Development Wiki — Sprites: https://wiki.neogeodev.org/index.php?title=Sprites
@@ -79,17 +82,28 @@ export const FIX_COLUMNS = 40;
 export const FIX_ROWS = 32;
 
 /**
- * Whether sprite 0 is drawn in front of sprite 380 or behind it.
+ * Whether a *lower* sprite index is drawn in front of a higher one.
  *
- * **Unverified.** The references this project could reach state the sprite list
- * is walked in index order and do not say which end wins a contested pixel. The
- * reading taken here is that a *lower* index is in front, which is the Super
- * Nintendo's convention and the more common one — and the backend above is
- * written not to care: it puts the playfield at the high indices and objects at
- * the low ones, so if this is backwards it is this constant that changes and not
- * a line of generated code.
+ * **It is not**, and this constant records that the question was asked. The
+ * NeoGeo Development Wiki is explicit: sprites are numbered by priority, so a
+ * lower number is drawn *behind* a higher one. That is the opposite of the Super
+ * Nintendo's convention and the opposite of the guess this file shipped with,
+ * which is exactly why it was a named constant and why the backend above is
+ * written not to care — the playfield takes the low indices and objects the
+ * high ones, so objects are in front.
  */
-export const SPRITE_ORDER_FRONT_TO_BACK = true;
+export const SPRITE_ORDER_FRONT_TO_BACK = false;
+
+/**
+ * The first sprite a program may use.
+ *
+ * **Sprite 0 belongs to the hardware.** It is what the LSPC pads a line's
+ * display list with, so it is expected to be left fully transparent and is not a
+ * programmer's to place — and it is reported to be drawn over everything else
+ * regardless of the ordering below, which is a second reason not to put a
+ * playfield column in it. The backend starts its plane at sprite 1.
+ */
+export const FIRST_USABLE_SPRITE = 1;
 
 /** One frame, as straight RGBA. */
 export interface Frame {

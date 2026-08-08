@@ -178,6 +178,32 @@ describe("a strip is a column of a tilemap", () => {
   });
 });
 
+describe("sprite priority", () => {
+  it("draws a higher-numbered sprite in front of a lower one", () => {
+    // Two strips at the same place, different colours. The wiki is explicit that
+    // sprites are numbered by priority and a lower number is drawn *behind* — the
+    // opposite of the Super Nintendo, and the opposite of this core's first
+    // guess, so it is worth a case of its own.
+    const rom = new Uint8Array(768);
+    rom.fill(3, 256, 512); // tile 1: colour 3
+    rom.fill(2, 512, 768); // tile 2: colour 2
+    const lspc = new Lspc({ characters: rom, fixCharacters: new Uint8Array(64) });
+    lspc.palettes[0]![3] = 0x0f00; // red
+    lspc.palettes[0]![2] = 0x00f0; // green
+
+    for (const strip of [1, 2]) {
+      lspc.vram[SCB3 + strip] = encodeScb3({ y: 0, sticky: false, height: 1 });
+      lspc.vram[SCB4 + strip] = encodeScb4(0);
+      lspc.vram[SCB1 + strip * SCB1_STRIDE + 1] = 0;
+    }
+    lspc.vram[SCB1 + 1 * SCB1_STRIDE] = 1; // sprite 1 is red
+    lspc.vram[SCB1 + 2 * SCB1_STRIDE] = 2; // sprite 2 is green
+
+    // Sprite 2 wins, because it is the higher number.
+    expect(pixelAt(lspc, 4, 4)).toEqual(GREEN);
+  });
+});
+
 describe("the fix layer", () => {
   function withFix(): Lspc {
     const lspc = new Lspc({ characters: characters(1, 3), fixCharacters: fixCharacters(5, 2) });

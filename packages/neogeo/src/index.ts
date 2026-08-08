@@ -37,6 +37,7 @@ export {
   encodeScb3,
   encodeScb4,
   expandColor,
+  FIRST_USABLE_SPRITE,
   FIX_COLUMNS,
   FIX_MAP,
   FIX_ROWS,
