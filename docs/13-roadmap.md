@@ -112,9 +112,12 @@ optimizer polish (SNES/GBA/ANTIC).
 **Done means**: all Tier 2 consoles E2E-green in nightly CI; docs/README support
 table auto-updated.
 
-**Status: started.** Two Tier 2 verticals are complete and ride the same loop as
-Tier 1, each reusing an existing edge rather than adding one — and the first of
-them now compiles games as well as pictures:
+**Status: started.** Two Tier 2 verticals ride the whole loop — art, a display
+ROM and a pixel-perfect emulator E2E — and a third, the **Neo Geo**, compiles
+games without a display ROM of its own (§The order, item 8: it has a self-hosted
+core and the full trace battery, but no `gen --format rom` harness). The two that
+ride the loop each reused an existing edge rather than adding one, and both now
+compile games as well as pictures:
 
 - **PC Engine** — a `pce` codegen backend (word-planar HuC6270 characters, BAT
   words, 9-bit VCE palettes), a 64 KiB HuCard harness assembled by
@@ -190,7 +193,7 @@ real work is.
 |---|---|---|
 | Tilemap + scroll + sprites | GB, GBC, Mega Duck, NES, SMS, GG, MD, SNES, PCE, TurboExpress, WS, WSC, NGP, NGPC, GBA, NDS | Nothing new — this is what the backend interface is |
 | Tilemap, **no scroll**, 1 KB RAM | SG-1000 | **Out of scope for games** ([§below](#the-sg-1000-is-out-of-scope-for-games)). The hardware has no scroll register, so a backend would have to reject any game that declares a camera; scrolling would mean rewriting the pattern table every frame |
-| **Sprite-only**, no tilemap | Neo Geo | The background is 512 sprites of vertical tile strips plus an 8×8 fix layer; all five background-cell writers need counterparts |
+| ~~**Sprite-only**, no tilemap~~ **done** | Neo Geo | *This row was wrong.* A sprite here is a vertical strip whose column of tile numbers is a 64-word table, and the **sticky bit** chains each strip to the one before it — so twenty-one strips side by side are a plane of 16×16 cells carrying **one position between them**. The background-cell writers needed a different address calculation, not counterparts, and scrolling turned out to be *two writes* rather than a scroll register. See [§the order, item 8](#the-order) |
 | **Display list** | Atari 7800 | MARIA draws from per-zone header lists and steals cycles from the 6502; no tilemap, no ordinary sprites |
 | **Framebuffer + blitter** | Atari Lynx | Suzy blits scaled RLE sprite packets into RAM; background, scroll and tile rendering all become software |
 | **Framebuffer, software everything** | Watara Supervision | 65C02, no tiles, no sprites, no scroll, and the visible bitmap lives *inside* the 8 KB of system RAM |
@@ -199,11 +202,24 @@ real work is.
 
 `rom.test.ts` is toolchain-free because the cores are ours (`@demake/dmg`,
 `@demake/nes`). Every new console needs either a self-hosted core or a BIOS-free
-libretro core plus doc 10's scripted input tape. **Neo Geo, Lynx and
-ColecoVision are gated on emulators that require copyrighted BIOS images**, which
-this loop will not ship — so for those three the proof is likely to cost more
-than the backend does, and that fact should drive the schedule rather than be
-discovered in it.
+libretro core plus doc 10's scripted input tape. **Lynx and ColecoVision are
+gated on emulators that require copyrighted BIOS images**, which this loop will
+not ship — so for those two the proof is likely to cost more than the backend
+does, and that fact should drive the schedule rather than be discovered in it.
+
+**The Neo Geo was on that list and should not have been**, which is worth
+recording because the same reasoning frees the other two if anyone acts on it.
+Owning the core changes the question from "can we run somebody else's emulator"
+to "what does the hardware do before it hands control over" — and here that is
+three lines: take the stack pointer from the cartridge's first longword and enter
+at the header's `USER` vector. Commercial cartridges lean on the system ROM
+constantly (its font, its soft dips, its coin handling); one this project *writes*
+calls none of it, because we author both sides. Nothing copyrighted is shipped,
+reimplemented or needed — the position `@demake/snes` already takes about the
+S-SMP's boot ROM and `@demake/ngp` about SNK's other console. The Lynx's boot ROM
+exists to decrypt a cartridge's first block and the `.lnx` header is the
+direct-boot path around it; a ColecoVision cartridge's header magic tells the BIOS
+to skip its own title screen. Neither is a reason to need somebody's dump.
 
 ### RAM and cartridge, measured
 
@@ -479,9 +495,45 @@ the backend today, and either is a reason to revisit rather than to work around.
    rules), and closing it is a continuous pan in the arranger — which would also
    be the first thing in this project to make a *stereo image* an arranging
    decision rather than a channel property.
-7. **Supervision**, **Lynx**, **Neo Geo** — each gated on something structural
-   (RAM, a BIOS-free core, a sprite-only renderer). Worth doing once a framebuffer
-   renderer exists for one of them.
+7. **Supervision** and **Lynx** — each gated on something structural (RAM, a
+   framebuffer renderer). Worth doing once a framebuffer renderer exists for one
+   of them.
+8. **Neo Geo** — **done**, and it was the cheapest console on this list rather
+   than the dearest. `demake build -c neogeo` produces a playable `.neo` and the
+   whole example library traces identically on it, in the same battery every
+   other console runs.
+
+   Three things made it cheap and none of them was foreseen here. The **68000 was
+   already built and so was a core for it**, so `@demake/neogeo` imports
+   `@demake/md`'s processor the way `@demake/nds` imports `@demake/gba`'s ARM —
+   and the arrival of a second 68000 console is what moved the value layer, the
+   expression compiler, the rule bodies, the tile walk *and* the tile rules into
+   `codegen/m68k/`, on `codegen/mos/`'s precedent. The backend that is left owns
+   only a renderer. **The playfield is a tilemap in everything but the name**
+   (§Axis 2 above). And **the BIOS was never a gate** (§Axis 3 above).
+
+   What it cost instead is a fact no other console in the set has: **a hardware
+   cell is 16×16 and a language cell is 8×8**, so one plane cell covers a 2×2
+   block of language cells. The art path composes level grids, backdrops and
+   objects into 16×16 tiles at build time and dedups those — legal only because a
+   Demotic tile layer cannot change, which is §D6's still-to-come work and the one
+   thing that will need a different answer here rather than a bigger one. The PC
+   Engine hit the first half of this for objects; what is new is that the
+   *background* has it too.
+
+   Two dividends fell out of the geometry. **There is no edge painter**: the plane
+   is 21×15 cells where a Mega Drive's map is 64×32, so a full repaint is 630
+   words and a few thousand cycles — the leading-edge mechanism every other
+   backend needs is *absent* rather than reimplemented. And **the HUD is the fix
+   layer**, 8×8 and always in front, on a grid that *is* the language's own — so
+   the write queue, the erase list and `PlotCell` are absent too. Three
+   mechanisms deleted by one piece of hardware.
+
+   Still missing: **sound**. The chip answers a Z80 that `demake build` emits no
+   program for, so a cartridge is silent and says so — the request bytes a rule
+   writes are still there, so its trace is identical to a sounding console's. A
+   Z80 encoder already exists (the Sega 8-bits'), so this is a driver and a
+   second program in the container rather than anything new.
 
 68000 (Mega Drive, then Neo Geo), 65816 (SNES, plus the SPC700 for its audio) and
 ARM (GBA, NDS) slot in wherever Tier 1 breadth is wanted ahead of Tier 2 depth;

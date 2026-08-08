@@ -12,12 +12,12 @@ something 8/16-bit-era consoles and handhelds up to the Nintendo DS could
 actually run. Four demakers, sharing one engine and one proof (a real ROM, in a
 real emulator, compared pixel for pixel):
 
-| Demaker               | Docs   | State                                                                        |
-| --------------------- | ------ | ---------------------------------------------------------------------------- |
-| art (images)          | 03–06  | working, ten consoles proven on hardware                                     |
-| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on twelve consoles |
-| music (`arrange`)     | 16, 17 | MIDI → chip music, fourteen consoles — and a Game Boy ROM that plays it      |
-| sound (`sfx`)         | 16, 18 | WAV → chip effects, fourteen consoles — same ROM, same proof                 |
+| Demaker               | Docs   | State                                                                         |
+| --------------------- | ------ | ----------------------------------------------------------------------------- |
+| art (images)          | 03–06  | working, ten consoles proven on hardware                                      |
+| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on fifteen consoles |
+| music (`arrange`)     | 16, 17 | MIDI → chip music, fourteen consoles — and a Game Boy ROM that plays it       |
+| sound (`sfx`)         | 16, 18 | WAV → chip effects, fourteen consoles — same ROM, same proof                  |
 
 The four are not four tools that share a repo any more: a `.dmt` says
 `music theme.mid` and `sound bounce.wav on ball hits paddle`, and `demake build`
@@ -967,6 +967,22 @@ packages/snes/       @demake/snes — a self-hosted Super Nintendo core: a 65816
                      boot ROM of *ours* that speaks the documented upload
                      handshake rather than transcribing Nintendo's. Its S-DSP is
                      @demake/chip's, not a second one
+packages/neogeo/     @demake/neogeo — a self-hosted Neo Geo core, and the eleventh.
+                     Its 68000 is @demake/md's rather than a second transcription,
+                     on the terms @demake/nds borrows @demake/gba's ARM. **Its
+                     boot ROM is ours and it is three lines** — stack pointer from
+                     the cartridge's first longword, enter at the header's USER
+                     vector — because a demade cartridge calls none of what a
+                     commercial one uses the system ROM for, which is what took
+                     this console off doc 13's "gated on a BIOS" list. The LSPC is
+                     the interesting part: a sprite is a *vertical strip* whose
+                     column of tile numbers is a 64-word table, and the sticky bit
+                     chains each to the one before it, so a row of strips is a
+                     tilemap carrying one position between all of them. Its fix
+                     layer is 8×8, column-major and in front of every sprite. The
+                     Z80 sound processor, the memory card, the calendar and the
+                     sprite shrinking hardware are absent rather than
+                     half-implemented
 packages/md/         @demake/md — a self-hosted Mega Drive core, and the only one
                      with *two* sound chips: the SN76489 at $C00011 and the
                      YM2612 at $A04000, both @demake/chip's rather than second
@@ -1036,6 +1052,14 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
     nes.ts, nes-art.ts, nes/              the 6502 backend and its image path
     sms.ts, sms-art.ts, sms/              the Z80 backend and its image path
     snes.ts, snes-art.ts, snes/           the 65816 backend and its image path
+    m68k/            the *68000's*, not one console's, and the second directory
+                     of its kind after mos/: the 16.16 value layer, the
+                     expression compiler, the rule bodies, the tile walk and the
+                     tile rules, shared verbatim by the Mega Drive and the Neo
+                     Geo. The five files needed no surgery to move, which is the
+                     evidence the line was already right — none of them imported
+                     a VDP register or a memory plan. What a backend owns beside
+                     it is a renderer and nothing else
     md.ts, md-art.ts, md/                 the 68000 backend and its image path
     pce.ts, pce-art.ts, pce/              the HuC6280 backend and its image path,
                      and the smallest in the set — everything but the renderer is
@@ -1065,6 +1089,18 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
                      emit.ts's `mapWord` is the PC Engine's and the WonderSwan's
                      shape a third time: nine bits of character and four of
                      palette, so there is no attribute table anywhere in it
+    neogeo.ts, neogeo-art.ts, neogeo/     the *second* 68000 backend, and the one
+                     that owns least: everything but the renderer is m68k/'s. Its
+                     playfield is not a tilemap — twenty-one sticky-chained sprite
+                     strips are — so scrolling is two writes and there is no edge
+                     painter at all, because a 21×15 plane repaints whole for a
+                     few thousand cycles. Its HUD is the hardware's fix layer,
+                     8×8 and in front of everything, so the write queue, the erase
+                     list and PlotCell are absent rather than reimplemented.
+                     machine.ts is where the one expensive fact lives: a hardware
+                     cell is 16×16 and a language cell is 8×8, so neogeo-art.ts
+                     composes every 2×2 block into one tile at *build* time —
+                     legal only while a tile layer cannot change
     gba.ts, gba-art.ts, gba/              the ARM backend and its image path,
                      which is *two* machines: gba/machine.ts is the description
                      that makes a Nintendo DS a variant rather than a seventh
@@ -3190,8 +3226,8 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
 - The Demotic ROM conformance suite (`packages/demotic/test/rom.test.ts`) builds
   a cartridge from each fixture game **for every console with a backend** — both
   Game Boys, the Mega Duck, the NES, both Sega 8-bits, the Super Nintendo, the
-  Mega Drive, the Game Boy Advance, the Nintendo DS, the PC Engine, both
-  WonderSwans and the Neo Geo Pocket Color — and runs it in the matching
+  Mega Drive, the Neo Geo, the Game Boy Advance, the Nintendo DS, the PC Engine,
+  both WonderSwans and the Neo Geo Pocket Color — and runs it in the matching
   self-hosted core, asserting the
   trace
   matches the reference interpreter tick for tick. No toolchain, no emulator
@@ -3212,6 +3248,22 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   which byte was which would not survive running the library. It also checks the Duck's cartridge _fails_ on a Game
   Boy — identical traces are also what a register map that had quietly become the
   identity would produce.
+- `packages/demotic/test/neogeo-rom.test.ts` and `neogeo-arith.test.ts` are the
+  Neo Geo's pair, and the first of them is where a bug lived that **nothing else
+  in the project could have reached**. The LSPC's own tests write `vram`
+  directly, so they never went through the address port; `VRAM_WORDS` is `$8800`,
+  which is not a power of two, so `address & (VRAM_WORDS - 1)` was never a wrap —
+  it clears bits instead of reducing, and `$737A & $87FF` is `$037A`. Every write
+  to the fix layer was folded into the middle of SCB1: a caption computed
+  correctly, addressed correctly, written correctly, landing in the tile numbers
+  of a strip nobody was looking at. A trace says nothing about pixels and the
+  emitter was right throughout, so the only route in was to ask whether a caption
+  had _arrived_ and then follow the value from emitter to bus. Write through the
+  port when testing a machine whose program can only reach memory that way.
+  The arith file is thin on `pce-arith.test.ts`'s terms — the emitters are
+  `m68k/`'s, so what it proves is that the same instructions mean the same thing
+  on a machine whose work RAM is at `$100000` rather than `$FF0000` and which is
+  entered through a header rather than a reset vector.
 - `packages/demotic/test/collision-sides.test.ts` runs the same battery for
   `from <side>`, which the example library reaches on one console's worth of
   geometry and this reaches on all four sides of both kinds of contact. Two
