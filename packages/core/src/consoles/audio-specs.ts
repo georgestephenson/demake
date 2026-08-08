@@ -1128,22 +1128,28 @@ export const neogeoAudio: AudioSpec = (() => {
       },
     ],
     driver: {
-      // A timer, and only a timer (§The driver clock). Timer A is ten bits at the
-      // chip's sample rate over six, so 108 Hz to 111 kHz; timer B is eight bits
-      // eight times slower and reaches down to 27 Hz. 120 Hz lands on timer A
-      // count 926 and is 119.99 Hz — the most exact tick in the matrix.
+      // A timer, and only a timer (§The driver clock). Timer A counts the chip's
+      // own sample period over ten bits, so 54 Hz to 55 kHz — and 120 Hz lands on
+      // count 463, which is 119.99 Hz: the most exact driver tick in the matrix.
+      // Timer B counts eight times slower over eight bits and would add 27-54 Hz,
+      // which is below anything a driver asks for.
       sources: ["timer"],
       // 6 MHz over 384 pixels of 264 lines: 59.1856 Hz. Nothing rides it — it is
       // here because the schema asks and because a game's own loop keeps it.
       frameRate: { num: 6000000, den: 101376 },
-      timerRange: [27, 500],
+      timerRange: [54, 500],
       // The largest in the matrix, and it is arithmetic rather than generosity:
       // this processor has nothing else to do. A tick at 120 Hz is 33333 T-states
-      // of a 4 MHz Z80, and a register write is two `out (c),a` instructions plus
+      // of a 4 MHz Z80, and a *register* costs two `out (c),a` instructions plus
       // the settling the hardware documentation requires between them — about 120
-      // T-states written conservatively. Spending two thirds of the tick on writes
-      // is 192, and the third left over is the stream walk around them.
-      writesPerTick: 192,
+      // T-states written conservatively. Two thirds of the tick is 192 registers.
+      //
+      // The number below is twice that because this budget counts **bus** writes,
+      // which is the unit a `ChipScript` is in: an address and a datum are two
+      // entries on an OPN-family bus and one register on every other chip in the
+      // set. A Mega Drive's 640 is the same unit, which is worth knowing before
+      // comparing the two.
+      writesPerTick: 384,
     },
     // The driver lives in the M ROM's fixed 32 KiB window and never touches a bank
     // register, so a schedule has what the driver leaves rather than the half a

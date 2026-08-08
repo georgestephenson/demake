@@ -17,6 +17,7 @@
  * Reference: VGM specification 1.71 — https://vgmrips.net/wiki/VGM_Specification
  */
 
+import { adpcmABank, adpcmBBank } from "../binding/neogeo-bank.js";
 import { wsDefaultWaveforms, wsWaveBank, WS_WAVE_BASE } from "../binding/wsc-bank.js";
 import type { ChipScript } from "../chipscript.js";
 
@@ -62,6 +63,18 @@ export function encodeVgm(script: ChipScript, options: VgmOptions = {}): Uint8Ar
     }
   }
 
+  // ### The sample ROMs
+  //
+  // Two sections reading two different codecs out of two ROMs, and a VGM player
+  // has no way to guess either — so both go in as ROM-image data blocks before
+  // the first tick, which is what the WonderSwan's wave RAM does one format over.
+  // Without them a Neo Geo track plays its FM and its squares and has no drums,
+  // which sounds like an arrangement decision rather than a missing file.
+  if (script.chips.includes("ym2610")) {
+    pushRomBlock(data, 0x82, adpcmABank().rom);
+    pushRomBlock(data, 0x83, adpcmBBank().rom);
+  }
+
   for (let tick = 0; tick < script.ticks.length; tick += 1) {
     if (tick === script.loopTick) loopOffset = data.length;
     for (const write of script.ticks[tick]!.writes) {
@@ -99,6 +112,31 @@ export function encodeVgm(script: ChipScript, options: VgmOptions = {}): Uint8Ar
   out.set(Uint8Array.from(data), headerSize);
   if (gd3.length > 0) out.set(gd3, headerSize + data.length);
   return out;
+}
+
+/**
+ * A ROM-image data block: the whole ROM, at offset zero.
+ *
+ * Types `$80`-`$BF` carry an image rather than a stream, so the payload opens
+ * with the ROM's total size and the address this piece starts at — both of which
+ * are what they are here because a bank is written whole rather than streamed.
+ */
+function pushRomBlock(data: number[], type: number, rom: Uint8Array): void {
+  if (rom.length === 0) return;
+  const size = rom.length + 8;
+  data.push(
+    0x67,
+    0x66,
+    type,
+    size & 0xff,
+    (size >> 8) & 0xff,
+    (size >> 16) & 0xff,
+    (size >> 24) & 0xff,
+  );
+  for (const at of [rom.length, 0]) {
+    data.push(at & 0xff, (at >> 8) & 0xff, (at >> 16) & 0xff, (at >> 24) & 0xff);
+  }
+  for (const byte of rom) data.push(byte);
 }
 
 /** Absolute VGM sample position of a driver tick. */
@@ -171,21 +209,27 @@ function commandWriter(
       // commands, and a schedule that addressed a data port without latching an
       // address first would have nothing to write. Which is why the binding
       // always emits them together and this holds the pending address.
-      return ym2612Writer();
+      return opnWriter(0x52);
+    case "ym2610":
+      // The same shape one command pair along, because it is the same bus: 0x58
+      // and 0x59 are this chip's two halves. What VGM does *not* infer is the
+      // sample ROMs the ADPCM sections read, so those go in as data blocks
+      // before the first tick (§The sample ROMs).
+      return opnWriter(0x58);
     default:
       return undefined;
   }
 }
 
 /**
- * Pair the YM2612's four bus ports back into VGM's two commands.
+ * Pair an OPN-family chip's four bus ports back into VGM's two commands.
  *
  * The model's interface is the hardware's — latch an address, then write a datum
  * — and VGM's is one command carrying both. Holding the latched address is
  * therefore not state this encoder invented: it is the chip's own, and a datum
  * arriving before an address is a schedule bug rather than something to guess at.
  */
-function ym2612Writer(): (data: number[], reg: number, value: number) => void {
+function opnWriter(command: number): (data: number[], reg: number, value: number) => void {
   const latched: [number, number] = [0, 0];
   return (data, reg, value) => {
     const half = (reg >> 1) & 1;
@@ -193,7 +237,7 @@ function ym2612Writer(): (data: number[], reg: number, value: number) => void {
       latched[half] = value & 0xff;
       return;
     }
-    data.push(0x52 + half, latched[half] as number, value & 0xff);
+    data.push(command + half, latched[half] as number, value & 0xff);
   };
 }
 
@@ -224,6 +268,12 @@ function writeClock(view: DataView, chip: string | undefined): void {
       break;
     case "ym2612":
       view.setUint32(0x2c, 7670453, true);
+      break;
+    case "ym2610":
+      // The YM2610/YM2610B field. Bit 31 clear says this is the four-channel
+      // part rather than the six-channel one, which is exactly the distinction
+      // `ym2610.ts` refuses two channels to keep.
+      view.setUint32(0x4c, 8000000, true);
       break;
     default:
       break;

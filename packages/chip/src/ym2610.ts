@@ -191,6 +191,17 @@ const ATTENUATION: readonly number[] = [
  */
 export const SSG_GAIN = 0.5;
 
+/**
+ * How loud each sample voice is, which is the section normalising by its count.
+ *
+ * The FM core divides by its six channels and the SSG by its three, so a voice at
+ * full scale contributes the same wherever it sits and no section can drown
+ * another merely by having more voices in it. The seven ADPCM voices — six fixed
+ * and one variable — follow the same rule. Without it one drum at full level is
+ * six times one FM voice, which is a demake that clips the moment a kick lands.
+ */
+export const SAMPLE_GAIN = 1 / 7;
+
 /** One fixed-rate sample voice. */
 interface AdpcmAVoice {
   playing: boolean;
@@ -510,7 +521,8 @@ export class Ym2610 implements ChipModel {
       // Five bits of its own and six shared, combining into one attenuation index
       // in 0.75 dB steps: a voice at `$1F` under a master of `$3F` is unattenuated.
       const attenuation = (0x1f - voice.volume) * 2 + (0x3f - this.adpcmAMaster);
-      const level = (accumulator / 2048) * (ATTENUATION[Math.min(attenuation, 63)] ?? 0);
+      const level =
+        (accumulator / 2048) * (ATTENUATION[Math.min(attenuation, 63)] ?? 0) * SAMPLE_GAIN;
       voice.outLeft = voice.left ? level : 0;
       voice.outRight = voice.right ? level : 0;
     }
@@ -619,7 +631,7 @@ export class Ym2610 implements ChipModel {
         ADPCM_B_STEP_MAX,
       );
     }
-    const level = ((this.bAccumulator / 32768) * this.bVolume) / 255;
+    const level = ((this.bAccumulator / 32768) * this.bVolume * SAMPLE_GAIN) / 255;
     this.bOutLeft = this.bLeft ? level : 0;
     this.bOutRight = this.bRight ? level : 0;
   }

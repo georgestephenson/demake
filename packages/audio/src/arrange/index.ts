@@ -13,8 +13,8 @@ import { getConsole, type AudioSpec } from "@demake/core";
 
 import { analyze, type AnalyzeOptions } from "../analysis.js";
 import { bindingFor } from "../binding/registry.js";
+import type { FmBindingOptions } from "../binding/fm-patch.js";
 import { fitPatchForPart, type FmPatchFit } from "../binding/fm-patch.js";
-import { mdBinding, type MdBindingOptions } from "../binding/md.js";
 import type { ChipScript, Dropped, TimingReport } from "../chipscript.js";
 import { artifactFormat, encodeSpc } from "../encode/spc.js";
 import { encodeVgm } from "../encode/vgm.js";
@@ -139,9 +139,9 @@ export function candidates(spec: AudioSpec): Candidate[] {
 /**
  * Fit a patch for every FM voice this plan uses.
  *
- * `undefined` for a console with no FM channels, which is every one but the Mega
- * Drive — and returning it rather than an empty object is what keeps those
- * consoles on the binding they were built with rather than a rebuilt copy.
+ * `undefined` for a console with no FM channels, which is all but two of them —
+ * and returning it rather than an empty object is what keeps those consoles on
+ * the binding they were built with rather than a rebuilt copy.
  *
  * Memoised by part, because the timbre search plays fifty-odd candidates through
  * the chip and a four-candidate portfolio would otherwise repeat it four times
@@ -151,7 +151,7 @@ function fitPatches(
   spec: AudioSpec,
   plan: ArrangementPlan,
   cache: Map<string, FmPatchFit>,
-): MdBindingOptions | undefined {
+): FmBindingOptions | undefined {
   const fmChannels = spec.channels.filter((channel) => channel.kind === "fm").length;
   if (fmChannels === 0) return undefined;
   const patches: (FmPatchFit["patch"] | undefined)[] = new Array(fmChannels).fill(
@@ -227,7 +227,7 @@ export function arrangeScore(input: Score, options: ArrangeOptions): ArrangeResu
     // what it should sound like. So a console with FM channels gets a binding of
     // its own per candidate, carrying that candidate's fitted patches.
     const fitted = fitPatches(spec, plan, patchCache);
-    const bound = fitted === undefined ? binding : mdBinding(options.console, spec, fitted);
+    const bound = fitted === undefined ? binding : bindingFor(options.console, fitted);
     const script = compileScript(analysed, spec, bound, plan, timing, candidate.compile);
 
     const inspection = inspectScript(script);

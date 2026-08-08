@@ -23,6 +23,7 @@
 
 import {
   ADPCM_A_DIVIDER,
+  SAMPLE_GAIN,
   YM2610_CLOCK_HZ,
   Ym2610,
   createChip,
@@ -272,7 +273,11 @@ describe("ADPCM-B", () => {
     w(chip, 0, 0x1b, 0xff);
     w(chip, 0, 0x10, 0x80);
     const samples = render(chip, 44_100, 512);
-    expect(Math.max(...samples)).toBeGreaterThan(0.9);
+    // Against the section's own ceiling rather than against one, because the seven
+    // sample voices normalise by their count the way the FM core normalises by
+    // six — otherwise a single drum is six times an FM voice and every demake
+    // clips the moment a kick lands.
+    expect(Math.max(...samples)).toBeGreaterThan(SAMPLE_GAIN * 0.9);
     expect(Math.min(...samples)).toBeGreaterThanOrEqual(0);
   });
 

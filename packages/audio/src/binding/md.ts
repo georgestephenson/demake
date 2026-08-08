@@ -31,16 +31,25 @@
  * - Plutiedev — YM2612 from the 68000: https://plutiedev.com/ym2612-registers
  */
 
-import { math, type AudioSpec } from "@demake/core";
+import type { AudioSpec } from "@demake/core";
 
 import type { ChannelFrame } from "../chipscript.js";
 
-import { carriersOf, patchWrites, pitchWrites, type FmPatch } from "./fm-patch.js";
+import {
+  carriersOf,
+  fnumAt,
+  type FmBindingOptions,
+  patchWrites,
+  pitchWrites,
+  totalLevelFor,
+  type FmPatch,
+} from "./fm-patch.js";
+// Kept exported from here as well: both are this console's encoding as much as
+// the other's, and a caller that had one from `md.ts` should still find it.
+export { totalLevelFor };
+
 import { psgBinding } from "./psg.js";
 import type { BoundWrite, ChipBinding, DriverRateFit } from "./types.js";
-
-/** The natural log of ten, for the one decibel conversion in this file. */
-const LN10 = 2.302585092994046;
 
 /** FM voices, which are the first six entries of the console's channel list. */
 export const FM_CHANNELS = 6;
@@ -60,10 +69,7 @@ const YM_SAMPLE_DIVIDER = 144;
 export const MD_CHIP_GAINS: readonly number[] = [1, 0.5];
 
 /** What the arranger hands the binding beyond the frames: one patch per voice. */
-export interface MdBindingOptions {
-  /** Patch per FM channel, by channel index 0-5; a missing one gets a default. */
-  patches?: readonly (FmPatch | undefined)[];
-}
+export type MdBindingOptions = FmBindingOptions;
 
 /**
  * Build the Mega Drive's binding.
@@ -265,54 +271,19 @@ function withChip(write: { reg: number; value: number }): BoundWrite {
 const REGISTER_POSITION: readonly number[] = [0, 2, 1, 3];
 
 /**
- * A frequency as an F-number and a block.
+ * A frequency as an F-number and a block, at this console's clock.
  *
- * The block is chosen so the F-number lands in the top half of its range, which
- * is where the lattice is finest: the same note an octave lower in F-number
- * terms is the same pitch with half the resolution, and on a chip whose steps
- * are already sub-cent at the top that is the difference between exact and
- * merely close.
+ * The arithmetic is `fm-patch.ts`'s and the only thing this console supplies is
+ * the sample rate, because the core is the same one a Neo Geo runs at 8 MHz.
  */
 export function fnumFor(hz: number): { fnum: number; block: number } {
-  if (!(hz > 0)) return { fnum: 0, block: 0 };
-  const sampleRate = YM_CLOCK / YM_SAMPLE_DIVIDER;
-  // f = fnum * sampleRate * 2^(block-1) / 2^20
-  let block = 0;
-  let fnum = (hz * (1 << 20)) / sampleRate / 0.5;
-  while (fnum >= 2048 && block < 7) {
-    fnum /= 2;
-    block += 1;
-  }
-  while (fnum < 1024 && block > 0) {
-    fnum *= 2;
-    block -= 1;
-  }
-  const rounded = Math.round(fnum);
-  return { fnum: Math.max(0, Math.min(2047, rounded)), block };
+  return fnumAt(hz, YM_CLOCK / YM_SAMPLE_DIVIDER);
 }
 
 function fnumChanged(before: number, after: number): boolean {
   const a = fnumFor(before);
   const b = fnumFor(after);
   return a.fnum !== b.fnum || a.block !== b.block;
-}
-
-/**
- * A 0-1 level as total level: seven bits of attenuation, 0.75 dB a step.
- *
- * The finest volume control on this board by a factor of eight, which is what
- * makes an FM part able to swell where a PSG one can only step. Silence is 127
- * rather than a key-off, so a fade need not restart the note.
- */
-export function totalLevelFor(level: number): number {
-  const clamped = level <= 0 ? 0 : level >= 1 ? 1 : level;
-  if (clamped <= 0) return 0x7f;
-  // 0.75 dB a step: 20·log10(level) / 0.75, floored at full attenuation. The
-  // natural log and a constant, because a shared kernel is what makes the
-  // register a browser writes the same one a CLI writes (doc 02 §Determinism).
-  const db = (20 * math.log(clamped)) / LN10;
-  const steps = Math.round(-db / 0.75);
-  return steps < 0 ? 0 : steps > 0x7f ? 0x7f : steps;
 }
 
 /**

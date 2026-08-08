@@ -1519,6 +1519,21 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     | HuC6280 LFO | yes | no — the LFO registers appear only in `binding/pce.ts`'s channel *tag*, never in a write |
     | WonderSwan channel 2's PCM voice | yes | no — nothing above the chip layer drives it |
     | PC Engine direct D/A | yes | no — likewise |
+    | YM2610 SSG noise | yes | no — `binding/neogeo.ts` writes the mixer once, tone on and noise off |
+    | YM2610 ADPCM-A voices 2-6 | yes | no — the *arranger* gives a percussion part one channel |
+
+    Two of those are the Neo Geo's and neither is the binding being lazy. The
+    **SSG noise** is refused deliberately: this console has six sample voices
+    playing recordings of drums, so putting a hi-hat on a shift register would be
+    spending the machine downwards, and not writing `$07` per note is also what
+    leaves the console with no shared register to merge. The **five idle sample
+    voices** are the interesting one, and they are an *arranger* gap rather than a
+    binding one: `plan.ts` assigns one part to one channel, and a General MIDI
+    drum track is one part — so a kit lands on one voice and the other five sit
+    there. Nothing before this console had more than one percussion voice, so the
+    question had never come up. What it needs is for a percussion part to be able
+    to take a *pool* of channels, with simultaneous hits spread across them, which
+    reaches `plan.ts` and `compile.ts` together.
 
     **The first line is the one to do first, and it is bigger than the FM chip.**
     Nothing anywhere in `@demake/audio` produces vibrato *at all* — not through a
