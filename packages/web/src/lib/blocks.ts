@@ -36,6 +36,8 @@ import {
   type Diagnostic,
   type PropertySpec,
   type SlotKind,
+  type SourceList,
+  type SourceRange,
   type SourceSlot,
   type StatementSpec,
   type StatementSpan,
@@ -79,17 +81,33 @@ export function read(text: string, dialect: Dialect): Reading {
 }
 
 /**
- * One piece of a row: connective text, or something you may change.
+ * One piece of a row: connective text, something you may change, or a control
+ * for the part of the statement that repeats.
  *
- * A part with no slot is the grammar's own words — `in`, `then`, a bracket, a
- * comma, a trailing comment — and it is shown rather than hidden, because a rule
- * whose `then` had been replaced by a layout convention would read as a different
+ * `glue` is the grammar's own words — `in`, `then`, a bracket, a comma, a
+ * trailing comment — and it is shown rather than hidden, because a rule whose
+ * `then` had been replaced by a layout convention would read as a different
  * statement from the one in the file.
+ *
+ * `add` and `drop` are the arity of a list, made editable. They are parts rather
+ * than something the row draws at its end because *where* they go is the point:
+ * the ⊖ that takes `paddle2` out of `when ball hits paddle1, paddle2` sits after
+ * `paddle2`, and a rule with two lists in it (`hits a, b from above`) has two
+ * places to add and they mean different things.
  */
-export interface Part {
-  text: string;
-  slot?: SourceSlot;
-}
+export type Part =
+  | { kind: "glue"; text: string }
+  | {
+      kind: "slot";
+      text: string;
+      slot: SourceSlot;
+      /** The list item this belongs to, where it is inside one. */
+      in?: { list: number; item: number };
+    }
+  /** Append an item to the statement's `list`th list. */
+  | { kind: "add"; list: number }
+  /** Take item `item` out of it. Only emitted where the grammar allows it. */
+  | { kind: "drop"; list: number; item: number };
 
 /** One line of the file, as the editor draws it. */
 export type Row =
@@ -175,15 +193,92 @@ export function rowsOf(text: string, reading: Reading): readonly Row[] {
  * with the row it was written beside.
  */
 function partsOf(text: string, span: StatementSpan, lineEnd: number): readonly Part[] {
+  const marks = markersOf(span);
+  const inside = itemsOf(span);
   const parts: Part[] = [];
   let at = span.keywordEnd;
+  let next = 0;
+
+  /** Emit everything up to `to`: the markers that fall in it, then the glue. */
+  const upTo = (to: number): void => {
+    while (next < marks.length && (marks[next] as Marker).at <= to) {
+      const mark = marks[next] as Marker;
+      if (mark.at > at) {
+        parts.push({ kind: "glue", text: text.slice(at, mark.at) });
+        at = mark.at;
+      }
+      parts.push(mark.part);
+      next += 1;
+    }
+    if (to > at) {
+      parts.push({ kind: "glue", text: text.slice(at, to) });
+      at = to;
+    }
+  };
+
   for (const slot of span.slots) {
-    if (slot.start > at) parts.push({ text: text.slice(at, slot.start) });
-    parts.push({ text: text.slice(slot.start, slot.end), slot });
+    upTo(slot.start);
+    const held = inside.get(slot);
+    parts.push({
+      kind: "slot",
+      text: text.slice(slot.start, slot.end),
+      slot,
+      ...(held === undefined ? {} : { in: held }),
+    });
     at = slot.end;
   }
-  if (at < lineEnd) parts.push({ text: text.slice(at, lineEnd) });
+  upTo(lineEnd);
   return parts;
+}
+
+/** A control, and the offset in the statement it belongs after. */
+interface Marker {
+  at: number;
+  part: Part;
+}
+
+/**
+ * Where a statement's add and drop controls go, in source order.
+ *
+ * A ⊖ sits at the end of the item it removes and the ⊕ at the end of the whole
+ * clause, which for an *absent* clause is a single point — `when ball hits
+ * paddle` has a side list of nothing at all, and the ⊕ after `paddle` is how
+ * `from above` is written without typing it.
+ *
+ * The two halves of a positional `(x, y) as (8, 4)` are one list written twice,
+ * so only the first half carries controls: two ⊕s that did the same thing would
+ * read as two different things.
+ */
+function markersOf(span: StatementSpan): readonly Marker[] {
+  const marks: Marker[] = [];
+  span.lists.forEach((list, index) => {
+    if (list.pair !== undefined && list.pair < index) return;
+    list.items.forEach((item, at) => {
+      if (list.items.length > list.min)
+        marks.push({ at: item.end, part: { kind: "drop", list: index, item: at } });
+    });
+    marks.push({ at: list.end, part: { kind: "add", list: index } });
+  });
+  // Stable by offset, so a drop and the add that follows it at the same point —
+  // a one-item clause — come out in that order.
+  return marks
+    .map((mark, order) => ({ mark, order }))
+    .sort((a, b) => a.mark.at - b.mark.at || a.order - b.order)
+    .map(({ mark }) => mark);
+}
+
+/** Which list item each slot sits inside, for the slots that sit inside one. */
+function itemsOf(span: StatementSpan): ReadonlyMap<SourceSlot, { list: number; item: number }> {
+  const held = new Map<SourceSlot, { list: number; item: number }>();
+  span.lists.forEach((list, index) => {
+    list.items.forEach((item, at) => {
+      for (const slot of span.slots) {
+        if (slot.start >= item.start && slot.end <= item.end)
+          held.set(slot, { list: index, item: at });
+      }
+    });
+  });
+  return held;
 }
 
 /**
@@ -207,6 +302,74 @@ export function slotValue(value: string): string {
 /** Write a value into one slot, and change nothing else in the file. */
 export function setSlot(text: string, slot: SourceSlot, value: string): string {
   return text.slice(0, slot.start) + slotValue(value) + text.slice(slot.end);
+}
+
+/** One rewritten range. Two of them at most, and they never overlap. */
+interface Splice {
+  start: number;
+  end: number;
+  text: string;
+}
+
+/** Apply rewrites back to front, so an earlier one cannot move a later one. */
+function spliced(text: string, edits: readonly Splice[]): string {
+  let out = text;
+  for (const edit of [...edits].sort((a, b) => b.start - a.start)) {
+    out = out.slice(0, edit.start) + edit.text + out.slice(edit.end);
+  }
+  return out;
+}
+
+/** Where a new item goes, and what it says. */
+function grown(list: SourceList): Splice {
+  const last = list.items[list.items.length - 1];
+  // An empty clause is written whole — `from above` brings its own `from` — and
+  // one that has items already grows by a separator and a template.
+  if (last === undefined) return { start: list.start, end: list.end, text: list.opener };
+  return { start: last.end, end: last.end, text: list.separator + list.template };
+}
+
+/** What taking item `index` out costs, or nothing if the grammar needs it. */
+function shrunk(list: SourceList, index: number): Splice | undefined {
+  const item = list.items[index];
+  if (item === undefined || list.items.length <= list.min) return undefined;
+  // The last one takes the whole clause with it, which is what makes `from
+  // above` reversible: the word that introduced it goes too.
+  if (list.items.length === 1) return { start: list.start, end: list.end, text: "" };
+  const before = list.items[index - 1];
+  const after = list.items[index + 1];
+  return before === undefined
+    ? { start: item.start, end: (after as SourceRange).start, text: "" }
+    : { start: before.end, end: item.end, text: "" };
+}
+
+/**
+ * The lists an operation touches: the one asked for, and its other half.
+ *
+ * `(x, y) as (8, 4)` is one list of assignments written as two, and the language
+ * says so — `E_ARITY` is what it calls the two drifting apart. So growing one
+ * grows both, in one edit, and a file is never left in the state the error names.
+ */
+function bothHalves(span: StatementSpan, index: number): readonly SourceList[] {
+  const list = span.lists[index];
+  if (list === undefined) return [];
+  const twin = list.pair === undefined ? undefined : span.lists[list.pair];
+  return twin === undefined ? [list] : [list, twin];
+}
+
+/** Append an item to a statement's `index`th list. */
+export function addItem(text: string, span: StatementSpan, index: number): string {
+  const halves = bothHalves(span, index);
+  if (halves.length === 0) return text;
+  return spliced(text, halves.map(grown));
+}
+
+/** Take item `item` out of it — or leave the file alone where it may not go. */
+export function removeItem(text: string, span: StatementSpan, index: number, item: number): string {
+  const halves = bothHalves(span, index);
+  const edits = halves.map((list) => shrunk(list, item));
+  if (edits.length === 0 || edits.some((edit) => edit === undefined)) return text;
+  return spliced(text, edits as Splice[]);
 }
 
 /**

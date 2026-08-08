@@ -324,6 +324,84 @@ test("picks a sprite from the project's own pictures", async ({ page }) => {
   expect(await sourceText(page)).not.toBe(before);
 });
 
+test("gives a rule another target, and takes it away again", async ({ page }) => {
+  await page.goto("/#section=game");
+  await expect(page.locator(".source-editor")).toBeVisible();
+  // Written here so the row is a known one, and so the rule starts with exactly
+  // one target: what this checks is that a *second* is reachable at all.
+  await page
+    .getByLabel("Demotic game source")
+    .fill(
+      "start play\nscene play\ncreate object ball (width 1 cell)\ncreate ball ball1 in play (x 4)\nwhen ball1 hits screenleft then xdirection as 1\n",
+    );
+  await showBlocks(page);
+
+  const rule = page.getByTestId("block-row-4");
+  // Two lists on this row — the targets and the absent `from` clause — so the
+  // one that grows the targets is the first.
+  await rule.locator(".block-add").first().click();
+
+  // The caret lands in the new one, because adding a target and then having to
+  // find it is two operations where the point of the button was that it is one.
+  // Asserted before the source is read: reading it switches to the text view and
+  // back, which is a fresh editor with the focus wherever a fresh editor puts it.
+  await expect(rule.locator('[data-item="0:1"] [data-slot="entity"]')).toBeFocused();
+  expect(lines(await sourceText(page))[4]).toBe(
+    "when ball1 hits screenleft, screenleft then xdirection as 1",
+  );
+  await rule.locator('[data-item="0:1"] [data-slot="entity"]').selectOption("screenright");
+  expect(lines(await sourceText(page))[4]).toBe(
+    "when ball1 hits screenleft, screenright then xdirection as 1",
+  );
+
+  await rule.locator(".block-drop").first().click();
+  expect(lines(await sourceText(page))[4]).toBe("when ball1 hits screenright then xdirection as 1");
+  // And the last one has no ⊖ at all: a rule with nothing to hit is not a rule,
+  // and deleting the row is what the × beside it is for.
+  await expect(rule.locator(".block-drop")).toHaveCount(0);
+});
+
+test("writes a `from` clause that was never in the file", async ({ page }) => {
+  await page.goto("/#section=game");
+  await expect(page.locator(".source-editor")).toBeVisible();
+  await page
+    .getByLabel("Demotic game source")
+    .fill(
+      "start play\nscene play\ncreate object ball (width 1 cell)\ncreate ball ball1 in play (x 4)\nwhen ball1 hits screenleft then xdirection as 1\n",
+    );
+  await showBlocks(page);
+
+  // The second ⊕ on the row is the side clause, which has no items and no `from`
+  // — the whole clause is written by pressing it.
+  const rule = page.getByTestId("block-row-4");
+  await rule.locator(".block-add").nth(1).click();
+  expect(lines(await sourceText(page))[4]).toBe(
+    "when ball1 hits screenleft from above then xdirection as 1",
+  );
+
+  // And down to none again, the word that introduced it goes too.
+  await rule.locator(".block-drop").last().click();
+  expect(lines(await sourceText(page))[4]).toBe("when ball1 hits screenleft then xdirection as 1");
+});
+
+test("gives an object another property, without repeating one it has", async ({ page }) => {
+  await page.goto("/#section=game");
+  await expect(page.locator(".source-editor")).toBeVisible();
+  await page.getByLabel("Demotic game source").fill("start play\nscene play\ncreate object ball\n");
+  await showBlocks(page);
+
+  const declaration = page.getByTestId("block-row-2");
+  // No brackets in the file at all: the first property brings them.
+  await declaration.locator(".block-add").click();
+  expect(lines(await sourceText(page))[2]).toBe("create object ball (x 0)");
+
+  // The second is a property the list does not already set, at its own default —
+  // a fixed one would be `E_DUPLICATE_PROP` on the row it was just added to.
+  await declaration.locator(".block-add").click();
+  expect(lines(await sourceText(page))[2]).toBe("create object ball (x 0, y 0)");
+  await expect(page.getByTestId("block-problems")).toHaveCount(0);
+});
+
 test("shows a problem against the row it is about", async ({ page }) => {
   await page.goto("/#section=game");
   await expect(page.locator(".source-editor")).toBeVisible();

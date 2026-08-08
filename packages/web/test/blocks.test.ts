@@ -21,6 +21,7 @@ import { describe, expect, it } from "vitest";
 import { PROPERTIES } from "@demake/demotic";
 
 import {
+  addItem,
   assetKindOf,
   assignableProperties,
   dialectOf,
@@ -31,6 +32,7 @@ import {
   problemsOf,
   propertyOf,
   read,
+  removeItem,
   removeRow,
   rowsOf,
   setSlot,
@@ -38,6 +40,7 @@ import {
   splitRows,
   templateFor,
   vocabularyOf,
+  type Part,
   type Row,
 } from "../src/lib/blocks.js";
 import { VIEWS, type SourceView } from "../src/lib/views.js";
@@ -64,7 +67,15 @@ function rows(text: string, dialect: "game" | "suite" = "game"): readonly Row[] 
 /** A row's text rebuilt from what the editor draws. */
 function drawn(row: Row): string {
   if (row.kind !== "statement") return row.text;
-  return row.indent + row.keyword + row.parts.map((part) => part.text).join("");
+  return (
+    row.indent + row.keyword + row.parts.map((part) => ("text" in part ? part.text : "")).join("")
+  );
+}
+
+/** Only the parts that hold a value — the ⊕/⊖ controls are not text. */
+function fields(row: Row): readonly Extract<Part, { kind: "slot" }>[] {
+  if (row.kind !== "statement") return [];
+  return row.parts.filter((part): part is Extract<Part, { kind: "slot" }> => part.kind === "slot");
 }
 
 describe("rows", () => {
@@ -112,9 +123,7 @@ describe("rows", () => {
 
   it("offers a slot for every part of a statement a person would change", () => {
     const [row] = rows("create ball ball1 in play (sprite ball.svg, x centerx)\n");
-    const slots = (row as Extract<Row, { kind: "statement" }>).parts
-      .filter((part) => part.slot)
-      .map((part) => [part.slot?.kind, part.text]);
+    const slots = fields(row as Row).map((part) => [part.slot.kind, part.text]);
     expect(slots).toEqual([
       ["class", "ball"],
       ["name", "ball1"],
@@ -132,7 +141,7 @@ describe("edits", () => {
 
   it("changes one slot and no other byte of the file", () => {
     const row = rows(source)[2] as Extract<Row, { kind: "statement" }>;
-    const slot = row.parts.find((part) => part.slot?.kind === "art")?.slot;
+    const slot = fields(row).find((part) => part.slot.kind === "art")?.slot;
     expect(slot).toBeDefined();
     expect(setSlot(source, slot!, "court.svg")).toBe(
       "start title\nscene title\nbackdrop court.svg\n",
@@ -141,7 +150,7 @@ describe("edits", () => {
 
   it("will not let a field split a statement across two lines", () => {
     const row = rows(source)[0] as Extract<Row, { kind: "statement" }>;
-    const slot = row.parts.find((part) => part.slot)?.slot;
+    const slot = fields(row)[0]?.slot;
     expect(setSlot(source, slot!, "play\nscene sneaky")).toBe(
       "start play scene sneaky\nscene title\nbackdrop title.svg\n",
     );
@@ -150,7 +159,7 @@ describe("edits", () => {
   it("will not let a field close the string it is inside", () => {
     const quoted = 'create text prompt (text "press a")\n';
     const row = rows(quoted)[0] as Extract<Row, { kind: "statement" }>;
-    const slot = row.parts.find((part) => part.slot?.kind === "string")?.slot;
+    const slot = fields(row).find((part) => part.slot.kind === "string")?.slot;
     expect(setSlot(quoted, slot!, 'go", visible 0)')).toBe(
       'create text prompt (text "go, visible 0)")\n',
     );
@@ -197,6 +206,186 @@ describe("edits", () => {
     expect(rows(spaced)).toHaveLength(3);
     expect(joinRows(splitRows(spaced).lines, true)).toBe(spaced);
     expect(moveRow(spaced, 2, 0)).toBe("scene title\nstart title\n\n");
+  });
+});
+
+/**
+ * The parts of a statement that repeat.
+ *
+ * This is the half a slot cannot describe. A slot says "this word is a target";
+ * it says nothing about there being any number of them, so an editor built on
+ * slots alone draws exactly the targets already written and offers no way to a
+ * third — which is a rule whose arity was decided by whoever typed the line
+ * first. Every case here is one of those, and the last two are the reasons this
+ * is not simply "splice a comma in": a positional `as` is one list written as
+ * two halves that the language refuses to let drift apart, and a clause that is
+ * *absent* has to bring its own keyword back with it.
+ */
+describe("the parts of a statement that repeat", () => {
+  /** The one statement on a line, with its lists. */
+  function only(text: string): Extract<Row, { kind: "statement" }> {
+    const [row] = rows(text);
+    expect(row?.kind).toBe("statement");
+    return row as Extract<Row, { kind: "statement" }>;
+  }
+
+  /** Every list of a line, as the text of its items. */
+  function items(text: string): string[][] {
+    const row = only(text);
+    return row.span.lists.map((list) => list.items.map((item) => text.slice(item.start, item.end)));
+  }
+
+  it("sees the list in a collision rule, and its sides", () => {
+    // Two lists and not three: `then y as 0` is the bracket-less assignment
+    // form, which is exactly one property by construction.
+    expect(
+      items("when ball hits paddle1, paddle2, screenleft from above, left then y as 0\n"),
+    ).toEqual([
+      ["paddle1", "paddle2", "screenleft"],
+      ["above", "left"],
+    ]);
+  });
+
+  it("adds a target to a rule that has one, and takes it away again", () => {
+    const one = "when ball hits paddle then ydirection as flip\n";
+    const two = addItem(one, only(one).span, 0);
+    expect(two).toBe("when ball hits paddle, screenleft then ydirection as flip\n");
+    expect(removeItem(two, only(two).span, 0, 1)).toBe(one);
+    // And the first is as removable as the second: an item takes the separator
+    // on whichever side of it the separator is.
+    expect(removeItem(two, only(two).span, 0, 0)).toBe(
+      "when ball hits screenleft then ydirection as flip\n",
+    );
+  });
+
+  it("will not take the last target, because a rule needs something to hit", () => {
+    const one = "when ball hits paddle then ydirection as flip\n";
+    expect(removeItem(one, only(one).span, 0, 0)).toBe(one);
+  });
+
+  it("writes a `from` clause that was not there, and takes the word back with it", () => {
+    const bare = "when hero touches ledge then footing.value as 1\n";
+    const sides = only(bare).span.lists.findIndex((list) => list.kind === "side");
+    expect(sides).toBeGreaterThanOrEqual(0);
+    expect(only(bare).span.lists[sides]?.items).toHaveLength(0);
+
+    const narrowed = addItem(bare, only(bare).span, sides);
+    expect(narrowed).toBe("when hero touches ledge from above then footing.value as 1\n");
+
+    const both = addItem(narrowed, only(narrowed).span, sides);
+    expect(both).toBe("when hero touches ledge from above, above then footing.value as 1\n");
+
+    // Down to none, the word that introduced them goes too — otherwise the file
+    // is left saying `from` with nothing after it.
+    expect(removeItem(narrowed, only(narrowed).span, sides, 0)).toBe(bare);
+  });
+
+  it("gives a property list to a `create` that has none, and grows one that has", () => {
+    const bare = "create ball ball1 in play\n";
+    expect(addItem(bare, only(bare).span, 0)).toBe("create ball ball1 in play (x 0)\n");
+
+    // The entry is the first property the list does not already set, at its own
+    // default — so it parses, compiles, and changes nothing until it is typed in.
+    // A fixed one would be `E_DUPLICATE_PROP` on every list that already had it.
+    const one = "create object ball (sprite ball.svg)\n";
+    expect(addItem(one, only(one).span, 0)).toBe("create object ball (sprite ball.svg, x 0)\n");
+    const taken = "create object ball (x 1, y 2)\n";
+    expect(addItem(taken, only(taken).span, 0)).toBe("create object ball (x 1, y 2, width 1)\n");
+  });
+
+  it("moves a name and its value together, because they are one entry", () => {
+    const two = "create object ball (sprite ball.svg, width 1 cell)\n";
+    expect(removeItem(two, only(two).span, 0, 0)).toBe("create object ball (width 1 cell)\n");
+    expect(removeItem(two, only(two).span, 0, 1)).toBe("create object ball (sprite ball.svg)\n");
+  });
+
+  it("keeps a positional `as` in step, because the language refuses to let it drift", () => {
+    const rule = "when hero hits coin then (coin.visible, coins.value) as (0, coins.value + 1)\n";
+    const row = only(rule);
+    const names = row.span.lists.findIndex(
+      (list) => list.kind === "property" && list.pair !== undefined,
+    );
+    expect(names).toBeGreaterThanOrEqual(0);
+
+    // Both halves gain an entry, in one edit: a file that had three names and
+    // two values would be `E_ARITY` and nothing on screen would say why.
+    expect(addItem(rule, row.span, names)).toBe(
+      "when hero hits coin then (coin.visible, coins.value, x) as (0, coins.value + 1, 0)\n",
+    );
+    expect(removeItem(rule, row.span, names, 0)).toBe(
+      "when hero hits coin then (coins.value) as (coins.value + 1)\n",
+    );
+    // And asking the *other* half does the same thing, since it is the same list.
+    const values = row.span.lists[names]?.pair as number;
+    expect(removeItem(rule, row.span, values, 1)).toBe(
+      "when hero hits coin then (coin.visible) as (0)\n",
+    );
+  });
+
+  it("offers a control at the end of each item and one for the clause", () => {
+    const row = only("when ball hits paddle1, paddle2 then ydirection as flip\n");
+    const controls = row.parts.filter((part) => part.kind === "add" || part.kind === "drop");
+    // Two targets, so both may go; the side clause is empty, so it has an add
+    // and no drops; the assignment is a single bare `x as y` and has no list.
+    expect(controls.filter((part) => part.kind === "drop")).toHaveLength(2);
+    expect(controls.filter((part) => part.kind === "add")).toHaveLength(2);
+
+    // A drop sits after the item it removes, which is what makes it readable as
+    // belonging to that item rather than to the row.
+    const order = row.parts.flatMap((part) =>
+      part.kind === "slot" ? [part.text] : part.kind === "drop" ? ["drop"] : [],
+    );
+    expect(order).toEqual([
+      "ball",
+      "hits",
+      "paddle1",
+      "drop",
+      "paddle2",
+      "drop",
+      "ydirection",
+      "flip",
+    ]);
+  });
+
+  it("says which item each field belongs to, so a new one can be typed into", () => {
+    const row = only("when ball hits paddle1, paddle2 then ydirection as flip\n");
+    const held = fields(row).map((part) => [part.text, part.in?.item]);
+    expect(held).toEqual([
+      ["ball", undefined],
+      ["hits", undefined],
+      ["paddle1", 0],
+      ["paddle2", 1],
+      ["ydirection", undefined],
+      ["flip", undefined],
+    ]);
+  });
+
+  it("draws every example game as the line it came from, controls and all", () => {
+    // The reassembly property the whole editor rests on, restated now that a row
+    // holds parts that are not text: a control contributes nothing to the line.
+    for (const text of [PONG.game, QUEST.game]) {
+      const { lines } = splitRows(text);
+      expect(rows(text).map(drawn)).toEqual(lines);
+    }
+  });
+
+  it("leaves a program that parsed still parsing after any single add", () => {
+    // Every list in the library, grown by one. A template that did not parse
+    // would be a button that breaks the file it is in, and the failure would be
+    // a diagnostic on a row the author did not touch.
+    for (const text of [PONG.game, QUEST.game]) {
+      for (const row of rows(text)) {
+        if (row.kind !== "statement") continue;
+        row.span.lists.forEach((_, at) => {
+          const grown = addItem(text, row.span, at);
+          expect(grown, `line ${String(row.line)} list ${String(at)}`).not.toBe(text);
+          expect(
+            read(grown, "game").diagnostics,
+            `line ${String(row.line)} list ${String(at)}: ${grown.split("\n")[row.line - 1] ?? ""}`,
+          ).toEqual([]);
+        });
+      }
+    }
   });
 });
 

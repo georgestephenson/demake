@@ -192,6 +192,11 @@ export function parseTests(source: string): TestFile {
         end: at + text.length,
         keywordEnd: at + keyword.length,
         slots,
+        // No statement in this grammar repeats a part: a suite holds one button,
+        // one scene, one claim per line. The field is here so a caller is written
+        // against `StatementSpan` rather than against whichever of the two
+        // languages it happens to have open.
+        lists: [],
       });
     };
 

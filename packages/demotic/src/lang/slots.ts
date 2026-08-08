@@ -107,6 +107,69 @@ export interface SourceSlot {
   prop?: string;
 }
 
+/** A half-open source range. */
+export interface SourceRange {
+  start: number;
+  end: number;
+}
+
+/**
+ * A part of a statement that repeats: `hits a, b, c`, a property list, `from
+ * above, left`.
+ *
+ * Slots alone describe a statement of **fixed shape** — here are its parts, here
+ * is what may go in each — and half the grammar is not that shape. `when ball
+ * hits paddle1, paddle2` has as many targets as the author wrote, and an editor
+ * that could only fill in the ones already there would be an editor in which a
+ * rule's arity is decided by whoever typed the line first. So the parser records
+ * the repetition it already walked, exactly as it records the slots inside it.
+ *
+ * A list **contains** slots rather than replacing them: every item's own parts
+ * are still in `StatementSpan.slots`, in source order, so the tiling property
+ * holds unchanged and a caller that ignores lists loses only the ability to add
+ * and remove. What this adds is the three offsets that arithmetic needs — where
+ * each item is, where the clause begins, and what goes between two items.
+ *
+ * The four strings are what an edit *writes*, and they are here rather than in
+ * the editor for the reason every other word is: `from above` is the grammar's
+ * spelling of an empty side list gaining its first side, and a page that spelled
+ * it itself would be a second, disagreeing statement of the syntax.
+ */
+export interface SourceList {
+  /** What one item is — the kind its own slot carries. */
+  kind: SlotKind;
+  line: number;
+  /**
+   * The whole clause: the opening keyword or the inside of its brackets, through
+   * to the last item.
+   *
+   * It is **not** `items[0].start`. A `from above, left` clause starts before
+   * `from`, so that removing its last side removes the word that introduced it;
+   * an empty clause has `start === end` at the point where its first item goes.
+   */
+  start: number;
+  end: number;
+  /** Each item's own range, in source order. */
+  items: readonly SourceRange[];
+  /** What goes between two items. */
+  separator: string;
+  /** What a new item says. */
+  template: string;
+  /** What replaces `start`–`end` when an empty clause gains its first item. */
+  opener: string;
+  /** Fewest items the grammar allows — 0 where the whole clause may go. */
+  min: number;
+  /**
+   * Another list of the same statement that gains and loses items with this one.
+   *
+   * The positional form `(x, y) as (8, 4)` is one list of assignments written as
+   * two halves, and `E_ARITY` is what the language says about the two drifting
+   * apart — so adding to one is adding to both. An index into the same
+   * statement's `lists`, and the pairing is recorded on both sides.
+   */
+  pair?: number;
+}
+
 /**
  * One statement, as a row an editor can draw.
  *
@@ -133,6 +196,14 @@ export interface StatementSpan {
   keywordEnd: number;
   /** Its editable parts, in source order and never overlapping. */
   slots: readonly SourceSlot[];
+  /**
+   * The parts of it that repeat, in source order.
+   *
+   * Empty for most statements. A list's items enclose slots that are also in
+   * `slots`, so the two describe the same statement at two grains rather than
+   * partitioning it.
+   */
+  lists: readonly SourceList[];
 }
 
 /**
