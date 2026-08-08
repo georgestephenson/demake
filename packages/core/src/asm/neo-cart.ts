@@ -46,6 +46,9 @@
  *   https://wiki.neogeodev.org/index.php?title=Fix_graphics_format
  * - Neo Geo Development Wiki — 68k program header:
  *   https://wiki.neogeodev.org/index.php?title=68k_program_header
+ * - Terraonion — Neobuilder guide (the `.neo` header's field order and its
+ *   4096-byte length): https://wiki.terraonion.com/index.php/Neobuilder_Guide
+ * - `city41/neosdconv`, `src/buildNeoFile.ts` — the C region's byte interleave.
  */
 
 /** Bytes one 16×16 sprite tile occupies across the C ROM pair. */
@@ -282,9 +285,11 @@ export interface NeoRegions {
  * describes.
  *
  * **The C region is the pair interleaved a byte at a time**, odd ROM at even
- * offsets — the arrangement a 16-bit pair is loaded in. That is the one thing in
- * this file taken from convention rather than from a format description, and it
- * is isolated to {@link interleave} so a correction is one function.
+ * offsets. This was the one thing here taken from convention rather than a
+ * format description, and it has since been checked against a reference
+ * converter — `neosdconv` builds its C region as `interleave(pair, 1)` over
+ * `[...oddData, ...evenData]`, which is a one-byte leaf with the odd ROM landing
+ * on the even offsets. The same arrangement, arrived at independently.
  */
 export function packNeoRom(regions: NeoRegions, options: { name?: string; ngh?: number } = {}) {
   const c = interleave(regions.c1, regions.c2);
@@ -314,7 +319,12 @@ export function packNeoRom(regions: NeoRegions, options: { name?: string; ngh?: 
   return out;
 }
 
-/** Merge a ROM pair byte by byte, the odd one at even offsets. */
+/**
+ * Merge a ROM pair byte by byte, the odd one at even offsets.
+ *
+ * A one-byte leaf, which is what a reference converter uses; a wider one would
+ * produce a container a flash cart reads as scrambled graphics.
+ */
 function interleave(odd: Uint8Array, even: Uint8Array): Uint8Array {
   const length = Math.max(odd.length, even.length);
   const out = new Uint8Array(length * 2);

@@ -30,15 +30,14 @@
  *     odd word. It is set to what can be cited rather than to what is believed,
  *     and either number is far past what one picture asks for.
  *
- * **The colour word's low bits are ambiguous in the sources and are declared
- * conservatively.** Bit 15 is the dark bit and bits 14–12 are per-channel least
- * significant bits over four high bits each, which is five bits a channel — but
- * the same reference also calls bit 15 "a common LSB for the three components",
- * which would make it six. Five is the reading every source agrees on, so that
- * is what is declared; if the finer lattice is confirmed, this is a one-line
- * change and the fit gets strictly better. Writing down the uncertainty rather
- * than hiding it is the `NGP_BUTTON_BITS` rule (AGENTS.md §Gotchas): a machine
- * description that is wrong *and* consistent passes every test there is.
+ * **Five bits a channel is the hardware's precision, not a conservative guess.**
+ * A colour word is bit 15 "dark", bits 14–12 the per-channel least significant
+ * bits, and bits 11–0 four high bits each — and the reference is explicit that
+ * the dark bit is "a common LSB for the 3 components". A *shared* bit cannot be
+ * chosen per channel, so declaring `[6, 6, 6]` would tell the fit it can pick
+ * colours no palette word expresses. What the sixth bit buys is a global
+ * half-step, which is a fact about the whole palette rather than about any
+ * colour in it, and `@demake/neogeo` records why it is left unmodelled.
  */
 import type { ConsoleSpec } from "./types.js";
 export const neogeo = {

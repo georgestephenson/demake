@@ -31,13 +31,15 @@
  *     HUD and the pixel-pinning argument every 8-bit console in the set needs
  *     are absent here the way they are on a Game Boy Advance.
  *
- * **One description here is still unverified and says so**, on the
- * `NGP_BUTTON_BITS` precedent (AGENTS.md §Gotchas): a machine description that
- * is wrong *and* consistent passes every test there is, so the guess is written
- * down rather than hidden. It is the dark bit's role in {@link expandColor}.
- * {@link SPRITE_ORDER_FRONT_TO_BACK} used to be the other, and being a named
- * constant is what made correcting it a one-line change when the reference
- * turned out to say the opposite of the guess.
+ * **Nothing here is a guess any more, and two of the constants record what it
+ * cost to stop guessing.** {@link SPRITE_ORDER_FRONT_TO_BACK} shipped with the
+ * Super Nintendo's convention and the reference says the opposite; being a named
+ * constant carrying its own uncertainty is what made that a one-line correction
+ * rather than archaeology. {@link expandColor}'s dark bit went the other way —
+ * confirmed, and then deliberately *not* modelled, for reasons that file states.
+ * That is the `NGP_BUTTON_BITS` rule paying for itself twice (AGENTS.md
+ * §Gotchas): a machine description that is wrong *and* consistent passes every
+ * test there is, so the way to survive one is to write the doubt down beside it.
  *
  * Sources:
  * - Neo Geo Development Wiki — Sprites: https://wiki.neogeodev.org/index.php?title=Sprites
@@ -119,14 +121,26 @@ export interface Frame {
  * green and blue, and bits 11–0 are their four high bits in that order — so a
  * channel is five bits, assembled high-nibble first.
  *
- * **The dark bit's role is unverified.** The same reference that gives the
- * layout above also calls bit 15 "a common LSB for the three components", which
- * would make each channel six bits rather than five and this function wrong in
- * its low bit. Five is the reading every source agrees on and is what the console
- * spec declares, so it is what is implemented; the alternative is one line here
- * and one in the spec. Treating it as a *darkening* multiplier — the third
- * possible reading — is deliberately not done, because a model that dimmed a
- * colour nothing asked to dim would be inventing hardware.
+ * **The dark bit is confirmed and deliberately not modelled**, which is a
+ * different thing from unverified. The reference's table is explicit — bit 15 is
+ * the "Dark bit, used as a common LSB for the 3 components" — so a channel is
+ * five bits of its own plus a sixth the three *share*.
+ *
+ * Two things follow, and the first is why the console spec declares five bits a
+ * channel rather than six. A shared bit cannot be chosen per channel, so six-bit
+ * independence is precision the hardware does not have: a fit told it had
+ * `[6, 6, 6]` would pick colours no palette word can express. Five is the
+ * *independently choosable* precision and is therefore the honest lattice.
+ *
+ * The second is why this function ignores the bit rather than folding it in.
+ * Its polarity is undocumented, and the one value the hardware pins contradicts
+ * the naive reading: `$400000` must be pure black and is written `$8000` — the
+ * dark bit *set*, every channel zero. As an ordinary least significant bit that
+ * would be one step above black, not black. So the sources fix the bit's
+ * position and not its sense, `encodeColour` writes it as zero for every colour
+ * but that reference, and the sixth of a step it is worth is left out rather
+ * than guessed at — `s-dsp.ts`'s Gaussian interpolation and the YM2612's busy
+ * flag are absent on the same terms.
  */
 export function expandColor(word: number): [number, number, number] {
   const lsbR = (word >> 14) & 1;
