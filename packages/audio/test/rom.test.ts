@@ -95,8 +95,8 @@ function trackFor(consoleId: string): ChipScript {
 }
 
 describe("gb audio cartridge", () => {
-  it("is a valid 32 KiB cartridge with correct checksums", () => {
-    const { bytes } = buildAudioRom(trackFor("dmg"), { title: "BAND" });
+  it("is a valid 32 KiB cartridge with correct checksums", async () => {
+    const { bytes } = await buildAudioRom(trackFor("dmg"), { title: "BAND" });
     expect(bytes.length).toBe(GB_ROM_SIZE);
     let header = 0;
     for (let at = 0x0134; at <= 0x014c; at += 1) {
@@ -112,7 +112,7 @@ describe("gb audio cartridge", () => {
     expect(bytes.subarray(0x0104, 0x0134).every((byte) => byte === 0)).toBe(true);
   });
 
-  it("refuses a console it has no driver for, rather than shipping silence", () => {
+  it("refuses a console it has no driver for, rather than shipping silence", async () => {
     // A Super Nintendo has a driver *inside a game* and none of its own, which
     // is the distinction this refusal exists to keep: `demake build -c snes`
     // puts music in a cartridge and `demake gen --format rom` cannot, and a
@@ -120,10 +120,10 @@ describe("gb audio cartridge", () => {
     // also the near miss — `demake arrange -c snes` writes an `.spc`, which is
     // the same driver and the same schedule in a RAM image rather than a board.
     const script = arrangeScore(parseMidi(bandFixture()), { console: "snes" }).script;
-    expect(() => buildAudioRom(script)).toThrow(/no standalone audio driver backend/);
+    await expect(buildAudioRom(script)).rejects.toThrow(/no standalone audio driver backend/);
   });
 
-  it("names the consoles it can build for", () => {
+  it("names the consoles it can build for", async () => {
     expect(audioRomConsoles()).toEqual(
       expect.arrayContaining(["dmg", "gbc", "nes", "pce", "sms", "gg", "md"]),
     );
@@ -133,8 +133,8 @@ describe("gb audio cartridge", () => {
 describe("nes audio cartridge", () => {
   const built = () => buildAudioRom(trackFor("nes"));
 
-  it("is an NROM cartridge on the smallest board that holds the track", () => {
-    const { bytes, stats, family, suffix } = built();
+  it("is an NROM cartridge on the smallest board that holds the track", async () => {
+    const { bytes, stats, family, suffix } = await built();
     expect(family).toBe("nes");
     expect(suffix).toBe(".nes");
     expect(String.fromCharCode(...bytes.subarray(0, 3))).toBe("NES");
@@ -148,11 +148,11 @@ describe("nes audio cartridge", () => {
     expect(stats.free).toBeGreaterThanOrEqual(0);
   });
 
-  it("boots from a vector rather than an entry point", () => {
+  it("boots from a vector rather than an entry point", async () => {
     // There is no fixed entry address on this CPU, so the last six bytes of the
     // image are what makes the cartridge run at all — and a builder that left
     // them zero would produce something that jumps into the padding.
-    const { bytes, symbols } = built();
+    const { bytes, symbols } = await built();
     const prg = (bytes[4] as number) * 0x4000;
     const at = NES_HEADER_SIZE + prg - 6;
     const read = (index: number) =>
@@ -165,21 +165,21 @@ describe("nes audio cartridge", () => {
     for (const index of [0, 1, 2]) expect(read(index)).toBeGreaterThanOrEqual(0x8000);
   });
 
-  it("refuses a schedule whose clock is not the frame", () => {
+  it("refuses a schedule whose clock is not the frame", async () => {
     // This CPU has no timer a driver can have without burning the DMC channel,
     // so a schedule fitted to anything else is a bug in the timing fit and is
     // named rather than rounded to something playable.
     const script = trackFor("nes");
     const timed = { ...script, driver: { ...script.driver, source: "timer" as const } };
-    expect(() => buildAudioRom(timed)).toThrow(/has no 'timer' clock/);
+    await expect(buildAudioRom(timed)).rejects.toThrow(/has no 'timer' clock/);
   });
 });
 
 describe("pce audio cartridge", () => {
   const built = () => buildAudioRom(trackFor("pce"));
 
-  it("is a HuCard whose boot bank is the one reset maps", () => {
-    const { bytes, family, suffix } = built();
+  it("is a HuCard whose boot bank is the one reset maps", async () => {
+    const { bytes, family, suffix } = await built();
     expect(family).toBe("pce");
     expect(suffix).toBe(".pce");
     expect(PCE_ROM_SIZES).toContain(bytes.length);
@@ -191,13 +191,13 @@ describe("pce audio cartridge", () => {
     expect(reset).toBe(0xe000 + 0); // the first instruction of the boot stub
   });
 
-  it("uploads the waveforms before the clock starts", () => {
+  it("uploads the waveforms before the clock starts", async () => {
     // The failure this exists to catch is a cartridge that is perfect in a
     // register diff and silent on the machine: this chip's wave RAM is only
     // reachable through the register port, so a build that skipped the boot
     // table would play every note through an empty wavetable.
     const script = trackFor("pce");
-    const boot = new AudioRomRunner(script).captureBoot();
+    const boot = (await AudioRomRunner.create(script)).captureBoot();
     expect(boot).toEqual(
       bindingFor("pce")
         .init()
@@ -207,16 +207,16 @@ describe("pce audio cartridge", () => {
     expect(script.ticks[0]!.writes.length).toBeGreaterThan(boot.length);
   });
 
-  it("refuses a schedule whose clock is not the timer", () => {
+  it("refuses a schedule whose clock is not the timer", async () => {
     const script = trackFor("pce");
     const framed = { ...script, driver: { ...script.driver, source: "vblank" as const } };
-    expect(() => buildAudioRom(framed)).toThrow(/has no 'vblank' clock/);
+    await expect(buildAudioRom(framed)).rejects.toThrow(/has no 'vblank' clock/);
   });
 });
 
 describe("sms audio cartridge", () => {
-  it("stamps a header inside the image rather than around it", () => {
-    const { bytes, family, suffix } = buildAudioRom(trackFor("sms"));
+  it("stamps a header inside the image rather than around it", async () => {
+    const { bytes, family, suffix } = await buildAudioRom(trackFor("sms"));
     expect(family).toBe("sms");
     expect(suffix).toBe(".sms");
     expect(SMS_FLAT_ROM_SIZES).toContain(bytes.length);
@@ -231,24 +231,24 @@ describe("sms audio cartridge", () => {
     expect(bytes[SMS_HEADER_OFFSET + 11]).toBe((sum >> 8) & 0xff);
   });
 
-  it("declares which of the two machines it is", () => {
+  it("declares which of the two machines it is", async () => {
     // Not decoration: `@demake/sms` reads this nibble to decide whether it is a
     // Game Gear, exactly as `@demake/dmg` reads the CGB flag — so a Game Gear
     // cartridge stamped as a Master System would pass the tick diff below while
     // playing on the wrong console, with its stereo latch reaching nothing.
-    const region = (script: ChipScript) =>
-      (buildAudioRom(script).bytes[SMS_HEADER_OFFSET + 15] as number) >> 4;
-    expect(region(trackFor("sms"))).toBe(4); // an exported Master System
-    expect(region(trackFor("gg"))).toBe(7); // an international Game Gear
-    expect(new Sms(buildAudioRom(trackFor("gg")).bytes).gameGear).toBe(true);
+    const region = async (script: ChipScript): Promise<number> =>
+      ((await buildAudioRom(script)).bytes[SMS_HEADER_OFFSET + 15] as number) >> 4;
+    expect(await region(trackFor("sms"))).toBe(4); // an exported Master System
+    expect(await region(trackFor("gg"))).toBe(7); // an international Game Gear
+    expect(new Sms((await buildAudioRom(trackFor("gg"))).bytes).gameGear).toBe(true);
   });
 
-  it("places its handlers at the addresses the CPU goes to", () => {
+  it("places its handlers at the addresses the CPU goes to", async () => {
     // There is no vector table on this machine: the Z80 resets to `$0000` and
     // takes a maskable interrupt to `$0038` in mode 1, so these three routines
     // are not pointed at — they are *placed*, by padding the image out to them.
     // A build that emitted them in a different order would still assemble.
-    const { bytes, symbols } = buildAudioRom(trackFor("sms"));
+    const { bytes, symbols } = await buildAudioRom(trackFor("sms"));
     expect(symbols.get("Boot")).toBe(0);
     expect(symbols.get("Irq")).toBe(SMS_IRQ_VECTOR);
     expect(symbols.get("Nmi")).toBe(SMS_NMI_VECTOR);
@@ -258,14 +258,14 @@ describe("sms audio cartridge", () => {
     expect(bytes[SMS_NMI_VECTOR + 1]).toBe(0x45); // retn
   });
 
-  it("ticks once a frame, which is what acknowledging the interrupt buys", () => {
+  it("ticks once a frame, which is what acknowledging the interrupt buys", async () => {
     // The failure this exists to catch is invisible to a register diff: a
     // handler that did not read the VDP's status byte would leave the interrupt
     // pending, re-enter the moment `ei` ran, and perform the whole schedule in a
     // few frames — every write correct, in order, and at ten thousand times the
     // tempo. So the assertion is about the *spacing*, in CPU cycles.
     const script = trackFor("sms");
-    const built = buildAudioRom(script);
+    const built = await buildAudioRom(script);
     const machine = new Sms(built.bytes);
     const at = built.symbols.get("Tick") as number;
     const spans: number[] = [];
@@ -282,15 +282,15 @@ describe("sms audio cartridge", () => {
     for (const span of spans.slice(2)) expect(Math.abs(span - FRAME_CYCLES)).toBeLessThan(200);
   });
 
-  it("refuses a schedule whose clock is not the frame", () => {
+  it("refuses a schedule whose clock is not the frame", async () => {
     // This VDP reloads its line counter outside the active display, so the rates
     // its line interrupt appears to offer are not a tempo a driver can hold.
     const script = trackFor("sms");
     const timed = { ...script, driver: { ...script.driver, source: "timer" as const } };
-    expect(() => buildAudioRom(timed)).toThrow(/has no 'timer' clock/);
+    await expect(buildAudioRom(timed)).rejects.toThrow(/has no 'timer' clock/);
   });
 
-  it("takes the larger board by stepping the data over the header", () => {
+  it("takes the larger board by stepping the data over the header", async () => {
     // The elastic-cartridge rule, and on this console it needs a mechanism: the
     // header is sixteen bytes *inside* the address space, so a schedule too big
     // for 32 KiB has to lay its blocks either side of the hole. Padding the
@@ -311,7 +311,7 @@ describe("sms audio cartridge", () => {
       })),
       loopTick: 0,
     };
-    const built = buildAudioRom(dense);
+    const built = await buildAudioRom(dense);
     expect(built.bytes.length).toBeGreaterThan(SMS_ROM_SIZE);
     expect(SMS_FLAT_ROM_SIZES).toContain(built.bytes.length);
     expect(built.stats.free).toBeGreaterThanOrEqual(0);
@@ -328,7 +328,7 @@ describe("sms audio cartridge", () => {
       );
     }
     // And it still plays, which is the half a layout check cannot see.
-    const { expected, actual } = captureAgainstRom(dense, 120);
+    const { expected, actual } = await captureAgainstRom(dense, 120);
     expect(firstDivergence(expected, actual)).toBeNull();
   });
 });
@@ -336,8 +336,8 @@ describe("sms audio cartridge", () => {
 describe("md audio cartridge", () => {
   const built = () => buildAudioRom(trackFor("md"));
 
-  it("is a cartridge on the smallest board this console shipped that holds it", () => {
-    const { bytes, stats, family, suffix } = built();
+  it("is a cartridge on the smallest board this console shipped that holds it", async () => {
+    const { bytes, stats, family, suffix } = await built();
     expect(family).toBe("md");
     expect(suffix).toBe(".md");
     expect(MD_ROM_SIZES).toContain(bytes.length);
@@ -350,13 +350,13 @@ describe("md audio cartridge", () => {
     expect(sum).toBe(mdChecksum(bytes));
   });
 
-  it("assembles where the cartridge puts it, not at zero", () => {
+  it("assembles where the cartridge puts it, not at zero", async () => {
     // Every absolute reference in this program — the order list, the boot table,
     // each `jsr` — is resolved at assembly time, and the code does not start at
     // the origin: the vectors and the header come first. A build assembled at
     // zero has a perfect symbol table and jumps two hundred bytes short of
     // everything, which is a cartridge that boots and executes its own title.
-    const { bytes, symbols } = built();
+    const { bytes, symbols } = await built();
     const long = (at: number): number =>
       (((bytes[at] as number) << 24) |
         ((bytes[at + 1] as number) << 16) |
@@ -372,7 +372,7 @@ describe("md audio cartridge", () => {
     expect(symbols.get("AudioBoot")).toBeGreaterThan(reset);
   });
 
-  it("performs the chip's initialisation before it starts the clock", () => {
+  it("performs the chip's initialisation before it starts the clock", async () => {
     // Two claims in one, and the second is this console's alone. The chip's own
     // initialisation is performed from a table at boot — so the schedule the ROM
     // promises is shorter than the one it was handed — and it *has* to be,
@@ -380,7 +380,7 @@ describe("md audio cartridge", () => {
     // register the driver's clock lives in. Left at the head of the stream, tick
     // 0 would stop the timer that was about to deliver tick 1.
     const script = trackFor("md");
-    const runner = new AudioRomRunner(script);
+    const runner = await AudioRomRunner.create(script);
     const boot = runner.captureBoot();
     const init = bindingFor("md").init();
     expect(boot.slice(0, init.length)).toEqual(
@@ -409,7 +409,7 @@ describe("md audio cartridge", () => {
     }
   });
 
-  it("keeps the timer's rate rather than the loop's", () => {
+  it("keeps the timer's rate rather than the loop's", async () => {
     // The claim this console's whole clock rests on, and the one a register diff
     // cannot make: a *game* here can only ride the frame, because polling the FM
     // chip's timer from a loop that is also running a game gives the loop's
@@ -417,7 +417,7 @@ describe("md audio cartridge", () => {
     // microseconds, so what it keeps is the timer's — measured in CPU cycles,
     // against the period the schedule's own reload asks for.
     const script = trackFor("md");
-    const runner = new AudioRomRunner(script);
+    const runner = await AudioRomRunner.create(script);
     const at = (runner as unknown as { tickAddress: number }).tickAddress;
     const machine = runner.machine as unknown as { stepInstruction(): number; cpu: { pc: number } };
     const spans: number[] = [];
@@ -435,30 +435,30 @@ describe("md audio cartridge", () => {
     for (const span of spans.slice(2)) expect(Math.abs(span - period)).toBeLessThan(200);
   });
 
-  it("refuses a schedule whose clock is not the timer", () => {
+  it("refuses a schedule whose clock is not the timer", async () => {
     const script = trackFor("md");
     const framed = { ...script, driver: { ...script.driver, source: "vblank" as const } };
-    expect(() => buildAudioRom(framed)).toThrow(/has no 'vblank' clock/);
+    await expect(buildAudioRom(framed)).rejects.toThrow(/has no 'vblank' clock/);
   });
 });
 
 describe("Level A — the ROM writes exactly the schedule", async () => {
-  it.each(audioRomConsoles())("plays an arranged track tick for tick on %s", (consoleId) => {
+  it.each(audioRomConsoles())("plays an arranged track tick for tick on %s", async (consoleId) => {
     const script = trackFor(consoleId);
     const wanted = Math.min(TICKS, script.ticks.length);
     // Against what the ROM *promises* rather than what it was handed, which is
     // the same distinction every game driver's `performed` makes: a console that
     // uploads its waveforms at boot has a shorter tick 0 than the demaker gave
     // it, and the writes are not missing — they happened before the clock did.
-    const { expected, actual } = captureAgainstRom(script, wanted);
+    const { expected, actual } = await captureAgainstRom(script, wanted);
     expect(firstDivergence(expected, actual)).toBeNull();
   });
 
-  it("plays a monophonic track tick for tick", () => {
+  it("plays a monophonic track tick for tick", async () => {
     const script = arrangeScore(parseMidi(scaleFixture()), { console: "dmg" }).script;
     const wanted = Math.min(TICKS, script.ticks.length);
     expect(
-      firstDivergence(script.ticks.slice(0, wanted), captureRomWrites(script, wanted)),
+      firstDivergence(script.ticks.slice(0, wanted), await captureRomWrites(script, wanted)),
     ).toBeNull();
   });
 
@@ -473,7 +473,7 @@ describe("Level A — the ROM writes exactly the schedule", async () => {
       // broken on any of them.
       const script = (await demakeSfx(blipWav(), { console: consoleId })).script;
       expect(script.loopTick).toBe(-1);
-      const runner = new AudioRomRunner(script);
+      const runner = await AudioRomRunner.create(script);
       const captured = runner.capture(runner.performed.ticks.length + 20);
       const total = runner.performed.ticks.length;
       expect(firstDivergence(runner.performed.ticks, captured.slice(0, total))).toBeNull();
@@ -481,12 +481,12 @@ describe("Level A — the ROM writes exactly the schedule", async () => {
     },
   );
 
-  it("returns to the loop point instead of running off the end", () => {
+  it("returns to the loop point instead of running off the end", async () => {
     const script = arrangeScore(parseMidi(scaleFixture()), { console: "dmg" }).script;
     const total = script.ticks.length;
     // Two ticks past the end is enough: the order list runs out exactly there,
     // and where it resumes is the only thing looping can get wrong.
-    const captured = captureRomWrites(script, total + 3);
+    const captured = await captureRomWrites(script, total + 3);
     const after = captured.slice(total);
     const expected = script.ticks.slice(script.loopTick, script.loopTick + after.length);
     expect(firstDivergence(expected, after)).toBeNull();
@@ -495,7 +495,7 @@ describe("Level A — the ROM writes exactly the schedule", async () => {
   it("a one-shot ends in silence and stays there", async () => {
     const script = (await demakeSfx(blipWav(), { console: "dmg" })).script;
     const total = script.ticks.length;
-    const captured = captureRomWrites(script, total + 40);
+    const captured = await captureRomWrites(script, total + 40);
     // The stop block powers every DAC down once, then rests forever. Whatever
     // it writes, nothing may sound again — a note-on after the effect ended
     // would be the failure this exists to catch.
@@ -508,45 +508,47 @@ describe("Level A — the ROM writes exactly the schedule", async () => {
 });
 
 describe("the packed schedule", () => {
-  it("deduplicates repeated blocks and stays inside the cartridge", () => {
+  it("deduplicates repeated blocks and stays inside the cartridge", async () => {
     const script = trackFor("dmg");
     const data = packScript(script);
     expect(data.blocks.length).toBeLessThanOrEqual(data.order.length);
     expect(data.ticks).toBe(script.ticks.length);
-    const built = buildAudioRom(script);
+    const built = await buildAudioRom(script);
     expect(built.stats.code + built.stats.data).toBeLessThanOrEqual(GB_ROM_SIZE);
     expect(built.stats.free).toBeGreaterThan(0);
     // Silence is where the format earns its keep: a bar of nothing is two bytes.
     expect(built.stats.data).toBeLessThan(script.budgets.writes * 2 + script.ticks.length);
   });
 
-  it("emits no rest handling for a schedule that never rests", () => {
+  it("emits no rest handling for a schedule that never rests", async () => {
     const dense: ChipScript = {
       ...trackFor("dmg"),
       ticks: Array.from({ length: 8 }, () => ({ writes: [{ reg: 0x12, value: 0xf0 }] })),
       loopTick: 0,
     };
-    const built = buildAudioRom(dense);
+    const built = await buildAudioRom(dense);
     expect(built.stats.helpers).not.toContain("rests");
     expect(built.symbols.has("TickRest")).toBe(false);
     // And it still plays: the pull is an optimisation, not a behaviour change.
-    expect(firstDivergence(dense.ticks, captureRomWrites(dense, dense.ticks.length))).toBeNull();
+    expect(
+      firstDivergence(dense.ticks, await captureRomWrites(dense, dense.ticks.length)),
+    ).toBeNull();
   });
 
-  it("runs the driver on the timer the schedule asked for", () => {
+  it("runs the driver on the timer the schedule asked for", async () => {
     const script = trackFor("dmg");
-    const built = buildAudioRom(script);
+    const built = await buildAudioRom(script);
     expect(built.stats.ratePpmError).toBe(0);
     expect(built.stats.helpers).toContain(
       script.driver.source === "timer" ? "timer-clock" : "vblank-clock",
     );
   });
 
-  it("keeps ticking after the driver has been running for a while", () => {
+  it("keeps ticking after the driver has been running for a while", async () => {
     // A regression net for the one thing a short capture cannot see: state that
     // drifts. The runner asserts progress itself by refusing to stop early.
     const script = trackFor("dmg");
-    const runner = new AudioRomRunner(script);
+    const runner = await AudioRomRunner.create(script);
     const captured = runner.capture(Math.min(script.ticks.length, 1200));
     expect(captured.length).toBe(Math.min(script.ticks.length, 1200));
   });

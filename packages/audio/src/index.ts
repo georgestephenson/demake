@@ -97,7 +97,6 @@ export {
 export {
   audioRomConsoles,
   buildAudioRom,
-  buildGbAudioRom,
   packScript,
   AudioRomError,
   PackError,

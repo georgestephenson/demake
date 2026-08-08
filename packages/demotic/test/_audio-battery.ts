@@ -1028,179 +1028,217 @@ export function target(id: string): Target {
 }
 
 /**
+ * What a case that *builds* is allowed to take, stated rather than inherited.
+ *
+ * The default twenty seconds was written for a battery whose bindings are all
+ * table lookups, and one console's is not: the Mega Drive's timbre is
+ * **searched** rather than selected (`binding/fm-patch.ts`, doc 17 §Stage 3),
+ * hardware-in-the-loop, because an FM voice is thirty-odd register bits and far
+ * too large a space to pick from a list. Measured on the shooter's theme,
+ * `arrangeScore` takes **8685 ms** there against **9 ms** on a Master System —
+ * so this console's first case spent nineteen of its twenty seconds inside a
+ * search that is the design working, and was a coin toss on a loaded runner.
+ *
+ * Raised for every console rather than one, because a number that only one
+ * target needs is a number the next FM console would have to discover again.
+ * A case that is fast pays nothing for a generous ceiling.
+ */
+const BUILDS_TIMEOUT = 120_000;
+
+/**
  * The register-level battery: what every driver must do, on one machine.
  *
  * Called once per console, from that console's own file.
  */
 export function audioBattery(target: Target): void {
   describe(`a game's music, on ${target.name} hardware`, async () => {
-    it("performs the schedule tick for tick, with nothing preempting it", async () => {
-      const { built, bound } = await build(target, MUSIC_ONLY);
-      const script = bound.driver?.performed.tracks[0];
-      expect(script).toBeDefined();
-      const address = target.tickAddress(built, bound);
-      expect(address).toBeDefined();
+    it(
+      "performs the schedule tick for tick, with nothing preempting it",
+      async () => {
+        const { built, bound } = await build(target, MUSIC_ONLY);
+        const script = bound.driver?.performed.tracks[0];
+        expect(script).toBeDefined();
+        const address = target.tickAddress(built, bound);
+        expect(address).toBeDefined();
 
-      const ticks = 600;
-      const expected = (script as ChipScript).ticks
-        .slice(0, ticks)
-        .map((tick) => observed(target, tick.writes as Write[]));
-      const actual = capture(target, built.bytes, address as number, ticks);
-      expect(firstDivergence(expected, actual)).toBeNull();
-    });
+        const ticks = 600;
+        const expected = (script as ChipScript).ticks
+          .slice(0, ticks)
+          .map((tick) => observed(target, tick.writes as Write[]));
+        const actual = capture(target, built.bytes, address as number, ticks);
+        expect(firstDivergence(expected, actual)).toBeNull();
+      },
+      BUILDS_TIMEOUT,
+    );
 
-    it("performs it identically in a ROM that also has effects in it", async () => {
-      // The run-packed stream and the flat one are two encodings of one schedule,
-      // and the whole point of the run format is that it changes nothing the chip
-      // can see.
-      const { built, bound } = await build(target, WITH_EFFECT);
-      const script = bound.driver?.performed.tracks[0] as ChipScript;
-      const address = target.tickAddress(built, bound);
-      const ticks = 600;
-      const expected = script.ticks
-        .slice(0, ticks)
-        .map((tick) => observed(target, tick.writes as Write[]));
-      expect(firstDivergence(expected, capture(target, built.bytes, address, ticks))).toBeNull();
-    });
+    it(
+      "performs it identically in a ROM that also has effects in it",
+      async () => {
+        // The run-packed stream and the flat one are two encodings of one schedule,
+        // and the whole point of the run format is that it changes nothing the chip
+        // can see.
+        const { built, bound } = await build(target, WITH_EFFECT);
+        const script = bound.driver?.performed.tracks[0] as ChipScript;
+        const address = target.tickAddress(built, bound);
+        const ticks = 600;
+        const expected = script.ticks
+          .slice(0, ticks)
+          .map((tick) => observed(target, tick.writes as Write[]));
+        expect(firstDivergence(expected, capture(target, built.bytes, address, ticks))).toBeNull();
+      },
+      BUILDS_TIMEOUT,
+    );
 
-    it("starts at the top of the schedule, with no silencing in front of it", async () => {
-      const { built, bound } = await build(target, MUSIC_ONLY);
-      const address = target.tickAddress(built, bound);
-      const first = capture(target, built.bytes, address, 1)[0] as Write[];
-      const want = bound.driver?.performed.tracks[0] as ChipScript;
-      expect(show(first)).toBe(
-        show(observed(target, (want.ticks[0] as { writes: Write[] }).writes)),
-      );
-    });
+    it(
+      "starts at the top of the schedule, with no silencing in front of it",
+      async () => {
+        const { built, bound } = await build(target, MUSIC_ONLY);
+        const address = target.tickAddress(built, bound);
+        const first = capture(target, built.bytes, address, 1)[0] as Write[];
+        const want = bound.driver?.performed.tracks[0] as ChipScript;
+        expect(show(first)).toBe(
+          show(observed(target, (want.ticks[0] as { writes: Write[] }).writes)),
+        );
+      },
+      BUILDS_TIMEOUT,
+    );
   });
 
   describe(`an effect borrowing a ${target.name} channel`, async () => {
-    it("plays its own schedule and hands the channel back", async () => {
-      const { built, bound } = await build(target, WITH_EFFECT);
-      const driver = bound.driver as Driver;
-      const effect = driver.performed.effects[0] as ChipScript;
-      const address = target.tickAddress(built, bound);
-      // The press lands at the same *moment* on every machine rather than at the
-      // same tick index: a frame-clocked driver ticks half as often as a Game
-      // Boy's, so a fixed tick number would be a different second of the track.
-      const press = Math.round(120 * target.ratio);
-      const groups = capture(target, built.bytes, address, Math.round(400 * target.ratio), press);
+    it(
+      "plays its own schedule and hands the channel back",
+      async () => {
+        const { built, bound } = await build(target, WITH_EFFECT);
+        const driver = bound.driver as Driver;
+        const effect = driver.performed.effects[0] as ChipScript;
+        const address = target.tickAddress(built, bound);
+        // The press lands at the same *moment* on every machine rather than at the
+        // same tick index: a frame-clocked driver ticks half as often as a Game
+        // Boy's, so a fixed tick number would be a different second of the track.
+        const press = Math.round(120 * target.ratio);
+        const groups = capture(target, built.bytes, address, Math.round(400 * target.ratio), press);
 
-      // The effect's channel, taken from the schedule rather than assumed — the
-      // first write that names one, because a schedule may open with a register
-      // that belongs to no channel (the NES's enable mask does).
-      const owned = channelOfEffect(target, effect);
-      // A fresh tag per group, walked in order over the *whole* group: on a
-      // latching chip the filter cannot be a predicate on one write.
-      const mine = (writes: readonly Write[]) => {
-        const tag = target.tag();
-        return writes.filter((write) => tag(write.reg, write.value, write.chip ?? 0) === owned);
-      };
+        // The effect's channel, taken from the schedule rather than assumed — the
+        // first write that names one, because a schedule may open with a register
+        // that belongs to no channel (the NES's enable mask does).
+        const owned = channelOfEffect(target, effect);
+        // A fresh tag per group, walked in order over the *whole* group: on a
+        // latching chip the filter cannot be a predicate on one write.
+        const mine = (writes: readonly Write[]) => {
+          const tag = target.tag();
+          return writes.filter((write) => tag(write.reg, write.value, write.chip ?? 0) === owned);
+        };
 
-      // Find where the effect started: the first tick carrying its opening writes.
-      const opening = show(mine([...(effect.ticks[0] as { writes: Write[] }).writes]));
-      // At or after the press, not strictly after: the NES driver is serviced in
-      // the same main-loop pass that ran the rule, so the effect's first tick can
-      // land in the very group the button went down in.
-      const start = groups.findIndex(
-        (writes, tick) => tick >= press && show(mine(writes)) === opening,
-      );
-      expect(start, "the effect never reached the chip").toBeGreaterThan(0);
+        // Find where the effect started: the first tick carrying its opening writes.
+        const opening = show(mine([...(effect.ticks[0] as { writes: Write[] }).writes]));
+        // At or after the press, not strictly after: the NES driver is serviced in
+        // the same main-loop pass that ran the rule, so the effect's first tick can
+        // land in the very group the button went down in.
+        const start = groups.findIndex(
+          (writes, tick) => tick >= press && show(mine(writes)) === opening,
+        );
+        expect(start, "the effect never reached the chip").toBeGreaterThan(0);
 
-      // From there, the effect's own channel is exactly what the schedule says —
-      // and nothing else writes to it, which is the preemption working.
-      for (let tick = 0; tick < effect.ticks.length; tick += 1) {
-        const want = show(mine([...(effect.ticks[tick] as { writes: Write[] }).writes]));
-        const got = show(mine((groups[start + tick] ?? []) as Write[]));
-        expect(got, `effect tick ${tick}`).toBe(want);
-      }
-
-      // The music was never stopped: it kept writing its own channels across the
-      // effect. (An effect is a few ticks long, so the window has to be wider than
-      // the effect itself — the music writes when a note changes, not every tick.)
-      const window = groups.slice(start, start + effect.ticks.length + 60).flat();
-      const others = target.tag();
-      const elsewhere = window
-        .map((write) => others(write.reg, write.value, write.chip ?? 0))
-        .filter((channel) => channel !== owned && channel !== 0);
-      expect(elsewhere.length, "the music stopped while the effect played").toBeGreaterThan(0);
-
-      // And it got its channel back: something writes the borrowed channel again
-      // once the effect has released it.
-      const after = mine(groups.slice(start + effect.ticks.length + 1).flat());
-      expect(after.length, "the borrowed channel never came back").toBeGreaterThan(0);
-    });
-
-    it("hands it back holding the music's own registers, not the effect's", async () => {
-      // The sharp half of the previous test. The packed music is a *delta*
-      // stream, so a register the music's own value did not change is a register
-      // the music never states again — and after an effect has borrowed the
-      // channel the chip is holding the effect's value for it. Left alone, the
-      // music's next volume step re-triggers the voice through a register whose
-      // neighbour still carries the effect's pitch, and a Game Boy pulse comes
-      // back a whole tone sharp and rings until the bar ends. So the release has
-      // to replay what the music would have been holding, and this is where that
-      // is checked: not that *something* wrote the channel, but that what the
-      // chip ends up holding is what the schedule says.
-      const { built, bound } = await build(target, WITH_EFFECT);
-      const driver = bound.driver as Driver;
-      const effect = driver.performed.effects[0] as ChipScript;
-      const track = driver.performed.tracks[0] as ChipScript;
-      const owned = channelOfEffect(target, effect);
-      const address = target.tickAddress(built, bound);
-      const press = Math.round(120 * target.ratio);
-      const ticks = Math.round(600 * target.ratio);
-      const groups = capture(target, built.bytes, address, ticks, press);
-
-      // Two walks of the same length: what the chip was left holding for the
-      // borrowed channel, and what the music's schedule says it should. Both tags
-      // and both namers run across the whole stream in order, because a latch is
-      // state that carries through one.
-      const chipTag = target.tag();
-      const chipReg = (target.register ?? defaultRegister)();
-      const musicTag = target.tag();
-      const musicReg = (target.register ?? defaultRegister)();
-      const held = new Map<string, number>();
-      const wanted = new Map<string, number>();
-      const record = (
-        into: Map<string, number>,
-        tag: ChannelTag,
-        name: (write: Write) => string | null,
-        writes: readonly Write[],
-      ): void => {
-        for (const write of writes) {
-          const channels = tag(write.reg, write.value, write.chip ?? 0);
-          const key = name(write);
-          if (key === null || (channels & owned) === 0) continue;
-          // A merged register is not state a voice holds: it is folded from two
-          // shadows, and on the Super Nintendo it is a *pulse* that starts one.
-          // The test above it is what checks a merge; this one is about the
-          // registers the release has to replay.
-          if (write.reg === target.mergeReg) continue;
-          into.set(key, write.value);
+        // From there, the effect's own channel is exactly what the schedule says —
+        // and nothing else writes to it, which is the preemption working.
+        for (let tick = 0; tick < effect.ticks.length; tick += 1) {
+          const want = show(mine([...(effect.ticks[tick] as { writes: Write[] }).writes]));
+          const got = show(mine((groups[start + tick] ?? []) as Write[]));
+          expect(got, `effect tick ${tick}`).toBe(want);
         }
-      };
 
-      const disagreements: string[] = [];
-      for (let tick = 0; tick < ticks && tick < track.ticks.length; tick += 1) {
-        record(held, chipTag, chipReg, (groups[tick] ?? []) as Write[]);
-        record(wanted, musicTag, musicReg, (track.ticks[tick] as { writes: Write[] }).writes);
-        // While the effect is sounding the chip is *meant* to hold its values, so
-        // the window opens once it has let go. It is a few ticks long and the
-        // press lands at `press`; a generous margin keeps this from depending on
-        // exactly which tick the button was seen.
-        if (tick < press + effect.ticks.length + 4) continue;
-        for (const [key, value] of wanted) {
-          if (held.get(key) !== value && disagreements.length < 6) {
-            disagreements.push(
-              `tick ${tick}: ${key} holds ${held.get(key) ?? "nothing"}, the music wants ${value}`,
-            );
+        // The music was never stopped: it kept writing its own channels across the
+        // effect. (An effect is a few ticks long, so the window has to be wider than
+        // the effect itself — the music writes when a note changes, not every tick.)
+        const window = groups.slice(start, start + effect.ticks.length + 60).flat();
+        const others = target.tag();
+        const elsewhere = window
+          .map((write) => others(write.reg, write.value, write.chip ?? 0))
+          .filter((channel) => channel !== owned && channel !== 0);
+        expect(elsewhere.length, "the music stopped while the effect played").toBeGreaterThan(0);
+
+        // And it got its channel back: something writes the borrowed channel again
+        // once the effect has released it.
+        const after = mine(groups.slice(start + effect.ticks.length + 1).flat());
+        expect(after.length, "the borrowed channel never came back").toBeGreaterThan(0);
+      },
+      BUILDS_TIMEOUT,
+    );
+
+    it(
+      "hands it back holding the music's own registers, not the effect's",
+      async () => {
+        // The sharp half of the previous test. The packed music is a *delta*
+        // stream, so a register the music's own value did not change is a register
+        // the music never states again — and after an effect has borrowed the
+        // channel the chip is holding the effect's value for it. Left alone, the
+        // music's next volume step re-triggers the voice through a register whose
+        // neighbour still carries the effect's pitch, and a Game Boy pulse comes
+        // back a whole tone sharp and rings until the bar ends. So the release has
+        // to replay what the music would have been holding, and this is where that
+        // is checked: not that *something* wrote the channel, but that what the
+        // chip ends up holding is what the schedule says.
+        const { built, bound } = await build(target, WITH_EFFECT);
+        const driver = bound.driver as Driver;
+        const effect = driver.performed.effects[0] as ChipScript;
+        const track = driver.performed.tracks[0] as ChipScript;
+        const owned = channelOfEffect(target, effect);
+        const address = target.tickAddress(built, bound);
+        const press = Math.round(120 * target.ratio);
+        const ticks = Math.round(600 * target.ratio);
+        const groups = capture(target, built.bytes, address, ticks, press);
+
+        // Two walks of the same length: what the chip was left holding for the
+        // borrowed channel, and what the music's schedule says it should. Both tags
+        // and both namers run across the whole stream in order, because a latch is
+        // state that carries through one.
+        const chipTag = target.tag();
+        const chipReg = (target.register ?? defaultRegister)();
+        const musicTag = target.tag();
+        const musicReg = (target.register ?? defaultRegister)();
+        const held = new Map<string, number>();
+        const wanted = new Map<string, number>();
+        const record = (
+          into: Map<string, number>,
+          tag: ChannelTag,
+          name: (write: Write) => string | null,
+          writes: readonly Write[],
+        ): void => {
+          for (const write of writes) {
+            const channels = tag(write.reg, write.value, write.chip ?? 0);
+            const key = name(write);
+            if (key === null || (channels & owned) === 0) continue;
+            // A merged register is not state a voice holds: it is folded from two
+            // shadows, and on the Super Nintendo it is a *pulse* that starts one.
+            // The test above it is what checks a merge; this one is about the
+            // registers the release has to replay.
+            if (write.reg === target.mergeReg) continue;
+            into.set(key, write.value);
           }
+        };
+
+        const disagreements: string[] = [];
+        for (let tick = 0; tick < ticks && tick < track.ticks.length; tick += 1) {
+          record(held, chipTag, chipReg, (groups[tick] ?? []) as Write[]);
+          record(wanted, musicTag, musicReg, (track.ticks[tick] as { writes: Write[] }).writes);
+          // While the effect is sounding the chip is *meant* to hold its values, so
+          // the window opens once it has let go. It is a few ticks long and the
+          // press lands at `press`; a generous margin keeps this from depending on
+          // exactly which tick the button was seen.
+          if (tick < press + effect.ticks.length + 4) continue;
+          for (const [key, value] of wanted) {
+            if (held.get(key) !== value && disagreements.length < 6) {
+              disagreements.push(
+                `tick ${tick}: ${key} holds ${held.get(key) ?? "nothing"}, the music wants ${value}`,
+              );
+            }
+          }
+          if (disagreements.length > 0) break;
         }
-        if (disagreements.length > 0) break;
-      }
-      expect(disagreements.join("; ")).toBe("");
-    });
+        expect(disagreements.join("; ")).toBe("");
+      },
+      BUILDS_TIMEOUT,
+    );
 
     it.skipIf(target.mergeReg === null)(
       "leaves the music's own bits alone in the register they share",
@@ -1232,73 +1270,93 @@ export function audioBattery(target: Target): void {
   });
 
   describe(`listening to a running ${target.name} cartridge`, async () => {
-    it("emits audible samples at the delivery rate the page asks for", async () => {
-      // The last link in doc 07's chain: the page plays what the chip emitted, so
-      // what the chip emits from a *running game* has to be real audio. The
-      // stream is `@demake/chip`'s, bit-identical to the offline renderer
-      // (`packages/chip/test/stream.test.ts`), which is what makes the page a
-      // playback device rather than a second implementation of the hardware.
-      const { built } = await build(target, MUSIC_ONLY);
-      const machine = target.boot(built.bytes);
-      const sink = new StreamSink(target.clockHz, { sampleRate: 48000, capacitySeconds: 3 });
-      machine.listen(sink);
-      const FRAMES = 120;
-      for (let frame = 0; frame < FRAMES; frame += 1) machine.runFrame();
+    it(
+      "emits audible samples at the delivery rate the page asks for",
+      async () => {
+        // The last link in doc 07's chain: the page plays what the chip emitted, so
+        // what the chip emits from a *running game* has to be real audio. The
+        // stream is `@demake/chip`'s, bit-identical to the offline renderer
+        // (`packages/chip/test/stream.test.ts`), which is what makes the page a
+        // playback device rather than a second implementation of the hardware.
+        const { built } = await build(target, MUSIC_ONLY);
+        const machine = target.boot(built.bytes);
+        const sink = new StreamSink(target.clockHz, { sampleRate: 48000, capacitySeconds: 3 });
+        machine.listen(sink);
+        const FRAMES = 120;
+        for (let frame = 0; frame < FRAMES; frame += 1) machine.runFrame();
 
-      // A hundred and twenty frames of the *console's* own rate, and that many
-      // seconds of samples: the chip is clocked by the same master clock the CPU
-      // counts in, and a ratio slipped in anywhere here would show up as a tempo
-      // that is not the one the arranger reported. The band is loose by a few
-      // percent because `runFrame` stops at the *next* vertical blank rather than
-      // after an exact number of clocks; a wrong ratio would miss by a factor,
-      // not by three percent.
-      const expected = FRAMES / (target.frameHz ?? 60);
-      const left = new Float32Array(sink.available);
-      const right = new Float32Array(sink.available);
-      const count = sink.read(left, right, left.length);
-      const seconds = count / 48000;
-      expect(seconds).toBeGreaterThan(expected * 0.95);
-      expect(seconds).toBeLessThan(expected * 1.1);
-      expect(sink.dropped).toBe(0);
+        // A hundred and twenty frames of the *console's* own rate, and that many
+        // seconds of samples: the chip is clocked by the same master clock the CPU
+        // counts in, and a ratio slipped in anywhere here would show up as a tempo
+        // that is not the one the arranger reported. The band is loose by a few
+        // percent because `runFrame` stops at the *next* vertical blank rather than
+        // after an exact number of clocks; a wrong ratio would miss by a factor,
+        // not by three percent.
+        const expected = FRAMES / (target.frameHz ?? 60);
+        const left = new Float32Array(sink.available);
+        const right = new Float32Array(sink.available);
+        const count = sink.read(left, right, left.length);
+        const seconds = count / 48000;
+        expect(seconds).toBeGreaterThan(expected * 0.95);
+        expect(seconds).toBeLessThan(expected * 1.1);
+        expect(sink.dropped).toBe(0);
 
-      let peak = 0;
-      for (let i = 0; i < count; i += 1) peak = Math.max(peak, Math.abs(left[i] as number));
-      expect(peak, "the cartridge played silence").toBeGreaterThan(0.05);
-    });
+        let peak = 0;
+        for (let i = 0; i < count; i += 1) peak = Math.max(peak, Math.abs(left[i] as number));
+        expect(peak, "the cartridge played silence").toBeGreaterThan(0.05);
+      },
+      BUILDS_TIMEOUT,
+    );
 
-    it("stays silent when nothing is listening", async () => {
-      // The conformance suites run without a sink, and must pay nothing for it.
-      const { built } = await build(target, MUSIC_ONLY);
-      const machine = target.boot(built.bytes);
-      expect(machine.listening).toBe(false);
-      for (let frame = 0; frame < 10; frame += 1) machine.runFrame();
-      expect(machine.listening).toBe(false);
-    });
+    it(
+      "stays silent when nothing is listening",
+      async () => {
+        // The conformance suites run without a sink, and must pay nothing for it.
+        const { built } = await build(target, MUSIC_ONLY);
+        const machine = target.boot(built.bytes);
+        expect(machine.listening).toBe(false);
+        for (let frame = 0; frame < 10; frame += 1) machine.runFrame();
+        expect(machine.listening).toBe(false);
+      },
+      BUILDS_TIMEOUT,
+    );
   });
 
   describe(`what a ${target.name} game pulls in`, async () => {
-    it("emits no preemption machinery when nothing can preempt", async () => {
-      const { built } = await build(target, MUSIC_ONLY);
-      const helpers = built.stats.audio?.helpers ?? [];
-      expect(helpers).toContain("music-order-walk");
-      expect(helpers.some((name) => name.includes("preemptible"))).toBe(false);
-      expect(helpers).not.toContain(target.mergeHelper);
-    });
+    it(
+      "emits no preemption machinery when nothing can preempt",
+      async () => {
+        const { built } = await build(target, MUSIC_ONLY);
+        const helpers = built.stats.audio?.helpers ?? [];
+        expect(helpers).toContain("music-order-walk");
+        expect(helpers.some((name) => name.includes("preemptible"))).toBe(false);
+        expect(helpers).not.toContain(target.mergeHelper);
+      },
+      BUILDS_TIMEOUT,
+    );
 
-    it("emits no music player in a game that only has effects", async () => {
-      const { built } = await build(target, EFFECT_ONLY);
-      const helpers = built.stats.audio?.helpers ?? [];
-      expect(helpers.some((name) => name.startsWith("sfx-"))).toBe(true);
-      expect(helpers.some((name) => name.startsWith("music-"))).toBe(false);
-      expect(built.stats.audio?.tracks).toBe(0);
-    });
+    it(
+      "emits no music player in a game that only has effects",
+      async () => {
+        const { built } = await build(target, EFFECT_ONLY);
+        const helpers = built.stats.audio?.helpers ?? [];
+        expect(helpers.some((name) => name.startsWith("sfx-"))).toBe(true);
+        expect(helpers.some((name) => name.startsWith("music-"))).toBe(false);
+        expect(built.stats.audio?.tracks).toBe(0);
+      },
+      BUILDS_TIMEOUT,
+    );
 
-    it("pulls the one-shot stop path for an effect and not for a track", async () => {
-      const { built } = await build(target, WITH_EFFECT);
-      const helpers = built.stats.audio?.helpers ?? [];
-      expect(helpers).toContain("sfx-one-shot-stop");
-      expect(helpers).not.toContain("music-one-shot-stop");
-    });
+    it(
+      "pulls the one-shot stop path for an effect and not for a track",
+      async () => {
+        const { built } = await build(target, WITH_EFFECT);
+        const helpers = built.stats.audio?.helpers ?? [];
+        expect(helpers).toContain("sfx-one-shot-stop");
+        expect(helpers).not.toContain("music-one-shot-stop");
+      },
+      BUILDS_TIMEOUT,
+    );
   });
 }
 

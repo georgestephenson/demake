@@ -694,17 +694,37 @@ export class Ym2612 implements ChipModel {
   }
 
   /**
+   * Whether either timer is counting, which is the only state a bus can read.
+   *
+   * A console asks this to decide whether the chip has to be clocked at all when
+   * nothing is rendering ({@link run}). It is not a fact about the audio: a chip
+   * with both timers stopped and no sink attached is a chip whose every change
+   * is invisible.
+   */
+  get timersRunning(): boolean {
+    return this.timerARunning || this.timerBRunning;
+  }
+
+  /**
    * Run the chip for `clocks` master cycles, rendering into `sink` if given.
    *
    * **The sink is optional because a timer is not audio.** Every other chip in
    * this set is write-only, so a model that only advanced while somebody was
    * listening was indistinguishable from one that always did. This chip has a
    * status byte the bus can *read* — two timer overflow flags — and a driver
-   * whose clock is timer A polls exactly that. So a console must clock this chip
-   * whether or not anything is rendering, and the cost of doing so is the point
-   * of the split: without a sink the run costs the same per sample and produces
-   * nothing, which is the chip running with the speakers unplugged rather than
-   * the chip stopped.
+   * whose clock is timer A polls exactly that, so a console has to clock this
+   * chip with the speakers unplugged.
+   *
+   * What it does *not* have to do is clock it when nothing at all is observable,
+   * which is why {@link timersRunning} is exposed beside this. A demade game
+   * never programmes either timer — `binding/md.ts` writes `$27 = 0` at boot and
+   * never again — so on that caller the whole simulation is dead weight, and it
+   * is a fifth of the Mega Drive audio battery's budget rather than a rounding
+   * error. The consequence to know: with no sink and no timer, the envelopes and
+   * phases stop where they were, so a sink attached *later* resumes a chip whose
+   * audio state is stale. Nothing here does that — every console attaches its
+   * sink before it runs — and the alternative is paying for six four-operator
+   * voices nobody can hear.
    */
   run(clocks: number, sink?: SampleSink): void {
     let remaining = clocks;

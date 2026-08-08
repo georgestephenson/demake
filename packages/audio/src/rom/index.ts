@@ -32,27 +32,22 @@ import type { ChipScript } from "../chipscript.js";
 import { bindingFor } from "../binding/registry.js";
 import { SFX_RATE_HZ } from "../sfx/index.js";
 
+// The *only* static import of anything under `rom/` that a family owns, and it
+// deliberately owns nothing: `artifact.ts` is four declarations and no
+// assembler. Each family is reached through an `import()` below, so a visitor
+// downloads the driver for the console they are building and not the other four
+// (doc 07 §The web JS budget). Statically importing one builder here — which is
+// what this file did while it was five `?:` arms — puts that console's whole
+// assembler in the always-loaded bundle, and five of them cost eight kilobytes
+// gzipped of every visitor's payload.
 import {
   AudioRomError,
-  buildGbAudioRom,
   type AudioRomOptions,
   type AudioRomStats,
   type BuiltAudioRom,
-} from "./gb.js";
+} from "./artifact.js";
 
-import { buildNesAudioRom } from "./nes.js";
-import { buildPceAudioRom } from "./pce.js";
-import { buildMdAudioRom } from "./md.js";
-import { buildSmsAudioRom } from "./sms.js";
-
-export {
-  AudioRomError,
-  buildGbAudioRom,
-  buildMdAudioRom,
-  buildNesAudioRom,
-  buildPceAudioRom,
-  buildSmsAudioRom,
-};
+export { AudioRomError };
 export type { AudioRomOptions, AudioRomStats, BuiltAudioRom };
 export {
   buildWscGameAudio,
@@ -316,10 +311,10 @@ const SUFFIXES: Readonly<Record<string, string>> = {
  * carries the console it was fitted to, and building it for another would be a
  * different arrangement, not a different output format.
  */
-export function buildAudioRom(
+export async function buildAudioRom(
   script: ChipScript,
   options: AudioRomOptions = {},
-): BuiltAudioRom & { family: AudioRomFamily; suffix: string } {
+): Promise<BuiltAudioRom & { family: AudioRomFamily; suffix: string }> {
   const spec = getConsole(script.console);
   const family = romFamily(spec.id);
   if (family === undefined) {
@@ -331,18 +326,43 @@ export function buildAudioRom(
         "puts one in a game on every console with a driver.",
     );
   }
-  const built =
-    family === "gb"
-      ? buildGbAudioRom(script, options)
-      : family === "nes"
-        ? buildNesAudioRom(script, bindingFor(spec.id).spec.driver.frameRate, options)
-        : family === "sms"
-          ? buildSmsAudioRom(script, options)
-          : family === "md"
-            ? buildMdAudioRom(script, options)
-            : buildPceAudioRom(script, options);
+  const built = await buildFor(family, spec.id, script, options);
   // A Game Boy Color cartridge with no CGB flag is a DMG cartridge, and the APU
   // is the same on both — so the suffix follows the console the user asked for
   // rather than anything in the header.
   return { ...built, family, suffix: SUFFIXES[spec.id] ?? ".gb" };
+}
+
+/**
+ * Reach one family's builder, and only that one.
+ *
+ * The reason this is a `switch` over `import()` rather than a table is the same
+ * reason `demotic`'s `codegen/registry.ts` is: a table's values would have to be
+ * the modules themselves, which is a static import wearing a lookup's clothes.
+ * Every question this file answers *about* a family — which consoles it serves,
+ * what suffix it takes — is answered from the static descriptions above, so
+ * nothing but an actual build pulls a driver down.
+ */
+async function buildFor(
+  family: AudioRomFamily,
+  consoleId: string,
+  script: ChipScript,
+  options: AudioRomOptions,
+): Promise<BuiltAudioRom> {
+  switch (family) {
+    case "gb":
+      return (await import("./gb.js")).buildGbAudioRom(script, options);
+    case "nes":
+      return (await import("./nes.js")).buildNesAudioRom(
+        script,
+        bindingFor(consoleId).spec.driver.frameRate,
+        options,
+      );
+    case "pce":
+      return (await import("./pce.js")).buildPceAudioRom(script, options);
+    case "sms":
+      return (await import("./sms.js")).buildSmsAudioRom(script, options);
+    case "md":
+      return (await import("./md.js")).buildMdAudioRom(script, options);
+  }
 }

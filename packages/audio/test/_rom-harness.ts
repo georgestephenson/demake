@@ -79,8 +79,19 @@ export class AudioRomRunner {
   private readonly endAddress: number | undefined;
   private current: Capture[] | undefined;
 
-  constructor(script: ChipScript, options: AudioRomOptions = {}) {
-    const built = buildAudioRom(script, options);
+  /**
+   * Build a ROM and wrap it, which is asynchronous because the build is.
+   *
+   * `buildAudioRom` reaches its family through an `import()` so that a console's
+   * driver and the assembler under it are a chunk of their own in the page's
+   * bundle (`rom/index.ts`). A constructor cannot await, so this is where a
+   * runner comes from.
+   */
+  static async create(script: ChipScript, options: AudioRomOptions = {}): Promise<AudioRomRunner> {
+    return new AudioRomRunner(await buildAudioRom(script, options));
+  }
+
+  private constructor(built: Awaited<ReturnType<typeof buildAudioRom>>) {
     this.rom = built.bytes;
     this.performed = built.performed;
     const tick = built.symbols.get("Tick");
@@ -176,12 +187,12 @@ export class AudioRomRunner {
 }
 
 /** The writes a built ROM performs over its first `count` driver ticks. */
-export function captureRomWrites(
+export async function captureRomWrites(
   script: ChipScript,
   count: number,
   options: AudioRomOptions = {},
-): TickWrites[] {
-  return new AudioRomRunner(script, options).capture(count);
+): Promise<TickWrites[]> {
+  return (await AudioRomRunner.create(script, options)).capture(count);
 }
 
 /**
@@ -191,12 +202,12 @@ export function captureRomWrites(
  * asking for the ticks and the capture separately is how a console that strips
  * a boot prefix comes to be compared against the schedule it was handed.
  */
-export function captureAgainstRom(
+export async function captureAgainstRom(
   script: ChipScript,
   count: number,
   options: AudioRomOptions = {},
-): { expected: readonly TickWrites[]; actual: readonly TickWrites[] } {
-  const runner = new AudioRomRunner(script, options);
+): Promise<{ expected: readonly TickWrites[]; actual: readonly TickWrites[] }> {
+  const runner = await AudioRomRunner.create(script, options);
   return { expected: runner.performed.ticks.slice(0, count), actual: runner.capture(count) };
 }
 

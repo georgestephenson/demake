@@ -2536,13 +2536,28 @@ most of the value layer stops being a problem and three new ones appear.
   clock that was about to deliver tick 1. That is the third distinct reason a
   console strips its boot prefix, after "stop an effect powering the chip up
   again" and "make tick 0 packable at all".
-- **The FM chip's timers are bus-visible state, so `@demake/md` clocks it whether
-  or not anything is listening.** Every other chip in the set is write-only,
-  which made "advance only when a sample sink is attached" indistinguishable from
-  "always advance" — until a driver's clock became a register a cartridge _reads_.
-  `packages/md/test/sound.test.ts` is the one place that property is pinned, and
-  the symptom it exists to catch is a cartridge that spins for ever on a flag
-  nothing can set. The PSG keeps the old arrangement, because nothing can read it.
+- **The FM chip's timers are bus-visible state, so `@demake/md` clocks it when
+  anything can _observe_ it.** Every other chip in the set is write-only, which
+  made "advance only when a sample sink is attached" indistinguishable from
+  "always advance" — until a driver's clock became a register a cartridge
+  _reads_. Two things can observe this one: a sink, and a running timer
+  (`Ym2612.timersRunning`), and the condition is both rather than either.
+  Gating on the sink alone leaves a standalone cartridge spinning for ever on a
+  flag nothing can set; gating on nothing charges every _game_ for six
+  four-operator voices no test can hear, because a demade game programmes no
+  timer at all — and that is not a rounding error, it is a fifth of the Mega
+  Drive audio battery's time budget and it turned CI red on the slower of two
+  Node versions. `packages/md/test/sound.test.ts` pins the property; the PSG
+  keeps the old arrangement, because nothing can read it.
+- **And that battery's cases state their own timeout, because one console's
+  binding is a _search_.** `BUILDS_TIMEOUT` in `_audio-battery.ts` is 120 s
+  against a default of 20, and the Mega Drive is why: its timbre is searched
+  hardware-in-the-loop rather than selected (`binding/fm-patch.ts`), so
+  `arrangeScore` takes **8685 ms** on the shooter's theme there against **9 ms**
+  on a Master System. That case was spending nineteen of its twenty seconds
+  inside a search that is the design working, which is a coin toss on a loaded
+  runner rather than a signal. Before optimising anything that battery does,
+  check whether what you are looking at is the FM search.
 
 ### The ARM half
 
@@ -3835,7 +3850,17 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   something builds, and the page's `src/players/` does the same for the emulator
   cores. Chunks are matched to a family **by name**, so a module that
   has to be per-family belongs in a file named after it; anything else counts as
-  always-loaded, which fails loud rather than passing quietly. **The list of
+  always-loaded, which fails loud rather than passing quietly. **There is a third
+  place that has to stay split, and it is `@demake/audio`'s `rom/index.ts`**:
+  `buildAudioRom` reaches each console's cartridge builder through an `import()`
+  for the same reason, because behind each one is a whole CPU's assembler. It
+  was five static imports until the Sega and Mega Drive cartridges landed and
+  put the Z80 and the 68000 in every visitor's bundle — which is what the budget
+  is for. Splitting it took the _Game Boy's_ driver out of there too, where it
+  had been since that feature existed: 328 KB for a visitor against 369 before.
+  The shared shape a dispatch has to name lives in `rom/artifact.ts` and owns no
+  assembler, because importing `BuiltAudioRom` from `gb.ts` would drag that
+  family back in and quietly undo the whole thing. **The list of
   families is `codegen/registry.ts`'s own** — `runtimeFamilies`, plus `familyFor`
   for a chunk named after a console rather than its family, which `nds` is. It
   used to be a copy, and the copy went stale the moment the ARM handhelds landed:
