@@ -18,13 +18,18 @@ import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { PROPERTIES } from "@demake/demotic";
+
 import {
+  assetKindOf,
+  assignableProperties,
   dialectOf,
   insertRow,
   joinRows,
   moveRow,
   paletteFor,
   problemsOf,
+  propertyOf,
   read,
   removeRow,
   rowsOf,
@@ -35,6 +40,7 @@ import {
   vocabularyOf,
   type Row,
 } from "../src/lib/blocks.js";
+import { VIEWS, type SourceView } from "../src/lib/views.js";
 
 /**
  * The example library, read off disk.
@@ -168,6 +174,24 @@ describe("edits", () => {
     );
   });
 
+  it("does nothing to a row index the file no longer has", () => {
+    // The editor holds an index across a render, and a file can shrink under it
+    // — a delete, or a change arriving from the text view. Naming a row that has
+    // gone must be a no-op rather than a splice at some other position.
+    for (const at of [-1, 3, 99]) {
+      expect(moveRow(source, at, 0), `move ${String(at)}`).toBe(source);
+      expect(removeRow(source, at), `remove ${String(at)}`).toBe(source);
+    }
+    // And a destination past the end lands at the end rather than off it.
+    expect(moveRow(source, 0, 99)).toBe("scene title\nbackdrop title.svg\nstart title\n");
+    expect(insertRow(source, 99, "seed 7")).toBe(
+      "start title\nscene title\nbackdrop title.svg\nseed 7\n",
+    );
+    expect(insertRow(source, -1, "seed 7")).toBe(
+      "seed 7\nstart title\nscene title\nbackdrop title.svg\n",
+    );
+  });
+
   it("keeps a blank line, because that is how a game is sectioned", () => {
     const spaced = "start title\n\nscene title\n";
     expect(rows(spaced)).toHaveLength(3);
@@ -234,6 +258,26 @@ describe("what a program calls things", () => {
     expect(vocabulary.entities).toContain("ball1");
   });
 
+  it("takes a name only from the statements that declare one", () => {
+    // A `level` names itself and is neither a scene nor a class, so it must not
+    // turn up in any of the three lists — and a statement with no name slot at
+    // all contributes nothing rather than an empty string.
+    const named = [
+      "scene play",
+      "level cavern from cavern.dmtl",
+      "stream course from a.dmtl 4 wide",
+      "backdrop title.svg",
+      "start play",
+    ].join("\n");
+    const vocabulary = vocabularyOf(named, read(named, "game"));
+    expect(vocabulary.scenes).toEqual(["play"]);
+    expect(vocabulary.classes).toEqual(["number", "text"]);
+    expect(vocabulary.instances).toEqual([]);
+    for (const name of ["cavern", "course", "title.svg", ""]) {
+      expect(vocabulary.entities, name).not.toContain(name);
+    }
+  });
+
   it("still offers them while a line below is half-typed", () => {
     // The whole reason it reads the spans rather than a compile: a file being
     // edited does not compile every second keystroke, and a dropdown that
@@ -285,5 +329,66 @@ describe("what a field may write", () => {
     // And it is exported so the editor can *see* that it did something, rather
     // than a character silently vanishing as it is typed.
     expect(slotValue("press a")).toBe("press a");
+  });
+});
+
+describe("what a field is offered", () => {
+  it("says which kind of file a slot names, and nothing for the rest", () => {
+    // The names are `AssetKind`s so a caller can filter the project by one
+    // directly rather than translating.
+    expect(assetKindOf("art")).toBe("art");
+    expect(assetKindOf("music")).toBe("music");
+    expect(assetKindOf("sound")).toBe("sound");
+    expect(assetKindOf("level")).toBe("level");
+    // A scene is not a file, and neither is anything else the parser marks.
+    for (const kind of ["scene", "entity", "property", "expression", "button"] as const) {
+      expect(assetKindOf(kind), kind).toBeUndefined();
+    }
+  });
+
+  it("finds the property a value belongs to, which decides its control", () => {
+    const slot = { kind: "expression", line: 1, start: 0, end: 1, prop: "sprite" } as const;
+    expect(propertyOf(slot)?.kind).toBe("asset");
+    expect(propertyOf({ ...slot, prop: "text" })?.kind).toBe("text");
+    expect(propertyOf({ ...slot, prop: "x" })?.kind).toBe("number");
+    // A slot that belongs to no property — a scene name, a button — has none,
+    // and a property the registry does not document is not invented.
+    expect(propertyOf({ kind: "scene", line: 1, start: 0, end: 1 })).toBeUndefined();
+    expect(propertyOf({ ...slot, prop: "nonsense" })).toBeUndefined();
+  });
+
+  it("offers every property except the ones that cannot be written", () => {
+    const offered = assignableProperties().map((property) => property.name);
+    // Derived properties are readable and never assignable, so offering one
+    // would be offering `E_UNKNOWN_PROP`.
+    for (const derived of ["centerx", "centery", "left", "right", "top", "bottom"]) {
+      expect(offered, derived).not.toContain(derived);
+    }
+    // Everything else is offered, `createOnly` included: whether *this*
+    // statement is a creation is a question about the row, and `check()`
+    // answers it either way.
+    for (const name of ["x", "y", "speed", "visible", "sprite", "text", "direction"]) {
+      expect(offered, name).toContain(name);
+    }
+    expect(offered).toEqual(PROPERTIES.filter((p) => !p.derived).map((p) => p.name));
+  });
+});
+
+describe("the views a source file has", () => {
+  it("offers the text and the blocks, and no third", () => {
+    // Side by side went: two views earn a split screen when they show different
+    // things, and these show the same thing twice.
+    expect(VIEWS.map((view) => view.id)).toEqual(["text", "blocks"]);
+  });
+
+  it("lists the text first, because it is the default", () => {
+    // The claim the game section makes is that a whole game is sixty readable
+    // lines, and somebody who arrives at a form cannot see that.
+    expect(VIEWS[0]?.id).toBe("text");
+    // Every id is a `SourceView`, so the picker cannot offer a view nothing
+    // renders.
+    const ids: SourceView[] = VIEWS.map((view) => view.id);
+    expect(new Set(ids).size).toBe(VIEWS.length);
+    expect(VIEWS.every((view) => view.label.length > 0)).toBe(true);
   });
 });
