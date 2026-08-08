@@ -210,6 +210,30 @@ const PROFILES: readonly ConsoleProfile[] = [
     romPath: true,
   },
   {
+    // **The widest sprite budget in the table by a factor of three.** Ninety-six
+    // a line against a Super Nintendo's thirty-two and an 8-bit console's eight
+    // — but a sprite here is sixteen pixels wide at its narrowest, so an object
+    // `w` cells wide costs `ceil(w/2)` of them, which is the PC Engine's
+    // arithmetic on a budget six times larger. `E_SPRITE_BUDGET` effectively
+    // stops biting on this console.
+    //
+    // The playfield spends twenty-one of the total on its own strips and the
+    // hardware keeps sprite 0 for itself, so the figure here is what is left for
+    // objects rather than the 381 the LSPC will consider.
+    id: "neogeo",
+    name: "Neo Geo",
+    label: "Neo Geo",
+    screenWidth: 40,
+    screenHeight: 28,
+    rawWidth: 320,
+    rawHeight: 224,
+    cellSize: 8,
+    fps: 59,
+    sprites: { total: 359, perLine: 96, hFlip: true },
+    startButton: "dedicated",
+    romPath: true,
+  },
+  {
     // Two hundred and fifty-six by two hundred and twenty-four, like the Super
     // Nintendo — and unlike every other console here, the sprites are sixteen
     // pixels square at their smallest, so an object costs a quarter of the
