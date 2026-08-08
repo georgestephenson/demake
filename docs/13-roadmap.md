@@ -1520,6 +1520,7 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     | WonderSwan channel 2's PCM voice | yes | no — nothing above the chip layer drives it |
     | PC Engine direct D/A | yes | no — likewise |
     | YM2610 SSG noise | yes | no — `binding/neogeo.ts` writes the mixer once, tone on and noise off |
+    | A Neo Geo borrowed channel's handback | n/a | no — the driver does not replay, beside the Mega Drive's |
     | YM2610 ADPCM-A voices 2-6 | yes | no — the *arranger* gives a percussion part one channel |
 
     Two of those are the Neo Geo's and neither is the binding being lazy. The

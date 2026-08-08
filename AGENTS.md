@@ -738,8 +738,39 @@ six drum voices sit idle**, which is an _arranger_ gap rather than a binding one
 `plan.ts` gives one part one channel and a General MIDI drum track is one part, a
 question no console before this one could raise.
 
-What this console still has no in-game driver for is the Z80 (§How to add a
-console — the answer is per step, not per console).
+**And it has a sound program, which is a cartridge region of its own.**
+`packages/audio/src/rom/neogeo-game.ts` is the eighth generated driver and the
+first that is neither routines a game calls, nor a block a cartridge uploads, nor
+a second binary in shared memory: it is a whole **Z80 program in the M region**, on
+a bus the 68000 cannot see. It boots itself, clocks itself, and a game reaches it
+by storing one byte to `REG_SOUND`. `packages/audio/test/neogeo-driver.test.ts` is
+doc 16's Level A proof for it on its own — every tick's writes, in order, for music
+and for an effect — and `@demake/neogeo`'s `sound.ts` is the machine it runs on.
+
+Four things about it are this console's. **The clock is the chip's own timer and
+the interrupt comes here**, which is the Mega Drive's hardware with the wire the
+other way round: there the line goes to the Z80 so a _game_ polls it from a loop
+that is also running a game, and here the driver _is_ the Z80 and keeps 119.99 Hz
+exactly. **A request is an interrupt rather than a poll**, so asking for a track
+costs one store with no handshake. **A write has to settle** — seventeen chip
+cycles after an address and eighty-three after a datum, which the hardware
+documentation warns is why some homebrew plays in an emulator and not on a board —
+so `neogeoWrite` pads with two `push af`/`pop af` pairs. And **the register is
+latched**, so the channel tag is a factory carrying it and an address byte is
+tagged by the register it is _about to_ latch: that keeps an address and its datum
+in one run, where tagging the address as nobody's would split every register write
+in half.
+
+**Two tags rather than one**, which no console before this needed. Preemption asks
+which of four borrowable channels a run is on; restriction asks which of
+_fourteen_ voices a write belongs to. Numbering only the borrowable ones for both
+calls the other ten "nobody" and keeps an effect's whole opening statement of the
+chip — a sound effect that silences the music every time it fires.
+
+What is still to come is the last step: `demake build -c neogeo` does not yet put
+that program in the cartridge, so a Neo Geo game still traces perfectly and plays
+silently. What it needs is the M and V regions in the `.neo` container and the
+68000's `REG_SOUND` store, and then the shared battery (doc 13 §A5).
 
 Still to come: the remaining Tier 2/3 consoles (each =
 a codegen backend, a ROM harness + toolchain, and a libretro core + DAC
@@ -1019,6 +1050,14 @@ packages/snes/       @demake/snes — a self-hosted Super Nintendo core: a 65816
                      handshake rather than transcribing Nintendo's. Its S-DSP is
                      @demake/chip's, not a second one
 packages/neogeo/     @demake/neogeo — a self-hosted Neo Geo core, and the eleventh.
+                     sound.ts is a whole second computer: a Z80 with its own ROM
+                     on its own bus, a YM2610, and one byte in each direction
+                     between the two processors. The chip is advanced *between*
+                     instructions rather than in a lump — a caller hands over a
+                     frame at a time, and advancing it all at once collapses
+                     hundreds of timer overflows into one flag, which is a driver
+                     playing at whatever rate its caller polls at. The three
+                     clocks divide exactly, so none of it rounds.
                      Its 68000 is @demake/md's rather than a second transcription,
                      on the terms @demake/nds borrows @demake/gba's ARM. **Its
                      boot ROM is ours and it is three lines** — stack pointer from
@@ -1311,6 +1350,16 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
                      I/O page hand it over before anything else is listened to;
                      t6w28.ts is what the *chip* owns, psg.ts's file for a part
                      with two write ports carrying different registers.
+                     The Neo Geo's is neogeo-driver.ts and neogeo-game.ts, and
+                     it is the only one that is a *cartridge region of its own*:
+                     a whole Z80 program in the M region, on a bus the 68000
+                     cannot see, clocked by the chip's own timer and asked for
+                     things by one byte. It is also the only driver with *two*
+                     channel tags — preemption asks which of four borrowable
+                     channels a run is on, restriction which of fourteen voices a
+                     write belongs to — and the only one whose write has to
+                     *settle*, which the hardware documentation warns is why some
+                     homebrew plays in an emulator and not on a board;
                      V30MZ: wsc-driver.ts and wsc-game.ts, and the only driver
                      whose clock is not an interrupt — this cartridge takes none,
                      so it reads the vertical-blank timer's counter and pays what
