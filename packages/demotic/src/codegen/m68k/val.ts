@@ -8,7 +8,7 @@
  * to catch. **Rounding is floor, toward negative infinity, everywhere.**
  *
  * This file is a quarter the size of the Sega's and an eighth of the NES's, and
- * the reason is the whole reason this console is worth a backend: **a 16.16
+ * the reason is the whole reason a 68000 console is cheap to add: **a 16.16
  * value is a register here.** `move.l`, `add.l`, `sub.l`, `neg.l`, `asr.l` and
  * `cmp.l` each do in one instruction what the Z80 does in four and the 6502 in
  * eight, and `cmp.l` sets a signed condition directly rather than leaving one to
@@ -36,7 +36,7 @@
 
 import { eaA, eaAbs, eaD, eaDisp, eaImm, eaInd, type Ea, type Ref } from "@demake/core";
 
-import type { MdCtx } from "./ctx.js";
+import type { M68kCtx } from "./ctx.js";
 
 /** 1.0 in 16.16. */
 export const ONE = 0x10000;
@@ -65,32 +65,32 @@ export function at(address: Ref, offset = 0): Ea {
 }
 
 /** `dst = src`, four bytes. */
-export function copy32(ctx: MdCtx, dst: Ref, src: Ref): void {
+export function copy32(ctx: M68kCtx, dst: Ref, src: Ref): void {
   ctx.asm.move("l", at(src), eaD(0));
   ctx.asm.move("l", eaD(0), at(dst));
 }
 
 /** `dst = value`. */
-export function set32(ctx: MdCtx, dst: Ref, value: number): void {
+export function set32(ctx: M68kCtx, dst: Ref, value: number): void {
   // `clr.l` for zero, which is two bytes shorter and by far the commonest write.
   if ((value | 0) === 0) ctx.asm.clr("l", at(dst));
   else ctx.asm.move("l", eaImm(value >>> 0), at(dst));
 }
 
 /** `dst += src`. */
-export function add32(ctx: MdCtx, dst: Ref, src: Ref): void {
+export function add32(ctx: M68kCtx, dst: Ref, src: Ref): void {
   ctx.asm.move("l", at(src), eaD(0));
   ctx.asm.addTo("l", 0, at(dst));
 }
 
 /** `dst -= src`. */
-export function sub32(ctx: MdCtx, dst: Ref, src: Ref): void {
+export function sub32(ctx: M68kCtx, dst: Ref, src: Ref): void {
   ctx.asm.move("l", at(src), eaD(0));
   ctx.asm.subTo("l", 0, at(dst));
 }
 
 /** `dst += value`, in whichever of the three forms the literal fits. */
-export function addConst32(ctx: MdCtx, dst: Ref, value: number): void {
+export function addConst32(ctx: M68kCtx, dst: Ref, value: number): void {
   const amount = value | 0;
   if (amount === 0) return;
   if (amount >= 1 && amount <= 8) {
@@ -105,19 +105,19 @@ export function addConst32(ctx: MdCtx, dst: Ref, value: number): void {
 }
 
 /** `dst = -dst`. */
-export function neg32(ctx: MdCtx, dst: Ref): void {
+export function neg32(ctx: M68kCtx, dst: Ref): void {
   ctx.asm.neg("l", at(dst));
 }
 
 /** `dst >>= 1`, arithmetic — which is floor division by two. */
-export function asr32(ctx: MdCtx, dst: Ref): void {
+export function asr32(ctx: M68kCtx, dst: Ref): void {
   ctx.asm.move("l", at(dst), eaD(0));
   ctx.asm.asr("l", 1, 0);
   ctx.asm.move("l", eaD(0), at(dst));
 }
 
 /** Branch to `target` when the value at `addr` is zero, or when it is not. */
-export function branchZero32(ctx: MdCtx, addr: Ref, target: string, whenZero = true): void {
+export function branchZero32(ctx: M68kCtx, addr: Ref, target: string, whenZero = true): void {
   ctx.asm.tst("l", at(addr));
   ctx.far(whenZero ? "eq" : "ne", target);
 }
@@ -130,27 +130,27 @@ export function branchZero32(ctx: MdCtx, addr: Ref, target: string, whenZero = t
  * unlike the Z80 version this needs no argument about the operands being
  * clamped; it is simply the comparison the machine has.
  */
-export function branchLess32(ctx: MdCtx, lhs: Ref, rhs: Ref, target: string, whenLess = true) {
+export function branchLess32(ctx: M68kCtx, lhs: Ref, rhs: Ref, target: string, whenLess = true) {
   ctx.asm.move("l", at(lhs), eaD(0));
   ctx.asm.cmp("l", at(rhs), 0);
   ctx.far(whenLess ? "lt" : "ge", target);
 }
 
 /** Branch on equality. */
-export function branchEqual32(ctx: MdCtx, lhs: Ref, rhs: Ref, target: string, whenEqual = true) {
+export function branchEqual32(ctx: M68kCtx, lhs: Ref, rhs: Ref, target: string, whenEqual = true) {
   ctx.asm.move("l", at(lhs), eaD(0));
   ctx.asm.cmp("l", at(rhs), 0);
   ctx.far(whenEqual ? "eq" : "ne", target);
 }
 
 /** Branch to `target` unless the four bytes hold exactly this constant. */
-export function branchUnlessConst32(ctx: MdCtx, addr: Ref, value: number, target: string): void {
+export function branchUnlessConst32(ctx: M68kCtx, addr: Ref, value: number, target: string): void {
   ctx.asm.cmpi("l", value >>> 0, at(addr));
   ctx.far("ne", target);
 }
 
 /** `dst = |dst|`. */
-export function abs32(ctx: MdCtx, dst: Ref): void {
+export function abs32(ctx: M68kCtx, dst: Ref): void {
   const done = ctx.unique("absDone");
   ctx.asm.tst("l", at(dst));
   ctx.far("pl", done);
@@ -166,12 +166,12 @@ export function abs32(ctx: MdCtx, dst: Ref): void {
  * four bytes at the call site for a RAM address plus the call — against the
  * twenty-odd an inlined comparison would take, and there are hundreds of them.
  */
-export function clamp32(ctx: MdCtx, dst: Ref): void {
+export function clamp32(ctx: M68kCtx, dst: Ref): void {
   ctx.asm.lea(at(dst), 0);
   ctx.asm.jsr(ctx.need("Clamp32", emitClamp32));
 }
 
-function emitClamp32(ctx: MdCtx): void {
+function emitClamp32(ctx: M68kCtx): void {
   const { asm } = ctx;
   const notHigh = ctx.unique("clampNotHigh");
   const done = ctx.unique("clampDone");
@@ -191,22 +191,22 @@ function emitClamp32(ctx: MdCtx): void {
 // --- multiply and divide -----------------------------------------------------
 
 /** `dst = floor(dst * src / 65536)`. */
-export function mul32(ctx: MdCtx, dst: Ref, src: Ref): void {
+export function mul32(ctx: M68kCtx, dst: Ref, src: Ref): void {
   callBinary(ctx, dst, src, "Mul32", emitMul32);
 }
 
 /** `dst = floor(dst * 65536 / src)`, and zero when the divisor is zero. */
-export function div32(ctx: MdCtx, dst: Ref, src: Ref): void {
+export function div32(ctx: M68kCtx, dst: Ref, src: Ref): void {
   callBinary(ctx, dst, src, "Div32", emitDiv32);
 }
 
 /** Copy both operands into the helper's workspace, call it, take the result. */
 function callBinary(
-  ctx: MdCtx,
+  ctx: M68kCtx,
   dst: Ref,
   src: Ref,
   name: string,
-  body: (ctx: MdCtx) => void,
+  body: (ctx: M68kCtx) => void,
 ): void {
   const { asm, layout } = ctx;
   copy32(ctx, layout.mathA, dst);
@@ -232,7 +232,7 @@ function callBinary(
  * The 64-bit product cannot overflow: both operands are clamped to ±2^26, so it
  * is below 2^52.
  */
-function emitMul32(ctx: MdCtx): void {
+function emitMul32(ctx: M68kCtx): void {
   const { asm, layout } = ctx;
   const a = layout.mathA;
   const b = layout.mathB;
@@ -336,7 +336,7 @@ function emitMul32(ctx: MdCtx): void {
  * truncate an over-range quotient to the same low thirty-two bits before the
  * clamp sees it.
  */
-function emitDiv32(ctx: MdCtx): void {
+function emitDiv32(ctx: M68kCtx): void {
   const { asm, layout } = ctx;
   const a = layout.mathA;
   const b = layout.mathB;

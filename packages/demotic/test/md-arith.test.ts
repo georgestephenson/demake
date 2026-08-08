@@ -27,7 +27,7 @@ import { describe, expect, it } from "vitest";
 
 import { analyze } from "../src/codegen/analyze.js";
 import { MD_MEMORY, planLayout } from "../src/codegen/layout.js";
-import { MdCtx } from "../src/codegen/md/ctx.js";
+import { M68kCtx } from "../src/codegen/m68k/ctx.js";
 import { CODE_ORIGIN, STACK_TOP } from "../src/codegen/md/emit.js";
 import {
   abs32,
@@ -45,7 +45,7 @@ import {
   neg32,
   set32,
   sub32,
-} from "../src/codegen/md/val.js";
+} from "../src/codegen/m68k/val.js";
 import { compile } from "../src/compile.js";
 import { clampFixed, div, mul, ONE } from "../src/fixed.js";
 import { getProfile } from "../src/profiles.js";
@@ -77,10 +77,10 @@ function read32(machine: Md, address: number): number {
 }
 
 /** Assemble `body` into a cartridge, run it to its spin loop, hand it back. */
-function run(body: (ctx: MdCtx) => void): Md {
+function run(body: (ctx: M68kCtx) => void): Md {
   const analysis = analyze(PROGRAM);
   const layout = planLayout(PROGRAM, analysis, MD_MEMORY);
-  const ctx = new MdCtx(PROGRAM, analysis, layout, getProfile("md"), CODE_ORIGIN);
+  const ctx = new M68kCtx(PROGRAM, analysis, layout, getProfile("md"), CODE_ORIGIN);
   const { asm } = ctx;
 
   asm.label("Start");
@@ -102,7 +102,7 @@ function run(body: (ctx: MdCtx) => void): Md {
 
 /** Run one binary operation over a vector of operand pairs. */
 function binary(
-  emit: (ctx: MdCtx, dst: number, src: number) => void,
+  emit: (ctx: M68kCtx, dst: number, src: number) => void,
   reference: (a: number, b: number) => number,
   vectors: readonly [number, number][],
 ): void {
@@ -310,11 +310,11 @@ describe("the Mega Drive value layer", () => {
     // that never divides ships no divider, because nothing ever asked for one.
     const analysis = analyze(PROGRAM);
     const layout = planLayout(PROGRAM, analysis, MD_MEMORY);
-    const plain = new MdCtx(PROGRAM, analysis, layout, getProfile("md"), CODE_ORIGIN);
+    const plain = new M68kCtx(PROGRAM, analysis, layout, getProfile("md"), CODE_ORIGIN);
     add32(plain, A, B);
     expect(plain.helperNames()).toEqual([]);
 
-    const dividing = new MdCtx(PROGRAM, analysis, layout, getProfile("md"), CODE_ORIGIN);
+    const dividing = new M68kCtx(PROGRAM, analysis, layout, getProfile("md"), CODE_ORIGIN);
     div32(dividing, A, B);
     expect(dividing.helperNames()).toContain("Div32");
   });
@@ -325,7 +325,7 @@ describe("the Mega Drive value layer", () => {
     const build = (): Uint8Array => {
       const analysis = analyze(PROGRAM);
       const layout = planLayout(PROGRAM, analysis, MD_MEMORY);
-      const ctx = new MdCtx(PROGRAM, analysis, layout, getProfile("md"), CODE_ORIGIN);
+      const ctx = new M68kCtx(PROGRAM, analysis, layout, getProfile("md"), CODE_ORIGIN);
       mul32(ctx, A, B);
       div32(ctx, A, B);
       ctx.finish();

@@ -1,5 +1,13 @@
 /**
- * The Mega Drive compilation context.
+ * The 68000 compilation context — the *processor's*, not one console's.
+ *
+ * This directory is to the 68000 what `mos/` is to the 6502: the value layer,
+ * the expression compiler, the rule bodies and the tile walk, shared verbatim by
+ * every console in the set that runs this instruction set. A Mega Drive and a
+ * Neo Geo have nothing in common above it — one is a tilemap machine with four
+ * sub-palettes and the other builds its playfield out of sprite strips and has
+ * 256 — and nothing in dispute below it, which is exactly the line
+ * `codegen/backend.ts` draws.
  *
  * Everything about pooled constants and pulled helpers is `CtxBase`'s, because
  * neither is a property of an instruction set. What this adds is the 68000's own
@@ -7,17 +15,19 @@
  *
  *   - **A branch reaches a rule body but not a program.** `Bcc` takes a
  *     sixteen-bit displacement, which covers any one routine and nothing
- *     further; `jmp` is absolute and always reaches. So {@link MdCtx.far} is one
+ *     further; `jmp` is absolute and always reaches. So {@link M68kCtx.far} is one
  *     instruction for the in-routine case the emitters use constantly, and
- *     {@link MdCtx.farJump} is the two-instruction form for the handful of
+ *     {@link M68kCtx.farJump} is the two-instruction form for the handful of
  *     places that cross the whole program.
  *   - **A pointer is a register with room to spare.** Eight of them, thirty-two
  *     bits wide, so nothing here helps with dereferencing the way the 6502
  *     backend's page-zero pointers have to.
  *
- * There is no per-console question for this backend to answer. The Sega context
- * has `gameGear` and the Game Boy's has `color`, because each of those builds
- * for two machines; this one builds for one.
+ * There is no per-console question in here, and that is the point rather than an
+ * accident: the Sega context has `gameGear` and the Game Boy's has `color`
+ * because each of those builds two machines, and a field like that in *this*
+ * file would be a console leaking into its processor. Anything a Mega Drive
+ * answers differently from a Neo Geo belongs in that console's `emit.ts`.
  */
 
 import { Asm68k, eaAbs, type M68kCC, type Ref } from "@demake/core";
@@ -50,9 +60,9 @@ const OPPOSITE: Readonly<Record<string, Cond>> = {
 };
 
 /** Emits a helper's body. Called once, after the main program. */
-export type MdHelperBody = (ctx: MdCtx) => void;
+export type MdHelperBody = (ctx: M68kCtx) => void;
 
-export class MdCtx extends CtxBase<MdCtx, Asm68k> {
+export class M68kCtx extends CtxBase<M68kCtx, Asm68k> {
   readonly asm: Asm68k;
 
   constructor(
