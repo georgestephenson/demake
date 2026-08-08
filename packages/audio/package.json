@@ -29,6 +29,10 @@
   "devDependencies": {
     "@demake/dmg": "workspace:*",
     "@demake/gba": "workspace:*",
+    "@demake/md": "workspace:*",
+    "@demake/nes": "workspace:*",
+    "@demake/pce": "workspace:*",
+    "@demake/sms": "workspace:*",
     "@demake/snes": "workspace:*"
   }
 }

@@ -7,28 +7,47 @@
  * cartridge that played a different arrangement from the preview would make the
  * schedule oracle report a divergence three layers from its cause.
  *
- * One family builds a *cartridge of its own* today, the Game Boy. Two more CPUs
- * have drivers — the NES's in `nes-game.ts`, the Sega 8-bits' in `sms-game.ts` —
- * but only inside a game, because that is what a cartridge whose only job is one
- * track would need next and not what a game needed. What any of them costs is not
- * hidden: a register encoder (which the binding already is), a driver emitter for
- * its CPU, and a core to prove it in — see doc 16 §The proof.
+ * Five families build a *cartridge of their own* today: the Game Boy, the NES,
+ * the PC Engine, the Sega 8-bits and the Mega Drive. The rest have drivers but
+ * only inside a game, because that is what a game needed and a cartridge whose
+ * only job is one track is a different caller. What any of them costs is no
+ * longer an estimate: the stream player belongs to the *processor* and already
+ * exists for six of them, so what a console adds is a boot sequence, a clock and
+ * a cartridge wrapper — which is the whole of the difference between `gb.ts`,
+ * `nes.ts`, `pce.ts`, `sms.ts` and `md.ts`, two of which share a player and one
+ * of which covers two machines.
+ *
+ * **A standalone cartridge is not a game with the game taken out**, and the last
+ * of them is where that stops being a turn of phrase. On the Mega Drive a game
+ * can only have the frame, because the FM chip's timer interrupt goes to the Z80
+ * and a game polling it would be reading the status byte once per pass of a loop
+ * that is also running a game. A cartridge whose loop does nothing else polls it
+ * every few microseconds, so it keeps the timer's rate exactly — which is why
+ * `resolveMdClock` and `resolveMdAudioClock` refuse *opposite* sources.
  */
 
 import { getConsole } from "@demake/core";
 
 import type { ChipScript } from "../chipscript.js";
+import { bindingFor } from "../binding/registry.js";
 import { SFX_RATE_HZ } from "../sfx/index.js";
 
+// The *only* static import of anything under `rom/` that a family owns, and it
+// deliberately owns nothing: `artifact.ts` is four declarations and no
+// assembler. Each family is reached through an `import()` below, so a visitor
+// downloads the driver for the console they are building and not the other four
+// (doc 07 §The web JS budget). Statically importing one builder here — which is
+// what this file did while it was five `?:` arms — puts that console's whole
+// assembler in the always-loaded bundle, and five of them cost eight kilobytes
+// gzipped of every visitor's payload.
 import {
   AudioRomError,
-  buildGbAudioRom,
   type AudioRomOptions,
   type AudioRomStats,
   type BuiltAudioRom,
-} from "./gb.js";
+} from "./artifact.js";
 
-export { AudioRomError, buildGbAudioRom };
+export { AudioRomError };
 export type { AudioRomOptions, AudioRomStats, BuiltAudioRom };
 export {
   buildWscGameAudio,
@@ -65,7 +84,26 @@ export {
  * four Game Boy channels are the same `gb-apu`, and an SM83 cartridge is no use
  * to it. A driver is a CPU's, so the machine is what decides.
  */
-const DRIVERS: Readonly<Record<string, "gb">> = { dmg: "gb", gbc: "gb", gb: "gb" };
+const DRIVERS: Readonly<Record<string, AudioRomFamily>> = {
+  dmg: "gb",
+  gbc: "gb",
+  gb: "gb",
+  nes: "nes",
+  pce: "pce",
+  sms: "sms",
+  gg: "sms",
+  md: "md",
+};
+
+/**
+ * The driver families a standalone cartridge can be built with.
+ *
+ * Five, over four stream players: the NES and the PC Engine share
+ * `mos-player.ts` because a HuC6280 *is* a 6502, and the two Sega 8-bits share
+ * `sms-driver.ts` because a Game Gear *is* a Master System — so what a family is
+ * here is a boot sequence, a clock and a cartridge wrapper rather than a driver.
+ */
+export type AudioRomFamily = "gb" | "nes" | "pce" | "sms" | "md";
 
 /**
  * The clock a *game's* driver rides on each chip that has one.
@@ -96,12 +134,14 @@ const GAME_CLOCKS: Readonly<Record<string, "timer" | "frame">> = {
   // two streams share one clock with the picture, and the vertical blank is what
   // a demade cartridge already takes.
   t6w28: "frame",
-  // The YM2612 *has* a programmable timer, and `mdBinding.fitRate` will offer it
-  // to a standalone track. A game cannot have it: on this board the chip's
-  // interrupt line goes to the Z80, not to the 68000, so a game's driver would
-  // have to poll the status byte from its main loop — which is a clock whose
-  // rate is the loop's rather than the timer's, and therefore not a clock at
-  // all. The picture's interrupt is the one this CPU actually gets.
+  // The YM2612 *has* a programmable timer, and `mdBinding.fitRate` offers it to a
+  // standalone track — which `rom/md.ts` now takes, so this entry is genuinely
+  // about a game rather than about the hardware. On this board the chip's
+  // interrupt line goes to the Z80, not to the 68000, so a driver has to poll the
+  // status byte from its main loop. A cartridge whose loop does nothing else
+  // polls it every few microseconds and keeps the timer's rate exactly; a game's
+  // loop is also running a game, so what it would keep is the loop's rate. The
+  // picture's interrupt is the one *this* caller actually gets.
   ym2612: "frame",
   // The HuC6280 has a timer of its own — seven bits of reload at master ÷ 3 ÷
   // 1024 — and nothing else in a demade cartridge uses it, so this console gets
@@ -239,7 +279,7 @@ export function gameAudioConsoles(): readonly string[] {
 /** Console ids `--format rom` can build an audio cartridge for. */
 export function audioRomConsoles(): string[] {
   const out: string[] = [];
-  for (const id of ["dmg", "gbc", "gb"]) {
+  for (const id of Object.keys(DRIVERS)) {
     try {
       if (romFamily(id)) out.push(id);
     } catch {
@@ -250,9 +290,19 @@ export function audioRomConsoles(): string[] {
 }
 
 /** The driver family a console's audio hardware resolves to, or `undefined`. */
-function romFamily(consoleId: string): "gb" | undefined {
+function romFamily(consoleId: string): AudioRomFamily | undefined {
   return getConsole(consoleId).audio === undefined ? undefined : DRIVERS[consoleId];
 }
+
+/** The file a built cartridge takes, which the console rather than the chip decides. */
+const SUFFIXES: Readonly<Record<string, string>> = {
+  gbc: ".gbc",
+  nes: ".nes",
+  pce: ".pce",
+  sms: ".sms",
+  gg: ".gg",
+  md: ".md",
+};
 
 /**
  * Build a cartridge that plays this schedule on its own console.
@@ -261,22 +311,58 @@ function romFamily(consoleId: string): "gb" | undefined {
  * carries the console it was fitted to, and building it for another would be a
  * different arrangement, not a different output format.
  */
-export function buildAudioRom(
+export async function buildAudioRom(
   script: ChipScript,
   options: AudioRomOptions = {},
-): BuiltAudioRom & { family: "gb"; suffix: string } {
+): Promise<BuiltAudioRom & { family: AudioRomFamily; suffix: string }> {
   const spec = getConsole(script.console);
   const family = romFamily(spec.id);
-  if (family !== "gb") {
+  if (family === undefined) {
     throw new AudioRomError(
       "E_DRIVER_UNSUPPORTED",
-      `there is no audio driver backend for ${spec.name} yet`,
-      "the Game Boy family is the one that boots today (doc 16 §The proof); `demake render` plays any console's schedule exactly.",
+      `there is no standalone audio driver backend for ${spec.name} yet`,
+      `${audioRomConsoles().join(", ")} boot today (doc 16 §The proof); ` +
+        "`demake render` plays any console's schedule exactly, and `demake build` " +
+        "puts one in a game on every console with a driver.",
     );
   }
-  const built = buildGbAudioRom(script, options);
+  const built = await buildFor(family, spec.id, script, options);
   // A Game Boy Color cartridge with no CGB flag is a DMG cartridge, and the APU
   // is the same on both — so the suffix follows the console the user asked for
   // rather than anything in the header.
-  return { ...built, family, suffix: spec.id === "gbc" ? ".gbc" : ".gb" };
+  return { ...built, family, suffix: SUFFIXES[spec.id] ?? ".gb" };
+}
+
+/**
+ * Reach one family's builder, and only that one.
+ *
+ * The reason this is a `switch` over `import()` rather than a table is the same
+ * reason `demotic`'s `codegen/registry.ts` is: a table's values would have to be
+ * the modules themselves, which is a static import wearing a lookup's clothes.
+ * Every question this file answers *about* a family — which consoles it serves,
+ * what suffix it takes — is answered from the static descriptions above, so
+ * nothing but an actual build pulls a driver down.
+ */
+async function buildFor(
+  family: AudioRomFamily,
+  consoleId: string,
+  script: ChipScript,
+  options: AudioRomOptions,
+): Promise<BuiltAudioRom> {
+  switch (family) {
+    case "gb":
+      return (await import("./gb.js")).buildGbAudioRom(script, options);
+    case "nes":
+      return (await import("./nes.js")).buildNesAudioRom(
+        script,
+        bindingFor(consoleId).spec.driver.frameRate,
+        options,
+      );
+    case "pce":
+      return (await import("./pce.js")).buildPceAudioRom(script, options);
+    case "sms":
+      return (await import("./sms.js")).buildSmsAudioRom(script, options);
+    case "md":
+      return (await import("./md.js")).buildMdAudioRom(script, options);
+  }
 }

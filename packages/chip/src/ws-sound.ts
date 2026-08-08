@@ -14,7 +14,7 @@
  * {@link NdsSpu} is handed the Nintendo DS's. It is also why the base must be
  * sixty-four-byte aligned and below `$4000`: those are the bits the register has.
  *
- * Three more things are worth knowing before touching this file:
+ * Four more things are worth knowing before touching this file:
  *
  *   - **Volume is four bits a side and it is linear.** No envelope, no global
  *     attenuator on the wavetable path, and no decibel table — a level is a
@@ -29,12 +29,20 @@
  *   - **A channel's own enable is in one shared register.** `$90` carries four
  *     enable bits and the three mode bits, so it is the byte two streams both
  *     write and the one a driver has to merge (doc 16 §`NR51` is merged).
+ *   - **Channel two can stop being a wavetable.** `$90` bit 5 turns it into a
+ *     direct D/A: `$89` stops being two volume nibbles and becomes an eight-bit
+ *     sample the chip holds until the next write, and `$94` supplies the only
+ *     level it has — full, half or silent, per side. So this voice is a
+ *     *sample player* on hardware whose other three channels cannot be one, and
+ *     it costs a channel rather than adding one.
  *
- * Deliberately absent, and each one a gap rather than a decision: **channel
- * two's PCM voice** (`$90` bit 5 and the volume at `$94` — stored and inert, so
- * a write is kept rather than dropped), the **Hyper Voice** stage the colour
- * models add, and the **readable output registers** at `$96`–`$9B`, which
- * nothing a demade cartridge does reads.
+ * Deliberately absent, and neither is a hardware fact this file disbelieves: the
+ * **Hyper Voice** stage, which is a WonderSwan Color addition on ports of its
+ * own (`$6A`, `$6B`, `$95`) rather than a mode of this chip; and the
+ * **readable output registers** at `$96`–`$9B`, which no reference this project
+ * could reach describes and which no model it could compare against implements.
+ * This model has no `read` at all, so there is nothing for them to be absent
+ * from.
  *
  * Sources:
  * - WSdev wiki — Sound: https://ws.nesdev.org/wiki/Sound
@@ -61,6 +69,7 @@ export const WS_WAVE_BYTES = WS_WAVE_CHANNEL_BYTES * 4;
 
 /** Channels the chip has, and the ones with a generator of their own. */
 export const WS_SOUND_CHANNELS = 4;
+export const WS_VOICE_CHANNEL = 1;
 export const WS_SWEEP_CHANNEL = 2;
 export const WS_NOISE_CHANNEL = 3;
 
@@ -94,6 +103,7 @@ export const WS_SOUND_REG = {
   CH4_FREQ_HIGH: 0x87,
   /** Left volume in the high nibble, right in the low one. */
   CH1_VOLUME: 0x88,
+  /** The same, until `$90` bit 5 makes the whole byte a PCM sample instead. */
   CH2_VOLUME: 0x89,
   CH3_VOLUME: 0x8a,
   CH4_VOLUME: 0x8b,
@@ -108,7 +118,7 @@ export const WS_SOUND_REG = {
   CONTROL: 0x90,
   /** Speaker and headphone enable, and the speaker's attenuation. */
   OUTPUT: 0x91,
-  /** Channel two's PCM volume: stored and inert (§Deliberately absent). */
+  /** Channel two's PCM level: two bits a side, and the voice's only volume. */
   VOICE_VOLUME: 0x94,
 } as const;
 
@@ -123,6 +133,14 @@ interface Channel {
   enabled: boolean;
   left: number;
   right: number;
+  /**
+   * The volume register's whole byte, which channel two's PCM voice reads.
+   *
+   * Kept beside the two nibbles rather than instead of them, because the mode
+   * bit that decides which reading applies is in a *different* register and may
+   * be written either side of this one.
+   */
+  volumeByte: number;
   readIndex: number;
 }
 
@@ -136,6 +154,7 @@ function newChannel(): Channel {
     enabled: false,
     left: 0,
     right: 0,
+    volumeByte: 0,
     readIndex: 0,
   };
 }
@@ -172,11 +191,12 @@ export class WsSound implements ChipModel {
   private ram: Uint8Array;
 
   /**
-   * Channel two's PCM voice, stored and inert.
+   * Channel two's PCM voice: whether it is on, and the four bits of level.
    *
-   * Kept rather than dropped, on the YM2612's three gaps' terms (AGENTS.md
-   * §Iron rules): the hardware has it, nothing here plays it, and a test can say
-   * so. Public for exactly that.
+   * Public because they are the two pieces of this chip's state a caller may
+   * legitimately want to inspect — the mode lives in the register two streams
+   * share, so "is channel two a voice right now" is a question a driver's own
+   * merge has to be able to answer.
    */
   voiceEnabled = false;
   voiceVolume = 0;
@@ -224,6 +244,7 @@ export class WsSound implements ChipModel {
       const channel = this.channels[port - WS_SOUND_REG.CH1_VOLUME] as Channel;
       channel.left = (byte >> 4) & 0x0f;
       channel.right = byte & 0x0f;
+      channel.volumeByte = byte;
       return;
     }
     switch (port) {
@@ -347,6 +368,17 @@ export class WsSound implements ChipModel {
     let right = 0;
     for (const [index, channel] of this.channels.entries()) {
       if (!channel.enabled) continue;
+      if (index === WS_VOICE_CHANNEL && this.voiceEnabled) {
+        // Eight bits against the wavetable path's four times four, which lands
+        // a voice at full level slightly *louder* than a channel at volume
+        // fifteen — as it is on the hardware, where the two share one mixer.
+        // The channel's divider keeps running underneath; only what is heard
+        // changes, so switching the mode off mid-note resumes the waveform
+        // where it would have been rather than where it was left.
+        left += voiceLevel(channel.volumeByte, (this.voiceVolume >> 2) & 0x03);
+        right += voiceLevel(channel.volumeByte, this.voiceVolume & 0x03);
+        continue;
+      }
       // Four bits centred at eight: the sample is unsigned and the chip subtracts
       // the midpoint, so a flat waveform of eight is silence rather than a click.
       const signed = this.sampleOf(index, channel) - 8;
@@ -366,4 +398,25 @@ export class WsSound implements ChipModel {
 /** The chip steps a waveform sample every `2048 - divider` clocks. */
 function divider(frequency: number): number {
   return 2048 - (frequency & 0x7ff);
+}
+
+/**
+ * One side of the PCM voice, from its sample byte and that side's two bits.
+ *
+ * The two bits are not a two-bit number: the higher one is full level and the
+ * lower one is half, and full wins — so `3` and `2` sound the same and only `0`
+ * is silence. Halving happens *before* the midpoint is taken away, because the
+ * chip halves the unsigned byte it was handed, which is why the two branches
+ * subtract different numbers rather than sharing one and scaling after.
+ *
+ * The two models this project could compare against disagree about which bit of
+ * each pair is which, so this follows the newer one; the choice is only audible
+ * on a value of one or two, and never on the three or the zero a driver setting
+ * a level would write.
+ */
+function voiceLevel(sample: number, bits: number): number {
+  const byte = sample & 0xff;
+  if ((bits & 0x02) !== 0) return byte - 0x80;
+  if ((bits & 0x01) !== 0) return (byte >> 1) - 0x40;
+  return 0;
 }

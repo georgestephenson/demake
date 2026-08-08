@@ -16,47 +16,48 @@ columns are [doc 03](03-console-matrix.md); the plan for the empty cells is
 | **emulator** | The ROM's framebuffer is compared against the DAC reference byte for byte in a headless core (doc 10). This is what *supported* means here. |
 | **game** | `demake build` compiles a `.dmt` into a cartridge for this console, proven against the reference interpreter tick for tick. |
 | **music/sfx** | `demake arrange`, `demake sfx` and `demake render` demake audio for this console's sound hardware. |
+| **audio ROM** | `demake gen <schedule> --format rom` builds a cartridge whose only job is that schedule. |
 | **in-game audio** | A generated driver plays that audio inside a `demake build` cartridge, at this tick rate. |
 
 ## Tier 1
 
-| Console | id | family | art | data | ROM | emulator | game | music/sfx | in-game audio |
-|---|---|---|---|---|---|---|---|---|---|
-| Game Boy | `dmg` | `gb` | yes | `bin` `asm` `c` | RGBDS | SameBoy | `gb` | yes | 120 Hz |
-| Game Boy Advance | `gba` | `gba` | yes | `bin` `asm` `c` | GNU ARM binutils | mGBA | `gba` | yes | 128 Hz |
-| Game Boy Color | `gbc` | `gb` | yes | `bin` `asm` `c` | RGBDS | SameBoy | `gb` | yes | 120 Hz |
-| Sega Mega Drive / Sega Genesis | `md` | `md` | yes | `bin` `asm` `c` | GNU m68k binutils | genesis-plus-gx | `md` | yes | 59.92 Hz |
-| Nintendo DS | `nds` | `nds` | yes | `bin` `asm` `c` | GNU ARM binutils | DeSmuME | `gba` | yes | 120 Hz |
-| Nintendo Entertainment System / Family Computer | `nes` | `nes` | yes | `bin` `asm` `c` | cc65 | fceumm | `nes` | yes | 60.1 Hz |
-| Sega Master System | `sms` | `sms` | yes | `bin` `asm` `c` | WLA-DX | genesis-plus-gx | `sms` | yes | 59.92 Hz |
-| Super Nintendo Entertainment System / Super Famicom | `snes` | `snes` | yes | `bin` `asm` `c` | WLA-DX | snes9x | `snes` | yes | 125 Hz |
+| Console | id | family | art | data | ROM | emulator | game | music/sfx | audio ROM | in-game audio |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Game Boy | `dmg` | `gb` | yes | `bin` `asm` `c` | RGBDS | SameBoy | `gb` | yes | yes | 120 Hz |
+| Game Boy Advance | `gba` | `gba` | yes | `bin` `asm` `c` | GNU ARM binutils | mGBA | `gba` | yes | — | 128 Hz |
+| Game Boy Color | `gbc` | `gb` | yes | `bin` `asm` `c` | RGBDS | SameBoy | `gb` | yes | yes | 120 Hz |
+| Sega Mega Drive / Sega Genesis | `md` | `md` | yes | `bin` `asm` `c` | GNU m68k binutils | genesis-plus-gx | `md` | yes | yes | 59.92 Hz |
+| Nintendo DS | `nds` | `nds` | yes | `bin` `asm` `c` | GNU ARM binutils | DeSmuME | `gba` | yes | — | 120 Hz |
+| Nintendo Entertainment System / Family Computer | `nes` | `nes` | yes | `bin` `asm` `c` | cc65 | fceumm | `nes` | yes | yes | 60.1 Hz |
+| Sega Master System | `sms` | `sms` | yes | `bin` `asm` `c` | WLA-DX | genesis-plus-gx | `sms` | yes | yes | 59.92 Hz |
+| Super Nintendo Entertainment System / Super Famicom | `snes` | `snes` | yes | `bin` `asm` `c` | WLA-DX | snes9x | `snes` | yes | — | 125 Hz |
 
 ## Tier 2
 
-| Console | id | family | art | data | ROM | emulator | game | music/sfx | in-game audio |
-|---|---|---|---|---|---|---|---|---|---|
-| Sega Game Gear | `gg` | `sms` | yes | `bin` `asm` `c` | WLA-DX | genesis-plus-gx | `sms` | yes | 59.92 Hz |
-| Neo Geo | `neogeo` | `neogeo` | yes | `bin` `asm` `c` | — | — | — | — | — |
-| Neo Geo Pocket | `ngp` | `ngp` | yes | `bin` `asm` `c` | — | — | — | yes | — |
-| Neo Geo Pocket Color | `ngpc` | `ngpc` | yes | `bin` `asm` `c` | — | — | `ngpc` | yes | 59.95 Hz |
-| PC Engine / TurboGrafx-16 | `pce` | `pce` | yes | `bin` `asm` `c` | WLA-DX | beetle-pce-fast | `pce` | yes | 120 Hz |
-| WonderSwan | `ws` | `ws` | yes | `bin` `asm` `c` | — | — | `wsc` | yes | 75.47 Hz |
-| WonderSwan Color | `wsc` | `wsc` | yes | `bin` `asm` `c` | NASM | beetle-wswan | `wsc` | yes | 75.47 Hz |
+| Console | id | family | art | data | ROM | emulator | game | music/sfx | audio ROM | in-game audio |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Sega Game Gear | `gg` | `sms` | yes | `bin` `asm` `c` | WLA-DX | genesis-plus-gx | `sms` | yes | yes | 59.92 Hz |
+| Neo Geo | `neogeo` | `neogeo` | yes | `bin` `asm` `c` | — | — | — | — | — | — |
+| Neo Geo Pocket | `ngp` | `ngp` | yes | `bin` `asm` `c` | — | — | — | yes | — | — |
+| Neo Geo Pocket Color | `ngpc` | `ngpc` | yes | `bin` `asm` `c` | — | — | `ngpc` | yes | — | 59.95 Hz |
+| PC Engine / TurboGrafx-16 | `pce` | `pce` | yes | `bin` `asm` `c` | WLA-DX | beetle-pce-fast | `pce` | yes | yes | 120 Hz |
+| WonderSwan | `ws` | `ws` | yes | `bin` `asm` `c` | — | — | `wsc` | yes | — | 75.47 Hz |
+| WonderSwan Color | `wsc` | `wsc` | yes | `bin` `asm` `c` | NASM | beetle-wswan | `wsc` | yes | — | 75.47 Hz |
 
 ## Tier 3
 
-| Console | id | family | art | data | ROM | emulator | game | music/sfx | in-game audio |
-|---|---|---|---|---|---|---|---|---|---|
-| Tiger Game.com | `gamecom` | `mono-misc` | yes | `bin` `asm` `c` | — | — | — | — | — |
-| Mega Duck / Cougar Boy | `megaduck` | `gb` | yes | `bin` `asm` `c` | — | — | `gb` | yes | 120 Hz |
-| Pokémon Mini | `pokemini` | `mono-misc` | yes | `bin` `asm` `c` | — | — | — | — | — |
-| Sega SG-1000 | `sg1000` | `sg1000` | yes | `bin` `asm` `c` | WLA-DX | genesis-plus-gx | — | yes | — |
-| Watara Supervision / QuickShot Supervision | `supervision` | `mono-misc` | yes | `bin` `asm` `c` | — | — | — | — | — |
-| Virtual Boy | `vb` | `vb` | yes | `bin` `asm` `c` | — | — | — | — | — |
+| Console | id | family | art | data | ROM | emulator | game | music/sfx | audio ROM | in-game audio |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Tiger Game.com | `gamecom` | `mono-misc` | yes | `bin` `asm` `c` | — | — | — | — | — | — |
+| Mega Duck / Cougar Boy | `megaduck` | `gb` | yes | `bin` `asm` `c` | — | — | `gb` | yes | — | 120 Hz |
+| Pokémon Mini | `pokemini` | `mono-misc` | yes | `bin` `asm` `c` | — | — | — | — | — | — |
+| Sega SG-1000 | `sg1000` | `sg1000` | yes | `bin` `asm` `c` | WLA-DX | genesis-plus-gx | — | yes | — | — |
+| Watara Supervision / QuickShot Supervision | `supervision` | `mono-misc` | yes | `bin` `asm` `c` | — | — | — | — | — | — |
+| Virtual Boy | `vb` | `vb` | yes | `bin` `asm` `c` | — | — | — | — | — | — |
 
 ## Totals
 
 - **21** consoles have a spec, so all 21 do art.
 - **12** build a display ROM; **12** of those are proven pixel-perfect in an emulator.
 - **14** compile a Demotic game.
-- **16** demake music and sound effects; **14** play it from inside a game.
+- **16** demake music and sound effects; **14** play it from inside a game, and **7** build a cartridge whose only job is one schedule.

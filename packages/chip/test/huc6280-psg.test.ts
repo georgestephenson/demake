@@ -22,6 +22,8 @@ import {
   HUC6280_PSG_CLOCK_HZ,
   HUC6280_PSG_REG as REG,
   HUC6280_WAVE_SAMPLES,
+  LFO_MODULATOR,
+  LFO_TARGET,
 } from "../src/huc6280-psg.js";
 import { renderSchedule, type ScheduleTick } from "../src/mix.js";
 import type { RegisterWrite } from "../src/types.js";
@@ -224,14 +226,155 @@ describe("the HuC6280 PSG", () => {
     expect(rms(right, right.length >> 2)).toBeLessThan(1e-3);
   });
 
-  it("stores the LFO's registers and does nothing with them", () => {
-    // A gap the model states out loud rather than dropping: channels one and two
-    // can modulate each other's frequency and nothing here does it, so the
-    // writes are kept and closing it is a few lines (AGENTS.md §Iron rules).
+  it("stores the LFO's two registers where a caller can read them", () => {
     const psg = new Huc6280Psg();
     psg.write(REG.LFO_FREQ, 0x42);
     psg.write(REG.LFO_CONTROL, 0x03);
     expect(psg.lfoFrequency).toBe(0x42);
     expect(psg.lfoControl).toBe(0x03);
+  });
+});
+
+/**
+ * The LFO, which on this chip is a *channel* rather than an oscillator.
+ *
+ * Every case here is one that would pass on a model that stored the registers
+ * and ignored them, or on one that wired the pair the other way round — so each
+ * asserts a consequence rather than a setting. What makes them checkable at all
+ * is that a modulator held at a constant sample is an ordinary detune: the pitch
+ * moves by a predictable number of divider steps and can simply be measured.
+ */
+describe("the HuC6280 PSG's LFO", () => {
+  /**
+   * Channel two, uploaded with one flat level and running.
+   *
+   * A flat waveform makes the modulation a constant offset, which is what turns
+   * "does the LFO reach the pitch" into a frequency this test can name. The
+   * divider is the slowest available so the modulator cannot step during the
+   * window measured.
+   */
+  function modulator(level: number): RegisterWrite[] {
+    return [
+      ...upload(
+        LFO_MODULATOR,
+        Array.from({ length: HUC6280_WAVE_SAMPLES }, () => level),
+      ),
+      ...play(LFO_MODULATOR, 0, 0),
+    ];
+  }
+
+  /** What the carrier's pitch comes out as under a given LFO setting. */
+  function pitchUnder(control: number, level: number, divider = 254): number {
+    const pcm = renderSchedule(
+      new Huc6280Psg(),
+      hold(
+        [
+          { reg: REG.GLOBAL, value: 0xff },
+          ...modulator(level),
+          { reg: REG.LFO_FREQ, value: 1 },
+          { reg: REG.LFO_CONTROL, value: control },
+          ...upload(LFO_TARGET, SQUARE),
+          ...play(LFO_TARGET, divider),
+        ],
+        90,
+      ),
+      RATE,
+    );
+    return frequencyOf(pcm.channels[0] as Float32Array, pcm.sampleRate);
+  }
+
+  it("adds channel two's sample to channel one's divider, centred at sixteen", () => {
+    // A modulator parked at the midpoint detunes nothing, which is the same
+    // convention the output stage uses and the reason a flat waveform is silence.
+    const divider = 254;
+    expect(pitchUnder(0x01, 16, divider)).toBeCloseTo(HUC6280_PSG_CLOCK_HZ / (32 * divider), -1);
+    // Depth 1 shifts by nothing, so a sample eight above the midpoint adds eight
+    // to the divider — a *lower* note, because the divider is a period.
+    expect(pitchUnder(0x01, 24, divider)).toBeCloseTo(
+      HUC6280_PSG_CLOCK_HZ / (32 * (divider + 8)),
+      -1,
+    );
+  });
+
+  it("shifts the depth by two bits a step, so the setting is not a multiplier", () => {
+    // Depths one, two and three shift by 0, 2 and 4 — which is 1x, 4x and 16x
+    // rather than the 1x, 2x, 3x a reader expects from "depth".
+    const divider = 254;
+    for (const [control, scale] of [
+      [0x01, 1],
+      [0x02, 4],
+      [0x03, 16],
+    ] as const) {
+      expect(pitchUnder(control, 20, divider)).toBeCloseTo(
+        HUC6280_PSG_CLOCK_HZ / (32 * (divider + 4 * scale)),
+        -1,
+      );
+    }
+  });
+
+  it("leaves the pitch alone when the depth is zero", () => {
+    const divider = 254;
+    expect(pitchUnder(0x00, 31, divider)).toBeCloseTo(HUC6280_PSG_CLOCK_HZ / (32 * divider), -1);
+  });
+
+  it("holds the modulator where it stands when bit 7 is set, rather than off", () => {
+    // The distinction the halt bit exists for: the LFO stops *moving* but its
+    // last sample is still the detune, so a halted modulator is a frozen pitch
+    // bend and not a return to the written one. Which means a halt with a
+    // modulator parked away from the midpoint sounds like neither of the two
+    // things a reader would guess.
+    const divider = 254;
+    expect(pitchUnder(0x83, 20, divider)).toBeCloseTo(HUC6280_PSG_CLOCK_HZ / (32 * divider), -1);
+  });
+
+  it("multiplies the modulator's own divider by the frequency register", () => {
+    // The LFO rate is the product of two registers rather than either one, so
+    // doubling `$08` halves the sweep — which is the whole reason a driver has
+    // to think about channel two's divider even when it is not a note.
+    //
+    // A square modulator makes the carrier alternate between two pitches, so
+    // counting how often it changes *is* the sweep rate: a model that ignored
+    // `$08` would report the same count both times.
+    const flips = (lfoFrequency: number): number => {
+      const pcm = renderSchedule(
+        new Huc6280Psg(),
+        hold(
+          [
+            { reg: REG.GLOBAL, value: 0xff },
+            ...upload(LFO_MODULATOR, SQUARE),
+            ...play(LFO_MODULATOR, 256, 0),
+            { reg: REG.LFO_FREQ, value: lfoFrequency },
+            { reg: REG.LFO_CONTROL, value: 0x01 },
+            ...upload(LFO_TARGET, SQUARE),
+            ...play(LFO_TARGET, 100),
+          ],
+          60,
+        ),
+        RATE,
+      );
+      const samples = pcm.channels[0] as Float32Array;
+      const windows = 60;
+      const span = Math.floor(samples.length / windows);
+      const pitches: number[] = [];
+      for (let index = 0; index < windows; index += 1) {
+        pitches.push(
+          frequencyOf(samples.subarray(index * span, (index + 1) * span), pcm.sampleRate),
+        );
+      }
+      const mean = pitches.reduce((sum, value) => sum + value, 0) / pitches.length;
+      let count = 0;
+      for (let index = 1; index < pitches.length; index += 1) {
+        const before = (pitches[index - 1] as number) - mean;
+        const after = (pitches[index] as number) - mean;
+        if (before <= 0 && after > 0) count += 1;
+      }
+      return count;
+    };
+    const fast = flips(55);
+    const slow = flips(220);
+    expect(fast).toBeGreaterThan(4);
+    // Four times the multiplier is a quarter the sweep, allowing for the window
+    // count being a coarse ruler at the slow end.
+    expect(slow).toBeLessThan(fast / 2);
   });
 });

@@ -49,10 +49,13 @@ write that follows it — and the answer is the same machinery again.
 The web app's audio sections are live over the same engine, the browser's `.vgm`,
 sidecar, WAV and cartridge are byte-identical to the CLI's (doc 07 §The audio
 sections), and the ROM pane plays whichever chip the running cartridge has. What
-is not built: the remaining chips (the handhelds), a *standalone* audio
-cartridge for anything but the Game Boy, driver backends for the remaining
-consoles, `bin`/`asm`/`c` emit, Level B sample comparison, and the lossy
-encoders.
+is not built: the remaining chips (the handhelds), a *standalone* audio cartridge
+for the consoles that still have none (the Game Boy, the **NES**, the **PC
+Engine**, both **Sega 8-bits** and the **Mega Drive** build one; every other
+console with a driver plays it only from inside a game, and
+[`console-support.md`](console-support.md)'s **audio ROM** column is where that
+is stated rather than here), driver backends for the remaining consoles,
+`bin`/`asm`/`c` emit, Level B sample comparison, and the lossy encoders.
 
 **And a sixth driver, on a console whose second device is not a chip.** `demake
 build -c gba` emits an ARM player, and it is the first one that has to *compute*
@@ -105,9 +108,14 @@ machine). Three things had to exist and each generalised rather than special-cas
 - **A chip model for the OPN2.** Six four-operator voices, eight algorithms, the
   hardware's own log-sine and exponential ROM tables, envelopes with key scaling,
   detune, feedback, per-voice stereo and the channel-6 DAC — integer and
-  table-driven like everything else here. Three parts are stored and inert and
-  each is a gap rather than a decision: the LFO's pitch modulation, SSG-EG, and
-  channel 3's per-operator frequency mode.
+  table-driven like everything else here. The three parts that were stored and
+  inert are now modelled: the LFO's pitch modulation, the SSG-EG envelope modes,
+  and channel 3's four-pitch mode with the timer-driven key-on that rides on it.
+  None of the three is reachable through a register the Mega Drive binding
+  writes, so closing them changed no cartridge's audio by a byte — which is the
+  point of doing it before a binding wants them (AGENTS.md §Iron rules: a
+  demaker spends the whole machine, and a chip with a gap in it is a gap to
+  close).
 - **A console with two chips.** `BoundWrite.chip` already existed for it;
   `RegisterWrite` gained the same field, `render()` filters per *write* rather
   than per tick, and `mix()` takes per-chip gains that come from the binding —
@@ -518,9 +526,9 @@ locked by the tests, not by this table.
 
 | Console | Chip | Channels | Notes |
 |---|---|---|---|
-| PC Engine | HuC6280 PSG | 6 × 32-sample, 5-bit wavetable; ch5/6 noise; direct DAC write mode | **Built.** Every voice is a wavetable, so which timbre a voice plays is the demaker's choice rather than the hardware's — and the demaker makes it at **boot**, because a driver uploads a waveform through the register port rather than selecting one. The five pitched voices therefore hold five different shapes at once, which is more than any other eight-bit console here can hold. Volume is three attenuators in series in 1.5 dB steps; the channel is a *register* and the chip latches it, so the driver skips a preempted run whole as an SN76489 driver does; and no register is written by both streams, so the build emits no merge routine. Fitting a 32 × 5-bit waveform to a target spectrum is Stage 3 in miniature, and demake does not attempt it yet |
+| PC Engine | HuC6280 PSG | 6 × 32-sample, 5-bit wavetable; ch5/6 noise; direct DAC write mode; ch2 modulates ch1 | **Built.** Every voice is a wavetable, so which timbre a voice plays is the demaker's choice rather than the hardware's — and the demaker makes it at **boot**, because a driver uploads a waveform through the register port rather than selecting one. The five pitched voices therefore hold five different shapes at once, which is more than any other eight-bit console here can hold. Volume is three attenuators in series in 1.5 dB steps; the channel is a *register* and the chip latches it, so the driver skips a preempted run whole as an SN76489 driver does; and no register is written by both streams, so the build emits no merge routine. The **LFO** is modelled and is unlike every other vibrato in the set: there is no oscillator, channel two *is* the modulator, so switching it on costs a voice and the depth is a shift on the *divider* rather than on the pitch. Fitting a 32 × 5-bit waveform to a target spectrum is Stage 3 in miniature, and demake does not attempt it yet; nor does anything above the chip layer stream samples into the direct D/A |
 | Neo Geo | YM2610 | 4 FM + 3 SSG square + 6 ADPCM-A + 1 ADPCM-B | Abundant; the work is the ADPCM budget and the Z80 sound program |
-| WonderSwan / Color | WS sound | 4 × 32-sample 4-bit wavetable; ch2 PCM voice, ch3 sweep, ch4 noise | **Built, both machines.** The only chip here whose waveforms are the *console's own RAM* — port `$8F` names a sixty-four-byte page and the four channels take sixteen bytes each — so a timbre is a memory write, the bank is bytes a driver copies rather than register writes it performs, and the address is one constant three things read. Its pitch register is the only one in the matrix that counts *up*: it is subtracted from 2048, so a larger value is a higher note. Noise is a **tap** rather than a rate — eight positions on a fifteen-bit register decide the sequence's length while the channel's own divider decides its pitch — so a drum has a colour and a pitch where a Game Boy's has only a period. `$90` carries all four enables and is the byte two streams merge into. Channel two's PCM voice is stored and inert |
+| WonderSwan / Color | WS sound | 4 × 32-sample 4-bit wavetable; ch2 PCM voice, ch3 sweep, ch4 noise | **Built, both machines.** The only chip here whose waveforms are the *console's own RAM* — port `$8F` names a sixty-four-byte page and the four channels take sixteen bytes each — so a timbre is a memory write, the bank is bytes a driver copies rather than register writes it performs, and the address is one constant three things read. Its pitch register is the only one in the matrix that counts *up*: it is subtracted from 2048, so a larger value is a higher note. Noise is a **tap** rather than a rate — eight positions on a fifteen-bit register decide the sequence's length while the channel's own divider decides its pitch — so a drum has a colour and a pitch where a Game Boy's has only a period. `$90` carries all four enables and is the byte two streams merge into. Channel two's **PCM voice** is modelled too — `$90` bit 5 turns that channel into a direct D/A whose sample is the whole of `$89` and whose only level is the full-or-half pair in `$94` — so this hardware can play a recording on one of its four voices, which nothing above the chip layer asks it to yet |
 | Neo Geo Pocket (C) | T6W28 | 3 square + 1 noise, **independent L/R attenuation** | A genuinely stereo PSG — panning is a real arrangement tool |
 | Atari Lynx | 4 × poly-counter channels | 4 | Polynomial taps rather than duty; timbre is chosen from a small discrete set |
 | Atari 7800 | TIA (+ optional POKEY) | 2 (+4) | See the 2600 note below; POKEY carts change the picture entirely |
@@ -648,6 +656,18 @@ exact at any rate), an effect notices it twice — a long one packs to fewer byt
 and eight milliseconds is still twice as fine as the sixty-hertz tick the
 machine's own games drove their drivers with.
 
+**And on one console it is the *caller's* answer rather than the console's.** The
+Mega Drive is the exception that makes the rule legible. Its YM2612 has a real
+programmable timer, but on that board the timer's interrupt line goes to the Z80
+rather than to the 68000 — so a driver has to poll the status byte, and what the
+poll's period is depends entirely on what else the loop is doing. A game polls it
+once per pass of a loop that is also running a game, and what it would keep is
+the loop's rate; a *standalone* cartridge's loop does nothing else, polls every
+few microseconds, and keeps the timer's rate with the drift bounded by one poll.
+So `resolveMdClock` and `resolveMdAudioClock` refuse **opposite** sources, and
+`GAME_CLOCKS` marks this chip `frame` while `mdBinding.fitRate` goes on offering
+the timer. Neither is wrong; they are answers to different questions.
+
 **And *which* interrupt is the console's answer, not the game's.** The NES has no
 general-purpose timer a driver can have without burning the DMC channel, so its
 one honest clock is the frame the picture already runs on, and its games run at
@@ -658,15 +678,26 @@ correctly and heard wrongly. `gameDriverRate` is where that is decided, in the
 package that owns the drivers, because it is a fact about the code that has to
 keep the rate rather than about the game asking for one.
 
-The Sega 8-bits reach the same answer by a different route, and it is worth
-recording because their spec says otherwise. `AudioSpec` lists `line-irq` among
-their clock sources and `psgBinding.fitRate` will happily return a rate a long way
-above the frame — but the VDP's line counter is **reloaded on every scanline
-outside the active display**, so an interrupt programmed for every N lines fires a
-handful of times inside the picture and then not at all until the next frame.
-That is a usable raster effect and not a tempo. A game's driver therefore rides
-the frame at 59.92 Hz, and `fitRate` treats the frame as the candidate every other
-clock has to beat rather than as a fallback for when none is in range.
+The Sega 8-bits reach the same answer by a different route, and theirs is the one
+worth recording, because for a long time the spec said otherwise. These consoles
+have a second interrupt and it looks like a timer: the VDP's line counter fires
+every (N+1) scanlines, which offers a far finer set of rates than the frame does.
+It is not a clock. The counter is **reloaded on every scanline outside the active
+display**, so an interrupt programmed for every 65 lines fires twice inside the
+picture and then not at all for seventy lines — two ticks a frame, in a burst, out
+of the four the rate claims. A schedule fitted to 241.53 Hz is performed at
+119.85: half speed, lurching once a frame, against a tempo requirement that says
+timing error must not accumulate.
+
+`AudioSpec` listed `line-irq` among their clock sources and `psgBinding.fitRate`
+would return one of those rates for any request above the frame. Nothing consumed
+it — a game asks `gameDriverRate` and gets the frame — so the promise went unpaid
+for as long as there was nobody to pay it, and the first standalone Sega cartridge
+(`rom/sms.ts`) is what asked. Both are gone now. Listing a clock there is not
+describing hardware the machine has; it is describing one it does not, and the
+distinction matters precisely because the iron rule runs the other way — a demaker
+spends the whole machine, so a spec that overstates one is the one kind of
+narrowing that is a bug rather than a gap.
 
 The frame is also *counted* rather than ridden directly, on both frame-clocked
 machines: the handler increments a byte and the main loop performs whatever it

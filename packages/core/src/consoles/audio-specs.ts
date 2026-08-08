@@ -192,9 +192,17 @@ function psgAudio(options: {
       },
     ],
     driver: {
-      sources: ["line-irq", "vblank"],
+      // **The frame, and nothing else.** These consoles have a second interrupt
+      // and it looks like a timer — the VDP's line counter fires every (N+1)
+      // scanlines — but the counter is *reloaded on every line outside the
+      // active display*, so an interrupt programmed for every 65 lines fires
+      // twice inside the picture and then not at all for seventy lines. That is
+      // a raster effect and not a tempo: a schedule fitted to the rate it
+      // appears to offer runs at half speed and lurches once a frame. Listing it
+      // here is not describing hardware the machine has, it is describing a
+      // clock it does not, which is why there is no `timerRange` either.
+      sources: ["vblank"],
       frameRate: options.frameRate,
-      timerRange: [50, 500],
       writesPerTick: 32,
     },
     budgets: { romBytes: 16384 },

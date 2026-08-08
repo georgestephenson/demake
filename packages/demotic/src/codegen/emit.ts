@@ -28,6 +28,7 @@ import {
   sceneContexts,
   sceneIndexOf,
   scrolls,
+  sideMask,
   tileCellsCacheable,
   type SpriteArt,
 } from "./shape.js";
@@ -50,6 +51,7 @@ import {
   emitMulConst16,
   emitTileAt,
   emitTileSeparate,
+  emitTileSide,
   emitTilesUnder,
   GRID_EMPTY,
   ruleTileTableLabel,
@@ -1104,6 +1106,18 @@ function emitTileRules(ctx: Ctx, scene: SceneCtx, level: LevelData): void {
         asm.alu("or", "a");
         asm.jp(next, "z");
 
+        // A side the rule did not name is a contact that never happened: it
+        // does not fire and it is not recorded either, so next tick's "was this
+        // seen before" answers the same as the interpreter's (`sim.ts`
+        // §resolveTiles). Separation is unaffected — a solid tile still stops
+        // the object, because what can hold you up is not what a rule asked
+        // about.
+        const mask = sideMask(event.sides);
+        if (mask !== 0) {
+          emitTileSide(ctx, base);
+          asm.aluN("and", mask);
+          asm.jp(next, "z");
+        }
         emitCellId(ctx);
         emitRecordContact(ctx);
         if (!event.level) {

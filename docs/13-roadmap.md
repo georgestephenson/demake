@@ -408,8 +408,12 @@ the backend today, and either is a reason to revisit rather than to work around.
    a handler for. And the **pitch register counts up** — it is subtracted from
    2048 — so the spec declares the lattice and the binding does the subtraction.
 
-   What is left on this console's audio is channel two's PCM voice, which is
-   stored and inert in the model and reachable by nothing above it.
+   **Channel two's PCM voice is modelled** — `$90` bit 5 turns that channel into
+   a direct D/A whose sample is the whole of `$89` and whose only level is the
+   full-or-half pair in `$94`, so the hardware can play a recording on one of
+   its four voices. What is left is a *demaker* that would: nothing above the
+   chip layer streams samples into it, which is doc 18's work rather than this
+   model's.
 
    **And one thing it found was not this console's** — *closed*. The display runs
    at **75.47 Hz**, so a tick that is a frame happens seventy-five times a second,
@@ -825,13 +829,15 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     channel selection with it.
 
     The clock is the other thing this console decided for itself. `psgBinding`
-    will fit a rate to the VDP's line interrupt, and for a *game* that is the
-    wrong answer — the line counter is reloaded on every scanline outside the
-    active display, so a line interrupt every N lines fires a handful of times
-    inside the picture and then not at all until the next frame. A game's driver
-    therefore rides the frame at 59.92 Hz, like the NES's and for the same kind of
-    reason, and `fitRate` now treats the frame as the candidate every other clock
-    has to beat rather than as a fallback for when none is in range.
+    would fit a rate to the VDP's line interrupt, and that is the wrong answer for
+    a *game* — the line counter is reloaded on every scanline outside the active
+    display, so a line interrupt every N lines fires a handful of times inside the
+    picture and then not at all until the next frame. A game's driver therefore
+    rides the frame at 59.92 Hz, like the NES's and for the same kind of reason.
+    The candidate survived for standalone tracks on the grounds that only a game
+    shares its clock with the picture; the standalone cartridge below is what
+    showed that reasoning to be wrong, and it is gone from the binding and from
+    the spec.
     **The Mega Drive is the fifth console, and it is the first 16-bit one.**
     `demake build -c md` produces a real Mega Drive cartridge — 68000 machine code
     written for the game, vector table, header and word checksum, art demade into
@@ -899,8 +905,18 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     and the FM half of a track plays straight through a sound effect rather than
     ducking for it.
 
-    What is still inert in the chip model, each a gap rather than a decision: the
-    LFO's pitch modulation, SSG-EG, and channel 3's per-operator frequency mode.
+    **The chip model is complete**, which it was not when this console landed:
+    the LFO's pitch modulation, the SSG-EG envelope modes and channel 3's
+    four-pitch mode — with the timer-driven key-on that rides on it — are all
+    modelled now. None of the three is reachable through a register the binding
+    writes, so closing them changed no cartridge's audio by a byte; the reason
+    to do it before a binding wants them is that a chip with a gap in it is a
+    gap to close (AGENTS.md §Iron rules) and a binding that reaches for one now
+    gets the hardware rather than a shrug. What the model still does not do is
+    the bus's busy flag, which is honest for a model with no bus timing, and the
+    difference between the discrete chip's nine-bit operator output and the
+    later ASIC's — a *board* difference of the kind `mix()` already takes
+    per-chip gains for.
 
     The cartridge budget has no story here at all, which is itself the news:
     512 KiB against 32, and 64 KiB of work RAM against an NROM cartridge's 2. The
@@ -1134,7 +1150,26 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     a chip, and whose relative level is a fact about the board.
   - **D6 — language growth**, driven by fixtures beyond Pong. Levels, tiles, a
     scrolling camera, `stream`-composed courses and a seeded `random` have
-    landed (doc 14 §Levels, §Composed levels, §Randomness). What is left:
+    landed (doc 14 §Levels, §Composed levels, §Randomness).
+
+    **`from <side>` builds now**, and it was the language's one entry in
+    `unsupportedFor` — a clause the interpreter honoured and no cartridge did,
+    so a program using it previewed, traced, and then refused to become a ROM.
+    It is closed on all eight backends at once, because the gap was in the
+    emitters as a group rather than a difference between them. What made it
+    affordable is that the answer was already being computed: separating an
+    overlap means choosing an axis and a direction, and *that choice is the
+    side*, so each backend's separation was split into a part that decides and a
+    part that applies and the new routine is the decision read out as a bit
+    rather than a push. Both halves of the contact model are covered — an object
+    pair and a level cell — and the narrowing skips the **whole** contact rather
+    than only the firing, which is what the interpreter does and what stops a
+    cartridge separating out of a contact it never had. Every existing cartridge
+    is byte-identical, because the routine is pulled and no fixture said `from`
+    before this landed; `platformer` says it now, where landing and bonking are
+    two rules naming two sides instead of one rule and a velocity test.
+
+    What is left:
     runtime spawn, a tile layer that can *change* — a door that opens, a block
     that breaks — which needs a way to name a cell, and a camera with more than
     "follow". Scrolling is also where per-scanline sprite pressure bites, so the
@@ -1300,7 +1335,7 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     than compounding. Outstanding: tracker ingest, `bin`/`asm`/`c` emit, driver
     backends beyond the Game Boy, and the listening sheets the judge weights get
     frozen against.
-  - **A2.5 — the driver and the proof** *(done for the `gb` family)*: `demake gen
+  - **A2.5 — the driver and the proof** *(done for the `gb` family, the NES and the PC Engine)*: `demake gen
     <schedule> --format rom` generates an SM83 driver *for this schedule* — rests
     pulled only if it rests, an order walk only if it has one, a stop path only
     for a one-shot — packs the schedule into deduplicated blocks behind an order
@@ -1311,10 +1346,51 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     a track and a one-shot exercise different halves of the driver.
 
     This is the point at which the audio domain reaches the shape the image
-    domain has — constrain → fit → emit → prove on emulated hardware — for one
-    family. Level B (sample comparison against a third-party core, via the
-    libretro harness's audio callback) and the other consoles' drivers are what
-    remain.
+    domain has — constrain → fit → emit → prove on emulated hardware.
+
+    **The NES is the second family**, and it is what turned "what does another
+    console cost" from an estimate into a measurement. Nothing about the *player*
+    moved: `rom/mos-player.ts` belongs to the processor and a game already used
+    it, so the whole of `rom/nes.ts` is the three things a console decides for
+    itself. The **clock is the picture's**, because this CPU has no timer a
+    driver can have without burning the DMC channel — so where `gb.ts` picks
+    between a timer and the frame, here there is nothing to pick and a schedule
+    fitted to anything else is refused by name. **There is no entry point**, only
+    a vector: the last six bytes of the image are what makes the cartridge boot,
+    stamped after assembly because they are addresses of labels inside it. And
+    **the picture hardware has to be quietened and then waited for**, because a
+    cartridge whose only job is sound still owns it.
+
+    The board is elastic on the language backend's terms — an NROM-128 when the
+    schedule fits one — and the proof is the Game Boy's run in `@demake/nes`: the
+    same `it.each(audioRomConsoles())` battery, plus a one-shot per console,
+    because where a stream *ends* is the order walk's business and that walk is
+    the processor's rather than the machine's.
+
+    **The PC Engine is the third, and it is the measurement rather than the
+    claim.** Its player is the NES's — literally the same file, because a
+    HuC6280 *is* a 6502 — so `rom/pce.ts` is the same three things with different
+    answers: a **timer** rather than the frame, a register base at `$0800` in the
+    hardware page the boot code maps, and a program that **is not where it was
+    assembled**, since reset maps only bank 0 at `$E000` and the boot stub is
+    emitted last and swapped into it.
+
+    It also added the one thing neither predecessor needs. This chip's wave RAM
+    is reachable only through the register port, so five waveforms is a hundred
+    and sixty writes and tick 0 arrives with more writes in it than the packed
+    format's run count can hold — the **boot strip** is what makes the schedule
+    packable here, rather than merely what stops an effect powering the chip up
+    again. `BuiltAudioRom` therefore carries a `performed` schedule, the same
+    field and the same reason every game driver in that directory has one, and
+    the proof diffs against *that*: what the driver promises, not what the caller
+    handed it. A second assertion covers the half no tick diff can see — that the
+    waveforms reached the chip before the clock started, because a cartridge that
+    skipped the table would be exact in a register diff and silent on the
+    machine.
+
+    What each remaining console costs is now the same three things over one
+    shared walk. Level B (sample comparison against a third-party core, via the
+    libretro harness's audio callback) is the other thing that remains.
   - **A3 — `sfx`** *(built for WAV; the Game Boy boots)*: eight gesture families, the class gate,
     deterministic coordinate descent with every candidate rendered through the
     chip model, and the placement contract each effect declares. A single effect
@@ -1335,11 +1411,16 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     the Nintendo DS's SPU each have a chip model, a
     binding and a generated driver — 6502, Z80, SPC700, 68000 and ARM twice — and
     `demake build` puts music and
-    effects in the cartridge with doc 16's Level A proof over all of them. What
-    none of them
-    has yet is a *standalone* audio cartridge — `demake gen … --format rom` is
-    still the Game Boy's alone — because a cartridge whose only job is one track is
-    what the next caller needs and not what a game needed. The Super Nintendo is
+    effects in the cartridge with doc 16's Level A proof over all of them. Five of
+    them now also build a *standalone* audio cartridge — `demake gen … --format
+    rom` reaches the Game Boy, the NES, the PC Engine, both Sega 8-bits and the
+    Mega Drive — and the rest do not, because a cartridge whose only job is one
+    track is what a later caller needed and not what a game did. That last one is
+    where the difference between the two callers stops being a matter of
+    packaging: on that board the FM chip's timer interrupt goes to the Z80, so a
+    driver polls the status byte, and a game's loop is also running a game while a
+    standalone cartridge's does nothing else. The same hardware is a usable clock
+    for one and not for the other. The Super Nintendo is
     the near miss: `demake arrange -c snes` writes an `.spc`, which is the same
     driver and the same schedules in the format that console's own players read,
     but it is a RAM image rather than a cartridge. The SN76489 is also the
@@ -1370,6 +1451,34 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     and a toolchain-free proof) or pair generated data with a checked-in driver
     source for a stock assembler (as the image harnesses do). Level A also needs
     a core we own or one that exposes scripted register access.
+  - **A5.5 — hardware the models describe and no demaker reaches** *(open)*: the
+    iron rule is that a demaker spends the whole machine, and the chip layer has
+    now run ahead of the bindings. None of this is a *correctness* gap — every
+    cartridge performs exactly the schedule its demaker produced, and the
+    schedule is exactly what the model would render — but each line is expression
+    the hardware offers and nothing asks for. Closing one changes output bytes on
+    the consoles it touches, so each needs re-baselined goldens and a `minor`.
+
+    | Hardware | Modelled | Spent by a demaker |
+    | --- | --- | --- |
+    | YM2612 LFO (vibrato and tremolo) | yes | no — `binding/md.ts` writes `$22 = 0` and every channel's sensitivity nibble as zero |
+    | YM2612 SSG-EG envelope modes | yes | no — those registers are never written |
+    | YM2612 channel 3's four-pitch mode | yes | no — `$27`'s mode bits are always zero |
+    | HuC6280 LFO | yes | no — the LFO registers appear only in `binding/pce.ts`'s channel *tag*, never in a write |
+    | WonderSwan channel 2's PCM voice | yes | no — nothing above the chip layer drives it |
+    | PC Engine direct D/A | yes | no — likewise |
+
+    **The first line is the one to do first, and it is bigger than the FM chip.**
+    Nothing anywhere in `@demake/audio` produces vibrato *at all* — not through a
+    chip LFO, and not through per-tick pitch writes on the consoles that have no
+    LFO to use. A period arranger uses it constantly, so this is an arranger
+    question (doc 17) before it is a binding one: where the depth comes from (a
+    source's own modulation controller? its articulation, the way
+    `binding/fm-patch.ts` already reads one?), whether it is a per-part decision
+    or a per-note one, and what it costs a four-channel console in schedule bytes
+    when it has to be written rather than switched on. The last two lines are
+    doc 18's rather than doc 17's — a sample player wants a *sound* demaker
+    pointed at it, not an arranger.
   - **A6 — the surfaces** *(Demotic done)*: the Demotic integration is settled
     and built — `music` and `sound` are in the language, every example game has
     a theme and effects, and the cartridge the page hands you is byte-identical

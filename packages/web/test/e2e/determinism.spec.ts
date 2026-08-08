@@ -265,7 +265,7 @@ test("the music demaker's artifacts are byte-identical to Node's", async ({ page
     vgm: result.artifact,
     wav: encodeWav(render(result.script, toRenderOptions(DEFAULT_ARRANGE))),
     manifest: encodeAudioManifest(arrangeManifest(result)),
-    rom: buildAudioRom(result.script, { title: "rally" }).bytes,
+    rom: (await buildAudioRom(result.script, { title: "rally" })).bytes,
   };
 
   // 2. Browser: the same conversion, driven through the page's own buttons.
@@ -295,7 +295,7 @@ test("the sound demaker's artifacts are byte-identical to Node's", async ({ page
     vgm: result.artifact,
     wav: encodeWav(render(result.script, toRenderOptions(DEFAULT_SFX))),
     manifest: encodeAudioManifest(sfxManifest(result)),
-    rom: buildAudioRom(result.script, { title: "bounce" }).bytes,
+    rom: (await buildAudioRom(result.script, { title: "bounce" })).bytes,
   };
 
   await page.goto("/#section=sound");

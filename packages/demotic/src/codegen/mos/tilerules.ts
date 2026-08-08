@@ -23,13 +23,14 @@ import { absX, imm, immHigh, immLow, indY, label } from "@demake/core";
 import type { InstanceDef, RuleDef } from "../../program.js";
 import { isMutable } from "../analyze.js";
 import { TILE_CONTACT_MAX, W } from "../layout.js";
-import { tileCellsCacheable, type SceneCtx } from "../shape.js";
+import { sideMask, tileCellsCacheable, type SceneCtx } from "../shape.js";
 
 import type { MosCtx } from "./ctx.js";
 import { emitTest, propOffset, type Binding } from "./expr.js";
 import { emitAssignments, emitSound } from "./rules.js";
 import {
   emitTileSeparate,
+  emitTileSide,
   emitTilesUnder,
   GRID_EMPTY,
   ruleTileTableLabel,
@@ -185,6 +186,17 @@ export function emitTileRules(ctx: MosCtx, scene: SceneCtx, level: LevelData): v
         asm.lda(absX(label(ruleTileTableLabel(rule, level))));
         ctx.far("eq", next);
 
+        // A side the rule did not name is a contact that never happened: it
+        // does not fire and it is not recorded either, so next tick's "was this
+        // seen before" answers as the interpreter's does (`sim.ts`
+        // §resolveTiles). Separation is unaffected — what can hold an object up
+        // is not what a rule asked about.
+        const mask = sideMask(event.sides);
+        if (mask !== 0) {
+          emitTileSide(ctx, base);
+          asm.and(imm(mask));
+          ctx.far("eq", next);
+        }
         emitCellId(ctx);
         emitRecordContact(ctx);
         if (!event.level) {

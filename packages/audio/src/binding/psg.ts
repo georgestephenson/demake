@@ -15,10 +15,6 @@ import type { AudioSpec } from "@demake/core";
 import { snapPitch, snapVolume } from "../pitch.js";
 import type { BoundWrite, ChipBinding, DriverRateFit } from "./types.js";
 
-const PSG_CLOCK = 3579545;
-/** CPU cycles per scanline on the SMS/GG VDP — the line interrupt's period. */
-const CYCLES_PER_LINE = 228;
-
 export function psgBinding(console: string, spec: AudioSpec): ChipBinding {
   const stereo = spec.mixing.channels === 2;
 
@@ -110,33 +106,26 @@ export function psgBinding(console: string, spec: AudioSpec): ChipBinding {
       return writes;
     },
 
-    fitRate(desiredHz): DriverRateFit {
-      // The frame interrupt is always available and always exact, so it is the
-      // candidate every other one has to beat rather than a fallback for when
-      // none is in range. It is also the *only* clock a game gets: a game's two
-      // streams share one interrupt with the picture, and this VDP reloads its
-      // line counter outside the active display — so a line interrupt every N
-      // lines fires a few times inside the picture and not at all in the border,
-      // which is a schedule performed correctly and heard wrongly (doc 16 §Two
-      // streams, one clock). `gameDriverRate` therefore asks for exactly this
-      // rate, and the zero error below is what hands it back.
-      const frameHz = spec.driver.frameRate.num / spec.driver.frameRate.den;
-      let best: DriverRateFit = { rate: spec.driver.frameRate, source: "vblank" };
-      let bestError = Math.abs(frameHz - desiredHz);
-      // The VDP's line interrupt fires every (N+1) scanlines, which gives a far
-      // finer set of rates than vblank and is how a *standalone* SMS driver holds
-      // a tempo above the frame rate.
-      for (let n = 0; n <= 255; n += 1) {
-        const den = CYCLES_PER_LINE * (n + 1);
-        const hz = PSG_CLOCK / den;
-        if (hz < 30 || hz > 800) continue;
-        const error = Math.abs(hz - desiredHz);
-        if (error < bestError - 1e-12) {
-          bestError = error;
-          best = { rate: { num: PSG_CLOCK, den }, source: "line-irq", divisor: n };
-        }
-      }
-      return best;
+    fitRate(): DriverRateFit {
+      // **The frame is this chip's only clock, on either kind of cartridge.**
+      //
+      // The console has a second interrupt and it looks like a timer: the VDP's
+      // line counter fires every (N+1) scanlines, which offers a far finer set of
+      // rates than the frame does. It is not a clock. The counter decrements
+      // across the active display and is *reloaded on every line outside it*, so
+      // an interrupt programmed for every 65 lines fires twice inside the picture
+      // and then not at all for seventy lines — two ticks a frame, in a burst, out
+      // of the four the rate claims. A schedule fitted to 241.53 Hz is performed
+      // at 119.85, which is a track at half speed with its tempo lurching once a
+      // frame, and doc 16's tempo requirement is that timing error does not
+      // accumulate.
+      //
+      // That is a fact about the hardware rather than about how many streams
+      // share it, which is why this candidate is gone rather than restricted to
+      // a standalone cartridge: `rom/sms.ts` is what a standalone one would have
+      // been, and it could not have held the tempo either. `gameDriverRate` asks
+      // for exactly the frame rate and this is what hands it back.
+      return { rate: spec.driver.frameRate, source: "vblank" };
     },
   };
 }

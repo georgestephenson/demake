@@ -25,22 +25,14 @@ import { tape, trace } from "../src/trace.js";
 import { romReady } from "../src/rom/trace.js";
 
 import {
-  gbaTarget,
   gbTarget,
   gbcTarget,
-  ggTarget,
   mdTarget,
   megaduckTarget,
-  ndsTarget,
-  nesTarget,
-  ngpcTarget,
-  pceTarget,
   RomRunner,
   romTrace,
-  smsTarget,
-  snesTarget,
+  TARGETS,
   wscTarget,
-  wsTarget,
   type RomTarget,
 } from "./_rom-harness.js";
 import { gameSource, projectBytes, projectText } from "./_projects.js";
@@ -68,31 +60,6 @@ function shadesShown(frame: Uint8ClampedArray): number {
   }
   return seen.size;
 }
-
-/**
- * Every console with a backend, over the same batteries.
- *
- * One list rather than one per `describe`, because "the same battery on every
- * machine" is what makes `Backend` a contract rather than a resemblance (doc 14
- * §Runtime model) — and a second list is a list a new console gets added to
- * once.
- */
-const TARGETS: readonly RomTarget[] = [
-  gbTarget,
-  gbcTarget,
-  megaduckTarget,
-  nesTarget,
-  pceTarget,
-  ngpcTarget,
-  smsTarget,
-  ggTarget,
-  snesTarget,
-  mdTarget,
-  gbaTarget,
-  ndsTarget,
-  wscTarget,
-  wsTarget,
-];
 
 describe("gb ROM", async () => {
   it("is a valid 32 KiB cartridge with correct checksums", async () => {
