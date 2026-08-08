@@ -26,7 +26,16 @@ import {
   writeText,
   type Project,
 } from "../src/lib/project.js";
-import { isBareHash, isTextFile, sectionForFile } from "../src/lib/route.js";
+import {
+  fileHash,
+  isBareHash,
+  isTextFile,
+  readRoute,
+  readSection,
+  sectionForFile,
+  sectionHash,
+  SECTIONS,
+} from "../src/lib/route.js";
 import { filterPaths, subsequence } from "../src/components/QuickOpen.js";
 import { saveToFolder } from "../src/lib/disk.js";
 import { fillBinaries } from "../src/lib/examples.js";
@@ -154,6 +163,62 @@ describe("the hash", () => {
     expect(isBareHash("#console=snes&dither=bayer4")).toBe(false);
     expect(isBareHash("#file=src%2Fpong.dmt")).toBe(false);
     expect(isBareHash("#section=art")).toBe(false);
+  });
+
+  it("reads a file out of it, and the editor from the file's own extension", () => {
+    // The route names a *file* and the section is derived, which is the one
+    // thing that stops the two disagreeing about what is on screen.
+    expect(readRoute("#file=src%2Fpong.dmt")).toEqual({ section: "game", file: "src/pong.dmt" });
+    expect(readRoute("#file=src%2Fpong.test.dmt")).toEqual({
+      section: "tests",
+      file: "src/pong.test.dmt",
+    });
+    expect(readRoute("#file=art%2Fball.svg")).toEqual({ section: "art", file: "art/ball.svg" });
+  });
+
+  it("ignores a file it has no editor for rather than opening an empty pane", () => {
+    // A built cartridge is in the project and nothing edits it. Naming one is a
+    // link to nowhere, so it falls through to the section rules instead.
+    expect(readRoute("#file=build%2Fpong.gb")).toEqual({ section: "art" });
+    expect(readRoute("#file=")).toEqual({ section: "art" });
+  });
+
+  it("still reads a bare section, because every old permalink carries one", () => {
+    for (const section of SECTIONS) {
+      expect(readRoute(sectionHash(section))).toEqual({ section });
+      expect(readSection(sectionHash(section))).toBe(section);
+    }
+    // Anything it does not recognise lands on the art demaker, which is what an
+    // option permalink — naming neither a file nor a section — has to do.
+    expect(readRoute("#section=nonsense")).toEqual({ section: "art" });
+    expect(readRoute("#console=snes&dither=bayer4")).toEqual({ section: "art" });
+    expect(readRoute("")).toEqual({ section: "art" });
+  });
+
+  it("prefers the file when a hash carries both", () => {
+    // The file is the better answer for "what is on screen", which is why the
+    // section tabs went (doc 07 §The workbench).
+    expect(readRoute("#section=music&file=src%2Fpong.dmt")).toEqual({
+      section: "game",
+      file: "src/pong.dmt",
+    });
+  });
+
+  it("writes a hash that reads back as the thing it names", () => {
+    // The round trip is the property: a path with a slash, a space or a `#` in
+    // it has to survive being put in a URL and taken out again.
+    for (const path of ["src/pong.dmt", "art/a b.svg", "levels/#odd.dmtl", "src/pong.test.dmt"]) {
+      expect(readRoute(fileHash(path)).file).toBe(path);
+    }
+    expect(fileHash("src/pong.dmt")).toBe("#file=src%2Fpong.dmt");
+  });
+
+  it("never writes a bare `#` for a section", () => {
+    // It used to, for the default one — and "no hash" now means "open the
+    // project", so a section with no file has to say which one it is.
+    for (const section of SECTIONS) {
+      expect(isBareHash(sectionHash(section))).toBe(false);
+    }
   });
 });
 

@@ -41,6 +41,7 @@ export {
 export { parse, type ParseResult } from "./lang/parse.js";
 export { lex, type Comment, type Token, type TokenKind } from "./lang/lex.js";
 export { highlight, type HighlightSpan, type Scope } from "./lang/highlight.js";
+export { SLOT_CHOICES, type SlotKind, type SourceSlot, type StatementSpan } from "./lang/slots.js";
 export type * from "./lang/ast.js";
 export {
   findProfile,
@@ -79,7 +80,15 @@ export {
 } from "./sim.js";
 export { trace, traceLine, traceHeader, tracesAudio, tape, describeProgram } from "./trace.js";
 export { renderAscii, type AsciiOptions } from "./render/ascii.js";
-export { parseTests, type TestCase, type TestFile, type TestStep } from "./testing/parse.js";
+export {
+  parseTests,
+  durationTicks,
+  type Duration,
+  type TestCase,
+  type TestFile,
+  type TestStep,
+} from "./testing/parse.js";
+export { TEST_STATEMENTS, TEST_KEYWORDS } from "./testing/spec.js";
 export {
   runTests,
   formatResults,
@@ -146,6 +155,7 @@ export {
 } from "./demakefile/model.js";
 export {
   findEntry,
+  gameFor,
   isIgnoredPath,
   isProject,
   isSuite,

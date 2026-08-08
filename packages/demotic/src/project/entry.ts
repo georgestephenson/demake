@@ -64,6 +64,22 @@ export function suiteFor(entry: string, files: readonly string[]): string | unde
 }
 
 /**
+ * The game a suite is about — `suiteFor` read the other way.
+ *
+ * By name first, because that is the convention the example library uses and the
+ * one `demake test` looks for. Where the names do not pair up, the project's own
+ * entry point is the answer: a suite is a program *about* a game, a project has
+ * one game, and a folder whose suite is called something else is still testing
+ * it. Both halves are here so an editor opening a `.test.dmt` and a CLI running
+ * one cannot disagree about what it is asserting against.
+ */
+export function gameFor(suite: string, files: readonly string[]): string | undefined {
+  if (!isSuite(suite)) return undefined;
+  const wanted = suite.replace(SUITE, ".dmt");
+  return files.includes(wanted) ? wanted : findEntry(files).path;
+}
+
+/**
  * Whether a set of paths looks like a project at all.
  *
  * One question, asked in one place, so `demake build` with no argument and the
