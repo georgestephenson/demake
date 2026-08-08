@@ -1270,7 +1270,12 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
                      format's run count holds, so on this console the strip is
                      what makes a schedule packable rather than merely what stops
                      an effect powering the chip up again;
-                     Z80: sms-driver.ts with two callers, a game (sms-game.ts)
+                     Z80: z80-player.ts, which is the *processor's* — a second
+                     console started driving one and the walk moved, on
+                     mos-player.ts's terms, leaving a chip two hooks: how a
+                     packed write leaves the CPU and how a borrowed channel's
+                     byte reaches a shadow. sms-driver.ts is what an SN76489 on
+                     this CPU owns, with two callers, a game (sms-game.ts)
                      and the fourth standalone cartridge (sms.ts) — which is one
                      file for *two* machines, because a Game Gear is a Master
                      System whose stereo latch is a write like any other, and the
