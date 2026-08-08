@@ -86,3 +86,18 @@ export const SYSTEM_PALETTE = 0;
  * which is a backdrop the ink is guaranteed to be legible against.
  */
 export const ART_PALETTE0 = 1;
+
+/**
+ * Sub-palettes a picture is fitted into.
+ *
+ * Fifteen rather than the hardware's 256, and this is a *cost* bound rather than
+ * a capability one — the distinction AGENTS.md §Gotchas draws about the Game Boy
+ * Advance's 256-colour mode. A k-means iteration is `O(pixels x centroids)`, so
+ * asking for 255 sub-palettes of sixteen is a fit measured in minutes for a
+ * picture that has only 280 cells to spend them on. Fifteen is 225 colours on
+ * screen against a Mega Drive's 61 and a Master System's 31, so nothing is
+ * starved — and it keeps every art palette inside the sixteen the fix layer can
+ * reach, which costs nothing and means one pool serves both layers. The console
+ * spec still declares the 256 the hardware has, because that is what it has.
+ */
+export const ART_PALETTES = 15;

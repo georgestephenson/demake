@@ -48,6 +48,7 @@ import { artKey } from "./shape.js";
 import { artRequests, digest, remember, rememberAsync, type AssetBytes } from "./art.js";
 import {
   ART_PALETTE0,
+  ART_PALETTES,
   CELLS_PER_TILE,
   SYSTEM_PALETTE,
   TILE_PIXELS,
@@ -293,7 +294,7 @@ async function demakeBackdrop(
         fit: "cover",
         // Every palette but the font's. This console has 256, so a picture is
         // never the thing that runs out.
-        maxSubPalettes: 255,
+        maxSubPalettes: ART_PALETTES,
         maxTiles,
         ...(executor === undefined ? {} : { executor }),
       },

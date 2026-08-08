@@ -205,6 +205,18 @@ export class Neogeo implements Bus {
     this.lineCycles = 0;
   }
 
+  /**
+   * Set exactly the buttons that are down, which is what a harness drives.
+   *
+   * Whole-set rather than per-button because a tape says what is held on a tick,
+   * and deriving releases from that is the caller's job on no other console.
+   */
+  setButtons(down: readonly Button[]): void {
+    this.buttons = 0;
+    this.systemButtons = 0;
+    for (const button of down) this.setButton(button, true);
+  }
+
   /** Press or release a button. */
   setButton(button: Button, down: boolean): void {
     if (button in SYSTEM_BUTTONS) {

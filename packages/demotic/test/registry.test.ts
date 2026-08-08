@@ -16,6 +16,7 @@ import { anyBackend, type AnyBackend } from "../src/codegen/backend.js";
 import { gbBackend } from "../src/codegen/gb.js";
 import { gbaBackend } from "../src/codegen/gba.js";
 import { mdBackend } from "../src/codegen/md.js";
+import { neogeoBackend } from "../src/codegen/neogeo.js";
 import { nesBackend } from "../src/codegen/nes.js";
 import { ngpcBackend } from "../src/codegen/ngpc.js";
 import { pceBackend } from "../src/codegen/pce.js";
@@ -39,6 +40,7 @@ const LOADED: readonly AnyBackend[] = [
   anyBackend(smsBackend),
   anyBackend(snesBackend),
   anyBackend(mdBackend),
+  anyBackend(neogeoBackend),
   anyBackend(gbaBackend),
   anyBackend(pceBackend),
   anyBackend(wscBackend),

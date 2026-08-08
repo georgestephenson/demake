@@ -77,6 +77,12 @@ const FAMILIES: readonly FamilyDescriptor[] = [
     load: async () => anyBackend((await import("./md.js")).mdBackend),
   },
   {
+    family: "neogeo",
+    consoles: ["neogeo"],
+    extension: () => "neo",
+    load: async () => anyBackend((await import("./neogeo.js")).neogeoBackend),
+  },
+  {
     family: "pce",
     consoles: ["pce"],
     extension: () => "pce",
