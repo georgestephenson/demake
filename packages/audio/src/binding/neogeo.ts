@@ -79,10 +79,18 @@ import type { BoundWrite, ChipBinding, DriverRateFit } from "./types.js";
 const YM_CLOCK = 8000000;
 const YM_SAMPLE_DIVIDER = 144;
 
-/** Where each section starts in the spec's channel list. */
-export const FM_CHANNELS = 4;
-export const SSG_FIRST = 4;
+/**
+ * Where each section starts in the spec's channel list.
+ *
+ * The squares come first, which is the spec's decision and not an accident of
+ * listing order: `sfx` places an effect on the first channel with a pitch, and on
+ * this console that should be a square — the four FM voices belong to the music,
+ * and keeping effects off them keeps the FM key-on byte off the preemption path.
+ */
+export const SSG_FIRST = 0;
 export const SSG_CHANNELS = 3;
+export const FM_FIRST = 3;
+export const FM_CHANNELS = 4;
 export const ADPCM_A_FIRST = 7;
 export const ADPCM_A_CHANNELS = 6;
 export const ADPCM_B_CHANNEL = 13;
@@ -148,7 +156,8 @@ export function neogeoBinding(
     encode(next, prev): BoundWrite[] {
       const out: BoundWrite[] = [];
       for (let index = 0; index < FM_CHANNELS; index += 1) {
-        encodeFm(out, index, next[index]!, prev?.[index], patches[index], installed);
+        const at = FM_FIRST + index;
+        encodeFm(out, index, next[at]!, prev?.[at], patches[index], installed);
       }
       for (let index = 0; index < SSG_CHANNELS; index += 1) {
         encodeSsg(out, index, next[SSG_FIRST + index]!, prev?.[SSG_FIRST + index]);

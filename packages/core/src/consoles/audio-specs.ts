@@ -1076,10 +1076,12 @@ export const neogeoAudio: AudioSpec = (() => {
   return {
     chips: ["ym2610"],
     channels: [
-      { id: "fm1", kind: "fm", chip: 0, ...fm },
-      { id: "fm2", kind: "fm", chip: 0, ...fm },
-      { id: "fm3", kind: "fm", chip: 0, ...fm },
-      { id: "fm4", kind: "fm", chip: 0, ...fm },
+      // The squares come first, and that is a decision rather than a listing
+      // order. `sfx` puts an effect on the first channel with a pitch, and a
+      // Neo Geo game wants its blips on a square and its four FM voices left to
+      // the music — which is how this console's own games were written, and it
+      // also keeps the FM key-on byte off the preemption path entirely (doc 16
+      // §Two streams, one clock).
       ...(["a", "b", "c"] as const).map((letter): AudioChannelSpec => ({
         id: `ssg-${letter}`,
         kind: "pulse",
@@ -1098,6 +1100,10 @@ export const neogeoAudio: AudioSpec = (() => {
         // The one section with no stereo: the SSG has its own mono output pin.
         panning: "none",
       })),
+      { id: "fm1", kind: "fm", chip: 0, ...fm },
+      { id: "fm2", kind: "fm", chip: 0, ...fm },
+      { id: "fm3", kind: "fm", chip: 0, ...fm },
+      { id: "fm4", kind: "fm", chip: 0, ...fm },
       ...[1, 2, 3, 4, 5, 6].map((index): AudioChannelSpec => ({
         id: `adpcm-a${index}`,
         kind: "sample",

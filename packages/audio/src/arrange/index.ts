@@ -152,13 +152,20 @@ function fitPatches(
   plan: ArrangementPlan,
   cache: Map<string, FmPatchFit>,
 ): FmBindingOptions | undefined {
+  const first = spec.channels.findIndex((channel) => channel.kind === "fm");
   const fmChannels = spec.channels.filter((channel) => channel.kind === "fm").length;
   if (fmChannels === 0) return undefined;
   const patches: (FmPatchFit["patch"] | undefined)[] = new Array(fmChannels).fill(
     undefined,
   ) as undefined[];
   for (const assignment of plan.assignments) {
-    if (assignment.channelIndex >= fmChannels) continue;
+    // Relative to the *first* FM voice rather than to the channel list, because a
+    // console may not put them at the front: a Neo Geo lists its squares first so
+    // that an effect lands on one, and a patch table indexed by absolute channel
+    // would give every FM voice the default timbre and the search would be spent
+    // on nothing.
+    const index = assignment.channelIndex - first;
+    if (index < 0 || index >= fmChannels) continue;
     // A channel carrying several parts is one voice playing all of them, so the
     // timbre follows the *first* — which is the part the plan considered the
     // channel's own, the rest having been folded onto it.
@@ -169,7 +176,7 @@ function fitPatches(
       fit = fitPatchForPart(part);
       cache.set(part.id, fit);
     }
-    patches[assignment.channelIndex] = fit.patch;
+    patches[index] = fit.patch;
   }
   return { patches };
 }

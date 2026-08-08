@@ -60,6 +60,9 @@ importers:
       '@demake/md':
         specifier: workspace:*
         version: link:../md
+      '@demake/neogeo':
+        specifier: workspace:*
+        version: link:../neogeo
       '@demake/nes':
         specifier: workspace:*
         version: link:../nes

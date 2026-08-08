@@ -54,7 +54,7 @@ describe("the FM half", () => {
     // would switch the driver's own tick off between two ticks of itself.
     const all = [
       ...registers(neogeoBinding("neogeo", spec).init()),
-      ...registers(neogeoBinding("neogeo", spec).encode(only(0, {}), undefined)),
+      ...registers(neogeoBinding("neogeo", spec).encode(only(3, {}), undefined)),
     ];
     expect(all.some(([half, reg]) => half === 0 && reg >= 0x24 && reg <= 0x27)).toBe(false);
   });
@@ -65,7 +65,7 @@ describe("the FM half", () => {
     // The F-number registers, which only a sounding channel writes — every
     // channel installs a patch on the first tick whether it plays or not.
     const halves = new Set(
-      registers(binding.encode(only(3, {}), undefined))
+      registers(binding.encode(only(6, {}), undefined))
         .filter(([, reg]) => reg === 0xa0 + 2 || reg === 0xa4 + 2)
         .map(([half]) => half),
     );
@@ -77,7 +77,7 @@ describe("the tone generator", () => {
   it("puts A4 on period $238, which is Yamaha's own worked example", () => {
     const binding = neogeoBinding("neogeo", spec);
     binding.init();
-    const writes = registers(binding.encode(only(4, { hz: 440 }), undefined));
+    const writes = registers(binding.encode(only(0, { hz: 440 }), undefined));
     const fine = writes.find(([half, reg]) => half === 0 && reg === 0x00)?.[2];
     const coarse = writes.find(([half, reg]) => half === 0 && reg === 0x01)?.[2];
     expect(((coarse ?? 0) << 8) | (fine ?? 0)).toBe(0x238);
@@ -87,7 +87,7 @@ describe("the tone generator", () => {
     const binding = neogeoBinding("neogeo", spec);
     binding.init();
     const levelAt = (level: number): number | undefined =>
-      registers(binding.encode(only(4, { level }), undefined)).find(
+      registers(binding.encode(only(0, { level }), undefined)).find(
         ([half, reg]) => half === 0 && reg === 0x08,
       )?.[2];
     expect(levelAt(1)).toBe(15);
@@ -102,7 +102,7 @@ describe("the tone generator", () => {
     expect(
       registers(binding.init()).filter(([half, reg]) => half === 0 && reg === 0x07),
     ).toHaveLength(1);
-    const playing = only(4, {});
+    const playing = only(0, {});
     const silent = silentFrames(spec);
     const later = [
       ...registers(binding.encode(playing, undefined)),
