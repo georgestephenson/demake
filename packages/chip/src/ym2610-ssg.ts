@@ -2,12 +2,10 @@
  * The YM2610's SSG: three square waves, a noise generator and one envelope.
  *
  * This is the Neo Geo's tone hardware, and it is a YM2149 — the AY-3-8910 family
- * — sitting on the same die as four FM channels and seven ADPCM ones. It is
- * modelled on its own because it is a *separate generator* with its own clock
- * divider and its own register file at `$00`–`$0D`, not because the rest of the
- * chip is out of scope: {@link Ym2610Ssg} is what a demade cartridge's Z80 driver
- * reaches today, and the FM and ADPCM halves are gaps to close rather than
- * hardware the console does not have (the console spec declares all of it).
+ * — sitting on the same die as four FM channels and seven ADPCM ones. It is a file
+ * of its own because it is a *separate generator*: its own clock divider, its own
+ * register file at `$00`–`$0D`, and none of the FM core's arithmetic. `ym2610.ts`
+ * is the whole chip and composes this, exactly as it composes the FM core.
  *
  * Four things about it are worth knowing before touching this file, and three of
  * them are places it differs from the SN76489 next door.
@@ -203,7 +201,7 @@ export class Ym2610Ssg implements ChipModel {
   run(clocks: number, sink: SampleSink): void {
     let remaining = clocks;
     while (remaining > 0) {
-      const step = Math.min(remaining, sink.clocksUntilSampleBoundary(), this.clocksToEvent());
+      const step = Math.min(remaining, sink.clocksUntilSampleBoundary(), this.clocksUntilEvent());
       const level = this.level();
       sink.add(level, level, step);
       this.advance(step);
@@ -211,8 +209,15 @@ export class Ym2610Ssg implements ChipModel {
     }
   }
 
-  /** Clocks until the next edge anything could produce, so a span is flat. */
-  private clocksToEvent(): number {
+  /**
+   * Clocks until the next edge anything could produce, so a span is flat.
+   *
+   * Public because the whole chip needs it: {@link Ym2610} sums this generator
+   * with an FM core and seven ADPCM voices, and it can only do that into one flat
+   * span if every section says when it will next move (`ym2610.ts` §The one run
+   * loop).
+   */
+  clocksUntilEvent(): number {
     let next = Number.MAX_SAFE_INTEGER;
     for (const channel of this.tone) {
       if (channel.counter > 0 && channel.counter < next) next = channel.counter;

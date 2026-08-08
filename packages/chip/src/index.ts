@@ -23,6 +23,7 @@ import { NdsSpu } from "./nds-spu.js";
 import { NesApu } from "./nes-apu.js";
 import { SDsp } from "./s-dsp.js";
 import { Sn76489 } from "./sn76489.js";
+import { Ym2610 } from "./ym2610.js";
 import { Ym2610Ssg } from "./ym2610-ssg.js";
 import { Ym2612 } from "./ym2612.js";
 import type { ChipId, ChipModel } from "./types.js";
@@ -82,6 +83,15 @@ export { T6w28, T6W28_CLOCK_HZ, T6W28_LEFT, T6W28_RIGHT } from "./t6w28.js";
 export { Sn76489, SN76489_CLOCK_HZ } from "./sn76489.js";
 export { NesApu, NES_CLOCK_HZ } from "./nes-apu.js";
 export { SSG_DIVIDER, SSG_REGISTERS, YM2610_CLOCK_HZ, Ym2610Ssg } from "./ym2610-ssg.js";
+export {
+  Ym2610,
+  ADPCM_A_DIVIDER,
+  ADPCM_B_DIVIDER,
+  SSG_GAIN,
+  YM2610_ADPCM_A_CHANNELS,
+  YM2610_FM_CHANNELS,
+  type Ym2610Options,
+} from "./ym2610.js";
 export { Ym2612, YM2612_CLOCK_HZ } from "./ym2612.js";
 export {
   SDsp,
@@ -113,6 +123,8 @@ export function createChip(
     ram?: Uint8Array;
     /** Where {@link ram}'s first byte answers, for a chip that sees an address. */
     ramBase?: number;
+    /** A second sample ROM, for the one chip whose two codecs read their own. */
+    ramB?: Uint8Array;
     bank?: readonly GbaSample[];
   } = {},
 ): ChipModel {
@@ -145,6 +157,16 @@ export function createChip(
       return new NesApu();
     case "ym2612":
       return new Ym2612();
+    case "ym2610":
+      // The fourth model that has to be *given* something, and the only one given
+      // two: its ADPCM-A and ADPCM-B sections read different sample ROMs, which on
+      // a cartridge are the two V regions. Without them the sample voices are
+      // silent and the FM and SSG halves play normally, which is what a caller
+      // arranging music rather than building a cartridge actually wants.
+      return new Ym2610({
+        ...(options.ram === undefined ? {} : { pcmA: options.ram }),
+        ...(options.ramB === undefined ? {} : { pcmB: options.ramB }),
+      });
     case "ym2610-ssg":
       return new Ym2610Ssg();
     case "gba-pcm":
