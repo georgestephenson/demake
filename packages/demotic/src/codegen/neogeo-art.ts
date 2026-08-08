@@ -39,10 +39,12 @@ import {
   type SpriteSource,
 } from "@demake/core";
 
+import { collectLevels } from "./shape.js";
 import type { Program } from "../program.js";
 import { builtinMd, BUILTIN_TILES } from "../rom/graphics.js";
 
 import { applyArtOverrides } from "../demakefile/overrides.js";
+import { artKey } from "./shape.js";
 import { artRequests, digest, remember, rememberAsync, type AssetBytes } from "./art.js";
 import {
   ART_PALETTE0,
@@ -105,6 +107,16 @@ export interface NeogeoArtOptions {
   fix?: Uint8Array;
   /** Palette RAM as the art chose it, one word an entry. */
   palette?: Uint16Array;
+  /**
+   * Each level's grid, already composed into hardware tiles.
+   *
+   * Keyed by the level's index in `collectLevels` order. A plane cell covers a
+   * 2x2 block of language cells, so the runtime cannot look a tile up per cell
+   * the way every other backend does — the composition is build-time, which is
+   * legal exactly because a Demotic tile layer cannot change (doc 13 §D6).
+   * Two words a block: the tile number, and the attribute carrying its palette.
+   */
+  levelPlanes?: ReadonlyMap<number, { words: Uint16Array; wide: number; high: number }>;
 }
 
 /**
@@ -460,6 +472,41 @@ export async function bindNeogeoArt(
     fix.set(unpack4(builtin, tile), tile * FIX_TILE_BYTES);
   }
   options.fix = fix;
+
+  // Levels: each 2x2 block of the grid becomes one hardware tile. Done here
+  // rather than in the emitter because it grows the bank, and the bank is this
+  // file's; done at build time rather than at run time because a plane cell has
+  // no single legend entry behind it and a tile layer cannot change.
+  const levelPlanes = new Map<number, { words: Uint16Array; wide: number; high: number }>();
+  for (const level of collectLevels(program.scenes)) {
+    const file = level.file;
+    const wide = Math.ceil(file.width / CELLS_PER_TILE);
+    const high = Math.ceil(file.height / CELLS_PER_TILE);
+    const words = new Uint16Array(wide * high * 2);
+    for (let row = 0; row < high; row += 1) {
+      for (let column = 0; column < wide; column += 1) {
+        const tile = bank.intern(
+          compose((qx, qy) => {
+            const cellX = column * CELLS_PER_TILE + qx;
+            const cellY = row * CELLS_PER_TILE + qy;
+            if (cellX >= file.width || cellY >= file.height) return null;
+            const character = file.rows[cellY]?.[cellX] ?? " ";
+            const legend = file.tiles.findIndex((entry) => entry.char === character);
+            if (legend < 0) return null;
+            const art = file.tiles[legend]?.art;
+            const bound = art ? levelTiles?.art.get(artKey(art, 1, 1)) : undefined;
+            if (!bound || !levelTiles) return null;
+            return unpack4(levelTiles.tiles, bound.tile);
+          }),
+        );
+        const at = (row * wide + column) * 2;
+        words[at] = tile;
+        words[at + 1] = (ART_PALETTE0 & 0xff) << 8;
+      }
+    }
+    levelPlanes.set(level.index, { words, wide, high });
+  }
+  if (levelPlanes.size > 0) options.levelPlanes = levelPlanes;
 
   options.bank = bank.bytes();
   options.palette = packPalette(artPalettes, spriteColours);
