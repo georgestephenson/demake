@@ -42,10 +42,15 @@ indistinguishable from always advancing it for a chip nothing can read — and e
 other chip in the set is write-only, so nothing had ever noticed. This one has a
 status byte carrying the two timer overflow flags, and a driver whose clock is
 timer A polls exactly that. Gated on a sink, the cartridge would spin for ever on
-a flag nothing could set. `Ym2612.run`'s sink is now optional and the console
-clocks the chip unconditionally: a timer is not audio, and a model that stops when
-the speakers are unplugged is a model of the speakers. The PSG keeps the old
-arrangement, because nothing can read it.
+a flag nothing could set: a timer is not audio, and a model that stops when the
+speakers are unplugged is a model of the speakers.
+
+`Ym2612.run`'s sink is now optional, and the console clocks the chip when either
+of the two things that can observe it is there — a sink, or a running timer
+(`Ym2612.timersRunning`). Not unconditionally: a demade _game_ programmes neither
+timer, so clocking it there would charge every one of them for six four-operator
+voices no test can hear. The PSG keeps the old arrangement, because nothing can
+read it at all.
 
 **The proof is the Game Boy's, run in `@demake/md`** — the same
 `it.each(audioRomConsoles())` battery, a track and a one-shot, no tolerance — and

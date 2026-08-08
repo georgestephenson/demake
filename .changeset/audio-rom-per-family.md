@@ -29,16 +29,7 @@ them from there would drag that family back into the always-loaded bundle and
 quietly undo the split. `gb.ts` re-exports all four, so every emitter and caller
 imports them from where it always did.
 
-**And the Mega Drive's FM chip is clocked when anything can _observe_ it**, which
-is a narrower condition than the one shipped a commit ago. Two things can: a
-sample sink, and a running timer. Gating on the sink alone leaves a standalone
-cartridge waiting for ever on a timer flag nothing can set; gating on nothing
-charges every _game_ for six four-operator voices no test can hear, because a
-demade game programmes no timer at all. That was a fifth of the Mega Drive audio
-battery's time budget and it turned CI red on the slower of the two Node versions.
-`Ym2612.timersRunning` is what the console asks.
-
-The same battery's building cases now state a timeout instead of inheriting the
+The Mega Drive audio battery's building cases now state a timeout instead of inheriting the
 default twenty seconds, and the measurement is why: the Mega Drive's timbre is
 _searched_ hardware-in-the-loop rather than selected, so `arrangeScore` takes
 8685 ms on the shooter's theme there against 9 ms on a Master System. That case
