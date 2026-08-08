@@ -298,14 +298,6 @@ export function insertRow(text: string, before: number, line: string): string {
   return joinRows(lines, trailingNewline);
 }
 
-/** Replace a whole row, for the cases a slot cannot express. */
-export function setRow(text: string, at: number, line: string): string {
-  const { lines, trailingNewline } = splitRows(text);
-  if (at < 0 || at >= lines.length) return text;
-  lines[at] = line;
-  return joinRows(lines, trailingNewline);
-}
-
 /**
  * The line a palette entry drops in.
  *
