@@ -12,6 +12,14 @@
  * and the status byte it polls is *bus-visible state* rather than a rendering.
  * A console that stopped the chip whenever the speakers were unplugged would
  * leave such a cartridge spinning for ever on a flag that could never be set.
+ *
+ * The condition `machine.ts` actually applies is narrower than "always", and
+ * deliberately: a sink **or** a running timer, which is the full list of ways
+ * this chip's advancing can be seen. The other half of that — a chip with
+ * neither, which is every demade *game*, doing nothing at all — is not pinned
+ * here and cannot be, because it is unobservable through the bus by
+ * construction. That is exactly what makes skipping it safe, and skipping it is
+ * worth a fifth of the Mega Drive audio battery's time budget.
  */
 
 import { describe, expect, it } from "vitest";
@@ -29,7 +37,7 @@ function blankRom(): Uint8Array {
   return rom;
 }
 
-describe("the FM chip runs whether or not anything is listening", () => {
+describe("the FM chip runs when anything can observe it", () => {
   it("raises timer A's overflow flag with no sample sink attached", () => {
     const machine = new Md(blankRom());
     expect(machine.ymSink).toBeUndefined();
