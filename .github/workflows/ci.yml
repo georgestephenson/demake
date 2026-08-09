@@ -57,7 +57,7 @@ jobs:
         run: pnpm lint
 
   test-unit:
-    name: Unit (${{ matrix.os }}, Node ${{ matrix.node }})
+    name: Unit (${{ matrix.os }}, Node ${{ matrix.node }}, ${{ matrix.shard }}/4)
     needs: changes
     if: needs.changes.outputs.unit == 'true'
     runs-on: ${{ matrix.os }}
@@ -68,11 +68,29 @@ jobs:
     # `main` still finds before anything ships; what they cost on a PR is the
     # whole run, because Windows is the slowest runner and this is the longest
     # job on it. `fromJSON` because a matrix dimension has to be a real list.
+    #
+    # Node 22 is the floor and 24 is the ceiling, and on a pull request only the
+    # floor runs — the OS split's argument, applied to the other axis. What the
+    # second version catches is a change in the runtime's own behaviour under
+    # code that is otherwise identical, which is a `main` concern rather than a
+    # per-commit one, and it is the whole suite again either way.
+    #
+    # **Four shards, because the suite is 45 core-minutes and a runner has four
+    # cores.** Vitest distributes whole files, so the floor is the slowest single
+    # file rather than the total — which is exactly why the batteries are one file
+    # per console (`_audio-battery.ts` §Why this is a battery rather than a test
+    # file) and why sharding is worth anything at all here. Two things to know
+    # before changing the count. The split is by SHA-1 of each file's path, so it
+    # is arbitrary rather than balanced: the shards do not take equal times and the
+    # slowest one is what the job costs. And every shard pays the setup again
+    # (checkout, install, build), so past four the setup starts to dominate what
+    # is left of the tail.
     strategy:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
-        node: [22, 24]
+        node: ${{ fromJSON(github.event_name == 'pull_request' && '[22]' || '[22,24]') }}
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
@@ -83,14 +101,16 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # Build first so the spawned-binary surface test runs against real dist.
       - run: pnpm build
-      # The whole suite, never a subset of its files: `vitest.config.ts` aliases
-      # every `@demake/*` specifier to source, so a test can import a package its
-      # own package.json does not declare. Job-level gating only ever asks
-      # whether a package is in the closure, which that hazard cannot affect.
-      - run: pnpm test
+      # A shard of the suite's files, never a subset chosen by what changed:
+      # `vitest.config.ts` aliases every `@demake/*` specifier to source, so a test
+      # can import a package its own package.json does not declare. Job-level
+      # gating only ever asks whether a package is in the closure, which that
+      # hazard cannot affect — and a shard is every file in turn, so it cannot
+      # either.
+      - run: pnpm test --shard=${{ matrix.shard }}/4
 
   test-browser:
-    name: "Browser (${{ matrix.browser }})"
+    name: "Browser (${{ matrix.browser }}, ${{ matrix.shard }}/2)"
     needs: changes
     if: needs.changes.outputs.browser == 'true'
     runs-on: ubuntu-latest
@@ -99,10 +119,19 @@ jobs:
     # engine — the three ran sequentially inside a single job for five and a half
     # minutes, which was the whole run's critical path while every other job had
     # been finished for three.
+    #
+    # And two shards per engine, because that job became the critical path the
+    # moment the unit suite was sharded: Firefox was fifteen minutes of a
+    # twenty-one-minute run. Playwright shards *tests* rather than files under
+    # `fullyParallel`, and `determinism.spec.ts` is a test per console with a
+    # backend — a dozen cases of roughly equal cost, which is the shape sharding
+    # divides best. Unlike the unit suite's four this is not floored by one long
+    # file, so the limit here is the browser install rather than the balance.
     strategy:
       fail-fast: false
       matrix:
         browser: [chromium, firefox, webkit]
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
@@ -127,13 +156,16 @@ jobs:
       - name: Install the browser's system dependencies
         if: steps.browser-cache.outputs.cache-hit == 'true'
         run: pnpm --filter @demake/web exec playwright install-deps ${{ matrix.browser }}
-      - run: pnpm test:browser
+      # No `--` before the flag: this script is a `pnpm --filter` delegation, so a
+      # separator survives the hand-off and reaches Playwright as a positional
+      # filter that matches no test.
+      - run: pnpm test:browser --shard=${{ matrix.shard }}/2
         env:
           DEMAKE_BROWSERS: ${{ matrix.browser }}
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-report-${{ matrix.browser }}
+          name: playwright-report-${{ matrix.browser }}-${{ matrix.shard }}
           path: packages/web/playwright-report
           retention-days: 7
 
