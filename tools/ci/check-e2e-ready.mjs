@@ -46,6 +46,10 @@ const FILES = {
   "nds (DeSmuME)": join(TC, "libretro", "cores", "desmume_libretro.so"),
   "pce (beetle-pce-fast)": join(TC, "libretro", "cores", "mednafen_pce_fast_libretro.so"),
   "wsc (beetle-wswan)": join(TC, "libretro", "cores", "mednafen_wswan_libretro.so"),
+  // The Virtual Boy has no entry in TOOLS: it is the one family whose display
+  // program demake emits with its own encoder, so the emulator is the whole of
+  // what its loop needs.
+  "vb (beetle-vb)": join(TC, "libretro", "cores", "mednafen_vb_libretro.so"),
 };
 
 const onPath = (tool) => {

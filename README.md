@@ -84,13 +84,16 @@ Nintendo DS. Beyond that, support deepens in two steps:
 | Capability                                        | Consoles                                                                                                                                                               |
 | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `prep` + `inspect` (compliant PNG)                | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, GBA, NDS, SG-1000, PC Engine, Neo Geo, WonderSwan/Color, NGP/NGPC, Virtual Boy, Pokémon Mini, Supervision, Game.com, Mega Duck |
-| `gen` (bin/asm/C data + display code)             | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, SG-1000, GBA, NDS, PC Engine, WonderSwan Color                                                                                 |
-| `--format rom` + **pixel-perfect emulator proof** | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, SG-1000, GBA, NDS, PC Engine, WonderSwan Color                                                                                 |
+| `gen` (bin/asm/C data + display code)             | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, SG-1000, GBA, NDS, PC Engine, WonderSwan Color, Virtual Boy                                                                    |
+| `--format rom` + **pixel-perfect emulator proof** | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, SG-1000, GBA, NDS, PC Engine, WonderSwan Color, Virtual Boy                                                                    |
 | `build` (a Demotic game as a playable ROM)        | GB, GBC, NES, SMS, GG, MD/Genesis                                                                                                                                      |
 
 "Pixel-perfect emulator proof" means what it says: CI assembles a real ROM,
 boots it in an emulator, and asserts the framebuffer matches demake's own output
-byte-for-byte across an extensive image battery.
+byte-for-byte across an extensive image battery. On the Virtual Boy that is
+**both eyes**: its display is two LED arrays and its video processor draws every
+scene twice, offset by a depth the scene declares, so a still picture is proved
+to sit at the display plane rather than merely to be drawn.
 
 ## Packages
 

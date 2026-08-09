@@ -138,7 +138,12 @@ compile games as well as pictures:
   traces identically on it in `@demake/wsc` (§Console rollout, item 4). Sound is
   the one gap it has left.
 
-Both march the shared image battery. The Game Gear shipped with the SMS family
+A third Tier 3 vertical rides most of the loop: the **Virtual Boy** has art, data,
+a display ROM and a pixel-perfect E2E against beetle-vb, and with it the first
+*depth axis* in the project — its video processor draws every scene once an eye.
+What it does not have is a game backend, which §Console rollout item 9 costs.
+
+All three march the shared image battery. The Game Gear shipped with the SMS family
 in Phase 2 and SG-1000 with the TMS9918 path.
 
 What remains of Tier 2, and of every other console in scope, is costed in
@@ -174,7 +179,8 @@ rom` and *not* for `demake build`. Encoders pay for more than one console:
 | 65816 | built (`core/src/asm/wdc65816.ts`) | SNES |
 | ARM | built (`core/src/asm/arm.ts`) | **GBA, NDS** — one encoder for three processors, since a DS has two |
 | V30MZ (8086) | built (`core/src/asm/v30mz.ts`) — 16-bit x86, and the second encoder here with two oracles | **WonderSwan, WonderSwan Color** |
-| TLCS-900/H | new, and the largest of them | Neo Geo Pocket, NGP Color |
+| TLCS-900/H | built (`core/src/asm/tlcs900.ts`), and the largest of them | Neo Geo Pocket, NGP Color |
+| V810 | built (`core/src/asm/v810.ts`) — the first *RISC* here, and the cheapest to write | **Virtual Boy** |
 | SPC700 | built (`core/src/asm/spc700.ts`) | SNES audio only |
 
 Four consoles therefore need no new encoder at all: the Mega Duck, the Atari
@@ -194,6 +200,7 @@ real work is.
 | Tilemap + scroll + sprites | GB, GBC, Mega Duck, NES, SMS, GG, MD, SNES, PCE, TurboExpress, WS, WSC, NGP, NGPC, GBA, NDS | Nothing new — this is what the backend interface is |
 | Tilemap, **no scroll**, 1 KB RAM | SG-1000 | **Out of scope for games** ([§below](#the-sg-1000-is-out-of-scope-for-games)). The hardware has no scroll register, so a backend would have to reject any game that declares a camera; scrolling would mean rewriting the pattern table every frame |
 | ~~**Sprite-only**, no tilemap~~ **done** | Neo Geo | *This row was wrong.* A sprite here is a vertical strip whose column of tile numbers is a 64-word table, and the **sticky bit** chains each strip to the one before it — so twenty-one strips side by side are a plane of 16×16 cells carrying **one position between them**. The background-cell writers needed a different address calculation, not counterparts, and scrolling turned out to be *two writes* rather than a scroll register. See [§the order, item 8](#the-order) |
+| **Display list of tilemap rectangles, with a depth** | Virtual Boy | The renderer is a 32-entry list rather than a stack of layers: a *world* names a rectangle of a BGMap, where on the screen it goes, and **how far apart its two eyes' copies are**. Three mechanisms fall away — a world carries its own source origin, so scrolling is not a scroll register; the HUD takes a world of its own, so the sprite HUD is absent; and the map is 64×64 against a 48×28 window, so there is no leading-edge painter. What is genuinely new is the depth field, which nothing in `codegen/shape.ts` has a vocabulary for |
 | **Display list** | Atari 7800 | MARIA draws from per-zone header lists and steals cycles from the 6502; no tilemap, no ordinary sprites |
 | **Framebuffer + blitter** | Atari Lynx | Suzy blits scaled RLE sprite packets into RAM; background, scroll and tile rendering all become software |
 | **Framebuffer, software everything** | Watara Supervision | 65C02, no tiles, no sprites, no scroll, and the visible bitmap lives *inside* the 8 KB of system RAM |
@@ -534,6 +541,53 @@ the backend today, and either is a reason to revisit rather than to work around.
    writes are still there, so its trace is identical to a sounding console's. A
    Z80 encoder already exists (the Sega 8-bits'), so this is a driver and a
    second program in the container rather than anything new.
+
+9. **Virtual Boy** — **art, data, a display ROM and a pixel-perfect E2E are
+   done; the game backend is what remains.** `demake gen -c vb --format rom`
+   builds a bootable cartridge and the whole shared image battery matches the DAC
+   reference in beetle-vb, *in both eyes*.
+
+   Three things about it were cheaper than this list would have guessed. The
+   **encoder is the smallest in the set** — a V810 is a RISC with thirty-two
+   32-bit registers, a hardware multiply and a hardware divide, so the value
+   layer a backend needs here will pull in **no arithmetic helper at all**, which
+   nothing else in the project can say. The **boot is three lines**, because a
+   27-bit address bus puts the reset fetch inside the cartridge's own last
+   sixteen bytes and there is no header to read on the way. And the **display ROM
+   needed no toolchain**: no distribution ships a V810 assembler, so this is the
+   one family whose display program demake emits with its own encoder — which
+   costs a second opinion on the assembly and keeps the one that matters, since a
+   third-party emulator still decodes every instruction.
+
+   What it costs that no predecessor did is a **depth axis**. The video processor
+   draws every scene twice, once an eye, offset by a parallax the scene itself
+   declares — so this console can put a sprite *in front of* the scenery it is
+   drawn over without moving the scenery, and a backend that ignored that would
+   be spending the machine downwards in a way no other console here allows
+   (AGENTS.md §Iron rules — a demaker spends the whole machine). The intended
+   arrangement is stated once and proved against hardware today: scenery at the
+   display plane, objects and the HUD in front of it, `VB_NEARER` the sign that
+   means nearer, and `packages/cli/test/vb.e2e.test.ts`'s depth case the place
+   where our model and beetle-vb are compared pixel for pixel on a scene with two
+   depths in it.
+
+   **What the backend costs**, in the terms this section uses: axis 1 is free
+   (the encoder is built and pinned); axis 3 is free (`@demake/vb` exists and
+   runs cartridges); axis 2 is the work, and it is *less* than the Mega Drive's
+   was rather than more — the renderer is a display list, and three of the five
+   mechanisms `codegen/shape.ts` assumes are absent here rather than
+   reimplemented (§Axis 2). What has no precedent is giving the language's
+   objects and captions a depth, and the honest place for that decision is a
+   maintainer's rather than an agent's, because "how far in front" is a value no
+   `.dmt` says and no Demakefile may (doc 14 §Scope). The RAM is 64 KiB against
+   an NROM's 2 and the cartridge 512 KiB against 32, so neither budget bites.
+
+   **Sound is untouched.** The VSU is six wavetable channels with hardware sweep
+   and modulation; `@demake/chip` does not model it, `@demake/vb`'s register page
+   accepts writes and generates nothing, and `arrange -c vb` therefore does not
+   exist. That is a chip model, a binding and a V810 driver — and the driver's
+   stream player would be the *processor's* first, on `arm-player.ts`'s and
+   `mos-player.ts`'s precedent.
 
 68000 (Mega Drive, then Neo Geo), 65816 (SNES, plus the SPC700 for its audio) and
 ARM (GBA, NDS) slot in wherever Tier 1 breadth is wanted ahead of Tier 2 depth;
