@@ -42,6 +42,7 @@ import {
   type GenResult,
   VB_BGMAP,
   VB_BKCOL,
+  VB_BRIGHTNESS,
   VB_BRTA,
   VB_BRTB,
   VB_BRTC,
@@ -73,7 +74,6 @@ import { CliError } from "../io.js";
 const BGMAP_W = 64;
 
 /** The brightness the console spec's ramp was measured at. */
-const BRIGHTNESS = { a: 32, b: 64, c: 32 };
 
 /** Registers the display program uses, named for what they hold. */
 const ADDR = 10;
@@ -167,9 +167,9 @@ export function buildVbRom(_env: CliEnv, spec: ConsoleSpec, result: GenResult): 
     poke(asm, VB_GPLT0 + index * 2, palette[index] ?? 0);
   }
   poke(asm, VB_BKCOL, palette[4] ?? 0);
-  poke(asm, VB_BRTA, BRIGHTNESS.a);
-  poke(asm, VB_BRTB, BRIGHTNESS.b);
-  poke(asm, VB_BRTC, BRIGHTNESS.c);
+  poke(asm, VB_BRTA, VB_BRIGHTNESS.a);
+  poke(asm, VB_BRTB, VB_BRIGHTNESS.b);
+  poke(asm, VB_BRTC, VB_BRIGHTNESS.c);
 
   // One world for the picture, at the display plane and centred, and one that
   // ends the list.

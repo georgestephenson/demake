@@ -15,7 +15,7 @@ real emulator, compared pixel for pixel):
 | Demaker               | Docs   | State                                                                         |
 | --------------------- | ------ | ----------------------------------------------------------------------------- |
 | art (images)          | 03–06  | working, ten consoles proven on hardware                                      |
-| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on fifteen consoles |
+| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on sixteen consoles |
 | music (`arrange`)     | 16, 17 | MIDI → chip music, seventeen consoles — and a Game Boy ROM that plays it      |
 | sound (`sfx`)         | 16, 18 | WAV → chip effects, seventeen consoles — same ROM, same proof                 |
 
@@ -718,6 +718,52 @@ console here puts index 0 — `vbShade` is the one place that reversal happens, 
 the emulator caught its absence on the first run as a picture that was a
 photographic negative.
 
+**And it builds games, which is where the third axis stops being a rendering
+detail.** `demake build -c vb` produces a real cartridge — V810 machine code
+written for the game, art demade into 2bpp characters, and a _display list_
+rather than a stack of layers — and the whole example library traces identically
+on it in `@demake/vb`, in the same battery, at the same one frame per tick. This
+is the sixteenth console to run it and the only one that draws every scene twice.
+
+**`VB_DEPTH` is spent rather than described**: the scenery world sits at the
+display plane, every object carries `vbParallax(VB_DEPTH.object)` in its own
+attribute entry, and the captions get a second BGMap world of their own at the
+nearest rung — so a demade game reads as three planes in depth on hardware that
+no other console in the matrix has anything to compare with. `vb-rom.test.ts`
+reads the ladder back off the worlds, off the object table and off the _pixels_,
+because a sign convention that was consistently wrong would satisfy any one of
+the three alone.
+
+Four things about the renderer are this console's. **A scene is a display list**,
+so what it costs is the worlds it uses: seven, written once at boot, and the four
+object worlds among them are four rather than one because the drawing processor
+decides which group a world draws by _how many object worlds came before it_.
+**Scrolling is two halfword stores** — the scenery world's own source origin —
+against a 64×64 map and a 48×28 window, so the leading edge is painted sixteen
+columns off the right-hand side and neither the NES's row pinning nor the Master
+System's seam mask exists. **The HUD gets a plane of its own**, whose origin is
+written at boot and never again, which is the WonderSwan's arrangement with a
+depth on top and the third time in the set the sprite HUD is absent rather than
+reimplemented. And **an unaligned access is masked rather than faulted**: a V810
+clears the low bits of an address instead of raising, so an `ld.h` at an odd
+address reads the halfword below it and reports nothing — which is why the tile
+cell list and both tile-contact lists are read a byte at a time and why the
+shared constant pool grew an `align` hook.
+
+**A caption here is chosen against the picture, not against the backdrop**, and
+that is the one place this console's HUD plane costs something the NES's shared
+backdrop does not. On that machine a caption's paper _is_ the backdrop register,
+so the ink is picked against it; here the caption is on a plane in front of the
+picture and what shows through its paper is the picture. Picking against the
+backdrop gave the caves title screen dark ink over a three-quarters-dark picture
+whose lightest colour was rare — a caption placed correctly, demade correctly and
+invisible, which no register comparison can see. `vb-art.ts` counts the shades the
+demade picture actually places and ramps the font the other way.
+
+What it does not have is an **in-game audio driver**; doc 13 §Console rollout
+item 9 costs it. A V810 stream player would be the processor's first, and unlike
+before it is blocked on nothing but itself — the cartridge it goes in exists.
+
 **And it demakes music and effects.** `@demake/chip` models the VSU — six voices,
 five of them wavetables of thirty-two six-bit samples — and `demake arrange -c vb`,
 `sfx` and `render` all work, on the Neo Geo Pocket's precedent that a demaker is
@@ -739,11 +785,9 @@ register**, so a volume step and a pan change are one write each and neither
 disturbs the other. Every other wavetable console in the set packs both into one
 byte and rewrites it for either.
 
-What it does not have is a **game backend** and, behind that, an **in-game
-driver**; doc 13 §Console rollout item 9 costs both. The driver is blocked on the
-backend rather than on anything of its own — a V810 stream player would be the
-_processor's_ first, and it has nothing to be embedded in until
-`demake build -c vb` exists.
+What it does not have is an **in-game driver**; doc 13 §Console rollout item 9
+costs it. A V810 stream player would be the _processor's_ first, and the
+cartridge it goes in now exists.
 
 **And it demakes music and sound, on both Neo Geo Pockets.** `@demake/chip`
 models the T6W28: a Master System's four voices with the thing that chip is
@@ -879,8 +923,8 @@ art-free build in `packages/audio/test/neogeo-driver.test.ts`.
 Still to come: the remaining Tier 2/3 consoles (each =
 a codegen backend, a ROM harness + toolchain, and a libretro core + DAC
 calibration), the remaining framebuffer/scanline layout paths (Lynx, GBA/NDS
-bitmap modes, 2600/7800), and the rest of the Demotic runtime story (the speed
-work doc 14 §Runtime model names).
+bitmap modes, 2600/7800), the Virtual Boy's in-game audio driver, and the rest of
+the Demotic runtime story (the speed work doc 14 §Runtime model names).
 
 **The audio spine is built, and two consoles boot** (docs
 [16](docs/16-audio-engine.md), [17](docs/17-music-demaker.md),
@@ -1346,21 +1390,28 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
                      which is *two* machines: gba/machine.ts is the description
                      that makes a Nintendo DS a variant rather than a seventh
                      backend, on the Mega Duck's terms
-    vb/              the V810's, and *started rather than finished*: regs.ts,
-                     ctx.ts, val.ts and expr.ts exist and are proven on the
-                     hardware by demotic/test/vb-arith.test.ts; the tile walk,
-                     the rule bodies, the renderer and the image path are not
-                     written and this console is **not** in codegen/registry.ts.
-                     Two things in what is there have no counterpart elsewhere.
-                     The multiply pulls in *nothing* — mul leaves the whole
-                     64-bit product and a 16.16 product is its middle
+    vb.ts, vb-art.ts, vb/                 the V810 backend and its image path,
+                     and the only renderer here that emits a *display list*
+                     rather than programming layers: seven world entries written
+                     once at boot, of which one is the scenery, four are the
+                     object worlds the drawing processor counts through to reach
+                     group 0, one is the caption plane at its own depth and one
+                     ends the list. Scrolling is two halfword stores into the
+                     scenery world, so the leading-edge painter is the smallest
+                     in the set. Three things in it have no counterpart
+                     elsewhere. The multiply pulls in *nothing* — mul leaves the
+                     whole 64-bit product and a 16.16 product is its middle
                      thirty-two bits, with no floor correction because an
                      arithmetic shift of a two's-complement product already is
-                     one. And a `jal` returns through a *register*, so a helper
-                     that calls a helper destroys its own return address, which
-                     reads as a hang rather than as a wrong number — ctx.enter/
-                     leave are the answer, and no other backend needs one
-                     because every other console pushes
+                     one. A `jal` returns through a *register*, so a helper that
+                     calls a helper destroys its own return address, which reads
+                     as a hang rather than as a wrong number — ctx.enter/leave
+                     are the answer, and no other backend needs one because every
+                     other console pushes. And an *unaligned* access is masked
+                     rather than faulted, so the three structures that interleave
+                     a count byte with halfword entries are read and written a
+                     byte at a time and the constant pool is aligned before it is
+                     emitted (CodeBuffer.align)
     audio.ts         the hand-off to @demake/audio, art.ts's twin
   demo/              terminal runner (play.mjs) and test runner (test.mjs)
 packages/chip/       @demake/chip — every sound chip as a register-driven model (doc 16)
@@ -3469,8 +3520,8 @@ Ask the four questions separately — the answer to "is this a variant" is per s
 not per console.
 
 **And a console can gain a chip model, both demakers and a game backend without
-gaining an in-game driver.** The Neo Geo Pocket Color is the case, and the four
-columns are what make it sayable: `arrange -c ngpc` demakes its music, `build -c
+gaining an in-game driver.** The Neo Geo Pocket Color and the Virtual Boy are the
+cases, and the four columns are what make it sayable: `arrange -c ngpc` demakes its music, `build -c
 ngpc` produces a cartridge that traces identically to one that plays it, and the
 in-game-audio column says `—` because `GAME_DRIVERS` does not list it. That last
 list is the fourth registry the support matrix reads and it is keyed by _console_
@@ -3579,7 +3630,7 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   a cartridge from each fixture game **for every console with a backend** — both
   Game Boys, the Mega Duck, the NES, both Sega 8-bits, the Super Nintendo, the
   Mega Drive, the Neo Geo, the Game Boy Advance, the Nintendo DS, the PC Engine,
-  both WonderSwans and the Neo Geo Pocket Color — and runs it in the matching
+  both WonderSwans, the Neo Geo Pocket Color and the Virtual Boy — and runs it in the matching
   self-hosted core, asserting the
   trace
   matches the reference interpreter tick for tick. No toolchain, no emulator
@@ -3793,10 +3844,8 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   opcode bytes `packages/core/test/huc6280.test.ts` pins — and the VDC test is
   where the _increment select_ was found to be one bit out, which no trace and no
   register assertion could have seen.
-- `packages/demotic/test/vb-arith.test.ts` is the Virtual Boy's, and it is
-  currently the _only_ thing that runs V810 code the code generator wrote —
-  the position `sms-arith.test.ts` held while the Sega backend was half-built,
-  and the reason a partial backend stops where this one does. Three of its
+- `packages/demotic/test/vb-arith.test.ts` and `vb-rom.test.ts` are the Virtual
+  Boy's pair. Three of the first's
   vectors are aimed at answers this machine gives that no predecessor does: a
   multiply with **no** floor correction (an arithmetic shift of the hardware's
   own 64-bit product already is one, so `THIRD × -THIRD` is where a version that
@@ -3807,6 +3856,19 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   taken with a logical shift: the Neo Geo Pocket subtracts in a sixteen-bit
   register and gets the sign extension from the wrap, and `random(-1, 1)` on a
   thirty-two-bit one computes a count of −65534.
+  The second is the rendering oracle, and it is the only one in the project that
+  can read a **depth** back off the hardware: the two worlds, the object table
+  and the pixels themselves, checked together because a sign convention that was
+  consistently wrong would satisfy any one of the three alone and put a game's
+  captions behind its scenery. Its other cases are the ways this cartridge can be
+  perfect and dark — a display list written one entry short (a scene with no
+  captions), a character bank that never arrived (nothing is uploaded through a
+  port here, so a short copy is a blank screen and nothing else), the plane
+  against the level's own grid, and the caption plane's origin staying at zero
+  while the scenery's moves. It scrolls the caves **vertically** to prove the
+  last one, because this is the widest screen in the matrix — forty-eight cells,
+  so a level that scrolls sideways on a Game Boy has both its edges on screen
+  here and the camera never leaves its horizontal clamp.
 - `packages/demotic/test/nes-arith.test.ts` is one layer below that: it assembles
   each 16.16 operation on its own, runs it in `@demake/nes` and compares with
   `fixed.ts`. A multiply that floors the wrong way for negative operands makes a

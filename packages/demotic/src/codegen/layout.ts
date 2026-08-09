@@ -948,10 +948,14 @@ export const VB_RAM_BASE = 0x05008000;
  *
  * Three things about it are this machine's.
  *
- *   - **The object table is the hardware's**, not a shadow of it: the drawing
- *     processor reads `$0003E000` directly, so writing it belongs in the frame's
- *     own gap and copying it anywhere would be a second answer — the WonderSwan's
- *     arrangement two consoles along.
+ *   - **The object table is a shadow, and it has to be.** The drawing processor
+ *     reads `$0003E000` for most of the frame, and a frame is built while it is
+ *     doing so — so the objects are staged in work RAM and copied across in the
+ *     gap after it finishes, exactly as the queued cells are. It sits *above* the
+ *     heap rather than in it, because the region has to hold one entry more than
+ *     the hardware is told about: the `SPT` registers name a last entry rather
+ *     than a count, so a frame with no objects is expressed by a terminator with
+ *     both eye bits clear.
  *   - **Everything is four-byte aligned**, and for a sharper reason than the
  *     Mega Drive's. A 68000 *faults* on an odd word access; a V810 silently
  *     masks the low bits of the address, so an unaligned `ld.w` reads four bytes
@@ -965,7 +969,10 @@ export const VB_MEMORY: MemoryPlan = {
   // from the top, and stopping short of the last so the two cannot meet.
   heapStart: 0x05000100,
   heapEnd: 0x0500f000,
-  oamShadow: 0x0003e000,
+  // Above the heap and below the stack: a hundred and twenty-nine entries of
+  // eight bytes, which is the hundred and twenty-eight a frame may draw and the
+  // terminator past them.
+  oamShadow: 0x0500f000,
   // Eight-by-eight only, so a wide object costs its width in entries — and the
   // hardware holds a thousand and twenty-four, which no demade game approaches.
   oamEntries: 128,

@@ -330,6 +330,18 @@ export const VB_XP_OVERTIME = 0x0010;
 /** What a runtime writes to `DPCTRL` to bring the display up. */
 export const VB_DPCTRL_ON = VB_DP_SYNCE | VB_DP_RE | VB_DP_DISP;
 
+/**
+ * The LED intensities every initialisation on this console writes.
+ *
+ * One definition with two readers — the display-ROM builder and the game
+ * backend — because the console spec's shade ramp is a *measured* artifact of
+ * exactly these three numbers (`consoles/vb.ts`). A cartridge that programmed
+ * different ones would put a picture on the screen that the pixel-perfect E2E's
+ * reference was never taken from, and the mismatch would look like a fitter
+ * fault rather than a brightness one.
+ */
+export const VB_BRIGHTNESS = { a: 32, b: 64, c: 32 } as const;
+
 // --- the pads and the timer ---------------------------------------------------
 
 /** Hardware register: the low half of the last pad read. */
@@ -434,7 +446,11 @@ export const VB_NEARER_SIGN = -1;
 
 /** The parallax value a layer at this depth is given. */
 export function vbParallax(depth: number): number {
-  return VB_NEARER_SIGN * depth;
+  // Coerced to an integer so that a depth of zero is zero rather than *negative*
+  // zero, which is the same number to the hardware and a different one to
+  // `Object.is` — and a display plane that compares unequal to itself is a
+  // confusing way to find out nothing is wrong.
+  return (VB_NEARER_SIGN * depth) | 0;
 }
 
 /**

@@ -856,14 +856,19 @@ function needSeparatePair(ctx: VbCtx): Ref {
     const { asm, layout } = inner;
     const a = layout.pairA as number;
     const useY = inner.unique("sepUseY");
+    // The clamp is a routine, and a `jal` returns through a register — so this
+    // one has to put its own return address away before calling it. It is the
+    // only pair helper that does: the rest are arithmetic all the way down
+    // (`ctx.ts` §enter).
+    inner.enter();
     const { xPush, yPush } = emitPairPushes(inner, useY);
     add32(inner, boxProp(a, "x"), xPush);
     clamp32(inner, boxProp(a, "x"));
-    asm.jmp(LP);
+    inner.leave();
     asm.label(useY);
     add32(inner, boxProp(a, "y"), yPush);
     clamp32(inner, boxProp(a, "y"));
-    asm.jmp(LP);
+    inner.leave();
   });
 }
 

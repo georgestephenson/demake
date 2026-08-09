@@ -142,7 +142,20 @@ export class Vip {
   /** Which framebuffer pair the drawing processor is filling. */
   private bank = 0;
 
-  private readonly rgba = new Uint8ClampedArray(VB_SCREEN_W * VB_SCREEN_H * 4);
+  /**
+   * One rendered picture per eye.
+   *
+   * Two buffers rather than one, and it is this console's own hazard: every
+   * other core here has a single framebuffer, so returning the same array twice
+   * is ordinary. Here a caller's whole reason to render is to *compare* the two
+   * — which is what a depth assertion is — and one shared buffer makes them
+   * trivially identical, so a layer standing off the display plane reads as a
+   * layer that is not there.
+   */
+  private readonly rgba: Record<Eye, Uint8ClampedArray> = {
+    left: new Uint8ClampedArray(VB_SCREEN_W * VB_SCREEN_H * 4),
+    right: new Uint8ClampedArray(VB_SCREEN_W * VB_SCREEN_H * 4),
+  };
 
   constructor() {
     this.reset();
@@ -432,20 +445,21 @@ export class Vip {
    */
   render(eye: Eye = "left"): Uint8ClampedArray {
     const base = this.shownBuffer(eye);
+    const rgba = this.rgba[eye];
     const lit = this.lit;
     let out = 0;
     for (let y = 0; y < VB_SCREEN_H; y += 1) {
       for (let x = 0; x < VB_SCREEN_W; x += 1) {
         const { byte, shift } = vbFramebufferBit(x, y);
         const shade = lit ? ((this.vram[base + byte] as number) >> shift) & 3 : 0;
-        this.rgba[out] = VB_SHADES[shade] as number;
-        this.rgba[out + 1] = 0;
-        this.rgba[out + 2] = 0;
-        this.rgba[out + 3] = 255;
+        rgba[out] = VB_SHADES[shade] as number;
+        rgba[out + 1] = 0;
+        rgba[out + 2] = 0;
+        rgba[out + 3] = 255;
         out += 4;
       }
     }
-    return this.rgba;
+    return rgba;
   }
 
   /** Which framebuffer the display is putting on one eye's LEDs. */

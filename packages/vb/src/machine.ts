@@ -241,34 +241,52 @@ export class Vb implements Bus {
 
   // --- running ---------------------------------------------------------------
 
-  /** Run one instruction and return what it cost. */
+  /**
+   * Run one instruction and return what it cost.
+   *
+   * **The frame happens here rather than in {@link runFrame}**, and that is the
+   * whole reason this is not two methods with the display work in the outer one:
+   * a cartridge that waits for a frame by *polling* — which this console's
+   * demade games do, because they take no interrupt anywhere — never returns to
+   * a caller stepping instructions, so a harness driving the machine one
+   * instruction at a time would spin for ever on a flag only the other method
+   * could set.
+   */
   step(): number {
     const cycles = this.cpu.step();
     this.cycles += cycles;
+    if (this.cycles >= CYCLES_PER_FRAME) {
+      this.cycles -= CYCLES_PER_FRAME;
+      this.endFrame();
+    }
     return cycles;
   }
 
   /**
-   * Run until the next frame boundary.
+   * Draw the frame and raise what it raises.
    *
    * The drawing processor fills the pair the display is not showing and then the
    * interrupt is raised — in that order, because a runtime's handler counts the
    * frame and the main loop writes the *next* one's worlds, and a picture drawn
    * after the handler ran would be a frame behind everything else.
    */
-  runFrame(limit = 8_000_000): number {
-    let guard = 0;
-    while (this.cycles < CYCLES_PER_FRAME) {
-      this.step();
-      if ((guard += 1) > limit) throw new Error("vb: no frame after 8M instructions");
-    }
-    this.cycles -= CYCLES_PER_FRAME;
+  private endFrame(): void {
     this.frames += 1;
     this.vip.drawFrame();
     const pending = this.vip.reg(VB_INTPND) | VB_INT_GAMESTART | VB_INT_FRAMESTART | VB_INT_XPEND;
     this.vip.setReg(VB_INTPND, pending);
     if ((pending & this.vip.reg(VB_INTENB)) !== 0) {
       this.cpu.interrupt(INT_VIP_CODE, VB_VECTOR_VIP);
+    }
+  }
+
+  /** Run until the next frame boundary. */
+  runFrame(limit = 8_000_000): number {
+    const target = this.frames + 1;
+    let guard = 0;
+    while (this.frames < target) {
+      this.step();
+      if ((guard += 1) > limit) throw new Error("vb: no frame after 8M instructions");
     }
     return this.frames;
   }

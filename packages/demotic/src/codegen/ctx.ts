@@ -39,6 +39,16 @@ export type HelperName = string;
 export interface CodeBuffer {
   label(name: string): unknown;
   dd(value: number): unknown;
+  /**
+   * Pad to a boundary, on a machine that has one.
+   *
+   * Optional because most of the processors here have none: a 6502 or a Z80
+   * reads a thirty-two-bit constant a byte at a time and does not care where it
+   * starts. A V810 does — it *masks* the low bits of an unaligned word access
+   * rather than faulting, so a pool that began on an odd halfword would hand
+   * every constant back four bytes of somewhere else, silently.
+   */
+  align?(bytes: 2 | 4): unknown;
 }
 
 /**
@@ -182,6 +192,7 @@ export abstract class CtxBase<Self, A extends CodeBuffer> {
     }
     // After the helpers, because a helper may have asked for a table of its own.
     for (const table of this.tables) table(this.asm);
+    if (this.constants.size > 0) this.asm.align?.(4);
     for (const [value, name] of this.constants) {
       this.asm.label(name);
       this.asm.dd(value);

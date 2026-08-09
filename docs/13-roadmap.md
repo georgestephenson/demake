@@ -138,10 +138,11 @@ compile games as well as pictures:
   traces identically on it in `@demake/wsc` (§Console rollout, item 4). Sound is
   the one gap it has left.
 
-A third Tier 3 vertical rides most of the loop: the **Virtual Boy** has art, data,
-a display ROM and a pixel-perfect E2E against beetle-vb, and with it the first
-*depth axis* in the project — its video processor draws every scene once an eye.
-What it does not have is a game backend, which §Console rollout item 9 costs.
+A third Tier 3 vertical rides the *whole* loop: the **Virtual Boy** has art, data,
+a display ROM, a pixel-perfect E2E against beetle-vb and a Demotic backend — and
+with it the first *depth axis* in the project, since its video processor draws
+every scene once an eye. What it does not have is an in-game audio driver, which
+§Console rollout item 9 costs.
 
 All three march the shared image battery. The Game Gear shipped with the SMS family
 in Phase 2 and SG-1000 with the TMS9918 path.
@@ -542,16 +543,17 @@ the backend today, and either is a reason to revisit rather than to work around.
    Z80 encoder already exists (the Sega 8-bits'), so this is a driver and a
    second program in the container rather than anything new.
 
-9. **Virtual Boy** — **art, data, a display ROM and a pixel-perfect E2E are
-   done; the game backend is what remains.** `demake gen -c vb --format rom`
-   builds a bootable cartridge and the whole shared image battery matches the DAC
-   reference in beetle-vb, *in both eyes*.
+9. **Virtual Boy** — **art, data, a display ROM, a pixel-perfect E2E and a game
+   backend are done; the in-game audio driver is what remains.**
+   `demake gen -c vb --format rom` builds a bootable cartridge and the whole
+   shared image battery matches the DAC reference in beetle-vb, *in both eyes*;
+   `demake build -c vb` builds a playable one.
 
    Three things about it were cheaper than this list would have guessed. The
    **encoder is the smallest in the set** — a V810 is a RISC with thirty-two
    32-bit registers, a hardware multiply and a hardware divide, so the value
-   layer a backend needs here will pull in **no arithmetic helper at all**, which
-   nothing else in the project can say. The **boot is three lines**, because a
+   layer pulls in **no arithmetic helper at all** for a multiply, which nothing
+   else in the project can say. The **boot is three lines**, because a
    27-bit address bus puts the reset fetch inside the cartridge's own last
    sixteen bytes and there is no header to read on the way. And the **display ROM
    needed no toolchain**: no distribution ships a V810 assembler, so this is the
@@ -571,16 +573,10 @@ the backend today, and either is a reason to revisit rather than to work around.
    where our model and beetle-vb are compared pixel for pixel on a scene with two
    depths in it.
 
-   **The backend is started, and the two layers that go wrong quietly are
-   done.** `codegen/vb/{regs,ctx,val,expr}.ts` exist and are proven on the
-   hardware by `packages/demotic/test/vb-arith.test.ts` — every 16.16 operation
-   against `fixed.ts`, and four generator draws in a row against `rng.ts`. That
-   is the position `sms-arith.test.ts` held while the Sega backend was
-   half-built, and it is deliberately where a partial backend stops: the value
-   layer is what a wrong answer hides in for a thousand ticks, and the renderer
-   is what fails loudly.
-
-   Three findings from writing it are worth carrying forward.
+   The **value layer** is proven on the hardware in its own file, as every
+   backend's is: `packages/demotic/test/vb-arith.test.ts` runs every 16.16
+   operation against `fixed.ts` and four generator draws in a row against
+   `rng.ts`. Three findings from writing it are worth carrying forward.
 
    - **The multiply pulls in nothing.** `mul` leaves the whole 64-bit product
      across two registers and a 16.16 product is its middle thirty-two bits, so
@@ -597,20 +593,58 @@ the backend today, and either is a reason to revisit rather than to work around.
      a wrong number. `ctx.enter`/`leave` are the answer and no other backend
      needs a counterpart, because every other console in the set pushes.
 
-   **What is left** is `tiles.ts`, `rules.ts`, `emit.ts`, `vb.ts` and
-   `vb-art.ts` — the tile walk, the rule bodies, the renderer, the console's six
-   answers and its image path — plus the registry entry, `rom.test.ts`'s target
-   list and a `vb-rom.test.ts` rendering oracle. In the terms this section uses:
-   axis 1 is free (the encoder is built and pinned); axis 3 is free
-   (`@demake/vb` exists and runs cartridges); axis 2 is the work, and it is
-   *less* than the Mega Drive's was rather than more — the renderer is a display
-   list, and three of the five mechanisms `codegen/shape.ts` assumes are absent
-   here rather than reimplemented (§Axis 2). What has no precedent is giving the
-   language's objects and captions a depth, and the honest place for that
-   decision is a maintainer's rather than an agent's, because "how far in front"
-   is a value no `.dmt` says and no Demakefile may (doc 14 §Scope) — `VB_DEPTH`
-   is a proposal, not a settled answer. The RAM is 64 KiB against an NROM's 2
-   and the cartridge 512 KiB against 32, so neither budget bites.
+   **The backend is finished.** `demake build -c vb` produces a real cartridge
+   and the whole example library traces identically on it in `@demake/vb`, in
+   the same battery, at the same one frame per tick — the sixteenth console to
+   do so. `packages/demotic/test/vb-rom.test.ts` is the rendering oracle beside
+   it, and every case in it is one that produces a cartridge which ticks
+   perfectly and shows nothing.
+
+   Four things about the renderer are this console's rather than a predecessor's
+   restated.
+
+   - **A scene is a display list, and this runtime's is seven entries written
+     once.** Scenery, four object worlds, the caption plane and the terminator.
+     The four object worlds are four rather than one because the drawing
+     processor counts them — the group a world draws is decided by how many
+     object worlds came before it, from three downward — and none of them is
+     wasted: the other three groups are left empty by the `SPT` registers, which
+     name a *last entry* rather than a count.
+   - **Scrolling is two halfword stores.** The map is 64×64 against a 48×28
+     window and the scenery world carries its own source origin, so the leading
+     edge is painted sixteen columns off the right-hand side, both wraps are
+     powers of two, and neither the NES's row pinning nor the Master System's
+     seam mask exists.
+   - **The HUD gets a plane of its own**, at the caption depth, whose origin is
+     written at boot and never again — the WonderSwan's arrangement and the Game
+     Boy Advance's, with a depth on top. The sprite HUD, the second decimal
+     renderer and the whole pixel-pinning argument are absent rather than
+     reimplemented.
+   - **A caption is chosen against the picture, not against the backdrop.** On
+     the NES and the PC Engine a caption's paper *is* the shared backdrop, so the
+     ink is picked against that; here the caption is on a plane in *front* of
+     the picture, so what shows through its paper is the picture itself. Picking
+     against the backdrop register gave the caves title screen dark ink over a
+     three-quarters-dark picture whose lightest colour was rare — a caption that
+     is perfectly placed, perfectly demade and invisible, and one no register
+     comparison can see. `vb-art.ts` counts the shades the demade picture
+     actually places and rams the font the other way.
+
+   And one about the emitter that the other fifteen backends are simply spared:
+   **an unaligned access is masked rather than faulted**. A V810 clears the low
+   bits of an address instead of raising, so an `ld.h` at an odd address reads
+   the halfword below it and reports nothing — which the three structures with a
+   count byte among halfword entries hit by construction, and which the constant
+   pool would hit whenever a byte table before it happened to be an odd length.
+   `MemoryPlan.align` covers the allocator's share; the rest is split loads and
+   an `align(4)` hook on the shared constant pool.
+
+   Two things it still does not have. The **in-game audio driver** is one, and
+   it is blocked on nothing but itself now: a V810 stream player would be the
+   processor's first, and the cartridge it goes in exists. The other is the
+   depth ladder itself — `VB_DEPTH`'s three numbers are still a *proposal*,
+   because "how far in front" is a value no `.dmt` says and no Demakefile may
+   (doc 14 §Scope), and the maintainer's call rather than an agent's.
 
    **The sound is half done, and it is the half that does not need the backend.**
    `@demake/chip` models the VSU, `binding/vb.ts` drives it and

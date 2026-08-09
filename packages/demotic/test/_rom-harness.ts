@@ -31,6 +31,7 @@ import { Ngp, type Button as NgpButton } from "@demake/ngp";
 import { Pce, type Button as PceButton } from "@demake/pce";
 import { Sms, type Button as SmsButton } from "@demake/sms";
 import { Snes, type Button as SnesButton } from "@demake/snes";
+import { Vb, type Button as VbButton } from "@demake/vb";
 import { Wsc, type Button as WscButton } from "@demake/wsc";
 
 import { buildGbRom } from "../src/codegen/gb.js";
@@ -43,6 +44,7 @@ import { buildNgpcRom } from "../src/codegen/ngpc.js";
 import { buildPceRom } from "../src/codegen/pce.js";
 import { buildSmsRom } from "../src/codegen/sms.js";
 import { buildSnesRom } from "../src/codegen/snes.js";
+import { buildVbRom } from "../src/codegen/vb.js";
 import { buildWscRom } from "../src/codegen/wsc.js";
 import type { BuildOptions, BuiltRom } from "../src/codegen/backend.js";
 import type { Program } from "../src/program.js";
@@ -194,6 +196,27 @@ export const ngpcTarget: RomTarget = {
   },
 };
 
+/**
+ * The Virtual Boy, and the only target here whose machine draws *two* pictures.
+ *
+ * A trace says nothing about either of them, so what this settles is the same
+ * thing every other console's pass settles — that a tenth processor's arithmetic
+ * and ordering agree to the bit. What the depth is for is `vb-rom.test.ts`'s.
+ */
+export const vbTarget: RomTarget = {
+  console: "vb",
+  build: (program, options) => buildVbRom(program, options),
+  boot: (bytes) => {
+    const machine = new Vb(bytes);
+    return {
+      readMemory: (address, length) => machine.readMemory(address, length),
+      stepInstruction: () => machine.step(),
+      runFrame: () => machine.runFrame(),
+      setButtons: (down) => machine.setButtons(down as VbButton[]),
+    };
+  },
+};
+
 export const smsTarget: RomTarget = {
   console: "sms",
   build: (program, options) => buildSmsRom(program, options),
@@ -337,6 +360,7 @@ export const TARGETS: readonly RomTarget[] = [
   ndsTarget,
   wscTarget,
   wsTarget,
+  vbTarget,
 ];
 
 export class RomRunner {

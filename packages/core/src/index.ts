@@ -613,6 +613,7 @@ export {
   VB_BGMAP_H,
   VB_BGMAP_W,
   VB_BKCOL,
+  VB_BRIGHTNESS,
   VB_BRTA,
   VB_BRTB,
   VB_BRTC,
