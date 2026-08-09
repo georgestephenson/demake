@@ -639,6 +639,15 @@ the backend today, and either is a reason to revisit rather than to work around.
    `MemoryPlan.align` covers the allocator's share; the rest is split loads and
    an `align(4)` hook on the shared constant pool.
 
+   One gap in it is worth naming because nothing will find it by accident:
+   **a cartridge stages 128 objects where the chip holds 1024.** The object table
+   is copied out of work RAM in the gap after the frame and `layout.oamCount` is
+   one byte, so the Demotic profile quotes 128 rather than the hardware's number
+   — a diagnostic that promised the chip's would pass a game whose sprites then
+   went missing. Reaching the rest is a sixteen-bit object count in `layout.ts`
+   and a wider shadow, and it is worth doing when a game wants it rather than
+   before: the widest fixture in the library stages fifteen.
+
    Two things it still does not have. The **in-game audio driver** is one, and
    it is blocked on nothing but itself now: a V810 stream player would be the
    processor's first, and the cartridge it goes in exists. The other is the

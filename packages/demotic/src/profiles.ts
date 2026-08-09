@@ -373,11 +373,20 @@ const PROFILES: readonly ConsoleProfile[] = [
     rawHeight: 224,
     cellSize: 8,
     fps: 50,
-    // A thousand and twenty-four objects, and the drawing processor works
-    // through a group until it runs out of frame rather than clipping a
-    // scanline — so `perLine` is the whole table, as on the Neo Geo Pocket, and
-    // what a wide object costs is entries.
-    sprites: { total: 1024, perLine: 1024, hFlip: true },
+    // **The runtime's staging, not the hardware's thousand and twenty-four.**
+    // The drawing processor works through a group until it runs out of frame
+    // rather than clipping a scanline, so `perLine` is the whole table as on the
+    // Neo Geo Pocket and a wide object costs entries and is never cut mid-line.
+    // What bounds the total is `VB_MEMORY.oamEntries`: a cartridge stages its
+    // objects in work RAM and copies them into the table in the gap after the
+    // frame, and `layout.oamCount` is one byte. So this says 128 rather than
+    // what the chip holds, because the number a diagnostic quotes has to be the
+    // number a cartridge will actually draw — a budget that promised the
+    // hardware's would pass a game whose sprites then went missing, which is the
+    // one thing a backend gap may never be (doc 14 §Runtime model). Reaching the
+    // rest wants a sixteen-bit object count in `layout.ts`; doc 13 §Console
+    // rollout item 9 records it.
+    sprites: { total: 128, perLine: 128, hFlip: true },
     startButton: "dedicated",
     romPath: true,
   },
