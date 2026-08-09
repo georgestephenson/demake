@@ -47,7 +47,16 @@ export {
   R31,
   type Bus,
 } from "./cpu.js";
-export { Vip, VB_NEARER, VB_SHADES, vbShade, VRAM_SIZE, type Eye } from "./vip.js";
+export {
+  Vip,
+  VB_DEPTH,
+  VB_NEARER,
+  VB_SHADES,
+  vbParallax,
+  vbShade,
+  VRAM_SIZE,
+  type Eye,
+} from "./vip.js";
 export {
   BUTTONS,
   CYCLES_PER_FRAME,

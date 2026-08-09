@@ -49,7 +49,7 @@ import {
   VB_WORLD_RON,
 } from "@demake/core";
 
-import { VB_NEARER, VB_SHADES, Vip, vbShade, type Eye } from "../src/vip.js";
+import { VB_DEPTH, VB_NEARER, VB_SHADES, Vip, vbParallax, vbShade, type Eye } from "../src/vip.js";
 
 /** A scene, built the way a cartridge builds one. */
 function scene(): Vip {
@@ -123,6 +123,46 @@ describe("the Virtual Boy's video processor", () => {
     // of six, which is the hardware's arithmetic and not a convention.
     expect(leftEdge(vip, "left", 50)).toBe(94);
     expect(leftEdge(vip, "right", 50)).toBe(106);
+  });
+
+  it("keeps the depth ladder shallow, and in the order a scene reads in", () => {
+    // Scenery at the plane, objects in front of it, captions in front of them —
+    // the whole of demake's use of the third axis, written down once because a
+    // caption behind the object it labels is not a wrong number anywhere, it is
+    // a wrong number relative to another one. Shallow on purpose: this display's
+    // two eyes are about sixty pixels apart, and a few pixels of disparity is
+    // what stays comfortable for a whole session.
+    expect(VB_DEPTH.background).toBe(0);
+    expect(VB_DEPTH.object).toBeGreaterThan(VB_DEPTH.background);
+    expect(VB_DEPTH.hud).toBeGreaterThan(VB_DEPTH.object);
+    expect(VB_DEPTH.hud).toBeLessThan(16);
+    expect(vbParallax(VB_DEPTH.object)).toBe(VB_NEARER * VB_DEPTH.object);
+  });
+
+  it("draws a scene's three layers at three depths, nearest last", () => {
+    const vip = scene();
+    cell(vip, 0, 0, 0);
+    const at = (index: number, depth: number, y: number): void =>
+      world(vip, index, {
+        0: VB_WORLD_LON | VB_WORLD_RON,
+        2: 100,
+        4: vbParallax(depth) & 0xffff,
+        6: y,
+        14: 7,
+        16: 7,
+      });
+    // The list runs from 31 down, so the nearest layer is the *lowest* index.
+    at(31, VB_DEPTH.background, 20);
+    at(30, VB_DEPTH.object, 60);
+    at(29, VB_DEPTH.hud, 100);
+    world(vip, 28, { 0: VB_WORLD_END });
+    vip.drawFrame();
+    const disparity = (row: number): number =>
+      leftEdge(vip, "left", row) - leftEdge(vip, "right", row);
+    // Scenery has none; each layer above it has more than the one below.
+    expect(disparity(20)).toBe(0);
+    expect(disparity(60)).toBe(VB_DEPTH.object * 2);
+    expect(disparity(100)).toBe(VB_DEPTH.hud * 2);
   });
 
   it("puts a layer in front of the display plane when the parallax is VB_NEARER", () => {

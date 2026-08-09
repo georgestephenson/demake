@@ -67,8 +67,10 @@ import {
   VB_XPCTRL,
   VB_XP_XPEN,
   packPacked2Le,
+  VB_DEPTH,
+  vbParallax,
 } from "@demake/core";
-import { Vb, VB_NEARER } from "@demake/vb";
+import { Vb } from "@demake/vb";
 
 import { makeNodeEnv } from "../src/env.js";
 import { buildVbRom } from "../src/rom/vb.js";
@@ -225,7 +227,8 @@ describe("Virtual Boy depth (needs libretro/beetle-vb)", () => {
     () => {
       const dir = mkdtempSync(join(tmpdir(), "demake-vb-depth-"));
       try {
-        const parallax = VB_NEARER * 8;
+        // The ladder demake actually uses: scenery at the plane, objects in front.
+        const parallax = vbParallax(VB_DEPTH.object);
         const rom = depthCartridge(parallax);
         const romPath = join(dir, "depth.vb");
         writeFileSync(romPath, rom);
@@ -257,7 +260,7 @@ describe("Virtual Boy depth (needs libretro/beetle-vb)", () => {
         // the screen means. This is the assertion `VB_NEARER` exists for, and the
         // only place in the project where it is checked against hardware.
         expect(edge(0, 84)).toBeGreaterThan(edge(VB_SCREEN_W, 84));
-        expect(edge(0, 84) - edge(VB_SCREEN_W, 84)).toBe(16);
+        expect(edge(0, 84) - edge(VB_SCREEN_W, 84)).toBe(VB_DEPTH.object * 2);
 
         // And demake's own video processor draws the same scene the same way —
         // every pixel of both eyes, against a third-party emulator.

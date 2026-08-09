@@ -381,6 +381,63 @@ export const VB_KEY_RD = 0x8000;
 export const VB_FRAME_HZ = 50.2;
 
 /**
+ * How far in front of the display plane each layer of a demade scene sits, in
+ * pixels of parallax.
+ *
+ * This is the whole of demake's use of the third axis, and it is written down
+ * once rather than chosen per emitter, because depth is a thing a reader has to
+ * be able to check against the *rest* of the scene: a caption that sits behind
+ * the object it labels is not a wrong number anywhere, it is a wrong number
+ * relative to another one.
+ *
+ * The ladder is deliberately shallow. A Virtual Boy's two eyes are about
+ * 60 pixels apart at the screen, and disparity beyond a few pixels asks the eyes
+ * to converge harder than they comfortably will for a whole session — the
+ * hardware's own manual is emphatic about it, and every commercial game on this
+ * console keeps its foreground within a handful of pixels of the plane. So:
+ *
+ *   - **Scenery is at the screen.** A backdrop has nothing in front of it to be
+ *     behind, and putting it there gives the layers above it room to be nearer
+ *     without any of them leaving comfortable range.
+ *   - **Objects are in front of it**, which is what makes a demade game read as
+ *     3D at all: the player, the ball, the coins stand off the scenery they are
+ *     drawn over, and the scenery does not move to allow it.
+ *   - **Captions are nearest.** A HUD is not in the world, so it reads best in
+ *     front of everything in it — and this console can say that where every
+ *     other one in the matrix can only draw text on top.
+ *
+ * A parallax is this multiplied by {@link VB_NEARER_SIGN}: the left eye's copy
+ * of a layer is drawn at `X − P` and the right eye's at `X + P`, so *negative*
+ * parallax crosses the eyes and reads as nearer.
+ * `packages/cli/test/vb.e2e.test.ts` is where that is settled against a
+ * third-party emulator rather than against this comment.
+ */
+export const VB_DEPTH = {
+  /** Scenery, and anything a scene is a picture of. */
+  background: 0,
+  /** Objects the game moves — the player, and everything it touches. */
+  object: 4,
+  /** Text and counters, which are not in the world. */
+  hud: 7,
+} as const;
+
+/**
+ * The sign a parallax takes to put a layer **in front of** the display plane.
+ *
+ * The left eye's copy is drawn at `X − P` and the right eye's at `X + P`, so a
+ * negative parallax puts the left eye's copy to the *right* of the right eye's —
+ * crossed disparity, which is what the eyes do converging on something nearer
+ * than the screen. One definition, because a project with two would have its
+ * scenery in front of its sprites on whichever of them was wrong.
+ */
+export const VB_NEARER_SIGN = -1;
+
+/** The parallax value a layer at this depth is given. */
+export function vbParallax(depth: number): number {
+  return VB_NEARER_SIGN * depth;
+}
+
+/**
  * The hardware shade a demake palette index means.
  *
  * A reversal, not an identity, and it is the one piece of arithmetic on this

@@ -686,10 +686,22 @@ every scene twice. That is not a rendering detail: a **world** is a display-list
 entry that says where a rectangle of a BGMap goes on the screen _and how far
 apart its two eyes' copies are pulled_, so a layer can sit in front of or behind
 the display plane, and nothing else in this project has a depth to spend at all.
-`VB_NEARER` is the sign that means nearer, it has one definition, and
+`VB_NEARER_SIGN` is the sign that means nearer, it has one definition, and
 `packages/cli/test/vb.e2e.test.ts` settles it against a third-party emulator
 rather than against our own model — a scene with two depths in it, run in
 beetle-vb and in `@demake/vb`, compared pixel for pixel in both eyes.
+
+**What goes where is `VB_DEPTH`**, and it is one table rather than a number per
+emitter: **scenery at the display plane, objects in front of it, captions in
+front of them.** Written down once because depth is the one quantity a reader
+has to check against the _rest_ of the scene — a caption behind the object it
+labels is not a wrong number anywhere, it is a wrong number relative to another
+one. And deliberately shallow: this display's two eyes are about sixty pixels
+apart, disparity beyond a handful asks them to converge harder than is
+comfortable for a session, and every commercial game on this console keeps its
+foreground within a few pixels of the plane. A demaker spends the whole machine
+(§Iron rules), and on this one that means using the axis rather than exhausting
+it.
 
 Four things about this console are worth knowing before touching any of it. The
 **encoder is the smallest in the set**: a V810 is a RISC with thirty-two 32-bit

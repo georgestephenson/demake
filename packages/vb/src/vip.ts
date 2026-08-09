@@ -74,9 +74,12 @@ import {
   VB_WORLD_RON,
   vbFramebufferBit,
   vbShade,
+  VB_DEPTH,
+  VB_NEARER_SIGN,
+  vbParallax,
 } from "@demake/core";
 
-export { vbShade };
+export { vbShade, VB_DEPTH, vbParallax };
 
 /** Bytes of video memory the drawing processor addresses. */
 export const VRAM_SIZE = 0x40000;
@@ -89,16 +92,15 @@ const REGS_SIZE = 0x80;
 export type Eye = "left" | "right";
 
 /**
- * The sign a parallax takes to put a layer **in front of** the display plane.
+ * The sign a parallax takes to put a layer in front of the display plane.
  *
- * The left eye's copy is drawn at `X − P` and the right eye's at `X + P`, so a
- * negative parallax puts the left eye's copy to the *right* of the right eye's —
- * crossed disparity, which is what the eyes converge on something nearer than
- * the screen. One definition, read by this renderer and by the game backend,
- * because two would put a cartridge's sprites behind its scenery on whichever of
- * them was wrong.
+ * `@demake/core`'s, re-exported rather than restated: it is a fact about the
+ * hardware and it has readers on both sides of the package boundary — this
+ * renderer, the display-ROM builder, and the depth ladder {@link VB_DEPTH}
+ * itself. Two definitions would put a cartridge's sprites behind its scenery on
+ * whichever of them was wrong.
  */
-export const VB_NEARER = -1;
+export const VB_NEARER = VB_NEARER_SIGN;
 
 /**
  * The four shades, in the **hardware's** order: index 0 is the LEDs being off.
