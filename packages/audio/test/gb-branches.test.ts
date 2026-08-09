@@ -146,4 +146,30 @@ describe("the widest Game Boy driver a game can ask for", () => {
     expect(outcome.error).toBeUndefined();
     expect(outcome.bytes?.length ?? 0).toBeGreaterThan(0);
   });
+
+  it("can reach every channel's body, including the one nothing jumps to", () => {
+    // The second thing the widest shape is the only place to check. A dispatch
+    // emits one test fewer than it has channels and lets the remaining one fall
+    // through — and *which* one falls through is the whole question, because the
+    // bodies are laid out in index order directly below the tests. With one
+    // borrowable channel there are no tests at all and the question cannot be
+    // asked, which is why the example library never asked it.
+    const symbols = asm.symbols();
+    const bytes = outcome.bytes as Uint8Array;
+    for (const prefix of ["AudioMusTickRecord", "AudioMusTickSkip"]) {
+      const from = symbols.get(prefix) as number;
+      const first = symbols.get(`${prefix}On0`) as number;
+      // Parsed strictly rather than scanned for opcodes: `ld a, e` / `and bit` /
+      // `jp nz, body` is six bytes, so the length is also a statement of what a
+      // dispatch is allowed to be.
+      expect(first - from).toBe(6 * (CHANNELS.length - 1));
+      const reached = new Set([first]);
+      for (let at = from; at < first; at += 6) {
+        expect([bytes[at], bytes[at + 1], bytes[at + 3]]).toEqual([0x7b, 0xe6, 0xc2]);
+        reached.add((bytes[at + 4] as number) | ((bytes[at + 5] as number) << 8));
+      }
+      const bodies = CHANNELS.map((_, index) => symbols.get(`${prefix}On${index}`) as number);
+      expect([...reached].sort((a, b) => a - b)).toEqual([...bodies].sort((a, b) => a - b));
+    }
+  });
 });

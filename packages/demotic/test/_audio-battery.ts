@@ -64,6 +64,7 @@ import {
   buildGbaGameAudio,
   buildMdGameAudio,
   buildNdsGameAudio,
+  buildNeogeoGameAudio,
   buildNesGameAudio,
   buildNgpGameAudio,
   buildPceGameAudio,
@@ -72,9 +73,11 @@ import {
   buildWscGameAudio,
   gbChannelOf,
   ndsChannelTag,
+  neogeoOwnerTag,
   nesChannelOf,
   pceChannelTag,
   wscChannelTag,
+  type NeogeoGameAudio,
   psgChannelTag,
   psgShadowSlot,
   t6w28ChannelTag,
@@ -101,6 +104,8 @@ import { megaduckRegister } from "@demake/core";
 import { Gameboy } from "@demake/dmg";
 import { Gba, ROM_BASE } from "@demake/gba";
 import { Md } from "@demake/md";
+import { Neogeo, loadNeo } from "@demake/neogeo";
+import { YM2610_CLOCK_HZ } from "@demake/chip";
 import { Nds } from "@demake/nds";
 import { Nes } from "@demake/nes";
 import { Ngp } from "@demake/ngp";
@@ -116,6 +121,7 @@ import type { BuiltRom } from "../src/codegen/backend.js";
 import { buildGbaRom } from "../src/codegen/gba.js";
 import { buildGbRom } from "../src/codegen/gb.js";
 import { buildMdRom } from "../src/codegen/md.js";
+import { buildNeogeoRom } from "../src/codegen/neogeo.js";
 import { buildNesRom } from "../src/codegen/nes.js";
 import { buildNgpcRom } from "../src/codegen/ngpc.js";
 import { buildPceRom } from "../src/codegen/pce.js";
@@ -146,6 +152,16 @@ export interface Machine {
    * added to the cartridge, which is what the proof rests on.
    */
   watch?(address: number, onEnter: () => void): void;
+  /**
+   * Call `onLeave` when the driver reaches `address`, which closes a tick.
+   *
+   * Only one console needs it, and the reason is the Mega Drive's *cartridge*
+   * restated one board along: this driver's clock is a register **on the chip it
+   * is playing**, so the timer acknowledge is a chip write that happens between
+   * ticks. Without a close, that write lands in the group of the tick before it
+   * and every tick diverges on a byte the schedule never asked for.
+   */
+  watchEnd?(address: number, onLeave: () => void): void;
 }
 
 /** One console, as everything below addresses it. */
@@ -166,6 +182,8 @@ export interface Target {
    * into one map would be a symbol file nobody could read.
    */
   tickAddress(built: BuiltRom, bound: BoundAudio<Driver>): number;
+  /** Where a driver tick *ends*, for a console whose clock it writes between them. */
+  tickEndAddress?(built: BuiltRom, bound: BoundAudio<Driver>): number;
   boot(rom: Uint8Array): Machine;
   /**
    * A **fresh** tag: which voice a write belongs to, `0` for none.
@@ -700,6 +718,50 @@ const ALL: readonly Target[] = [
     },
   },
   {
+    // The only console whose driver is a whole *separate program* with its own
+    // ROM on its own bus. Everything the battery compares is the same; what is
+    // different is where it looks — the tick address is the Z80's rather than the
+    // cartridge's, because the game's 68000 has no symbol for it and no idea a
+    // tick is happening.
+    id: "neogeo",
+    name: "Neo Geo",
+    clockHz: YM2610_CLOCK_HZ,
+    // Nothing shared, for two reasons at once: the SSG mixer is written once at
+    // boot because a note is silenced by its own level, and the ADPCM key-on is a
+    // pulse. So no merge routine is emitted at all.
+    mergeReg: null,
+    mergeHelper: "stereo-merge",
+    // 119.99 Hz against the Game Boy's 120, which the timer hits to within a
+    // hundredth of a hertz — the most exact driver tick in the matrix.
+    ratio: 1,
+    // All fourteen voices, unlike the driver's own run tag: that field is four
+    // bits and numbers only the borrowable channels, and nothing here is packed.
+    tag: () => neogeoOwnerTag(),
+    tickAddress: (_built, bound) => (bound.driver as NeogeoGameAudio).symbols.tick,
+    // The clock is a register on the chip this driver is playing, so the timer
+    // acknowledge is a chip write between two ticks — the Mega Drive audio
+    // cartridge's problem, one board along and inside a game.
+    tickEndAddress: (_built, bound) => (bound.driver as NeogeoGameAudio).symbols.tickEnd,
+    // A packed byte here is a bus *port*, so a write only names a register once
+    // the address before it has been seen. Without this the question "what is the
+    // chip holding" is asked about four ports rather than about the chip — the
+    // Mega Drive's `mdRegister` one board along, and the same shape.
+    register: neogeoRegister,
+    async build(source, project) {
+      const { files, levels, assets } = exampleProject(project);
+      const program = compile(source, { profile: getProfile("neogeo"), files, levels });
+      const built = await buildNeogeoRom(program, { assets });
+      const bound = await bindAudio(program, assets, {
+        build: (tracks, effects) =>
+          buildNeogeoGameAudio({ tracks, effects: effects as GameEffect[] }),
+      });
+      return { built, bound };
+    },
+    boot(rom) {
+      return wrap(new Neogeo(loadNeo(rom)));
+    },
+  },
+  {
     id: "gba",
     name: "Game Boy Advance",
     // The Game Boy channels' own clock, which is a quarter of this machine's —
@@ -772,7 +834,9 @@ const ALL: readonly Target[] = [
 ];
 
 /** Every core answers the same five questions; this is the adapter, once. */
-function wrap(machine: Gameboy | Nes | Sms | Snes | Md | Gba | Nds | Pce | Wsc | Ngp): Machine {
+function wrap(
+  machine: Gameboy | Nes | Sms | Snes | Md | Gba | Nds | Pce | Wsc | Ngp | Neogeo,
+): Machine {
   return {
     step: () => {
       machine.stepInstruction();
@@ -783,6 +847,10 @@ function wrap(machine: Gameboy | Nes | Sms | Snes | Md | Gba | Nds | Pce | Wsc |
       // begins, and the game's own is running something else entirely.
       if (machine instanceof Snes) return machine.smp.pc;
       if (machine instanceof Nds) return machine.arm7.cpu.pc;
+      // And on the one whose driver is a whole *separate program* with its own
+      // ROM, it is that program's — the game's 68000 is running a game and has
+      // no idea a tick is happening.
+      if (machine instanceof Neogeo) return machine.sound.cpu.pc;
       // And on the one whose processor is an 8086, the register is called `ip`
       // and it is an *offset* — the driver is in the same segment as everything
       // else a cartridge runs, so the offset is the whole address.
@@ -792,6 +860,10 @@ function wrap(machine: Gameboy | Nes | Sms | Snes | Md | Gba | Nds | Pce | Wsc |
     tap: (listener) => {
       // Each core names it after its own chip; the shape is the same, and so is
       // the promise — it observes, it does not intercept.
+      if (machine instanceof Neogeo) {
+        machine.sound.chipTap = (reg, value) => listener(reg, value, 0);
+        return;
+      }
       if (machine instanceof Md) {
         // Two chips, and the tag has to know which: an FM bus port and a PSG
         // write are both "register 0" and mean nothing alike.
@@ -822,11 +894,24 @@ function wrap(machine: Gameboy | Nes | Sms | Snes | Md | Gba | Nds | Pce | Wsc |
             )
           : machine.setButtons(down as never),
     runFrame: () => void machine.runFrame(),
+    ...(machine instanceof Neogeo
+      ? {
+          watch: (address: number, onEnter: () => void): void => {
+            machine.sound.watch(address, onEnter);
+          },
+          watchEnd: (address: number, onLeave: () => void): void => {
+            machine.sound.watch(address, onLeave);
+          },
+        }
+      : {}),
     listen: (sink) => {
-      machine.audioSink = sink;
+      if (machine instanceof Neogeo) machine.sound.audioSink = sink;
+      else machine.audioSink = sink;
     },
     get listening() {
-      return machine.audioSink !== undefined;
+      return (
+        (machine instanceof Neogeo ? machine.sound.audioSink : machine.audioSink) !== undefined
+      );
     },
   };
 }
@@ -867,6 +952,7 @@ export function capture(
   tickAddress: number,
   ticks: number,
   press?: number,
+  tickEnd?: number,
 ): Write[][] {
   const machine = target.boot(rom);
   const groups: Write[][] = [];
@@ -883,6 +969,11 @@ export function capture(
   // afterwards is the same answer.
   const watched = machine.watch !== undefined;
   machine.watch?.(tickAddress, open);
+  if (tickEnd !== undefined) {
+    machine.watchEnd?.(tickEnd, () => {
+      current = undefined;
+    });
+  }
   let guard = 0;
   while (groups.length <= ticks) {
     const pc = machine.step();
@@ -892,6 +983,11 @@ export function capture(
     if (guard > 100_000_000) throw new Error("the driver stopped ticking");
   }
   return groups.slice(0, ticks);
+}
+
+/** Where this console's tick ends, for the one that has an answer. */
+function endOf(target: Target, built: BuiltRom, bound: BoundAudio<Driver>): number | undefined {
+  return target.tickEndAddress?.(built, bound);
 }
 
 /** A register named by its own number, which is every chip but one. */
@@ -927,6 +1023,26 @@ function mdRegister(): (write: Write) => string | null {
       return null;
     }
     return `0:fm:${latched[half]}`;
+  };
+}
+
+/**
+ * A register on the YM2610, which a byte only names once its address has passed.
+ *
+ * `mdRegister`'s shape on the other OPN-family bus: an even port latches and names
+ * nothing, and the odd one after it is a value belonging to whatever was latched
+ * on that half. Without it the handback assertion would ask what four *ports* were
+ * holding, which is a question with no musical meaning.
+ */
+function neogeoRegister(): (write: Write) => string | null {
+  const latched: [number, number] = [-1, -1];
+  return (write) => {
+    const half = (write.reg >> 1) & 1;
+    if ((write.reg & 1) === 0) {
+      latched[half] = write.value & 0xff;
+      return null;
+    }
+    return `${half}:${latched[half]}`;
   };
 }
 
@@ -1065,7 +1181,14 @@ export function audioBattery(target: Target): void {
         const expected = (script as ChipScript).ticks
           .slice(0, ticks)
           .map((tick) => observed(target, tick.writes as Write[]));
-        const actual = capture(target, built.bytes, address as number, ticks);
+        const actual = capture(
+          target,
+          built.bytes,
+          address as number,
+          ticks,
+          undefined,
+          endOf(target, built, bound),
+        );
         expect(firstDivergence(expected, actual)).toBeNull();
       },
       BUILDS_TIMEOUT,
@@ -1084,7 +1207,15 @@ export function audioBattery(target: Target): void {
         const expected = script.ticks
           .slice(0, ticks)
           .map((tick) => observed(target, tick.writes as Write[]));
-        expect(firstDivergence(expected, capture(target, built.bytes, address, ticks))).toBeNull();
+        const actual = capture(
+          target,
+          built.bytes,
+          address,
+          ticks,
+          undefined,
+          endOf(target, built, bound),
+        );
+        expect(firstDivergence(expected, actual)).toBeNull();
       },
       BUILDS_TIMEOUT,
     );
@@ -1094,7 +1225,14 @@ export function audioBattery(target: Target): void {
       async () => {
         const { built, bound } = await build(target, MUSIC_ONLY);
         const address = target.tickAddress(built, bound);
-        const first = capture(target, built.bytes, address, 1)[0] as Write[];
+        const first = capture(
+          target,
+          built.bytes,
+          address,
+          1,
+          undefined,
+          endOf(target, built, bound),
+        )[0] as Write[];
         const want = bound.driver?.performed.tracks[0] as ChipScript;
         expect(show(first)).toBe(
           show(observed(target, (want.ticks[0] as { writes: Write[] }).writes)),
@@ -1116,7 +1254,14 @@ export function audioBattery(target: Target): void {
         // same tick index: a frame-clocked driver ticks half as often as a Game
         // Boy's, so a fixed tick number would be a different second of the track.
         const press = Math.round(120 * target.ratio);
-        const groups = capture(target, built.bytes, address, Math.round(400 * target.ratio), press);
+        const groups = capture(
+          target,
+          built.bytes,
+          address,
+          Math.round(400 * target.ratio),
+          press,
+          endOf(target, built, bound),
+        );
 
         // The effect's channel, taken from the schedule rather than assumed — the
         // first write that names one, because a schedule may open with a register
@@ -1186,7 +1331,14 @@ export function audioBattery(target: Target): void {
         const address = target.tickAddress(built, bound);
         const press = Math.round(120 * target.ratio);
         const ticks = Math.round(600 * target.ratio);
-        const groups = capture(target, built.bytes, address, ticks, press);
+        const groups = capture(
+          target,
+          built.bytes,
+          address,
+          ticks,
+          press,
+          endOf(target, built, bound),
+        );
 
         // Two walks of the same length: what the chip was left holding for the
         // borrowed channel, and what the music's schedule says it should. Both tags
@@ -1254,7 +1406,14 @@ export function audioBattery(target: Target): void {
         const owned = channelOfEffect(target, effect);
         const address = target.tickAddress(built, bound);
         const press = Math.round(120 * target.ratio);
-        const groups = capture(target, built.bytes, address, Math.round(400 * target.ratio), press);
+        const groups = capture(
+          target,
+          built.bytes,
+          address,
+          Math.round(400 * target.ratio),
+          press,
+          endOf(target, built, bound),
+        );
 
         const shared = groups
           .slice(press + 10)
@@ -1519,6 +1678,14 @@ export function audioSweep(target: Target): void {
       sms: ["caves", "runner"],
       md: ["shooter"],
       snes: ["shooter"],
+      // The Neo Geo keeps one, for the Mega Drive's reason twice over: a game is
+      // tens of kilobytes of a *megabyte* P region and its sound program is a
+      // separate 32 KiB of its own, so there is no overflow for the assertion to
+      // catch at all — and a picture here is the whole `prep` tournament against
+      // 320×224, which is a minute a fixture. What the one case still buys is the
+      // thing the size sweep is really for: that a driver's reported sizes are
+      // real rather than the zero they hold before assembly.
+      neogeo: ["shooter"],
       // The PC Engine keeps the two tightest, and here they really are the two
       // tightest rather than the shooter: characters are *program* bytes on this
       // console, uploaded at boot, so a game's budget follows its art and not its

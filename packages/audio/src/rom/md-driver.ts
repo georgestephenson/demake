@@ -306,9 +306,13 @@ function emitWrite(asm: Asm68k, label: string, latch?: number): void {
 /**
  * Emit one body per borrowable voice, routed on the run's channel bits.
  *
- * The last voice falls through rather than being tested, because a run only
+ * The **first** voice falls through rather than being tested, because a run only
  * reaches here when it named one of them — so with a single borrowable voice,
- * which is what a game with one pitched effect has, there is no test at all.
+ * which is what a game with one pitched effect has, there is no test at all. It
+ * has to be the first and not the last, because the bodies are emitted in index
+ * order directly below: testing every one but the *last* would send a run that
+ * named it into the *first* voice's body, which no schedule in the example
+ * library reaches and which nothing but a two-channel effect set can see.
  */
 function mdPerChannel(
   asm: Asm68k,
@@ -317,7 +321,7 @@ function mdPerChannel(
   body: (name: string, channel: MdShadowChannel) => void,
 ): void {
   const { channels } = shadow;
-  for (let index = 0; index < channels.length - 1; index += 1) {
+  for (let index = 1; index < channels.length; index += 1) {
     asm.move("b", eaD(REG.flags), eaD(REG.byte));
     asm.andi("b", (channels[index] as MdShadowChannel).channel, eaD(REG.byte));
     asm.bcc("ne", `${prefix}${index}`);

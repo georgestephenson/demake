@@ -66,13 +66,8 @@ import type { ChipScript, Rational } from "../chipscript.js";
 import type { DriverData } from "./data.js";
 import { AudioRomError, type AudioRomOptions, type BuiltAudioRom } from "./gb.js";
 import { pack } from "./shared.js";
-import {
-  emitStream,
-  emitStreamData,
-  psgPortOf,
-  PSG_PORT,
-  type SmsStreamState,
-} from "./sms-driver.js";
+import { psgPortOf, psgWrite, PSG_PORT } from "./sms-driver.js";
+import { emitStream, emitStreamData, type Z80StreamState } from "./z80-player.js";
 import { resolveSmsClock } from "./sms-game.js";
 
 /**
@@ -100,11 +95,11 @@ const STACK_TOP = 0xdff0;
  *
  * Words rather than the byte pairs the Game Boy and the two 6502 machines keep,
  * because this CPU loads and stores sixteen bits in one instruction and has no
- * cheap page to be economical in — `sms-driver.ts` §`SmsStreamState` is where
+ * cheap page to be economical in — `sms-driver.ts` §`Z80StreamState` is where
  * that is stated. A standalone cartridge owns the whole 8 KiB, so the layout
  * starts at the first byte of it and the rest is simply unused.
  */
-const STATE: SmsStreamState = {
+const STATE: Z80StreamState = {
   data: 0xc000,
   order: 0xc002,
   loop: 0xc004,
@@ -303,7 +298,7 @@ function emitDriver(
   asm.jp("Idle");
 
   // --- the tick --------------------------------------------------------------
-  helpers.push(...emitStream(asm, { prefix: "", state: STATE, data }));
+  helpers.push(...emitStream(asm, { prefix: "", state: STATE, data, write: psgWrite }));
 
   // --- the schedule ----------------------------------------------------------
   //

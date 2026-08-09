@@ -79,6 +79,20 @@ export interface FmPatchFit {
   score: number;
 }
 
+/**
+ * What an arranger hands a binding beyond the frames, on a console with FM.
+ *
+ * Two consoles take it — a Mega Drive's six voices and a Neo Geo's four — and
+ * they take it for the same reason: timbre here is *searched* rather than
+ * selected, the search needs to know which part a voice carries, and that is not
+ * known until a candidate has been planned. So a candidate rebuilds the console's
+ * binding carrying its own fitted patches.
+ */
+export interface FmBindingOptions {
+  /** Patch per FM channel, by channel index; a missing one gets a default. */
+  patches?: readonly (FmPatch | undefined)[];
+}
+
 /** Which slots an algorithm's carriers are — the ones the note's volume rides. */
 export function carriersOf(algorithm: number): readonly number[] {
   return CARRIERS[algorithm] as readonly number[];
@@ -447,6 +461,58 @@ export function pitchWrites(
     { reg: half * 2, value: 0xa0 + within },
     { reg: half * 2 + 1, value: fnum & 0xff },
   ];
+}
+
+/** The natural log of ten, for the one decibel conversion below. */
+const LN10 = 2.302585092994046;
+
+/**
+ * A frequency as an F-number and a block, at a given internal sample rate.
+ *
+ * The block is chosen so the F-number lands in the top half of its range, which
+ * is where the lattice is finest: the same note an octave lower in F-number
+ * terms is the same pitch with half the resolution, and on a chip whose steps
+ * are already sub-cent at the top that is the difference between exact and
+ * merely close.
+ *
+ * The rate is a parameter because two consoles run this core at different
+ * clocks — a Mega Drive's YM2612 at master over seven and a Neo Geo's YM2610 at
+ * 8 MHz — and the encoding is otherwise identical, because it is the same core.
+ */
+export function fnumAt(hz: number, sampleRate: number): { fnum: number; block: number } {
+  if (!(hz > 0)) return { fnum: 0, block: 0 };
+  // f = fnum * sampleRate * 2^(block-1) / 2^20
+  let block = 0;
+  let fnum = (hz * (1 << 20)) / sampleRate / 0.5;
+  while (fnum >= 2048 && block < 7) {
+    fnum /= 2;
+    block += 1;
+  }
+  while (fnum < 1024 && block > 0) {
+    fnum *= 2;
+    block -= 1;
+  }
+  const rounded = Math.round(fnum);
+  return { fnum: Math.max(0, Math.min(2047, rounded)), block };
+}
+
+/**
+ * A 0-1 level as total level: seven bits of attenuation, 0.75 dB a step.
+ *
+ * The finest volume control either of these boards has by a factor of eight,
+ * which is what makes an FM part able to swell where a square-wave one can only
+ * step. Silence is 127 rather than a key-off, so a fade need not restart the
+ * note.
+ */
+export function totalLevelFor(level: number): number {
+  const clamped = level <= 0 ? 0 : level >= 1 ? 1 : level;
+  if (clamped <= 0) return 0x7f;
+  // 0.75 dB a step: 20*log10(level) / 0.75, floored at full attenuation. The
+  // natural log and a constant, because a shared kernel is what makes the
+  // register a browser writes the same one a CLI writes (doc 02 §Determinism).
+  const db = (20 * math.log(clamped)) / LN10;
+  const steps = Math.round(-db / 0.75);
+  return steps < 0 ? 0 : steps > 0x7f ? 0x7f : steps;
 }
 
 export { YM2612_CLOCK_HZ };

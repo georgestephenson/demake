@@ -12,12 +12,12 @@ something 8/16-bit-era consoles and handhelds up to the Nintendo DS could
 actually run. Four demakers, sharing one engine and one proof (a real ROM, in a
 real emulator, compared pixel for pixel):
 
-| Demaker               | Docs   | State                                                                        |
-| --------------------- | ------ | ---------------------------------------------------------------------------- |
-| art (images)          | 03–06  | working, ten consoles proven on hardware                                     |
-| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on twelve consoles |
-| music (`arrange`)     | 16, 17 | MIDI → chip music, fourteen consoles — and a Game Boy ROM that plays it      |
-| sound (`sfx`)         | 16, 18 | WAV → chip effects, fourteen consoles — same ROM, same proof                 |
+| Demaker               | Docs   | State                                                                         |
+| --------------------- | ------ | ----------------------------------------------------------------------------- |
+| art (images)          | 03–06  | working, ten consoles proven on hardware                                      |
+| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on fifteen consoles |
+| music (`arrange`)     | 16, 17 | MIDI → chip music, seventeen consoles — and a Game Boy ROM that plays it      |
+| sound (`sfx`)         | 16, 18 | WAV → chip effects, seventeen consoles — same ROM, same proof                 |
 
 The four are not four tools that share a repo any more: a `.dmt` says
 `music theme.mid` and `sound bounce.wav on ball hits paddle`, and `demake build`
@@ -690,6 +690,125 @@ machine is on that list too, because it has the same sound hardware and a
 demaker is per-domain — so `arrange -c ngp` works on a console `build -c ngp`
 cannot target.
 
+**And it demakes music and sound for the Neo Geo, which is fourteen voices on one
+die.** `@demake/chip` models the whole YM2610 — four four-operator FM channels,
+three squares with a shared noise generator, six fixed-rate ADPCM sample channels
+and one variable-rate one — and `binding/neogeo.ts` drives all of it, so
+`arrange -c neogeo`, `sfx` and `render` produce a `.vgm` carrying the chip's own
+commands _and_ both of its sample ROMs as data blocks. Four things about it are
+worth knowing and none is a predecessor restated.
+
+**The FM section is a YM2612, and that is the hardware rather than a shortcut.**
+The register map says so out loud: `$30`–`$B6` is addressed at per-channel offsets
+**1 and 2** on each port with offset 0 absent, and `$28` names the four channels
+`001`, `010`, `101`, `110` — a six-channel part with 1 and 4 removed. The sample
+rate agrees, 8 MHz over 144. So `Ym2612` _is_ that section and `FM_SLOT` is
+`[1, 2, 4, 5]`, which is the check rather than the convention: running those four
+through the shared key-on encoding reproduces the documented codes exactly. What
+`ym2610.ts` owes is **refusing** what the OPNB does not have — the LFO, the DAC and
+both missing channels — because a model that plays six voices on four-voice
+hardware sounds right here and silent on the board.
+
+**The percussion is a recording, and it is the first in the matrix that is.**
+Six voices playing 4-bit ADPCM at a fixed 18518.5 Hz, so `binding/neogeo-bank.ts`
+is the fourth kind of bank in the set and the first that is _two_ ROMs in two
+codecs — drums for A, single-cycle waveforms for the one sample voice that has a
+pitch. Both encoders run the decoders' own arithmetic, because the two codecs are
+not one: **A wraps a twelve-bit accumulator** (so an overdriven drum folds rather
+than flattening) and **B clamps a sixteen-bit one** with a step that scales by a
+multiplier. A shared decoder would be wrong in both directions at once.
+
+**There is no shared register, for two reasons at once.** The SSG mixer at `$07` is
+the one byte three channels share and it is written _once_ at boot — tone on, noise
+off — because a note here is silenced by its own level; and the ADPCM key-on byte
+is a **pulse**, acting on the voices its mask names and leaving the rest alone,
+which is the Super Nintendo's `KON` on completely different hardware. Six consoles
+now emit no merge routine and this is the first whose reason is two.
+
+**The clock is a timer and only a timer**, because this is the only console in the
+matrix whose sound processor cannot see the picture: the Z80 takes an IRQ from the
+chip's own timers and an NMI when the 68000 sends it a byte, and the vertical blank
+reaches the 68000 alone. So `fitRate` has no frame candidate to beat — the only one
+in the set that does not — and timer A puts 120 Hz on count 463, which is 119.99 Hz.
+
+Two things it does not reach and both are recorded (doc 13 §A5.5). The SSG's
+**noise** is refused on purpose: with six sample voices playing real drums, putting
+a hi-hat on a shift register is spending the machine downwards. And **five of the
+six drum voices sit idle**, which is an _arranger_ gap rather than a binding one —
+`plan.ts` gives one part one channel and a General MIDI drum track is one part, a
+question no console before this one could raise.
+
+**And it has a sound program, which is a cartridge region of its own.**
+`packages/audio/src/rom/neogeo-game.ts` is the eighth generated driver and the
+first that is neither routines a game calls, nor a block a cartridge uploads, nor
+a second binary in shared memory: it is a whole **Z80 program in the M region**, on
+a bus the 68000 cannot see. It boots itself, clocks itself, and a game reaches it
+by storing one byte to `REG_SOUND`. `packages/audio/test/neogeo-driver.test.ts` is
+doc 16's Level A proof for it on its own — every tick's writes, in order, for music
+and for an effect — and `@demake/neogeo`'s `sound.ts` is the machine it runs on.
+
+Four things about it are this console's. **The clock is the chip's own timer and
+the interrupt comes here**, which is the Mega Drive's hardware with the wire the
+other way round: there the line goes to the Z80 so a _game_ polls it from a loop
+that is also running a game, and here the driver _is_ the Z80 and keeps 119.99 Hz
+exactly. **A request is an interrupt rather than a poll**, so asking for a track
+costs one store with no handshake. **A write has to settle** — seventeen chip
+cycles after an address and eighty-three after a datum, which the hardware
+documentation warns is why some homebrew plays in an emulator and not on a board —
+so `neogeoWrite` pads with two `push af`/`pop af` pairs. And **the register is
+latched**, so the channel tag is a factory carrying it and an address byte is
+tagged by the register it is _about to_ latch: that keeps an address and its datum
+in one run, where tagging the address as nobody's would split every register write
+in half.
+
+**Two tags rather than one**, which no console before this needed. Preemption asks
+which of four borrowable channels a run is on; restriction asks which of
+_fourteen_ voices a write belongs to. Numbering only the borrowable ones for both
+calls the other ten "nobody" and keeps an effect's whole opening statement of the
+chip — a sound effect that silences the music every time it fires.
+
+**And `demake build -c neogeo` puts it in the cartridge.** The `.neo` container
+carries the M and V regions — a Z80 program and the two sample ROMs — and the
+68000's whole share of the audio is one byte stored to `REG_SOUND` at a scene
+change. `packages/demotic/test/audio-neogeo.test.ts` runs the shared battery on
+it, so the fifteenth console plays its own music and effects and is diffed tick
+for tick.
+
+Three things about the wiring are this console's. **A tick nothing is playing is
+not a tick**: this driver runs from boot whether or not a game has asked for
+anything — it is a separate program, so there is nobody to start it — and ticking
+through silence would put a schedule's tick 0 several ticks after the first one
+the hardware delivered. Every other console is spared that because its driver is a
+routine the game calls. **The request can arrive before the driver is listening**,
+because a 68000 boots in a few hundred cycles and this program takes tens of
+thousands; the hardware latches the byte either way and only the interrupt is
+lost, so the boot ends by reading the port — without which a cartridge is silent
+until its second scene. And **one host step is not one instruction of the
+processor the driver runs on**, so the conformance harness watches the Z80's
+instruction stream (`Sound.watch`) exactly as it watches a Super Nintendo's sound
+processor; sampling the program counter after each 68000 instruction sees one
+arrival as dozens.
+
+**A borrowed channel comes back holding the music's own registers here too**, and
+what is this console's is how the copy is filled in. A packed byte is a _port_
+rather than a register number, so the recorder cannot tell one of a channel's
+bytes from another by looking at it: an even port latched a register and the byte
+_is_ that number, an odd one is the datum and the latch says which of the three
+copies it belongs to — which is why the shadow is four bytes rather than three
+(`rom/neogeo-driver.ts` §`NEOGEO_SHADOW`). Three is the whole replay because an
+effect only ever borrows a square; an FM voice's state is a patch, and nothing
+ever hands one of those back. What made this land was one word in the packer: a
+game's effect ends with `stop` and not `silence`, because the silence block turns
+_every_ channel off and then rests for ever — so it takes the music with it and
+holds the borrowed channel long after the effect is over.
+
+The battery skips one thing for this console and it is recorded rather than
+tolerated: the **size sweep**, on the Game Boy Advance's
+terms. A game is tens of kilobytes of a megabyte P region with its sound program
+in 32 KiB of its own, so there is no budget to catch — and what the sweep would
+still have bought, that a driver's reported sizes are real, is asserted on an
+art-free build in `packages/audio/test/neogeo-driver.test.ts`.
+
 Still to come: the remaining Tier 2/3 consoles (each =
 a codegen backend, a ROM harness + toolchain, and a libretro core + DAC
 calibration), the remaining framebuffer/scanline layout paths (Lynx, GBA/NDS
@@ -700,11 +819,11 @@ work doc 14 §Runtime model names).
 [16](docs/16-audio-engine.md), [17](docs/17-music-demaker.md),
 [18](docs/18-sound-demaker.md)): `@demake/chip` models the Game Boy APU, the
 SN76489, the NES 2A03, the YM2612, the Super Nintendo's S-DSP, the Nintendo DS's
-SPU, the HuC6280's wavetable PSG, the WonderSwan's and the Neo Geo Pocket's
-T6W28; `@demake/audio`
+SPU, the HuC6280's wavetable PSG, the WonderSwan's, the Neo Geo Pocket's
+T6W28 and the Neo Geo's whole YM2610; `@demake/audio`
 holds both demakers; and `demake arrange`, `demake sfx` and `demake render` work
 for `dmg`, `gbc`, `megaduck`, `nes`, `sms`, `gg`, `sg1000`, `snes`, `md`, `gba`,
-`nds`, `pce`, both WonderSwans and both Neo Geo Pockets — the mono machine included, because it has the
+`nds`, `pce`, `neogeo`, both WonderSwans and both Neo Geo Pockets — the mono machine included, because it has the
 same sound hardware and a demaker is per-domain, so `arrange -c ws` works on a
 console `build -c ws` cannot target. A
 track becomes a `.vgm` plus a WAV that is exactly what the schedule produces — or,
@@ -742,15 +861,18 @@ artifact _is_ the schedule.
 effect per event, one clock serving both, and the same proof one level up —
 `packages/demotic/test/_audio-battery.ts` boots a cartridge that is playing a game
 and diffs every register write against the schedules the demakers produced.
-It does that on **every** console the game backend builds for, over eight drivers
-that share only the packed format and — where the CPU is the same — the stream
-player, and below that only what the chip decides: an SM83 player on a
+It does that on **every** console the game backend builds for, over eleven
+drivers that share only the packed format and — where the CPU is the same — the
+stream player, and below that only what the chip decides: an SM83 player on a
 programmable timer, a 6502 player on the picture's interrupt, the _same_ 6502
 player on a timer one console over, a Z80 player writing an I/O port, a 68000
 player storing a byte to an address, an SPC700 player that is not on the console's
 processor at all, an ARM player clocked by its own sample transfer that has to
-_compute_ six of its ten voices before it can play them, and a TLCS-900/H player
-that has to _ask_ for its chip before anything it sends is listened to.
+_compute_ six of its ten voices before it can play them, a TLCS-900/H player
+that has to _ask_ for its chip before anything it sends is listened to, a V30MZ
+player that takes no interrupt at all and reads a timer's counter instead, and the
+_same_ Z80 player one board over as a whole program of its own, on a bus the game
+cannot see.
 
 **And both demakers are on the web** (doc 07 §The audio sections): a music
 section and a sound section over their own worker, carrying the whole
@@ -967,6 +1089,30 @@ packages/snes/       @demake/snes — a self-hosted Super Nintendo core: a 65816
                      boot ROM of *ours* that speaks the documented upload
                      handshake rather than transcribing Nintendo's. Its S-DSP is
                      @demake/chip's, not a second one
+packages/neogeo/     @demake/neogeo — a self-hosted Neo Geo core, and the eleventh.
+                     sound.ts is a whole second computer: a Z80 with its own ROM
+                     on its own bus, a YM2610, and one byte in each direction
+                     between the two processors. The chip is advanced *between*
+                     instructions rather than in a lump — a caller hands over a
+                     frame at a time, and advancing it all at once collapses
+                     hundreds of timer overflows into one flag, which is a driver
+                     playing at whatever rate its caller polls at. The three
+                     clocks divide exactly, so none of it rounds.
+                     Its 68000 is @demake/md's rather than a second transcription,
+                     on the terms @demake/nds borrows @demake/gba's ARM. **Its
+                     boot ROM is ours and it is three lines** — stack pointer from
+                     the cartridge's first longword, enter at the header's USER
+                     vector — because a demade cartridge calls none of what a
+                     commercial one uses the system ROM for, which is what took
+                     this console off doc 13's "gated on a BIOS" list. The LSPC is
+                     the interesting part: a sprite is a *vertical strip* whose
+                     column of tile numbers is a 64-word table, and the sticky bit
+                     chains each to the one before it, so a row of strips is a
+                     tilemap carrying one position between all of them. Its fix
+                     layer is 8×8, column-major and in front of every sprite. The
+                     Z80 sound processor, the memory card, the calendar and the
+                     sprite shrinking hardware are absent rather than
+                     half-implemented
 packages/md/         @demake/md — a self-hosted Mega Drive core, and the only one
                      with *two* sound chips: the SN76489 at $C00011 and the
                      YM2612 at $A04000, both @demake/chip's rather than second
@@ -1047,6 +1193,14 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
     nes.ts, nes-art.ts, nes/              the 6502 backend and its image path
     sms.ts, sms-art.ts, sms/              the Z80 backend and its image path
     snes.ts, snes-art.ts, snes/           the 65816 backend and its image path
+    m68k/            the *68000's*, not one console's, and the second directory
+                     of its kind after mos/: the 16.16 value layer, the
+                     expression compiler, the rule bodies, the tile walk and the
+                     tile rules, shared verbatim by the Mega Drive and the Neo
+                     Geo. The five files needed no surgery to move, which is the
+                     evidence the line was already right — none of them imported
+                     a VDP register or a memory plan. What a backend owns beside
+                     it is a renderer and nothing else
     md.ts, md-art.ts, md/                 the 68000 backend and its image path
     pce.ts, pce-art.ts, pce/              the HuC6280 backend and its image path,
                      and the smallest in the set — everything but the renderer is
@@ -1076,6 +1230,18 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
                      emit.ts's `mapWord` is the PC Engine's and the WonderSwan's
                      shape a third time: nine bits of character and four of
                      palette, so there is no attribute table anywhere in it
+    neogeo.ts, neogeo-art.ts, neogeo/     the *second* 68000 backend, and the one
+                     that owns least: everything but the renderer is m68k/'s. Its
+                     playfield is not a tilemap — twenty-one sticky-chained sprite
+                     strips are — so scrolling is two writes and there is no edge
+                     painter at all, because a 21×15 plane repaints whole for a
+                     few thousand cycles. Its HUD is the hardware's fix layer,
+                     8×8 and in front of everything, so the write queue, the erase
+                     list and PlotCell are absent rather than reimplemented.
+                     machine.ts is where the one expensive fact lives: a hardware
+                     cell is 16×16 and a language cell is 8×8, so neogeo-art.ts
+                     composes every 2×2 block into one tile at *build* time —
+                     legal only while a tile layer cannot change
     gba.ts, gba-art.ts, gba/              the ARM backend and its image path,
                      which is *two* machines: gba/machine.ts is the description
                      that makes a Nintendo DS a variant rather than a seventh
@@ -1085,6 +1251,20 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
 packages/chip/       @demake/chip — every sound chip as a register-driven model (doc 16)
   src/gb-apu.ts      Game Boy APU: 2 pulse + wave + noise, envelopes, panning
   src/sn76489.ts     the SMS/GG/SG-1000/MD PSG: no envelopes, ~109 Hz pitch floor
+  src/ym2610.ts      the Neo Geo's whole sound system: four four-operator FM
+                     channels, three squares, six fixed-rate ADPCM sample voices
+                     and one variable-rate one. Its FM section *is* ym2612.ts —
+                     OPNB and OPN2 are one core, and the register map says so:
+                     offsets 1 and 2 with 0 absent, and key-on codes 001, 010,
+                     101, 110. So what this file owes is refusing what the OPNB
+                     lacks. Its two ADPCM codecs are not one — A wraps a
+                     twelve-bit accumulator and B clamps a sixteen-bit one — and
+                     its run loop steps to the nearest event over all four
+                     sections, which is why Ym2612 and Ym2610Ssg each say when
+                     they will next move
+  src/ym2610-ssg.ts  that chip's tone generator, a file of its own because it is
+                     a separate generator: its own divider, its own register file
+                     at $00-$0D and none of the FM core's arithmetic
   src/t6w28.ts       the Neo Geo Pocket's: that chip's four voices with *two*
                      four-bit attenuators each, one a side — the only stereo in
                      the set that is a level rather than a switch, and the reason
@@ -1154,7 +1334,13 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
                      is where a timbre is *searched* rather than selected;
                      t6w28.ts is the one whose `BoundWrite.reg` is a *port*
                      rather than a register number, because that chip has two of
-                     them and they carry different things
+                     them and they carry different things; neogeo.ts is four
+                     encoders under one `encode` and the second FM console, so
+                     the FM half is fm-patch.ts's called rather than restated and
+                     what it supplies is a channel map and a clock. fm-patch.ts
+                     is where the *shared* FM encoding lives — the patch and
+                     pitch writes, the F-number at a given sample rate, and total
+                     level — because two consoles run that core
   src/timing.ts      absolute row placement: the tempo guarantee lives here
   src/sfx/           gesture families, class gate, hardware-in-the-loop fitting
   src/rom/           the console hand-off: schedule packing (data.ts, shared) +
@@ -1174,7 +1360,12 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
                      format's run count holds, so on this console the strip is
                      what makes a schedule packable rather than merely what stops
                      an effect powering the chip up again;
-                     Z80: sms-driver.ts with two callers, a game (sms-game.ts)
+                     Z80: z80-player.ts, which is the *processor's* — a second
+                     console started driving one and the walk moved, on
+                     mos-player.ts's terms, leaving a chip two hooks: how a
+                     packed write leaves the CPU and how a borrowed channel's
+                     byte reaches a shadow. sms-driver.ts is what an SN76489 on
+                     this CPU owns, with two callers, a game (sms-game.ts)
                      and the fourth standalone cartridge (sms.ts) — which is one
                      file for *two* machines, because a Game Gear is a Master
                      System whose stereo latch is a write like any other, and the
@@ -1210,6 +1401,16 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
                      I/O page hand it over before anything else is listened to;
                      t6w28.ts is what the *chip* owns, psg.ts's file for a part
                      with two write ports carrying different registers.
+                     The Neo Geo's is neogeo-driver.ts and neogeo-game.ts, and
+                     it is the only one that is a *cartridge region of its own*:
+                     a whole Z80 program in the M region, on a bus the 68000
+                     cannot see, clocked by the chip's own timer and asked for
+                     things by one byte. It is also the only driver with *two*
+                     channel tags — preemption asks which of four borrowable
+                     channels a run is on, restriction which of fourteen voices a
+                     write belongs to — and the only one whose write has to
+                     *settle*, which the hardware documentation warns is why some
+                     homebrew plays in an emulator and not on a board;
                      V30MZ: wsc-driver.ts and wsc-game.ts, and the only driver
                      whose clock is not an interrupt — this cartridge takes none,
                      so it reads the vertical-blank timer's counter and pays what
@@ -1225,6 +1426,14 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
   src/binding/gba-bank.ts  the Game Boy Advance mixer's, and nothing like it:
                      signed 8-bit PCM read straight out of cartridge ROM, so the
                      driver lays these same bytes down rather than uploading them
+  src/binding/neogeo-bank.ts  the Neo Geo's, and the fourth kind again — *two*
+                     ROMs in two codecs, because that chip's two sample sections
+                     do not share a decoder. Drums for ADPCM-A (which has no
+                     pitch, so a recording is the only thing it can usefully be)
+                     and single-cycle waveforms for ADPCM-B (whose rate is a
+                     phase increment). Both encoders run the decoders' own
+                     arithmetic, which is the only way a search over sixteen
+                     codes lands on what was intended
   src/binding/wsc-bank.ts  the WonderSwan's, and the third kind again: this
                      chip reads sixty-four bytes of the console's *own RAM*, so
                      what this produces is a page of bytes the driver copies —
@@ -2951,6 +3160,18 @@ that keep them from being undone. All of them come from doc 16.
   rule (§Working on the console backend), which the driver is not exempt from.
   `packages/audio/test/gb-branches.test.ts` builds the widest shape a Game Boy
   can ask for, because the example library cannot reach it.
+- **A per-channel dispatch lets the _first_ channel fall through, not the last.**
+  Every stream player emits one body per borrowable channel and tests one channel
+  fewer than it has; the bodies are laid out in index order directly below the
+  tests, so the fall-through reaches body zero and the channel that must go
+  untested is the first. All eight tested `0..n-2` instead, which made the _last_
+  channel's body unreachable and recorded its music into the first channel's copy
+  — a borrowed channel handed back holding another channel's registers. Nothing
+  saw it because the shared battery builds one effect, and with one borrowable
+  channel a dispatch has no tests at all; `quest` is the example game that reaches
+  it, with its smash on the noise channel and everything else on the first pitched
+  one. `gb-branches.test.ts` asserts every body is reachable, which is the only
+  place the question can be asked.
 - **A driver's size is a query, not a value.** The emitter is a closure the
   assembler runs, so `stats.code`, `stats.data` and `stats.helpers` are all zero
   or empty until it has — which happens in `assemble`, one step after
@@ -3005,13 +3226,15 @@ that keep them from being undone. All of them come from doc 16.
   therefore a _replay_ from a copy the run walk keeps (`rom/shared.ts`
   §`shadowPlan`), not a note-off: the music's next volume step re-triggers the
   voice, and on a Game Boy that meant a pulse coming back a whole tone sharp and
-  ringing until the bar ended, on every bounce in pong. Six drivers have it and
-  the Mega Drive does not (doc 13 §Handing a borrowed channel back); the battery
-  asserts on every console that what the chip is left holding is what the
-  schedule says, which is a sharper claim than "something wrote it afterwards".
-  Two chips needed more than a register-indexed copy and both say so where the
-  chip's other rules live: the SN76489 has no register numbers, and the PC Engine
-  _selects_ a voice rather than addressing one.
+  ringing until the bar ended, on every bounce in pong. Every driver in the set
+  has it (doc 13 §Handing a borrowed channel back), and the battery asserts on
+  every console that what the chip is left holding is what the schedule says,
+  which is a sharper claim than "something wrote it afterwards". Three chips
+  needed more than a register-indexed copy and each says so where the chip's
+  other rules live: the SN76489 has no register numbers, the PC Engine _selects_
+  a voice rather than addressing one, and the YM2610's packed byte is a _port_ —
+  so its copy carries the latch as a fourth byte and the recorder classifies on
+  which port the byte was going to rather than on the byte.
 - **`NR51` is merged, never stored, whenever two streams share the chip.** One
   byte carries every channel's panning. Each stream keeps a shadow and the driver
   folds them under the steal mask, which is what makes the register stream exactly
@@ -3240,8 +3463,8 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
 - The Demotic ROM conformance suite (`packages/demotic/test/rom.test.ts`) builds
   a cartridge from each fixture game **for every console with a backend** — both
   Game Boys, the Mega Duck, the NES, both Sega 8-bits, the Super Nintendo, the
-  Mega Drive, the Game Boy Advance, the Nintendo DS, the PC Engine, both
-  WonderSwans and the Neo Geo Pocket Color — and runs it in the matching
+  Mega Drive, the Neo Geo, the Game Boy Advance, the Nintendo DS, the PC Engine,
+  both WonderSwans and the Neo Geo Pocket Color — and runs it in the matching
   self-hosted core, asserting the
   trace
   matches the reference interpreter tick for tick. No toolchain, no emulator
@@ -3262,6 +3485,22 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   which byte was which would not survive running the library. It also checks the Duck's cartridge _fails_ on a Game
   Boy — identical traces are also what a register map that had quietly become the
   identity would produce.
+- `packages/demotic/test/neogeo-rom.test.ts` and `neogeo-arith.test.ts` are the
+  Neo Geo's pair, and the first of them is where a bug lived that **nothing else
+  in the project could have reached**. The LSPC's own tests write `vram`
+  directly, so they never went through the address port; `VRAM_WORDS` is `$8800`,
+  which is not a power of two, so `address & (VRAM_WORDS - 1)` was never a wrap —
+  it clears bits instead of reducing, and `$737A & $87FF` is `$037A`. Every write
+  to the fix layer was folded into the middle of SCB1: a caption computed
+  correctly, addressed correctly, written correctly, landing in the tile numbers
+  of a strip nobody was looking at. A trace says nothing about pixels and the
+  emitter was right throughout, so the only route in was to ask whether a caption
+  had _arrived_ and then follow the value from emitter to bus. Write through the
+  port when testing a machine whose program can only reach memory that way.
+  The arith file is thin on `pce-arith.test.ts`'s terms — the emitters are
+  `m68k/`'s, so what it proves is that the same instructions mean the same thing
+  on a machine whose work RAM is at `$100000` rather than `$FF0000` and which is
+  entered through a header rather than a reset vector.
 - `packages/demotic/test/collision-sides.test.ts` runs the same battery for
   `from <side>`, which the example library reaches on one console's worth of
   geometry and this reaches on all four sides of both kinds of contact. Two
@@ -3967,7 +4206,17 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   something builds, and the page's `src/players/` does the same for the emulator
   cores. Chunks are matched to a family **by name**, so a module that
   has to be per-family belongs in a file named after it; anything else counts as
-  always-loaded, which fails loud rather than passing quietly. **There is a third
+  always-loaded, which fails loud rather than passing quietly — **unless the
+  import graph proves only families reach it**, which is how a chunk _two_
+  consoles share is charged to both of them rather than to everyone. That case is
+  not hypothetical and it is what a shared backend costs: `codegen/m68k/` was the
+  Mega Drive's alone and sat in a chunk called `md-*` until the Neo Geo shared it,
+  at which point the bundler named the chunk after neither and 9.8 KB nobody on a
+  Game Boy fetches was charged to every visitor. `codegen/mos/` is the same
+  between the NES and the PC Engine, `rom/z80-player.ts` between the Sega 8-bits
+  and the Neo Geo, and together they were overstating the page by twenty
+  kilobytes. A chunk _every_ family reaches costs the same either way, so this can
+  only ever help code a proper subset of consoles needs. **There is a third
   place that has to stay split, and it is `@demake/audio`'s `rom/index.ts`**:
   `buildAudioRom` reaches each console's cartridge builder through an `import()`
   for the same reason, because behind each one is a whole CPU's assembler. It
@@ -3985,7 +4234,7 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   `import()` like every other core, and they were charged to _every_ visitor for
   as long as the two lists disagreed. A budget that overstates itself fails the
   next honest change, which is what it did. Current figures:
-  380 KB for a visitor against a 400 KB budget, 598 KB for the whole site — and
+  378 KB for a visitor against a 400 KB budget, 623 KB for the whole site — and
   a new example game costs about fourteen of those kilobytes, because the page
   bundles every fixture SVG twice (raw text for the ROM build, a URL for the
   preview). Measure with a **clean** `dist`: the checker reads every `.js` it

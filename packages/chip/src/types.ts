@@ -32,7 +32,9 @@ export type ChipId =
   | "nds-spu"
   | "huc6280-psg"
   | "ws-sound"
-  | "t6w28";
+  | "t6w28"
+  | "ym2610"
+  | "ym2610-ssg";
 
 /** A single write to a chip register, in the chip's own address space. */
 export interface RegisterWrite {

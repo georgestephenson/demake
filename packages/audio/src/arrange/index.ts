@@ -13,8 +13,8 @@ import { getConsole, type AudioSpec } from "@demake/core";
 
 import { analyze, type AnalyzeOptions } from "../analysis.js";
 import { bindingFor } from "../binding/registry.js";
+import type { FmBindingOptions } from "../binding/fm-patch.js";
 import { fitPatchForPart, type FmPatchFit } from "../binding/fm-patch.js";
-import { mdBinding, type MdBindingOptions } from "../binding/md.js";
 import type { ChipScript, Dropped, TimingReport } from "../chipscript.js";
 import { artifactFormat, encodeSpc } from "../encode/spc.js";
 import { encodeVgm } from "../encode/vgm.js";
@@ -139,9 +139,9 @@ export function candidates(spec: AudioSpec): Candidate[] {
 /**
  * Fit a patch for every FM voice this plan uses.
  *
- * `undefined` for a console with no FM channels, which is every one but the Mega
- * Drive — and returning it rather than an empty object is what keeps those
- * consoles on the binding they were built with rather than a rebuilt copy.
+ * `undefined` for a console with no FM channels, which is all but two of them —
+ * and returning it rather than an empty object is what keeps those consoles on
+ * the binding they were built with rather than a rebuilt copy.
  *
  * Memoised by part, because the timbre search plays fifty-odd candidates through
  * the chip and a four-candidate portfolio would otherwise repeat it four times
@@ -151,14 +151,21 @@ function fitPatches(
   spec: AudioSpec,
   plan: ArrangementPlan,
   cache: Map<string, FmPatchFit>,
-): MdBindingOptions | undefined {
+): FmBindingOptions | undefined {
+  const first = spec.channels.findIndex((channel) => channel.kind === "fm");
   const fmChannels = spec.channels.filter((channel) => channel.kind === "fm").length;
   if (fmChannels === 0) return undefined;
   const patches: (FmPatchFit["patch"] | undefined)[] = new Array(fmChannels).fill(
     undefined,
   ) as undefined[];
   for (const assignment of plan.assignments) {
-    if (assignment.channelIndex >= fmChannels) continue;
+    // Relative to the *first* FM voice rather than to the channel list, because a
+    // console may not put them at the front: a Neo Geo lists its squares first so
+    // that an effect lands on one, and a patch table indexed by absolute channel
+    // would give every FM voice the default timbre and the search would be spent
+    // on nothing.
+    const index = assignment.channelIndex - first;
+    if (index < 0 || index >= fmChannels) continue;
     // A channel carrying several parts is one voice playing all of them, so the
     // timbre follows the *first* — which is the part the plan considered the
     // channel's own, the rest having been folded onto it.
@@ -169,7 +176,7 @@ function fitPatches(
       fit = fitPatchForPart(part);
       cache.set(part.id, fit);
     }
-    patches[assignment.channelIndex] = fit.patch;
+    patches[index] = fit.patch;
   }
   return { patches };
 }
@@ -227,7 +234,7 @@ export function arrangeScore(input: Score, options: ArrangeOptions): ArrangeResu
     // what it should sound like. So a console with FM channels gets a binding of
     // its own per candidate, carrying that candidate's fitted patches.
     const fitted = fitPatches(spec, plan, patchCache);
-    const bound = fitted === undefined ? binding : mdBinding(options.console, spec, fitted);
+    const bound = fitted === undefined ? binding : bindingFor(options.console, fitted);
     const script = compileScript(analysed, spec, bound, plan, timing, candidate.compile);
 
     const inspection = inspectScript(script);

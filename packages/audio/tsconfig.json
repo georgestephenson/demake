@@ -12,6 +12,7 @@
   "references": [
     { "path": "../core/tsconfig.json" },
     { "path": "../chip/tsconfig.json" },
+    { "path": "../neogeo/tsconfig.json" },
     { "path": "../snes/tsconfig.json" }
   ]
 }

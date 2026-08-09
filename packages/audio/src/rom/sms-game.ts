@@ -62,13 +62,8 @@ import {
   PSG_STEREO_REG,
 } from "./psg.js";
 import { clampByte, MAX_PENDING, pack, rateHz, restrict, shapeOf, stripBoot } from "./shared.js";
-import {
-  emitStream,
-  emitStreamData,
-  psgPortOf,
-  PSG_PORT,
-  type SmsStreamState,
-} from "./sms-driver.js";
+import { psgPortOf, psgRecord, psgWrite, PSG_PORT } from "./sms-driver.js";
+import { emitStream, emitStreamData, type Z80StreamState } from "./z80-player.js";
 
 /** The value that stops the music, rather than starting a track. */
 export const STOP = 0xff;
@@ -262,6 +257,7 @@ export function buildSmsGameAudio(input: SmsGameAudioInput): SmsGameAudio {
           prefix: "AudioMus",
           state: state.music,
           data: shapeOf(musicData),
+          write: psgWrite,
           ...(shared ? { steal: state.steal } : {}),
           ...(copies.length > 0
             ? {
@@ -271,6 +267,7 @@ export function buildSmsGameAudio(input: SmsGameAudioInput): SmsGameAudio {
                     at: shadowAt(index),
                     slots: copy.slots,
                   })),
+                  record: psgRecord,
                 },
               }
             : {}),
@@ -286,6 +283,7 @@ export function buildSmsGameAudio(input: SmsGameAudioInput): SmsGameAudio {
           prefix: "AudioSfx",
           state: state.sfx,
           data: shapeOf(effectData),
+          write: psgWrite,
           onEnd: "AudioSfxRelease",
           ...(merging ? { merge: "AudioSfxStereo" } : {}),
         }).map((name) => `sfx-${name}`),
@@ -387,8 +385,8 @@ export function resolveSmsClock(script: ChipScript): SmsGameAudio["clock"] {
 
 /** Where the driver keeps everything, laid out from the game's first free byte. */
 interface Layout {
-  music: SmsStreamState;
-  sfx: SmsStreamState;
+  music: Z80StreamState;
+  sfx: Z80StreamState;
   /**
    * First byte of the music's copy of the borrowable channels.
    *
@@ -419,7 +417,7 @@ function layout(base: number, shadowBytes: number): Layout {
     at += bytes;
     return address;
   };
-  const music: SmsStreamState = {
+  const music: Z80StreamState = {
     data: take(2),
     order: take(2),
     loop: take(2),
@@ -427,7 +425,7 @@ function layout(base: number, shadowBytes: number): Layout {
     active: take(),
   };
   // A sound effect stops rather than looping, so it needs no loop entry.
-  const sfx: SmsStreamState = {
+  const sfx: Z80StreamState = {
     data: take(2),
     order: take(2),
     rest: take(),

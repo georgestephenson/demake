@@ -706,6 +706,20 @@ export class Ym2612 implements ChipModel {
   }
 
   /**
+   * Master clocks until this chip's output can next change.
+   *
+   * An operator produces a new value every {@link SAMPLE_DIVIDER} clocks and holds
+   * it in between, so a span no longer than this carries one level and integrates
+   * exactly. Nothing here needs it — {@link run} already bounds its own steps —
+   * but a *containing* chip does: the YM2610 is this FM core beside an SSG and
+   * seven ADPCM voices, and it can only sum them into one flat span if every
+   * section says when it will next move (`ym2610.ts` §The one run loop).
+   */
+  get clocksUntilSample(): number {
+    return this.clocksToSample;
+  }
+
+  /**
    * Run the chip for `clocks` master cycles, rendering into `sink` if given.
    *
    * **The sink is optional because a timer is not audio.** Every other chip in

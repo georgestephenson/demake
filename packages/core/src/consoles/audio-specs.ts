@@ -1011,3 +1011,157 @@ export const wsAudio: AudioSpec = {
   mixing: { channels: 2, linear: true },
   docs: { sources: WS_SOURCES },
 };
+
+const NEOGEO_SOURCES = [
+  "Neo Geo Development Wiki — YM2610: https://wiki.neogeodev.org/index.php?title=YM2610",
+  "Neo Geo Development Wiki — YM2610 registers: https://wiki.neogeodev.org/index.php?title=YM2610_registers",
+  "Neo Geo Development Wiki — FM: https://wiki.neogeodev.org/index.php?title=FM",
+  "Neo Geo Development Wiki — SSG: https://wiki.neogeodev.org/index.php?title=SSG",
+  "Neo Geo Development Wiki — ADPCM: https://wiki.neogeodev.org/index.php?title=ADPCM",
+  "Neo Geo Development Wiki — Z80: https://wiki.neogeodev.org/index.php?title=Z80",
+  "Yamaha — YM2610 Application Manual and Application Manual II",
+];
+
+/** The YM2610's clock on every Neo Geo board: the 24 MHz crystal over three. */
+const YM2610_CLOCK = 8000000;
+
+/** Samples in one cycle of a built-in ADPCM-B waveform (`binding/neogeo-bank.ts`). */
+const NEOGEO_WAVE_SAMPLES = 32;
+
+/**
+ * The Neo Geo: fourteen voices, and the widest sound hardware in the matrix.
+ *
+ * One chip and four sections that have almost nothing to do with each other, which
+ * is why this spec looks like three consoles stacked rather than like a longer
+ * version of any of them.
+ *
+ *   - **Four FM voices**, on the YM2612's core at 8 MHz. Everything about their
+ *     lattice is a Mega Drive's with a different clock, because it is the same
+ *     design with two channels not wired out.
+ *   - **Three squares**, which are an AY-3-8910's and reach 61 Hz — *below* an
+ *     SN76489's floor, so this console needs none of the octave-doubling a Master
+ *     System's bass does. They are the one section here with no panning at all:
+ *     the SSG leaves the chip through its own mono analog output.
+ *   - **Six fixed-rate sample voices**, and this is what makes the console. They
+ *     play a recording at 18518.5 Hz and cannot be tuned, so they are percussion
+ *     and nothing else — but they are *six* of it, against every other console in
+ *     the set having one noise generator and calling it a drum kit.
+ *   - **One variable-rate sample voice**, whose rate is a phase increment rather
+ *     than a divider. Give it a single-cycle waveform and it is a pitched channel
+ *     with whatever timbre the bank holds.
+ *
+ * **The driver clock is a timer and only a timer.** This is the only console in
+ * the matrix whose sound processor cannot see the picture: the Z80 takes an IRQ
+ * from the YM2610's own timers and an NMI when the 68000 sends it a byte, and the
+ * vertical blank reaches the 68000 alone. So `sources` names one entry, where every
+ * other console lists the frame among its options — and a frame the *game* overran
+ * costs the music no tempo at all, because the two processors share no clock.
+ */
+export const neogeoAudio: AudioSpec = (() => {
+  /**
+   * A four-operator voice, which is the Mega Drive's lattice at this clock.
+   *
+   * Expressed as an equivalent divider for `fmChannel`'s reason: a whole cycle is
+   * 2^20 increment units at the chip's own 55555 Hz, and the F-number is eleven
+   * bits shifted by a three-bit block.
+   */
+  const fm = {
+    pitch: { clockHz: YM2610_CLOCK, step: 144, minDivider: 4, maxDivider: 1 << 20 },
+    volume: { steps: 128, law: "db" as const, stepDb: 0.75 },
+    envelope: { kind: "decay" as const, ratePerSecond: 18519 },
+    panning: "lr-enable" as const,
+  };
+  /** `f = 250000 / period`: the crystal over three, halved, over sixteen. */
+  const ssgPitch = { clockHz: YM2610_CLOCK, step: 32, minDivider: 1, maxDivider: 4095 };
+  return {
+    chips: ["ym2610"],
+    channels: [
+      // The squares come first, and that is a decision rather than a listing
+      // order. `sfx` puts an effect on the first channel with a pitch, and a
+      // Neo Geo game wants its blips on a square and its four FM voices left to
+      // the music — which is how this console's own games were written, and it
+      // also keeps the FM key-on byte off the preemption path entirely (doc 16
+      // §Two streams, one clock).
+      ...(["a", "b", "c"] as const).map((letter): AudioChannelSpec => ({
+        id: `ssg-${letter}`,
+        kind: "pulse",
+        chip: 0,
+        pitch: ssgPitch,
+        // Sixteen levels about 3 dB apart, and they *rise* where an SN76489's
+        // fall. Bit 4 of the same register hands the channel to the chip's one
+        // hardware envelope instead, which is a facility that chip has no
+        // equivalent of at all.
+        volume: { steps: 16, law: "db", stepDb: 3 },
+        envelope: { kind: "decay", ratePerSecond: 977 },
+        // Any of the three can take the shared noise source instead of, or as
+        // well as, its own square — so the noise has one period however many
+        // channels are listening to it.
+        noise: { periods: 32, tonalMode: false },
+        // The one section with no stereo: the SSG has its own mono output pin.
+        panning: "none",
+      })),
+      { id: "fm1", kind: "fm", chip: 0, ...fm },
+      { id: "fm2", kind: "fm", chip: 0, ...fm },
+      { id: "fm3", kind: "fm", chip: 0, ...fm },
+      { id: "fm4", kind: "fm", chip: 0, ...fm },
+      ...[1, 2, 3, 4, 5, 6].map((index): AudioChannelSpec => ({
+        id: `adpcm-a${index}`,
+        kind: "sample",
+        chip: 0,
+        // No pitch lattice, because there is no pitch: this voice plays its
+        // recording at 18518.5 Hz and has no register that would change it.
+        // That is what makes six of them a drum kit rather than six leads.
+        volume: { steps: 32, law: "db", stepDb: 1.5 },
+        panning: "lr-enable",
+      })),
+      {
+        id: "adpcm-b",
+        kind: "sample",
+        chip: 0,
+        // A *multiplier* lattice, which only the Super Nintendo's sample player
+        // shares: `f = 55555 × ΔN / 65536` with no divider anywhere, so the steps
+        // are uniform in frequency and it is the bass that quantises rather than
+        // the top. One cycle of a built-in waveform per note gives the divide.
+        pitch: {
+          kind: "multiplier",
+          clockHz: YM2610_CLOCK / 144,
+          step: 65536 * NEOGEO_WAVE_SAMPLES,
+          minDivider: 1,
+          maxDivider: 65535,
+        },
+        volume: { steps: 256, law: "linear" },
+        panning: "lr-enable",
+      },
+    ],
+    driver: {
+      // A timer, and only a timer (§The driver clock). Timer A counts the chip's
+      // own sample period over ten bits, so 54 Hz to 55 kHz — and 120 Hz lands on
+      // count 463, which is 119.99 Hz: the most exact driver tick in the matrix.
+      // Timer B counts eight times slower over eight bits and would add 27-54 Hz,
+      // which is below anything a driver asks for.
+      sources: ["timer"],
+      // 6 MHz over 384 pixels of 264 lines: 59.1856 Hz. Nothing rides it — it is
+      // here because the schema asks and because a game's own loop keeps it.
+      frameRate: { num: 6000000, den: 101376 },
+      timerRange: [54, 500],
+      // The largest in the matrix, and it is arithmetic rather than generosity:
+      // this processor has nothing else to do. A tick at 120 Hz is 33333 T-states
+      // of a 4 MHz Z80, and a *register* costs two `out (c),a` instructions plus
+      // the settling the hardware documentation requires between them — about 120
+      // T-states written conservatively. Two thirds of the tick is 192 registers.
+      //
+      // The number below is twice that because this budget counts **bus** writes,
+      // which is the unit a `ChipScript` is in: an address and a datum are two
+      // entries on an OPN-family bus and one register on every other chip in the
+      // set. A Mega Drive's 640 is the same unit, which is worth knowing before
+      // comparing the two.
+      writesPerTick: 384,
+    },
+    // The driver lives in the M ROM's fixed 32 KiB window and never touches a bank
+    // register, so a schedule has what the driver leaves rather than the half a
+    // megabyte the board can hold.
+    budgets: { romBytes: 24576 },
+    mixing: { channels: 2, linear: true },
+    docs: { sources: NEOGEO_SOURCES },
+  };
+})();

@@ -48,11 +48,11 @@ import {
   type Ref,
 } from "@demake/core";
 
-import type { InstanceDef, RuleDef } from "../../program.js";
+import type { InstanceDef } from "../../program.js";
 import { glyphTile, OBJECT_TILE, patternTile } from "../../rom/graphics.js";
 import { isMutable } from "../analyze.js";
 import { emitTickSteps, type TickSteps } from "../backend.js";
-import { PROPS, TILE_CONTACT_MAX, W } from "../layout.js";
+import { PROPS, W } from "../layout.js";
 import {
   artKey,
   emitInstanceDefaults,
@@ -62,25 +62,22 @@ import {
   sceneContexts,
   sceneIndexOf,
   scrolls,
-  sideMask,
-  tileCellsCacheable,
   type SceneCtx,
   type SpriteArt,
 } from "../shape.js";
 
-import type { MdCtx } from "./ctx.js";
-import { emitTest, propOffset, type Binding } from "./expr.js";
+import type { M68kCtx } from "../m68k/ctx.js";
+import { emitTileContactHelper, emitTileRules } from "../m68k/tilerules.js";
+import { propOffset } from "../m68k/expr.js";
 import {
   CELL_OFFSET,
-  emitAssignments,
   emitCamera,
   emitCollisions,
   emitControls,
   emitEdgeRules,
   emitIntegrate,
   emitLevelRules,
-  emitSound,
-} from "./rules.js";
+} from "../m68k/rules.js";
 import {
   collectLevels,
   copy16,
@@ -88,17 +85,12 @@ import {
   emitLevelData,
   emitRuleTileTable,
   emitTileAt,
-  emitTileSeparate,
-  emitTileSide,
-  emitTilesUnder,
   GRID_EMPTY,
   inc16,
-  ruleTileTableLabel,
   tileAtLabel,
-  tileSlot,
   type LevelData,
-} from "./tiles.js";
-import { at, branchZero32, copy32, sub32 } from "./val.js";
+} from "../m68k/tiles.js";
+import { at, branchZero32, copy32, sub32 } from "../m68k/val.js";
 
 /** Where a cartridge's code starts, past the vectors and the header. */
 export const CODE_ORIGIN = 0x0200;
@@ -185,7 +177,7 @@ function vsramCtrl(address: number): number {
 }
 
 /** The byte the frame interrupt raises and the main loop waits on. */
-function frameFlag(ctx: MdCtx): number {
+function frameFlag(ctx: M68kCtx): number {
   return ctx.layout.interrupt as number;
 }
 
@@ -228,7 +220,7 @@ export interface MdEmitOptions {
  * than that, so a table is the form that is *correct* rather than the form that
  * is fast.
  */
-function emitSceneDispatch(ctx: MdCtx, labels: readonly string[]): void {
+function emitSceneDispatch(ctx: M68kCtx, labels: readonly string[]): void {
   const { asm, layout } = ctx;
   if (labels.length === 1) {
     asm.jmp(labels[0] as string);
@@ -249,7 +241,7 @@ function emitSceneDispatch(ctx: MdCtx, labels: readonly string[]): void {
 }
 
 /** Emit the whole program. */
-export function emitProgram(ctx: MdCtx, options: MdEmitOptions = {}): void {
+export function emitProgram(ctx: M68kCtx, options: MdEmitOptions = {}): void {
   const { asm, program } = ctx;
   const scenes = sceneContexts(ctx);
   const levels = collectLevels(program.scenes);
@@ -383,7 +375,7 @@ export function encodeColour(codes: readonly number[]): number {
 
 // --- boot --------------------------------------------------------------------
 
-function emitReset(ctx: MdCtx, options: MdEmitOptions): void {
+function emitReset(ctx: M68kCtx, options: MdEmitOptions): void {
   const { asm, layout, program } = ctx;
 
   asm.label("Reset");
@@ -488,7 +480,7 @@ export const STACK_TOP = 0xfffffe;
  * address, which is why the one routine long enough to be interrupted runs
  * masked.
  */
-function emitVint(ctx: MdCtx, options: MdEmitOptions): void {
+function emitVint(ctx: M68kCtx, options: MdEmitOptions): void {
   const { asm } = ctx;
   asm.label("Vint");
   asm.move("l", eaD(0), eaPre(7));
@@ -513,7 +505,7 @@ function emitVint(ctx: MdCtx, options: MdEmitOptions): void {
 }
 
 /** Write one VDP register with a compile-time value. */
-function emitVdpRegister(ctx: MdCtx, register: number, value: number): void {
+function emitVdpRegister(ctx: M68kCtx, register: number, value: number): void {
   ctx.asm.move("w", eaImm(0x8000 | (register << 8) | (value & 0xff)), eaAbs(VDP.CONTROL));
 }
 
@@ -524,7 +516,7 @@ function emitVdpRegister(ctx: MdCtx, register: number, value: number): void {
  * {@link VRAM}'s addresses are what they are. `R16` is the plane size, and 64×32
  * is what gives a scrolling scene somewhere off screen to paint into.
  */
-function emitVdpInit(ctx: MdCtx): void {
+function emitVdpInit(ctx: M68kCtx): void {
   const registers: readonly [number, number][] = [
     [0, 0x04], // mode 1: no horizontal interrupt
     [1, 0x04], // mode 2: display off, no frame interrupt, Mega Drive mode
@@ -555,12 +547,12 @@ function emitVdpInit(ctx: MdCtx): void {
 }
 
 /** Point the data port at a compile-time video-RAM address, for writing. */
-function emitVramAddress(ctx: MdCtx, address: number): void {
+function emitVramAddress(ctx: M68kCtx, address: number): void {
   ctx.asm.move("l", eaImm(vramCtrl(address)), eaAbs(VDP.CONTROL));
 }
 
 /** Copy the tile bank from the cartridge into video RAM. */
-function emitTileUpload(ctx: MdCtx, bytes: number): void {
+function emitTileUpload(ctx: M68kCtx, bytes: number): void {
   const { asm } = ctx;
   if (bytes === 0) return;
   const loop = ctx.unique("bankLoop");
@@ -574,7 +566,7 @@ function emitTileUpload(ctx: MdCtx, bytes: number): void {
 }
 
 /** Upload all four sub-palettes: sixty-four colours, one word each. */
-function emitPaletteUpload(ctx: MdCtx, source: string): void {
+function emitPaletteUpload(ctx: M68kCtx, source: string): void {
   const { asm } = ctx;
   const loop = ctx.unique("cramLoop");
   asm.move("l", eaImm(cramCtrl(0)), eaAbs(VDP.CONTROL));
@@ -594,7 +586,7 @@ function emitPaletteUpload(ctx: MdCtx, source: string): void {
  * through it. That is the Mega Drive convention `codegen/md.ts` already relies
  * on for the image path.
  */
-function emitBlankPlanes(ctx: MdCtx): void {
+function emitBlankPlanes(ctx: M68kCtx): void {
   const { asm } = ctx;
   const loop = ctx.unique("blankLoop");
   const words = (VRAM.SAT - VRAM.NAME) >> 1;
@@ -613,7 +605,7 @@ function emitBlankPlanes(ctx: MdCtx): void {
 }
 
 /** Copy an entity's defaults from the cartridge into work RAM. */
-function emitCopyBlock(ctx: MdCtx, source: Ref, dest: number, bytes: number): void {
+function emitCopyBlock(ctx: M68kCtx, source: Ref, dest: number, bytes: number): void {
   const { asm } = ctx;
   asm.lea(eaAbs(source), 0);
   asm.lea(at(dest), 1);
@@ -623,14 +615,14 @@ function emitCopyBlock(ctx: MdCtx, source: Ref, dest: number, bytes: number): vo
 }
 
 /** Put the program's seed back into the generator. */
-function emitSeedRng(ctx: MdCtx): void {
+function emitSeedRng(ctx: M68kCtx): void {
   const { asm, layout, program } = ctx;
   if (layout.rng === null) return;
   asm.move("l", eaImm(program.seed >>> 0), at(layout.rng));
 }
 
 /** Zero the contact, hold and reach bookkeeping — a fresh scene inherits none. */
-function emitClearState(ctx: MdCtx): void {
+function emitClearState(ctx: M68kCtx): void {
   const { asm, layout } = ctx;
   for (let index = 0; index < layout.contactBytes; index += 1) {
     asm.clr("b", at(layout.contacts + index));
@@ -647,7 +639,7 @@ function emitClearState(ctx: MdCtx): void {
   }
 }
 
-function emitMainLoop(ctx: MdCtx, audio: boolean): void {
+function emitMainLoop(ctx: M68kCtx, audio: boolean): void {
   const { asm } = ctx;
   const wait = ctx.unique("waitFrame");
   // The flag is cleared *after* it is seen, not before the wait: a tick that
@@ -675,7 +667,7 @@ function emitMainLoop(ctx: MdCtx, audio: boolean): void {
  * read is two byte reads with a line toggle between them, and `c` — which the
  * language has no word for — is simply not looked at.
  */
-function emitInput(ctx: MdCtx): void {
+function emitInput(ctx: M68kCtx): void {
   const { asm, layout } = ctx;
   asm.label("ReadInput");
   asm.move("b", eaImm(0x40), eaAbs(PAD.DATA));
@@ -728,7 +720,7 @@ function emitInput(ctx: MdCtx): void {
   asm.rts();
 }
 
-function emitTickDispatch(ctx: MdCtx, scenes: readonly SceneCtx[]): void {
+function emitTickDispatch(ctx: M68kCtx, scenes: readonly SceneCtx[]): void {
   const { asm, layout } = ctx;
   asm.label("Tick");
   // Nothing has asked for a sound yet this tick. Cleared here rather than after
@@ -748,7 +740,7 @@ function emitTickDispatch(ctx: MdCtx, scenes: readonly SceneCtx[]): void {
   asm.rts();
 }
 
-function emitSceneChange(ctx: MdCtx, scenes: readonly SceneCtx[]): void {
+function emitSceneChange(ctx: M68kCtx, scenes: readonly SceneCtx[]): void {
   const { asm, layout } = ctx;
   asm.label("SceneChange");
   const go = ctx.unique("changeGo");
@@ -801,7 +793,7 @@ function emitSceneChange(ctx: MdCtx, scenes: readonly SceneCtx[]): void {
 // --- per-scene ---------------------------------------------------------------
 
 /** This console's instructions for each of doc 14's tick steps. */
-function tickSteps(ctx: MdCtx): TickSteps {
+function tickSteps(ctx: M68kCtx): TickSteps {
   const { asm, layout } = ctx;
   return {
     controls: (scene) => emitControls(ctx, scene),
@@ -824,14 +816,14 @@ function tickSteps(ctx: MdCtx): TickSteps {
   };
 }
 
-function emitSceneTick(ctx: MdCtx, scene: SceneCtx, level: LevelData | undefined): void {
+function emitSceneTick(ctx: M68kCtx, scene: SceneCtx, level: LevelData | undefined): void {
   const { asm } = ctx;
   asm.label(`SceneTick_${scene.index}`);
   emitTickSteps(tickSteps(ctx), scene, level);
   asm.jmp("TickDone");
 }
 
-function emitSceneReset(ctx: MdCtx, scene: SceneCtx): void {
+function emitSceneReset(ctx: M68kCtx, scene: SceneCtx): void {
   const { asm, layout } = ctx;
   asm.label(`SceneReset_${scene.index}`);
   for (const id of scene.def.instanceIds) {
@@ -845,347 +837,17 @@ function emitSceneReset(ctx: MdCtx, scene: SceneCtx): void {
   asm.rts();
 }
 
-function emitSceneCamera(ctx: MdCtx, scene: SceneCtx): void {
+function emitSceneCamera(ctx: M68kCtx, scene: SceneCtx): void {
   const { asm } = ctx;
   asm.label(`SceneCamera_${scene.index}`);
   emitCamera(ctx, scene);
   asm.rts();
 }
 
-// --- 6. tiles ----------------------------------------------------------------
-
-/** Where one subject's cell list lives. */
-function cellSlot(ctx: MdCtx, subjectId: number): number {
-  const index = ctx.layout.tileCellSlots.get(subjectId);
-  if (index === undefined) throw new Error(`no tile cell list for object ${subjectId}`);
-  return ctx.layout.tileCells + index * ctx.layout.tileCellStride;
-}
-
-/** Walk the grid once and record every cell this object overlaps. */
-function emitFillCells(ctx: MdCtx, subjectId: number, level: LevelData): void {
-  const { asm, layout } = ctx;
-  const base = layout.entities[subjectId] as number;
-  const list = cellSlot(ctx, subjectId);
-  const col = layout.words + W.tileCol * 2;
-  const row = layout.words + W.tileRow * 2;
-
-  asm.clr("b", at(list));
-  emitTilesUnder(ctx, base, level, () => {
-    const next = ctx.unique("cellSkip");
-    asm.cmpi("w", GRID_EMPTY, eaD(0));
-    ctx.far("eq", next);
-    asm.move("w", eaD(0), eaD(3)); // the legend index, held across the arithmetic
-    asm.moveq(0, 1);
-    asm.move("b", at(list), eaD(1));
-    asm.cmpi("w", TILE_CONTACT_MAX, eaD(1));
-    ctx.far("cc", next);
-    // The entry is five bytes: the column, the row, and the legend index.
-    asm.move("l", eaD(1), eaD(2));
-    asm.lsl("l", 2, 2);
-    asm.add("l", eaD(1), 2);
-    asm.lea(at(list + 1), 0);
-    asm.adda("l", eaD(2), 0);
-    // A byte at a time, because a five-byte entry after a count byte lands on an
-    // odd address every other time — and a word access to an odd address is an
-    // address error on this CPU. The shared stride is what it is because three
-    // other consoles read a word from anywhere at all.
-    asm.move("b", at(col), eaInd(0));
-    asm.move("b", at(col, 1), eaDisp(0, 1));
-    asm.move("b", at(row), eaDisp(0, 2));
-    asm.move("b", at(row, 1), eaDisp(0, 3));
-    asm.move("b", eaD(3), eaDisp(0, 4));
-    asm.addq("b", 1, at(list));
-    asm.label(next);
-  });
-}
-
-/** Run `body` for each recorded cell, with its legend index in `d0`. */
-function emitOverCells(ctx: MdCtx, subjectId: number, body: () => void): void {
-  const { asm, layout } = ctx;
-  const list = cellSlot(ctx, subjectId);
-  const col = layout.words + W.tileCol * 2;
-  const row = layout.words + W.tileRow * 2;
-  const cursor = layout.words + W.count * 2;
-  const loop = ctx.unique("cellLoop");
-  const done = ctx.unique("cellDone");
-
-  asm.tst("b", at(list));
-  ctx.far("eq", done);
-  asm.clr("w", at(cursor));
-  asm.label(loop);
-  asm.lea(at(list + 1), 0);
-  asm.moveq(0, 1);
-  asm.move("w", at(cursor), eaD(1));
-  asm.adda("l", eaD(1), 0);
-  asm.move("b", eaInd(0), at(col));
-  asm.move("b", eaDisp(0, 1), at(col, 1));
-  asm.move("b", eaDisp(0, 2), at(row));
-  asm.move("b", eaDisp(0, 3), at(row, 1));
-  asm.moveq(0, 0);
-  asm.move("b", eaDisp(0, 4), eaD(0));
-  body();
-  // Five bytes on, and stop when the count is reached. The cursor is in memory
-  // because a rule body uses every register there is.
-  asm.addi("w", 5, at(cursor));
-  asm.moveq(0, 1);
-  asm.move("b", at(list), eaD(1));
-  asm.move("l", eaD(1), eaD(2));
-  asm.lsl("l", 2, 2);
-  asm.add("l", eaD(1), 2);
-  asm.cmp("w", at(cursor), 2);
-  ctx.far("ne", loop);
-  asm.label(done);
-}
-
-/**
- * Tile collision, in the interpreter's two passes: fire the rules that name a
- * tile, then push objects out of the solid ones.
- */
-function emitTileRules(ctx: MdCtx, scene: SceneCtx, level: LevelData): void {
-  const { asm, layout, program } = ctx;
-  const blockers = new Map<number, Set<string>>();
-
-  // Objects whose overlapped cells are the same for every rule this tick get
-  // walked once, here, and every pass below reads the list instead of the grid.
-  const cached = new Set<number>();
-  for (const rule of program.rules) {
-    if (rule.event.kind !== "hits" || rule.event.tiles.length === 0) continue;
-    if (rule.scene !== undefined && rule.scene !== scene.def.name) continue;
-    for (const subjectId of rule.event.subjects) {
-      const instance = program.instances[subjectId];
-      if (!instance || instance.scene !== scene.def.name) continue;
-      if (cached.has(subjectId) || !tileCellsCacheable(ctx, scene, subjectId)) continue;
-      cached.add(subjectId);
-      emitFillCells(ctx, subjectId, level);
-    }
-  }
-  const walk = (subjectId: number, base: number, body: () => void): void => {
-    if (cached.has(subjectId)) emitOverCells(ctx, subjectId, body);
-    else emitTilesUnder(ctx, base, level, body);
-  };
-
-  for (const rule of program.rules) {
-    if (rule.event.kind !== "hits" || rule.event.tiles.length === 0) continue;
-    if (rule.scene !== undefined && rule.scene !== scene.def.name) continue;
-    const event = rule.event;
-    for (const subjectId of event.subjects) {
-      const instance = program.instances[subjectId];
-      if (!instance || instance.scene !== scene.def.name) continue;
-      const named = blockers.get(subjectId) ?? new Set<string>();
-      for (const name of event.tiles) named.add(name);
-      blockers.set(subjectId, named);
-
-      const skip = ctx.unique("tileSubjSkip");
-      if (isMutable(ctx.analysis, subjectId, "visible")) {
-        branchZero32(ctx, (layout.entities[subjectId] as number) + propOffset("visible"), skip);
-      } else if ((instance.numbers["visible"] ?? 0) === 0) {
-        asm.label(skip);
-        continue;
-      }
-
-      const base = layout.entities[subjectId] as number;
-      const listBase = tileSlot(ctx, rule.id, subjectId);
-      emitBeginContacts(ctx, listBase);
-
-      walk(subjectId, base, () => {
-        const next = ctx.unique("tileNext");
-        asm.cmpi("w", GRID_EMPTY, eaD(0));
-        ctx.far("eq", next);
-        // Is this legend entry one the rule names?
-        asm.lea(eaAbs(label(ruleTileTableLabel(rule, level))), 0);
-        asm.tst("b", eaIdx(0, 0, 0));
-        ctx.far("eq", next);
-
-        // A side the rule did not name is a contact that never happened: it
-        // does not fire and it is not recorded either, so next tick's "was this
-        // seen before" answers as the interpreter's does (`sim.ts`
-        // §resolveTiles). Separation is unaffected — what can hold an object up
-        // is not what a rule asked about.
-        const mask = sideMask(event.sides);
-        if (mask !== 0) {
-          emitTileSide(ctx, base);
-          asm.andi("b", mask, eaD(0));
-          ctx.far("eq", next);
-        }
-        emitCellId(ctx);
-        emitRecordContact(ctx);
-        if (!event.level) {
-          asm.lea(at(listBase + 1), 1);
-          asm.move("b", at(listBase), eaD(1));
-          asm.jsr("TileContactSeen");
-          ctx.far("ne", next);
-        }
-        const bind: Binding = {
-          subject: { kind: "const", id: subjectId, base },
-          other: { kind: "none" },
-        };
-        emitFireTileRule(ctx, rule, bind);
-        asm.label(next);
-      });
-
-      emitCommitContacts(ctx, listBase);
-      asm.label(skip);
-    }
-  }
-
-  for (const [subjectId, named] of blockers) {
-    const instance = program.instances[subjectId] as InstanceDef;
-    const skip = ctx.unique("tileSepSkip");
-    if (isMutable(ctx.analysis, subjectId, "visible")) {
-      branchZero32(ctx, (layout.entities[subjectId] as number) + propOffset("visible"), skip);
-    } else if ((instance.numbers["visible"] ?? 0) === 0) {
-      asm.label(skip);
-      continue;
-    }
-    const base = layout.entities[subjectId] as number;
-    const namedTable = `BlockNames_${scene.index}_${subjectId}`;
-    walk(subjectId, base, () => {
-      const next = ctx.unique("sepNext");
-      asm.cmpi("w", GRID_EMPTY, eaD(0));
-      ctx.far("eq", next);
-      asm.lea(eaAbs(label(level.solidLabel)), 0);
-      asm.tst("b", eaIdx(0, 0, 0));
-      ctx.far("eq", next);
-      asm.lea(eaAbs(label(namedTable)), 0);
-      asm.tst("b", eaIdx(0, 0, 0));
-      ctx.far("eq", next);
-      emitTileSeparate(ctx, base);
-      asm.label(next);
-    });
-    asm.label(skip);
-    // The table of tiles that can stop this subject, by legend index.
-    ctx.need(namedTable, () => {
-      for (const tile of level.file.tiles) ctx.asm.db(named.has(tile.name) ? 1 : 0);
-      ctx.asm.align();
-    });
-  }
-}
-
-/** Fire a tile rule's body — the guard and assignments, with no trigger test. */
-function emitFireTileRule(ctx: MdCtx, rule: RuleDef, bind: Binding): void {
-  const { asm } = ctx;
-  const elseLabel = ctx.unique("tileElse");
-  const done = ctx.unique("tileFired");
-  let branched = false;
-  if (rule.guard) {
-    const verdict = emitTest(ctx, rule.guard, bind, elseLabel);
-    if (verdict === "never") {
-      if (rule.otherwise) emitAssignments(ctx, rule.otherwise, bind);
-      return;
-    }
-    if (verdict === "runtime") branched = true;
-  }
-  emitSound(ctx, rule);
-  emitAssignments(ctx, rule.assignments, bind);
-  if (!branched) return;
-  if (rule.otherwise && rule.otherwise.length > 0) {
-    asm.bra(done);
-    asm.label(elseLabel);
-    emitAssignments(ctx, rule.otherwise, bind);
-    asm.label(done);
-  } else {
-    asm.label(elseLabel);
-  }
-}
-
-/** The key a contact list stores: the cell's coordinates, packed into a word. */
-function emitCellId(ctx: MdCtx): void {
-  const { asm, layout } = ctx;
-  asm.move("b", at(layout.words + W.tileCol * 2 + 1), at(layout.words + W.cell * 2));
-  asm.move("b", at(layout.words + W.tileRow * 2 + 1), at(layout.words + W.cell * 2 + 1));
-}
-
-/** Start a pair's list: nothing recorded yet, and the stored count remembered. */
-function emitBeginContacts(ctx: MdCtx, listBase: number): void {
-  const { asm, layout } = ctx;
-  asm.clr("b", at(layout.tileScratch));
-  asm.move("b", at(listBase), at(layout.words + W.target * 2));
-}
-
-/** Append the current cell to this tick's list. */
-function emitRecordContact(ctx: MdCtx): void {
-  const { asm, layout } = ctx;
-  const full = ctx.unique("contactFull");
-  asm.moveq(0, 1);
-  asm.move("b", at(layout.tileScratch), eaD(1));
-  asm.cmpi("w", TILE_CONTACT_MAX, eaD(1));
-  ctx.far("cc", full);
-  asm.add("l", eaD(1), 1); // an entry is two bytes
-  asm.lea(at(layout.tileScratch + 1), 0);
-  asm.adda("l", eaD(1), 0);
-  // Two byte stores rather than one word store: the entries sit after a count
-  // byte, so half of them are at odd addresses.
-  asm.move("b", at(layout.words + W.cell * 2), eaInd(0));
-  asm.move("b", at(layout.words + W.cell * 2 + 1), eaDisp(0, 1));
-  asm.addq("b", 1, at(layout.tileScratch));
-  asm.label(full);
-}
-
-/** Replace the pair's stored list with the one just built. */
-function emitCommitContacts(ctx: MdCtx, listBase: number): void {
-  const { asm, layout } = ctx;
-  const loop = ctx.unique("commitLoop");
-  const done = ctx.unique("commitDone");
-  asm.moveq(0, 0);
-  asm.move("b", at(layout.tileScratch), eaD(0));
-  asm.move("b", eaD(0), at(listBase));
-  asm.tst("w", eaD(0));
-  ctx.far("eq", done);
-  asm.add("w", eaD(0), 0); // two bytes an entry
-  asm.subq("w", 1, eaD(0));
-  asm.lea(at(layout.tileScratch + 1), 0);
-  asm.lea(at(listBase + 1), 1);
-  asm.label(loop);
-  asm.move("b", eaPost(0), eaPost(1));
-  asm.dbra(0, loop);
-  asm.label(done);
-}
-
-/**
- * Was this cell in the pair's list at the end of last tick?
- *
- * That question is the whole of `hits` versus `touches` for tiles. The list to
- * search arrives in `a1` and its length in `d1`, and the answer is the zero flag
- * — set when the cell was not there.
- */
-function emitTileContactHelper(ctx: MdCtx): void {
-  const { asm, layout } = ctx;
-  if (!ctx.analysis.usesTiles) return;
-  asm.label("TileContactSeen");
-  const loop = ctx.unique("seenLoop");
-  const found = ctx.unique("seenFound");
-  const missing = ctx.unique("seenMissing");
-  const step = ctx.unique("seenStep");
-  asm.andi("l", 0xff, eaD(1));
-  ctx.far("eq", missing);
-  asm.subq("w", 1, eaD(1));
-  asm.move("b", at(layout.words + W.cell * 2), eaD(2));
-  asm.move("b", at(layout.words + W.cell * 2 + 1), eaD(3));
-  asm.moveq(0, 4);
-  asm.label(loop);
-  // Indexed rather than walked with a post-increment, and compared a byte at a
-  // time: the entries follow a count byte, so half of them are odd-addressed.
-  asm.move("b", eaIdx(1, 0, 4), eaD(5));
-  asm.cmp("b", eaD(5), 2);
-  ctx.far("ne", step);
-  asm.move("b", eaIdx(1, 1, 4), eaD(5));
-  asm.cmp("b", eaD(5), 3);
-  ctx.far("eq", found);
-  asm.label(step);
-  asm.addq("l", 2, eaD(4));
-  asm.dbra(1, loop);
-  asm.label(missing);
-  asm.moveq(0, 0);
-  asm.rts();
-  asm.label(found);
-  asm.moveq(1, 0);
-  asm.rts();
-}
-
 // --- rendering ---------------------------------------------------------------
 
 function emitSceneRender(
-  ctx: MdCtx,
+  ctx: M68kCtx,
   scene: SceneCtx,
   level: LevelData | undefined,
   options: MdEmitOptions,
@@ -1229,7 +891,7 @@ function emitSceneRender(
 }
 
 /** `dst16 = floor(value * 8 / 65536)` — cells to pixels. */
-function emitPixelsFromFixed(ctx: MdCtx, src: number, dst: number): void {
+function emitPixelsFromFixed(ctx: M68kCtx, src: number, dst: number): void {
   const { asm } = ctx;
   asm.move("l", at(src), eaD(0));
   asm.asr("l", 8, 0);
@@ -1239,7 +901,7 @@ function emitPixelsFromFixed(ctx: MdCtx, src: number, dst: number): void {
 
 /** Draw the whole visible window, with the display off. */
 function emitFullRedraw(
-  ctx: MdCtx,
+  ctx: M68kCtx,
   scene: SceneCtx,
   level: LevelData | undefined,
   options: MdEmitOptions,
@@ -1373,7 +1035,7 @@ export function packCells(cells: Uint8Array): Uint8Array {
 }
 
 /** `a0` = a packed name table; write it to the data port at the current address. */
-function needBlitBackdrop(ctx: MdCtx): Ref {
+function needBlitBackdrop(ctx: M68kCtx): Ref {
   return ctx.need("BlitBackdrop", (inner) => {
     const { asm } = inner;
     const next = inner.unique("blitNext");
@@ -1419,7 +1081,7 @@ function needBlitBackdrop(ctx: MdCtx): Ref {
  * error on this CPU. It cost the first cell of every picture, which is exactly
  * the kind of thing a cell-for-cell oracle finds and a screenshot does not.
  */
-function emitPackedCell(ctx: MdCtx): void {
+function emitPackedCell(ctx: M68kCtx): void {
   const { asm } = ctx;
   asm.moveq(0, 2);
   asm.move("b", eaPost(0), eaD(2));
@@ -1442,7 +1104,7 @@ function scenePaletteLabel(scene: SceneCtx): string {
  * and through its legend, and a scene without one is blank. A backdrop scene
  * never reaches here: its picture is a block copy.
  */
-function emitBackgroundTile(ctx: MdCtx, level: LevelData | undefined): void {
+function emitBackgroundTile(ctx: M68kCtx, level: LevelData | undefined): void {
   const { asm } = ctx;
   if (!level) {
     asm.move("w", eaImm(SYSTEM_CELL), eaD(0));
@@ -1453,7 +1115,7 @@ function emitBackgroundTile(ctx: MdCtx, level: LevelData | undefined): void {
 }
 
 /** `d0 = the cell word for the legend index in d0`. */
-function emitLegendToTile(ctx: MdCtx, level: LevelData): void {
+function emitLegendToTile(ctx: M68kCtx, level: LevelData): void {
   const { asm } = ctx;
   const empty = ctx.unique("legendEmpty");
   const done = ctx.unique("legendDone");
@@ -1475,7 +1137,7 @@ function emitLegendToTile(ctx: MdCtx, level: LevelData): void {
 }
 
 /** The cell a pixel scroll sits in: an arithmetic shift by three. */
-function emitOriginFromScroll(ctx: MdCtx, dstCol: number, dstRow: number): void {
+function emitOriginFromScroll(ctx: M68kCtx, dstCol: number, dstRow: number): void {
   const { asm, layout } = ctx;
   const shift = (src: number, dst: number): void => {
     asm.move("w", at(src), eaD(0));
@@ -1495,7 +1157,7 @@ function emitOriginFromScroll(ctx: MdCtx, dstCol: number, dstRow: number): void 
  * the full-redraw flag instead of silently dropping cells off the end of the
  * queue.
  */
-function emitScrollUpdate(ctx: MdCtx, level: LevelData): void {
+function emitScrollUpdate(ctx: M68kCtx, level: LevelData): void {
   const { asm, layout } = ctx;
   const wantCol = layout.words + W.firstCol * 2;
   const wantRow = layout.words + W.lastCol * 2;
@@ -1524,7 +1186,7 @@ function emitScrollUpdate(ctx: MdCtx, level: LevelData): void {
  * is nothing to hide.
  */
 function emitWalkAxis(
-  ctx: MdCtx,
+  ctx: M68kCtx,
   level: LevelData,
   origin: number,
   want: number,
@@ -1557,7 +1219,7 @@ function emitWalkAxis(
 }
 
 /** Paint one column or row of the window, `offset` cells from the origin. */
-function emitPaintEdge(ctx: MdCtx, level: LevelData, isColumn: boolean, offset: number): void {
+function emitPaintEdge(ctx: M68kCtx, level: LevelData, isColumn: boolean, offset: number): void {
   const { asm, layout } = ctx;
   const along = isColumn ? layout.words + W.tileRow * 2 : layout.words + W.tileCol * 2;
   const across = isColumn ? layout.words + W.tileCol * 2 : layout.words + W.tileRow * 2;
@@ -1585,7 +1247,7 @@ function emitPaintEdge(ctx: MdCtx, level: LevelData, isColumn: boolean, offset: 
 }
 
 /** Put back the level tiles the HUD covered last frame. */
-function emitHudErase(ctx: MdCtx, scene: SceneCtx, level: LevelData | undefined): void {
+function emitHudErase(ctx: M68kCtx, scene: SceneCtx, level: LevelData | undefined): void {
   const { asm, layout } = ctx;
   void scene;
   const loop = ctx.unique("eraseLoop");
@@ -1613,7 +1275,7 @@ function emitHudErase(ctx: MdCtx, scene: SceneCtx, level: LevelData | undefined)
   asm.label(done);
 }
 
-function emitSwapPlots(ctx: MdCtx): void {
+function emitSwapPlots(ctx: M68kCtx): void {
   const { asm, layout } = ctx;
   const done = ctx.unique("swapDone");
   const loop = ctx.unique("swapLoop");
@@ -1632,7 +1294,7 @@ function emitSwapPlots(ctx: MdCtx): void {
 }
 
 /** Draw the scene's `number` and `text` objects on the background layer. */
-function emitHud(ctx: MdCtx, scene: SceneCtx, want: "static" | "dynamic"): void {
+function emitHud(ctx: M68kCtx, scene: SceneCtx, want: "static" | "dynamic"): void {
   const { asm, layout, program } = ctx;
   for (const id of scene.def.instanceIds) {
     const instance = program.instances[id] as InstanceDef;
@@ -1673,7 +1335,7 @@ function emitHud(ctx: MdCtx, scene: SceneCtx, want: "static" | "dynamic"): void 
 }
 
 /** `d0 = tile`: write it at the current cell and advance the column. */
-function needPokeCell(ctx: MdCtx): Ref {
+function needPokeCell(ctx: M68kCtx): Ref {
   return ctx.need("PokeCell", (inner) => {
     const { asm, layout } = inner;
     // Neither `VramFor` nor the routines under it touch `d0`, so the cell word
@@ -1687,7 +1349,7 @@ function needPokeCell(ctx: MdCtx): Ref {
 }
 
 /** The decimal renderer again, writing straight to video RAM. */
-function needPokeNumber(ctx: MdCtx): Ref {
+function needPokeNumber(ctx: M68kCtx): Ref {
   return ctx.need("DrawNumberPoke", (inner) => {
     emitDecimal(inner, needPokeCell(inner));
   });
@@ -1701,7 +1363,7 @@ function needPokeNumber(ctx: MdCtx): Ref {
  * word of a 16.16 coordinate *is* the cell it sits in. The margins are rounded
  * outward by a cell, so an object straddling the edge is never culled.
  */
-function needOnscreen(ctx: MdCtx): Ref {
+function needOnscreen(ctx: M68kCtx): Ref {
   return ctx.need("Onscreen", (inner) => {
     const { asm, layout } = inner;
     const camera = layout.camera as number;
@@ -1731,7 +1393,7 @@ function needOnscreen(ctx: MdCtx): Ref {
 }
 
 /** Build the object shadow from the scene's sprite objects. */
-function emitOam(ctx: MdCtx, scene: SceneCtx, options: MdEmitOptions): void {
+function emitOam(ctx: M68kCtx, scene: SceneCtx, options: MdEmitOptions): void {
   const { asm, layout, program } = ctx;
   asm.clr("b", at(layout.oamCount));
 
@@ -1801,7 +1463,7 @@ function emitOam(ctx: MdCtx, scene: SceneCtx, options: MdEmitOptions): void {
  * limit here, which is twice what the Sega 8-bits and the NES allow, so a
  * caption in a scrolling scene is far less constrained than it is there.
  */
-function emitHudSprites(ctx: MdCtx, scene: SceneCtx): void {
+function emitHudSprites(ctx: M68kCtx, scene: SceneCtx): void {
   const { asm, layout, program } = ctx;
   const penX = layout.words + W.cell * 2;
   const penY = layout.words + W.count * 2;
@@ -1846,7 +1508,7 @@ function emitHudSprites(ctx: MdCtx, scene: SceneCtx): void {
 }
 
 /** `d0 = tile`: put one glyph at the pen, on the object layer, and advance it. */
-function needHudGlyph(ctx: MdCtx): Ref {
+function needHudGlyph(ctx: M68kCtx): Ref {
   return ctx.need("HudGlyph", (inner) => {
     const { asm, layout } = inner;
     asm.ori("w", SYSTEM_CELL, eaD(0));
@@ -1860,7 +1522,7 @@ function needHudGlyph(ctx: MdCtx): Ref {
 }
 
 /** The decimal renderer again, plotting sprites instead of background cells. */
-function needHudNumber(ctx: MdCtx): Ref {
+function needHudNumber(ctx: M68kCtx): Ref {
   return ctx.need("DrawNumberOam", (inner) => {
     emitDecimal(inner, needHudGlyph(inner));
   });
@@ -1878,7 +1540,7 @@ function needHudNumber(ctx: MdCtx): Ref {
  * with the *link* to the next — so the upload is one run. Each entry links to
  * the one after it and {@link needClearRestOfOam} cuts the list at the end.
  */
-function needPushSprite(ctx: MdCtx): Ref {
+function needPushSprite(ctx: M68kCtx): Ref {
   return ctx.need("PushSprite", (inner) => {
     const { asm, layout } = inner;
     const room = inner.unique("oamRoom");
@@ -1913,7 +1575,7 @@ function needPushSprite(ctx: MdCtx): Ref {
  * top of the screen. Nothing above the list has to be touched at all, which is
  * why the upload is as long as the list rather than as long as the table.
  */
-function needClearRestOfOam(ctx: MdCtx): Ref {
+function needClearRestOfOam(ctx: M68kCtx): Ref {
   return ctx.need("ClearRestOfOam", (inner) => {
     const { asm, layout } = inner;
     const some = inner.unique("oamSome");
@@ -1941,7 +1603,7 @@ function needClearRestOfOam(ctx: MdCtx): Ref {
 // --- shared render routines --------------------------------------------------
 
 /** Emit the render helpers the scene code calls. */
-export function emitRenderHelpers(ctx: MdCtx): void {
+export function emitRenderHelpers(ctx: M68kCtx): void {
   const { asm, layout } = ctx;
 
   // `d1.w` = a plane address → point the data port at it, for writing. Every
@@ -2036,7 +1698,7 @@ export function emitRenderHelpers(ctx: MdCtx): void {
  * capped at what one will hold and anything over sets the redraw flag instead of
  * being dropped.
  */
-function emitUploadFrame(ctx: MdCtx): void {
+function emitUploadFrame(ctx: M68kCtx): void {
   const { asm, layout } = ctx;
   asm.label("UploadFrame");
   const noQueue = ctx.unique("noQueue");
@@ -2088,7 +1750,7 @@ function emitUploadFrame(ctx: MdCtx): void {
  * wrap is a mask rather than the subtraction loop the Master System's
  * twenty-eight rows force.
  */
-function emitScrollWrite(ctx: MdCtx): void {
+function emitScrollWrite(ctx: M68kCtx): void {
   const { asm, layout } = ctx;
   asm.move("l", eaImm(vramCtrl(VRAM.HSCROLL)), eaAbs(VDP.CONTROL));
   asm.move("w", at(layout.words + W.scrollX * 2), eaD(0));
@@ -2110,7 +1772,7 @@ function emitScrollWrite(ctx: MdCtx): void {
  * why it is a parameter rather than a second copy of the digit loop. Leading
  * zeroes are suppressed and a lone zero still prints.
  */
-function emitDecimal(ctx: MdCtx, plot: Ref): void {
+function emitDecimal(ctx: M68kCtx, plot: Ref): void {
   const { asm, layout } = ctx;
   // Everything here has to survive a call to `plot`, and `plot` reaches the cell
   // address routine, the write queue and the object builder — which between them
@@ -2179,7 +1841,7 @@ function emitDecimal(ctx: MdCtx, plot: Ref): void {
 }
 
 /** The powers of ten a decimal render walks, as big-endian words. */
-function emitDecimalPowers(ctx: MdCtx): void {
+function emitDecimalPowers(ctx: M68kCtx): void {
   ctx.asm.align();
   ctx.asm.label("DecimalPowers");
   for (const power of [10000, 1000, 100, 10, 1]) ctx.asm.dw(power);

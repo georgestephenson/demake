@@ -254,6 +254,9 @@ const GAME_DRIVERS: readonly string[] = [
   "gba",
   "nds",
   "pce",
+  // The eighth driver and the only one that is a whole program of its own: the
+  // cartridge's M region, on a bus the 68000 cannot see.
+  "neogeo",
   "wsc",
   // The mono machine's sound hardware *is* the colour machine's — same chip,
   // same ports, same waveform page in the same place (`binding/wsc-bank.ts`) —

@@ -13,6 +13,8 @@
 
 import { createChip, mix, renderSchedule, type OutputStage, type Pcm } from "@demake/chip";
 
+import { adpcmABank, adpcmBBank } from "./binding/neogeo-bank.js";
+
 import { bindingFor } from "./binding/registry.js";
 import { sampleBank } from "./binding/gba-bank.js";
 import { ndsSampleRam } from "./binding/nds-bank.js";
@@ -58,12 +60,19 @@ export function render(script: ChipScript, options: RenderAudioOptions = {}): Pc
       id === "ws-sound" && script.sampleRam === undefined
         ? wsWaveRam(wsDefaultWaveforms())
         : undefined;
+    // And the fifth, which is the only one that needs *two*: this chip's ADPCM-A
+    // and ADPCM-B sections read different sample ROMs in different codecs, so a
+    // model given one of them plays half its voices. Both are the binding's, so
+    // the drums a render hears are the drums a cartridge carries
+    // (`binding/neogeo-bank.ts`).
+    const neogeo = id === "ym2610" ? { pcmA: adpcmABank().rom, pcmB: adpcmBBank().rom } : undefined;
     const chip = createChip(id, {
       stereo: true,
       ...(ram === undefined ? {} : { ram }),
       ...(ndsRam === undefined ? {} : { ram: ndsRam.ram, ramBase: ndsRam.base }),
       ...(bank === undefined ? {} : { bank }),
       ...(waveRam === undefined ? {} : { ram: waveRam }),
+      ...(neogeo === undefined ? {} : { ram: neogeo.pcmA, ramB: neogeo.pcmB }),
     });
     // Filtered per *write* rather than per tick: a console with two chips writes
     // both within one driver tick, and a tick-level tag could not say so.

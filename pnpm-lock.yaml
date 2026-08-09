@@ -60,6 +60,9 @@ importers:
       '@demake/md':
         specifier: workspace:*
         version: link:../md
+      '@demake/neogeo':
+        specifier: workspace:*
+        version: link:../neogeo
       '@demake/nes':
         specifier: workspace:*
         version: link:../nes
@@ -118,6 +121,9 @@ importers:
       '@demake/nds':
         specifier: workspace:*
         version: link:../nds
+      '@demake/neogeo':
+        specifier: workspace:*
+        version: link:../neogeo
       '@demake/nes':
         specifier: workspace:*
         version: link:../nes
@@ -176,6 +182,21 @@ importers:
       '@demake/gba':
         specifier: workspace:*
         version: link:../gba
+
+  packages/neogeo:
+    dependencies:
+      '@demake/chip':
+        specifier: workspace:*
+        version: link:../chip
+      '@demake/core':
+        specifier: workspace:*
+        version: link:../core
+      '@demake/md':
+        specifier: workspace:*
+        version: link:../md
+      '@demake/sms':
+        specifier: workspace:*
+        version: link:../sms
 
   packages/nes:
     dependencies:

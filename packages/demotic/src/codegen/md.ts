@@ -54,7 +54,7 @@ import {
 } from "./backend.js";
 import { MD_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
 import { ART_TILES, bindMdArt } from "./md-art.js";
-import { MdCtx } from "./md/ctx.js";
+import { M68kCtx } from "./m68k/ctx.js";
 import { BANK_TILES, CODE_ORIGIN, emitProgram, STACK_TOP, type MdEmitOptions } from "./md/emit.js";
 import type { ArtSettings } from "./settings.js";
 
@@ -200,7 +200,7 @@ export const mdBackend: Backend<MdEmitOptions, MdAudio> = {
   },
 
   assemble({ program, analysis, layout, art, audio, title }): Assembled {
-    const ctx = new MdCtx(program, analysis, layout, getProfile(program.profile.id), CODE_ORIGIN);
+    const ctx = new M68kCtx(program, analysis, layout, getProfile(program.profile.id), CODE_ORIGIN);
     if (audio.hooks) {
       ctx.audio = {
         driver: audio.hooks.driver,

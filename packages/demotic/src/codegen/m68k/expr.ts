@@ -35,7 +35,7 @@ import {
   type TestVerdict,
 } from "../shape.js";
 
-import type { MdCtx } from "./ctx.js";
+import type { M68kCtx } from "./ctx.js";
 import {
   abs32,
   add32,
@@ -68,7 +68,7 @@ export {
 };
 
 /** Copy four bytes from `[ptr] + offset` to an absolute address. */
-export function copyFromPtr(ctx: MdCtx, ptr: number, offset: number, dst: Ref): void {
+export function copyFromPtr(ctx: M68kCtx, ptr: number, offset: number, dst: Ref): void {
   const { asm } = ctx;
   asm.movea("l", at(ptr), 0);
   asm.move("l", eaDisp(0, offset), eaD(0));
@@ -76,7 +76,7 @@ export function copyFromPtr(ctx: MdCtx, ptr: number, offset: number, dst: Ref): 
 }
 
 /** Copy four bytes from an absolute address to `[ptr] + offset`. */
-export function copyToPtr(ctx: MdCtx, ptr: number, offset: number, src: Ref): void {
+export function copyToPtr(ctx: M68kCtx, ptr: number, offset: number, src: Ref): void {
   const { asm } = ctx;
   asm.movea("l", at(ptr), 0);
   asm.move("l", at(src), eaD(0));
@@ -84,7 +84,7 @@ export function copyToPtr(ctx: MdCtx, ptr: number, offset: number, src: Ref): vo
 }
 
 /** Read a stored property into a slot, without copying where possible. */
-function readStored(ctx: MdCtx, entity: EntityAddr, prop: string): Slot {
+function readStored(ctx: M68kCtx, entity: EntityAddr, prop: string): Slot {
   switch (entity.kind) {
     case "none":
       return { addr: ctx.constant(0), temp: false };
@@ -99,7 +99,7 @@ function readStored(ctx: MdCtx, entity: EntityAddr, prop: string): Slot {
 }
 
 /** Read any property, stored or derived. */
-export function readProp(ctx: MdCtx, entity: EntityAddr, prop: string): Slot {
+export function readProp(ctx: M68kCtx, entity: EntityAddr, prop: string): Slot {
   const derived = DERIVED_PARTS[prop];
   if (!derived) return readStored(ctx, entity, prop);
   if (entity.kind === "none") return { addr: ctx.constant(0), temp: false };
@@ -126,7 +126,7 @@ export function readProp(ctx: MdCtx, entity: EntityAddr, prop: string): Slot {
 }
 
 /** Write a value into a property, clamping it the way `writeProp` does. */
-export function writeProp(ctx: MdCtx, entity: EntityAddr, prop: string, value: Ref): void {
+export function writeProp(ctx: M68kCtx, entity: EntityAddr, prop: string, value: Ref): void {
   if (entity.kind === "none") return;
   // The interpreter clamps on write, so the value is clamped in the staging slot
   // it already owns rather than copied first.
@@ -144,7 +144,7 @@ export function writeProp(ctx: MdCtx, entity: EntityAddr, prop: string, value: R
  * `into` asks for a specific destination; without it the compiler picks the
  * cheapest place, which for a bare property read is the entity record itself.
  */
-export function emitExpr(ctx: MdCtx, expr: CExpr, bind: Binding, into?: number): Slot {
+export function emitExpr(ctx: M68kCtx, expr: CExpr, bind: Binding, into?: number): Slot {
   const constant = fold(expr);
   if (constant !== undefined) {
     if (into === undefined) return { addr: ctx.constant(constant), temp: false };
@@ -188,7 +188,7 @@ export function emitExpr(ctx: MdCtx, expr: CExpr, bind: Binding, into?: number):
 }
 
 function emitBinary(
-  ctx: MdCtx,
+  ctx: M68kCtx,
   op: CBinaryOp,
   leftExpr: CExpr,
   rightExpr: CExpr,
@@ -242,7 +242,12 @@ function emitBinary(
   return { addr: target, temp: into === undefined };
 }
 
-function emitCall(ctx: MdCtx, expr: CExpr & { kind: "call" }, bind: Binding, into?: number): Slot {
+function emitCall(
+  ctx: M68kCtx,
+  expr: CExpr & { kind: "call" },
+  bind: Binding,
+  into?: number,
+): Slot {
   const { asm } = ctx;
   const target = into ?? ctx.pushTemp();
   const args = expr.args;
@@ -307,7 +312,7 @@ function emitCall(ctx: MdCtx, expr: CExpr & { kind: "call" }, bind: Binding, int
  * false" and get the same code with one flag changed.
  */
 export function emitCompare(
-  ctx: MdCtx,
+  ctx: M68kCtx,
   op: CBinaryOp,
   leftExpr: CExpr,
   rightExpr: CExpr,
@@ -351,7 +356,12 @@ export function emitCompare(
  * was emitted and the caller can drop the branch — and, for `never`, the whole
  * body behind it.
  */
-export function emitTest(ctx: MdCtx, expr: CExpr, bind: Binding, falseTarget: string): TestVerdict {
+export function emitTest(
+  ctx: M68kCtx,
+  expr: CExpr,
+  bind: Binding,
+  falseTarget: string,
+): TestVerdict {
   const constant = fold(expr);
   if (constant !== undefined) return constant !== 0 ? "always" : "never";
 
@@ -382,7 +392,7 @@ export function emitTest(ctx: MdCtx, expr: CExpr, bind: Binding, falseTarget: st
  * is **not** advanced — which is behaviour, because *when* a draw happens is part
  * of the language.
  */
-function emitRngPick(ctx: MdCtx): void {
+function emitRngPick(ctx: M68kCtx): void {
   const { asm, layout } = ctx;
   const rng = layout.rng;
   if (rng === null) throw new Error("random() without a generator allocated");
@@ -436,7 +446,7 @@ function emitRngPick(ctx: MdCtx): void {
  * 32×32 product needs `al·bl` plus the low half of `ah·bl + al·bh`, and the top
  * product is thrown away because it only reaches bits the modulus discards.
  */
-function emitRngAdvance(ctx: MdCtx): void {
+function emitRngAdvance(ctx: M68kCtx): void {
   const { asm, layout } = ctx;
   const rng = layout.rng as number;
   const MUL_LOW = 1664525 & 0xffff;

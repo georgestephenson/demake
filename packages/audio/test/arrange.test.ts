@@ -55,6 +55,9 @@ const CONSOLES = [
   // machine's *video* path has not reached.
   "ngp",
   "ngpc",
+  // The widest of them: fourteen voices on one chip, and the only console here
+  // whose sound processor cannot see the picture at all.
+  "neogeo",
 ];
 
 describe("ingest", () => {

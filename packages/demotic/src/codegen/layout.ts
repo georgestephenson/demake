@@ -603,6 +603,72 @@ export const MD_MEMORY: MemoryPlan = {
 };
 
 /**
+ * The Neo Geo's plan: sixty-four kilobytes at `$100000`, and a sprite shadow
+ * that is bigger than any other console's for a reason worth knowing.
+ *
+ * Two things are this machine's rather than the Mega Drive's restated.
+ *
+ *   - **An object's shadow entry carries its tile numbers, not just its
+ *     position.** Everywhere else an object is a position and a tile index in a
+ *     fixed-size OAM entry; here a sprite is a *vertical strip* whose column of
+ *     tile numbers lives in SCB1, so the runtime has to stage those too. That is
+ *     {@link NEOGEO_SPRITE_BYTES} a strip against a Mega Drive's eight, and it
+ *     is affordable only because this console has sixty-four kilobytes of work
+ *     RAM rather than two.
+ *   - **The plane costs sprites, so the shadow starts past them.** Strips 1 to
+ *     21 are the playfield and sprite 0 is the hardware's own padding entry
+ *     (`FIRST_USABLE_SPRITE`), so an object's strip index is offset by
+ *     {@link NEOGEO_OBJECT_SPRITE0} and the budget the profile advertises is
+ *     what is left rather than what the LSPC will consider.
+ *
+ * The heap starts high enough that the short absolute form the 68000 uses for
+ * `$1000xx` still reaches, which is the same consideration `MD_MEMORY` records
+ * about its own base.
+ */
+
+/** Strips the playfield occupies: twenty visible columns and one to scroll into. */
+export const NEOGEO_PLANE_STRIPS = 21;
+
+/** The first strip an object may use: past sprite 0 and past the plane. */
+export const NEOGEO_OBJECT_SPRITE0 = 1 + NEOGEO_PLANE_STRIPS;
+
+/**
+ * Bytes one staged object strip costs.
+ *
+ * SCB3 and SCB4 are a word each, and then four rows of SCB1 at two words a row —
+ * four because a game object taller than sixty-four pixels does not occur in the
+ * example library and the upload is bounded by what is staged.
+ */
+export const NEOGEO_SPRITE_BYTES = 2 + 2 + 4 * 4;
+
+export const NEOGEO_MEMORY: MemoryPlan = {
+  machine: "Neo Geo",
+  heapStart: 0x102000,
+  heapEnd: 0x10f000,
+  oamShadow: 0x100800,
+  oamEntries: 64,
+  viewW: 40,
+  viewH: 28,
+  // A vertical blank here is generous and a queued cell is a handful of writes
+  // through the VRAM port, so this is what a diagonal scroll needs — a column of
+  // twenty-nine and a row of forty-one — rather than what fits.
+  queueMax: 96,
+  plotMax: 48,
+  // No driver yet: this console's sound answers a Z80 `demake build` emits no
+  // program for, so a cartridge is silent and says so rather than reserving
+  // state for a driver that does not exist.
+  audioBytes: 0,
+  cellAttributes: true,
+  // The frame flag the main loop waits on, and the watchdog is kicked beside it.
+  interruptBytes: 1,
+  // A four-byte record pointer and a two-byte index, the Mega Drive's for the
+  // same reason: an address is a long here and a rule body uses every register.
+  loopBytes: 6,
+  bigEndian: true,
+  align: 2,
+};
+
+/**
  * The Game Boy Advance's plan: 32 KiB of internal work RAM, and none of the
  * other 256.
  *

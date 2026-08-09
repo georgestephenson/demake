@@ -49,7 +49,7 @@ import {
   type SceneCtx,
 } from "../shape.js";
 
-import type { MdCtx } from "./ctx.js";
+import type { M68kCtx } from "./ctx.js";
 import {
   copyFromPtr,
   copyToPtr,
@@ -94,7 +94,7 @@ export const CELL_OFFSET = 0;
 export const S = { w0: 0, w1: 2, w2: 4, w3: 6 } as const;
 
 /** Test a byte and set the flags from it. */
-function loadByte(ctx: MdCtx, address: Ref): void {
+function loadByte(ctx: M68kCtx, address: Ref): void {
   ctx.asm.tst("b", at(address));
 }
 
@@ -105,7 +105,7 @@ function loadByte(ctx: MdCtx, address: Ref): void {
  * an object whose `visible` no assignment can reach is decided here rather than
  * every tick.
  */
-function guardVisible(ctx: MdCtx, id: number, skip: string): "always" | "never" | "runtime" {
+function guardVisible(ctx: M68kCtx, id: number, skip: string): "always" | "never" | "runtime" {
   const instance = ctx.program.instances[id] as InstanceDef;
   if (!isMutable(ctx.analysis, id, "visible")) {
     return (instance.numbers["visible"] ?? 0) !== 0 ? "always" : "never";
@@ -115,7 +115,7 @@ function guardVisible(ctx: MdCtx, id: number, skip: string): "always" | "never" 
 }
 
 /** The same, for the record a loop is walking rather than one the compiler named. */
-function guardVisiblePtr(ctx: MdCtx, skip: string): void {
+function guardVisiblePtr(ctx: M68kCtx, skip: string): void {
   const { asm, layout } = ctx;
   asm.movea("l", at(layout.loop as number), 0);
   asm.tst("l", eaDisp(0, propOffset("visible")));
@@ -129,7 +129,7 @@ function guardVisiblePtr(ctx: MdCtx, skip: string): void {
  * computed against the pre-rule state, then the writes land together.
  */
 export function emitAssignments(
-  ctx: MdCtx,
+  ctx: M68kCtx,
   assignments: readonly CAssignment[],
   bind: Binding,
 ): void {
@@ -207,7 +207,7 @@ type Trigger = (falseLabel: string) => "always" | "never" | "runtime";
  * Fire a rule: its assignments when the trigger held and the guard passed, its
  * `else` when it was evaluated and did not.
  */
-function emitFire(ctx: MdCtx, rule: RuleDef, bind: Binding, trigger?: Trigger): void {
+function emitFire(ctx: M68kCtx, rule: RuleDef, bind: Binding, trigger?: Trigger): void {
   const { asm } = ctx;
   const elseLabel = ctx.unique("ruleElse");
   const done = ctx.unique("ruleDone");
@@ -251,7 +251,7 @@ function emitFire(ctx: MdCtx, rule: RuleDef, bind: Binding, trigger?: Trigger): 
  * build whose audio could not be played still has to trace identically to one
  * that could (doc 14 §Conformance), and this is where that is kept true.
  */
-export function emitSound(ctx: MdCtx, rule: RuleDef): void {
+export function emitSound(ctx: M68kCtx, rule: RuleDef): void {
   if (rule.sound === undefined || ctx.audio === undefined) return;
   const index = ctx.audio.effects[rule.sound] ?? -1;
   if (ctx.audio.driver && index >= 0) {
@@ -269,7 +269,7 @@ export function emitSound(ctx: MdCtx, rule: RuleDef): void {
  * is down (`set`) or when it is not (`clear`).
  */
 function emitButton(
-  ctx: MdCtx,
+  ctx: M68kCtx,
   set: number,
   action: string,
   target: string,
@@ -281,13 +281,13 @@ function emitButton(
 }
 
 /** Which input set a control's mode fires on. */
-function inputSet(ctx: MdCtx, mode: ControlDef["mode"]): number {
+function inputSet(ctx: M68kCtx, mode: ControlDef["mode"]): number {
   const { layout } = ctx;
   if (mode === "press") return layout.pressed;
   return mode === "release" ? layout.released : layout.held;
 }
 
-export function emitControls(ctx: MdCtx, scene: SceneCtx): void {
+export function emitControls(ctx: M68kCtx, scene: SceneCtx): void {
   const { asm } = ctx;
 
   emitHoldEdges(ctx, scene);
@@ -308,7 +308,7 @@ export function emitControls(ctx: MdCtx, scene: SceneCtx): void {
  * *down* rather than on its press edge. `sim.ts`'s `updateHolds` is the
  * specification and states why both of those are load-bearing.
  */
-function emitHoldEdges(ctx: MdCtx, scene: SceneCtx): void {
+function emitHoldEdges(ctx: M68kCtx, scene: SceneCtx): void {
   const { asm, layout } = ctx;
   for (const [slot, target] of holdTargets(ctx.program).entries()) {
     const bindings = target.controls
@@ -348,7 +348,7 @@ function emitHoldEdges(ctx: MdCtx, scene: SceneCtx): void {
 
 // --- 3. level rules ----------------------------------------------------------
 
-export function emitLevelRules(ctx: MdCtx, scene: SceneCtx): void {
+export function emitLevelRules(ctx: M68kCtx, scene: SceneCtx): void {
   const { asm } = ctx;
   for (const rule of ctx.program.rules) {
     if (rule.event.kind !== "predicate" || !ruleInScene(rule, scene)) continue;
@@ -378,7 +378,7 @@ export function emitLevelRules(ctx: MdCtx, scene: SceneCtx): void {
  * them identically compile to identical code — which is the whole condition for
  * running them through one loop rather than a copy each.
  */
-function moveShape(ctx: MdCtx, id: number): string {
+function moveShape(ctx: M68kCtx, id: number): string {
   const instance = ctx.program.instances[id] as InstanceDef;
   const mutable = (prop: string): string => (isMutable(ctx.analysis, id, prop) ? "m" : "f");
   const fixed = (prop: string): string =>
@@ -395,7 +395,7 @@ function moveShape(ctx: MdCtx, id: number): string {
   ].join(":");
 }
 
-export function emitIntegrate(ctx: MdCtx, scene: SceneCtx): void {
+export function emitIntegrate(ctx: M68kCtx, scene: SceneCtx): void {
   const { asm } = ctx;
   const groups = new Map<string, number[]>();
   for (const id of scene.def.instanceIds) {
@@ -429,7 +429,7 @@ export function emitIntegrate(ctx: MdCtx, scene: SceneCtx): void {
 }
 
 /** One movement body for every object that moves the same way. */
-function emitMoveLoop(ctx: MdCtx, ids: readonly number[]): boolean {
+function emitMoveLoop(ctx: M68kCtx, ids: readonly number[]): boolean {
   const { asm } = ctx;
   if (ctx.layout.loop === null) return false;
   const first = ids[0] as number;
@@ -463,7 +463,11 @@ function emitMoveLoop(ctx: MdCtx, ids: readonly number[]): boolean {
  * For an instance the compiler named it is the property's own address and the
  * close is nothing, so the unrolled form is byte-for-byte what it always was.
  */
-function openProp(ctx: MdCtx, entity: EntityAddr, prop: string): { addr: Ref; close: () => void } {
+function openProp(
+  ctx: M68kCtx,
+  entity: EntityAddr,
+  prop: string,
+): { addr: Ref; close: () => void } {
   if (entity.kind === "const") {
     return { addr: entity.base + propOffset(prop), close: () => undefined };
   }
@@ -480,7 +484,7 @@ function openProp(ctx: MdCtx, entity: EntityAddr, prop: string): { addr: Ref; cl
 }
 
 function emitAxis(
-  ctx: MdCtx,
+  ctx: M68kCtx,
   entity: EntityAddr,
   id: number,
   posProp: string,
@@ -568,7 +572,7 @@ const LOOP_PAIRS = 3;
  * are memory rather than registers because a rule body fires inside the loop and
  * may use every register the machine has.
  */
-function emitLoopHead(ctx: MdCtx, table: string): string {
+function emitLoopHead(ctx: M68kCtx, table: string): string {
   const { asm, layout } = ctx;
   const ptr = layout.loop as number;
   const loop = ctx.unique("walkLoop");
@@ -584,7 +588,7 @@ function emitLoopHead(ctx: MdCtx, table: string): string {
 }
 
 /** Step the cursor and go round again while entries remain. */
-function emitLoopNext(ctx: MdCtx, loop: string, count: number): void {
+function emitLoopNext(ctx: M68kCtx, loop: string, count: number): void {
   const { asm, layout } = ctx;
   const ptr = layout.loop as number;
   asm.addq("w", 1, at(ptr + 4));
@@ -593,7 +597,7 @@ function emitLoopNext(ctx: MdCtx, loop: string, count: number): void {
 }
 
 /** The addresses a loop walks, emitted after the code with the other tables. */
-function emitEntityTable(ctx: MdCtx, table: string, bases: readonly number[]): void {
+function emitEntityTable(ctx: M68kCtx, table: string, bases: readonly number[]): void {
   ctx.data((data) => {
     data.label(table);
     for (const base of bases) data.dl(base);
@@ -606,7 +610,7 @@ function emitEntityTable(ctx: MdCtx, table: string, bases: readonly number[]): v
  * A contact bit is a compile-time constant in the unrolled form; a loop knows
  * only an index, so the byte and the mask are tables rather than arithmetic.
  */
-function needContactSlot(ctx: MdCtx): Ref {
+function needContactSlot(ctx: M68kCtx): Ref {
   return ctx.need("ContactSlot", (inner) => {
     const { asm, layout } = inner;
     asm.moveq(0, 0);
@@ -623,7 +627,7 @@ function needContactSlot(ctx: MdCtx): Ref {
 
 /** Test or set this entry's contact bit, whose number is only known at run time. */
 function emitContactBitPtr(
-  ctx: MdCtx,
+  ctx: M68kCtx,
   table: string,
   what: "seen" | "set",
   seen?: string,
@@ -646,7 +650,12 @@ function emitContactBitPtr(
 }
 
 /** The byte-and-mask tables one contact bit per entry needs. */
-function emitContactTables(ctx: MdCtx, table: string, bits: readonly number[], suffix = ""): void {
+function emitContactTables(
+  ctx: M68kCtx,
+  table: string,
+  bits: readonly number[],
+  suffix = "",
+): void {
   ctx.data((data) => {
     data.label(`${table}Byte${suffix}`);
     data.db(...bits.map((bit) => bit >> 3));
@@ -661,7 +670,7 @@ function emitContactTables(ctx: MdCtx, table: string, bits: readonly number[], s
 
 /** Jump to `skip` when the subject is not touching this edge of the playfield. */
 function emitEdgeTest(
-  ctx: MdCtx,
+  ctx: M68kCtx,
   entity: EntityAddr,
   edge: Edge,
   scene: SceneCtx,
@@ -699,7 +708,7 @@ function emitEdgeTest(
 
 /** Push the subject back inside the playfield. The interpreter does not clamp
  * here, and neither does this. */
-function emitEdgeSeparate(ctx: MdCtx, entity: EntityAddr, edge: Edge, scene: SceneCtx): void {
+function emitEdgeSeparate(ctx: M68kCtx, entity: EntityAddr, edge: Edge, scene: SceneCtx): void {
   if (entity.kind === "none") return;
   const axis = edge === "screenleft" || edge === "screenright" ? "x" : "y";
   const span = axis === "x" ? "width" : "height";
@@ -734,14 +743,14 @@ function emitEdgeSeparate(ctx: MdCtx, entity: EntityAddr, edge: Edge, scene: Sce
  * where the copy takes it. The destination is one of two fixed addresses, so it
  * is baked into the routine rather than passed.
  */
-function emitStageBox(ctx: MdCtx, src: number, slot: "a" | "b"): void {
+function emitStageBox(ctx: M68kCtx, src: number, slot: "a" | "b"): void {
   const { asm } = ctx;
   asm.lea(at(src), 1);
   asm.jsr(needCopyBox(ctx, slot));
 }
 
 /** The routine that stages a box; it takes the record's address in `a1`. */
-function needCopyBox(ctx: MdCtx, slot: "a" | "b"): Ref {
+function needCopyBox(ctx: M68kCtx, slot: "a" | "b"): Ref {
   const dst = (slot === "a" ? ctx.layout.pairA : ctx.layout.pairB) as number;
   return ctx.need(`CopyBox${slot.toUpperCase()}`, (inner) => {
     const { asm } = inner;
@@ -754,13 +763,13 @@ function needCopyBox(ctx: MdCtx, slot: "a" | "b"): Ref {
 }
 
 /** The same, for the record the loop pointer names. */
-function emitStageBoxPtr(ctx: MdCtx, slot: "a" | "b"): void {
+function emitStageBoxPtr(ctx: M68kCtx, slot: "a" | "b"): void {
   const { asm, layout } = ctx;
   asm.movea("l", at(layout.loop as number), 1);
   asm.jsr(needCopyBox(ctx, slot));
 }
 
-function emitStagePair(ctx: MdCtx, a: number, b: number): void {
+function emitStagePair(ctx: M68kCtx, a: number, b: number): void {
   emitStageBox(ctx, a, "a");
   emitStageBox(ctx, b, "b");
 }
@@ -776,7 +785,7 @@ function boxProp(base: number, prop: string): number {
  *
  * Half-open on both axes, matching the interpreter and matching tile contact.
  */
-function needOverlapPair(ctx: MdCtx): Ref {
+function needOverlapPair(ctx: M68kCtx): Ref {
   return ctx.need("OverlapPair", (inner) => {
     const { asm, layout } = inner;
     const a = layout.pairA as number;
@@ -808,7 +817,7 @@ function needOverlapPair(ctx: MdCtx): Ref {
  * penetration — the same rule the interpreter uses, because resolving the deeper
  * axis would teleport a walking object over something it merely brushed.
  */
-function needSeparatePair(ctx: MdCtx): Ref {
+function needSeparatePair(ctx: M68kCtx): Ref {
   return ctx.need("SeparatePair", (inner) => {
     const { asm, layout } = inner;
     const a = layout.pairA as number;
@@ -831,7 +840,7 @@ function needSeparatePair(ctx: MdCtx): Ref {
  * because `from above` and the push that follows it are the same arithmetic read
  * twice (`level/scene.ts` §contactOf), and two copies of it could disagree.
  */
-function emitPairPushes(ctx: MdCtx, useY: string): { xPush: number; yPush: number } {
+function emitPairPushes(ctx: M68kCtx, useY: string): { xPush: number; yPush: number } {
   const { asm, layout } = ctx;
   const a = layout.pairA as number;
   const b = layout.pairB as number;
@@ -881,7 +890,7 @@ function emitPairPushes(ctx: MdCtx, useY: string): { xPush: number; yPush: numbe
  * separates *after* it (`sim.ts` §resolveCollisions). It answers in `d0` for
  * `OverlapPair`'s reason: that is the register a `moveq` sets the flags of.
  */
-function needContactSide(ctx: MdCtx): Ref {
+function needContactSide(ctx: M68kCtx): Ref {
   return ctx.need("ContactSide", (inner) => {
     const { asm } = inner;
     const useY = inner.unique("sideUseY");
@@ -915,7 +924,7 @@ function needContactSide(ctx: MdCtx): Ref {
  * pushes nothing apart and records nothing either (`sim.ts` §resolveCollisions).
  * A rule with no `from` emits not one instruction.
  */
-function emitSideGate(ctx: MdCtx, sides: readonly string[], skip: string): void {
+function emitSideGate(ctx: M68kCtx, sides: readonly string[], skip: string): void {
   const mask = sideMask(sides);
   if (mask === 0) return;
   ctx.asm.jsr(needContactSide(ctx));
@@ -935,7 +944,7 @@ function emitSideGate(ctx: MdCtx, sides: readonly string[], skip: string): void 
  * keeps it conservative: it may say "maybe" when the answer is no, never the
  * reverse.
  */
-function needNearBox(ctx: MdCtx): Ref {
+function needNearBox(ctx: M68kCtx): Ref {
   return ctx.need("NearBox", (inner) => {
     const { asm, layout } = inner;
     const subject = layout.pairA as number;
@@ -964,13 +973,13 @@ function needNearBox(ctx: MdCtx): Ref {
 }
 
 /** Put the two near-test margins where {@link needNearBox} expects them. */
-function emitNearMargins(ctx: MdCtx, margins: { x: number; y: number }): void {
+function emitNearMargins(ctx: M68kCtx, margins: { x: number; y: number }): void {
   ctx.asm.move("w", eaImm(margins.x), eaD(4));
   ctx.asm.move("w", eaImm(margins.y), eaD(5));
 }
 
 /** Write the staged subject's position back to the entity it came from. */
-function emitCommitPair(ctx: MdCtx, entity: number): void {
+function emitCommitPair(ctx: M68kCtx, entity: number): void {
   const { asm, layout } = ctx;
   const source = layout.pairA as number;
   asm.lea(at(entity), 1);
@@ -986,12 +995,12 @@ function emitCommitPair(ctx: MdCtx, entity: number): void {
 }
 
 /** Test a contact bit from last tick; jump to `seen` when it was set. */
-function emitContactSeen(ctx: MdCtx, bit: number, seen: string): void {
+function emitContactSeen(ctx: M68kCtx, bit: number, seen: string): void {
   ctx.asm.btst(bit & 7, at(ctx.layout.contactsPrev + (bit >> 3)));
   ctx.far("ne", seen);
 }
 
-function emitContactSet(ctx: MdCtx, bit: number): void {
+function emitContactSet(ctx: M68kCtx, bit: number): void {
   ctx.asm.bset(bit & 7, at(ctx.layout.contacts + (bit >> 3)));
 }
 
@@ -1005,7 +1014,7 @@ function emitContactSet(ctx: MdCtx, bit: number): void {
  * the pairs agree about what an unrolled copy would have baked in.
  */
 function emitPairLoop(
-  ctx: MdCtx,
+  ctx: M68kCtx,
   rule: RuleDef,
   subject: EntityAddr,
   subjectId: number,
@@ -1080,7 +1089,7 @@ function emitPairLoop(
 
 /** The other half of the same idea: many subjects against the screen's edges. */
 function emitEdgeLoop(
-  ctx: MdCtx,
+  ctx: M68kCtx,
   rule: RuleDef,
   scene: SceneCtx,
   subjects: readonly { id: number; base: number; bit: number }[],
@@ -1136,7 +1145,7 @@ function emitEdgeLoop(
   return true;
 }
 
-export function emitCollisions(ctx: MdCtx, scene: SceneCtx): void {
+export function emitCollisions(ctx: M68kCtx, scene: SceneCtx): void {
   const { asm, layout } = ctx;
   for (const rule of ctx.program.rules) {
     if (rule.event.kind !== "hits" || !ruleInScene(rule, scene)) continue;
@@ -1259,7 +1268,7 @@ export function emitCollisions(ctx: MdCtx, scene: SceneCtx): void {
 
 // --- 7. edge rules -----------------------------------------------------------
 
-export function emitEdgeRules(ctx: MdCtx, scene: SceneCtx): void {
+export function emitEdgeRules(ctx: M68kCtx, scene: SceneCtx): void {
   const { asm, layout } = ctx;
   for (const rule of ctx.program.rules) {
     if (!ruleInScene(rule, scene)) continue;
@@ -1301,7 +1310,7 @@ export function emitEdgeRules(ctx: MdCtx, scene: SceneCtx): void {
 /** Run one subject binding of an edge rule, with the trigger's verdict in a byte
  * when it is not statically known. */
 function emitSubjectFire(
-  ctx: MdCtx,
+  ctx: M68kCtx,
   rule: RuleDef,
   subject: number | null,
   firedFlag: number | undefined,
@@ -1333,7 +1342,7 @@ function emitSubjectFire(
  * lands exactly on its target or crosses it from either side, and a value that
  * *starts* on its target has not reached it.
  */
-function emitReaches(ctx: MdCtx, rule: RuleDef, scene: SceneCtx): void {
+function emitReaches(ctx: M68kCtx, rule: RuleDef, scene: SceneCtx): void {
   const { asm, layout } = ctx;
   if (rule.event.kind !== "reaches") return;
   const slot = layout.reachSlots.get(rule.id);
@@ -1405,7 +1414,7 @@ function emitReaches(ctx: MdCtx, rule: RuleDef, scene: SceneCtx): void {
  * end of a level, and it means a level no bigger than the screen never scrolls,
  * so a non-scrolling game needs no special case anywhere.
  */
-export function emitCamera(ctx: MdCtx, scene: SceneCtx): void {
+export function emitCamera(ctx: M68kCtx, scene: SceneCtx): void {
   const { asm, layout, profile } = ctx;
   const camera = layout.camera;
   if (camera === null) return;

@@ -29,6 +29,7 @@
     "@demake/gba": "workspace:*",
     "@demake/md": "workspace:*",
     "@demake/nds": "workspace:*",
+    "@demake/neogeo": "workspace:*",
     "@demake/nes": "workspace:*",
     "@demake/ngp": "workspace:*",
     "@demake/pce": "workspace:*",

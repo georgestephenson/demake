@@ -64,6 +64,16 @@ const UNUSABLE = 40;
 /** Role affinity per channel kind: lower is better. */
 function affinity(role: PartRole, channel: AudioChannelSpec): number {
   const kind = channel.kind;
+  // A sample voice plays a *recording* of a drum, which beats every generator on
+  // this list at percussion and is the whole reason the Neo Geo's six of them are
+  // worth having. Whether it can carry anything else is a question about its
+  // pitch: one whose rate is fixed — a YM2610's ADPCM-A — has no register that
+  // would change the note, so a melody on it is not a compromise, it is a wrong
+  // one. `channel.pitch` is where the hardware already said which it is.
+  if (kind === "sample") {
+    if (role === "percussion") return 0;
+    return channel.pitch ? 1 : UNUSABLE;
+  }
   // An FM voice can be struck as well as held, so it is a real percussion
   // option — worse than a noise generator for a snare, far better for a tom.
   if (role === "percussion") return kind === "noise" ? 0 : kind === "fm" ? 6 : UNUSABLE;

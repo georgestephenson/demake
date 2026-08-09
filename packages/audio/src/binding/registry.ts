@@ -14,12 +14,14 @@ import { gbBinding } from "./gb.js";
 import { gbaBinding } from "./gba.js";
 import { mdBinding } from "./md.js";
 import { ndsBinding } from "./nds.js";
+import { neogeoBinding } from "./neogeo.js";
 import { nesBinding } from "./nes.js";
 import { pceBinding } from "./pce.js";
 import { wscBinding } from "./wsc.js";
 import { psgBinding } from "./psg.js";
 import { t6w28Binding } from "./t6w28.js";
 import { sdspBinding } from "./sdsp.js";
+import type { FmBindingOptions } from "./fm-patch.js";
 import type { ChipBinding } from "./types.js";
 
 /** Thrown when a console cannot be demade to audio, with the reason. */
@@ -33,8 +35,18 @@ export class UnsupportedConsoleError extends Error {
   }
 }
 
-/** Build the binding for a console id or alias. */
-export function bindingFor(consoleId: string): ChipBinding {
+/**
+ * Build the binding for a console id or alias.
+ *
+ * `options` is how a *fitted timbre* reaches an FM console's encoder, and it goes
+ * through here rather than through a direct call for a reason a second FM console
+ * made visible: the arranger used to name `mdBinding` outright, so the moment a
+ * Neo Geo arrived — four FM voices, three squares and seven sample channels — it
+ * was encoded as six FM voices and an SN76489, which disqualified every candidate
+ * with a byte that was not one. A console's binding is this registry's answer and
+ * nobody else's.
+ */
+export function bindingFor(consoleId: string, options: FmBindingOptions = {}): ChipBinding {
   const spec: ConsoleSpec = getConsole(consoleId);
   const audio: AudioSpec | undefined = spec.audio;
   if (!audio) {
@@ -48,7 +60,7 @@ export function bindingFor(consoleId: string): ChipBinding {
   // instrument of ten voices, and the binding that encodes it has to see both.
   if (audio.chips.length > 1) {
     if (audio.chips[0] === "ym2612" && audio.chips[1] === "sn76489") {
-      return mdBinding(spec.id, audio);
+      return mdBinding(spec.id, audio, options);
     }
     // And the Game Boy Advance, whose two chips are different *kinds* of thing:
     // four channels that generate their own waveform, and a mixer that plays
@@ -80,6 +92,8 @@ export function bindingFor(consoleId: string): ChipBinding {
       return wscBinding(spec.id, audio);
     case "t6w28":
       return t6w28Binding(spec.id, audio);
+    case "ym2610":
+      return neogeoBinding(spec.id, audio, options);
     default:
       throw new UnsupportedConsoleError(
         spec.id,

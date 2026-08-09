@@ -25,6 +25,7 @@ import { Gameboy, type Button as GbButton, type Machine as GbMachine } from "@de
 import { Gba, type Button as GbaButton } from "@demake/gba";
 import { Nds, type Button as NdsButton } from "@demake/nds";
 import { Md, type Button as MdButton } from "@demake/md";
+import { Neogeo, loadNeo, type Button as NeogeoButton } from "@demake/neogeo";
 import { Nes, type Button as NesButton } from "@demake/nes";
 import { Ngp, type Button as NgpButton } from "@demake/ngp";
 import { Pce, type Button as PceButton } from "@demake/pce";
@@ -36,6 +37,7 @@ import { buildGbRom } from "../src/codegen/gb.js";
 import { buildGbaRom } from "../src/codegen/gba.js";
 import type { Layout } from "../src/codegen/layout.js";
 import { buildMdRom } from "../src/codegen/md.js";
+import { buildNeogeoRom } from "../src/codegen/neogeo.js";
 import { buildNesRom } from "../src/codegen/nes.js";
 import { buildNgpcRom } from "../src/codegen/ngpc.js";
 import { buildPceRom } from "../src/codegen/pce.js";
@@ -248,6 +250,27 @@ export const mdTarget: RomTarget = {
  * The Game Boy Advance, whose pad has every button the abstract set names and
  * two more the language has no word for.
  */
+/**
+ * The Neo Geo, whose cartridge is a `.neo` container rather than one image.
+ *
+ * `loadNeo` splits it and decodes the packed graphics, which is what a real
+ * loader does — so this target exercises the C ROM's block order on every case
+ * rather than only in the cartridge test.
+ */
+export const neogeoTarget: RomTarget = {
+  console: "neogeo",
+  build: (program, options) => buildNeogeoRom(program, options),
+  boot: (bytes) => {
+    const machine = new Neogeo(loadNeo(bytes));
+    return {
+      readMemory: (address, length) => machine.readMemory(address, length),
+      stepInstruction: () => machine.stepInstruction(),
+      runFrame: () => machine.runFrame(),
+      setButtons: (down) => machine.setButtons(down as NeogeoButton[]),
+    };
+  },
+};
+
 export const gbaTarget: RomTarget = {
   console: "gba",
   build: (program, options) => buildGbaRom(program, options),
@@ -309,6 +332,7 @@ export const TARGETS: readonly RomTarget[] = [
   ggTarget,
   snesTarget,
   mdTarget,
+  neogeoTarget,
   gbaTarget,
   ndsTarget,
   wscTarget,

@@ -38,7 +38,7 @@ import {
   type LevelData,
 } from "../shape.js";
 
-import type { MdCtx } from "./ctx.js";
+import type { M68kCtx } from "./ctx.js";
 import { abs32, add32, at, branchLess32, clamp32, copy32, neg32, set32, sub32 } from "./val.js";
 
 export {
@@ -53,22 +53,22 @@ export {
 };
 
 /** `dst = src`, on a 16-bit word. */
-export function copy16(ctx: MdCtx, dst: number, src: number): void {
+export function copy16(ctx: M68kCtx, dst: number, src: number): void {
   ctx.asm.move("w", at(src), at(dst));
 }
 
 /** `addr += 1`, on a 16-bit word. */
-export function inc16(ctx: MdCtx, addr: number): void {
+export function inc16(ctx: M68kCtx, addr: number): void {
   ctx.asm.addq("w", 1, at(addr));
 }
 
 /** `addr -= 1`, on a 16-bit word. */
-export function dec16(ctx: MdCtx, addr: number): void {
+export function dec16(ctx: M68kCtx, addr: number): void {
   ctx.asm.subq("w", 1, at(addr));
 }
 
 /** `d0 = the zero-extended byte at `table + d0`. */
-function indexByte(ctx: MdCtx, table: string): void {
+function indexByte(ctx: M68kCtx, table: string): void {
   const { asm } = ctx;
   asm.lea(eaAbs(label(table)), 0);
   asm.move("b", eaIdx(0, 0, 0), eaD(1));
@@ -77,7 +77,7 @@ function indexByte(ctx: MdCtx, table: string): void {
 }
 
 /** Look a byte table up by the legend index in `d0`, leaving the entry in `d0`. */
-export function emitTableLookup(ctx: MdCtx, table: string): void {
+export function emitTableLookup(ctx: M68kCtx, table: string): void {
   indexByte(ctx, table);
 }
 
@@ -89,7 +89,7 @@ export function emitTableLookup(ctx: MdCtx, table: string): void {
  * it as a table index straight afterwards. Returning a sign-extended byte would
  * make the empty marker index four billion bytes into a table.
  */
-export function emitTileAt(ctx: MdCtx, data: LevelData): void {
+export function emitTileAt(ctx: M68kCtx, data: LevelData): void {
   const { asm, layout } = ctx;
   const level = data.file;
   const col = layout.words + W.tileCol * 2;
@@ -133,7 +133,12 @@ export function emitTileAt(ctx: MdCtx, data: LevelData): void {
  * boundary is not in that cell — which matches how object overlap already works,
  * so an object resting against a wall is touching it and not inside it.
  */
-export function emitTilesUnder(ctx: MdCtx, base: number, data: LevelData, body: () => void): void {
+export function emitTilesUnder(
+  ctx: M68kCtx,
+  base: number,
+  data: LevelData,
+  body: () => void,
+): void {
   const { asm, layout } = ctx;
   const w = layout.words;
   const firstCol = w + W.firstCol * 2;
@@ -202,7 +207,7 @@ export function emitTilesUnder(ctx: MdCtx, base: number, data: LevelData, body: 
 }
 
 /** Jump to `target` when the signed word at `a` is less than the one at `b`. */
-export function branchLess16(ctx: MdCtx, a: number, b: number, target: string): void {
+export function branchLess16(ctx: M68kCtx, a: number, b: number, target: string): void {
   const { asm } = ctx;
   asm.move("w", at(a), eaD(0));
   asm.cmp("w", at(b), 0);
@@ -210,7 +215,7 @@ export function branchLess16(ctx: MdCtx, a: number, b: number, target: string): 
 }
 
 /** `addr = max(addr, 0)`, on a signed 16-bit cell coordinate. */
-function clampLow16(ctx: MdCtx, addr: number): void {
+function clampLow16(ctx: M68kCtx, addr: number): void {
   const { asm } = ctx;
   const done = ctx.unique("clampLow16");
   asm.tst("w", at(addr));
@@ -221,7 +226,7 @@ function clampLow16(ctx: MdCtx, addr: number): void {
 
 /** `addr = min(addr, limit)`, leaving a negative coordinate alone so an object
  * entirely off the grid ends up with `last < first` and walks nothing. */
-function clampHigh16(ctx: MdCtx, addr: number, limit: number): void {
+function clampHigh16(ctx: M68kCtx, addr: number, limit: number): void {
   const { asm } = ctx;
   const done = ctx.unique("clampHigh16");
   asm.tst("w", at(addr));
@@ -239,7 +244,7 @@ function clampHigh16(ctx: MdCtx, addr: number, limit: number): void {
  * Every other backend says `+2`; the difference is the byte order and not a
  * mistake.
  */
-function floorCell(ctx: MdCtx, src: number, dst: number): void {
+function floorCell(ctx: M68kCtx, src: number, dst: number): void {
   ctx.asm.move("w", at(src), at(dst));
 }
 
@@ -247,7 +252,7 @@ function floorCell(ctx: MdCtx, src: number, dst: number): void {
  * The last cell a half-open span touches: `floor(edge)`, minus one when the edge
  * lands exactly on a boundary.
  */
-function ceilOpen(ctx: MdCtx, src: number, dst: number): void {
+function ceilOpen(ctx: M68kCtx, src: number, dst: number): void {
   const { asm } = ctx;
   const notExact = ctx.unique("ceilOpen");
   floorCell(ctx, src, dst);
@@ -262,7 +267,7 @@ function ceilOpen(ctx: MdCtx, src: number, dst: number): void {
  * object separation uses, and for the same reason: resolving the deeper axis
  * would teleport a walking object over a wall it merely brushed.
  */
-export function emitTileSeparate(ctx: MdCtx, base: number): void {
+export function emitTileSeparate(ctx: M68kCtx, base: number): void {
   const { asm } = ctx;
   ctx.scoped(() => {
     const useY = ctx.unique("tsepUseY");
@@ -287,7 +292,7 @@ export function emitTileSeparate(ctx: MdCtx, base: number): void {
  * follows it. Inline rather than a routine because the cell it is asked about
  * lives in the walk's own render words, which a call would have to be handed.
  */
-export function emitTileSide(ctx: MdCtx, base: number): void {
+export function emitTileSide(ctx: M68kCtx, base: number): void {
   const { asm } = ctx;
   ctx.scoped(() => {
     const useY = ctx.unique("tsideUseY");
@@ -322,7 +327,11 @@ export function emitTileSide(ctx: MdCtx, base: number): void {
  * thing that makes this a different function from the pair version rather than a
  * call to it. The two temporaries live for as long as the caller's scope.
  */
-function emitTilePushes(ctx: MdCtx, base: number, useY: string): { pushX: number; pushY: number } {
+function emitTilePushes(
+  ctx: M68kCtx,
+  base: number,
+  useY: string,
+): { pushX: number; pushY: number } {
   const { asm, layout } = ctx;
   const col = layout.words + W.tileCol * 2;
   const row = layout.words + W.tileRow * 2;
@@ -367,7 +376,7 @@ function emitTilePushes(ctx: MdCtx, base: number, useY: string): { pushX: number
 }
 
 /** Widen a signed 16-bit cell coordinate into 16.16. */
-function cellToFixed(ctx: MdCtx, src: number, dst: number): void {
+function cellToFixed(ctx: M68kCtx, src: number, dst: number): void {
   const { asm } = ctx;
   asm.move("w", at(src), eaD(0));
   asm.ext("l", 0);
