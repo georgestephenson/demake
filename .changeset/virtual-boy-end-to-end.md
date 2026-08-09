@@ -1,5 +1,7 @@
 ---
 "@demake/core": minor
+"@demake/chip": minor
+"@demake/audio": minor
 "@demake/vb": minor
 "demake": minor
 ---
@@ -23,6 +25,13 @@ with it the first **depth axis** in the project.
 - **`demake gen -c vb --format rom`** builds a bootable `.vb`, and it is the one
   display ROM with no external assembler behind it — no distribution ships a
   V810 one, so demake emits the program itself.
+- **`demake arrange -c vb`, `sfx` and `render`** demake this console's music and
+  effects. `@demake/chip` models the **VSU**: six voices, five of them wavetables
+  of thirty-two six-bit samples, with a shared pool of five waveform tables, a
+  hardware envelope on every channel, and **nothing shared between channels** —
+  so this is the sixth console in the matrix that emits no merge routine at all.
+  The VGM writer gains the `0xC7` command, whose sixteen-bit address is why this
+  chip's registers are numbered by byte offset.
 
 **Output-byte change**: the `vb` console spec's DAC ramp is now the LED ramp
 beetle-vb actually renders at the brightness a demade cartridge programs

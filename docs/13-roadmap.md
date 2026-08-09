@@ -582,12 +582,24 @@ the backend today, and either is a reason to revisit rather than to work around.
    `.dmt` says and no Demakefile may (doc 14 §Scope). The RAM is 64 KiB against
    an NROM's 2 and the cartridge 512 KiB against 32, so neither budget bites.
 
-   **Sound is untouched.** The VSU is six wavetable channels with hardware sweep
-   and modulation; `@demake/chip` does not model it, `@demake/vb`'s register page
-   accepts writes and generates nothing, and `arrange -c vb` therefore does not
-   exist. That is a chip model, a binding and a V810 driver — and the driver's
-   stream player would be the *processor's* first, on `arm-player.ts`'s and
-   `mos-player.ts`'s precedent.
+   **The sound is half done, and it is the half that does not need the backend.**
+   `@demake/chip` models the VSU, `binding/vb.ts` drives it and
+   `binding/vb-bank.ts` supplies its five waveform tables, so
+   `demake arrange -c vb`, `sfx` and `render` all work — this console demakes
+   music on the Neo Geo Pocket's precedent, where a demaker is per-domain and
+   does not wait for a cartridge. Three things about the chip are worth knowing:
+   the waveform tables are a **shared pool of five** rather than one per channel,
+   **every channel has a hardware envelope** (so a drum's decay is programmed
+   rather than written every tick), and **nothing is shared between channels** —
+   so this console emits no merge routine at all, the sixth in the matrix to do
+   so.
+
+   What remains is the **in-game driver**, and it is blocked on the backend rather
+   than on anything of its own: a V810 stream player would be the *processor's*
+   first, on `arm-player.ts`'s and `mos-player.ts`'s precedent, and it has nothing
+   to be embedded in until `demake build -c vb` exists. `@demake/vb`'s VSU page
+   accepts writes and generates nothing until then, which is why the in-game
+   audio column reads `—` while the music/sfx one reads `yes`.
 
 68000 (Mega Drive, then Neo Geo), 65816 (SNES, plus the SPC700 for its audio) and
 ARM (GBA, NDS) slot in wherever Tier 1 breadth is wanted ahead of Tier 2 depth;

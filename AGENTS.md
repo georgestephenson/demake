@@ -718,9 +718,32 @@ console here puts index 0 — `vbShade` is the one place that reversal happens, 
 the emulator caught its absence on the first run as a picture that was a
 photographic negative.
 
-What it does not have is a **game backend** and **sound**; doc 13 §Console
-rollout item 9 costs both, and the second is a chip model, a binding and a driver
-rather than anything structural.
+**And it demakes music and effects.** `@demake/chip` models the VSU — six voices,
+five of them wavetables of thirty-two six-bit samples — and `demake arrange -c vb`,
+`sfx` and `render` all work, on the Neo Geo Pocket's precedent that a demaker is
+per-domain and does not wait for a cartridge. Three things about that chip decide
+what a driver for it will look like. The **waveform tables are a shared pool of
+five** rather than one per channel, so a table is a timbre and the bank is
+register writes a boot performs (`binding/vb-bank.ts`, the fifth kind of bank in
+the set). **Every channel has a hardware envelope**, so a drum's decay is one
+write rather than one a tick — which neither of the other two wavetable consoles
+here can say. And **nothing is shared between channels**: panning is two nibbles
+in the channel's own byte, enabling is its own bit 7, and the one global register
+is a panic button — so this console emits **no merge routine at all**, the sixth
+in the matrix and the fourth whose reason is that its hardware shares _less_
+rather than more.
+
+The binding spends both of the output stage's multiplies rather than one: the
+note's **level goes in the envelope register** and the **pan in the level
+register**, so a volume step and a pan change are one write each and neither
+disturbs the other. Every other wavetable console in the set packs both into one
+byte and rewrites it for either.
+
+What it does not have is a **game backend** and, behind that, an **in-game
+driver**; doc 13 §Console rollout item 9 costs both. The driver is blocked on the
+backend rather than on anything of its own — a V810 stream player would be the
+_processor's_ first, and it has nothing to be embedded in until
+`demake build -c vb` exists.
 
 **And it demakes music and sound, on both Neo Geo Pockets.** `@demake/chip`
 models the T6W28: a Master System's four voices with the thing that chip is
