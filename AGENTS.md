@@ -4150,6 +4150,15 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   four `GPLT` registers and then the backdrop, because a family that emitted the
   four and left the fifth to a caller would have every picture's paper decided by
   whoever wrote the display program.
+- **The Virtual Boy's two flip bits mean opposite things on its two layers.** A
+  BGMap entry mirrors horizontally on bit 12 and vertically on bit 13; an object
+  attribute is the other way round. It is the hardware rather than a
+  transcription error, and it is exactly the asymmetry a reader will helpfully
+  "correct" — so it was settled with a probe cartridge rather than by reading:
+  one lit pixel at a character's top-left corner, run in beetle-vb, moves to
+  (0, 7) with bit 12 set and to (7, 0) with bit 13. The background half is
+  settled by the pixel-perfect E2E, whose fits are flip-aware, so a mirrored tile
+  there is a byte-comparison failure.
 - **A Virtual Boy framebuffer is columns.** 384 of them, 256 pixels at two bits
   each, so consecutive bytes are _vertical_ neighbours — a reader that walked one
   row-major produces noise rather than a wrong picture. `vbFramebufferBit` has

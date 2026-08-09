@@ -222,9 +222,21 @@ export const VB_OBJ_JLON = 0x4000;
 export function vbObjPalette(index: number): number {
   return (index & 3) << 14;
 }
-/** Mirror this object horizontally. */
+/**
+ * Mirror this object horizontally — **bit 13**, which is not where a BGMap entry
+ * keeps the same field.
+ *
+ * A background cell flips horizontally on bit 12 and vertically on bit 13; an
+ * object is the other way round. That is the hardware and not a transcription
+ * error, and it is the sort of asymmetry a reader will helpfully "correct", so
+ * it is settled rather than asserted: a probe cartridge drawing one lit pixel at
+ * a character's top-left corner, run in beetle-vb, moves it to *(0, 7)* with bit
+ * 12 set and to *(7, 0)* with bit 13 set. The background half is settled by the
+ * pixel-perfect E2E, whose fits are flip-aware — a mirrored tile there is a
+ * byte-comparison failure.
+ */
 export const VB_OBJ_HFLIP = 0x2000;
-/** Mirror it vertically. */
+/** Mirror it vertically — bit 12, and see {@link VB_OBJ_HFLIP}. */
 export const VB_OBJ_VFLIP = 0x1000;
 
 // --- the video processor's registers ------------------------------------------

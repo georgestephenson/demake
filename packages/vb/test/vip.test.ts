@@ -34,6 +34,9 @@ import {
   VB_GPLT0,
   VB_JPLT0,
   VB_OAM,
+  VB_OBJ_BYTES,
+  VB_OBJ_HFLIP,
+  VB_OBJ_VFLIP,
   VB_OBJ_JLON,
   VB_OBJ_JRON,
   VB_SCREEN_W,
@@ -233,6 +236,61 @@ describe("the Virtual Boy's video processor", () => {
     expect(leftEdge(vip, "left", 60)).toBe(208);
     expect(leftEdge(vip, "right", 60)).toBe(192);
     expect(vip.shades("left")[60 * VB_SCREEN_W + 208]).toBe(2);
+  });
+
+  it("flips an object the opposite way round from a background cell", () => {
+    // A BGMap entry mirrors horizontally on bit 12 and vertically on bit 13; an
+    // object is the other way round. That is the hardware and not a
+    // transcription, so it is pinned against what beetle-vb does rather than
+    // against this model's own inverse — a probe cartridge drawing one lit pixel
+    // at a character's top-left corner moves it to (0, 7) with bit 12 set and to
+    // (7, 0) with bit 13.
+    const vip = new Vip();
+    const grid = new Uint8Array(64);
+    grid[0] = 1; // one pixel, top-left
+    const bytes = packPacked2Le(grid, 8, 8);
+    for (let index = 0; index < bytes.length; index += 1) {
+      vip.write(VB_CHR_MIRROR + 16 + index, bytes[index] as number);
+    }
+    vip.setReg(VB_JPLT0, (3 << 2) | (2 << 4) | (1 << 6));
+    vip.setReg(VB_BKCOL, 0);
+    vip.setReg(VB_DPCTRL, VB_DPCTRL_ON);
+    vip.setReg(VB_BRTA, 32);
+    vip.setReg(VB_SPT0, 2);
+    vip.setReg(VB_SPT1, 2);
+    vip.setReg(VB_SPT2, 2);
+    vip.setReg(VB_SPT3, 2);
+    const put = (index: number, x: number, attr: number): void => {
+      const base = VB_OAM + index * VB_OBJ_BYTES;
+      const halves = [x, 0xc000, 32, attr];
+      for (const [offset, value] of halves.entries()) {
+        vip.write(base + offset * 2, value & 0xff);
+        vip.write(base + offset * 2 + 1, (value >> 8) & 0xff);
+      }
+    };
+    put(0, 32, 1);
+    put(1, 64, 1 | VB_OBJ_VFLIP);
+    put(2, 96, 1 | VB_OBJ_HFLIP);
+    // Four object worlds and the same last index in all four `SPT` registers,
+    // which is the arrangement a demade cartridge uses: the drawing processor
+    // counts down from group 3 as it meets them, so the fourth reaches group 0
+    // and group 0 is the one that holds everything.
+    for (const index of [31, 30, 29, 28]) {
+      world(vip, index, { 0: VB_WORLD_LON | VB_WORLD_RON | VB_WORLD_BGM_OBJ });
+    }
+    world(vip, 27, { 0: VB_WORLD_END });
+    vip.drawFrame();
+
+    const shades = vip.shades("left");
+    const lit = (x: number, y: number): boolean => (shades[y * VB_SCREEN_W + x] as number) !== 0;
+    // Unflipped: the character's own top-left.
+    expect(lit(32, 32)).toBe(true);
+    // The vertical flip moves it down a row, not across.
+    expect(lit(64, 39)).toBe(true);
+    expect(lit(64, 32)).toBe(false);
+    // And the horizontal flip moves it across, not down.
+    expect(lit(96 + 7, 32)).toBe(true);
+    expect(lit(96, 32)).toBe(false);
   });
 
   it("hides an object whose eye bits are clear", () => {
