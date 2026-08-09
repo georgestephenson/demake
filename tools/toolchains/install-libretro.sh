@@ -4,8 +4,17 @@
 # accuracy core per console family. One frontend serves every console — adding a
 # console adds its core to the table below, not a new emulator harness.
 #
-# Pinned source builds (git clone + make), cached and idempotent. No Docker;
-# needs git egress + a C compiler. Best-effort (exits 0 unless LIBRETRO_STRICT=1).
+# Source builds (git clone + make), cached and idempotent. No Docker; needs git
+# egress and a C compiler. Best-effort (exits 0 unless LIBRETRO_STRICT=1).
+#
+# **The cores track upstream `master` and are therefore not pinned**, which is a
+# standing risk rather than a settled decision: a core whose build moves under us
+# fails the day the toolchain cache is cold, and the cache key is a hash of this
+# directory — so the branch that *changes* this file is the one that finds out.
+# mGBA did exactly that, replacing its hand-written `Makefile.libretro` with a
+# CMake target, and it had been broken on `master` for as long as nobody rebuilt
+# it. If this happens twice, pin each entry to a commit and take the loss of
+# upstream fixes; a pixel-perfect comparison wants a reproducible core anyway.
 set -uo pipefail
 
 CACHE_ROOT="${DEMAKE_TOOLCHAIN_DIR:-$HOME/.cache/demake/toolchains}"
@@ -17,12 +26,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RUNNER_SRC="$REPO_ROOT/emu-harness/libretro/retrorun.c"
 
-# Cores to build: "name|git-url|branch|make-recipe|output.so". Extend per console.
+# Cores to build: "name|git-url|branch|recipe|output.so". Extend per console.
+#
+# The recipe is `eval`ed with `-j<cpus>` appended, so it may be a whole shell
+# command rather than a single `make` — which is what mGBA needs, its libretro
+# core having become a CMake target with no makefile of its own.
 CORES=(
   "fceumm|https://github.com/libretro/libretro-fceumm.git|master|make -f Makefile.libretro|fceumm_libretro.so"
   "genesis_plus_gx|https://github.com/libretro/Genesis-Plus-GX.git|master|make -f Makefile.libretro|genesis_plus_gx_libretro.so"
   "snes9x|https://github.com/libretro/snes9x.git|master|make -C libretro|snes9x_libretro.so"
-  "mgba|https://github.com/libretro/mgba.git|master|make -f Makefile.libretro|mgba_libretro.so"
+  "mgba|https://github.com/libretro/mgba.git|master|cmake -B build -DBUILD_LIBRETRO=ON -DSKIP_LIBRARY=ON -DCMAKE_BUILD_TYPE=Release && make -C build|mgba_libretro.so"
   "desmume|https://github.com/libretro/desmume.git|master|make -C desmume/src/frontend/libretro|desmume_libretro.so"
   "mednafen_pce_fast|https://github.com/libretro/beetle-pce-fast-libretro.git|master|make|mednafen_pce_fast_libretro.so"
   "mednafen_wswan|https://github.com/libretro/beetle-wswan-libretro.git|master|make|mednafen_wswan_libretro.so"
@@ -80,6 +93,12 @@ for entry in "${CORES[@]}"; do
     log "cached: $name ($out)"
     continue
   fi
+  case "$recipe" in
+    cmake*)
+      command -v cmake >/dev/null 2>&1 ||
+        die "core $name is built with CMake; install cmake"
+      ;;
+  esac
   if [ "$name" = "desmume" ]; then
     # DeSmuME's Linux build compiles its wifi unit against libpcap and its
     # (runtime-optional) OpenGL rasterizer against the GL headers; the demake
@@ -95,7 +114,10 @@ for entry in "${CORES[@]}"; do
     git clone --depth 1 "$url" "$WORK/$name" >/dev/null 2>&1 ||
     die "git clone of $name failed"
   log "building core $name (this can take a minute)…"
-  ( cd "$WORK/$name" && $recipe -j"$(nproc 2>/dev/null || echo 2)" ) >/tmp/libretro-$name.log 2>&1 ||
+  # `eval`, so a recipe may be a whole command line rather than one `make` — the
+  # table is this file's own and carries no external input.
+  ( cd "$WORK/$name" && eval "$recipe -j$(nproc 2>/dev/null || echo 2)" ) \
+    >/tmp/libretro-$name.log 2>&1 ||
     die "build of $name failed (see /tmp/libretro-$name.log)"
   soPath="$(find "$WORK/$name" -maxdepth 6 -name "$out" | head -1)"
   [ -n "$soPath" ] || die "core $name did not produce $out"
