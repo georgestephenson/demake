@@ -22,6 +22,7 @@ import { ngpcBackend } from "../src/codegen/ngpc.js";
 import { pceBackend } from "../src/codegen/pce.js";
 import { smsBackend } from "../src/codegen/sms.js";
 import { snesBackend } from "../src/codegen/snes.js";
+import { vbBackend } from "../src/codegen/vb.js";
 import { wscBackend } from "../src/codegen/wsc.js";
 import {
   familyFor,
@@ -45,6 +46,7 @@ const LOADED: readonly AnyBackend[] = [
   anyBackend(pceBackend),
   anyBackend(wscBackend),
   anyBackend(ngpcBackend),
+  anyBackend(vbBackend),
 ];
 
 /** The smallest program that compiles, so a profile is all that varies. */
