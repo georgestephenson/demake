@@ -1587,10 +1587,10 @@ function emitPaintEdge(ctx: VbCtx, level: LevelData, isColumn: boolean, offset: 
   const originAcross = isColumn ? layout.words + W.mapCol * 2 : layout.words + W.mapRow * 2;
   const originAlong = isColumn ? layout.words + W.mapRow * 2 : layout.words + W.mapCol * 2;
   const count = (isColumn ? layout.memory.viewH : layout.memory.viewW) + 1;
-  // Not `temp`: the grid lookup uses that word for its row-times-width multiply,
-  // and a counter clobbered mid-loop paints a strip of whatever tile the count
-  // happened to land on.
   const remaining = layout.words + W.lastRow * 2;
+  // Not `temp` and not `count`: the cached cell walk uses one for its limit and
+  // the scroll walk uses the other for its guard, and a counter clobbered
+  // mid-loop paints a strip of whatever tile the count happened to land on.
 
   copy16(ctx, across, originAcross);
   if (offset !== 0) {
