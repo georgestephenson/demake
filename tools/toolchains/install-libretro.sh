@@ -26,6 +26,7 @@ CORES=(
   "desmume|https://github.com/libretro/desmume.git|master|make -C desmume/src/frontend/libretro|desmume_libretro.so"
   "mednafen_pce_fast|https://github.com/libretro/beetle-pce-fast-libretro.git|master|make|mednafen_pce_fast_libretro.so"
   "mednafen_wswan|https://github.com/libretro/beetle-wswan-libretro.git|master|make|mednafen_wswan_libretro.so"
+  "mednafen_vb|https://github.com/libretro/beetle-vb-libretro.git|master|make|mednafen_vb_libretro.so"
 )
 # Which cores to (re)build this run (default: all). Pass names as args to subset.
 WANT=("$@")

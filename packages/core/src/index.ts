@@ -736,6 +736,7 @@ export {
   VB_XP_XPEN,
   VB_XP_XPRST,
   vbFramebufferBit,
+  vbShade,
   vbObjPalette,
   vbWorldScx,
   vbWorldScy,

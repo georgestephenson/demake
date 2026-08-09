@@ -164,7 +164,7 @@ describe("gen — vb family (Virtual Boy / VIP)", () => {
 
     expect(chars.length % 16).toBe(0);
     expect(map.length).toBe((64 / 8) * (64 / 8) * 2);
-    expect(pal.length).toBe(4); // GPLT0-3, one byte each
+    expect(pal.length).toBe(5); // GPLT0-3 and then BKCOL
     for (let i = 0; i < map.length; i += 2) {
       const word = map[i]! | (map[i + 1]! << 8);
       expect(word & 0x7ff).toBeLessThan(chars.length / 16); // 11-bit character
@@ -172,7 +172,10 @@ describe("gen — vb family (Virtual Boy / VIP)", () => {
     }
     // Pixel value 0 is transparent on this hardware and shows BKCOL, so the
     // palette byte's bottom two bits name nothing and are left clear.
-    for (const byte of pal) expect(byte! & 3).toBe(0);
+    for (let i = 0; i < 4; i += 1) expect(pal[i]! & 3).toBe(0);
+    // And the fifth byte is the backdrop, reversed for a display whose shade 0
+    // is the LEDs being off: a fit's lightest index is this console's brightest.
+    expect(pal[4]).toBeLessThan(4);
 
     // Two world entries: the picture, then the end of the display list. A
     // program that shipped only the first would have the drawing processor walk

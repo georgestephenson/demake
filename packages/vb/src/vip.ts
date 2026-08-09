@@ -73,7 +73,10 @@ import {
   VB_WORLD_OVR,
   VB_WORLD_RON,
   vbFramebufferBit,
+  vbShade,
 } from "@demake/core";
+
+export { vbShade };
 
 /** Bytes of video memory the drawing processor addresses. */
 export const VRAM_SIZE = 0x40000;
@@ -105,21 +108,13 @@ export const VB_NEARER = -1;
  * one, and a fit's index 0 is its lightest. So the two are reverses of each
  * other, `packages/vb/test/vip.test.ts` pins that against the spec, and
  * {@link vbShade} is the one place the reversal happens.
- */
-export const VB_SHADES: readonly number[] = [0, 85, 170, 255];
-
-/**
- * The hardware shade a demake palette index means.
  *
- * Index 0 is a fit's lightest colour and shade 3 is the display's brightest, so
- * this is a reversal and not an identity. It has one definition with three
- * readers — this renderer, the `vb` codegen family and the game backend's
- * palette emitter — because a copy of it in any one of them is a cartridge whose
- * picture is a photographic negative.
+ * The spacing is uneven because it is *measured* rather than derived: the spec's
+ * ramp reproduces what beetle-vb puts on screen at the brightness a demade
+ * cartridge programs, and that emulator applies a gamma to the LED intensities.
+ * An evenly spaced ramp would fail the pixel-perfect E2E on every mid-tone.
  */
-export function vbShade(index: number, shades = 4): number {
-  return shades - 1 - (index & (shades - 1));
-}
+export const VB_SHADES: readonly number[] = [0, 135, 185, 254];
 
 /** A world attribute entry, as the drawing processor reads it. */
 interface World {

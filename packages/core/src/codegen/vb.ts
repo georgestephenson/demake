@@ -12,9 +12,11 @@
  *     select. The PC Engine's arrangement at a quarter of the depth.
  *   - **A palette is one byte for three colours**, because pixel value 0 is
  *     transparent on this hardware and shows `BKCOL` rather than a palette
- *     entry. So `.pal.bin` is four bytes for `GPLT0`–`GPLT3` and the backdrop is
- *     emitted beside them rather than inside them — the NES's shared index 0
- *     reached by different hardware.
+ *     entry. So `.pal.bin` is *five* bytes — `GPLT0`–`GPLT3` and then `BKCOL`,
+ *     because the backdrop is a palette entry here rather than a register
+ *     somebody else chooses. The NES's shared index 0 reached by different
+ *     hardware, and the reason a picture's lightest shade reaches the screen at
+ *     all.
  *   - **A world is the display list**, and it is the *only* structure here that
  *     is about depth. `.world.bin` is one 32-byte entry that puts the picture on
  *     the screen with a parallax the caller chose, plus a second entry that ends
@@ -43,6 +45,7 @@ import {
   VB_WORLD_LON,
   VB_WORLD_RON,
   VB_WORLD_BYTES,
+  vbShade,
 } from "../asm/vb.js";
 
 import { asciiBytes, hex2 } from "./text.js";
@@ -73,9 +76,9 @@ interface VbData {
   chrBytes: Uint8Array;
   /** Two bytes an entry, little-endian BGMap words. */
   mapBytes: Uint8Array;
-  /** Four bytes: `GPLT0`–`GPLT3`, three colours each. */
+  /** Five bytes: `GPLT0`–`GPLT3`, three colours each, and then `BKCOL`. */
   palBytes: Uint8Array;
-  /** One byte: what every transparent pixel shows. */
+  /** What every transparent pixel shows — the fifth byte of `palBytes`. */
   backdrop: number;
   /** Two 32-byte world entries: the picture, and the end of the list. */
   worldBytes: Uint8Array;
@@ -84,13 +87,18 @@ interface VbData {
 /**
  * One `GPLT` byte: three two-bit shades in bits 7–2.
  *
- * Bits 1–0 are unused because pixel value 0 never reads the palette — it is
- * transparent, and what shows through it is `BKCOL`. Writing a shade there is
- * harmless and misleading, so this leaves it zero.
+ * Two things about it are this display's. The entries are {@link vbShade}d,
+ * because a fit's index 0 is its lightest colour and this display's shade 0 is
+ * the LEDs being off — the reversal is the whole difference between a picture
+ * and its negative. And bits 1–0 are left clear, because pixel value 0 never
+ * reads the palette at all: it is transparent, and what shows through it is
+ * `BKCOL`.
  */
-function paletteByte(shades: readonly number[]): number {
+function paletteByte(indices: readonly number[]): number {
   return (
-    (((shades[1] ?? 0) & 3) << 2) | (((shades[2] ?? 0) & 3) << 4) | (((shades[3] ?? 0) & 3) << 6)
+    ((vbShade(indices[1] ?? 0) & 3) << 2) |
+    ((vbShade(indices[2] ?? 0) & 3) << 4) |
+    ((vbShade(indices[3] ?? 0) & 3) << 6)
   );
 }
 
@@ -127,12 +135,18 @@ function buildVbData(img: CompliantImage, spec: ConsoleSpec, opts: EmitOptions):
     mapBytes[i * 2 + 1] = (word >> 8) & 0xff;
   });
 
-  const palBytes = new Uint8Array(PALETTES);
+  // Four palette registers and then the backdrop, because on this console the
+  // backdrop *is* a palette entry: colour 0 is transparent on every layer, so a
+  // picture's lightest shade only ever reaches the screen through `BKCOL`. A
+  // build that emitted the four and left the fifth to a caller would have every
+  // picture's paper decided by whoever wrote the display program.
+  const palBytes = new Uint8Array(PALETTES + 1);
   for (let p = 0; p < PALETTES; p += 1) {
     const colors = img.palettes[p]?.colors ?? img.palettes[0]?.colors ?? [];
     palBytes[p] = paletteByte(colors.map((color) => color.codes[0] ?? 0));
   }
-  const backdrop = (img.palettes[0]?.colors[0]?.codes[0] ?? 0) & 3;
+  const backdrop = vbShade((img.palettes[0]?.colors[0]?.codes[0] ?? 0) & 3);
+  palBytes[PALETTES] = backdrop;
 
   // Two entries: the picture, and the terminator. The picture is drawn into both
   // eyes at the same place, which is the display plane — see VB_GEN_PARALLAX.

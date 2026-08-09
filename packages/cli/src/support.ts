@@ -50,6 +50,7 @@ export const EMULATOR_PROVEN: Readonly<Record<string, string>> = {
   nds: "DeSmuME",
   pce: "beetle-pce-fast",
   wsc: "beetle-wswan",
+  vb: "beetle-vb",
 };
 
 /** What works for one console, across all four domains. */

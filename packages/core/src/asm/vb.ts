@@ -381,6 +381,25 @@ export const VB_KEY_RD = 0x8000;
 export const VB_FRAME_HZ = 50.2;
 
 /**
+ * The hardware shade a demake palette index means.
+ *
+ * A reversal, not an identity, and it is the one piece of arithmetic on this
+ * console that is invisible until a picture is looked at. A fit's index 0 is its
+ * *lightest* colour — that is where every mono console in this project puts it,
+ * and where this console's spec puts the brightest red — while shade 0 on this
+ * display is the LEDs being **off**. So a cartridge that wrote a fit's indices
+ * into `GPLT` straight through shows a photographic negative, which is exactly
+ * what the pixel-perfect E2E caught the first time it ran.
+ *
+ * One definition with three readers — the `vb` codegen family, `@demake/vb`'s
+ * renderer and the game backend's palette emitter — because a copy in any one of
+ * them is a cartridge whose picture is inverted against the other two.
+ */
+export function vbShade(index: number, shades = 4): number {
+  return shades - 1 - (index & (shades - 1));
+}
+
+/**
  * Byte offset of a pixel in a framebuffer, and the shift that selects it.
  *
  * One definition with two readers — the core's renderer and the E2E's
