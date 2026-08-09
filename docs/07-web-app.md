@@ -581,6 +581,20 @@ bundled track or effect on arrival instead, so every section demos itself.
   A budget that overstates itself fails the next honest change, which is what it
   did.
 
+  **And a name alone cannot say who loads a chunk, which is the second time that
+  bit.** A backend two consoles share is bundled into a chunk named after
+  neither, so `codegen/m68k/` — the Mega Drive's alone until the Neo Geo shared
+  it, which is the whole point of that directory — moved out of a chunk called
+  `md-*` and started being charged to every visitor, along with `codegen/mos/`
+  between the NES and the PC Engine and `rom/z80-player.ts` between the Sega
+  8-bits and the Neo Geo: twenty kilobytes nobody playing a Game Boy fetches. The
+  checker therefore walks the built import graph from the entry the HTML names,
+  never through a per-family chunk, and charges what that walk cannot reach to
+  each family that can. A chunk every family reaches costs exactly what it did
+  before, so this can only ever change the answer for code a proper subset of
+  consoles needs — and a split that stops working still puts its chunk back on a
+  path from the entry, which is the loud failure the name rule was for.
+
   **The third console is what made that rule bite, and what it bought was one
   copy of the engine.** A Sega vertical is 21 KB gzipped and none of it is fat —
   a Z80 assembler, a Z80 core, a VDP, a code generator — so the room had to come

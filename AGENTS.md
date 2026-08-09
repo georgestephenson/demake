@@ -4206,7 +4206,17 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   something builds, and the page's `src/players/` does the same for the emulator
   cores. Chunks are matched to a family **by name**, so a module that
   has to be per-family belongs in a file named after it; anything else counts as
-  always-loaded, which fails loud rather than passing quietly. **There is a third
+  always-loaded, which fails loud rather than passing quietly — **unless the
+  import graph proves only families reach it**, which is how a chunk _two_
+  consoles share is charged to both of them rather than to everyone. That case is
+  not hypothetical and it is what a shared backend costs: `codegen/m68k/` was the
+  Mega Drive's alone and sat in a chunk called `md-*` until the Neo Geo shared it,
+  at which point the bundler named the chunk after neither and 9.8 KB nobody on a
+  Game Boy fetches was charged to every visitor. `codegen/mos/` is the same
+  between the NES and the PC Engine, `rom/z80-player.ts` between the Sega 8-bits
+  and the Neo Geo, and together they were overstating the page by twenty
+  kilobytes. A chunk _every_ family reaches costs the same either way, so this can
+  only ever help code a proper subset of consoles needs. **There is a third
   place that has to stay split, and it is `@demake/audio`'s `rom/index.ts`**:
   `buildAudioRom` reaches each console's cartridge builder through an `import()`
   for the same reason, because behind each one is a whole CPU's assembler. It
@@ -4224,7 +4234,7 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   `import()` like every other core, and they were charged to _every_ visitor for
   as long as the two lists disagreed. A budget that overstates itself fails the
   next honest change, which is what it did. Current figures:
-  380 KB for a visitor against a 400 KB budget, 598 KB for the whole site — and
+  378 KB for a visitor against a 400 KB budget, 623 KB for the whole site — and
   a new example game costs about fourteen of those kilobytes, because the page
   bundles every fixture SVG twice (raw text for the ROM build, a URL for the
   preview). Measure with a **clean** `dist`: the checker reads every `.js` it
