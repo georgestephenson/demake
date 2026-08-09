@@ -143,6 +143,9 @@ importers:
       '@demake/snes':
         specifier: workspace:*
         version: link:../snes
+      '@demake/vb':
+        specifier: workspace:*
+        version: link:../vb
       '@demake/wsc':
         specifier: workspace:*
         version: link:../wsc

@@ -35,6 +35,7 @@
     "@demake/pce": "workspace:*",
     "@demake/sms": "workspace:*",
     "@demake/snes": "workspace:*",
+    "@demake/vb": "workspace:*",
     "@demake/wsc": "workspace:*"
   },
   "publishConfig": {

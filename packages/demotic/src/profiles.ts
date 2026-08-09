@@ -359,6 +359,29 @@ const PROFILES: readonly ConsoleProfile[] = [
     romPath: true,
   },
   {
+    // **The widest playfield in the table, and the slowest clock.** Forty-eight
+    // cells by twenty-eight is a third more screen than a Mega Drive's, and
+    // 50.2 ticks a second is a fifth slower than everything else here — which is
+    // exactly the pair that makes this console the one a delta written as a bare
+    // constant goes wrong on first (AGENTS.md §Working on Demotic).
+    id: "vb",
+    name: "Virtual Boy",
+    label: "Virtual Boy",
+    screenWidth: 48,
+    screenHeight: 28,
+    rawWidth: 384,
+    rawHeight: 224,
+    cellSize: 8,
+    fps: 50,
+    // A thousand and twenty-four objects, and the drawing processor works
+    // through a group until it runs out of frame rather than clipping a
+    // scanline — so `perLine` is the whole table, as on the Neo Geo Pocket, and
+    // what a wide object costs is entries.
+    sprites: { total: 1024, perLine: 1024, hFlip: true },
+    startButton: "dedicated",
+    romPath: true,
+  },
+  {
     // The same machine in monochrome: the same display at the same 75.47 Hz,
     // the same screen, the same object budget. Everything that decides how a
     // game *plays* is shared, which is what makes this a variant rather than a
