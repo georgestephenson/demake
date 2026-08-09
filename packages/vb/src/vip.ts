@@ -100,6 +100,18 @@ export type Eye = "left" | "right";
  * itself. Two definitions would put a cartridge's sprites behind its scenery on
  * whichever of them was wrong.
  */
+/**
+ * One eye's picture, in pixels.
+ *
+ * Named the way every other core here names it, because the page's screen table
+ * reads it — and *one eye's* rather than the pair's, since a browser canvas is
+ * not a stereoscope and this display has no second hue to build an anaglyph out
+ * of. What the page shows is the left eye, which is what every screenshot of
+ * this console has ever been.
+ */
+export const SCREEN_WIDTH = VB_SCREEN_W;
+export const SCREEN_HEIGHT = VB_SCREEN_H;
+
 export const VB_NEARER = VB_NEARER_SIGN;
 
 /**

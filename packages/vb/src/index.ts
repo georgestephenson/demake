@@ -49,6 +49,8 @@ export {
 } from "./cpu.js";
 export {
   Vip,
+  SCREEN_HEIGHT,
+  SCREEN_WIDTH,
   VB_DEPTH,
   VB_NEARER,
   VB_SHADES,

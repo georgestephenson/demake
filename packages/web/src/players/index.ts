@@ -33,6 +33,8 @@ export async function bootPlayer(
       return (await import("./pce.js")).boot(rom);
     case "ngpc":
       return (await import("./ngpc.js")).boot(rom, consoleId);
+    case "vb":
+      return (await import("./vb.js")).boot(rom);
     case "wsc":
       // Two machines behind one family again, and here the *core* is the one
       // that has to be told: a WonderSwan and a WonderSwan Color do not differ

@@ -62,6 +62,9 @@ export const SCREENS: Readonly<Record<string, { width: number; height: number }>
   ws: { width: 224, height: 144 },
   ngpc: { width: 160, height: 152 },
   ngp: { width: 160, height: 152 },
+  // One eye's. A browser canvas is not a stereoscope and this display is
+  // red-only, so there is no anaglyph to build (`players/vb.ts`).
+  vb: { width: 384, height: 224 },
 };
 
 /** The framebuffer a console draws into, by family and — where it differs — id. */
