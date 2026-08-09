@@ -74,6 +74,41 @@ export type AssetBytes = ReadonlyMap<string, Uint8Array>;
  */
 const CACHE_LIMIT = 24;
 
+/**
+ * Somewhere a conversion can be remembered that outlives this process.
+ *
+ * The caches above are per module and therefore per process, which is right for
+ * the callers that have one: the web app and a `demake build` both rebuild inside
+ * a process that is already warm. The test suite is the caller that does not —
+ * it is twenty-odd worker processes, and a picture demade in one of them is
+ * demade again in the next, which measured at a fifth of all the conversion time
+ * a run spends.
+ *
+ * So this is a seam and not an implementation: whoever has a disk installs one
+ * (`packages/demotic/test/_art-store.ts` is the only thing that does today) and
+ * this package keeps no `node:fs` import, exactly as `core` keeps none. Nothing
+ * installs one in production, so the CLI and the page behave as they did.
+ *
+ * Two rules for an implementation, and both are about the one hazard here — a
+ * cache that is *wrong and consistent* passes every test there is, because both
+ * sides of a comparison would read it. It must key on the engine that produced
+ * the value, so a source change cannot be answered from a previous version's
+ * cache; and it must return byte-identical data, never an approximation.
+ */
+export interface ArtStore {
+  /** The remembered value for a key, or `undefined` to compute it. */
+  get(key: string): unknown;
+  /** Remember a computed value. Failing to store is never an error. */
+  set(key: string, value: unknown): void;
+}
+
+let store: ArtStore | undefined;
+
+/** Install a conversion store; pass `undefined` to go back to memory alone. */
+export function setArtStore(next: ArtStore | undefined): void {
+  store = next;
+}
+
 export function remember<T>(
   cache: Map<string, T>,
   key: string,
@@ -82,7 +117,9 @@ export function remember<T>(
 ): T {
   const hit = cache.get(key);
   if (hit !== undefined) return hit;
-  const value = make();
+  const stored = store?.get(key) as T | undefined;
+  const value = stored ?? make();
+  if (stored === undefined) store?.set(key, value);
   cache.set(key, value);
   evict(cache, limit);
   return value;
@@ -115,10 +152,21 @@ export function rememberAsync<T>(
 ): Promise<T> {
   const hit = cache.get(key);
   if (hit !== undefined) return hit;
-  const value = make().catch((error: unknown) => {
-    cache.delete(key);
-    throw error;
-  });
+  const stored = store?.get(key) as T | undefined;
+  const value =
+    stored === undefined
+      ? make()
+          .then((made) => {
+            // Stored once it exists rather than when it was asked for, because a
+            // conversion that threw has nothing worth remembering.
+            store?.set(key, made);
+            return made;
+          })
+          .catch((error: unknown) => {
+            cache.delete(key);
+            throw error;
+          })
+      : Promise.resolve(stored);
   cache.set(key, value);
   evict(cache, limit);
   return value;

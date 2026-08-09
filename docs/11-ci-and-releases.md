@@ -8,8 +8,8 @@
 |---|---|---|
 | `changes` | which gates this change can break (see §Affected-only gates) | no install, no build; ~10 s |
 | `lint` | eslint (incl. custom rules: no `Math.random`/`Date.now`/platform APIs in core), prettier check, typecheck (project references), `cli-spec` regeneration diff check | fast-fail; **never gated** |
-| `test-unit` | Vitest unit + property + golden suites, coverage upload | Node 22/24 × ubuntu on a PR, × ubuntu/macos/windows on `main` (see §The unit matrix) |
-| `test-browser` | Playwright: web build determinism + functional | **one job per engine**: Chromium/Firefox/WebKit, ubuntu |
+| `test-unit` | Vitest unit + property + golden suites, coverage upload | **4 shards**; Node 22 × ubuntu on a PR, Node 22/24 × ubuntu/macos/windows on `main` (see §The unit matrix) |
+| `test-browser` | Playwright: web build determinism + functional | **one job per engine × 2 shards**: Chromium/Firefox/WebKit, ubuntu |
 | `web-quality` | the doc-07 JS budget, then Lighthouse over the built site | ubuntu; shares one `build:web` |
 | `test-e2e` | Doc-10 emulator suite over every proven console (`pnpm test:rom-e2e`) | ubuntu, source-built assemblers + libretro cores, cached |
 | `gate` | the one required check: every job that ran must have passed | `if: always()`; a skipped job is a pass |
@@ -18,13 +18,24 @@
 | `docs` | man page lint, docs-site build, link check | |
 
 Full-corpus determinism + all-tier E2E run **nightly** (`nightly.yml`) rather than
-per-PR (keeps PR CI < ~15 min); nightly failures open an issue automatically.
+per-PR; nightly failures open an issue automatically. A PR's own target is
+**under ten minutes**, which is what the shard counts above are set to hold: it
+was 20m 47s when the unit suite ran as one job, and the two longest things on the
+board are now a shard of that suite and a shard of Firefox.
 
 **The three engines are three jobs, not three Playwright projects.** Run inside
 one job they were sequential — five and a half minutes, which was the entire
 run's critical path while every other job had been finished for three. Sharding
 does not weaken the doc-07 parity contract at all: every engine still runs every
 spec, and `DEMAKE_BROWSERS` was already the supported way to name one.
+
+**And two shards per engine**, which is what that job needed once the unit suite
+stopped being the critical path: Firefox alone was 14m 36s of a 20m 47s run,
+WebKit 11m 49s, Chromium 8m 06s. Playwright shards *tests* rather than files when
+`fullyParallel` is set, and `determinism.spec.ts` is a test per console with a
+backend — a dozen cases of roughly equal cost, which is the shape a shard divides
+best. Unlike the unit suite there is no long single file to floor it, so what
+limits the count here is the browser install each shard repeats.
 
 **`test-e2e` runs only the `*.e2e.test.ts` suites.** It used to run `pnpm test`,
 which re-ran the whole unit suite on the same runner image `test-unit` had
@@ -47,14 +58,48 @@ is path handling and line endings at the edges — real, and still caught on the
 merge to `main` before anything ships. What they cost on a PR is the whole run,
 because Windows is the slowest runner and this is the longest job on it.
 
+**Node 22 on a pull request, both versions on `main`.** The operating-system
+split's argument applied to the other axis: what the second runtime catches is a
+change in its own behaviour under code that is otherwise identical, which is a
+`main` concern rather than a per-commit one. It does not shorten a run — the two
+jobs were always parallel — it halves what the longest job on the board costs to
+run.
+
 **And the run is only ever as long as the slowest single test file**, which is
 worth knowing before optimising anything else here. Vitest schedules a *file* to
 a worker, so one long file pins one core and idles the rest: `audio.test.ts` was
 777 s of an 836 s suite until it was split per console (`_audio-battery.ts`), and
 `parallel.test.ts` 454 s until the same (`_fanout.ts`). Neither split changed a
 single assertion. If this job is slow again, look for the file that is minutes
-long before reaching for a matrix dimension or a shard count — `--shard`
-distributes files and cannot help a suite whose floor is one of them.
+long before reaching for a matrix dimension or a shard count.
+
+### Sharding
+
+That split is also what made sharding worth anything, and the note here used to
+say the opposite — correctly, at the time. `--shard` distributes *files*, so it
+cannot help a suite whose floor is one of them, and this suite's floor was
+`audio.test.ts` at 777 s of 836. Split per console, the floor is a few minutes
+and the total is what dominates: measured at **45 core-minutes over 4 runner
+cores**, which is 20m 04s of a 20m 47s run and every other job finished long
+before it.
+
+So the unit job runs **four shards**. Two things are worth knowing before
+changing that number:
+
+- **The split is by SHA-1 of each file's path, so it is arbitrary rather than
+  balanced.** The shards do not take equal times and the job costs whatever the
+  slowest one does. Modelled on measured per-file durations, four shards came out
+  9.4 / 4.1 / 20.3 / 11.3 core-minutes — better than one shard by a factor of two
+  even at that spread, and it re-randomises whenever a file is added or renamed.
+- **Every shard pays the setup again** — checkout, install, `pnpm build` — which
+  is about 55 s. Past four, that starts to dominate what is left of the tail.
+
+The suite also **shares demade art between its worker processes** for the length
+of one run, which is a different attack on the same cost: a test file is a
+process, so the same fixture was being fitted from scratch in each of the twenty-odd
+files that build one, measured at a fifth of all the conversion time a run spends.
+`packages/demotic/test/_art-store.ts` is that store; doc 10 §The conversion store
+covers why it cannot be wrong quietly and which battery has to opt out of it.
 
 ### Affected-only gates
 
