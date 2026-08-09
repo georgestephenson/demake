@@ -23,6 +23,7 @@ export default defineConfig({
       "@demake/pce": fileURLToPath(new URL("./packages/pce/src/index.ts", import.meta.url)),
       "@demake/wsc": fileURLToPath(new URL("./packages/wsc/src/index.ts", import.meta.url)),
       "@demake/ngp": fileURLToPath(new URL("./packages/ngp/src/index.ts", import.meta.url)),
+      "@demake/vb": fileURLToPath(new URL("./packages/vb/src/index.ts", import.meta.url)),
       "@demake/chip": fileURLToPath(new URL("./packages/chip/src/index.ts", import.meta.url)),
       "@demake/audio": fileURLToPath(new URL("./packages/audio/src/index.ts", import.meta.url)),
     },

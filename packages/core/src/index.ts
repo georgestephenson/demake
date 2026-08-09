@@ -137,6 +137,12 @@ export { backendFor, codegenFamilies } from "./codegen/registry.js";
 // slot it came from (`pipeline/fit-mono-tiled.ts`). One definition, because
 // `demake build` has to agree with `demake gen` about which slot is which.
 export { poolFor, WS_POOL_SIZE, WS_TILE_BYTES } from "./codegen/ws.js";
+// The Virtual Boy's character packer, public for the reason `poolFor` is: the
+// game backend and `demake gen` have to agree byte for byte about which two bits
+// a pixel is, and the wrong one of this console's two candidate orders mirrors
+// every tile in place rather than failing.
+export { packPacked2Le } from "./codegen/tiles.js";
+export { VB_CHAR_BYTES, VB_GEN_PARALLAX } from "./codegen/vb.js";
 export {
   parseManifest,
   applyManifest,

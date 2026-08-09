@@ -246,6 +246,12 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/vb:
+    dependencies:
+      '@demake/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/web:
     dependencies:
       '@demake/audio':
