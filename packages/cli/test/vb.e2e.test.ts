@@ -40,6 +40,36 @@ import { join } from "node:path";
 import { gen, getConsole, renderCompliant, VB_SCREEN_H, VB_SCREEN_W } from "@demake/core";
 import { describe, expect, it } from "vitest";
 
+import {
+  Asm810,
+  packVbRom,
+  SR_PSW,
+  V810_R0,
+  VB_BGMAP,
+  VB_BKCOL,
+  VB_BRTA,
+  VB_BRTB,
+  VB_BRTC,
+  VB_CHR_MIRROR,
+  VB_DPCTRL,
+  VB_DPCTRL_ON,
+  VB_FRMCYC,
+  VB_GPLT0,
+  VB_INTCLR,
+  VB_INTENB,
+  VB_REST,
+  VB_ROM,
+  VB_WORLDS,
+  VB_WORLD_BYTES,
+  VB_WORLD_END,
+  VB_WORLD_LON,
+  VB_WORLD_RON,
+  VB_XPCTRL,
+  VB_XP_XPEN,
+  packPacked2Le,
+} from "@demake/core";
+import { Vb, VB_NEARER } from "@demake/vb";
+
 import { makeNodeEnv } from "../src/env.js";
 import { buildVbRom } from "../src/rom/vb.js";
 import { makeBattery, readPpm } from "./_emu-battery.js";
@@ -125,4 +155,133 @@ describe("pixel-perfect Virtual Boy E2E (needs libretro/beetle-vb)", () => {
       120000,
     );
   }
+});
+
+/**
+ * A cartridge with two layers at two depths, built by hand.
+ *
+ * Small enough to read: one character that is solid, two BGMap cells, and two
+ * worlds — the far one at the display plane and the near one pulled toward the
+ * viewer. It is hand-built rather than produced by `gen` because `gen` demakes a
+ * *picture*, and a picture has nothing in front of it; what is being checked
+ * here is the depth axis itself.
+ */
+function depthCartridge(nearParallax: number): Uint8Array {
+  const ADDR = 10;
+  const VALUE = 11;
+  const asm = new Asm810(VB_ROM);
+  const poke = (address: number, value: number): void => {
+    asm.movImm32(address, ADDR);
+    asm.movImm32(value & 0xffff, VALUE);
+    asm.sth(VALUE, 0, ADDR);
+  };
+
+  asm.ldsr(V810_R0, SR_PSW);
+  poke(VB_INTENB, 0);
+  poke(VB_INTCLR, 0xffff);
+  poke(VB_REST, 0);
+  poke(VB_FRMCYC, 0);
+  poke(VB_XPCTRL, 0);
+
+  // Character 0: every pixel value 3. Character 1: every pixel value 1, so the
+  // two layers are told apart by shade as well as by position.
+  const solid = packPacked2Le(new Uint8Array(64).fill(3), 8, 8);
+  const faint = packPacked2Le(new Uint8Array(64).fill(1), 8, 8);
+  for (let i = 0; i < 16; i += 2) {
+    poke(VB_CHR_MIRROR + i, solid[i]! | (solid[i + 1]! << 8));
+    poke(VB_CHR_MIRROR + 16 + i, faint[i]! | (faint[i + 1]! << 8));
+  }
+  // BGMap 0 cell 0 is the near layer; BGMap 1 cell 0 is the far one.
+  poke(VB_BGMAP, 0);
+  poke(VB_BGMAP + 0x2000, 1);
+
+  poke(VB_GPLT0, 0xe4);
+  poke(VB_BKCOL, 0);
+  poke(VB_BRTA, 32);
+  poke(VB_BRTB, 64);
+  poke(VB_BRTC, 32);
+
+  const world = (index: number, fields: Record<number, number>): void => {
+    const base = VB_WORLDS + index * VB_WORLD_BYTES;
+    for (let offset = 0; offset < VB_WORLD_BYTES; offset += 2)
+      poke(base + offset, fields[offset] ?? 0);
+  };
+  // World 31 is drawn first and world 30 over it, so the near layer is the
+  // *lower* index — the display list runs backwards.
+  world(31, { 0: VB_WORLD_LON | VB_WORLD_RON | 1, 2: 100, 4: 0, 6: 40, 14: 7, 16: 7 });
+  world(30, { 0: VB_WORLD_LON | VB_WORLD_RON, 2: 100, 4: nearParallax, 6: 80, 14: 7, 16: 7 });
+  world(29, { 0: VB_WORLD_END });
+
+  poke(VB_XPCTRL, VB_XP_XPEN);
+  poke(VB_DPCTRL, VB_DPCTRL_ON);
+  asm.label("Idle");
+  asm.br("Idle");
+  return packVbRom(asm.assemble(), { title: "DEPTH" });
+}
+
+describe("Virtual Boy depth (needs libretro/beetle-vb)", () => {
+  maybe(
+    "a nearer layer crosses the eyes, and demake's own core agrees pixel for pixel",
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), "demake-vb-depth-"));
+      try {
+        const parallax = VB_NEARER * 8;
+        const rom = depthCartridge(parallax);
+        const romPath = join(dir, "depth.vb");
+        writeFileSync(romPath, rom);
+        const ppmPath = join(dir, "frame.ppm");
+        execFileSync(RETRORUN, [
+          CORE,
+          romPath,
+          String(FRAMES),
+          ppmPath,
+          dir,
+          "vb_3dmode=side-by-side",
+          "vb_anaglyph_preset=disabled",
+          "vb_color_mode=black & red",
+        ]);
+        const frame = readPpm(readFileSync(ppmPath));
+
+        // Where each layer starts on its own row, in each eye.
+        const edge = (eyeX: number, row: number): number => {
+          for (let x = 0; x < VB_SCREEN_W; x += 1) {
+            if (frame.data[(row * frame.w + eyeX + x) * 3]! !== 0) return x;
+          }
+          return -1;
+        };
+        // The far layer sits at the display plane: both eyes see it in one place.
+        expect(edge(0, 44)).toBe(100);
+        expect(edge(VB_SCREEN_W, 44)).toBe(100);
+        // The near one is crossed — the left eye sees it to the *right* of where
+        // the right eye does, which is what converging on something nearer than
+        // the screen means. This is the assertion `VB_NEARER` exists for, and the
+        // only place in the project where it is checked against hardware.
+        expect(edge(0, 84)).toBeGreaterThan(edge(VB_SCREEN_W, 84));
+        expect(edge(0, 84) - edge(VB_SCREEN_W, 84)).toBe(16);
+
+        // And demake's own video processor draws the same scene the same way —
+        // every pixel of both eyes, against a third-party emulator.
+        const machine = new Vb(rom);
+        for (let f = 0; f < FRAMES; f += 1) machine.runFrame();
+        for (const [eyeX, which] of [
+          [0, "left"],
+          [VB_SCREEN_W, "right"],
+        ] as const) {
+          const ours = machine.eye(which);
+          let bad = 0;
+          for (let y = 0; y < VB_SCREEN_H; y += 1) {
+            for (let x = 0; x < VB_SCREEN_W; x += 1) {
+              const p = (y * frame.w + eyeX + x) * 3;
+              const q = (y * VB_SCREEN_W + x) * 4;
+              if (frame.data[p] !== ours[q]) bad += 1;
+            }
+          }
+          expect(bad).toBe(0);
+        }
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    120000,
+  );
 });

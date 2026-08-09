@@ -92,6 +92,10 @@ importers:
       '@demake/demotic':
         specifier: workspace:*
         version: link:../demotic
+    devDependencies:
+      '@demake/vb':
+        specifier: workspace:*
+        version: link:../vb
 
   packages/cli-spec: {}
 
