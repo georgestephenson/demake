@@ -234,6 +234,20 @@ export {
   type NdsGameAudioInput,
   type NdsGameAudioStats,
 } from "./rom/nds-game.js";
+export {
+  neogeoChannelOf,
+  neogeoChannelTag,
+  neogeoOwnerTag,
+  neogeoPortOf,
+} from "./rom/neogeo-driver.js";
+export {
+  buildNeogeoGameAudio,
+  SFX_BASE as NEOGEO_SFX_BASE,
+  STOP as NEOGEO_AUDIO_STOP,
+  type NeogeoGameAudio,
+  type NeogeoGameAudioInput,
+  type NeogeoGameAudioStats,
+} from "./rom/neogeo-game.js";
 export { NDS_SPU_BASE, NDS_STATE_BASE } from "./rom/nds-driver.js";
 export { ndsChannelTag, ndsPackTag } from "./binding/nds.js";
 export { NDS_BANK_BASE, ndsBank, ndsSampleRam } from "./binding/nds-bank.js";

@@ -36,10 +36,13 @@ import {
   type Executor,
 } from "@demake/core";
 
+import { buildNeogeoGameAudio, NEOGEO_SFX_BASE, type NeogeoGameAudio } from "@demake/audio";
+
 import { getProfile } from "../profiles.js";
 import type { Program } from "../program.js";
 
 import { type Analysis } from "./analyze.js";
+import { bindAudio, effectIndices, trackForScene } from "./audio.js";
 import type { AssetBytes } from "./art.js";
 import {
   buildRom,
@@ -54,7 +57,7 @@ import {
 import { NEOGEO_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
 import { M68kCtx } from "./m68k/ctx.js";
 import { ART_TILES, bindNeogeoArt, type NeogeoArtOptions } from "./neogeo-art.js";
-import { CODE_ORIGIN, emitProgram, STACK_TOP } from "./neogeo/emit.js";
+import { CODE_ORIGIN, emitProgram, STACK_TOP, type NeogeoEmitOptions } from "./neogeo/emit.js";
 import type { ArtSettings } from "./settings.js";
 
 /**
@@ -66,10 +69,33 @@ import type { ArtSettings } from "./settings.js";
  */
 export const CODE_SIZE = 0x100000 - NEO_CODE_ORIGIN;
 
-/** What this backend's audio binding hands the emitter, which is nothing yet. */
+/**
+ * What this backend's audio binding hands the emitter.
+ *
+ * Unlike every other console's, the driver is not routines the game's own image
+ * carries: it is a whole second program with its own ROM, so what the binding
+ * hands over is a *region* rather than an emitter option. `options` therefore
+ * carries only the scene-track table, which is the game side's whole share of
+ * the audio.
+ */
 interface NeogeoAudio extends BoundAudioShape {
-  options: Record<string, never>;
+  options: NeogeoEmitOptions;
+  /** The built sound program, or absent for a game with nothing to play. */
+  rom?: NeogeoGameAudio;
+  /** The bytes a rule writes to ask for a sound; absent when none can. */
+  hooks?: { driver: boolean; music: number; request: number; effects: readonly number[] };
 }
+
+/**
+ * Where the 68000 asks for a sound, which is not memory.
+ *
+ * `$320000` is one byte into a whole second computer: the hardware latches it and
+ * pulls that processor's non-maskable line, so a store is the entire request
+ * protocol. Stated here rather than imported from `@demake/neogeo` because a
+ * backend may not depend on a core, exactly as every other backend states its own
+ * hardware addresses.
+ */
+const REG_SOUND = 0x320000;
 
 /** The Neo Geo's implementation of the build. */
 export const neogeoBackend: Backend<NeogeoArtOptions, NeogeoAudio> = {
@@ -113,43 +139,86 @@ export const neogeoBackend: Backend<NeogeoArtOptions, NeogeoAudio> = {
     void program;
   },
 
-  async bindAudio(): Promise<BoundAssets<NeogeoAudio>> {
-    // No driver: the sound chip is the Z80's and this build emits no Z80
-    // program. A game that names music still compiles and still records what its
-    // rules asked for, so its trace is identical to a sounding console's.
+  async bindAudio(
+    program: Program,
+    assets: AssetBytes,
+    _layout: Layout,
+    executor?: Executor,
+  ): Promise<BoundAssets<NeogeoAudio>> {
+    // The layout is unused, which is this console alone: every other backend
+    // gates on `layout.audio` because its driver lives in the game's own work
+    // RAM. Here the driver is a whole program on a processor of its own with its
+    // own two kilobytes, so there is nothing for this machine's allocator to set
+    // aside and nothing for it to refuse.
+    const names = program.tracks.length > 0 || program.sounds.length > 0;
+    const bound = names
+      ? await bindAudio(
+          program,
+          assets,
+          { build: (tracks, effects) => buildNeogeoGameAudio({ tracks, effects }) },
+          executor,
+        )
+      : { driver: undefined, missing: [] as readonly string[], notes: [] as readonly string[] };
+    const driver = bound.driver;
+    const options: NeogeoEmitOptions = driver ? { sceneTracks: trackForScene(program, bound) } : {};
     const emit: NeogeoAudio = {
-      present: false,
-      options: {},
-      tracks: 0,
-      effects: 0,
-      code: 0,
-      data: 0,
-      helpers: [],
-      rateHz: 0,
-      writesRestricted: 0,
+      present: driver !== undefined,
+      options,
+      tracks: driver?.stats.tracks ?? 0,
+      effects: driver?.stats.effects ?? 0,
+      // Not queries here, unlike every other console: this driver is a *separate
+      // image* and is assembled by `buildNeogeoGameAudio` before it returns, so
+      // its sizes are real the moment the binding has one.
+      code: driver?.stats.code ?? 0,
+      data: driver?.stats.data ?? 0,
+      helpers: driver?.stats.helpers ?? [],
+      rateHz: driver ? driver.stats.rate.num / driver.stats.rate.den : 0,
+      writesRestricted: driver?.stats.writesRestricted ?? 0,
+      ...(driver ? { rom: driver } : {}),
+      ...(names
+        ? {
+            hooks: {
+              driver: driver !== undefined,
+              // Both requests are the same address, because on this console a
+              // request is not a variable at all: `REG_SOUND` is one byte into a
+              // second computer, and which of the two things it means is in the
+              // *value*.
+              music: REG_SOUND,
+              request: REG_SOUND,
+              effects: driver
+                ? effectIndices(program, bound).map((index) =>
+                    // The shared 68000 rule emitter stores `index + 1`, and this
+                    // console's effect commands start at `SFX_BASE` — so the
+                    // table is offset rather than the emitter being branched.
+                    index < 0 ? -1 : NEOGEO_SFX_BASE + index - 1,
+                  )
+                : program.sounds.map(() => -1),
+            },
+          }
+        : {}),
     };
-    return { emit, tiles: 0, missing: [], notes: [] };
+    return { emit, tiles: 0, missing: bound.missing, notes: bound.notes };
   },
 
-  assemble({ program, analysis, layout, art, title }): Assembled {
+  assemble({ program, analysis, layout, art, audio, title }): Assembled {
     const ctx = new M68kCtx(program, analysis, layout, getProfile(program.profile.id), CODE_ORIGIN);
     // No driver, but the *request* a rule makes is still recorded: a trace's
     // `audio` field is what the rules asked for, not what a chip heard, so a
     // silent console has to trace identically to a sounding one (doc 14
     // §Conformance). Without this every game diverges on the tick a sound fires
     // and on nothing else, which is exactly what it did.
-    if (program.sounds.length > 0 || program.tracks.length > 0) {
+    if (audio.hooks) {
       ctx.audio = {
-        driver: false,
-        music: 0,
-        request: 0,
+        driver: audio.hooks.driver,
+        music: audio.hooks.music,
+        request: audio.hooks.request,
         trace: layout.sound,
-        effects: program.sounds.map(() => -1),
+        effects: audio.hooks.effects,
       };
     }
     let code: Uint8Array;
     try {
-      emitProgram(ctx, art);
+      emitProgram(ctx, { ...art, ...audio.options });
       code = ctx.asm.assemble();
     } catch (error) {
       if (error instanceof AsmError) {
@@ -190,6 +259,7 @@ export const neogeoBackend: Backend<NeogeoArtOptions, NeogeoAudio> = {
     p.set(code, NEO_CODE_ORIGIN);
 
     const characters = packNeoCharacters(art.bank ?? new Uint8Array(0));
+    const sound = audio.rom;
     return {
       bytes: packNeoRom(
         {
@@ -197,6 +267,10 @@ export const neogeoBackend: Backend<NeogeoArtOptions, NeogeoAudio> = {
           s: packNeoFix(art.fix ?? new Uint8Array(0)),
           c1: characters.c1,
           c2: characters.c2,
+          // The three sound regions, which are three different things on three
+          // different buses: a Z80 program and the two sample ROMs its chip's two
+          // ADPCM sections read in two different codecs.
+          ...(sound ? { m: sound.rom, v1: sound.samplesA, v2: sound.samplesB } : {}),
         },
         title === undefined ? {} : { name: title },
       ),

@@ -364,6 +364,14 @@ function assemble(input: AssembleInput): {
   chipWrite(asm, 0, 0x27, 0x05);
   asm.im(1);
   asm.inN(NEOGEO_SOUND_PORT.enableNmi);
+  // And take whatever is already waiting. The 68000 boots in a few hundred cycles
+  // and this program takes tens of thousands, so a game that asks for its entry
+  // scene's track asks before this processor was listening — the hardware latches
+  // the byte either way, and only the interrupt is lost. Reading the port here is
+  // what turns that into a track that plays rather than a cartridge that is
+  // silent until the second scene.
+  asm.inN(NEOGEO_SOUND_PORT.command);
+  asm.sta(state.command);
   asm.ei();
 
   asm.label("Loop");
@@ -379,6 +387,25 @@ function assemble(input: AssembleInput): {
   asm.jr("Loop", "z");
   asm.dec("a");
   asm.sta(state.ticks);
+  // A tick nothing is playing is not a tick. This driver runs from boot whether
+  // or not the game has asked for anything — it is a separate program, so there
+  // is nobody to start it — and ticking through silence would put the schedule's
+  // tick 0 several ticks after the first one the hardware delivered. Every other
+  // console is spared this because its driver is a routine the game calls.
+  const play = "LoopPlay";
+  if (musicData.length > 0 && effectData.length > 0) {
+    asm.lda(state.music.active as number);
+    asm.alu("or", "a");
+    asm.jr(play, "nz");
+    asm.lda(state.sfx.active as number);
+    asm.alu("or", "a");
+    asm.jp("Loop", "z");
+  } else {
+    asm.lda((musicData.length > 0 ? state.music.active : state.sfx.active) as number);
+    asm.alu("or", "a");
+    asm.jp("Loop", "z");
+  }
+  asm.label(play);
   // One label per driver tick, so a conformance harness can attribute writes by
   // program counter without anything being added to the ROM to make it visible
   // (doc 16 §The proof).

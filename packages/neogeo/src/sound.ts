@@ -109,6 +109,30 @@ export class Sound implements Bus {
    */
   audioSink: SampleSink | undefined;
 
+  /**
+   * Everything the chip receives, observed rather than intercepted.
+   *
+   * `@demake/md`'s `ymTap` for the same reason and with the same promise: the
+   * conformance harness needs to see what the hardware was told, and a hook that
+   * *changed* what the hardware saw would be testing itself. The port is reported
+   * as the chip's own 0-3 rather than the Z80's `$04`-`$07`, because that is what
+   * a schedule's register number is on this machine.
+   */
+  chipTap: ((reg: number, value: number) => void) | undefined;
+
+  /**
+   * Call back every time this processor is about to execute `address`.
+   *
+   * `@demake/snes`'s arrangement and for the same reason: one step of the *game's*
+   * processor is not one instruction of the one the driver runs on. A 68000
+   * instruction is four to twenty of its own cycles and this Z80 is a third of
+   * that clock, so most game steps advance it by less than an instruction — and a
+   * harness sampling the program counter afterwards sees one arrival as dozens.
+   * Watching the instruction stream is still observation: nothing is added to the
+   * cartridge, which is what the proof rests on.
+   */
+  private readonly watched = new Map<number, () => void>();
+
   private readonly rom: Uint8Array;
   /** A command that arrived and has not yet been taken by the handler. */
   private nmiPending = false;
@@ -129,6 +153,11 @@ export class Sound implements Bus {
    * is in front of the enable — a driver that has masked itself still finds the
    * byte waiting when it reads port `$00`.
    */
+  /** Watch for the driver reaching `address`. Several may be registered. */
+  watch(address: number, onEnter: () => void): void {
+    this.watched.set(address & 0xffff, onEnter);
+  }
+
   send(value: number): void {
     this.command = value & 0xff;
     if (this.nmiEnabled) this.nmiPending = true;
@@ -174,7 +203,9 @@ export class Sound implements Bus {
   out(port: number, value: number): void {
     const at = port & 0xff;
     if (at >= SOUND_PORT.addressA && at <= SOUND_PORT.dataB) {
-      this.chip.write(at - SOUND_PORT.addressA, value);
+      const reg = at - SOUND_PORT.addressA;
+      this.chip.write(reg, value);
+      this.chipTap?.(reg, value & 0xff);
       return;
     }
     if (at === SOUND_PORT.reply) this.reply = value & 0xff;
@@ -220,7 +251,10 @@ export class Sound implements Bus {
       // hide exactly the bug the Sega cartridge's tempo case exists to catch.
       states = this.cpu.interrupt();
     }
-    if (states === 0) states = this.cpu.step();
+    if (states === 0) {
+      if (this.watched.size > 0) this.watched.get(this.cpu.pc)?.();
+      states = this.cpu.step();
+    }
     this.chip.run(states * STATES_PER_CHIP_CYCLE, this.audioSink ?? SILENT);
     return states;
   }

@@ -27,7 +27,8 @@
  *     a reset loop.
  */
 
-import { eaA, eaAbs, eaD, eaImm, eaInd, eaPost, eaPre, label, type Ref } from "@demake/core";
+import { eaA, eaAbs, eaD, eaIdx, eaImm, eaInd, eaPost, eaPre, label, type Ref } from "@demake/core";
+import { NEOGEO_AUDIO_STOP } from "@demake/audio";
 import {
   encodeScb3,
   encodeScb4,
@@ -128,7 +129,17 @@ function frameFlag(ctx: M68kCtx): number {
 }
 
 /** Everything the emitter needs beyond the program itself. */
-export type NeogeoEmitOptions = NeogeoArtOptions;
+export interface NeogeoEmitOptions extends NeogeoArtOptions {
+  /**
+   * The command byte that starts each scene's track, or stops the music.
+   *
+   * A table rather than a dispatch, for the Mega Drive's reason: a scene change
+   * already costs a redraw and this is the cheapest thing in it. What is unusual
+   * here is where the byte *goes* — `REG_SOUND`, which is not memory at all but
+   * the letterbox to a whole second computer.
+   */
+  sceneTracks?: readonly number[];
+}
 
 /** Point the data port at a compile-time VRAM address, stepping by `step`. */
 function emitVramAddress(ctx: M68kCtx, address: number, step = 1): void {
@@ -155,6 +166,38 @@ function emitSceneDispatch(ctx: M68kCtx, labels: readonly string[]): void {
   ctx.data((data) => {
     data.label(table);
     for (const target of labels) data.dl(label(target));
+  });
+}
+
+/**
+ * Ask the sound processor for the running scene's track.
+ *
+ * One byte to `REG_SOUND`, which is the whole of what this console's game side
+ * does about audio: no driver call, no shared memory, and nothing to wait for.
+ * The other processor is already running and takes it as a non-maskable
+ * interrupt, so a scene change pays a table lookup and a store.
+ */
+function emitSceneMusic(
+  ctx: M68kCtx,
+  scenes: readonly SceneCtx[],
+  options: NeogeoEmitOptions,
+): void {
+  const { asm, program, layout } = ctx;
+  if (ctx.audio?.driver !== true || program.tracks.length === 0) return;
+  const table = "SceneTracks";
+  asm.label("SceneMusic");
+  asm.moveq(0, 0);
+  asm.move("b", at(layout.scene), eaD(0));
+  asm.lea(eaAbs(label(table)), 0);
+  asm.move("b", eaIdx(0, 0, 0), eaD(1));
+  asm.move("b", eaD(1), at(ctx.audio.music));
+  asm.rts();
+  ctx.data((data) => {
+    data.label(table);
+    for (const scene of scenes) {
+      const track = options.sceneTracks?.[scene.index] ?? -1;
+      data.db(track < 0 ? NEOGEO_AUDIO_STOP : track + 1);
+    }
   });
 }
 
@@ -185,6 +228,7 @@ export function emitProgram(ctx: M68kCtx, options: NeogeoEmitOptions = {}): void
 
   emitRenderHelpers(ctx);
   emitTileContactHelper(ctx);
+  emitSceneMusic(ctx, scenes, options);
   ctx.finish();
 
   // --- data ------------------------------------------------------------------
@@ -297,6 +341,7 @@ function emitReset(ctx: M68kCtx): void {
   emitSeedRng(ctx);
 
   asm.jsr("ResetScene");
+  if (ctx.audio?.driver === true && ctx.program.tracks.length > 0) asm.jsr("SceneMusic");
   // The interpreter's camera starts at the origin and only moves at the end of a
   // tick, so a rule reading it on tick one sees zero.
   if (layout.camera !== null) {
@@ -436,6 +481,7 @@ function emitSceneChange(ctx: M68kCtx, scenes: readonly SceneCtx[]): void {
   asm.jsr("ResetScene");
   emitSeedRng(ctx);
   emitClearState(ctx);
+  if (ctx.audio?.driver === true && ctx.program.tracks.length > 0) asm.jsr("SceneMusic");
   asm.jsr("UpdateCamera");
   asm.rts();
 
@@ -797,7 +843,11 @@ function needDrawFixNumber(ctx: M68kCtx): Ref {
       asm.addi("w", glyphTile("0"), eaD(5));
       asm.ori("w", (SYSTEM_PALETTE & 0xf) << 12, eaD(5));
       asm.move("w", eaD(5), eaD(0));
-      asm.jsr("PokeFix");
+      // *Pulled*, not named: a game whose HUD is a counter and no caption never
+      // reaches the text path, so a bare `jsr "PokeFix"` is a label nothing
+      // emits. Helpers are pulled, never pushed (AGENTS.md §Iron rules), and the
+      // reachability closure in `finish()` is what makes a nested pull work.
+      asm.jsr(needPokeFix(inner));
     }
     asm.movem("l", 0x00f0, eaPost(7), false);
     asm.rts();

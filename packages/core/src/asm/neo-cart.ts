@@ -274,15 +274,21 @@ export interface NeoRegions {
   c1: Uint8Array;
   /** Sprite tiles: the even ROM of the pair. */
   c2: Uint8Array;
+  /** The Z80's program, for a build with sound; absent is a silent cartridge. */
+  m?: Uint8Array;
+  /** The ADPCM-A sample ROM the six fixed-rate voices read. */
+  v1?: Uint8Array;
+  /** The ADPCM-B sample ROM the one variable-rate voice reads. */
+  v2?: Uint8Array;
 }
 
 /**
  * Write the `.neo` container.
  *
  * A 4096-byte header of little-endian region lengths and catalogue text, then
- * P, S, M, V1, V2 and C end to end. The M and V regions are empty here: this
- * build emits no Z80 program, so a board with no sound ROMs is what it
- * describes.
+ * P, S, M, V1, V2 and C end to end. A build with no audio leaves the middle three
+ * empty, which is a board with no sound ROMs on it — and is exactly what this
+ * console's cartridges described before it had a driver.
  *
  * **The C region is the pair interleaved a byte at a time**, odd ROM at even
  * offsets. This was the one thing here taken from convention rather than a
@@ -301,18 +307,36 @@ export function packNeoRom(regions: NeoRegions, options: { name?: string; ngh?: 
   header[3] = 0x01; // Format version.
   view.setUint32(0x04, regions.p.length, true);
   view.setUint32(0x08, regions.s.length, true);
-  view.setUint32(0x0c, 0, true); // M ROM: no Z80 program.
-  view.setUint32(0x10, 0, true); // V1.
-  view.setUint32(0x14, 0, true); // V2.
+  // The sound side, and it is three regions rather than one because they are
+  // three different things on three different buses: a Z80 program, and the two
+  // sample ROMs the chip's two ADPCM sections read in two different codecs. All
+  // three are empty for a build with no audio, which is what they were until one
+  // existed.
+  view.setUint32(0x0c, regions.m?.length ?? 0, true);
+  view.setUint32(0x10, regions.v1?.length ?? 0, true);
+  view.setUint32(0x14, regions.v2?.length ?? 0, true);
   view.setUint32(0x18, c.length, true);
   view.setUint32(0x28, options.ngh ?? 0x0001, true);
   for (const [index, code] of [...(options.name ?? "demake").slice(0, 32)].entries()) {
     header[0x2c + index] = code.charCodeAt(0);
   }
 
-  const out = new Uint8Array(header.length + regions.p.length + regions.s.length + c.length);
+  const empty = new Uint8Array(0);
+  const m = regions.m ?? empty;
+  const v1 = regions.v1 ?? empty;
+  const v2 = regions.v2 ?? empty;
+  const out = new Uint8Array(
+    header.length +
+      regions.p.length +
+      regions.s.length +
+      m.length +
+      v1.length +
+      v2.length +
+      c.length,
+  );
   let at = 0;
-  for (const part of [header, regions.p, regions.s, c]) {
+  // The container's own order, which is not the order the header lists them in.
+  for (const part of [header, regions.p, regions.s, m, v1, v2, c]) {
     out.set(part, at);
     at += part.length;
   }

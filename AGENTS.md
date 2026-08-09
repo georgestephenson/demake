@@ -767,10 +767,35 @@ _fourteen_ voices a write belongs to. Numbering only the borrowable ones for bot
 calls the other ten "nobody" and keeps an effect's whole opening statement of the
 chip — a sound effect that silences the music every time it fires.
 
-What is still to come is the last step: `demake build -c neogeo` does not yet put
-that program in the cartridge, so a Neo Geo game still traces perfectly and plays
-silently. What it needs is the M and V regions in the `.neo` container and the
-68000's `REG_SOUND` store, and then the shared battery (doc 13 §A5).
+**And `demake build -c neogeo` puts it in the cartridge.** The `.neo` container
+carries the M and V regions — a Z80 program and the two sample ROMs — and the
+68000's whole share of the audio is one byte stored to `REG_SOUND` at a scene
+change. `packages/demotic/test/audio-neogeo.test.ts` runs the shared battery on
+it, so the fifteenth console plays its own music and effects and is diffed tick
+for tick.
+
+Three things about the wiring are this console's. **A tick nothing is playing is
+not a tick**: this driver runs from boot whether or not a game has asked for
+anything — it is a separate program, so there is nobody to start it — and ticking
+through silence would put a schedule's tick 0 several ticks after the first one
+the hardware delivered. Every other console is spared that because its driver is a
+routine the game calls. **The request can arrive before the driver is listening**,
+because a 68000 boots in a few hundred cycles and this program takes tens of
+thousands; the hardware latches the byte either way and only the interrupt is
+lost, so the boot ends by reading the port — without which a cartridge is silent
+until its second scene. And **one host step is not one instruction of the
+processor the driver runs on**, so the conformance harness watches the Z80's
+instruction stream (`Sound.watch`) exactly as it watches a Super Nintendo's sound
+processor; sampling the program counter after each 68000 instruction sees one
+arrival as dozens.
+
+The battery skips two things for this console and both are recorded rather than
+tolerated. The **handback** assertion, because this driver does not replay a
+borrowed channel (doc 13 §A5.5). And the **size sweep**, on the Game Boy Advance's
+terms: a game is tens of kilobytes of a megabyte P region with its sound program
+in 32 KiB of its own, so there is no budget to catch — and what the sweep would
+still have bought, that a driver's reported sizes are real, is asserted on an
+art-free build in `packages/audio/test/neogeo-driver.test.ts`.
 
 Still to come: the remaining Tier 2/3 consoles (each =
 a codegen backend, a ROM harness + toolchain, and a libretro core + DAC
