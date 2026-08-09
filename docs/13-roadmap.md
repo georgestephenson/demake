@@ -571,16 +571,46 @@ the backend today, and either is a reason to revisit rather than to work around.
    where our model and beetle-vb are compared pixel for pixel on a scene with two
    depths in it.
 
-   **What the backend costs**, in the terms this section uses: axis 1 is free
-   (the encoder is built and pinned); axis 3 is free (`@demake/vb` exists and
-   runs cartridges); axis 2 is the work, and it is *less* than the Mega Drive's
-   was rather than more — the renderer is a display list, and three of the five
-   mechanisms `codegen/shape.ts` assumes are absent here rather than
-   reimplemented (§Axis 2). What has no precedent is giving the language's
-   objects and captions a depth, and the honest place for that decision is a
-   maintainer's rather than an agent's, because "how far in front" is a value no
-   `.dmt` says and no Demakefile may (doc 14 §Scope). The RAM is 64 KiB against
-   an NROM's 2 and the cartridge 512 KiB against 32, so neither budget bites.
+   **The backend is started, and the two layers that go wrong quietly are
+   done.** `codegen/vb/{regs,ctx,val,expr}.ts` exist and are proven on the
+   hardware by `packages/demotic/test/vb-arith.test.ts` — every 16.16 operation
+   against `fixed.ts`, and four generator draws in a row against `rng.ts`. That
+   is the position `sms-arith.test.ts` held while the Sega backend was
+   half-built, and it is deliberately where a partial backend stops: the value
+   layer is what a wrong answer hides in for a thousand ticks, and the renderer
+   is what fails loudly.
+
+   Three findings from writing it are worth carrying forward.
+
+   - **The multiply pulls in nothing.** `mul` leaves the whole 64-bit product
+     across two registers and a 16.16 product is its middle thirty-two bits, so
+     six instructions and no routine — and *no floor correction*, because an
+     arithmetic shift of a two's-complement product already is one. This is the
+     only console in the set with no multiply helper.
+   - **The divide is the one place this machine is worse than its neighbours.**
+     `div` is 32-by-32 and a 16.16 numerator is 48 bits, so there is a
+     shift-and-subtract loop — with the Mega Drive's escape, since a divisor
+     that is a whole number of cells is a single `divu`. Every `n / fps`
+     constant folds onto that path.
+   - **A `jal` returns through a register**, so a helper that calls a helper
+     destroys its own return address — and that reads as a *hang* rather than as
+     a wrong number. `ctx.enter`/`leave` are the answer and no other backend
+     needs a counterpart, because every other console in the set pushes.
+
+   **What is left** is `tiles.ts`, `rules.ts`, `emit.ts`, `vb.ts` and
+   `vb-art.ts` — the tile walk, the rule bodies, the renderer, the console's six
+   answers and its image path — plus the registry entry, `rom.test.ts`'s target
+   list and a `vb-rom.test.ts` rendering oracle. In the terms this section uses:
+   axis 1 is free (the encoder is built and pinned); axis 3 is free
+   (`@demake/vb` exists and runs cartridges); axis 2 is the work, and it is
+   *less* than the Mega Drive's was rather than more — the renderer is a display
+   list, and three of the five mechanisms `codegen/shape.ts` assumes are absent
+   here rather than reimplemented (§Axis 2). What has no precedent is giving the
+   language's objects and captions a depth, and the honest place for that
+   decision is a maintainer's rather than an agent's, because "how far in front"
+   is a value no `.dmt` says and no Demakefile may (doc 14 §Scope) — `VB_DEPTH`
+   is a proposal, not a settled answer. The RAM is 64 KiB against an NROM's 2
+   and the cartridge 512 KiB against 32, so neither budget bites.
 
    **The sound is half done, and it is the half that does not need the backend.**
    `@demake/chip` models the VSU, `binding/vb.ts` drives it and

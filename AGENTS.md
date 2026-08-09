@@ -1346,6 +1346,21 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
                      which is *two* machines: gba/machine.ts is the description
                      that makes a Nintendo DS a variant rather than a seventh
                      backend, on the Mega Duck's terms
+    vb/              the V810's, and *started rather than finished*: regs.ts,
+                     ctx.ts, val.ts and expr.ts exist and are proven on the
+                     hardware by demotic/test/vb-arith.test.ts; the tile walk,
+                     the rule bodies, the renderer and the image path are not
+                     written and this console is **not** in codegen/registry.ts.
+                     Two things in what is there have no counterpart elsewhere.
+                     The multiply pulls in *nothing* — mul leaves the whole
+                     64-bit product and a 16.16 product is its middle
+                     thirty-two bits, with no floor correction because an
+                     arithmetic shift of a two's-complement product already is
+                     one. And a `jal` returns through a *register*, so a helper
+                     that calls a helper destroys its own return address, which
+                     reads as a hang rather than as a wrong number — ctx.enter/
+                     leave are the answer, and no other backend needs one
+                     because every other console pushes
     audio.ts         the hand-off to @demake/audio, art.ts's twin
   demo/              terminal runner (play.mjs) and test runner (test.mjs)
 packages/chip/       @demake/chip — every sound chip as a register-driven model (doc 16)
@@ -3778,6 +3793,20 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   opcode bytes `packages/core/test/huc6280.test.ts` pins — and the VDC test is
   where the _increment select_ was found to be one bit out, which no trace and no
   register assertion could have seen.
+- `packages/demotic/test/vb-arith.test.ts` is the Virtual Boy's, and it is
+  currently the _only_ thing that runs V810 code the code generator wrote —
+  the position `sms-arith.test.ts` held while the Sega backend was half-built,
+  and the reason a partial backend stops where this one does. Three of its
+  vectors are aimed at answers this machine gives that no predecessor does: a
+  multiply with **no** floor correction (an arithmetic shift of the hardware's
+  own 64-bit product already is one, so `THIRD × -THIRD` is where a version that
+  assembled the product from unsigned halves would fail and pass everything
+  else), a divide with _two_ paths of which the example library only ever
+  reaches the first, and a pooled constant that is in the cartridge where a
+  variable is not. Its generator case is what caught the integer part being
+  taken with a logical shift: the Neo Geo Pocket subtracts in a sixteen-bit
+  register and gets the sign extension from the wrap, and `random(-1, 1)` on a
+  thirty-two-bit one computes a count of −65534.
 - `packages/demotic/test/nes-arith.test.ts` is one layer below that: it assembles
   each 16.16 operation on its own, runs it in `@demake/nes` and compares with
   `fixed.ts`. A multiply that floors the wrong way for negative operands makes a
