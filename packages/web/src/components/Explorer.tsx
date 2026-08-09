@@ -119,12 +119,23 @@ export function Explorer({
     element.setSelectionRange(start, start + (dot > 0 ? dot : name.length));
   }, [editing === null, editing?.from]);
 
+  /**
+   * Take what is in the box, from the box.
+   *
+   * Not from `editing.text`, which is the same string one render behind. A
+   * keystroke sets state and the state reaches this closure on the *next* render,
+   * so typing a name and pressing Enter before one happens — which is a loaded
+   * machine, or simply a fast typist — committed the name the box used to hold.
+   * Equal to the name being renamed, that is `to === editing.from`, and the
+   * rename silently did nothing at all.
+   */
   const commit = (): void => {
     if (editing === null) return;
-    const to = normalisePath(editing.text);
+    const typed = box.current?.value ?? editing.text;
+    const to = normalisePath(typed);
     setEditing(null);
     if (to === undefined) {
-      if (editing.text.trim() !== "") onNotice(`'${editing.text}' is not a path in this project.`);
+      if (typed.trim() !== "") onNotice(`'${typed}' is not a path in this project.`);
       return;
     }
     if (to === editing.from) return;

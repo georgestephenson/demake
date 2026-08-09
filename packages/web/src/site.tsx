@@ -68,6 +68,7 @@ import { download } from "./lib/download.js";
  */
 const TAGLINES: Readonly<Record<Section, string>> = {
   game: "one source project, ROMs for every game console",
+  tests: "assertions about a game, run on every console",
   level: "draw a level, or write it",
   text: "the project's own files, as text",
   language: "every statement, property and diagnostic",
@@ -85,6 +86,7 @@ const TAGLINES: Readonly<Record<Section, string>> = {
  */
 const ENGINES: Readonly<Record<Section, readonly string[]>> = {
   game: ["@demake/demotic", "@demake/core"],
+  tests: ["@demake/demotic"],
   level: ["@demake/demotic"],
   text: ["@demake/demotic"],
   language: ["@demake/demotic"],
@@ -251,17 +253,19 @@ export function Site() {
     const load =
       section === "game"
         ? () => import("./sections/GameDemaker.js").then((m) => m.GameDemaker)
-        : section === "level"
-          ? () => import("./sections/LevelEditor.js").then((m) => m.LevelEditor)
-          : section === "text"
-            ? () => import("./sections/TextEditor.js").then((m) => m.TextEditor)
-            : section === "language"
-              ? () => import("./sections/LanguageDocs.js").then((m) => m.LanguageDocs)
-              : section === "music"
-                ? () => import("./sections/MusicDemaker.js").then((m) => m.MusicDemaker)
-                : section === "sound"
-                  ? () => import("./sections/SoundDemaker.js").then((m) => m.SoundDemaker)
-                  : null;
+        : section === "tests"
+          ? () => import("./sections/TestEditor.js").then((m) => m.TestEditor)
+          : section === "level"
+            ? () => import("./sections/LevelEditor.js").then((m) => m.LevelEditor)
+            : section === "text"
+              ? () => import("./sections/TextEditor.js").then((m) => m.TextEditor)
+              : section === "language"
+                ? () => import("./sections/LanguageDocs.js").then((m) => m.LanguageDocs)
+                : section === "music"
+                  ? () => import("./sections/MusicDemaker.js").then((m) => m.MusicDemaker)
+                  : section === "sound"
+                    ? () => import("./sections/SoundDemaker.js").then((m) => m.SoundDemaker)
+                    : null;
     if (!load) return;
     void load().then(
       (component) =>

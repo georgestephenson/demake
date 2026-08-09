@@ -10,7 +10,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/compile.js";
-import { findEntry, isIgnoredPath, isProject, suiteFor } from "../src/project/entry.js";
+import { findEntry, gameFor, isIgnoredPath, isProject, suiteFor } from "../src/project/entry.js";
 import { kindOf } from "../src/project/kinds.js";
 import { resolveReference, shortestName } from "../src/project/resolve.js";
 import { findProfile } from "../src/profiles.js";
@@ -271,5 +271,23 @@ describe("findEntry", () => {
     const files = ["src/pong.dmt", "src/pong.test.dmt", "src/other.dmt"];
     expect(suiteFor("src/pong.dmt", files)).toBe("src/pong.test.dmt");
     expect(suiteFor("src/other.dmt", files)).toBeUndefined();
+  });
+
+  it("finds the game a suite is about, which is `suiteFor` read backwards", () => {
+    const files = ["src/pong.dmt", "src/pong.test.dmt", "art/ball.svg"];
+    expect(gameFor("src/pong.test.dmt", files)).toBe("src/pong.dmt");
+  });
+
+  it("falls back to the project's entry point when the names do not pair", () => {
+    // A suite is a program *about* a game and a project has one game, so a
+    // folder whose suite is named differently is still testing it.
+    const files = ["src/pong.dmt", "src/balance.test.dmt"];
+    expect(gameFor("src/balance.test.dmt", files)).toBe("src/pong.dmt");
+  });
+
+  it("has no answer where there is no game, or where it was not asked about a suite", () => {
+    expect(gameFor("src/pong.test.dmt", ["src/pong.test.dmt"])).toBeUndefined();
+    // A `.dmt` that is not a suite *is* the game; there is nothing to pair.
+    expect(gameFor("src/pong.dmt", ["src/pong.dmt"])).toBeUndefined();
   });
 });

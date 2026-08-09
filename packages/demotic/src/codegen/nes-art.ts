@@ -41,7 +41,7 @@ import {
 import type { Program } from "../program.js";
 import { selectBank, TILE_BYTES, type SelectedBank } from "../rom/graphics.js";
 
-import { artRequests, TilePool, type AssetBytes } from "./art.js";
+import { artRequests, digest, remember, rememberAsync, TilePool, type AssetBytes } from "./art.js";
 import { artKey, instanceCells } from "./shape.js";
 import { NES_MEMORY } from "./layout.js";
 import { ART_PALETTES, SYSTEM_PALETTE, type NesEmitOptions } from "./nes/emit.js";
@@ -53,6 +53,27 @@ export const PATTERNS_PER_TABLE = 256;
 
 /** Background sub-palettes a picture may use: all of them (see `packBackdropPalette`). */
 export const BACKDROP_PALETTES = 4;
+
+/**
+ * Demaking is expensive, deterministic, and asked for over and over.
+ *
+ * The same memo the other seven art modules keep, and this console wants it
+ * most: a screenful here is 960 cells against a Game Boy's 360, fitted to a
+ * *fixed* master palette, and the pictures arrive one at a time rather than
+ * concurrently — so a build that demakes two of them is two full tournaments
+ * back to back. Meanwhile the callers that matter ask for the same one
+ * repeatedly: the web app recompiles the game on every keystroke, and a test
+ * file builds one fixture several times over.
+ *
+ * The conversion is a pure function of (bytes, budget, overrides), so
+ * remembering its answer cannot change one — the budget is in the key because it
+ * is what a picture may spend (§{@link bindNesArt}), and two pictures with the
+ * same bytes and different room are two different fits. A speed optimisation
+ * over a pure function, never one that changes bytes.
+ */
+const CACHE_LIMIT = 12;
+const backdropCache = new Map<string, Promise<Backdrop>>();
+const bankCache = new Map<string, SpriteBank>();
 
 /** What the art binding produced, beyond the emitter's own options. */
 export interface BoundNesArt {
@@ -431,15 +452,22 @@ export async function bindNesArt(
   const demakeBank = (kind: "sprite" | "tile"): SpriteBank | null => {
     const list = sources[kind];
     if (list.length === 0) return null;
-    return buildSpriteBank(list, {
-      console: "nes",
-      packing: "grouped",
-      // Level tile art is fitted to one background palette, because a 16×16
-      // attribute cell covers four map cells: two adjacent legend entries cannot
-      // have different palettes, whatever the fit would prefer.
-      maxPalettes: kind === "tile" ? 1 : ART_PALETTES,
-      ...(kind === "tile" ? { opaque: true } : {}),
-    });
+    const key = `nes:${kind}:${list.map((source) => `${source.name}:${digest(source.bytes)}`).join("|")}`;
+    return remember(
+      bankCache,
+      key,
+      () =>
+        buildSpriteBank(list, {
+          console: "nes",
+          packing: "grouped",
+          // Level tile art is fitted to one background palette, because a 16×16
+          // attribute cell covers four map cells: two adjacent legend entries cannot
+          // have different palettes, whatever the fit would prefer.
+          maxPalettes: kind === "tile" ? 1 : ART_PALETTES,
+          ...(kind === "tile" ? { opaque: true } : {}),
+        }),
+      CACHE_LIMIT,
+    );
   };
   const objects = demakeBank("sprite");
   const backgrounds = demakeBank("tile");
@@ -534,11 +562,13 @@ export async function bindNesArt(
     // later conversion cannot start until an earlier one has been interned. The
     // tournament inside each conversion still spreads across the executor's lanes,
     // which is where a backdrop's time actually goes.
-    const art = await demakeBackdrop(
-      assets.get(scene.backdrop as string) as Uint8Array,
-      budget,
-      executor,
-      settings?.[scene.backdrop as string],
+    const source = assets.get(scene.backdrop as string) as Uint8Array;
+    const overrides = settings?.[scene.backdrop as string];
+    const art = await rememberAsync(
+      backdropCache,
+      `nes:${budget}:${digest(source)}:${JSON.stringify(overrides ?? {})}`,
+      () => demakeBackdrop(source, budget, executor, overrides),
+      CACHE_LIMIT,
     );
     const map = new Uint8Array(art.map.length);
     for (let cell = 0; cell < art.map.length; cell += 1) {

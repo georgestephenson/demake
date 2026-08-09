@@ -2019,3 +2019,496 @@ main.text-layout .source-editor {
 .legend-note {
   color: var(--warn);
 }
+
+/* --- the block editor (see components/BlockEditor.tsx) ---------------------- */
+
+/*
+ * A view over the file, so it is laid out like one: a column of rows in source
+ * order, each as tall as its content and none of them nested. There is no canvas
+ * and there are no wires, because the language is flat (doc 19 §The block
+ * editor) — what a block earns over a line of text is a field that knows what
+ * may go in it.
+ */
+.block-editor {
+  min-width: 0;
+}
+
+/* What is wrong, counted, above the list — because a row scrolled out of view
+   is a problem you cannot see. */
+.block-problems {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 0 0.4rem;
+  font-size: 0.78rem;
+}
+
+.block-problems button {
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.block-problems button:hover,
+.block-problems button:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* The palette: every statement the dialect's registry lists, and no more —
+   as a grid you can look through and a box you can type into, because those
+   are good at opposite things. */
+.block-palette-bar {
+  display: grid;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+
+.block-search {
+  justify-self: start;
+  min-width: min(18rem, 100%);
+}
+
+.block-palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.block-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.78rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--ink);
+  cursor: grab;
+}
+
+.block-chip:hover,
+.block-chip:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.block-symbol {
+  flex: none;
+  color: var(--accent);
+}
+
+.block-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0.4rem;
+  list-style: none;
+  height: 44vh;
+  min-height: 280px;
+  overflow: auto;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.block-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.35rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+/* A blank line is a row, because blank lines are how a game is sectioned — and it
+   is drawn as the gap it is: a rule where the fields would be, and no box.
+   It keeps its natural height rather than being squashed to a sliver, because a
+   row shorter than its own contents lets the next row's controls bleed up
+   through it. */
+.block-row.block-blank {
+  background: none;
+}
+
+.block-blank .block-note {
+  display: block;
+  width: 100%;
+  border-top: 1px dashed var(--line);
+}
+
+/* The row the keyboard is on: the one Tab reaches, whose fields are in the tab
+   order, and where a new statement lands. */
+.block-row.active {
+  border-color: var(--accent);
+}
+
+/* A problem is shown *at* its row, so the row says so too. */
+.block-row.has-error {
+  border-left: 3px solid var(--error);
+}
+
+.block-row.has-warning {
+  border-left: 3px solid var(--warn);
+}
+
+/* Diagnostics that name no row in this file — the game's, when a suite is open.
+   Its own item at the top of the list rather than nowhere at all. */
+.block-row.block-loose {
+  display: block;
+  border-left: 3px solid var(--error);
+  background: color-mix(in srgb, var(--error) 8%, var(--panel));
+}
+
+.block-row.block-loose p {
+  margin: 0.1rem 0;
+  font-size: 0.74rem;
+}
+
+/* A row the keyboard has picked up. It is lifted rather than tinted, because
+   what has changed is that the arrows now move *it* rather than the focus. */
+.block-row.held {
+  border-color: var(--accent);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 30%);
+  transform: scale(1.01);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .block-row.held {
+    transform: none;
+  }
+}
+
+.block-row.block-raw {
+  border-color: var(--error);
+}
+
+/* Where a drop would land. Drawn on the row's own edge rather than as a spacer,
+   so nothing below it moves while the pointer is travelling. */
+.block-row.drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.block-row.drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.block-grip {
+  padding: 0.15rem;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: grab;
+  line-height: 0;
+}
+
+.block-grip:focus-visible {
+  color: var(--accent);
+}
+
+.block-line {
+  min-width: 2ch;
+  font-size: 0.7rem;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.block-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.block-keyword {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* The grammar's own connective words — `in`, `then`, `from`, a bracket. Shown
+   rather than hidden: a rule whose `then` had become a layout convention would
+   read as a different statement from the one in the file. */
+.block-glue {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.block-field,
+.block-text {
+  padding: 0.15rem 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.78rem;
+  min-width: 0;
+}
+
+.block-text {
+  flex: 1 1 12rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.block-field:focus-visible,
+.block-text:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* A `<select>` is as wide as its longest option, so a property picker was as wide
+   as `ydirection` on every row of the file. Capped, the selected value is what is
+   read and the list is still complete when it opens. */
+.block-choice {
+  max-width: 11rem;
+}
+
+.block-choice[data-slot="property"] {
+  max-width: 7.5rem;
+}
+
+/* An item of a list, wrapped only so the editor can find the one it has just
+   added and put the caret in it. `contents`, so a row lays out exactly as it did
+   before there were lists. */
+.block-item {
+  display: contents;
+}
+
+/* The arity of a list, made editable: ⊕ at the end of a clause, ⊖ after each
+   item it may take away. Small and quiet — they sit *inside* a statement, so a
+   row of them at button weight would read as the loudest thing on the line. */
+.block-arity {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--bg);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.72rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.block-arity:hover,
+.block-arity:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+
+/* Tucked against the item it removes, so which one it means is a matter of
+   looking rather than counting. */
+.block-drop {
+  margin-left: -0.15rem;
+}
+
+/* A clause with nothing in it names what it would write. A collision rule has
+   two lists, so one with no `from` puts two ⊕s side by side — identical circles
+   meaning different things, which is the one arrangement a symbol cannot carry
+   on its own. */
+.block-add-first {
+  width: auto;
+  gap: 0.2rem;
+  padding: 0 0.35rem;
+  border-radius: 0.6rem;
+}
+
+/* A string's slot covers the *contents* of the literal, so the quotes are the
+   editor's to draw — printed as glue they came out as debris at the end of a
+   wrapped line. */
+.block-quoted::before,
+.block-quoted::after {
+  content: "\201C";
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.block-quoted::after {
+  content: "\201D";
+}
+
+/* Every place a row could go, filtered by typing — the move a drag is worst
+   at. Anchored to the row rather than the viewport, so it opens where you are
+   looking. */
+.block-moveto {
+  grid-column: 2 / -1;
+  display: grid;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+  padding: 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.block-places {
+  display: grid;
+  gap: 0.1rem;
+  max-height: 12rem;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.block-places button {
+  width: 100%;
+  padding: 0.15rem 0.3rem;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--ink);
+  font-size: 0.74rem;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.block-places button:hover,
+.block-places button:focus-visible {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.block-remove {
+  padding: 0 0.3rem;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.block-remove:hover,
+.block-remove:focus-visible {
+  color: var(--error);
+}
+
+.block-row .diag-error,
+.block-row .diag-warning {
+  grid-column: 3 / -1;
+  margin: 0.15rem 0 0;
+  font-size: 0.72rem;
+}
+
+/* Art is picked as art (doc 19): the button shows the picture the statement
+   names, and the gallery is the project's own, drawn. */
+/* The button and its gallery are laid out by the row's own body rather than by
+   a box around them, so the gallery can take a line to itself. */
+.block-art {
+  display: contents;
+}
+
+.block-thumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+}
+
+.block-thumb img {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+/* A full-width line of its own inside the row's body, which is a wrapping flex
+   row — `flex-basis: 100%` is what makes it take one. */
+.block-gallery {
+  flex: 1 0 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 0.4rem;
+  width: 100%;
+  max-height: 16rem;
+  overflow: auto;
+  margin-top: 0.3rem;
+  padding: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.block-tile {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.3rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink);
+  font-size: 0.68rem;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.block-tile.picked,
+.block-tile:hover,
+.block-tile:focus-visible {
+  border-color: var(--accent);
+}
+
+.block-tile img {
+  width: 100%;
+  height: 48px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  background: var(--bg);
+  border-radius: 4px;
+}
+
+/* --- the suite editor (see sections/TestEditor.tsx) ------------------------- */
+
+main.tests-layout {
+  display: grid;
+  grid-template-columns: minmax(340px, 3fr) minmax(280px, 2fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 1000px) {
+  main.tests-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.suite-pass,
+.suite-fail {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.suite-pass {
+  color: var(--accent);
+}
+
+.suite-fail {
+  color: var(--error);
+}

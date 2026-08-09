@@ -29,6 +29,15 @@ export default defineConfig({
   },
   test: {
     include: ["packages/*/test/**/*.test.ts"],
+    // A demade picture is shared between worker processes for the length of one
+    // run (`packages/demotic/test/_art-store.ts`). A test file is the unit Vitest
+    // schedules, so without this the same fixture is fitted from scratch in every
+    // file that builds it — a fifth of all the conversion time the suite spends.
+    // The store keys on a digest of the engine's own source, so it cannot answer
+    // for code that has changed; `globalSetup` is what computes that and what
+    // removes the directory afterwards.
+    globalSetup: ["packages/demotic/test/_art-cache-setup.ts"],
+    setupFiles: ["packages/demotic/test/_art-store.ts"],
     // Tournament-driven tests run several full prep pipelines per assertion
     // (9 candidates since the graded portfolio); give them headroom while the
     // whole suite stays under the doc-10 two-minute target.

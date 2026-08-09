@@ -20,6 +20,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+
+import { useDismiss } from "./popover.js";
 import type { JSX } from "preact";
 
 /** One command in a menu. */
@@ -143,22 +145,9 @@ export function MenuBar({ menus }: { menus: readonly Menu[] }): JSX.Element {
   const switched = useRef<string | null>(null);
 
   // A menu closes on Escape and on anything outside it, which is the behaviour
-  // every menu bar has and the one nobody notices until it is missing.
-  useEffect(() => {
-    if (open === null) return;
-    const away = (event: Event): void => {
-      if (!bar.current?.contains(event.target as Node)) setOpen(null);
-    };
-    const escape = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") setOpen(null);
-    };
-    addEventListener("pointerdown", away);
-    addEventListener("keydown", escape);
-    return () => {
-      removeEventListener("pointerdown", away);
-      removeEventListener("keydown", escape);
-    };
-  }, [open]);
+  // every menu bar has and the one nobody notices until it is missing. The rule
+  // lives in `popover.ts` because the block editor's pickers need the same one.
+  useDismiss(bar, open !== null, () => setOpen(null));
 
   const choose = useCallback((item: MenuItem) => {
     if (item.disabled || !item.run) return;

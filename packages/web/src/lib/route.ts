@@ -13,10 +13,19 @@
  * one falls back to (doc 07 §UX).
  */
 
-import { extensionOf, kindOf } from "@demake/demotic";
+import { extensionOf, isSuite, kindOf } from "@demake/demotic";
 
 /** The editors, in the order the workbench would list them. */
-export const SECTIONS = ["game", "level", "text", "language", "art", "music", "sound"] as const;
+export const SECTIONS = [
+  "game",
+  "tests",
+  "level",
+  "text",
+  "language",
+  "art",
+  "music",
+  "sound",
+] as const;
 
 /** One editor's id. */
 export type Section = (typeof SECTIONS)[number];
@@ -24,6 +33,7 @@ export type Section = (typeof SECTIONS)[number];
 /** Human-readable names. */
 export const SECTION_LABELS: Readonly<Record<Section, string>> = {
   game: "demotic game demaker",
+  tests: "demotic suite editor",
   level: "level editor",
   text: "text editor",
   language: "demotic reference",
@@ -40,7 +50,15 @@ export const SECTION_LABELS: Readonly<Record<Section, string>> = {
  * carry the whole game language and the whole audio engine, and someone who came
  * to convert an image should download neither (doc 07 §Quality bar).
  */
-export const LAZY: readonly Section[] = ["game", "level", "text", "language", "music", "sound"];
+export const LAZY: readonly Section[] = [
+  "game",
+  "tests",
+  "level",
+  "text",
+  "language",
+  "music",
+  "sound",
+];
 
 const DEFAULT_SECTION: Section = "art";
 
@@ -90,8 +108,17 @@ export function isTextFile(path: string): boolean {
  * language has no kind for — nothing in a program can *name* a program — so it
  * is named here, and everything left over that reads as text gets the plain
  * editor rather than nothing.
+ *
+ * The two `.dmt`s are two editors, and `isSuite` is the engine's own answer to
+ * which is which — the same predicate `findEntry` uses to decide that a folder
+ * holding `pong.dmt` and `pong.test.dmt` has one game in it rather than two.
  */
 export function sectionForFile(path: string): Section | undefined {
+  // A suite is asked about *first*, because it is a `.dmt` too and the longer
+  // extension is the whole distinction. Without this it opened the game demaker
+  // — a console picker, a cartridge and a playable preview, wrapped around a
+  // file that builds to nothing (doc 19 §The suite editor).
+  if (isSuite(path)) return "tests";
   if (path.endsWith(".dmt")) return "game";
   switch (kindOf(path)) {
     case "art":

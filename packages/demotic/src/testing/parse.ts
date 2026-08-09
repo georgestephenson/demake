@@ -17,8 +17,11 @@
 
 import type { Diagnostic } from "../errors.js";
 import type { Expr } from "../lang/ast.js";
+import type { Comment } from "../lang/lex.js";
 import { parseExpression } from "../lang/parse.js";
+import type { SlotKind, SourceSlot, StatementSpan } from "../lang/slots.js";
 import { ACTIONS, type Action } from "../program.js";
+import { TEST_KEYWORDS } from "./spec.js";
 
 /**
  * How long a step lasts, in the unit it was written in.
@@ -67,13 +70,36 @@ export interface TestCase {
 export interface TestFile {
   cases: TestCase[];
   diagnostics: Diagnostic[];
+  /**
+   * Where each statement's editable parts are (`lang/slots.ts`).
+   *
+   * The same side channel the game parser keeps, for the same reason and in the
+   * same shape: a block editor works on a suite exactly as it works on a game,
+   * over one component that knows nothing about either grammar.
+   */
+  spans: StatementSpan[];
+  /**
+   * Comments, as source ranges — the lexer's own habit, one grammar along.
+   *
+   * `lex.ts` keeps them because the highlighter would otherwise have to re-decide
+   * where a comment starts; this keeps them because a block editor would. A suite
+   * is not lexed at all, so without these the page would be matching `--` itself,
+   * and the two files disagree about the rule: a game needs a space before it (so
+   * `y--1` is arithmetic), a suite has no arithmetic to protect.
+   */
+  comments: Comment[];
 }
 
 const ACTION_SET = new Set<string>(ACTIONS);
 
-function stripComment(line: string): string {
-  const at = line.indexOf("--");
-  return (at < 0 ? line : line.slice(0, at)).trim();
+/** A duration, and where its parts sit in the text it was read from. */
+interface ReadDuration {
+  duration: Duration;
+  /** Length of the count, which always starts the text. */
+  countLength: number;
+  /** Where the unit word sits, when one was written. */
+  unitAt?: number;
+  unitLength?: number;
 }
 
 /**
@@ -90,21 +116,31 @@ function stripComment(line: string): string {
  * tick" means exactly that, and a bare number still reads as ticks because it
  * always has.
  */
-function parseDuration(rest: string): Duration | undefined {
-  const match = /^(\d+(?:\.\d+)?)(?:\s+(ticks?|seconds?))?$/i.exec(rest.trim());
+function parseDuration(rest: string): ReadDuration | undefined {
+  const text = rest.trim();
+  const match = /^(\d+(?:\.\d+)?)(?:\s+(ticks?|seconds?))?$/i.exec(text);
   if (!match) return undefined;
   const count = Number(match[1]);
   if (!Number.isFinite(count) || count < 0) return undefined;
-  const unit = (match[2] ?? "ticks").toLowerCase();
-  if (unit.startsWith("second")) return { unit: "seconds", count };
+  const written = match[2];
+  const unit = (written ?? "ticks").toLowerCase();
   // A fractional tick is not a thing the simulation has.
-  return Number.isSafeInteger(count) ? { unit: "ticks", count } : undefined;
+  if (!unit.startsWith("second") && !Number.isSafeInteger(count)) return undefined;
+  const duration: Duration = unit.startsWith("second")
+    ? { unit: "seconds", count }
+    : { unit: "ticks", count };
+  const countLength = (match[1] as string).length;
+  return written === undefined
+    ? { duration, countLength }
+    : { duration, countLength, unitAt: text.length - written.length, unitLength: written.length };
 }
 
 /** Parse a `.test.dmt` source file. Never throws. */
 export function parseTests(source: string): TestFile {
   const cases: TestCase[] = [];
   const diagnostics: Diagnostic[] = [];
+  const spans: StatementSpan[] = [];
+  const comments: Comment[] = [];
   let current: TestCase | undefined;
 
   const fail = (line: number, code: string, message: string, hint?: string): void => {
@@ -118,14 +154,51 @@ export function parseTests(source: string): TestFile {
   };
 
   const lines = source.split("\n");
+  // Where the line being read starts in the file. Slots are offsets into the
+  // whole source, because an editor splices the file rather than the line.
+  let lineStart = 0;
   for (let index = 0; index < lines.length; index += 1) {
     const line = index + 1;
-    const text = stripComment(lines[index] as string);
+    const raw = lines[index] as string;
+    const start = lineStart;
+    lineStart += raw.length + 1;
+
+    const comment = raw.indexOf("--");
+    const body = comment < 0 ? raw : raw.slice(0, comment);
+    if (comment >= 0) comments.push({ start: start + comment, end: start + raw.length, line });
+    const text = body.trim();
     if (text === "") continue;
+    const at = start + (body.length - body.trimStart().length);
 
     const space = text.search(/\s/);
     const keyword = (space < 0 ? text : text.slice(0, space)).toLowerCase();
-    const rest = space < 0 ? "" : text.slice(space + 1).trim();
+    const tail = space < 0 ? "" : text.slice(space + 1);
+    const rest = tail.trim();
+    const restAt =
+      at + (space < 0 ? text.length : space + 1 + tail.length - tail.trimStart().length);
+
+    // Slots are recorded against `rest`, which is where everything editable is:
+    // the keyword itself is what the row *is*, and it is changed by replacing the
+    // row rather than by typing over the word.
+    const slots: SourceSlot[] = [];
+    const mark = (kind: SlotKind, from: number, length: number): void => {
+      slots.push({ kind, line, start: restAt + from, end: restAt + from + length });
+    };
+    const record = (): void => {
+      spans.push({
+        keyword,
+        line,
+        start: at,
+        end: at + text.length,
+        keywordEnd: at + keyword.length,
+        slots,
+        // No statement in this grammar repeats a part: a suite holds one button,
+        // one scene, one claim per line. The field is here so a caller is written
+        // against `StatementSpan` rather than against whichever of the two
+        // languages it happens to have open.
+        lists: [],
+      });
+    };
 
     if (keyword === "test") {
       if (rest === "") {
@@ -139,6 +212,8 @@ export function parseTests(source: string): TestFile {
       }
       current = { name: rest, steps: [], line };
       cases.push(current);
+      mark("title", 0, rest.length);
+      record();
       continue;
     }
 
@@ -154,12 +229,14 @@ export function parseTests(source: string): TestFile {
 
     switch (keyword) {
       case "play": {
-        const duration = parseDuration(rest);
-        if (duration === undefined) {
+        const read = parseDuration(rest);
+        if (read === undefined) {
           fail(line, "E_SYNTAX", "`play` takes a duration", "e.g. `play 4 seconds`");
           break;
         }
-        current.steps.push({ kind: "play", duration, line });
+        current.steps.push({ kind: "play", duration: read.duration, line });
+        markDuration(mark, read, 0);
+        record();
         break;
       }
 
@@ -175,6 +252,8 @@ export function parseTests(source: string): TestFile {
           break;
         }
         current.steps.push({ kind: "press", action: action as Action, line });
+        mark("button", 0, rest.length);
+        record();
         break;
       }
 
@@ -190,7 +269,8 @@ export function parseTests(source: string): TestFile {
           break;
         }
         const action = (match[1] as string).toLowerCase();
-        const duration = parseDuration(match[2] as string);
+        const written = match[2] as string;
+        const read = parseDuration(written);
         if (!ACTION_SET.has(action)) {
           fail(
             line,
@@ -200,22 +280,31 @@ export function parseTests(source: string): TestFile {
           );
           break;
         }
-        if (duration === undefined) {
+        if (read === undefined) {
           fail(line, "E_SYNTAX", "`hold` needs a duration", "e.g. `hold left for 5 seconds`");
           break;
         }
-        current.steps.push({ kind: "hold", action: action as Action, duration, line });
+        current.steps.push({
+          kind: "hold",
+          action: action as Action,
+          duration: read.duration,
+          line,
+        });
+        mark("button", 0, action.length);
+        // `for` may be spaced any way at all, so the duration is found by where
+        // the tail of the line begins rather than by counting the words.
+        markDuration(mark, read, rest.length - written.length);
+        record();
         break;
       }
 
       case "expect": {
         const sceneMatch = /^scene\s+(\w+)$/i.exec(rest);
         if (sceneMatch) {
-          current.steps.push({
-            kind: "expectScene",
-            scene: (sceneMatch[1] as string).toLowerCase(),
-            line,
-          });
+          const name = sceneMatch[1] as string;
+          current.steps.push({ kind: "expectScene", scene: name.toLowerCase(), line });
+          mark("scene", rest.length - name.length, name.length);
+          record();
           break;
         }
         const { expr, error } = parseExpression(rest, line);
@@ -224,6 +313,8 @@ export function parseTests(source: string): TestFile {
           break;
         }
         current.steps.push({ kind: "expect", expr: expr as Expr, source: rest, line });
+        mark("expression", 0, rest.length);
+        record();
         break;
       }
 
@@ -232,10 +323,22 @@ export function parseTests(source: string): TestFile {
           line,
           "E_UNKNOWN_STATEMENT",
           `unknown statement '${keyword}'`,
-          "statements are test, play, press, hold, expect",
+          `statements are ${TEST_KEYWORDS.join(", ")}`,
         );
     }
   }
 
-  return { cases, diagnostics };
+  return { cases, diagnostics, spans, comments };
+}
+
+/** Record a duration's count and, where one was written, its unit. */
+function markDuration(
+  mark: (kind: SlotKind, from: number, length: number) => void,
+  read: ReadDuration,
+  from: number,
+): void {
+  mark("number", from, read.countLength);
+  if (read.unitAt !== undefined && read.unitLength !== undefined) {
+    mark("duration-unit", from + read.unitAt, read.unitLength);
+  }
 }
