@@ -37,6 +37,7 @@ import { describe, expect, it } from "vitest";
 import { analyze } from "../src/codegen/analyze.js";
 import { planLayout, VB_MEMORY, VB_RAM_BASE } from "../src/codegen/layout.js";
 import { VbCtx } from "../src/codegen/vb/ctx.js";
+import { emitRngPick } from "../src/codegen/vb/expr.js";
 import { RAM } from "../src/codegen/vb/regs.js";
 import {
   abs32,
@@ -57,10 +58,31 @@ import {
 } from "../src/codegen/vb/val.js";
 import { compile } from "../src/compile.js";
 import { clampFixed, div, mul, ONE } from "../src/fixed.js";
+import { draw } from "../src/rng.js";
 import { getProfile } from "../src/profiles.js";
 
 /** A program with nothing in it: all these tests need from one is a layout. */
 const PROGRAM = compile("start only\n\nscene only\n", { profile: getProfile("vb") });
+
+/**
+ * One that draws, because the generator is allocated only when something asks.
+ *
+ * A separate fixture rather than the one above, so every other case here keeps
+ * the memory map an empty program has — the addresses in a failure message stay
+ * the ones a reader can look up.
+ */
+const DRAWS = compile(
+  [
+    "start only",
+    "seed 1",
+    "",
+    "scene only",
+    "create number die in only (x 1, y 1, value 0)",
+    "when always in only then die.value as random(0, 3)",
+    "",
+  ].join("\n"),
+  { profile: getProfile("vb") },
+);
 
 /** A third of a cell, as a whole 16.16 value — `ONE / 3` is not one. */
 const THIRD = Math.floor(ONE / 3);
@@ -83,10 +105,10 @@ function read32(machine: Vb, address: number): number {
 }
 
 /** Assemble `body` into a cartridge, run it to its spin loop, hand it back. */
-function run(body: (ctx: VbCtx) => void): Vb {
-  const analysis = analyze(PROGRAM);
-  const layout = planLayout(PROGRAM, analysis, VB_MEMORY);
-  const ctx = new VbCtx(PROGRAM, analysis, layout, getProfile("vb"), VB_ROM);
+function run(body: (ctx: VbCtx) => void, program = PROGRAM): Vb {
+  const analysis = analyze(program);
+  const layout = planLayout(program, analysis, VB_MEMORY);
+  const ctx = new VbCtx(program, analysis, layout, getProfile("vb"), VB_ROM);
   const { asm } = ctx;
 
   // The whole of this console's boot: clear the reset PSW's `NP` bit, point the
@@ -278,6 +300,48 @@ describe("the Virtual Boy value layer", () => {
       copy32(ctx, OUT, ctx.constant(3 * ONE));
     });
     expect(read32(machine, OUT)).toBe(3 * ONE);
+  });
+
+  it("draws exactly what the language's own generator draws", () => {
+    // The generator is part of the language, not a convenience: two
+    // implementations that disagree about it cannot be compared at all. What
+    // this catches on *this* console specifically is the integer part being
+    // taken with a logical shift — the Neo Geo Pocket subtracts in a sixteen-bit
+    // register and gets the sign extension from the wrap, and a thirty-two-bit
+    // one does not, so `random(-1, 1)` would compute a count of −65534.
+    const layout = planLayout(DRAWS, analyze(DRAWS), VB_MEMORY);
+    const rngAt = layout.rng;
+    if (rngAt === null) throw new Error("the fixture program allocated no generator");
+
+    for (const [low, high] of [
+      [0, 3 * ONE],
+      [-ONE, ONE],
+      [-5 * ONE, -ONE],
+      [2 * ONE, 2 * ONE],
+      [3 * ONE, ONE],
+      [0, 63 * ONE],
+    ] as const) {
+      // Four draws in a row, so the state carried between them is checked too.
+      let state = 1;
+      const wanted: number[] = [];
+      for (let index = 0; index < 4; index += 1) {
+        const result = draw(state, low, high);
+        state = result.state;
+        wanted.push(result.value);
+      }
+
+      const machine = run((ctx) => {
+        set32(ctx, rngAt, 1);
+        for (let index = 0; index < 4; index += 1) {
+          set32(ctx, ctx.layout.mathA, low);
+          set32(ctx, ctx.layout.mathB, high);
+          ctx.asm.jal(ctx.need("RngPick", emitRngPick));
+          copy32(ctx, OUT + index * 4, ctx.layout.mathA);
+        }
+      }, DRAWS);
+      expect([0, 1, 2, 3].map((index) => read32(machine, OUT + index * 4))).toEqual(wanted);
+      expect(read32(machine, rngAt) >>> 0).toBe(state);
+    }
   });
 
   it("pulls in a divider only when something divides", () => {

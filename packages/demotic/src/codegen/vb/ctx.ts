@@ -27,6 +27,7 @@ import type { Program } from "../../program.js";
 import type { Analysis } from "../analyze.js";
 import { CtxBase } from "../ctx.js";
 import type { Layout } from "../layout.js";
+import { LP, SP } from "./regs.js";
 
 /** A branch condition, as the V810 names its branches. */
 export type Cond = V810Cond;
@@ -79,5 +80,31 @@ export class VbCtx extends CtxBase<VbCtx, Asm810> {
   /** An unconditional jump that always reaches. */
   jump(target: Ref): void {
     this.asm.jr(target);
+  }
+
+  /**
+   * Open a helper that calls another helper.
+   *
+   * **A `jal` returns through a register, not through the stack**, so a routine
+   * that calls a second one destroys its own return address before it can use
+   * it. That is the one thing about this processor a backend can get wrong in a
+   * way that looks like a hang rather than like a wrong number: the inner call
+   * returns correctly, the outer one returns to wherever the inner one was, and
+   * the program runs in a circle.
+   *
+   * Every other console in the set pushes a return address, so none of them has
+   * a counterpart to this. A **leaf** helper — which is almost all of them —
+   * needs neither this nor {@link leave} and simply ends with `jmp [lp]`.
+   */
+  enter(): void {
+    this.asm.addImm5(-4, SP);
+    this.asm.stw(LP, 0, SP);
+  }
+
+  /** Close one, restoring the return address {@link enter} put away. */
+  leave(): void {
+    this.asm.ldw(0, SP, LP);
+    this.asm.addImm5(4, SP);
+    this.asm.jmp(LP);
   }
 }
