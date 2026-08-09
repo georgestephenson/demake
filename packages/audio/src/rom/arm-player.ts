@@ -328,9 +328,13 @@ function emitRuns(asm: AsmArm, options: ArmStreamOptions, preemptible: boolean):
 /**
  * Emit one body per borrowable channel, routed on the run's channel bits in `r0`.
  *
- * The last channel falls through rather than being tested, because a run only
+ * The **first** channel falls through rather than being tested, because a run only
  * reaches here when it named one of them — so with a single borrowable channel,
- * which is what a game with one pitched effect has, there is no test at all.
+ * which is what a game with one pitched effect has, there is no test at all. It
+ * has to be the first and not the last, because the bodies are emitted in index
+ * order directly below: testing every one but the *last* would send a run that
+ * named it into the *first* channel's body, which no schedule in the example
+ * library reaches and which nothing but a two-channel effect set can see.
  */
 function armPerChannel(
   asm: AsmArm,
@@ -340,7 +344,7 @@ function armPerChannel(
 ): void {
   const channels = (options.shadow as { channels: readonly { bit: number; base: number }[] })
     .channels;
-  for (let index = 0; index < channels.length - 1; index += 1) {
+  for (let index = 1; index < channels.length; index += 1) {
     asm.tst(REG.a0, armImm((channels[index] as { bit: number }).bit));
     asm.b(`${prefix}${index}`, "ne");
   }

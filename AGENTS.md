@@ -3128,6 +3128,18 @@ that keep them from being undone. All of them come from doc 16.
   rule (§Working on the console backend), which the driver is not exempt from.
   `packages/audio/test/gb-branches.test.ts` builds the widest shape a Game Boy
   can ask for, because the example library cannot reach it.
+- **A per-channel dispatch lets the _first_ channel fall through, not the last.**
+  Every stream player emits one body per borrowable channel and tests one channel
+  fewer than it has; the bodies are laid out in index order directly below the
+  tests, so the fall-through reaches body zero and the channel that must go
+  untested is the first. All eight tested `0..n-2` instead, which made the _last_
+  channel's body unreachable and recorded its music into the first channel's copy
+  — a borrowed channel handed back holding another channel's registers. Nothing
+  saw it because the shared battery builds one effect, and with one borrowable
+  channel a dispatch has no tests at all; `quest` is the example game that reaches
+  it, with its smash on the noise channel and everything else on the first pitched
+  one. `gb-branches.test.ts` asserts every body is reachable, which is the only
+  place the question can be asked.
 - **A driver's size is a query, not a value.** The emitter is a closure the
   assembler runs, so `stats.code`, `stats.data` and `stats.helpers` are all zero
   or empty until it has — which happens in `assemble`, one step after

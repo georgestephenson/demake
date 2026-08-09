@@ -328,9 +328,13 @@ function emitRuns(asm: Asm900, options: NgpStreamOptions, preemptible: boolean):
 /**
  * Emit one body per borrowable channel, routed on the run's channel bits.
  *
- * The last channel falls through rather than being tested, because a run only
+ * The **first** channel falls through rather than being tested, because a run only
  * reaches here when it named one of them — so with a single borrowable channel,
- * which is what a game with one pitched effect has, there is no test at all.
+ * which is what a game with one pitched effect has, there is no test at all. It
+ * has to be the first and not the last, because the bodies are emitted in index
+ * order directly below: testing every one but the *last* would send a run that
+ * named it into the *first* channel's body, which no schedule in the example
+ * library reaches and which nothing but a two-channel effect set can see.
  * `C` still holds the run's flags, so the bits are read from there rather than
  * from a register set aside for them.
  */
@@ -340,7 +344,7 @@ function perChannel(
   prefix: string,
   body: (name: string, entry: { at: number; slots: readonly number[] }) => void,
 ): void {
-  for (let index = 0; index < channels.length - 1; index += 1) {
+  for (let index = 1; index < channels.length; index += 1) {
     asm.ld("a", "c");
     asm.aluImm("and", "a", (channels[index] as { bit: number }).bit);
     asm.jrl("nz", `${prefix}${index}`);

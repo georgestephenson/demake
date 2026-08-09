@@ -413,9 +413,13 @@ function emitRuns(asm: Asm6502, options: MosStreamOptions, walk: Walk): void {
 /**
  * Emit one body per borrowable channel, routed on the run's flags.
  *
- * The last channel falls through rather than being tested, because a run only
+ * The **first** channel falls through rather than being tested, because a run only
  * reaches here when it named one of them — so with a single borrowable channel,
- * which is what a game with one pitched effect has, there is no test at all.
+ * which is what a game with one pitched effect has, there is no test at all. It
+ * has to be the first and not the last, because the bodies are emitted in index
+ * order directly below: testing every one but the *last* would send a run that
+ * named it into the *first* channel's body, which no schedule in the example
+ * library reaches and which nothing but a two-channel effect set can see.
  */
 function perChannel(
   asm: Asm6502,
@@ -426,7 +430,7 @@ function perChannel(
   const channels = (options.shadow as { channels: readonly { bit: number; base: number }[] })
     .channels;
   const flags = options.scratch.flags;
-  for (let index = 0; index < channels.length - 1; index += 1) {
+  for (let index = 1; index < channels.length; index += 1) {
     asm.lda(zp(flags));
     asm.and(imm((channels[index] as { bit: number }).bit));
     asm.bne(`${prefix}${index}`);

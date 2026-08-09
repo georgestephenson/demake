@@ -358,9 +358,13 @@ function emitRuns(asm: AsmZ80, options: Z80StreamOptions, preemptible: boolean):
 /**
  * Emit one body per borrowable channel, routed on the run's channel bits in `e`.
  *
- * The last channel falls through rather than being tested, because a run only
+ * The **first** channel falls through rather than being tested, because a run only
  * reaches here when it named one of them — so with a single borrowable channel,
- * which is what a game with one pitched effect has, there is no test at all.
+ * which is what a game with one pitched effect has, there is no test at all. It
+ * has to be the first and not the last, because the bodies are emitted in index
+ * order directly below: testing every one but the *last* would send a run that
+ * named it into the *first* channel's body, which no schedule in the example
+ * library reaches and which nothing but a two-channel effect set can see.
  */
 function perChannel(
   asm: AsmZ80,
@@ -368,7 +372,7 @@ function perChannel(
   prefix: string,
   body: (name: string, entry: Z80ShadowChannel) => void,
 ): void {
-  for (let index = 0; index < channels.length - 1; index += 1) {
+  for (let index = 1; index < channels.length; index += 1) {
     asm.ld("a", "e");
     asm.aluN("and", (channels[index] as Z80ShadowChannel).bit);
     asm.jp(`${prefix}${index}`, "nz");

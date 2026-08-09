@@ -610,9 +610,12 @@ function emitRelease(asm: AsmZ80, state: Layout, input: AssembleInput): void {
     return;
   }
   const channels = input.numbered;
-  // The last channel is not tested: the release only runs because an effect was
-  // playing, so one of these bits is set and the dispatch falls into it.
-  for (let index = 0; index < channels.length - 1; index += 1) {
+  // The *first* channel is not tested: the release only runs because an effect
+  // was playing, so one of these bits is set and the dispatch falls into the body
+  // emitted directly below it. Testing every one but the last instead would send
+  // a run that named the last into the first channel's body, which is the trap
+  // `z80-player.ts` §perChannel states.
+  for (let index = 1; index < channels.length; index += 1) {
     asm.lda(state.steal);
     asm.aluN("and", 1 << index);
     asm.jp(`AudioSfxGiveBack${index}`, "nz");
