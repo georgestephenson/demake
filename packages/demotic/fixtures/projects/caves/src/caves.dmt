@@ -71,7 +71,13 @@ when player touches ledge if player.ydirection >= 0 then (ydirection, footing.va
 -- the hero hang on it.
 when player hits wall then ydirection as 0
 
-when a pressed if footing.value > 0 then player.ydirection as -1.5
+-- The impulse carries half a tick of gravity, for the same reason gravity is
+-- written against `fps`: the tick applies the pull before the move, so the first
+-- one is already slowed and a slower machine loses more of the rise. Without it
+-- the apex spread twelve hundredths of a cell across the consoles and the
+-- Virtual Boy — the slowest clock here — cleared four and a bit rows where every
+-- other machine cleared five.
+when a pressed if footing.value > 0 then player.ydirection as -1.5 - 1.2 / fps
 
 -- Tile names, straight from the legend. Spikes are not
 -- `solid`, so the hero falls into them.

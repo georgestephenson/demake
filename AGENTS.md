@@ -1948,7 +1948,13 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   everywhere and four on the WonderSwan, which stopped its climb two thirds of
   the way up the cavern and was invisible from every other console.
   `2.4 / fps` folds to the same constant a 60 Hz console already had, so the
-  code eleven of the twelve emit does not change by one byte. What it costs is
+  code eleven of the twelve emit does not change by one byte.
+  **And an impulse needs the same treatment, for the other half of the same
+  reason.** A tick pulls before it moves, so the first tick of a jump is already
+  slowed and a slower machine loses more of the rise — which put the Virtual Boy
+  at 50.2 Hz a hundredth of a cell short of a ledge every other console cleared,
+  on a staircase whose step _is_ the jump. `- 1.2 / fps` on the impulse is half of
+  what the next tick will subtract, and it collapses the apex spread tenfold. What it costs is
   four bytes of RAM: the emitter folds a constant subexpression
   (`codegen/expr.ts` §emitExpr) but `analyze.ts` measures the tree it was
   handed, so the division buys an expression temporary it never uses — and would
@@ -1957,6 +1963,12 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   **A duration is the same problem**: `guard.value as 120` is two seconds only on
   a machine that ticks 60 times a second, so quest writes `2 * fps` and reads its
   boss timer at `fps * 7 / 6`.
+- **A level is at least as big as the widest screen that will show it.** Which
+  is forty-eight cells by twenty-eight, the Virtual Boy's — a third wider than a
+  Mega Drive's, which held the record until this console arrived and quietly made
+  `quest`'s vault too small (`E_LEVEL_TOO_SMALL`). A level meant to fill the view
+  exactly and never scroll has to be sized against the _widest_ machine in the
+  table rather than the one it was drawn on.
 - **A ledge wants three clear rows above it and a surface within four rows
   below.** A hero is two cells tall and a jump rises five, of which the top one
   is spent getting _above_ the ledge rather than into its side — so a ledge four
