@@ -35,10 +35,29 @@ import { coreJobKinds, jobHandlers, runJob, type Executor, type JobOutcome } fro
 
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
+import { setArtStore } from "../src/codegen/art.js";
 import { buildGame } from "../src/codegen/registry.js";
 import { EXAMPLES, exampleProject } from "./_projects.js";
 
 const handlers = jobHandlers([...coreJobKinds, ...audioJobKinds]);
+
+/**
+ * This battery needs its conversions cold, so it opts out of the suite's store.
+ *
+ * The comparison below builds one game twice and the point of it is that the
+ * *first* build fans out — which is why it is the one that runs first, on an
+ * empty cache. The suite installs a store shared between worker processes
+ * (`_art-store.ts`), and a battery that read it would be handed every backdrop
+ * already demade by whichever file ran before it: the adversarial executor would
+ * see no candidates at all and the cartridges would match because neither was
+ * built. The `ran()` guard at the end would catch it — loudly, which is the
+ * design — but the fix belongs here, where the requirement is.
+ *
+ * At module scope rather than in a hook, because `setupFiles` has already
+ * installed the store by the time this module is evaluated and the builds start
+ * inside `it`.
+ */
+setArtStore(undefined);
 
 /**
  * One queue for every caller, drained from the middle, backwards, a turn at a

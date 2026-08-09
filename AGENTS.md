@@ -3159,9 +3159,27 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   work fits across the runner's cores and nothing about what is asserted changed.
   Two rules follow. Split per **console**, never per battery: `builds` is memoized
   per module, so a machine's register battery and its size sweep have to stay in
-  one file or every build happens twice. And `vitest --shard` is not the fix for
-  this — it distributes files, so it cannot help a suite whose floor is one of
-  them.
+  one file or every build happens twice. And splitting is what makes `--shard`
+  worth anything: it distributes _files_, so it cannot help a suite whose floor is
+  one of them, which is what this suite was before the batteries were split and
+  is why the note here used to say sharding was not the fix. It is now — CI runs
+  four shards (doc 11 §Sharding) — and the floor is once again the slowest single
+  file, which is what to look at before raising the count.
+- **The suite shares demade art between its worker processes, and two things
+  depend on that being invisible.** A test file is a process, so the same fixture
+  used to be fitted from scratch in every file that built it — a fifth of all the
+  conversion time a run spends. `packages/demotic/test/_art-store.ts` is a store on
+  disk behind the `ArtStore` seam, installed by `setupFiles` and by nothing in
+  production, and it is keyed on a digest of every source file under
+  `packages/core/src` and `packages/demotic/src` so that a change to a fitter
+  cannot be answered from a previous version's cache. The hazard it is written
+  against is §Gotchas' own — a cache that is _wrong and consistent_ passes
+  everything, because both sides of a comparison read it — so
+  `art-store.test.ts` builds a cartridge cold, then from the store, and compares
+  bytes. And `_fanout.ts` **opts out**: its whole point is that the first of its
+  two builds fans out, so a battery handed pre-demade backdrops would compare two
+  cartridges neither of which was built. A new test that asserts a conversion
+  _happened_ has to opt out the same way.
 - **A frame boundary is not a tick boundary, so never read a game's own variable
   out of an emulated machine's RAM.** `runFrame` returns where the raster says,
   which is anywhere in the tick — including the six instructions between the

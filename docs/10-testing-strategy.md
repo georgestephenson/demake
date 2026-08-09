@@ -109,6 +109,50 @@ Chromium/Firefox/WebKit via Playwright loading the actual web build. All six
 environments must produce byte-identical PNGs and artifacts. Runs on every PR
 (subset) and nightly (full corpus).
 
+## 5b. The conversion store
+
+Art is most of what the unit suite costs — a fixture's backdrop is the whole
+`prep` tournament — and a test file is a worker process, so the same picture was
+being fitted from scratch in each of the twenty-odd files that build one.
+Measured over seven of those files: 52 of 246 seconds of conversion time spent
+re-deciding something another process had already decided.
+
+`packages/demotic/test/_art-store.ts` is a store on disk that those processes
+share for the length of one run. It sits behind the `ArtStore` seam in
+`codegen/art.ts`, so `@demake/demotic` keeps no `node:fs` import (exactly as
+`core` keeps none) and **nothing installs one in production** — the CLI and the
+page each rebuild inside a process that is already warm.
+
+The hazard it is written against is the one doc 03 §Names and AGENTS.md §Gotchas
+both name in other forms: **a cache that is wrong and consistent passes
+everything**, because both sides of every comparison read it. Four things answer
+that, and none is a convention anyone has to remember:
+
+- **The key carries the engine that produced the value** — a digest of every
+  source file under `packages/core/src` and `packages/demotic/src`, computed once
+  per run. A change to a fitter, a console spec or an art module is a different
+  cache, so a stale entry is unreachable rather than merely unlikely. There is no
+  version number to forget to bump.
+- **It is scoped to one run** and removed when the run ends, so nothing persists
+  to be trusted later. What it saves is duplication *within* a run, which is where
+  the duplication is.
+- **A value round-trips exactly or not at all** — `node:v8` rather than JSON,
+  because these values are typed arrays and JSON turns a `Uint8Array` into an
+  object with numeric keys, which is a different cartridge.
+- **`art-store.test.ts` builds the artifact both ways** — cold with no store, then
+  written to one, then read back through a fresh store over the same directory —
+  and compares cartridge bytes and stats. It builds `pong` on the NES on purpose:
+  that console's pictures are fitted one at a time against the budget the ones
+  before them left, so a store that returned a picture fitted to the wrong budget
+  would show there.
+
+**`_fanout.ts` opts out**, and a new test that asserts a conversion *happened*
+must do the same. The whole point of that battery is that the first of its two
+builds fans out over an adversarial executor; handed pre-demade backdrops it would
+compare two cartridges neither of which was built. Its candidate-count guard
+would catch that loudly — which is the design — but the opt-out belongs where the
+requirement is.
+
 ## 6. E2E hardware-proof tests (the flagship)
 
 Per console: `hd-many-colors.png` → `prep` → `gen --format rom` → build in the
