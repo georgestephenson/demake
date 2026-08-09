@@ -789,10 +789,22 @@ instruction stream (`Sound.watch`) exactly as it watches a Super Nintendo's soun
 processor; sampling the program counter after each 68000 instruction sees one
 arrival as dozens.
 
-The battery skips two things for this console and both are recorded rather than
-tolerated. The **handback** assertion, because this driver does not replay a
-borrowed channel (doc 13 §A5.5). And the **size sweep**, on the Game Boy Advance's
-terms: a game is tens of kilobytes of a megabyte P region with its sound program
+**A borrowed channel comes back holding the music's own registers here too**, and
+what is this console's is how the copy is filled in. A packed byte is a _port_
+rather than a register number, so the recorder cannot tell one of a channel's
+bytes from another by looking at it: an even port latched a register and the byte
+_is_ that number, an odd one is the datum and the latch says which of the three
+copies it belongs to — which is why the shadow is four bytes rather than three
+(`rom/neogeo-driver.ts` §`NEOGEO_SHADOW`). Three is the whole replay because an
+effect only ever borrows a square; an FM voice's state is a patch, and nothing
+ever hands one of those back. What made this land was one word in the packer: a
+game's effect ends with `stop` and not `silence`, because the silence block turns
+_every_ channel off and then rests for ever — so it takes the music with it and
+holds the borrowed channel long after the effect is over.
+
+The battery skips one thing for this console and it is recorded rather than
+tolerated: the **size sweep**, on the Game Boy Advance's
+terms. A game is tens of kilobytes of a megabyte P region with its sound program
 in 32 KiB of its own, so there is no budget to catch — and what the sweep would
 still have bought, that a driver's reported sizes are real, is asserted on an
 art-free build in `packages/audio/test/neogeo-driver.test.ts`.
@@ -849,15 +861,18 @@ artifact _is_ the schedule.
 effect per event, one clock serving both, and the same proof one level up —
 `packages/demotic/test/_audio-battery.ts` boots a cartridge that is playing a game
 and diffs every register write against the schedules the demakers produced.
-It does that on **every** console the game backend builds for, over eight drivers
-that share only the packed format and — where the CPU is the same — the stream
-player, and below that only what the chip decides: an SM83 player on a
+It does that on **every** console the game backend builds for, over eleven
+drivers that share only the packed format and — where the CPU is the same — the
+stream player, and below that only what the chip decides: an SM83 player on a
 programmable timer, a 6502 player on the picture's interrupt, the _same_ 6502
 player on a timer one console over, a Z80 player writing an I/O port, a 68000
 player storing a byte to an address, an SPC700 player that is not on the console's
 processor at all, an ARM player clocked by its own sample transfer that has to
-_compute_ six of its ten voices before it can play them, and a TLCS-900/H player
-that has to _ask_ for its chip before anything it sends is listened to.
+_compute_ six of its ten voices before it can play them, a TLCS-900/H player
+that has to _ask_ for its chip before anything it sends is listened to, a V30MZ
+player that takes no interrupt at all and reads a timer's counter instead, and the
+_same_ Z80 player one board over as a whole program of its own, on a bus the game
+cannot see.
 
 **And both demakers are on the web** (doc 07 §The audio sections): a music
 section and a sound section over their own worker, carrying the whole
@@ -3167,13 +3182,15 @@ that keep them from being undone. All of them come from doc 16.
   therefore a _replay_ from a copy the run walk keeps (`rom/shared.ts`
   §`shadowPlan`), not a note-off: the music's next volume step re-triggers the
   voice, and on a Game Boy that meant a pulse coming back a whole tone sharp and
-  ringing until the bar ended, on every bounce in pong. Six drivers have it and
-  the Mega Drive does not (doc 13 §Handing a borrowed channel back); the battery
-  asserts on every console that what the chip is left holding is what the
-  schedule says, which is a sharper claim than "something wrote it afterwards".
-  Two chips needed more than a register-indexed copy and both say so where the
-  chip's other rules live: the SN76489 has no register numbers, and the PC Engine
-  _selects_ a voice rather than addressing one.
+  ringing until the bar ended, on every bounce in pong. Every driver in the set
+  has it (doc 13 §Handing a borrowed channel back), and the battery asserts on
+  every console that what the chip is left holding is what the schedule says,
+  which is a sharper claim than "something wrote it afterwards". Three chips
+  needed more than a register-indexed copy and each says so where the chip's
+  other rules live: the SN76489 has no register numbers, the PC Engine _selects_
+  a voice rather than addressing one, and the YM2610's packed byte is a _port_ —
+  so its copy carries the latch as a fourth byte and the recorder classifies on
+  which port the byte was going to rather than on the byte.
 - **`NR51` is merged, never stored, whenever two streams share the chip.** One
   byte carries every channel's panning. Each stream keeps a shadow and the driver
   folds them under the steal mask, which is what makes the register stream exactly

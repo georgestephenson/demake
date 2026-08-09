@@ -184,18 +184,6 @@ export interface Target {
   tickAddress(built: BuiltRom, bound: BoundAudio<Driver>): number;
   /** Where a driver tick *ends*, for a console whose clock it writes between them. */
   tickEndAddress?(built: BuiltRom, bound: BoundAudio<Driver>): number;
-  /**
-   * Whether releasing a borrowed channel replays the music's own registers.
-   *
-   * True everywhere but one console, and the exception is recorded rather than
-   * quietly tolerated (doc 13 §Handing a borrowed channel back). On the Neo Geo
-   * the driver does not replay, for the Mega Drive's reason and a second on top
-   * of it: the packed byte is a *port* and the register it names is latched, so a
-   * shadow cannot tell one of a channel's registers from another by looking at
-   * the byte — which is exactly what the SN76489's shadow does. What the music
-   * does instead is state the channel again on its next note.
-   */
-  replaysHandback?: boolean;
   boot(rom: Uint8Array): Machine;
   /**
    * A **fresh** tag: which voice a write belongs to, `0` for none.
@@ -754,7 +742,11 @@ const ALL: readonly Target[] = [
     // acknowledge is a chip write between two ticks — the Mega Drive audio
     // cartridge's problem, one board along and inside a game.
     tickEndAddress: (_built, bound) => (bound.driver as NeogeoGameAudio).symbols.tickEnd,
-    replaysHandback: false,
+    // A packed byte here is a bus *port*, so a write only names a register once
+    // the address before it has been seen. Without this the question "what is the
+    // chip holding" is asked about four ports rather than about the chip — the
+    // Mega Drive's `mdRegister` one board along, and the same shape.
+    register: neogeoRegister,
     async build(source, project) {
       const { files, levels, assets } = exampleProject(project);
       const program = compile(source, { profile: getProfile("neogeo"), files, levels });
@@ -1035,6 +1027,26 @@ function mdRegister(): (write: Write) => string | null {
 }
 
 /**
+ * A register on the YM2610, which a byte only names once its address has passed.
+ *
+ * `mdRegister`'s shape on the other OPN-family bus: an even port latches and names
+ * nothing, and the odd one after it is a value belonging to whatever was latched
+ * on that half. Without it the handback assertion would ask what four *ports* were
+ * holding, which is a question with no musical meaning.
+ */
+function neogeoRegister(): (write: Write) => string | null {
+  const latched: [number, number] = [-1, -1];
+  return (write) => {
+    const half = (write.reg >> 1) & 1;
+    if ((write.reg & 1) === 0) {
+      latched[half] = write.value & 0xff;
+      return null;
+    }
+    return `${half}:${latched[half]}`;
+  };
+}
+
+/**
  * A register on the T6W28, which is a *port* and a byte together.
  *
  * The SN76489's problem with a second port in it: this chip has no register
@@ -1298,7 +1310,7 @@ export function audioBattery(target: Target): void {
       BUILDS_TIMEOUT,
     );
 
-    it.skipIf(target.replaysHandback === false)(
+    it(
       "hands it back holding the music's own registers, not the effect's",
       async () => {
         // The sharp half of the previous test. The packed music is a *delta*

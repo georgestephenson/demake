@@ -45,6 +45,7 @@ import type { AsmZ80 } from "@demake/core";
 import type { ChipScript } from "../chipscript.js";
 
 import { AudioRomError } from "./gb.js";
+import type { Z80ShadowChannel } from "./z80-player.js";
 
 /** The chip's four bus addresses, as Z80 ports. */
 export const NEOGEO_PORT = { first: 0x04 } as const;
@@ -171,6 +172,80 @@ export function neogeoOwnerTag(): (reg: number, value: number) => number {
     const channel = neogeoChannelOf(half, register);
     return channel < 0 ? 0 : 1 << channel;
   };
+}
+
+/**
+ * A borrowed channel's shadow: a latch, and the three registers a square is.
+ *
+ * Four bytes rather than the SN76489's three, and the extra one is this chip's
+ * whole difference: its register is *latched*, so a recorder cannot tell one of a
+ * channel's bytes from another by looking at it. What it looks at instead is the
+ * **port** — even latches, odd writes — and the latch byte is where the register
+ * an odd byte belongs to was put by the even one before it.
+ */
+export const NEOGEO_SHADOW = { latch: 0, fine: 1, coarse: 2, level: 3, bytes: 4 } as const;
+
+/** The three registers an SSG square is, which is all an effect ever borrows. */
+export function neogeoShadowRegisters(channel: number): readonly number[] {
+  return [channel * 2, channel * 2 + 1, 0x08 + channel];
+}
+
+/**
+ * Consume one packed write of a skipped run, keeping the port.
+ *
+ * {@link neogeoWrite} without the store or the settling: the recorder needs the
+ * port in `c` to tell an address from a datum, and a skipped run's bytes are
+ * exactly the ones a written run's are.
+ */
+export function neogeoShadowTake(asm: AsmZ80): void {
+  asm.ld("a", "hlp");
+  asm.inc16("hl");
+  asm.ld("c", "a");
+  asm.ld("a", "hlp");
+  asm.inc16("hl");
+}
+
+/**
+ * Put the byte in `a` into whichever of this channel's copies it is.
+ *
+ * Called with the port in `c` and the value in `a`, and it must leave `b`, `d`,
+ * `e` and `hl` alone — which is why the classification borrows the accumulator
+ * through the stack rather than a register.
+ *
+ * An **even** port latched a register, so the byte *is* the register and goes in
+ * the latch. An odd one is the datum, and which of the three copies it belongs to
+ * is what the latch says. A byte for a register this channel does not have — the
+ * mixer, an envelope — is dropped, because replaying it would state something the
+ * music never said.
+ */
+export function neogeoRecord(asm: AsmZ80, name: string, entry: Z80ShadowChannel): void {
+  const done = `${name}Kept`;
+  const [fine, coarse, level] = entry.slots as [number, number, number];
+  asm.bit(0, "c");
+  asm.jr(`${name}Data`, "nz");
+  asm.sta(entry.at + NEOGEO_SHADOW.latch);
+  asm.jr(done);
+
+  asm.label(`${name}Data`);
+  asm.push("af");
+  asm.lda(entry.at + NEOGEO_SHADOW.latch);
+  for (const [register, slot] of [
+    [fine, NEOGEO_SHADOW.fine],
+    [coarse, NEOGEO_SHADOW.coarse],
+    [level, NEOGEO_SHADOW.level],
+  ] as const) {
+    asm.aluN("cp", register);
+    asm.jr(`${name}Slot${slot}`, "z");
+  }
+  asm.pop("af");
+  asm.jr(done);
+  for (const slot of [NEOGEO_SHADOW.fine, NEOGEO_SHADOW.coarse, NEOGEO_SHADOW.level]) {
+    asm.label(`${name}Slot${slot}`);
+    asm.pop("af");
+    asm.sta(entry.at + slot);
+    if (slot !== NEOGEO_SHADOW.level) asm.jr(done);
+  }
+  asm.label(done);
 }
 
 /**

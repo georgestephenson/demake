@@ -138,6 +138,16 @@ export interface Z80ShadowChannel {
 export interface Z80Shadow {
   channels: readonly Z80ShadowChannel[];
   /**
+   * Consume one packed write of a *skipped* run, leaving what `record` needs.
+   *
+   * The default takes the port and drops it, which is right for a chip whose byte
+   * says what it is. A chip that *latches* its register needs the port kept —
+   * that is how the recorder tells an address from the datum after it — so the
+   * YM2610 supplies its own and leaves the port in `c` (`neogeo-driver.ts`
+   * §neogeoShadowTake).
+   */
+  take?: (asm: AsmZ80) => void;
+  /**
    * Put the byte in `a` into whichever of this channel's copies it is.
    *
    * A chip with numbered registers indexes; the SN76489 has none, so its bytes
@@ -318,8 +328,11 @@ function emitRuns(asm: AsmZ80, options: Z80StreamOptions, preemptible: boolean):
     if (shadow) {
       perChannel(asm, shadow.channels, `${p}TickSkipOn`, (name, entry) => {
         asm.label(name);
-        asm.inc16("hl"); // the port, which nothing but the chip wants
-        fetch(asm);
+        if (shadow.take) shadow.take(asm);
+        else {
+          asm.inc16("hl"); // the port, which nothing but the chip wants
+          fetch(asm);
+        }
         shadow.record(asm, name, entry);
         asm.dec("b");
         asm.jp(name, "nz");

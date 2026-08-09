@@ -48,14 +48,23 @@
  * an address byte cannot know, so an effect on an FM voice would need a tag that
  * cannot be computed. Off the FM voices, the tag is exact.
  *
- * ### A borrowed channel is not replayed
+ * ### A borrowed channel is given back, and its shadow is told apart by the port
  *
- * The Mega Drive's driver is the other one that does not (doc 13 §Handing a
- * borrowed channel back), and here there is a second reason on top of that one:
- * an FM voice's state is a whole patch, so a general replay is thirty registers
- * rather than three. What the music does instead is state the channel again on its
- * next note, which on a square is the next level write. It is recorded rather than
- * pretended about.
+ * The music is a delta stream, so a channel an effect has borrowed comes back
+ * holding the effect's registers unless the release replays the music's own
+ * (doc 13 §Handing a borrowed channel back). Every driver in the set does that;
+ * what is this console's is *how the copy is filled in*. A packed byte here is a
+ * **port** rather than a register number, so a recorder cannot tell one of a
+ * channel's bytes from another by looking at it — an even port latched a register
+ * and the byte is that register's number, an odd one is the datum and the latch
+ * says which of the three copies it belongs to. That is why the shadow is four
+ * bytes rather than three (`neogeo-driver.ts` §{@link NEOGEO_SHADOW}), and it is
+ * the SN76489's problem two chips along with a different mechanism.
+ *
+ * Three registers is the whole of it because an effect only ever borrows a square,
+ * which the section above is why. An FM voice's state is a patch, so a driver that
+ * had to give one of those back would be replaying thirty registers rather than
+ * three — and it never has to.
  *
  * The stream player is `z80-player.ts`'s, unchanged — the walk belongs to the
  * processor — and what this chip adds is in `neogeo-driver.ts`.
@@ -73,6 +82,10 @@ import type { GameEffect } from "./gb-game.js";
 import {
   checkAddressDiscipline,
   neogeoChannelTag,
+  neogeoRecord,
+  neogeoShadowRegisters,
+  neogeoShadowTake,
+  NEOGEO_SHADOW,
   neogeoOwnerTag,
   neogeoPortOf,
   neogeoWrite,
@@ -150,6 +163,8 @@ interface Layout {
   steal: number;
   music: Z80StreamState;
   sfx: Z80StreamState;
+  /** Where each borrowable channel's copy of the music's registers lives. */
+  shadow(index: number): number;
   top: number;
 }
 
@@ -161,12 +176,17 @@ function layout(): Layout {
     at += 2;
     return here;
   };
+  const shadowBase = RAM + 0x20;
   return {
     ticks: byte(),
     command: byte(),
     steal: byte(),
     music: { data: word(), order: word(), loop: word(), rest: byte(), active: byte() },
     sfx: { data: word(), order: word(), rest: byte(), active: byte() },
+    // Four bytes per borrowable channel, reserved rather than fitted: the number
+    // of them is not known until the effects are demade, and this processor has
+    // two kilobytes it uses a few dozen of.
+    shadow: (index: number): number => shadowBase + index * NEOGEO_SHADOW.bytes,
     // The stack grows down from the top of the two kilobytes. This processor comes
     // up with none at all — everything below `$F800` is ROM — so a program that
     // took an interrupt without setting one would push its return address into a
@@ -234,7 +254,13 @@ export function buildNeogeoGameAudio(input: NeogeoGameAudioInput): NeogeoGameAud
 
   const options = { channelOf: tag, port: neogeoPortOf } as const;
   const musicData = tracks.map((script) => pack(script, options));
-  const effectData = effects.map((script) => pack(script, { ...options, end: "silence" }));
+  // `stop` rather than `silence`, which is the whole difference between a
+  // cartridge that owns the chip and one borrowing a channel from the music: the
+  // silence block turns *every* channel off and then rests for ever, so it would
+  // take the music with it and hold the borrowed channel long after the effect
+  // had finished. The order list's terminator is what says an effect is over, and
+  // the release is what hands the channel back.
+  const effectData = effects.map((script) => pack(script, { ...options, end: "stop" }));
 
   const stealMasks = input.effects.map(
     (effect) => 1 << Math.max(0, numbered.indexOf(effect.channel)),
@@ -247,6 +273,7 @@ export function buildNeogeoGameAudio(input: NeogeoGameAudioInput): NeogeoGameAud
     musicData,
     effectData,
     stealMasks,
+    numbered,
     hasSteal: numbered.length > 0 && tracks.length > 0,
   });
 
@@ -284,6 +311,8 @@ interface AssembleInput {
   musicData: readonly DriverData[];
   effectData: readonly DriverData[];
   stealMasks: readonly number[];
+  /** The spec channels effects were placed on, in run-bit order. */
+  numbered: readonly number[];
   hasSteal: boolean;
 }
 
@@ -476,6 +505,19 @@ function assemble(input: AssembleInput): {
         data: shapeOf(musicData),
         write: neogeoWrite,
         ...(input.hasSteal ? { steal: state.steal } : {}),
+        ...(input.hasSteal
+          ? {
+              shadow: {
+                channels: input.numbered.map((channel, index) => ({
+                  bit: 1 << index,
+                  at: state.shadow(index),
+                  slots: neogeoShadowRegisters(channel),
+                })),
+                take: neogeoShadowTake,
+                record: neogeoRecord,
+              },
+            }
+          : {}),
       }).map((name) => `music-${name}`),
     );
   }
@@ -484,11 +526,8 @@ function assemble(input: AssembleInput): {
       steal: state.steal,
       masks: "AudioSfxSteal",
     });
-    asm.label("AudioSfxRelease");
-    asm.alu("xor", "a");
-    asm.sta(state.steal);
-    asm.ret();
-    helpers.push("sfx-release");
+    emitRelease(asm, state, input);
+    helpers.push(input.hasSteal ? "borrowed-channel-replay" : "sfx-release");
     helpers.push(
       ...emitStream(asm, {
         prefix: "AudioSfx",
@@ -541,6 +580,62 @@ function assemble(input: AssembleInput): {
 }
 
 /**
+ * Hand a borrowed channel back holding the music's own registers.
+ *
+ * Not a note-off: the packed music is a **delta** stream, so a register the
+ * music's own value did not change is one it never states again — and after an
+ * effect has borrowed the channel the chip is holding the effect's period for it.
+ * Left alone, the music's next level step re-triggers the voice at whatever pitch
+ * the effect ended on, which is the "comes back a whole tone sharp" failure
+ * `shared.ts` §shadowPlan names. So the release replays the three registers a
+ * square is, from the copy the run walk has been keeping.
+ *
+ * Only `a` is used, and nothing is saved: this is called from the stream player's
+ * own dispatch rather than from inside its data walk.
+ *
+ * The shape is `z80-player.ts`'s `perChannel` — every channel tested up front with
+ * a `jp`, then the bodies — for its reason and one more. Each body here is about
+ * fifty bytes, so four of them laid out to fall through would put the last one's
+ * exit branch two hundred bytes from its target: a relative jump that assembles
+ * for every game in the library until one places effects on all four borrowable
+ * channels, which is the trap the SM83 player already fell into once (§Which is
+ * why a branch across a driver's run walk is a long branch).
+ */
+function emitRelease(asm: AsmZ80, state: Layout, input: AssembleInput): void {
+  asm.label("AudioSfxRelease");
+  if (!input.hasSteal) {
+    asm.alu("xor", "a");
+    asm.sta(state.steal);
+    asm.ret();
+    return;
+  }
+  const channels = input.numbered;
+  // The last channel is not tested: the release only runs because an effect was
+  // playing, so one of these bits is set and the dispatch falls into it.
+  for (let index = 0; index < channels.length - 1; index += 1) {
+    asm.lda(state.steal);
+    asm.aluN("and", 1 << index);
+    asm.jp(`AudioSfxGiveBack${index}`, "nz");
+  }
+  for (const [index, channel] of channels.entries()) {
+    asm.label(`AudioSfxGiveBack${index}`);
+    const registers = neogeoShadowRegisters(channel);
+    const slots = [NEOGEO_SHADOW.fine, NEOGEO_SHADOW.coarse, NEOGEO_SHADOW.level];
+    for (const [slot, register] of registers.entries()) {
+      asm.ldn("a", register);
+      asm.outN(0x04);
+      settle(asm);
+      asm.lda(state.shadow(index) + (slots[slot] as number));
+      asm.outN(0x05);
+      settle(asm);
+    }
+    asm.alu("xor", "a");
+    asm.sta(state.steal);
+    asm.ret();
+  }
+}
+
+/**
  * Start a stream: point it at an order list and take the first block.
  *
  * `NextBlock` is the player's own, so a start is a pointer and a call rather than
@@ -589,8 +684,14 @@ function chipWrite(asm: AsmZ80, pair: 0 | 1, register: number, value: number): v
   const port = 0x04 + pair * 2;
   asm.ldn("a", register);
   asm.outN(port);
+  settle(asm);
   asm.ldn("a", value);
   asm.outN(port + 1);
+  settle(asm);
+}
+
+/** The time this chip needs after a store, which is four bytes and no register. */
+function settle(asm: AsmZ80): void {
   asm.push("af");
   asm.pop("af");
   asm.push("af");

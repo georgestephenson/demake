@@ -563,10 +563,11 @@ asserts it on every console — not that *something* wrote the borrowed channel
 afterwards, which is what it used to check, but that what the chip is left
 holding is what the schedule says.
 
-**All seven drivers have it**: SM83, 6502 (the NES and the PC Engine share the
-player), Z80, 68000, SPC700, and ARM (the Game Boy Advance and the Nintendo DS
-share theirs). Three needed more than the generic plan, and each for a reason
-about its chip rather than its processor.
+**Every driver in the set has it**: SM83, 6502 (the NES and the PC Engine share
+the player), Z80 (the Sega 8-bits and the Neo Geo share theirs), 68000, SPC700,
+ARM (the Game Boy Advance and the Nintendo DS share theirs), TLCS-900/H and
+V30MZ. Four needed more than the generic plan, and each for a reason about its
+chip rather than its processor.
 
 The **SN76489** has no register numbers at all — one write port, and the channel
 latched in the byte — so its three bytes are told apart by what each byte *is*
@@ -587,6 +588,19 @@ the frequency's slot — which is what it did, and what a borrowed voice then
 replayed. So the latch is a byte of driver state that **every** FM write this
 stream makes updates, and `checkMdPairDiscipline` refuses a schedule that would
 need two of them.
+
+The **Neo Geo** is the Mega Drive's problem with the latch kept honest by the
+packer rather than by the recorder. A packed byte on that board is a *port*, so
+an even one latched a register and *is* that register's number while an odd one
+is the datum — which means the copy needs a fourth byte to hold the latch beside
+the three a square is (`rom/neogeo-driver.ts` §`NEOGEO_SHADOW`), and the recorder
+classifies on the port in `c` rather than on anything about the value. What it
+does not need is the Mega Drive's rule that every write updates the latch,
+because here an address byte is tagged with the channels of **the register it is
+about to latch** — so an address and its datum carry the same tag, land in the
+same run, and `checkAddressDiscipline` refuses a schedule where they would not.
+The replay is three registers because an effect on this console only ever borrows
+a square; an FM voice's state is a whole patch, and nothing ever hands one back.
 
 ## Phase 6 — 1.0
 
@@ -1520,7 +1534,6 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     | WonderSwan channel 2's PCM voice | yes | no — nothing above the chip layer drives it |
     | PC Engine direct D/A | yes | no — likewise |
     | YM2610 SSG noise | yes | no — `binding/neogeo.ts` writes the mixer once, tone on and noise off |
-    | A Neo Geo borrowed channel's handback | n/a | no — the driver does not replay, beside the Mega Drive's |
     | YM2610 ADPCM-A voices 2-6 | yes | no — the *arranger* gives a percussion part one channel |
 
     Two of those are the Neo Geo's and neither is the binding being lazy. The
