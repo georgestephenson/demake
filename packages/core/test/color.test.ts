@@ -21,6 +21,85 @@ describe("sRGB transfer", () => {
       expect(linearToSrgb8(srgb8ToLinear(v))).toBe(v);
     }
   });
+
+  /**
+   * `linearToSrgb8` remembers answers it has already given (`srgb.ts` §the
+   * cache), so what has to be pinned is that remembering one cannot change one —
+   * these are output bytes, and every colour a fit snaps passes through here.
+   *
+   * The oracle is the curve itself, written out from the exported pieces, and the
+   * domain is chosen rather than sampled: a disagreement can only be adjacent to
+   * a place where the byte changes, so every one of those 255 places is walked
+   * ulp by ulp. A uniform sweep would step over all of them.
+   */
+  const curve = (c: number): number => {
+    const v = linearToSrgb(c <= 0 ? 0 : c >= 1 ? 1 : c);
+    const byte = Math.round(v * 255);
+    return byte < 0 ? 0 : byte > 255 ? 255 : byte;
+  };
+  /** The adjacent double, `n` steps along — exact bit arithmetic. */
+  const nudge = (x: number, n: number): number => {
+    const bits = new Float64Array([x]);
+    const ints = new BigInt64Array(bits.buffer);
+    ints[0] = (ints[0] as bigint) + BigInt(n);
+    return bits[0] as number;
+  };
+
+  it("encodes exactly what the curve encodes, including at every step", () => {
+    for (let k = 1; k <= 255; k += 1) {
+      const boundary = srgbToLinear((k - 0.5) / 255);
+      for (let d = -48; d <= 48; d += 1) {
+        const c = nudge(boundary, d);
+        expect(linearToSrgb8(c)).toBe(curve(c));
+      }
+    }
+    // And asked twice, because the second answer is the one that comes from the
+    // cache rather than from the curve.
+    for (let k = 1; k <= 255; k += 1) {
+      const c = srgbToLinear((k - 0.5) / 255);
+      expect(linearToSrgb8(c)).toBe(curve(c));
+      expect(linearToSrgb8(c)).toBe(curve(c));
+    }
+    for (let i = 0; i <= 20_000; i += 1) {
+      const c = i / 20_000;
+      expect(linearToSrgb8(c)).toBe(curve(c));
+    }
+  });
+
+  it("carries a value out of range or not a number the way the curve does", () => {
+    for (const c of [-1, -1e-300, 0, 1, 1 + 1e-16, 2, 1e300, Infinity, -Infinity]) {
+      expect(linearToSrgb8(c)).toBe(curve(c));
+    }
+    expect(Number.isNaN(linearToSrgb8(Number.NaN))).toBe(true);
+    expect(Number.isNaN(curve(Number.NaN))).toBe(true);
+  });
+
+  /**
+   * The curve is not monotone at the last bit, which is why the fast path is a
+   * cache rather than a table of the 255 thresholds and a binary search.
+   *
+   * `pow` is an eighteen-term series rather than a correctly-rounded operation,
+   * so around a threshold the encoded byte can step back *down* as the linear
+   * value rises. Any step function — however carefully its thresholds are
+   * calibrated — reproduces a monotone function, so it cannot reproduce this one:
+   * the first attempt here was 581 values out of thirteen million, all of them
+   * within a few ulps of a threshold. This test exists so that the next person to
+   * spot the "obvious" optimisation finds out from a failing test rather than
+   * from a picture that demakes differently.
+   */
+  it("is not monotone at the last bit, so no table can stand in for it", () => {
+    const backwards: number[] = [];
+    for (let k = 1; k <= 255; k += 1) {
+      const boundary = srgbToLinear((k - 0.5) / 255);
+      let previous = curve(nudge(boundary, -9));
+      for (let d = -8; d <= 8; d += 1) {
+        const here = curve(nudge(boundary, d));
+        if (here < previous) backwards.push(k);
+        previous = here;
+      }
+    }
+    expect(backwards.length).toBeGreaterThan(0);
+  });
 });
 
 describe("Oklab", () => {
