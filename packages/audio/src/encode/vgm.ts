@@ -193,6 +193,17 @@ function commandWriter(
       return (data, reg, value) => {
         data.push(0xbc, (reg - 0x80) & 0xff, value & 0xff);
       };
+    case "vsu":
+      // 0xC7: Virtual Boy VSU, and the address is *sixteen* bits rather than
+      // eight — which is exactly why this chip's schedule numbers its registers
+      // by byte offset: the waveform tables, the modulation table and the six
+      // channel blocks are one address space, and no eight-bit numbering names
+      // all of them. So the bank goes into a VGM as ordinary register writes and
+      // this console needs no data block at all, unlike the WonderSwan one
+      // format over.
+      return (data, reg, value) => {
+        data.push(0xc7, (reg >> 8) & 0x7f, reg & 0xff, value & 0xff);
+      };
     case "t6w28":
       // VGM carries this part as a *pair* of SN76489s, which is what it is:
       // 0x50 is the first chip's data port and 0x30 the second's, and the header
@@ -265,6 +276,9 @@ function writeClock(view: DataView, chip: string | undefined): void {
       break;
     case "ws-sound":
       view.setUint32(0xc0, 3072000, true);
+      break;
+    case "vsu":
+      view.setUint32(0xc4, 5000000, true);
       break;
     case "ym2612":
       view.setUint32(0x2c, 7670453, true);

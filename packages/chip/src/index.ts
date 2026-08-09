@@ -25,6 +25,7 @@ import { SDsp } from "./s-dsp.js";
 import { Sn76489 } from "./sn76489.js";
 import { Ym2610 } from "./ym2610.js";
 import { Ym2610Ssg } from "./ym2610-ssg.js";
+import { Vsu } from "./vsu.js";
 import { Ym2612 } from "./ym2612.js";
 import type { ChipId, ChipModel } from "./types.js";
 import type { GbaSample } from "./gba-pcm.js";
@@ -94,6 +95,23 @@ export {
   type Ym2610Options,
 } from "./ym2610.js";
 export { Ym2612, YM2612_CLOCK_HZ } from "./ym2612.js";
+export {
+  Vsu,
+  VSU_CHANNELS,
+  VSU_CHANNEL_BASE,
+  VSU_CHANNEL_STRIDE,
+  VSU_CLOCK_HZ,
+  VSU_MOD_BASE,
+  VSU_MOD_CHANNEL,
+  VSU_NOISE_CHANNEL,
+  VSU_REG,
+  VSU_SSTOP,
+  VSU_TABLE_STRIDE,
+  VSU_WAVE_BASE,
+  VSU_WAVE_BITS,
+  VSU_WAVE_SAMPLES,
+  VSU_WAVE_TABLES,
+} from "./vsu.js";
 export {
   SDsp,
   encodeBrrBlock,
@@ -170,6 +188,8 @@ export function createChip(
       });
     case "ym2610-ssg":
       return new Ym2610Ssg();
+    case "vsu":
+      return new Vsu();
     case "gba-pcm":
       // A mixer with no waveforms renders silence, for the same reason a sample
       // player with empty RAM does.

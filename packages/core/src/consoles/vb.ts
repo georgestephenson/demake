@@ -19,6 +19,7 @@
  * `packages/cli/test/vb.e2e.test.ts` is what keeps them true.
  */
 
+import { vbAudio } from "./audio-specs.js";
 import type { ConsoleSpec, RGB8 } from "./types.js";
 
 /** Virtual Boy red ramp, brightest → darkest, as the LED display shows it. */
@@ -46,6 +47,7 @@ export const vb = {
     tileBudget: 2048,
     flip: true,
   },
+  audio: vbAudio,
   codegen: { family: "vb", formats: ["bin", "asm", "c", "rom"] },
   docs: {
     sources: [

@@ -34,7 +34,8 @@ export type ChipId =
   | "ws-sound"
   | "t6w28"
   | "ym2610"
-  | "ym2610-ssg";
+  | "ym2610-ssg"
+  | "vsu";
 
 /** A single write to a chip register, in the chip's own address space. */
 export interface RegisterWrite {

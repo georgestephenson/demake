@@ -46,6 +46,12 @@ const REGISTER_LIMIT: Record<string, number> = {
   // volume sits above them — the one chip here whose map does not fit in one,
   // which is why the default below is a *default* rather than the rule.
   "nds-spu": 0x103,
+  // The second chip whose map does not fit in a byte, and for a different
+  // reason: the Virtual Boy's waveform tables, its modulation table and its six
+  // channel blocks are one address space rather than a port and an index, so a
+  // register number here is a byte *offset* and the stop register at `$580` is
+  // the top of it.
+  vsu: 0x580,
 };
 
 /** Check a script against the console it claims to target. */
