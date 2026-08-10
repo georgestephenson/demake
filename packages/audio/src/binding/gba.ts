@@ -36,6 +36,7 @@ import { GBA_PCM_KON, GBA_PCM_VOICES } from "@demake/chip";
 import { snapPitch } from "../pitch.js";
 
 import { gbBinding } from "./gb.js";
+import { panGains } from "./pan.js";
 import { sampleNumber, WAVE_SAMPLES, type Waveform } from "./gba-bank.js";
 import type { BoundWrite, ChipBinding, DriverRateFit } from "./types.js";
 
@@ -99,9 +100,9 @@ function stepFor(hz: number, samples: number): number {
 }
 
 /** Eight bits of level, scaled from the frame's 0…1 and clamped. */
-function levelByte(level: number, on: boolean): number {
-  if (!on) return 0;
-  const value = Math.round(level * 255);
+function levelByte(level: number, gain: number): number {
+  if (gain <= 0) return 0;
+  const value = Math.round(level * gain * 255);
   return value < 0 ? 0 : value > 255 ? 255 : value;
 }
 
@@ -182,10 +183,15 @@ export function gbaBinding(console: string, spec: AudioSpec): ChipBinding {
           writes.push({ reg: base + REG_STEP0 + 2, value: (step >> 16) & 0xff, chip: 1 });
         }
 
-        const left = levelByte(frame.level, frame.pan?.left ?? true);
-        const right = levelByte(frame.level, frame.pan?.right ?? true);
-        const beforeLeft = before?.on ? levelByte(before.level, before.pan?.left ?? true) : -1;
-        const beforeRight = before?.on ? levelByte(before.level, before.pan?.right ?? true) : -1;
+        // A mixer voice carries a whole byte of level a side, so this half of
+        // the console places a part where the arranger asked rather than
+        // quantising it — the Game Boy half above is the one with `NR51`.
+        const gains = panGains(frame.pan);
+        const wasGains = panGains(before?.pan);
+        const left = levelByte(frame.level, gains.left);
+        const right = levelByte(frame.level, gains.right);
+        const beforeLeft = before?.on ? levelByte(before.level, wasGains.left) : -1;
+        const beforeRight = before?.on ? levelByte(before.level, wasGains.right) : -1;
         if (retrigger || beforeLeft !== left) {
           writes.push({ reg: base + REG_VOLL, value: left, chip: 1 });
         }

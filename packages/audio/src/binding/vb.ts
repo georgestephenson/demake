@@ -40,6 +40,7 @@ import type { ChannelFrame } from "../chipscript.js";
 import { snapPitch, snapVolume } from "../pitch.js";
 
 import { vbBankWrites, vbTableFor } from "./vb-bank.js";
+import { attenuate, panGains } from "./pan.js";
 import type { BoundWrite, ChipBinding, DriverRateFit } from "./types.js";
 
 /** Noise tap modes the register offers. */
@@ -80,11 +81,17 @@ function registerFor(channel: AudioSpec["channels"][number], hz: number): number
   return value < 0 ? 0 : value > 0x7ff ? 0x7ff : value;
 }
 
-/** `LRV`: which sides this frame is heard on, at full — the pan and nothing else. */
+/**
+ * `LRV`: where across the image this frame sits — the pan and nothing else.
+ *
+ * Four bits a side, so this console places a voice at one of fifteen positions
+ * either way rather than choosing between three. It costs nothing to spend:
+ * the register is written anyway, and the level lives in `EV0` (§the binding's
+ * two multiplies), so a placement here never disturbs a volume step.
+ */
 function panByte(frame: ChannelFrame): number {
-  const left = frame.pan?.left ?? true;
-  const right = frame.pan?.right ?? true;
-  return ((left ? 0x0f : 0) << 4) | (right ? 0x0f : 0);
+  const gains = panGains(frame.pan);
+  return (attenuate(0x0f, gains.left) << 4) | attenuate(0x0f, gains.right);
 }
 
 /**

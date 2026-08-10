@@ -276,12 +276,76 @@ the arranger reaches for:
 ### When there are more channels than parts
 
 The instruction is to use them, and the ways are: detune-doubling a lead across
-two channels for thickness (a period technique with a real timbral effect), true
-stereo placement where the hardware pans (GB, GG, NGPC, PCE, VB, SNES),
+two channels for thickness (a period technique with a real timbral effect),
 harmonizing a lead in thirds, adding the octave below a bass, and giving
 percussion its own channel instead of stealing one. Each is a candidate, judged
 like anything else — unused channels are not a failure, and a track that sounds
 better sparse should stay sparse.
+
+Stereo placement was on that list and is no longer a candidate axis at all — it
+is unconditional, because it costs nothing and every arrangement wants it. It
+has a section of its own below.
+
+### Stereo placement
+
+**Built.** Every arrangement is placed across the image; before this stage
+existed every demade track was mono, on every console, and a rendered stereo WAV
+had two bit-identical channels (doc 13 §A5.5).
+
+Three decisions carry it.
+
+**A position, not a pair of switches.** `ChannelFrame.pan` is `-1` … `+1`, and
+`binding/pan.ts` holds the two laws a chip can take it under, because the
+hardware genuinely splits two ways. Seven chips pan by **level** — two
+attenuators, one a side, so a voice sits anywhere across the image: the T6W28,
+the S-DSP, the DS SPU, the VSU, the HuC6280, the WonderSwan and the Game Boy
+Advance's mixer. Four pan by **switch** — one bit a side and nothing between:
+`NR51`, the Game Gear's stereo latch, and the YM2612's and YM2610's two output
+bits. A switch-panned chip drops the far side only past halfway, so a part
+placed gently is heard centred there and placed where the hardware can do
+better.
+
+**Centre is both sides at full**, under both laws. That makes it a *balance* law
+rather than a constant-power one, and the reason is the hardware rather than
+taste: these are attenuators feeding a chip whose full level *is* the ceiling,
+so the only thing a power law could do at centre is start every voice quieter
+than the machine can play it. It is also what made the change reviewable — a
+part left centred encodes byte-for-byte what it did when nothing panned.
+
+**Per channel, constant for the piece.** A pan register is therefore written
+once, at the first tick, and never again — which matters because a track is
+already a few kilobytes of schedule on a machine with 32 KiB and no mapper. It
+would also be wrong to move it: a channel that time-shares two parts is carrying
+a *reduction*, and re-placing it at the seam draws attention to exactly what
+time-sharing exists to hide.
+
+What holds the piece up holds the centre: bass (off-centre it gives up half its
+power on a four-bit attenuator, and mono-compatible low end is near-universal
+practice), percussion (which on a four-channel console is the noise channel, the
+one voice a listener localises instantly), and the tune. Harmony, pad, arpeggio
+and effects parts spread outward, widening with how far from the tune they are,
+and alternating in sign so the image stays balanced.
+
+**Only one lead keeps the centre**, and that is the part with a lesson in it.
+The classifier routinely returns four or five `lead` parts for one piece,
+because a melody, its harmony line, a counter-line and an echo all carry a lead
+patch (§Stage 1 — a part's programme is a role prior, not a decoration). Reading
+that literally and centring every one of them is what a *mono* arrangement does,
+and on a four-channel console it leaves this stage with nothing to place: the
+arrangement there is bass, two leads and the kit. So the most salient lead keeps
+the centre and the rest are placed as the accompaniment they musically are. That
+is a placement decision rather than a reclassification — the part is still a
+lead everywhere else, still competes for the channel a lead wants, and is still
+reported as one.
+
+A console whose spec says `panning: "none"` is never placed and never *reports*
+a placement, so `--json` and the page's piano roll say what the chip does rather
+than what the arranger would have liked. `ChannelSpan.pan` carries it, because a
+placement is otherwise invisible in everything but the audio itself.
+
+Sound effects are not placed. An effect borrows a channel the music is using, so
+placing one would move what the music put there and leave it moved (doc 18
+§Stage 4).
 
 ### Percussion
 

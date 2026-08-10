@@ -46,6 +46,7 @@ import type { ChannelFrame } from "../chipscript.js";
 import { snapPitch, snapVolume } from "../pitch.js";
 
 import { wsWaveformFor, WS_WAVE_BASE, type WsWaveform } from "./wsc-bank.js";
+import { attenuate, panGains } from "./pan.js";
 import type { BoundWrite, ChipBinding, DriverRateFit } from "./types.js";
 
 /** Noise tap modes the register offers, longest sequence first. */
@@ -105,12 +106,18 @@ function registerFor(channel: AudioSpec["channels"][number], hz: number): number
   return value < 0 ? 0 : value > 0x7ff ? 0x7ff : value;
 }
 
-/** The volume byte a frame asks for: four bits a side, fifteen is full. */
+/**
+ * The volume byte a frame asks for: four bits a side, fifteen is full.
+ *
+ * Level and placement share one byte on this chip, so the position scales the
+ * snapped level per side instead of gating it. That does mean a quiet note
+ * placed off centre loses resolution — four bits is all there is — which is the
+ * hardware's arrangement rather than a choice this binding gets to make.
+ */
 function volumeFor(channel: AudioSpec["channels"][number], frame: ChannelFrame): number {
   const level = snapVolume(channel.volume, frame.level);
-  const left = frame.pan?.left ?? true;
-  const right = frame.pan?.right ?? true;
-  return ((left ? level : 0) << 4) | (right ? level : 0);
+  const gains = panGains(frame.pan);
+  return (attenuate(level, gains.left) << 4) | attenuate(level, gains.right);
 }
 
 /** Which waveform each channel is given, in spec order. */

@@ -804,7 +804,10 @@ cartridge it goes in now exists.
 **And it demakes music and sound, on both Neo Geo Pockets.** `@demake/chip`
 models the T6W28: a Master System's four voices with the thing that chip is
 poorest in — **stereo that is a level rather than a switch**, two four-bit
-attenuators per channel, one a side. It is the fourth console in the set with no
+attenuators per channel, one a side — and the arranger now places a part
+anywhere across that image rather than switching it fully to one side, which was
+this console's last unspent line (§Working on audio). It is the fourth console
+in the set with no
 shared register and the first to have none because its hardware pans _more_. Two
 write ports carry different registers (the tone periods on the left, the noise's
 own divisor on the right), so a driver that had them backwards would produce
@@ -1606,6 +1609,13 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
   src/analysis.ts    roles, salience, sections, loop choice
   src/arrange/       assignment, exchange refinement, and the schedule compiler
   src/binding/       per-console register encoders + the driver-rate fits.
+                     pan.ts is the one that is nobody's console and nobody's
+                     chip: a stereo position reduces exactly two ways, and which
+                     one a channel takes is `AudioSpec.panning`'s answer — two
+                     attenuators (`panGains`) or one bit a side (`panSides`).
+                     Centre is both sides at full under *both*, which is what
+                     lets a part the arranger leaves alone encode byte-for-byte
+                     what it did before placement existed.
                      md.ts is the one that drives two chips at once; fm-patch.ts
                      is where a timbre is *searched* rather than selected;
                      t6w28.ts is the one whose `BoundWrite.reg` is a *port*
@@ -2278,8 +2288,16 @@ them do the work. Generators live in the session scratchpad; the `.mid` and
 - **A part count is a floor, not a target.** The arranger takes as many parts as
   the console can play and drops the rest by salience, so more parts is strictly
   more information: the small consoles show it _choosing_ and the wide ones show
-  it spending everything. `demake arrange --json` reports the channels used and
-  the parts dropped; check both when you add a tune.
+  it spending everything. `demake arrange --json` reports the channels used, the
+  parts dropped and where each channel was **placed** across the stereo image;
+  check all three when you add a tune.
+- **A tune with one accompaniment line is a tune with nothing to place.** The
+  arranger centres bass, percussion and the most salient lead, and spreads what
+  is left — so a MIDI whose parts all classify as `lead` or `bass` produces a
+  nearly mono arrangement on a wide console however many voices it fills. That
+  is the classifier being coarse rather than the placement being timid (five
+  `lead` parts is the usual result for these fixtures), and it is another reason
+  to give every part the General MIDI programme a real arranger would.
 - **Give every part the General MIDI programme a real arranger would.** It is not
   decoration: `analysis.ts` takes a _role prior_ from it, so a programme is how a
   part says what it is for. A counter-line under a lead patch is classified as a
@@ -3686,6 +3704,25 @@ that keep them from being undone. All of them come from doc 16.
   a voice rather than addressing one, and the YM2610's packed byte is a _port_ —
   so its copy carries the latch as a fourth byte and the recorder classifies on
   which port the byte was going to rather than on the byte.
+- **A stereo position is the arranger's; which law it reaches the chip under is
+  the spec's.** `ChannelFrame.pan` is `-1` … `+1` and `binding/pan.ts` reduces
+  it, because the hardware splits two ways and neither is the other's
+  approximation: seven chips have two attenuators and place a voice anywhere
+  (`panGains`), four have one bit a side (`panSides`). Never flatten the
+  distinction to booleans "because most consoles only switch" — that is exactly
+  what the representation used to do, and it is why the T6W28's spec claimed
+  `lr-level` for a year while the demaker could only say full or cut. Three
+  things about it are load-bearing. **Centre is both sides at full under both
+  laws**, so a part nobody placed encodes what it always did; a constant-power
+  law would start every voice below the chip's own ceiling. **Placement is per
+  channel and constant for the piece**, so a pan register is written once — a
+  per-note pan would be a schedule several kilobytes larger on a machine with
+  32 KiB and no mapper. And **a channel whose spec says `panning: "none"` is
+  never placed and never reports one**, because a binding that ignores a
+  position encodes identically and _says_ something false.
+- **An effect is never placed**, for the reason a borrowed channel is replayed
+  rather than silenced: an effect borrows a channel the music is using, so
+  placing one moves what the music put there and leaves it moved.
 - **`NR51` is merged, never stored, whenever two streams share the chip.** One
   byte carries every channel's panning. Each stream keeps a shadow and the driver
   folds them under the steal mask, which is what makes the register stream exactly

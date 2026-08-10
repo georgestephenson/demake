@@ -31,6 +31,8 @@ export interface ChannelAssignment {
   treatment: Treatment;
   /** Octaves the material was shifted to fit the channel's lattice. */
   octaveShift: number;
+  /** Where across the stereo image this channel sits: `-1` left … `+1` right. */
+  pan: number;
 }
 
 export interface ArrangementPlan {
@@ -339,10 +341,151 @@ export function planArrangement(
               ? "folded"
               : "direct",
       octaveShift,
+      pan: 0,
     });
   }
   assignments.sort((a, b) => a.channelIndex - b.channelIndex);
+  placeStereo(assignments);
   return { assignments, dropped };
+}
+
+/**
+ * How far off centre a role is placed, where it is placed at all (doc 17 §Stereo placement).
+ *
+ * The three that are absent are absent on purpose, and it is the same reason
+ * every time: a part that carries the piece belongs where both speakers are. A
+ * **bass** placed off centre gives up half its power on hardware whose whole
+ * output is a four-bit attenuator, and mono-compatible low end is near-universal
+ * practice besides. **Percussion** anchors the middle, and on a four-channel
+ * console it is the noise channel, which is the one voice a listener localises
+ * instantly. A **lead** is the thing being listened to.
+ *
+ * What is left is accompaniment, and the widths run with how far from the tune
+ * a part is: harmony sits just off centre, a pad opens further, an arpeggio —
+ * the one figure that is texture rather than statement — goes widest of the
+ * musical parts, and an effects part goes wider still because nothing depends
+ * on hearing it in both ears.
+ *
+ * These are deliberately short of hard: a chip that pans by switch drops a whole
+ * side past `panSides`' halfway mark, so a width is also a decision about which
+ * consoles hear the placement at all. Harmony stays inside it and is heard
+ * centred on a Game Boy and placed on a Neo Geo Pocket; everything above it is
+ * placed on both.
+ */
+const PAN_WIDTH: Partial<Record<PartRole, number>> = {
+  harmony: 0.45,
+  pad: 0.6,
+  arp: 0.7,
+  fx: 0.8,
+};
+
+/**
+ * How far a *second* lead is placed — because only one of them is the tune.
+ *
+ * The classifier routinely returns four or five `lead` parts for one piece: a
+ * melody, its harmony line, a counter-line and an echo all carry a lead patch,
+ * and AGENTS.md §Writing music already records that a counter-line under a lead
+ * patch is classified as one. Reading that literally and centring every one of
+ * them is what a *mono* arrangement does, and on a four-channel console it
+ * leaves the placement machinery with nothing to place at all — the arrangement
+ * there is bass, two leads and the kit, and every one of those centres.
+ *
+ * So the most salient lead keeps the centre and the rest are treated as what
+ * they musically are: accompaniment. This is a placement decision rather than a
+ * reclassification — the part is still a lead everywhere else, still competes
+ * for the channel a lead wants, and is still reported as one.
+ *
+ * Past `panSides`' halfway mark on purpose, so the consoles that pan by switch
+ * hear it too: a Game Boy's melody on pulse 1 and its counter-line placed on
+ * pulse 2 is how music for that machine has always been written.
+ */
+const SECONDARY_LEAD_WIDTH = 0.55;
+
+/**
+ * Place each channel across the stereo image.
+ *
+ * Per **channel** rather than per note, and constant for the piece. That is
+ * what makes the placement nearly free: a pan register is written once, at the
+ * first tick, and never again — which matters because a track is already a few
+ * kilobytes of schedule on a machine with 32 KiB and no mapper (AGENTS.md
+ * §Audio costs cartridge). Moving a channel's placement when a time-shared
+ * voice changes part would also draw attention to exactly the seam that
+ * time-sharing exists to hide.
+ *
+ * The sign alternates so the image stays balanced, and it is taken from the
+ * order the channels are placed in rather than from anything about the music,
+ * because the alternative is a rule that reads the notes and is therefore one
+ * more thing that can disagree between two runs. Left first, which is arbitrary
+ * but has to be *some* fixed answer: an arrangement with an odd number of
+ * placed channels leans one way, and it leans the same way every time.
+ *
+ * A single placeable channel is still placed, which it did not used to be. The
+ * thing that makes a lone placement tolerable is that everything holding the
+ * piece up — bass, tune and kit — is centred by the rules above, so there are
+ * three anchors against the one voice that moves. On a four-channel console
+ * that is the *usual* outcome rather than an edge case, and declining it there
+ * meant the narrow machines spent none of this hardware at all, which is the
+ * iron rule pointing the wrong way.
+ */
+function placeStereo(assignments: ChannelAssignment[]): void {
+  const lead = primaryLead(assignments);
+  const widths = new Map(assignments.map((a) => [a, widthOf(a, lead)]));
+  const spread = assignments.filter((a) => widths.get(a)! > 0);
+  for (let i = 0; i < spread.length; i += 1) {
+    spread[i]!.pan = (i % 2 === 0 ? -1 : 1) * widths.get(spread[i]!)!;
+  }
+}
+
+/**
+ * The lead channel that keeps the centre: the most salient one.
+ *
+ * Ties break on channel index so the answer cannot depend on the order the
+ * assignments happen to have been built in — this runs on every arrangement in
+ * a four-candidate tournament, and two runs that placed the image differently
+ * would be an output-byte change with no cause.
+ */
+function primaryLead(assignments: readonly ChannelAssignment[]): ChannelAssignment | undefined {
+  let best: ChannelAssignment | undefined;
+  let bestSalience = -1;
+  for (const assignment of assignments) {
+    if (!assignment.parts.some((part) => part.role === "lead")) continue;
+    let salience = 0;
+    for (const part of assignment.parts) {
+      if (part.role === "lead") salience = Math.max(salience, meanSalience(part));
+    }
+    if (salience > bestSalience) {
+      best = assignment;
+      bestSalience = salience;
+    }
+  }
+  return best;
+}
+
+/**
+ * The width a channel's material asks for: the widest of the parts it carries.
+ *
+ * The widest rather than the first, because a channel that time-shares is
+ * carrying a reduction — and a reduction that put a pad and an arpeggio on one
+ * voice should sit where the more peripheral of the two wants to be, not where
+ * whichever happened to sort first does.
+ */
+function widthOf(assignment: ChannelAssignment, primary: ChannelAssignment | undefined): number {
+  // A channel whose hardware has no stereo at all is never placed, so what the
+  // span reports is what the chip does. Leaving the position on and letting the
+  // binding ignore it would encode identically and *say* something false — an
+  // NES arrangement claiming a stereo image in `--json` and the piano roll.
+  if (assignment.channel.panning === "none") return 0;
+  let width = 0;
+  for (const part of assignment.parts) {
+    const role =
+      part.role === "lead"
+        ? assignment === primary
+          ? 0
+          : SECONDARY_LEAD_WIDTH
+        : (PAN_WIDTH[part.role] ?? 0);
+    if (role > width) width = role;
+  }
+  return width;
 }
 
 /**

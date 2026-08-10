@@ -52,6 +52,7 @@ import {
   waveAddress,
   type NdsWaveform,
 } from "./nds-bank.js";
+import { panGains } from "./pan.js";
 import type { BoundWrite, ChipBinding, DriverRateFit } from "./types.js";
 
 /** The ARM7's system clock, which its timers count. */
@@ -62,6 +63,31 @@ const PRESCALERS = [1, 64, 256, 1024] as const;
 
 /** Panning positions: hard left, centre, hard right, in the register's units. */
 const PAN = { left: 0, centre: 64, right: 127 } as const;
+
+/**
+ * A position as this chip's panning byte.
+ *
+ * Seven bits with centre at 64, so the widest palette in the set is also the
+ * finest placement in it: a voice sits at any of a hundred and twenty-seven
+ * points across the image, and nothing is shared with another channel, so
+ * moving one costs one byte and disturbs nothing. Centre is exactly 64, which
+ * is what a part the arranger does not place has always been given.
+ */
+function panRegister(pan: number | undefined): number {
+  // Read off the *attenuated* side rather than the position, so this stays
+  // expressed through the same taper every other level-panning chip uses: the
+  // near side holds at full and the far one falls away, and how far it has
+  // fallen is how far from centre the voice sits. Taking it off `pan` directly
+  // would be a second statement of the law, and the two could drift.
+  const gains = panGains(pan);
+  const toRight = 1 - gains.left;
+  const toLeft = 1 - gains.right;
+  const value =
+    toRight > 0
+      ? PAN.centre + Math.round(toRight * (PAN.right - PAN.centre))
+      : PAN.centre - Math.round(toLeft * PAN.centre);
+  return value < PAN.left ? PAN.left : value > PAN.right ? PAN.right : value;
+}
 
 /**
  * The control byte's fields.
@@ -215,9 +241,7 @@ export function ndsBinding(console: string, spec: AudioSpec): ChipBinding {
 
         const retrigger = !before?.on || frame.retrigger === true;
         const level = snapVolume(channel.volume, frame.level);
-        const left = frame.pan?.left ?? true;
-        const right = frame.pan?.right ?? true;
-        const pan = left === right ? PAN.centre : left ? PAN.left : PAN.right;
+        const pan = panRegister(frame.pan);
         const period = periodFor(channel, frame);
         const timer = (0x10000 - period) & 0xffff;
 
@@ -241,13 +265,7 @@ export function ndsBinding(console: string, spec: AudioSpec): ChipBinding {
         if (retrigger || snapVolume(channel.volume, before!.level) !== level) {
           writes.push({ reg: base + NDS_CH.volume, value: level & 0x7f });
         }
-        const beforePan = before?.on
-          ? (before.pan?.left ?? true) === (before.pan?.right ?? true)
-            ? PAN.centre
-            : (before.pan?.left ?? true)
-              ? PAN.left
-              : PAN.right
-          : -1;
+        const beforePan = before?.on ? panRegister(before.pan) : -1;
         if (retrigger || beforePan !== pan) {
           writes.push({ reg: base + NDS_CH.panning, value: pan });
         }

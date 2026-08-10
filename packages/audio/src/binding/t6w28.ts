@@ -31,23 +31,20 @@
  * with a latch byte, and `checkLatchDiscipline` refuses a schedule where it does
  * not.
  *
- * **One thing this binding cannot yet spend, and the spec is honest about it.**
- * `ChannelFrame.pan` is a pair of *booleans*, so what reaches the chip is a
- * side that is full on or fully cut — the Game Gear's answer through a per-
- * channel attenuator. The hardware places a voice anywhere across the image, the
- * spec says `lr-level` because that is what the hardware does (AGENTS.md §Iron
- * rules: a chip a demaker cannot yet reach is a gap to close, never a reason to
- * narrow the spec), and closing it is a continuous pan in the arranger rather
- * than anything here. Doc 13 records it.
+ * **And the placement is spent rather than switched.** `ChannelFrame.pan` is a
+ * signed position, so a voice sits anywhere across the image: the level is
+ * scaled per side by `panGains` and then inverted into each attenuator, which
+ * is what the spec's `lr-level` has always claimed the hardware does. It was a
+ * pair of booleans once — full on or fully cut, the Game Gear's answer through
+ * a per-channel attenuator — and that was the last thing about this chip a
+ * demaker could not reach.
  */
 
 import type { AudioSpec } from "@demake/core";
 
 import { snapPitch, snapVolume } from "../pitch.js";
+import { attenuate, panGains } from "./pan.js";
 import type { BoundWrite, ChipBinding, DriverRateFit } from "./types.js";
-
-/** Which sides a part is placed on, as the arranger states it. */
-type Pan = { left: boolean; right: boolean };
 
 /** The two write ports, as this binding's register numbers. */
 export const T6W28_RIGHT = 0;
@@ -91,15 +88,20 @@ export function t6w28Binding(console: string, spec: AudioSpec): ChipBinding {
         const isNoise = channel.kind === "noise";
         const steps = channel.volume.steps;
 
-        // A pan of "both" is full on both sides, which is what every part that
-        // does not ask to be placed gets — and it is what makes a mono
-        // arrangement here sound like a Master System's.
-        const sides = (frameAt: { on: boolean; level: number; pan?: Pan }) => {
+        // Centre is full on both sides, which is what a part that does not ask
+        // to be placed gets — and it is what makes a mono arrangement here
+        // sound like a Master System's. Anything else is spent across the two
+        // attenuators, which is the whole reason this chip's spec says
+        // `lr-level`: the level is scaled per side and then inverted into an
+        // attenuation, so a voice sits where the arranger put it rather than
+        // being switched out of one speaker.
+        const sides = (frameAt: { on: boolean; level: number; pan?: number }) => {
           if (!frameAt.on) return [steps - 1, steps - 1] as const;
-          const cut = steps - 1 - snapVolume(channel.volume, frameAt.level);
+          const level = snapVolume(channel.volume, frameAt.level);
+          const gains = panGains(frameAt.pan);
           return [
-            (frameAt.pan?.left ?? true) ? cut : steps - 1,
-            (frameAt.pan?.right ?? true) ? cut : steps - 1,
+            steps - 1 - attenuate(level, gains.left),
+            steps - 1 - attenuate(level, gains.right),
           ] as const;
         };
         const [leftAtt, rightAtt] = sides(frame);

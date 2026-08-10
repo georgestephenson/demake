@@ -48,6 +48,7 @@ import {
 // the other's, and a caller that had one from `md.ts` should still find it.
 export { totalLevelFor };
 
+import { panSides } from "./pan.js";
 import { psgBinding } from "./psg.js";
 import type { BoundWrite, ChipBinding, DriverRateFit } from "./types.js";
 
@@ -245,12 +246,14 @@ function encodeFm(
     }
   }
 
-  const pan = frame.pan;
-  const panBits = ((pan?.left ?? true) ? 0x80 : 0) | ((pan?.right ?? true) ? 0x40 : 0);
+  // An FM voice has one output bit a side and nothing between them, so a
+  // position is quantised rather than spent — this is the one part of this
+  // console's stereo the PSG half does not share (its own is `psg.ts`'s).
+  const sides = panSides(frame.pan);
+  const panBits = (sides.left ? 0x80 : 0) | (sides.right ? 0x40 : 0);
+  const wasSides = panSides(before?.pan);
   const beforePan =
-    before?.on === true
-      ? ((before.pan?.left ?? true) ? 0x80 : 0) | ((before.pan?.right ?? true) ? 0x40 : 0)
-      : -1;
+    before?.on === true ? (wasSides.left ? 0x80 : 0) | (wasSides.right ? 0x40 : 0) : -1;
   if (panBits !== beforePan) out.push(...ymChannel(channel, 0xb4, panBits));
 
   if (changed) out.push(...pitchWrites(channel, pitch.fnum, pitch.block).map(withChip));

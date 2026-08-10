@@ -73,6 +73,7 @@ import {
   NEOGEO_WAVE_SAMPLES,
   type NeogeoWaveform,
 } from "./neogeo-bank.js";
+import { panSides } from "./pan.js";
 import type { BoundWrite, ChipBinding, DriverRateFit } from "./types.js";
 
 /** The chip's clock, and the divider that makes its internal sample rate. */
@@ -307,12 +308,14 @@ function encodeFm(
     }
   }
 
-  const pan = frame.pan;
-  const panBits = ((pan?.left ?? true) ? 0x80 : 0) | ((pan?.right ?? true) ? 0x40 : 0);
+  // Two output bits and nothing between, exactly as on the Mega Drive's OPN2 —
+  // every one of this chip's four sections pans by switch, which is why none of
+  // them calls `panGains`.
+  const sides = panSides(frame.pan);
+  const panBits = (sides.left ? 0x80 : 0) | (sides.right ? 0x40 : 0);
+  const wasSides = panSides(before?.pan);
   const beforePan =
-    before?.on === true
-      ? ((before.pan?.left ?? true) ? 0x80 : 0) | ((before.pan?.right ?? true) ? 0x40 : 0)
-      : -1;
+    before?.on === true ? (wasSides.left ? 0x80 : 0) | (wasSides.right ? 0x40 : 0) : -1;
   if (panBits !== beforePan) out.push(...ymChannel(channel, 0xb4, panBits));
 
   if (changed) {
@@ -414,8 +417,8 @@ function encodeAdpcmA(
 
   const bank = adpcmABank();
   const region = bank.regions[drumFor(frame.hz)];
-  const pan = frame.pan;
-  const bits = ((pan?.left ?? true) ? 0x80 : 0) | ((pan?.right ?? true) ? 0x40 : 0);
+  const sides = panSides(frame.pan);
+  const bits = (sides.left ? 0x80 : 0) | (sides.right ? 0x40 : 0);
   out.push(...portB(0x08 + voice, bits | adpcmALevel(frame.level)));
   out.push(...portB(0x10 + voice, region.startBlock & 0xff));
   out.push(...portB(0x18 + voice, (region.startBlock >> 8) & 0xff));
@@ -474,12 +477,11 @@ function encodeAdpcmB(
     out.push(...portA(0x1a, (delta >> 8) & 0xff));
   }
 
-  const pan = frame.pan;
-  const bits = ((pan?.left ?? true) ? 0x80 : 0) | ((pan?.right ?? true) ? 0x40 : 0);
+  const sides = panSides(frame.pan);
+  const bits = (sides.left ? 0x80 : 0) | (sides.right ? 0x40 : 0);
+  const wasSides = panSides(before?.pan);
   const beforeBits =
-    before?.on === true
-      ? ((before.pan?.left ?? true) ? 0x80 : 0) | ((before.pan?.right ?? true) ? 0x40 : 0)
-      : -1;
+    before?.on === true ? (wasSides.left ? 0x80 : 0) | (wasSides.right ? 0x40 : 0) : -1;
   if (bits !== beforeBits) out.push(...portA(0x11, bits));
 
   const volume = Math.round(Math.max(0, Math.min(1, frame.level)) * 255);

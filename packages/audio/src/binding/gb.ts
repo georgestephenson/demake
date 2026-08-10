@@ -20,6 +20,7 @@ import type { AudioSpec } from "@demake/core";
 
 import type { ChannelFrame } from "../chipscript.js";
 import { snapPitch, snapVolume } from "../pitch.js";
+import { panSides } from "./pan.js";
 import type { BoundWrite, ChipBinding, DriverRateFit } from "./types.js";
 
 const GB_CLOCK = 4194304;
@@ -74,17 +75,17 @@ export function gbBinding(console: string, spec: AudioSpec): ChipBinding {
         const frame = next[i]!;
         const before = prev?.[i];
         const bit = 1 << i;
+        const sides = panSides(frame.pan);
         if (frame.on) {
-          const left = frame.pan?.left ?? true;
-          const right = frame.pan?.right ?? true;
-          if (left) panning |= bit << 4;
-          if (right) panning |= bit;
+          if (sides.left) panning |= bit << 4;
+          if (sides.right) panning |= bit;
         }
+        const wasSides = before === undefined ? undefined : panSides(before.pan);
         if (
           before === undefined ||
           before.on !== frame.on ||
-          before.pan?.left !== frame.pan?.left ||
-          before.pan?.right !== frame.pan?.right
+          wasSides!.left !== sides.left ||
+          wasSides!.right !== sides.right
         ) {
           panningChanged = true;
         }

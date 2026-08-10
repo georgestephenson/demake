@@ -87,6 +87,7 @@ export function compileScript(
         startTick: 0,
         endTick: totalTicks,
         treatment: assignment.treatment,
+        pan: assignment.pan,
       });
     }
   }
@@ -141,7 +142,16 @@ function buildLane(
 ): ChannelFrame[] {
   const channel = assignment.channel;
   const frames: ChannelFrame[] = new Array<ChannelFrame>(totalTicks);
-  for (let i = 0; i < totalTicks; i += 1) frames[i] = { on: false, hz: 0, level: 0 };
+  // The placement is stamped at construction rather than on each of the three
+  // paths below, and onto the silent frames as well as the sounding ones. Both
+  // halves of that are deliberate: it is the one property of this lane that
+  // does not depend on what is playing, so a path that forgot it would be a
+  // channel that drifts back to centre for one kind of material — and stating
+  // it while silent is what puts the pan register in the first tick's writes,
+  // beside the rest of what the channel is about to need.
+  for (let i = 0; i < totalTicks; i += 1) {
+    frames[i] = { on: false, hz: 0, level: 0, pan: assignment.pan };
+  }
 
   // Every note the channel is responsible for, on the driver's grid.
   interface Placed {

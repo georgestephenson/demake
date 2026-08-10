@@ -486,6 +486,17 @@ interface ChannelSpec {
 }
 ```
 
+`panning` earns its keep the same way, and it is the field that decides which of
+two laws a placement reaches the chip under. `lr-enable` is one bit a side and
+nothing between (`NR51`, the Game Gear's stereo latch, an FM voice's two output
+bits); `lr-level` is two attenuators, so a voice sits anywhere across the image
+(the T6W28, the S-DSP, the DS SPU, the VSU, the HuC6280, the WonderSwan, the
+Game Boy Advance's mixer). `binding/pan.ts` holds both, and the arranger states
+a *position* rather than a pair of sides precisely so that the distinction stays
+the hardware's rather than being flattened to the poorest chip's answer (doc 17
+§Stereo placement). A channel declaring `none` is never placed and never reports
+a placement.
+
 The pitch lattice is the part that earns its keep. From `formula`, `clockHz`,
 `bits` and `divisor` the engine derives the complete set of frequencies a channel
 can emit, and therefore the *cents error* of any requested note — the audio
@@ -514,7 +525,7 @@ locked by the tests, not by this table.
 
 | Console | Chip(s) | Channels | The constraint that shapes arrangement |
 |---|---|---|---|
-| **Game Boy / Color** | GB APU (DMG/CGB) | 2 pulse (4 duties, 4-bit envelope, sweep on ch1), 1 wave (32 × 4-bit RAM), 1 noise (15/7-bit LFSR) | Four voices, one of which only does noise. The wave channel is the swing vote: bass, or a distinctive lead, not both. Hardware envelopes are decay-only, so swells cost driver writes. Stereo panning per channel (NR51) is free and under-used |
+| **Game Boy / Color** | GB APU (DMG/CGB) | 2 pulse (4 duties, 4-bit envelope, sweep on ch1), 1 wave (32 × 4-bit RAM), 1 noise (15/7-bit LFSR) | Four voices, one of which only does noise. The wave channel is the swing vote: bass, or a distinctive lead, not both. Hardware envelopes are decay-only, so swells cost driver writes. Stereo panning per channel (NR51) is free, and now spent: the arranger places the counter-line against the tune (doc 17 §Stereo placement) |
 | **NES** | 2A03 | 2 pulse (4 duties, envelope, sweep), 1 triangle (**no volume control**), 1 noise (16 periods, tonal short mode), 1 DPCM | The triangle is on/off — it is a bass voice and cannot be dynamic. DPCM buys real drums for real ROM bytes, and stalls the CPU while it plays. Non-linear mixing means channel balance is not additive |
 | **SMS / GG / SG-1000** | SN76489 (T6W28-like stereo on GG) | 3 square (fixed 50% duty), 1 noise (3 rates or ch3's pitch) | **No envelopes at all** — every volume shape is driver writes, so expression has a direct data cost. No duty variation, so timbre comes from arpeggio and vibrato. Hard pitch floor ~109 Hz; periodic noise is the bass trick. GG adds per-channel stereo |
 | **Mega Drive** | YM2612 + SN76489 | 6 FM (4-operator, 8 algorithms), ch6 switchable to 8-bit PCM; plus the 4 PSG channels | The only Tier-1 target where *timbre is fitted*, not chosen: a 4-op FM patch is a search problem against the source's spectrum (doc 17 §Stage 3). PCM on ch6 costs CPU per sample. **Built, both chips**, and the first console here to need per-write chip routing |

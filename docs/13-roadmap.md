@@ -546,12 +546,13 @@ the backend today, and either is a reason to revisit rather than to work around.
    is per frame either way. The audio is what made it visible, because a chip
    handed the wrong number of clocks renders at the wrong speed.
 
-   One thing the binding cannot yet spend: `ChannelFrame.pan` is a pair of
-   booleans, so a part reaches the chip hard left, hard right or both. The spec
-   says `lr-level` because that is what the hardware does (AGENTS.md §Iron
-   rules), and closing it is a continuous pan in the arranger — which would also
-   be the first thing in this project to make a *stereo image* an arranging
-   decision rather than a channel property.
+   The one thing this binding could not spend is now spent. `ChannelFrame.pan`
+   was a pair of booleans, so a part reached the chip hard left, hard right or
+   both; it is a signed position, the level is scaled per side and inverted into
+   each of the two attenuators, and the spec's `lr-level` is finally what the
+   demaker produces rather than only what the hardware does. Closing it turned
+   out to be six other consoles as well as this one, and an arranger stage under
+   all of them — §A5.5.
 7. **Supervision** and **Lynx** — each gated on something structural (RAM, a
    framebuffer renderer). Worth doing once a framebuffer renderer exists for one
    of them.
@@ -1678,6 +1679,26 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     What each remaining console costs is now the same three things over one
     shared walk. Level B (sample comparison against a third-party core, via the
     libretro harness's audio callback) is the other thing that remains.
+
+    **And one console cannot be rendered at all, which Level B would have found
+    the hard way.** `demake render -c gba` writes a WAV in which every sample
+    after the first is `NaN`, and it always has. The cause is in the *one
+    renderer* rather than in that console's binding or its chip model:
+    `GbaPcm.clockHz` is 32768 — the only model in the set whose clock is
+    **below** the 48 kHz the renderer defaults to, because it is a mixer rather
+    than an oscillator — and `BoxSink` computes its integration boundaries as
+    `floor(i × clockHz / sampleRate)`. Consecutive boundaries therefore collide,
+    the width of the box is zero, and each sample is `0 / 0`. Every other chip
+    here clocks in megahertz, so box integration has only ever had to
+    *downsample* and the case was never written.
+
+    Nothing downstream hides it and nothing upstream causes it: the register
+    schedule is correct, and `audio-gba.test.ts`'s byte-for-byte mixer proof
+    still passes because it compares the driver against the model's own integer
+    mix rather than against a float render. What is needed is a decision about
+    what `render()` does when it has to upsample — hold the sample, interpolate,
+    or render at the chip's rate and resample once — and that is doc 16's
+    §The render contract rather than a patch to one chip.
   - **A3 — `sfx`** *(built for WAV; the Game Boy boots)*: eight gesture families, the class gate,
     deterministic coordinate descent with every candidate rendered through the
     chip model, and the placement contract each effect declares. A single effect
@@ -1756,6 +1777,44 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     | PC Engine direct D/A | yes | no — likewise |
     | YM2610 SSG noise | yes | no — `binding/neogeo.ts` writes the mixer once, tone on and noise off |
     | YM2610 ADPCM-A voices 2-6 | yes | no — the *arranger* gives a percussion part one channel |
+    | Stereo placement | yes, on eleven bindings | **closed** — see below |
+
+    **The stereo line is closed, and it was wider than it was written down as.**
+    It was recorded as the Neo Geo Pocket's — `ChannelFrame.pan` being a pair of
+    booleans where the T6W28 pans by level — and the boolean was the smaller
+    half of the problem. *Nothing in `@demake/audio` ever set `pan` at all*, by
+    any route: eleven bindings read it, every one of them defaulted an absent
+    value to both sides at full, and so every demade track on every console was
+    mono. A rendered stereo WAV had two bit-identical channels, which no
+    assertion in the suite was in a position to notice, because a register diff
+    compares a schedule against itself and hears nothing.
+
+    So closing it was two things rather than one. `pan` became a **signed
+    position** and `binding/pan.ts` holds the two laws a chip can take it under
+    — seven chips pan by *level* and now spend it (the T6W28, the S-DSP, the DS
+    SPU, the VSU, the HuC6280, the WonderSwan and the Game Boy Advance mixer),
+    four pan by *switch* and quantise it (`NR51`, the Game Gear's stereo latch,
+    the YM2612's and the YM2610's output bits). And `plan.ts` gained the stage
+    that produces one: per channel, constant for the piece — so a pan register
+    is written once at the first tick and costs a schedule nothing — with bass,
+    the tune and the kit holding the centre and the accompaniment spread
+    outward.
+
+    The part of that with a lesson in it is the **lead**. The classifier
+    routinely returns four or five `lead` parts for one piece, because a melody,
+    its harmony, a counter-line and an echo all carry a lead patch (AGENTS.md
+    §Writing music already records it). Reading that literally and centring
+    every one of them is what a mono arrangement does, and on a four-channel
+    console it left the placement stage with nothing to place: the arrangement
+    there is bass, two leads and the kit, and every one of those centres. So the
+    most salient lead keeps the centre and the rest are placed as what they
+    musically are. That is a *placement* decision and not a reclassification —
+    the part is still a lead everywhere else, and still competes for the channel
+    a lead wants.
+
+    Centre is both sides at full under both laws, which is what made the change
+    reviewable: a part the arranger leaves alone encodes byte-for-byte what it
+    always did, so only a part that is actually placed moves.
 
     Two of those are the Neo Geo's and neither is the binding being lazy. The
     **SSG noise** is refused deliberately: this console has six sample voices
