@@ -2591,10 +2591,29 @@ is the game.
   is the list; the build assembles the 32 KiB cartridge first and only
   reassembles when the game does not fit, which is what keeps every existing
   cartridge byte-identical. The catch is the header: sixteen bytes _inside_ the
-  image at `$7FF0`, so a 48 KiB build pads across the hole and the data section
-  starts at `$8000` — the gap below `$7FF0` is wasted, and a game whose code runs
-  past the header cannot be laid out this way at all and is told so by name. Doc
-  13 §Banked cartridges has the fix and why it comes before slot-2 paging.
+  image at `$7FF0`, and a game whose _code_ runs past it cannot be laid out this
+  way at all and is told so by name.
+- **The header hole is stepped over one data block at a time, and the sizes come
+  from the pass before.** Everything after `ctx.finish()` is addressed by label
+  rather than by a branch, so a block that moves takes its label with it and
+  nothing else notices — which means the question is per block ("would _this_ one
+  be laid across `$7FF0`?") rather than one wholesale pad to `$8000`. It has to
+  be, because padding the whole data section past the header throws away
+  everything between the end of the code and `$7FF0`: up to thirty-two kilobytes
+  for a game whose code is short and whose tables are long, and 1223 bytes on the
+  smallest game that reaches the larger board at all. What makes it possible is
+  that the answer needs a length the emitter does not have until the block has
+  been emitted — so it is taken from the pass that has already happened.
+  `sms.ts` assembles once with no hole to find out whether the game fits below
+  `$7FF0`, that pass emits the same blocks in the same order, and
+  `EmittedProgram.blocks` is what it measured. The two passes are compared
+  afterwards, because a size list that had drifted would place the hole somewhere
+  plausible and wrong. The audio driver's schedules are the one block that places
+  _itself_ — dozens of small label-addressed blocks rather than one, so
+  `emitData` is handed the hole and steps over it at whichever of its own
+  boundaries falls there, exactly as the standalone cartridge already did. Doc 13
+  §Banked cartridges says why this comes before slot-2 paging: paging inherits
+  the same hole.
 - **The mapper's registers are decoded out of the RAM mirror.** `$FFFC`–`$FFFF`
   is `$DFFC`–`$DFFF` in real RAM, so those four bytes read back as ordinary
   memory and page a ROM bank out from under the program when written. The heap

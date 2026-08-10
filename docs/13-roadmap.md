@@ -1743,18 +1743,37 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     byte-identical, because a game that fits below `$7FF0` takes the same single
     pass it always did.
 
-    What this does *not* reach is the thing quest needs, and the shape of the
-    limit is worth writing down. The header is sixteen bytes **inside** the image
-    at `$7FF0`, so a 48 KiB build pads across the hole — which means the data
-    section starts at `$8000` and the gap between the end of the code and `$7FF0`
-    is wasted. So the window is games whose *code* ends just below the header:
-    below that the padding costs more than the extra bank gives, and above it
-    there is nowhere to put the header at all and the build says so
-    (`E_GAME_TOO_LARGE`, naming `$7FF0`). Placing the hole tightly means either
-    checking the running address between data items, or using one of the other
-    header slots the BIOS accepts (`$1FF0`, `$3FF0`) and working out what each does
-    to the checksum range. Neither is hard; both want doing before slot-2 paging,
-    because paging inherits the same hole.
+    **And the header hole is placed tightly**, which was the prerequisite this
+    entry used to name. The header is sixteen bytes **inside** the image at
+    `$7FF0`, and the data section used to be padded past it in one move — so the
+    whole gap between the end of the code and `$7FF0` was thrown away, up to
+    thirty-two kilobytes for a game whose code is short and whose tables are long.
+    It is now stepped over one block at a time: everything after the code is
+    addressed by label rather than by a branch, so a block that would be laid
+    across the header moves past it whole and takes its label with it, and every
+    block that fits below stays below. The audio driver's packed schedules place
+    themselves, because they are dozens of small blocks rather than one — the same
+    `DataHole` the standalone Sega cartridge has always used. The smallest game
+    that reaches the larger board at all recovers 1223 bytes;
+    `sms-flat48.test.ts` asserts what no wholesale pad can produce, which is a
+    data section with blocks on *both* sides of the header.
+
+    The one thing that made it awkward is that a block's length is not known
+    until it has been emitted, and by then the decision is made — so the lengths
+    come from the pass that has already happened. `sms.ts` assembles once with no
+    hole to find out whether the game fits below `$7FF0` at all, that pass emits
+    the same blocks in the same order, and the second pass reads the length of the
+    block it is about to emit out of what the first measured. The two are compared
+    afterwards, because a size list that had drifted would place the hole
+    somewhere plausible and wrong. Every existing cartridge is still
+    byte-identical: a game that fits below `$7FF0` never makes the second pass.
+
+    What this still does *not* reach is the thing quest needs, and the shape of
+    the limit is what is left. The window is games whose *code* ends below the
+    header: above that there is nowhere to put it at all and the build says so
+    (`E_GAME_TOO_LARGE`, naming `$7FF0`). Past 48 KiB the cartridge has to page
+    slot 2, which inherits the same hole — and now inherits the placement with
+    it.
   - **Game Boy** — MBC5: bank 0 fixed at `$0000`–`$3FFF`, a switchable 16 KiB
     window at `$4000`, and the header's type and size bytes. `@demake/dmg` says
     in as many words that it has no MBC and that this is the day it gains one.

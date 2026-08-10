@@ -59,7 +59,7 @@ import {
 import { GG_MEMORY, SMS_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
 import { ART_TILES, bindSmsArt } from "./sms-art.js";
 import { SmsCtx } from "./sms/ctx.js";
-import { emitProgram, BANK_TILES, type SmsEmitOptions } from "./sms/emit.js";
+import { emitProgram, BANK_TILES, type HeaderHole, type SmsEmitOptions } from "./sms/emit.js";
 import type { ArtSettings } from "./settings.js";
 
 /** Bytes the smallest flat Sega cartridge holds. */
@@ -221,7 +221,7 @@ export const smsBackend: Backend<SmsEmitOptions, SmsAudio> = {
      * A fresh `SmsCtx` each time, because emitting is what pulls a helper into the
      * output — a context that had already been emitted into would emit them twice.
      */
-    const assembleWith = (reserveHeader: boolean) => {
+    const assembleWith = (hole?: HeaderHole) => {
       const inner = new SmsCtx(
         program,
         analysis,
@@ -231,22 +231,13 @@ export const smsBackend: Backend<SmsEmitOptions, SmsAudio> = {
       );
       if (hooks) inner.audio = hooks;
       try {
-        emitProgram(inner, { ...art, ...audio.options, reserveHeader });
-        return { inner, code: inner.asm.assemble() };
+        const emitted = emitProgram(inner, {
+          ...art,
+          ...audio.options,
+          ...(hole ? { hole } : {}),
+        });
+        return { inner, ...emitted, code: inner.asm.assemble() };
       } catch (error) {
-        // The one shape the two-size scheme cannot take: the *code* alone runs
-        // past `$7FF0`, so there is nowhere to put the header hole that is not in
-        // the middle of something a branch addresses. Worth its own sentence
-        // rather than an internal error, because the answer is paging slot 2 and
-        // not a smaller game.
-        if (error instanceof AsmError && /cannot pad to/.test(error.message)) {
-          throw new BuildError(
-            "E_GAME_TOO_LARGE",
-            "this game's code reaches past $7FF0, where the cartridge header sits",
-            "the flat cartridge has nowhere to put the header; paging slot 2 is what this " +
-              "needs (doc 13 §Banked cartridges).",
-          );
-        }
         if (error instanceof AsmError) {
           throw new BuildError(
             "E_INTERNAL",
@@ -262,7 +253,13 @@ export const smsBackend: Backend<SmsEmitOptions, SmsAudio> = {
     // so there is no hole to leave and nothing to pad. Only a game that does not
     // fit pays for the second pass — and it pays in assembly, which is
     // milliseconds against the art and audio already demade by now.
-    let { inner, code } = assembleWith(false);
+    //
+    // That first pass is also the measuring tape the second one needs: it emits
+    // the same data blocks in the same order with nothing stepped over, so what it
+    // reports is how long each of them is (`sms/emit.ts` §Placing the header hole).
+    const first = assembleWith();
+    const dataStart = first.dataStart;
+    let { inner, blocks, code } = first;
     let size = SMS_ROM_SIZE;
     if (code.length > CODE_SIZE) {
       if (code.length > MAX_ROM_SIZE - SMS_HEADER_SIZE) {
@@ -274,7 +271,36 @@ export const smsBackend: Backend<SmsEmitOptions, SmsAudio> = {
             "page slot 2 (doc 13 §Banked cartridges).",
         );
       }
-      ({ inner, code } = assembleWith(true));
+      // The one shape the two-size scheme cannot take: the *code* alone reaches
+      // `$7FF0`, so there is nowhere to put the header that is not in the middle
+      // of something a branch addresses. Only the tables can be stepped over, and
+      // this is where the code stops being tables. Worth its own sentence rather
+      // than an internal error, because the answer is paging slot 2 and not a
+      // smaller game.
+      if (dataStart > SMS_HEADER_OFFSET) {
+        throw new BuildError(
+          "E_GAME_TOO_LARGE",
+          "this game's code reaches past $7FF0, where the cartridge header sits",
+          "the flat cartridge has nowhere to put the header; paging slot 2 is what this " +
+            "needs (doc 13 §Banked cartridges).",
+        );
+      }
+      const measured = blocks;
+      ({ inner, blocks, code } = assembleWith({
+        from: SMS_HEADER_OFFSET,
+        to: SMS_HEADER_OFFSET + SMS_HEADER_SIZE,
+        blocks: measured,
+      }));
+      // The one thing that would make the placement quietly wrong: a second pass
+      // whose blocks are not the first pass's. Nothing in the data depends on
+      // where it landed, so they cannot differ — and a check is four lines
+      // against a header stamped through the middle of a table.
+      if (blocks.length !== measured.length || blocks.some((n, i) => n !== measured[i])) {
+        throw new BuildError(
+          "E_INTERNAL",
+          "the data section changed size between the two assembly passes",
+        );
+      }
       size = MAX_ROM_SIZE;
     }
 

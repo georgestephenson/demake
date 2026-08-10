@@ -39,7 +39,7 @@
  */
 
 import { AUDIO_STOP, type SmsGameAudio } from "@demake/audio";
-import { label, SMS_HEADER_OFFSET, SMS_HEADER_SIZE, type Ref } from "@demake/core";
+import { label, type AsmZ80, type Ref } from "@demake/core";
 
 import type { InstanceDef, RuleDef } from "../../program.js";
 import {
@@ -243,16 +243,110 @@ export interface SmsEmitOptions {
   /** Which track each scene plays, as an index into the driver's table. */
   sceneTracks?: readonly number[];
   /**
-   * Leave the sixteen bytes the cartridge header occupies free.
+   * Leave the sixteen bytes the cartridge header occupies free, block by block.
    *
    * The header is *inside* the image at `$7FF0`, not a wrapper around it, so a
-   * 32 KiB build simply stops short of it and needs nothing here. A 48 KiB one
+   * 32 KiB build simply stops short of it and needs nothing here; a 48 KiB one
    * runs straight through, and whatever landed there would be replaced by the
-   * stamp — so the data section is padded across the hole instead. Set by
-   * `sms.ts` on the second pass, once the first has shown the game does not fit
-   * below it; a build that fits is byte-for-byte the build it always was.
+   * stamp. Set by `sms.ts` on the second pass, once the first has shown the game
+   * does not fit below it; a build that fits is byte-for-byte the build it always
+   * was.
+   *
+   * What it carries is the *sizes* the first pass measured, which is what makes
+   * the placement tight rather than wholesale (§Placing the header hole).
    */
-  reserveHeader?: boolean;
+  hole?: HeaderHole;
+}
+
+/**
+ * Where the cartridge header sits, and how long each data block is.
+ *
+ * ## Placing the header hole
+ *
+ * The data section used to be padded past `$8000` in one step, which is correct
+ * and throws away everything between the end of the code and `$7FF0` — up to
+ * thirty-two kilobytes for a game whose code is short and whose tables are long.
+ * Placing it tightly means asking, in front of each block, whether *that* block
+ * would be laid across the hole, and moving only the ones that would. Blocks are
+ * addressed by label, so moving one costs the gap in front of it and nothing
+ * else.
+ *
+ * The catch is that a block's length is not known until it has been emitted, and
+ * by then it is too late. So the sizes come from the pass that has already
+ * happened: `sms.ts` assembles once with no hole to find out whether the game
+ * fits below `$7FF0` at all, and that pass emits exactly the same data in exactly
+ * the same order. {@link blocks} is what it measured, and the second pass reads
+ * the length of the block it is about to emit out of it. The two passes are
+ * checked against each other afterwards, because a size list that had drifted
+ * would place the hole somewhere plausible and wrong.
+ */
+export interface HeaderHole {
+  /** First byte the data may not occupy. */
+  from: number;
+  /** First byte after the hole. */
+  to: number;
+  /** Byte length of each data block, in emission order, from the pass with no hole. */
+  blocks: readonly number[];
+}
+
+/**
+ * The size recorded for a block that steps over the hole itself.
+ *
+ * Not a length: the whole point of such a block is that its length is different
+ * in the two passes, so a length would be the one number the cross-check has to
+ * ignore. Recording an impossible one instead means the check can stay an
+ * equality.
+ */
+const SELF_PLACED = -1;
+
+/**
+ * The data section, laid out around the header.
+ *
+ * One instance per pass. With no hole it is a measuring tape: every block is
+ * emitted where it falls and {@link sizes} records what it took. With one, it is
+ * also the placer — the size of the block about to be emitted is read out of the
+ * previous pass, and a block that would straddle the hole is moved past it whole.
+ */
+class DataSection {
+  /** What each block took, in emission order. */
+  readonly sizes: number[] = [];
+
+  constructor(
+    private readonly asm: AsmZ80,
+    private readonly hole: HeaderHole | undefined,
+  ) {}
+
+  /** Emit one block, stepping over the hole if this one would be laid across it. */
+  block(emit: () => void): void {
+    const size = this.hole?.blocks[this.sizes.length];
+    if (this.hole && size !== undefined) {
+      if (this.asm.pc < this.hole.to && this.asm.pc + size > this.hole.from) {
+        this.asm.padTo(this.hole.to);
+      }
+    }
+    const at = this.asm.pc;
+    emit();
+    this.sizes.push(this.asm.pc - at);
+  }
+
+  /**
+   * Emit a block that places itself.
+   *
+   * The audio driver's packed schedules are the only one: they are dozens of
+   * small label-addressed blocks rather than one, so the driver is handed the
+   * hole and steps over it at whichever of its own boundaries falls there. Taking
+   * it as a single block instead would move a whole track's schedule past the
+   * header to save sixteen bytes.
+   *
+   * Its size is recorded as {@link SELF_PLACED} rather than as a length, because
+   * the length is the one thing about it that legitimately differs between the
+   * two passes — the pass with the hole is longer by whatever gap it left. The
+   * entry is still recorded, so every later block keeps its index.
+   */
+  placed(emit: (hole: HeaderHole | undefined) => void): void {
+    emit(this.hole);
+    this.sizes.push(SELF_PLACED);
+  }
 }
 
 /** Dispatch on the running scene to one of a set of labels. */
@@ -273,8 +367,29 @@ function emitSceneDispatch(ctx: SmsCtx, labels: readonly string[]): void {
   }
 }
 
-/** Emit the whole program. */
-export function emitProgram(ctx: SmsCtx, options: SmsEmitOptions = {}): void {
+/** What a pass over the program measured, beyond the bytes themselves. */
+export interface EmittedProgram {
+  /**
+   * The address the code ends and the tables begin.
+   *
+   * The boundary between what is addressed by branches and what is addressed by
+   * label, so it is also the highest address the header hole can be placed above:
+   * a program whose *code* reaches `$7FF0` has nowhere to put the header that is
+   * not in the middle of something a branch points at, and `sms.ts` refuses it by
+   * name.
+   */
+  dataStart: number;
+  /** How long each data block came out, in emission order ({@link HeaderHole}). */
+  blocks: readonly number[];
+}
+
+/**
+ * Emit the whole program, and report what a second pass would need to know.
+ *
+ * The block lengths are what places the header hole tightly ({@link HeaderHole});
+ * a caller that is not going to make one can ignore them.
+ */
+export function emitProgram(ctx: SmsCtx, options: SmsEmitOptions = {}): EmittedProgram {
   const { asm, program } = ctx;
   const scenes = sceneContexts(ctx);
   const levels = collectLevels(program.scenes);
@@ -304,11 +419,13 @@ export function emitProgram(ctx: SmsCtx, options: SmsEmitOptions = {}): void {
   ctx.finish();
 
   // --- data ------------------------------------------------------------------
-  // The header hole, skipped here rather than anywhere else: this is the boundary
-  // between the code, which is addressed by every branch in the program, and the
-  // tables, which are addressed by label — so a gap costs nothing but the sixteen
-  // bytes, and no instruction moves relative to another.
-  if (options.reserveHeader) asm.padTo(SMS_HEADER_OFFSET + SMS_HEADER_SIZE);
+  // Everything from here on is addressed by label rather than by a branch, which
+  // is what lets the cartridge header be stepped over one block at a time: a
+  // block that moves takes its label with it and nothing else notices. The code
+  // above cannot do that, so a game whose *code* reaches `$7FF0` is refused by
+  // name (`sms.ts` §the one shape the two-size scheme cannot take).
+  const dataStart = asm.pc;
+  const data = new DataSection(asm, options.hole);
 
   for (const level of levels) {
     const boundTile = (index: number): number => {
@@ -319,46 +436,71 @@ export function emitProgram(ctx: SmsCtx, options: SmsEmitOptions = {}): void {
       // A legend entry with no art draws a built-in pattern.
       return bound?.tile ?? patternTile(index, level.file.tiles[index]?.solid ?? false);
     };
-    emitLevelData(asm, level, (index) => boundTile(index) & 0xff);
-    emitTileAt(ctx, level);
+    data.block(() => {
+      emitLevelData(asm, level, (index) => boundTile(index) & 0xff);
+    });
+    // A routine rather than a table, and the only one down here — so it is a
+    // block for the same reason the tables are, and for one more: its own
+    // branches are relative.
+    data.block(() => {
+      emitTileAt(ctx, level);
+    });
     for (const rule of program.rules) {
       if (rule.event.kind === "hits" && rule.event.tiles.length > 0) {
-        emitRuleTileTable(asm, rule, level);
+        data.block(() => {
+          emitRuleTileTable(asm, rule, level);
+        });
       }
     }
   }
-  emitInstanceDefaults(asm, program, PROPS, ctx.layout.entitySizes);
+  data.block(() => {
+    emitInstanceDefaults(asm, program, PROPS, ctx.layout.entitySizes);
+  });
 
   for (const scene of scenes) {
     const art = options.backdrops?.get(scene.def.name);
     if (art) {
-      asm.label(backdropLabel(scene));
-      asm.bytes(packCells(art.map));
+      data.block(() => {
+        asm.label(backdropLabel(scene));
+        asm.bytes(packCells(art.map));
+      });
     }
     const palette = options.scenePalettes?.get(scene.def.name);
     if (palette) {
-      asm.label(scenePaletteLabel(scene));
-      asm.bytes(palette);
+      data.block(() => {
+        asm.label(scenePaletteLabel(scene));
+        asm.bytes(palette);
+      });
     }
   }
   if (options.audio) {
     if (program.tracks.length > 0) {
-      asm.label("SceneTracks");
-      // One byte per scene: the request value that starts its track, or the one
-      // that stops the music. A table rather than a dispatch because a scene
-      // change already costs a redraw, and this is the cheapest thing in it.
-      for (const scene of scenes) {
-        const track = options.sceneTracks?.[scene.index] ?? -1;
-        asm.db(track < 0 ? AUDIO_STOP : track + 1);
-      }
+      data.block(() => {
+        asm.label("SceneTracks");
+        // One byte per scene: the request value that starts its track, or the one
+        // that stops the music. A table rather than a dispatch because a scene
+        // change already costs a redraw, and this is the cheapest thing in it.
+        for (const scene of scenes) {
+          const track = options.sceneTracks?.[scene.index] ?? -1;
+          asm.db(track < 0 ? AUDIO_STOP : track + 1);
+        }
+      });
     }
-    options.audio.emitData(asm);
+    const audio = options.audio;
+    data.placed((hole) => {
+      audio.emitData(asm, hole);
+    });
   }
 
-  asm.label("TileBank");
-  asm.bytes(options.bank ?? new Uint8Array(0));
-  asm.label("Palette");
-  asm.bytes(options.palette ?? defaultPalette(ctx.gameGear));
+  data.block(() => {
+    asm.label("TileBank");
+    asm.bytes(options.bank ?? new Uint8Array(0));
+  });
+  data.block(() => {
+    asm.label("Palette");
+    asm.bytes(options.palette ?? defaultPalette(ctx.gameGear));
+  });
+  return { dataStart, blocks: data.sizes };
 }
 
 /**

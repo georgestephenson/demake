@@ -451,6 +451,20 @@ export interface DataHole {
 }
 
 /**
+ * Step over the hole when the next `bytes` bytes would be laid across it.
+ *
+ * A block that starts below the hole and ends above it is one the stamp would
+ * cut sixteen bytes out of, so the whole block moves past instead — and because
+ * every block is addressed by label, moving one costs the gap in front of it and
+ * nothing else. A block that starts above the hole is left alone, which is what
+ * makes this safe to call in front of every block rather than only the ones near
+ * the boundary.
+ */
+export function clearHole(asm: AsmZ80, hole: DataHole | undefined, bytes: number): void {
+  if (hole && asm.pc < hole.to && asm.pc + bytes > hole.from) asm.padTo(hole.to);
+}
+
+/**
  * Emit a stream's packed data, and return the label its order list starts at.
  *
  * The order list comes first so a caller can point at it without knowing how many
@@ -467,7 +481,7 @@ export function emitStreamData(
   const blockLabel = (block: number) => `${prefix}Block${index}_${block}`;
   /** Step over the hole when the next `bytes` bytes would run into it. */
   const clear = (bytes: number): void => {
-    if (hole && asm.pc < hole.from && asm.pc + bytes > hole.from) asm.padTo(hole.to);
+    clearHole(asm, hole, bytes);
   };
   clear(data.order.length * 2 + 2);
   asm.label(orderLabel);

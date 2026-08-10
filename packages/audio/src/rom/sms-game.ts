@@ -63,7 +63,13 @@ import {
 } from "./psg.js";
 import { clampByte, MAX_PENDING, pack, rateHz, restrict, shapeOf, stripBoot } from "./shared.js";
 import { psgPortOf, psgRecord, psgWrite, PSG_PORT } from "./sms-driver.js";
-import { emitStream, emitStreamData, type Z80StreamState } from "./z80-player.js";
+import {
+  clearHole,
+  emitStream,
+  emitStreamData,
+  type DataHole,
+  type Z80StreamState,
+} from "./z80-player.js";
 
 /** The value that stops the music, rather than starting a track. */
 export const STOP = 0xff;
@@ -156,8 +162,17 @@ export interface SmsGameAudio {
   };
   /** Emit `AudioInit`, `AudioTick` and everything they pull in. */
   emitCode(asm: AsmZ80): void;
-  /** Emit the tables and the packed streams. */
-  emitData(asm: AsmZ80): void;
+  /**
+   * Emit the tables and the packed streams.
+   *
+   * `hole` is a region of the image the data may not be laid across, which on
+   * this console is the cartridge header at `$7FF0` — sixteen bytes *inside* the
+   * address space rather than a wrapper around it. Given one, each table and each
+   * packed block steps over it individually rather than the whole section being
+   * padded past, which is the difference between losing the gap in front of one
+   * block and losing everything between the end of the code and `$7FF0`.
+   */
+  emitData(asm: AsmZ80, hole?: DataHole): void;
   /**
    * The schedules as the ROM will really perform them.
    *
@@ -297,9 +312,12 @@ export function buildSmsGameAudio(input: SmsGameAudioInput): SmsGameAudio {
     code = asm.pc - start;
   };
 
-  const emitData = (asm: AsmZ80): void => {
+  const emitData = (asm: AsmZ80, hole?: DataHole): void => {
     const start = asm.pc;
+    // The gap the hole costs is counted as data like everything else, because
+    // what `stats.data` answers is how much of the cartridge the audio took.
     if (input.tracks.length > 0) {
+      clearHole(asm, hole, musicData.length * 4);
       asm.label("AudioTracks");
       for (let index = 0; index < musicData.length; index += 1) {
         const track = musicData[index] as DriverData;
@@ -308,6 +326,7 @@ export function buildSmsGameAudio(input: SmsGameAudioInput): SmsGameAudio {
       }
     }
     if (input.effects.length > 0) {
+      clearHole(asm, hole, effectData.length * 4);
       asm.label("AudioEffects");
       for (let index = 0; index < effectData.length; index += 1) {
         asm.dw(label(`AudioSfxOrder${index}`));
@@ -316,10 +335,10 @@ export function buildSmsGameAudio(input: SmsGameAudioInput): SmsGameAudio {
       }
     }
     for (let index = 0; index < musicData.length; index += 1) {
-      emitStreamData(asm, "AudioMus", index, musicData[index] as DriverData);
+      emitStreamData(asm, "AudioMus", index, musicData[index] as DriverData, hole);
     }
     for (let index = 0; index < effectData.length; index += 1) {
-      emitStreamData(asm, "AudioSfx", index, effectData[index] as DriverData);
+      emitStreamData(asm, "AudioSfx", index, effectData[index] as DriverData, hole);
     }
     data = asm.pc - start;
   };

@@ -161,6 +161,7 @@ export {
   type SmsGameAudioInput,
   type SmsGameAudioStats,
 } from "./rom/sms-game.js";
+export { type DataHole } from "./rom/z80-player.js";
 export { t6w28Binding } from "./binding/t6w28.js";
 export {
   t6w28AttenuationOff,
