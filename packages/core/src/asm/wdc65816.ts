@@ -187,8 +187,15 @@ export function absIndLong(address: Ref): Operand65816 {
   return { mode: "absIndLong", value: address };
 }
 
-/** `$nnnnnn` — long: the bank travels in the instruction. */
-export function long(address: number): Operand65816 {
+/**
+ * `$nnnnnn` — long: the bank travels in the instruction.
+ *
+ * Takes a label as well as a number, which is what makes `jsl`/`jml` usable
+ * between banks: a label in a banked program carries its bank
+ * ({@link Asm65816.section}), so the operand resolves to all twenty-four bits
+ * without a caller doing the arithmetic.
+ */
+export function long(address: Ref): Operand65816 {
   return { mode: "long", value: address };
 }
 
@@ -613,15 +620,39 @@ interface Fixup {
  * `origin` is where byte zero lives in the *bank's* address space. A LoROM
  * cartridge's first bank is visible at `$8000`, so that is what a backend passes,
  * and every absolute reference then resolves without the caller doing base
- * arithmetic. The bank itself is never part of a label: this assembler emits one
- * bank's worth of code, which is exactly what a Demotic cartridge is.
+ * arithmetic.
+ *
+ * ## Banks
+ *
+ * A program that outgrows one bank calls {@link section} to say which bank the
+ * code after it lives in, and from then on a label carries all twenty-four bits
+ * of its address. Three things follow and each is what makes the arrangement
+ * safe rather than merely possible:
+ *
+ *   - **`abs16` takes the low sixteen**, which is what the hardware does with an
+ *     absolute operand — the bank comes from the data bank register or the
+ *     program bank register, not from the instruction. So a `jmp` or a data read
+ *     is still bank-local and reads exactly as it did before.
+ *   - **`long24` takes all of it**, so `jsl` and `jml` reach any bank and need no
+ *     arithmetic at a call site.
+ *   - **A section does not move any byte.** The image stays one linear buffer and
+ *     `section` only changes what an address *means*; a caller that wants a bank
+ *     boundary in the image pads to it first, which is the one thing this class
+ *     cannot decide for it (a Demotic cartridge's banks are not contiguous — the
+ *     tile art and the sound processor's image sit between them).
  */
 export class Asm65816 {
   private code: number[] = [];
   private readonly labels = new Map<string, number>();
   private readonly fixups: Fixup[] = [];
+  /** Address of `code[sectionAt]`, which is {@link origin} until `section` moves it. */
+  private base: number;
+  /** Where the current section began, as a byte offset. */
+  private sectionAt = 0;
 
-  constructor(readonly origin = 0) {}
+  constructor(readonly origin = 0) {
+    this.base = origin;
+  }
 
   /** Bytes emitted so far. */
   get length(): number {
@@ -630,7 +661,21 @@ export class Asm65816 {
 
   /** The address the next byte will occupy. */
   get pc(): number {
-    return this.origin + this.code.length;
+    return this.base + (this.code.length - this.sectionAt);
+  }
+
+  /**
+   * Continue in `bank`, at the origin the constructor was given.
+   *
+   * Every label from here on carries that bank, so `jsl` and `jml` reach it and
+   * an absolute reference into it still means the low sixteen bits — which is
+   * the hardware's own rule and the reason a banked build's data reads do not
+   * change. Pad to the bank boundary first: this moves no bytes.
+   */
+  section(bank: number): this {
+    this.base = ((bank & 0xff) << 16) | this.origin;
+    this.sectionAt = this.code.length;
+    return this;
   }
 
   /** Define a label at the current address. */
@@ -877,8 +922,16 @@ export class Asm65816 {
   jmpIndX(target: Ref): this {
     return this.op("jmp", absIndX(target));
   }
+  /** `jml` — a jump that carries its bank, so it reaches the whole cartridge. */
+  jml(target: Ref): this {
+    return this.op("jml", long(target));
+  }
   jsr(target: Ref): this {
     return this.op("jsr", abs(target));
+  }
+  /** `jsl` — a call that carries its bank; returns through `rtl`, never `rts`. */
+  jsl(target: Ref): this {
+    return this.op("jsl", long(target));
   }
   lda(operand: Operand65816): this {
     return this.op("lda", operand);

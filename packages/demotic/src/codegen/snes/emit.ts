@@ -41,7 +41,17 @@
  */
 
 import { SPC_PORT, SPC_STOP, type SpcGameAudio } from "@demake/audio";
-import { imm16, imm8, label, longX, SNES_TILE_BANK, SNES_TILE_BASE, type Ref } from "@demake/core";
+import {
+  AsmError,
+  imm16,
+  imm8,
+  label,
+  longX,
+  SNES_BANK_SIZE,
+  SNES_TILE_BANK,
+  SNES_TILE_BASE,
+  type Ref,
+} from "@demake/core";
 
 import { ACTIONS, type InstanceDef, type RuleDef } from "../../program.js";
 import {
@@ -221,28 +231,103 @@ export interface SnesEmitOptions {
   effectIndices?: readonly number[];
   /** Which track each scene asks for, or `-1` for a scene that plays none. */
   sceneTracks?: readonly number[];
+  /**
+   * Where each scene's routines go, for a game that outgrew one bank.
+   *
+   * Absent for a game that fits, and then this emitter does exactly what it
+   * always did — one section, near calls, and a cartridge byte-identical to the
+   * one it built before banking existed.
+   */
+  banks?: SnesBankPlan;
 }
 
-/** Dispatch on the running scene to one of a set of labels. */
+/**
+ * Which cartridge bank each scene's routines are emitted into.
+ *
+ * ## Banking a Super Nintendo cartridge
+ *
+ * A LoROM bank is thirty-two kilobytes and a demade game is unrolled into the
+ * scenes its rules can fire in, so what outgrows the bank is *code* and the
+ * natural unit is a scene: its four routines are the only things anything
+ * outside them reaches, and they are reached exactly four ways — the tick, the
+ * reset, the camera and the render dispatch. Everything else stays in bank zero
+ * and stays where it is:
+ *
+ *   - **All the data does**, and that is what makes this cheap. A level's grid, a
+ *     packed backdrop, the instance defaults and the pooled constants are read
+ *     with the data bank register at zero, which is also where the console's
+ *     first 8 KiB of work RAM is mirrored — so a scene in bank five reads its own
+ *     level out of bank zero with the same absolute instruction it used when it
+ *     was in bank zero itself. Not one data access changes.
+ *   - **All the helpers do**, because a helper is shared by definition. What
+ *     changes is how they are *reached*: `jsl` and `rtl` rather than `jsr` and
+ *     `rts`, everywhere in the program at once ({@link SnesCtx.banked}).
+ *
+ * The awkward part is emission order rather than addressing. Helpers are pulled
+ * by the code that calls them and `ctx.finish()` has to run after all of it — so
+ * the extra banks are emitted **first** and bank zero last, which is the reverse
+ * of how the cartridge is laid out and the only order in which the last thing
+ * emitted is the thing that has to be last. `section` makes that free: it changes
+ * what an address means and moves no bytes, so `snes.ts` copies each thirty-two
+ * kilobyte chunk to the bank its plan named.
+ */
+export interface SnesBankPlan {
+  /** The cartridge bank each scene's routines go in; zero is the program bank. */
+  sceneBank: readonly number[];
+  /** The extra banks in use, in the order they are emitted. */
+  extra: readonly number[];
+}
+
+/** What a pass over the program measured, beyond the bytes themselves. */
+export interface EmittedSnesProgram {
+  /** Bytes each scene's four routines took, by scene index. */
+  scenes: readonly number[];
+  /**
+   * Bytes everything that must be in bank zero took: code, helpers, pool, data.
+   *
+   * The scenes are *not* in it, wherever they were emitted, because what a bank
+   * plan needs to know is how much of bank zero is spoken for before a scene can
+   * go in it. That also makes it the number the two passes are compared on.
+   */
+  shared: number;
+}
+
+/**
+ * Dispatch on the running scene to one of a set of labels.
+ *
+ * A *tail* jump rather than a call, which is what makes this the one place in
+ * the backend that has to reach across banks: a scene's routines are the part of
+ * the program that moves out of bank zero (doc 13 §Banked cartridges), so every
+ * transfer here is `ctx.jump` and not `asm.jmp`. Returning is unchanged either
+ * way — three of the four dispatched routines end in a return, which lands back
+ * at the caller of the dispatch, and the fourth jumps to the tick's shared tail.
+ */
 function emitSceneDispatch(ctx: SnesCtx, labels: readonly string[]): void {
   const { asm, layout } = ctx;
   if (labels.length === 1) {
-    asm.jmp(labels[0] as string);
+    ctx.jump(labels[0] as string);
     return;
   }
   loadByte(ctx, layout.scene);
   for (const [index, target] of labels.entries()) {
     if (index === labels.length - 1) {
-      asm.jmp(target);
+      ctx.jump(target);
       break;
     }
     asm.cmp(imm16(index));
-    ctx.far("eq", target);
+    ctx.farJump("eq", target);
   }
 }
 
-/** Emit the whole program. */
-export function emitProgram(ctx: SnesCtx, options: SnesEmitOptions = {}): void {
+/**
+ * Emit the whole program, and report what a bank plan would need to know.
+ *
+ * With no plan this is exactly the emitter it always was: one section, one bank,
+ * and the same bytes. With one, the scenes it names are emitted into sections of
+ * their own — extra banks first, bank zero last, for the reason
+ * {@link SnesBankPlan} gives.
+ */
+export function emitProgram(ctx: SnesCtx, options: SnesEmitOptions = {}): EmittedSnesProgram {
   const { asm, program } = ctx;
   const scenes = sceneContexts(ctx);
   const levels = collectLevels(program.scenes);
@@ -252,6 +337,41 @@ export function emitProgram(ctx: SnesCtx, options: SnesEmitOptions = {}): void {
     if (found) levelFor.set(scene.index, found);
   }
 
+  const sceneBytes = new Array<number>(scenes.length).fill(0);
+  /** Emit one scene's four routines, and record what they took. */
+  const emitScene = (scene: SceneCtx): void => {
+    const at = asm.length;
+    emitSceneTick(ctx, scene, levelFor.get(scene.index));
+    emitSceneReset(ctx, scene);
+    emitSceneCamera(ctx, scene);
+    emitSceneRender(ctx, scene, levelFor.get(scene.index), options);
+    sceneBytes[scene.index] = asm.length - at;
+  };
+  /** Scene bytes emitted inside bank zero, which the shared total excludes. */
+  let sceneBytesInBankZero = 0;
+
+  // The extra banks, before anything else and in the plan's own order. Each is
+  // padded to the full bank so the next one starts on a boundary and `snes.ts`
+  // can copy them out by index — a bank is a fixed slice of the cartridge, not a
+  // run of bytes that happens to end somewhere.
+  const plan = options.banks;
+  if (plan) {
+    for (const bank of plan.extra) {
+      asm.section(bank);
+      const start = asm.length;
+      for (const scene of scenes) {
+        if (plan.sceneBank[scene.index] === bank) emitScene(scene);
+      }
+      const used = asm.length - start;
+      if (used > SNES_BANK_SIZE) {
+        throw new AsmError(`bank $${bank.toString(16)} holds ${used} bytes of a possible 32768`);
+      }
+      asm.ds(SNES_BANK_SIZE - used);
+    }
+    asm.section(0);
+  }
+
+  const sharedStart = asm.length;
   emitReset(ctx, options);
   emitNmi(ctx);
   emitMainLoop(ctx, options.audio !== undefined);
@@ -261,10 +381,9 @@ export function emitProgram(ctx: SnesCtx, options: SnesEmitOptions = {}): void {
   emitSceneChange(ctx, scenes);
 
   for (const scene of scenes) {
-    emitSceneTick(ctx, scene, levelFor.get(scene.index));
-    emitSceneReset(ctx, scene);
-    emitSceneCamera(ctx, scene);
-    emitSceneRender(ctx, scene, levelFor.get(scene.index), options);
+    if (plan && plan.sceneBank[scene.index] !== 0) continue;
+    emitScene(scene);
+    sceneBytesInBankZero += sceneBytes[scene.index] as number;
   }
 
   emitRenderHelpers(ctx);
@@ -320,6 +439,11 @@ export function emitProgram(ctx: SnesCtx, options: SnesEmitOptions = {}): void {
 
   asm.label("Palette");
   asm.bytes(options.palette ?? defaultPalette());
+  // What the *shared* material took: everything in bank zero that is not a
+  // scene. Reported separately from the scenes because that is what a bank plan
+  // needs — how much of bank zero is spoken for before a scene can go in it —
+  // and it is the one number that has to be the same in both passes.
+  return { scenes: sceneBytes, shared: asm.length - sharedStart - sceneBytesInBankZero };
 }
 
 /** One tilemap entry: ten bits of tile, three of palette, and no flip. */
@@ -418,24 +542,24 @@ function emitReset(ctx: SnesCtx, options: SnesEmitOptions): void {
   // already been playing to nobody. No scene *change* will ever ask for the
   // entry scene's track either, which is the other half of why this is here.
   if (options.audio) {
-    asm.jsr("AudioUpload");
+    ctx.call("AudioUpload");
     if (program.tracks.length > 0) {
-      asm.jsr("SceneMusic");
-      asm.jsr("AudioService");
+      ctx.call("SceneMusic");
+      ctx.call("AudioService");
     }
   }
   if (layout.interrupt !== null) clearBytes(ctx, layout.interrupt, 1);
   emitClearState(ctx);
   emitSeedRng(ctx);
 
-  asm.jsr("ResetScene");
+  ctx.call("ResetScene");
   // The interpreter's camera starts at the origin and only moves at the *end* of
   // a tick, so a rule reading it on tick one sees zero.
   if (layout.camera !== null) {
     for (let index = 0; index < 8; index += 2) asm.stz(mem(layout.camera + index));
   }
-  asm.jsr("BuildFrame");
-  asm.jsr("UploadFrame");
+  ctx.call("BuildFrame");
+  ctx.call("UploadFrame");
 
   // The picture on, and the interrupt with it. Everything above ran under forced
   // blank, which is what makes a screenful of tilemap safe to write.
@@ -633,11 +757,11 @@ function emitMainLoop(ctx: SnesCtx, audio: boolean): void {
   loadByte(ctx, layout.interrupt as number);
   ctx.far("eq", wait);
   clearByte(ctx, layout.interrupt as number);
-  asm.jsr("UploadFrame");
-  asm.jsr("ReadInput");
-  asm.jsr("Tick");
-  if (audio) asm.jsr("AudioService");
-  asm.jsr("BuildFrame");
+  ctx.call("UploadFrame");
+  ctx.call("ReadInput");
+  ctx.call("Tick");
+  if (audio) ctx.call("AudioService");
+  ctx.call("BuildFrame");
   asm.jmp("Main");
 }
 
@@ -718,7 +842,7 @@ function emitAudio(ctx: SnesCtx, options: SnesEmitOptions): void {
     asm.inc();
     asm.sta(abs(R.APUIO));
   });
-  asm.rts();
+  ctx.ret();
 
   // --- posting a request -----------------------------------------------------
   //
@@ -743,7 +867,7 @@ function emitAudio(ctx: SnesCtx, options: SnesEmitOptions): void {
     asm.stz(mem(effect));
     asm.label(idle);
   });
-  asm.rts();
+  ctx.ret();
 
   // --- what a scene plays ----------------------------------------------------
   //
@@ -757,7 +881,7 @@ function emitAudio(ctx: SnesCtx, options: SnesEmitOptions): void {
     asm.lda(absX(label("SceneTracks")));
     asm.sta(mem(music));
   });
-  asm.rts();
+  ctx.ret();
 
   asm.label("SceneTracks");
   for (let index = 0; index < program.scenes.length; index += 1) {
@@ -852,7 +976,7 @@ function emitInput(ctx: SnesCtx): void {
     asm.lda(mem(released));
     asm.sta(mem(layout.released));
   });
-  asm.rts();
+  ctx.ret();
 }
 
 function emitTickDispatch(ctx: SnesCtx, scenes: readonly SceneCtx[]): void {
@@ -867,12 +991,12 @@ function emitTickDispatch(ctx: SnesCtx, scenes: readonly SceneCtx[]): void {
   );
 
   asm.label("TickDone");
-  asm.jsr("SceneChange");
+  ctx.call("SceneChange");
   // The tick counter, then the handshake byte the harness watches — in that
   // order, so a reader can never see the counter half-updated.
   inc16(ctx, layout.tick);
   incByte(ctx, layout.ready);
-  asm.rts();
+  ctx.ret();
 }
 
 function emitSceneChange(ctx: SnesCtx, scenes: readonly SceneCtx[]): void {
@@ -882,20 +1006,20 @@ function emitSceneChange(ctx: SnesCtx, scenes: readonly SceneCtx[]): void {
   loadByte(ctx, layout.pending);
   asm.cmp(imm16(0x00ff));
   asm.bne(go);
-  asm.rts();
+  ctx.ret();
   asm.label(go);
   ctx.narrow(() => {
     asm.lda(mem(layout.pending));
     asm.sta(mem(layout.scene));
   });
   setByte(ctx, layout.pending, 0xff);
-  if (ctx.audio?.driver === true) asm.jsr("SceneMusic");
-  asm.jsr("ResetScene");
+  if (ctx.audio?.driver === true) ctx.call("SceneMusic");
+  ctx.call("ResetScene");
   emitSeedRng(ctx);
   emitClearState(ctx);
-  asm.jsr("UpdateCamera");
+  ctx.call("UpdateCamera");
   setByte(ctx, layout.redraw, 1);
-  asm.rts();
+  ctx.ret();
 
   asm.label("ResetScene");
   emitSceneDispatch(
@@ -950,7 +1074,8 @@ function emitSceneTick(ctx: SnesCtx, scene: SceneCtx, level: LevelData | undefin
   const { asm } = ctx;
   asm.label(`SceneTick_${scene.index}`);
   emitTickSteps(tickSteps(ctx), scene, level);
-  asm.jmp("TickDone");
+  // Back to the shared tail, which is in bank zero and this may not be.
+  ctx.jump("TickDone");
 }
 
 function emitSceneReset(ctx: SnesCtx, scene: SceneCtx): void {
@@ -964,14 +1089,14 @@ function emitSceneReset(ctx: SnesCtx, scene: SceneCtx): void {
       layout.entitySizes[id] as number,
     );
   }
-  asm.rts();
+  ctx.ret();
 }
 
 function emitSceneCamera(ctx: SnesCtx, scene: SceneCtx): void {
   const { asm } = ctx;
   asm.label(`SceneCamera_${scene.index}`);
   emitCamera(ctx, scene);
-  asm.rts();
+  ctx.ret();
 }
 
 // --- 6. tiles ----------------------------------------------------------------
@@ -1140,7 +1265,7 @@ function emitTileRules(ctx: SnesCtx, scene: SceneCtx, level: LevelData): void {
         emitRecordContact(ctx);
         if (!event.level) {
           asm.ldx(imm16(listBase + 1));
-          asm.jsr("TileContactSeen");
+          ctx.call("TileContactSeen");
           ctx.far("ne", next);
         }
         const bind: Binding = {
@@ -1297,10 +1422,10 @@ function emitTileContactHelper(ctx: SnesCtx): void {
   asm.bne(loop);
   asm.label(missing);
   asm.lda(imm16(0));
-  asm.rts();
+  ctx.ret();
   asm.label(found);
   asm.lda(imm16(1));
-  asm.rts();
+  ctx.ret();
 }
 
 // --- rendering ---------------------------------------------------------------
@@ -1360,7 +1485,7 @@ function emitSceneRender(
     emitSwapPlots(ctx);
   }
   emitOam(ctx, scene, options);
-  asm.rts();
+  ctx.ret();
 }
 
 /**
@@ -1412,7 +1537,7 @@ function emitFullRedraw(
     asm.lda(imm16(VRAM.MAP));
     asm.sta(mem(R.VMADD));
     asm.ldx(imm16(label(backdropLabel(scene))));
-    asm.jsr(needBlitCells(ctx));
+    ctx.call(needBlitCells(ctx));
   } else {
     // The window, and the one column and row the first scroll step will need
     // before it has had a chance to paint them — and nothing else. Painting a
@@ -1437,7 +1562,7 @@ function emitFullRedraw(
     // The address is set once per row and the chip steps it — the whole point of
     // an auto-incrementing port. It has to be reset where the column crosses into
     // the other 32×32 screen, because those two are a kilobyte apart.
-    asm.jsr("VramFor");
+    ctx.call("VramFor");
     asm.label(colLoop);
     emitBackgroundTile(ctx, level);
     asm.sta(mem(R.VMDATA));
@@ -1446,7 +1571,7 @@ function emitFullRedraw(
     asm.lda(mem(layout.words + W.tileCol * 2));
     asm.and(imm16(31));
     asm.bne(noWrap);
-    asm.jsr("VramFor");
+    ctx.call("VramFor");
     asm.label(noWrap);
     asm.dec(mem(columns));
     ctx.far("ne", colLoop);
@@ -1552,7 +1677,7 @@ function needBlitCells(ctx: SnesCtx): Ref {
     asm.bra(next);
 
     asm.label(done);
-    asm.rts();
+    ctx.ret();
   });
 }
 
@@ -1580,7 +1705,7 @@ function emitBackgroundTile(ctx: SnesCtx, level: LevelData | undefined): void {
     asm.lda(imm16(BLANK_ENTRY));
     return;
   }
-  asm.jsr(tileAtLabel(level));
+  ctx.call(tileAtLabel(level));
   emitLegendToTile(ctx, level);
 }
 
@@ -1709,7 +1834,7 @@ function emitPaintEdge(ctx: SnesCtx, level: LevelData, isColumn: boolean, offset
   asm.sta(mem(remaining));
   asm.label(loop);
   emitBackgroundTile(ctx, level);
-  asm.jsr("QueueCell");
+  ctx.call("QueueCell");
   inc16(ctx, along);
   asm.dec(mem(remaining));
   ctx.far("ne", loop);
@@ -1736,7 +1861,7 @@ function emitHudErase(ctx: SnesCtx, scene: SceneCtx, level: LevelData | undefine
   asm.lda(absX(layout.plotPrev + 2));
   asm.sta(mem(layout.words + W.tileRow * 2));
   emitBackgroundTile(ctx, level);
-  asm.jsr("QueueCell");
+  ctx.call("QueueCell");
   asm.clc();
   asm.lda(mem(cursor));
   asm.adc(imm16(4));
@@ -1802,12 +1927,12 @@ function emitHud(ctx: SnesCtx, scene: SceneCtx, want: "static" | "dynamic"): voi
       const text = instance.strings["text"] ?? "";
       for (const character of [...text].slice(0, layout.memory.viewW)) {
         asm.lda(imm16(tilemapEntry(glyphTile(character), SYSTEM_PALETTE)));
-        asm.jsr(plot);
+        ctx.call(plot);
       }
     } else {
       asm.lda(mem(base + propOffset("value") + 2));
       asm.sta(mem(layout.words + W.target * 2));
-      asm.jsr(want === "static" ? needPokeNumber(ctx) : "DrawNumber");
+      ctx.call(want === "static" ? needPokeNumber(ctx) : "DrawNumber");
     }
     asm.label(skip);
   }
@@ -1818,11 +1943,11 @@ function needPokeCell(ctx: SnesCtx): Ref {
   return ctx.need("PokeCell", (inner) => {
     const { asm, layout } = inner;
     asm.sta(mem(DP.t2));
-    asm.jsr("VramFor");
+    ctx.call("VramFor");
     asm.lda(mem(DP.t2));
     asm.sta(mem(R.VMDATA));
     inc16(inner, layout.words + W.tileCol * 2);
-    asm.rts();
+    ctx.ret();
   });
 }
 
@@ -1868,10 +1993,10 @@ function needOnscreen(ctx: SnesCtx): Ref {
     axis(propOffset("y"), DP.t1, layout.memory.viewH);
 
     asm.lda(imm16(1));
-    asm.rts();
+    ctx.ret();
     asm.label(apart);
     asm.lda(imm16(0));
-    asm.rts();
+    ctx.ret();
   });
 }
 
@@ -1908,7 +2033,7 @@ function emitOam(ctx: SnesCtx, scene: SceneCtx, options: SnesEmitOptions): void 
       asm.lda(imm16(height));
       asm.sta(mem(DP.t1));
       asm.ldx(imm16(base));
-      asm.jsr(needOnscreen(ctx));
+      ctx.call(needOnscreen(ctx));
       ctx.far("eq", skip);
     }
     // Screen pixels are level pixels minus the camera's.
@@ -1932,7 +2057,7 @@ function emitOam(ctx: SnesCtx, scene: SceneCtx, options: SnesEmitOptions): void 
     asm.label(skip);
   }
   if (scrolls(ctx, scene)) emitHudSprites(ctx, scene);
-  asm.jsr(needClearRestOfOam(ctx));
+  ctx.call(needClearRestOfOam(ctx));
 }
 
 /**
@@ -1977,12 +2102,12 @@ function emitHudSprites(ctx: SnesCtx, scene: SceneCtx): void {
       const text = instance.strings["text"] ?? "";
       for (const character of [...text].slice(0, layout.memory.viewW)) {
         asm.lda(imm16(objectEntry(glyphTile(character), SYSTEM_PALETTE)));
-        asm.jsr(needHudGlyph(ctx));
+        ctx.call(needHudGlyph(ctx));
       }
     } else {
       asm.lda(mem(base + propOffset("value") + 2));
       asm.sta(mem(layout.words + W.target * 2));
-      asm.jsr(needHudNumber(ctx));
+      ctx.call(needHudNumber(ctx));
     }
     asm.label(skip);
   }
@@ -2016,13 +2141,13 @@ function needHudGlyph(ctx: SnesCtx): Ref {
     asm.cmp(imm16(0x0100));
     asm.bcs(offscreen);
     asm.sta(mem(DP.t1));
-    asm.jsr(needPushSprite(inner));
+    ctx.call(needPushSprite(inner));
     asm.label(offscreen);
     asm.clc();
     asm.lda(mem(layout.words + W.temp * 2));
     asm.adc(imm16(8));
     asm.sta(mem(layout.words + W.temp * 2));
-    asm.rts();
+    ctx.ret();
   });
 }
 
@@ -2075,7 +2200,7 @@ function emitSpriteCell(
   asm.sta(mem(DP.t0));
   asm.lda(imm16(objectEntry(tile, palette)));
   asm.sta(mem(DP.t2));
-  asm.jsr(needPushSprite(ctx));
+  ctx.call(needPushSprite(ctx));
   asm.label(offscreen);
 }
 
@@ -2094,7 +2219,7 @@ function needPushSprite(ctx: SnesCtx): Ref {
     loadByte(inner, layout.oamCount);
     asm.cmp(imm16(layout.memory.oamEntries));
     asm.bcc(room);
-    asm.rts();
+    ctx.ret();
     asm.label(room);
     asm.asl();
     asm.asl();
@@ -2106,7 +2231,7 @@ function needPushSprite(ctx: SnesCtx): Ref {
     asm.lda(mem(DP.t2));
     asm.sta(absX(layout.memory.oamShadow + 2));
     incByte(inner, layout.oamCount);
-    asm.rts();
+    ctx.ret();
   });
 }
 
@@ -2134,7 +2259,7 @@ function needClearRestOfOam(ctx: SnesCtx): Ref {
     asm.lda(mem(DP.t1));
     asm.cmp(mem(DP.t2));
     asm.bcc(sweep);
-    asm.rts();
+    ctx.ret();
     asm.label(sweep);
     // From this frame's count up to last frame's, four bytes an entry. Both are
     // scaled here rather than compared as entry numbers, because the index is
@@ -2157,7 +2282,7 @@ function needClearRestOfOam(ctx: SnesCtx): Ref {
       asm.cpx(mem(DP.t3));
       asm.bne(step);
     });
-    asm.rts();
+    ctx.ret();
   });
 }
 
@@ -2186,13 +2311,13 @@ export function emitRenderHelpers(ctx: SnesCtx): void {
   asm.ora(mem(DP.t0));
   asm.clc();
   asm.adc(imm16(VRAM.MAP));
-  asm.rts();
+  ctx.ret();
 
   // Point the video-RAM address at that cell, for a direct write.
   asm.label("VramFor");
-  asm.jsr("CellAddress");
+  ctx.call("CellAddress");
   asm.sta(mem(R.VMADD));
-  asm.rts();
+  ctx.ret();
 
   // `A` = a tilemap entry: queue it for the next blanking interval. An entry is
   // its address and its data, four bytes, because both are words and both go out
@@ -2206,9 +2331,9 @@ export function emitRenderHelpers(ctx: SnesCtx): void {
   // No room: repaint the whole background next frame rather than leave a strip of
   // it stale for ever.
   setByte(ctx, layout.redraw, 1);
-  asm.rts();
+  ctx.ret();
   asm.label(room);
-  asm.jsr("CellAddress");
+  ctx.call("CellAddress");
   asm.sta(mem(DP.t3));
   loadByte(ctx, layout.queueCount);
   asm.asl();
@@ -2219,14 +2344,14 @@ export function emitRenderHelpers(ctx: SnesCtx): void {
   asm.lda(mem(DP.t2));
   asm.sta(absX(layout.queue + 2));
   incByte(ctx, layout.queueCount);
-  asm.rts();
+  ctx.ret();
 
   // `A` = an entry: queue it, record the cell for erasing, and advance the
   // column. The HUD is scattered cells rather than a strip, so each is its own
   // queue entry — and there are never many of them.
   asm.label("PlotCell");
   const plotFull = ctx.unique("plotFull");
-  asm.jsr("QueueCell");
+  ctx.call("QueueCell");
   loadByte(ctx, layout.plotCount);
   asm.cmp(imm16(plotEntries(ctx)));
   asm.bcs(plotFull);
@@ -2240,7 +2365,7 @@ export function emitRenderHelpers(ctx: SnesCtx): void {
   incByte(ctx, layout.plotCount);
   asm.label(plotFull);
   inc16(ctx, layout.words + W.tileCol * 2);
-  asm.rts();
+  ctx.ret();
 
   // Flush the queue, hand the objects to the transfer controller, and set the
   // scroll. All three fit inside the blanking interval by construction: the queue
@@ -2291,7 +2416,7 @@ export function emitRenderHelpers(ctx: SnesCtx): void {
   // background line `VOFS + N + 1` on screen line `N`.
   emitScrollWrite(ctx, R.BG1HOFS, layout.words + W.scrollX * 2, 0);
   emitScrollWrite(ctx, R.BG1VOFS, layout.words + W.scrollY * 2, -1);
-  asm.rts();
+  ctx.ret();
 
   asm.label("DrawNumber");
   emitDecimal(ctx, "PlotCell", cellGlyph);
@@ -2345,7 +2470,7 @@ function emitDecimal(ctx: SnesCtx, plot: Ref, entry: (character: string) => numb
   asm.inc();
   asm.sta(mem(value));
   asm.lda(imm16(entry("-")));
-  asm.jsr(plot);
+  ctx.call(plot);
   asm.label(positive);
 
   asm.stz(mem(flag));
@@ -2382,7 +2507,7 @@ function emitDecimal(ctx: SnesCtx, plot: Ref, entry: (character: string) => numb
   asm.clc();
   asm.lda(mem(digit));
   asm.adc(imm16(entry("0")));
-  asm.jsr(plot);
+  ctx.call(plot);
   asm.label(skipDigit);
   asm.lda(mem(power));
   asm.inc();
@@ -2390,7 +2515,7 @@ function emitDecimal(ctx: SnesCtx, plot: Ref, entry: (character: string) => numb
   asm.sta(mem(power));
   asm.cmp(imm16(10));
   ctx.far("ne", powerLoop);
-  asm.rts();
+  ctx.ret();
 }
 
 /**

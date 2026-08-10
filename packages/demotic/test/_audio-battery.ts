@@ -1649,12 +1649,16 @@ export function audioSweep(target: Target): void {
      * `assemble` (`backend.ts` §BoundAudioShape). Five more builds a piece bought
      * neither, at ten minutes of `pnpm test`.
      *
-     * A Mega Drive and a Super Nintendo take the shooter alone, for opposite
-     * reasons: a Mega Drive game is twenty-odd kilobytes against four megabytes of
-     * boards and there is no overflow to catch at all, and a Super Nintendo picture is
-     * thirty seconds of tournament against five. Both build the shooter because it
-     * is the tightest fixture everywhere else — two demade backdrops, nine aliens,
-     * a theme and four effects.
+     * A Mega Drive and a Super Nintendo take the shooter alone, and they now
+     * share the Mega Drive's reason as well as keeping the Super Nintendo's own.
+     * Neither is a budget any more: a Mega Drive game is twenty-odd kilobytes
+     * against four megabytes of boards, and a Super Nintendo game whose code
+     * outgrows a bank takes another bank rather than overflowing (doc 13 §Banked
+     * cartridges), so `free` there is measured against four megabytes too. What
+     * still keeps the Super Nintendo down to one fixture is build cost — a
+     * picture there is thirty seconds of tournament against five. Both build the
+     * shooter because it is the tightest fixture everywhere else — two demade
+     * backdrops, nine aliens, a theme and four effects.
      *
      * Re-measure before widening or narrowing this: the numbers above move with
      * every code-generator change, and the day a console's tightest fixture

@@ -43,12 +43,15 @@ import {
   SNES_SPC_BASE,
   SNES_SPC_CAPACITY,
   SNES_SPC_OFFSET,
+  SNES_BANK_SIZE,
   SNES_CODE_SIZE,
   SNES_ORIGIN,
+  SNES_PROGRAM_CAPACITY,
   SNES_ROM_SIZE,
   SNES_ROM_SIZES,
   SNES_TILE_CAPACITY,
   SNES_TILE_OFFSET,
+  snesRomSizeFor,
   type Executor,
 } from "@demake/core";
 
@@ -74,7 +77,13 @@ import {
 import { SNES_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
 import { ART_TILES, bindSnesArt, type BoundSnesArt } from "./snes-art.js";
 import { SnesCtx } from "./snes/ctx.js";
-import { BANK_TILES, emitProgram, type SnesEmitOptions } from "./snes/emit.js";
+import {
+  BANK_TILES,
+  emitProgram,
+  type EmittedSnesProgram,
+  type SnesBankPlan,
+  type SnesEmitOptions,
+} from "./snes/emit.js";
 import type { ArtSettings } from "./settings.js";
 
 /** Bytes the largest LoROM cartridge this backend builds holds. */
@@ -233,29 +242,50 @@ export const snesBackend: Backend<SnesEmitOptions, SnesAudio> = {
   },
 
   assemble({ program, analysis, layout, art, audio, title }): Assembled {
-    const ctx = new SnesCtx(program, analysis, layout, getProfile(program.profile.id), SNES_ORIGIN);
-    if (audio.hooks) {
-      ctx.audio = {
-        driver: audio.hooks.driver,
-        music: audio.hooks.music,
-        request: audio.hooks.request,
-        trace: layout.sound,
-        effects: audio.hooks.effects,
-      };
-    }
-    let code: Uint8Array;
-    try {
-      emitProgram(ctx, { ...art, ...audio.options });
-      code = ctx.asm.assemble();
-    } catch (error) {
-      if (error instanceof AsmError) {
-        throw new BuildError(
-          "E_INTERNAL",
-          `the code generator produced invalid code: ${error.message}`,
-        );
+    const hooks = audio.hooks
+      ? {
+          driver: audio.hooks.driver,
+          music: audio.hooks.music,
+          request: audio.hooks.request,
+          trace: layout.sound,
+          effects: audio.hooks.effects,
+        }
+      : undefined;
+
+    /**
+     * Assemble once, near or far, with or without a bank plan.
+     *
+     * A fresh `SnesCtx` each time, because emitting is what pulls a helper into
+     * the output — a context that had already been emitted into would emit them
+     * twice.
+     */
+    const assembleWith = (banked: boolean, plan?: SnesBankPlan) => {
+      const inner = new SnesCtx(
+        program,
+        analysis,
+        layout,
+        getProfile(program.profile.id),
+        SNES_ORIGIN,
+      );
+      inner.banked = banked;
+      if (hooks) inner.audio = hooks;
+      try {
+        const emitted = emitProgram(inner, {
+          ...art,
+          ...audio.options,
+          ...(plan ? { banks: plan } : {}),
+        });
+        return { inner, ...emitted, code: inner.asm.assemble() };
+      } catch (error) {
+        if (error instanceof AsmError) {
+          throw new BuildError(
+            "E_INTERNAL",
+            `the code generator produced invalid code: ${error.message}`,
+          );
+        }
+        throw error;
       }
-      throw error;
-    }
+    };
 
     const bank = banks.get(art)?.options.bank ?? new Uint8Array(0);
     const spc = audio.options.audio?.image ?? new Uint8Array(0);
@@ -278,34 +308,144 @@ export const snesBackend: Backend<SnesEmitOptions, SnesAudio> = {
       );
     }
 
-    // Two banks or four, and the sound processor is what decides (`backend.ts`
-    // §Elastic cartridges). Bank zero and bank one are always spoken for — a
-    // program, and the tile art it draws with — so a game with nothing to play
-    // needs neither bank two nor the padding behind it, and ships on a cartridge
-    // half the size. There is no three-bank option: the capacity field is a power
-    // of two and so was every mask ROM.
-    const size = spc.length > 0 ? SNES_ROM_SIZE : (SNES_ROM_SIZES[0] as number);
+    // The first bank an extra *program* bank may take. Bank zero is the program,
+    // bank one is the tile art, and bank two onward is the sound processor's
+    // image where there is one — as many banks as it needs, which is at most two
+    // because that is how far the upload's `long,X` reaches. A silent game's
+    // overflow therefore starts one bank lower, and a silent game that never
+    // overflows is the two-bank cartridge it always was.
+    const reserved = SNES_SPC_BANK + Math.ceil(spc.length / SNES_BANK_SIZE);
+
+    // The small cartridge first, near calls and one section, and its bytes are
+    // exactly what they always were. Only a game that does not fit bank zero pays
+    // for the second and third passes — and it pays in assembly, which is
+    // milliseconds against the art and audio already demade by now.
+    let built = assembleWith(false);
+    let plan: SnesBankPlan | undefined;
+    if (built.shared + total(built.scenes) > CODE_SIZE) {
+      // Far calls change every routine's length, so the plan is measured on a
+      // pass that already has them: same instructions, same sizes, one section.
+      const measured = assembleWith(true);
+      plan = planBanks(measured, reserved);
+      built = assembleWith(true, plan);
+      // The one thing that would make the placement quietly wrong: a pass whose
+      // scenes are not the sizes the plan was built from. Nothing a scene emits
+      // depends on which bank it landed in, so they cannot differ — and a check
+      // is four lines against a bank that silently overran into the next.
+      if (
+        built.shared !== measured.shared ||
+        built.scenes.some((bytes, index) => bytes !== measured.scenes[index])
+      ) {
+        throw new BuildError("E_INTERNAL", "the program changed size between assembly passes");
+      }
+    }
+
+    const { inner: ctx, code } = built;
+    const content = built.shared + total(built.scenes);
+    // Every bank the cartridge needs: the reserved ones, and one per extra
+    // program bank the plan opened. The board is the smallest this console
+    // shipped that holds them (`backend.ts` §Elastic cartridges) — two banks for
+    // a silent game that fits, four once it has music, and up from there in
+    // powers of two because the capacity field is a power of two and so was every
+    // mask ROM.
+    const used = reserved + (plan?.extra.length ?? 0);
+    const size = snesRomSizeFor(used);
+    if (size === undefined) {
+      throw new BuildError(
+        "E_GAME_TOO_LARGE",
+        `this game needs ${used} banks and the largest LoROM cartridge holds ` +
+          `${String(SNES_ROM_SIZES[SNES_ROM_SIZES.length - 1] as number)} bytes`,
+        "fewer objects in one rule, or a smaller level; past four megabytes a " +
+          "cartridge stops being LoROM.",
+      );
+    }
+
     const image = new Uint8Array(size);
-    image.set(code.subarray(0, Math.min(code.length, size)), 0);
+    // The emitter puts the extra banks first and bank zero last, so that the
+    // helpers — which are pulled by whatever code calls them — are still the last
+    // thing emitted (`snes/emit.ts` §Banking a Super Nintendo cartridge). Undoing
+    // that here is a copy per bank, because a bank is a fixed slice of the
+    // cartridge rather than a run of bytes that happens to end somewhere.
+    const extra = plan?.extra ?? [];
+    for (const [index, target] of extra.entries()) {
+      const at = index * SNES_BANK_SIZE;
+      image.set(code.subarray(at, at + SNES_BANK_SIZE), target * SNES_BANK_SIZE);
+    }
+    const zero = code.subarray(extra.length * SNES_BANK_SIZE);
+    image.set(zero.subarray(0, Math.min(zero.length, CODE_SIZE)), 0);
     image.set(bank, SNES_TILE_OFFSET);
     image.set(spc, SNES_SPC_OFFSET);
     return {
       bytes: packSnesRom(
         image,
         {
-          reset: ctx.asm.addressOf("Reset"),
-          nmi: ctx.asm.addressOf("Nmi"),
-          irq: ctx.asm.addressOf("Irq"),
+          reset: ctx.asm.addressOf("Reset") & 0xffff,
+          nmi: ctx.asm.addressOf("Nmi") & 0xffff,
+          irq: ctx.asm.addressOf("Irq") & 0xffff,
         },
         { title: title ?? "DEMOTIC" },
       ),
-      code: code.length,
-      capacity: CODE_SIZE,
+      code: content,
+      capacity: SNES_PROGRAM_CAPACITY,
       symbols: ctx.asm.symbols(),
       helpers: ctx.helperNames(),
     };
   },
 };
+
+/** Sum a list of sizes. */
+function total(sizes: readonly number[]): number {
+  return sizes.reduce((sum, bytes) => sum + bytes, 0);
+}
+
+/**
+ * Give every scene a bank, first fit, in the order the scenes are declared.
+ *
+ * Bank zero goes first and is short by whatever the shared material took, so a
+ * game that only just outgrew one bank keeps most of its scenes where they were
+ * and opens one more. After that each new bank is a whole one. First fit rather
+ * than anything cleverer for two reasons: it is deterministic, which a cartridge
+ * has to be, and the thing it would be optimising — a bank of padding — is a
+ * quarter of the smallest board this console shipped either way.
+ *
+ * A scene that does not fit a *whole* bank is refused by name. That is the wall
+ * this scheme has, and it is a real one on the 16 KiB-window consoles (doc 13
+ * §Banked cartridges); here a bank is thirty-two kilobytes and the largest scene
+ * in the example library is twenty.
+ */
+function planBanks(measured: EmittedSnesProgram, reserved: number): SnesBankPlan {
+  // The one thing banking cannot rescue. Every table a game reads is addressed
+  // with the data bank register at zero, and so is every helper's entry, so the
+  // shared material has to fit bank zero however many banks the scenes take.
+  if (measured.shared > CODE_SIZE) {
+    throw new BuildError(
+      "E_GAME_TOO_LARGE",
+      `this game's shared code and tables are ${measured.shared} bytes and bank zero holds ${CODE_SIZE}`,
+      "smaller levels or fewer backdrops; banking moves a game's scenes, and " +
+        "everything an absolute address reaches has to stay in bank zero.",
+    );
+  }
+  const room = [CODE_SIZE - measured.shared];
+  const sceneBank = measured.scenes.map(() => 0);
+  for (const [index, bytes] of measured.scenes.entries()) {
+    if (bytes > SNES_BANK_SIZE) {
+      throw new BuildError(
+        "E_GAME_TOO_LARGE",
+        `one scene compiles to ${bytes} bytes and a LoROM bank holds ${SNES_BANK_SIZE}`,
+        "fewer rules or fewer objects in that scene; a bank is the unit this " +
+          "console pages, so one scene has to fit one.",
+      );
+    }
+    let slot = room.findIndex((left) => left >= bytes);
+    if (slot < 0) slot = room.push(SNES_BANK_SIZE) - 1;
+    room[slot] = (room[slot] as number) - bytes;
+    sceneBank[index] = slot === 0 ? 0 : reserved + slot - 1;
+  }
+  return {
+    sceneBank,
+    extra: room.slice(1).map((_, index) => reserved + index),
+  };
+}
 
 /**
  * The tile bank each art binding produced, keyed by the options it returned.

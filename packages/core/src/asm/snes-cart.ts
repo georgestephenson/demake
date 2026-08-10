@@ -7,8 +7,8 @@
  * byte in one of them, and more than one builder will wrap 65816 code into a
  * cartridge once the S-DSP has a driver.
  *
- * **A 128 KiB LoROM cartridge**, which is four banks, and the split is a hardware
- * fact rather than a convenience:
+ * **A LoROM cartridge of as many banks as the game needs**, and what is in each
+ * of them is a hardware fact rather than a convenience:
  *
  *   - **Bank `$00` is the program**, visible at `$00:8000`–`$00:FFFF`. Code, the
  *     level tables, the packed tilemaps and the constant pool all live here, and
@@ -20,12 +20,17 @@
  *     which takes its source bank as a *data byte* ({@link SNES_TILE_BANK}). That
  *     is what lets a game spend sixteen kilobytes on art without spending it out
  *     of the thirty-two the program has.
- *   - **Bank `$02` is the sound processor's image**, at `$02:8000`–`$02:FFFF`.
- *     It is never executed by *this* processor either: the boot reads it with
- *     `long,X` and hands it over four mailbox bytes at a time
+ *   - **Bank `$02` is the sound processor's image**, and bank `$03` too where it
+ *     is long enough. It is never executed by *this* processor either: the boot
+ *     reads it with `long,X` and hands it over four mailbox bytes at a time
  *     ({@link SNES_SPC_BANK}). A bank of its own because the art and the music
- *     are sized by different things, and the fourth bank is padding to a size the
- *     header's capacity field can express.
+ *     are sized by different things and neither can be asked to know how big the
+ *     other got.
+ *   - **Everything above them is the program again**, for a game whose code
+ *     outgrew one bank: scenes, reached by `jsl` and returning through `rtl`
+ *     (doc 13 §Banked cartridges). Every *data* address stays in bank zero, which
+ *     is why a banked build's reads are the same instructions an unbanked one's
+ *     were.
  *
  * Three things about this header have bitten somebody:
  *
@@ -46,16 +51,14 @@
  */
 
 /**
- * Bytes of the largest LoROM cartridge a demade game ships on: four banks.
+ * The cartridge a game with music and one bank of program ships on: four banks.
  *
  * Bank zero is the program, bank one is the tile art, bank two is the sound
  * processor's image, and the fourth is padding to the next size the header's
- * capacity field can express. It was two banks while the art and the sound
- * shared one, and that stopped working the moment the example library's music
- * had enough parts to fill eight voices: a track's schedule doubled and took the
- * picture's room with it. A bank each is the arrangement the hardware wants
- * anyway — this console takes cartridges up to four megabytes, so 64 KiB was a
- * choice rather than a limit, and the wrong one.
+ * capacity field can express. Every example in the library but one is this size,
+ * which is why it is worth naming — but it is a *point on* {@link SNES_ROM_SIZES}
+ * rather than a ceiling: a game whose code outgrows bank zero takes more banks
+ * and a bigger board.
  *
  * A game with nothing to play needs neither the sound processor's bank nor the
  * padding behind it, and ships on {@link SNES_ROM_SIZES}'s smaller entry.
@@ -65,14 +68,39 @@ export const SNES_ROM_SIZE = 0x20000;
 /**
  * Cartridge sizes, smallest first — which here is a count of banks.
  *
- * Two, or four. Bank zero and bank one are always spoken for: a program and the
- * tile art it draws with, and every game has both. Bank two is the sound
- * processor's image, and a game with no `music` and no `sound` does not have one —
- * so a silent cartridge is 64 KiB and a sounding one is 128, because three banks
- * is not a size the capacity field can express and a mask ROM was a power of two
+ * Bank zero and bank one are always spoken for: a program and the tile art it
+ * draws with, and every game has both. Bank two is the sound processor's image,
+ * and a game with no `music` and no `sound` does not have one — so a silent
+ * cartridge is 64 KiB and a sounding one is 128, because three banks is not a
+ * size the capacity field can express and a mask ROM was a power of two
  * regardless.
+ *
+ * Past that the list is every power of two up to four megabytes, which is where
+ * a LoROM cartridge stops being one: banks `$00`–`$7F` are 4 MiB of `$8000`
+ * windows and the eighth bit of the bank is the fast/slow mirror rather than more
+ * address. A game reaches those sizes by *banking its code* (doc 13 §Banked
+ * cartridges) — the scenes that do not fit bank zero go in banks of their own,
+ * and a `jsl` reaches them because the bank travels in the instruction.
  */
-export const SNES_ROM_SIZES: readonly number[] = [0x10000, 0x20000];
+export const SNES_ROM_SIZES: readonly number[] = [
+  0x10000, 0x20000, 0x40000, 0x80000, 0x100000, 0x200000, 0x400000,
+];
+
+/** Banks a cartridge of `bytes` holds. */
+export function snesBankCount(bytes: number): number {
+  return bytes / SNES_BANK_SIZE;
+}
+
+/**
+ * The smallest cartridge that holds `banks` banks, or `undefined` for too many.
+ *
+ * A mask ROM was a power of two, so the answer is never "exactly what was asked
+ * for" — which is the elastic-cartridge rule's other half (doc 14): the board is
+ * one this console shipped, not the smallest file that boots.
+ */
+export function snesRomSizeFor(banks: number): number | undefined {
+  return SNES_ROM_SIZES.find((size) => size >= banks * SNES_BANK_SIZE);
+}
 
 /** Bytes of one LoROM bank, which is what the CPU sees at `$8000`. */
 export const SNES_BANK_SIZE = 0x8000;
@@ -93,6 +121,20 @@ export const SNES_HEADER_OFFSET = 0x7fc0;
  */
 export const SNES_CODE_SIZE = SNES_HEADER_OFFSET;
 
+/**
+ * Bytes of program the largest LoROM cartridge holds.
+ *
+ * What {@link SNES_ROM_SIZES}'s largest entry leaves once the art bank and the
+ * sound processor's bank are taken out, with bank zero short by the sixty-four
+ * bytes of header and vectors at its top. Measured with the sound bank spoken
+ * for whether or not a game has one, because this is the number `free` is
+ * reported against (doc 14 §Elastic cartridges) — a headroom figure that dropped
+ * by thirty-two kilobytes the moment a game gained a track would be a game
+ * getting *smaller* looking like a game with less room.
+ */
+export const SNES_PROGRAM_CAPACITY =
+  SNES_CODE_SIZE + (0x400000 / SNES_BANK_SIZE - 3) * SNES_BANK_SIZE;
+
 /** The bank the tile art lives in, as the DMA controller wants it. */
 export const SNES_TILE_BANK = 0x01;
 
@@ -106,21 +148,32 @@ export const SNES_TILE_CAPACITY = SNES_BANK_SIZE;
 export const SNES_TILE_OFFSET = SNES_BANK_SIZE;
 
 /**
- * The bank the sound processor's image is uploaded from.
+ * The first bank the sound processor's image is uploaded from.
  *
  * Its own bank rather than the tail of the art's, because the two are sized by
- * different things and neither can be asked to know how big the other got. The
- * upload reads it with `long,X` and `X` is sixteen bits, so the image is bounded
- * by the bank rather than by the addressing — which is also why it starts at the
- * bank's first byte.
+ * different things and neither can be asked to know how big the other got — and
+ * it starts at the bank's first byte because the upload indexes it with
+ * `long,X`, so the offset it can reach is measured from there.
  */
 export const SNES_SPC_BANK = 0x02;
 
 /** Where that bank starts in the CPU's address space. */
 export const SNES_SPC_BASE = 0x8000;
 
-/** Bytes of it the image may occupy. */
-export const SNES_SPC_CAPACITY = SNES_BANK_SIZE;
+/**
+ * Bytes the image may occupy: two banks, which is the addressing's own limit.
+ *
+ * `X` is sixteen bits, so `long,X` from the first byte of bank two reaches
+ * `$03:7FFF` and no further. It was one bank while the cartridge was four banks
+ * and nothing could grow — an arbitrary tightening of an addressing limit by
+ * half — and a cartridge that takes as many banks as the game needs has no
+ * reason to keep it (doc 14 §Elastic cartridges).
+ *
+ * What is left is not the cartridge's to state: an image this large is bounded by
+ * the *sound processor's* own 64 KiB, minus the page it is uploaded above and the
+ * mailbox at the top, which is `@demake/audio`'s number rather than a board's.
+ */
+export const SNES_SPC_CAPACITY = SNES_BANK_SIZE * 2;
 
 /** Where its bytes start in the packed image. */
 export const SNES_SPC_OFFSET = SNES_BANK_SIZE * 2;

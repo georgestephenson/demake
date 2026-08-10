@@ -28,6 +28,7 @@ import {
   gbTarget,
   gbcTarget,
   mdTarget,
+  snesTarget,
   megaduckTarget,
   RomRunner,
   romTrace,
@@ -179,31 +180,55 @@ describe("ROM conformance across the example library", async () => {
   });
 
   /**
-   * And the biggest game in the library, on the one console that can hold it.
+   * And the biggest game in the library, on the two consoles that can hold it.
    *
    * Not in the matrix above, and the reason is the cartridge rather than the
    * code: three levels, a boss and a room behind a pipe compile to around
    * 122 KiB of SM83 and 117 of Z80 against a mapper-less 32 (doc 13 §Banked
-   * cartridges). The Mega Drive has 512 KiB and uses 96 of them, so this is the
-   * only place the claim can be made at all — and it is worth making, because
-   * nothing else in the library has four playfields, two of them sharing a tile
-   * bank, or a rule set written against classes rather than named objects.
+   * cartridges). Nothing else in the library has four playfields, two of them
+   * sharing a tile bank, or a rule set written against classes rather than named
+   * objects.
    *
    * The tape runs the meadow: fall, run, jump the first pit, and keep going into
    * the second one — which is a tile walk, a camera that scrolls on one axis,
    * an object collected, a level restart and a counter that outlives it.
    */
-  it("matches the interpreter for the quest fixture on md", async () => {
-    const levels = Object.fromEntries(
+  const questLevels = () =>
+    Object.fromEntries(
       ["meadow.dmtl", "vault.dmtl", "hollow.dmtl", "keep.dmtl"].map((name) => [
         name,
         projectText("quest", `levels/${name}`),
       ]),
     );
-    const program = build(gameSource("quest"), levels, "md");
-    const frames = tape("2:,1:a,85:right,1:a,90:right,60:right,120:right");
+  const QUEST_TAPE = "2:,1:a,85:right,1:a,90:right,60:right,120:right";
+
+  it("matches the interpreter for the quest fixture on md", async () => {
+    // The Mega Drive holds it without paging anything: 512 KiB of flat cartridge
+    // and 96 in use, so this is the game running with nothing clever underneath
+    // it — which is what makes it the control for the case below.
+    const program = build(gameSource("quest"), questLevels(), "md");
+    const frames = tape(QUEST_TAPE);
     expect(await romTrace(program, frames, {}, mdTarget)).toBe(trace(new Sim(program), frames));
   }, 120_000);
+
+  /**
+   * And on the Super Nintendo, where it is a *banked* cartridge.
+   *
+   * The one case in this file whose subject is the cartridge rather than the
+   * code. A LoROM bank is thirty-two kilobytes and this game's program is eighty,
+   * so its scenes are spread across banks and every call in the program is a
+   * `jsl` returning through `rtl` — a different instruction stream from the one
+   * every other Super Nintendo fixture here compiles to. What that can get wrong
+   * is not arithmetic: it is a routine returning to the right offset in the wrong
+   * bank, which executes whatever is at that address and diverges with nothing to
+   * point at. So the oracle is the same one every other backend answers to, tick
+   * for tick, and the claim it makes is that the banking is invisible.
+   */
+  it("matches the interpreter for the quest fixture on snes, across banks", async () => {
+    const program = build(gameSource("quest"), questLevels(), "snes");
+    const frames = tape(QUEST_TAPE);
+    expect(await romTrace(program, frames, {}, snesTarget)).toBe(trace(new Sim(program), frames));
+  }, 180_000);
 
   it("builds a Mega Duck cartridge that a Game Boy could not run", async () => {
     // The guard the test above cannot be: identical traces are also what a map

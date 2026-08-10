@@ -1714,15 +1714,18 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
 - **Banked cartridges, and the game that needs one**: `quest.dmt` — three
   levels, a boss, a secret room, four tracks and eight effects — is the first
   example the mapper-less cartridge cannot hold. It builds and plays on the Mega
-  Drive (140 KiB, on the 256 KiB board its size asks for) and on nothing else, and
-  the numbers say what each console is short of rather than by how little:
+  Drive (140 KiB, on the 256 KiB board its size asks for) and **on the Super
+  Nintendo, where it is the first banked cartridge this project produces** — 128
+  KiB, its scenes spread across banks, traced tick for tick against the
+  interpreter by `rom.test.ts`. The numbers say what each of the rest is short of
+  rather than by how little:
 
   | Console | Wall it hits | Needs | Has |
   | --- | --- | --- | --- |
   | Game Boy / Color / Mega Duck | cartridge | ~122 KiB | 32 KiB |
   | Master System / Game Gear | cartridge | ~117 KiB | 48 KiB |
   | NES | work RAM, then cartridge | 1288 B of heap, ~120 KiB of PRG | 1280 B, 32 KiB |
-  | Super Nintendo | ~~direct page, then~~ cartridge | ~~239 B~~, 80 KiB | ~~238 B~~, 32 KiB of bank zero |
+  | ~~Super Nintendo~~ | ~~direct page, then cartridge~~ | **done** | 128 KiB, of 4 MiB |
 
   The Super Nintendo's first wall is gone, and it went for a reason worth
   keeping: the direct page there is a pure size optimisation — `$nn` is two bytes
@@ -1760,14 +1763,15 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   thirteen backends at once.
 
   The Super Nintendo does not have that problem, because a LoROM bank is 32 KiB
-  and its largest scene is 19766 bytes. So the ordering that follows from the
-  measurement is: **the Super Nintendo first**, where a bank per scene fits, the
+  and its largest scene is 19766 bytes. So the ordering that followed from the
+  measurement was: **the Super Nintendo first**, where a bank per scene fits, the
   cartridge needs no controller at all (LoROM past bank 1 is address decoding),
   and the 65816 has `jsl`/`rtl` — a real far call, where the other three CPUs
-  need a trampoline in the fixed bank. The two 16 KiB-window consoles come after
-  the tick steps are routines, and the Sega 8-bits sit between the two: its
-  window is 16 KiB as well, but slots 0 and 1 are 32 KiB of *fixed* space rather
-  than 16, so the shared half is twice the size before anything has to move.
+  need a trampoline in the fixed bank. **That one is done** (§Super Nintendo
+  below). The two 16 KiB-window consoles come after the tick steps are routines,
+  and the Sega 8-bits sit between the two: its window is 16 KiB as well, but
+  slots 0 and 1 are 32 KiB of *fixed* space rather than 16, so the shared half is
+  twice the size before anything has to move.
 
   What that costs, per family:
 
@@ -1845,19 +1849,46 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     is behind the same tick-step split the Game Boy is — and it is the one
     console where the RAM wall comes *first*, which means the `$6000` half is
     worth doing on its own even before a byte of code moves.
-  - **Super Nintendo** — **the one to do first**, on the measurement above: a
-    LoROM bank is 32 KiB and quest's largest scene is 19766 bytes, so a bank per
-    scene fits without the tick ever being split. It is also the cheapest in
-    every other direction — extra banks are address decoding rather than a
-    controller (DMA already takes its source bank as a byte, which is why the
-    tile art costs bank zero nothing), and `jsl`/`rtl` is a real far call where
-    the other three CPUs need a trampoline in the fixed bank. **Its first wall
-    is already down**: the direct page there is a size optimisation and not a
-    capability, so overrunning it now costs a game bytes rather than the build
-    (§the table above), and quest was one byte over. What is left of the RAM
-    story is a separate opportunity rather than a wall: the plan stops at the
-    8 KiB mirrored into bank zero, and the other 120 KiB is reachable with long
-    addressing or a data-bank switch.
+  - **Super Nintendo** — **done.** A LoROM bank is 32 KiB and quest's largest
+    scene is nineteen and a half, so a bank per scene fits without the tick ever
+    being split, and this console needs no controller at all: banks past the
+    first are address decoding, so `SNES_ROM_SIZES` is every power of two up to
+    the four megabytes LoROM stops at and the build takes the smallest that holds
+    the banks it opened.
+
+    What a scene's routines cost to reach from another bank is one instruction
+    each way — `jsl` and `rtl` rather than `jsr` and `rts`, four bytes instead of
+    three — and the **switch is all-or-nothing**, because which of `rts` and
+    `rtl` a routine ends with has to match how every caller reaches it and "which
+    callers share this routine's bank" is not a question an emitter can answer
+    while it is still deciding where things go. So a game that fits one bank is
+    assembled exactly as it always was and its cartridge is byte-identical, which
+    `snes-banked.test.ts` asserts by reading the opcode at `TickDone` on both
+    kinds of build.
+
+    Three things made it cheap. **All the data stays in bank zero** — a level's
+    grid, a packed backdrop, the instance defaults, the constant pool — so with
+    the data bank register at zero a scene in bank four reads its own level with
+    the same absolute instruction it used when it was in bank zero itself, and not
+    one data access changed. **`Asm65816.section` moves no bytes**: it changes
+    what an address *means*, so a label carries its bank for `jsl` and still means
+    its low sixteen bits for everything else. And **the extra banks are emitted
+    first**, bank zero last, because helpers are pulled by whatever code calls
+    them and `ctx.finish()` has to be the last thing to run — `snes.ts` copies
+    each 32 KiB chunk to the bank the plan named, which is a copy per bank and no
+    more.
+
+    Its first wall went earlier and for its own reason: the direct page there is a
+    size optimisation and not a capability, so overrunning it costs a game bytes
+    rather than the build (§the table above), and quest was one byte over. What is
+    left of the RAM story is an opportunity rather than a wall — the plan stops at
+    the 8 KiB mirrored into bank zero, and the other 120 KiB is reachable with
+    long addressing or a data-bank switch. And quest's *music* is still cut on
+    this console, which is the honest answer rather than a gap: four tracks and
+    eight effects pack to 103912 bytes and the sound processor has 64 KiB of its
+    own, so no cartridge size can hold it. The bank the image is uploaded from is
+    elastic now too — two banks, which is as far as the upload's `long,X`
+    reaches — so what refuses it is the S-SMP's memory and nothing else.
   - **Mega Drive** — nothing to do but grow the image, and that is now what
     happens: `MD_ROM_SIZES` runs 128 KiB to 4 MiB and the build takes the
     smallest board that holds the game. Past 4 MiB it wants paging through

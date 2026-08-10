@@ -1239,7 +1239,10 @@ packages/snes/       @demake/snes — a self-hosted Super Nintendo core: a 65816
                      computer: an SPC700 with its own 64 KiB, three timers, and a
                      boot ROM of *ours* that speaks the documented upload
                      handshake rather than transcribing Nintendo's. Its S-DSP is
-                     @demake/chip's, not a second one
+                     @demake/chip's, not a second one. Its LoROM decoding is
+                     generic — bank `k` shows ROM offset `k x $8000` — so a
+                     banked cartridge needed nothing here at all, which is what
+                     "no controller, just address decoding" means in practice
 packages/neogeo/     @demake/neogeo — a self-hosted Neo Geo core, and the eleventh.
                      sound.ts is a whole second computer: a Z80 with its own ROM
                      on its own bus, a YM2610, and one byte in each direction
@@ -1343,7 +1346,12 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
     gb.ts, emit/rules/expr/val/tiles.ts   the SM83 backend
     nes.ts, nes-art.ts, nes/              the 6502 backend and its image path
     sms.ts, sms-art.ts, sms/              the Z80 backend and its image path
-    snes.ts, snes-art.ts, snes/           the 65816 backend and its image path
+    snes.ts, snes-art.ts, snes/           the 65816 backend and its image path,
+                     and the only one that emits a *banked* cartridge: a game
+                     whose program outgrows one 32 KiB LoROM bank gets a bank per
+                     scene, reached by `jsl` and returned from by `rtl`. The
+                     switch is all-or-nothing and off for a game that fits, so
+                     every cartridge that fitted before is byte-identical
     m68k/            the *68000's*, not one console's, and the second directory
                      of its kind after mos/: the 16.16 value layer, the
                      expression compiler, the rule bodies, the tile walk and the
@@ -1860,11 +1868,12 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   cannot do what a `.dmt` asks for, `unsupportedFeatures` names it and the build
   stops. A cartridge that plays a different game from the preview would make the
   trace oracle report a divergence three layers from its cause.
-- **A cartridge is as big as the game needs and no bigger** (doc 14 §Elastic
-  cartridges). Every console that shipped its games on more than one board takes
+- **A cartridge is as big as the game needs and no bigger, in every direction the
+  hardware allows** (doc 14 §Elastic cartridges). Every console that shipped its games on more than one board takes
   the smallest that holds the program — an NROM-128 rather than an NROM-256, 32
   KiB of Sega rather than 48, one megabit of Mega Drive rather than four, two
-  LoROM banks rather than four — and grows only when the game does. Which boards
+  LoROM banks rather than four, and up to four megabytes for a game whose code
+  outgrows a bank — and grows only when the game does. Which boards
   exist is the **console's** answer and lives beside its header in
   `core/src/asm/*-cart.ts`; a backend's job is to pick, and where picking the
   small one moves the code, it emits the program a second time rather than
@@ -2800,6 +2809,30 @@ Clamp32` is the whole calling convention and there is one clamp routine where
   not be dereferenced at all. Only a request the region cannot hold moves, so a
   game that fits keeps every address it had — which is what let this land with no
   trace re-baselined. `quest` was one byte over.
+- **A program that outgrows a bank calls with `jsl` and returns with `rtl`, and
+  the switch is all-or-nothing.** `jsr`, `rts` and `jmp` carry sixteen bits and
+  take the seventeenth from whichever bank the processor is already in, so a
+  scene emitted into bank four cannot be reached or returned from by any of them.
+  Which of `rts` and `rtl` a routine ends with has to match how _every_ caller
+  reaches it, and "which callers share this routine's bank" is not a question an
+  emitter can answer while it is still deciding where things go — so `ctx.banked`
+  converts the whole program or none of it, and `snes.ts` assembles a game that
+  fits one bank exactly as it always did. Every existing cartridge is
+  byte-identical because of that, and `snes-banked.test.ts` reads the opcode at
+  `TickDone` on both kinds of build to say so.
+- **All the data stays in bank zero, which is what makes banking cheap here.** A
+  level's grid, a packed backdrop, the instance defaults and the constant pool
+  are read with the data bank register at zero, so a scene in bank four reads its
+  own level with the same absolute instruction it used when it was in bank zero.
+  Not one data access changes. The corollary is the constraint: anything an
+  emitter puts in a high bank has to be reached by `long`, and nothing does.
+- **`Asm65816.section` moves no bytes.** It says which bank the code after it
+  lives in, so a label carries all twenty-four bits for `jsl`/`jml` and still
+  means its low sixteen everywhere else — which is the hardware's own rule. The
+  image stays one linear buffer, and `snes.ts` copies each 32 KiB chunk to the
+  bank its plan named. That is also why the emitter puts the **extra banks first
+  and bank zero last**: helpers are pulled by whatever code calls them, so
+  `ctx.finish()` has to be the last thing that runs.
 - **Reset lands in emulation mode.** There is no native reset vector, so a
   cartridge's first instructions are `clc; xce; rep #$38`. `snes-rom.test.ts`
   pins those three bytes, because a build that forgot them fetches every

@@ -301,7 +301,7 @@ function emitCall(
         copy32(ctx, ctx.layout.mathA, low);
         copy32(ctx, ctx.layout.mathB, high);
       });
-      asm.jsr(ctx.need("RngPick", emitRngPick));
+      ctx.call(ctx.need("RngPick", emitRngPick));
       copy32(ctx, target, ctx.layout.mathA);
       break;
     }
@@ -408,7 +408,7 @@ function emitRngPick(ctx: SnesCtx): void {
   // The generator advances first, and unconditionally — `rng.ts`'s `draw` is the
   // definition, and the advance is not conditional on the bounds. At the top of
   // the routine nothing is live yet, so the call costs no saves.
-  asm.jsr(ctx.need("RngAdvance", emitRngAdvance));
+  ctx.call(ctx.need("RngAdvance", emitRngAdvance));
 
   // count = floor(hi) - floor(lo), in whole cells, then one more for the span.
   asm.lda(mem(lo, 2));
@@ -427,7 +427,7 @@ function emitRngPick(ctx: SnesCtx): void {
   // The draw is the generator's high half, modulo the count.
   asm.lda(mem(rng, 2));
   asm.sta(mem(DP.t2));
-  asm.jsr(ctx.need("Mod16", emitMod16));
+  ctx.call(ctx.need("Mod16", emitMod16));
   asm.clc();
   asm.lda(mem(DP.t2));
   asm.adc(mem(bound));
@@ -441,7 +441,7 @@ function emitRngPick(ctx: SnesCtx): void {
   asm.stz(mem(lo));
   asm.lda(mem(DP.t2));
   asm.sta(mem(lo, 2));
-  asm.rts();
+  ctx.ret();
 }
 
 /** `rng = rng * 1664525 + 1013904223`, modulo 2^32. */
@@ -478,7 +478,7 @@ function emitRngAdvance(ctx: SnesCtx): void {
   asm.label(done);
   addConst32(ctx, acc, ADD);
   copy32(ctx, rng, acc);
-  asm.rts();
+  ctx.ret();
 }
 
 /**
@@ -519,5 +519,5 @@ function emitMod16(ctx: SnesCtx): void {
   ctx.far("ne", loop);
   asm.sta(mem(value));
   asm.label(done);
-  asm.rts();
+  ctx.ret();
 }
