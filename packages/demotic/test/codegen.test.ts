@@ -12,11 +12,19 @@
 import { describe, expect, it } from "vitest";
 
 import { analyze } from "../src/codegen/analyze.js";
-import { BOX_SIZE, GB_MEMORY, planLayout, ENTITY_SIZE } from "../src/codegen/layout.js";
+import {
+  BOX_SIZE,
+  GB_MEMORY,
+  NES_MEMORY,
+  planLayout,
+  SNES_MEMORY,
+  ENTITY_SIZE,
+} from "../src/codegen/layout.js";
 import { buildGbRom } from "../src/codegen/gb.js";
 import { compile } from "../src/compile.js";
+import { DP_FREE } from "../src/codegen/snes/ops.js";
 import { getProfile } from "../src/profiles.js";
-import { gameSource } from "./_projects.js";
+import { exampleProject, gameSource } from "./_projects.js";
 
 const build = (source: string) => compile(source, { profile: getProfile("gb") });
 
@@ -89,5 +97,64 @@ describe("what a program needs", async () => {
     const { stats } = await buildGbRom(build(gameSource("pong")));
     expect(stats.bytes).toBeGreaterThan(1024);
     expect(stats.free).toBeGreaterThan(0x4000);
+  });
+
+  /*
+   * The one cheap region that is an optimisation rather than a capability.
+   *
+   * A 65816 addresses the direct page in two bytes where an absolute takes
+   * three, and its index registers are sixteen bits wide — so `$nnnn,x` reaches
+   * all of bank zero and nothing this backend allocates *has* to be down there.
+   * Filling it should therefore cost a game a slightly larger program and not a
+   * build error, which is what `fastSpills` says. On a 6502 the same overrun has
+   * to stay fatal, because page zero is the only place a pointer can live.
+   *
+   * `quest` is the game that reaches it — 239 bytes of a 238-byte page — and it
+   * is what this asserts against, because a program written to overrun would
+   * only prove the mechanism and not that the mechanism was ever needed.
+   */
+  it("spills the Super Nintendo's direct page into the heap rather than refusing", () => {
+    const quest = exampleProject("quest");
+    const program = compile(quest.source, {
+      profile: getProfile("snes"),
+      files: quest.files,
+      levels: quest.levels,
+    });
+    const layout = planLayout(program, analyze(program), SNES_MEMORY);
+    // The page is full to the byte, and the byte that did not fit is up in the
+    // heap. `interrupt` is that byte because it is the last thing planned, so a
+    // request that spills is the last one asked for — which is also why it is
+    // safe to name here rather than scanning for whichever one moved.
+    expect(layout.fastUsed).toBe(0x0100 - DP_FREE);
+    expect(layout.interrupt).toBeGreaterThanOrEqual(SNES_MEMORY.heapStart);
+    // And the beginning of the page is still the page, because only a request
+    // the region cannot hold moves.
+    expect(layout.tick).toBeLessThan(0x0100);
+  });
+
+  it("keeps the Super Nintendo's map exactly what it was for a game that fits", () => {
+    // Pong is nowhere near 238 bytes, so every address it plans has to be the
+    // one it always had: a spill that changed a game that fits would re-baseline
+    // every checked-in trace for nothing.
+    const program = compile(gameSource("pong"), { profile: getProfile("snes") });
+    const layout = planLayout(program, analyze(program), SNES_MEMORY);
+    for (const address of [layout.tick, layout.contacts, layout.contactsPrev, layout.interrupt]) {
+      expect(address).toBeLessThan(0x0100);
+    }
+  });
+
+  it("does not spill a 6502 page zero, because a pointer has to be in it", () => {
+    // `($nn),y` is that CPU's one indirect mode, so an address that fell through
+    // to the heap could not be dereferenced at all — a program that cannot be
+    // assembled rather than one that is bigger. The NES is the console quest
+    // runs out of *work RAM* on first, which is what it is refused for.
+    expect(NES_MEMORY.fastSpills).toBeFalsy();
+    const quest = exampleProject("quest");
+    const program = compile(quest.source, {
+      profile: getProfile("nes"),
+      files: quest.files,
+      levels: quest.levels,
+    });
+    expect(() => planLayout(program, analyze(program), NES_MEMORY)).toThrow(/work RAM/);
   });
 });

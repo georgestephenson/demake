@@ -1722,7 +1722,17 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   | Game Boy / Color / Mega Duck | cartridge | ~122 KiB | 32 KiB |
   | Master System / Game Gear | cartridge | ~117 KiB | 48 KiB |
   | NES | work RAM, then cartridge | 1288 B of heap, ~120 KiB of PRG | 1280 B, 32 KiB |
-  | Super Nintendo | direct page, then cartridge | 239 B, ~100 KiB | 238 B, 32 KiB of bank zero |
+  | Super Nintendo | ~~direct page, then~~ cartridge | ~~239 B~~, 80 KiB | ~~238 B~~, 32 KiB of bank zero |
+
+  The Super Nintendo's first wall is gone, and it went for a reason worth
+  keeping: the direct page there is a pure size optimisation — `$nn` is two bytes
+  where `$nnnn` is three, and the index registers are sixteen bits wide so
+  `$nnnn,x` reaches all of bank zero — so nothing the backend allocates *has* to
+  be in it, and a game that fills it should get a slightly larger program rather
+  than a refusal. `MemoryPlan.fastSpills` says so and only that console's plan
+  sets it; on a 6502 the same overrun stays fatal, because page zero is the only
+  place a pointer can live. No game that fits moved by an address, because only a
+  request the region cannot hold spills.
 
   The RAM half is close on two of them and the cartridge half is not close on
   any: the code alone is around 100 KiB, because a program is unrolled into the
@@ -1841,11 +1851,13 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     every other direction — extra banks are address decoding rather than a
     controller (DMA already takes its source bank as a byte, which is why the
     tile art costs bank zero nothing), and `jsl`/`rtl` is a real far call where
-    the other three CPUs need a trampoline in the fixed bank. Its work RAM is a
-    separate opportunity and the wall quest hits first: the plan stops at the
-    8 KiB mirrored into bank zero, it needs 239 bytes of a 238-byte direct page,
-    and the other 120 KiB is reachable with long addressing or a data-bank
-    switch.
+    the other three CPUs need a trampoline in the fixed bank. **Its first wall
+    is already down**: the direct page there is a size optimisation and not a
+    capability, so overrunning it now costs a game bytes rather than the build
+    (§the table above), and quest was one byte over. What is left of the RAM
+    story is a separate opportunity rather than a wall: the plan stops at the
+    8 KiB mirrored into bank zero, and the other 120 KiB is reachable with long
+    addressing or a data-bank switch.
   - **Mega Drive** — nothing to do but grow the image, and that is now what
     happens: `MD_ROM_SIZES` runs 128 KiB to 4 MiB and the build takes the
     smallest board that holds the game. Past 4 MiB it wants paging through

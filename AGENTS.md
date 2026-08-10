@@ -2789,6 +2789,17 @@ Clamp32` is the whole calling convention and there is one clamp routine where
   `ldx` and an indexed load rather than four indirections. `X` is reloaded per
   access rather than kept live, because a rule body between two accesses uses
   every register there is.
+- **The direct page is the one cheap region in the project that is an
+  optimisation and not a capability, so filling it costs bytes rather than the
+  build.** Two hundred and thirty-eight bytes, and `$nn` is two where `$nnnn` is
+  three — but the index registers reach all of bank zero, so nothing the
+  allocator hands out _has_ to be down there and `at65816` already picks the long
+  form for an address that is not. `MemoryPlan.fastSpills` is set here and
+  nowhere else: on a 6502 the same overrun has to stay fatal, because `($nn),y`
+  is that CPU's one indirect mode and a pointer that spilled to the heap could
+  not be dereferenced at all. Only a request the region cannot hold moves, so a
+  game that fits keeps every address it had — which is what let this land with no
+  trace re-baselined. `quest` was one byte over.
 - **Reset lands in emulation mode.** There is no native reset vector, so a
   cartridge's first instructions are `clc; xce; rep #$38`. `snes-rom.test.ts`
   pins those three bytes, because a build that forgot them fetches every

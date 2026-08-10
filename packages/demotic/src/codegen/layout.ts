@@ -179,6 +179,22 @@ export interface MemoryPlan {
   /** The cheaply-addressed region, if the machine has one. */
   fastStart?: number;
   fastEnd?: number;
+  /**
+   * Whether running out of the cheap region costs bytes rather than the build.
+   *
+   * The Super Nintendo's, and only its. There the direct page is a pure size
+   * optimisation — `$nn` is two bytes where `$nnnn` is three, and the index
+   * registers are sixteen bits wide so `$nnnn,x` reaches all of bank zero — so a
+   * game that overruns 238 bytes of it should get a slightly larger program and
+   * not a refusal. On a 6502 the same overrun is fatal and has to stay fatal:
+   * page zero is the only place a pointer can live, because `($nn),y` is that
+   * CPU's one indirect mode, so an address that spilled to the heap could not be
+   * dereferenced at all.
+   *
+   * It changes no address in a game that fits, because only a request the cheap
+   * region cannot hold moves.
+   */
+  fastSpills?: boolean;
   /** Where the object shadow lives; the DMA source must be page-aligned. */
   oamShadow: number;
   /** Hardware object entries the shadow covers. */
@@ -501,7 +517,12 @@ export const GG_MEMORY: MemoryPlan = {
  *
  *   - **The direct page**, `$0000`–`$00FF`, which this CPU addresses in two bytes
  *     rather than three. `codegen/snes/ops.ts` owns the bottom of it and states
- *     where the allocator may begin.
+ *     where the allocator may begin. Two hundred and thirty-eight bytes are left,
+ *     and running out of them is *not* fatal here: this is the one console whose
+ *     cheap region is a pure optimisation, so what a game that fills it gets is a
+ *     slightly larger program (§{@link MemoryPlan.fastSpills}). On a 6502 the
+ *     same overrun has to stay fatal, because page zero is the only place a
+ *     pointer can live.
  *   - **The stack**, below the object shadow. Native mode puts it anywhere in
  *     bank zero, unlike the 6502's fixed page one.
  *   - **The object shadow**, 544 bytes: 128 entries of four, then the two-bit
@@ -518,6 +539,9 @@ export const SNES_MEMORY: MemoryPlan = {
   heapEnd: 0x1f00,
   fastStart: DP_FREE,
   fastEnd: 0x0100,
+  // The direct page here is a size optimisation and nothing else, so a game that
+  // fills it gets a bigger program rather than a build error (§fastSpills).
+  fastSpills: true,
   oamShadow: 0x0400,
   oamEntries: 128,
   viewW: 32,
@@ -1243,23 +1267,41 @@ class Bump {
   }
 
   take(bytes: number): number {
-    // Only what is read as a word or a long has to be aligned; a run of single
-    // bytes still packs tightly, which is what keeps every other console's map
-    // exactly what it was.
-    if (bytes > 1 && this.align > 1) {
-      this.at = Math.ceil(this.at / this.align) * this.align;
-    }
-    const address = this.at;
-    this.at += bytes;
-    if (this.at > this.end) {
+    const address = this.tryTake(bytes);
+    if (address === undefined) {
       throw new LayoutError(
         "E_GAME_TOO_LARGE",
-        `this game needs ${this.at - this.start} bytes of ${this.what} and the ` +
+        `this game needs ${this.wanted(bytes)} bytes of ${this.what} and the ` +
           `${this.machine} has ${this.end - this.start}`,
         "fewer objects, or a smaller level; the limit is the machine's, not a policy.",
       );
     }
     return address;
+  }
+
+  /**
+   * The same, answering `undefined` rather than raising when it will not fit.
+   *
+   * For a region that is an *optimisation* rather than a capability — a
+   * 65816's direct page, where running out costs a byte an access and nothing
+   * else (§{@link MemoryPlan.fastSpills}). Nothing else may use it: on a 6502
+   * page zero is the only place a pointer can live, so falling back there is a
+   * program that cannot be assembled rather than one that is bigger.
+   */
+  tryTake(bytes: number): number | undefined {
+    // Only what is read as a word or a long has to be aligned; a run of single
+    // bytes still packs tightly, which is what keeps every other console's map
+    // exactly what it was.
+    const at = bytes > 1 && this.align > 1 ? Math.ceil(this.at / this.align) * this.align : this.at;
+    if (at + bytes > this.end) return undefined;
+    this.at = at + bytes;
+    return at;
+  }
+
+  /** What this region would have held had the request fitted, for the message. */
+  private wanted(bytes: number): number {
+    const at = bytes > 1 && this.align > 1 ? Math.ceil(this.at / this.align) * this.align : this.at;
+    return at + bytes - this.start;
   }
 
   get used(): number {
@@ -1304,8 +1346,21 @@ export function planLayout(program: Program, analysis: Analysis, memory: MemoryP
     memory.fastStart !== undefined && memory.fastEnd !== undefined
       ? new Bump(memory.fastStart, memory.fastEnd, memory.machine, "page zero", align)
       : undefined;
-  /** Take from the cheap region if the machine has one, the heap otherwise. */
-  const fast = (bytes: number): number => (quick ?? heap).take(bytes);
+  /**
+   * Take from the cheap region if the machine has one, the heap otherwise.
+   *
+   * And from the heap when the cheap region is *full*, on a machine that says
+   * running out of it costs bytes rather than the build ({@link
+   * MemoryPlan.fastSpills}). A request that does not fit is the only one that
+   * moves — a later smaller one still gets the cheap region — which keeps the
+   * map deterministic and keeps as much of a game in the cheap region as will
+   * go.
+   */
+  const fast = (bytes: number): number => {
+    if (!quick) return heap.take(bytes);
+    if (!memory.fastSpills) return quick.take(bytes);
+    return quick.tryTake(bytes) ?? heap.take(bytes);
+  };
 
   const entities: number[] = [];
   const entitySizes: number[] = [];
