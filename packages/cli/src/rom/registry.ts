@@ -28,6 +28,7 @@ import { buildPceRom } from "./pce.js";
 import { buildSg1000Rom } from "./sg1000.js";
 import { buildSmsRom } from "./sms.js";
 import { buildSnesRom } from "./snes.js";
+import { buildVbRom } from "./vb.js";
 import { buildWscRom } from "./wsc.js";
 
 /** How one family turns `gen` output into a cartridge. */
@@ -70,6 +71,16 @@ export const ROM_BUILDERS: Readonly<Record<string, RomBuilder>> = {
   nds: { format: "bin", toolchain: "GNU ARM binutils", suffix: () => ".nds", build: buildNdsRom },
   pce: { format: "bin", toolchain: "WLA-DX", suffix: () => ".pce", build: buildPceRom },
   wsc: { format: "bin", toolchain: "NASM", suffix: () => ".wsc", build: buildWscRom },
+  // The one family with no external assembler behind it: no distribution ships
+  // a V810 one, so the display program is emitted with `core`'s own encoder —
+  // the same one `demake build` compiles a game with. What keeps that honest is
+  // that the cartridge is still booted in a third-party emulator by the E2E.
+  vb: {
+    format: "bin",
+    toolchain: "none (demake's own V810 assembler)",
+    suffix: () => ".vb",
+    build: buildVbRom,
+  },
 };
 
 /** The builder for a console's family, or `undefined` when this edge has none. */

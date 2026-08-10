@@ -40,6 +40,21 @@ import { gameSource, projectBytes, projectText } from "./_projects.js";
 /** The tape the golden trace was recorded with (see determinism.test.ts). */
 const PONG_TAPE = "1:a,90:,90:left,120:right";
 
+/**
+ * How long one console's pass may take, where the default twenty seconds is not
+ * enough.
+ *
+ * The Virtual Boy is the only entry, and what makes it slow is its *hardware*
+ * rather than anything the runtime does: a 20 MHz processor against a 50.2 Hz
+ * frame is four hundred thousand cycles a frame, where a Game Boy has seventy
+ * thousand. A demade tick fills the same small fraction of a frame on both, so
+ * the rest is a cartridge waiting — and a tape of three hundred frames is five
+ * times as many emulated instructions here as anywhere else. Stated rather than
+ * raised globally, so a case that becomes slow on another console is still
+ * caught.
+ */
+const TIMEOUT: Record<string, number | undefined> = { vb: 60_000 };
+
 function build(source: string, levels?: Record<string, string>, consoleId = "gb") {
   return compile(source, { profile: getProfile(consoleId), levels });
 }
@@ -136,11 +151,15 @@ describe("ROM conformance across the example library", async () => {
   // code.
   for (const target of TARGETS) {
     for (const [file, script, levels] of cases) {
-      it(`matches the interpreter for ${file} on ${target.console}`, async () => {
-        const program = build(gameSource(file), levels, target.console);
-        const frames = tape(script);
-        expect(await romTrace(program, frames, {}, target)).toBe(trace(new Sim(program), frames));
-      });
+      it(
+        `matches the interpreter for ${file} on ${target.console}`,
+        async () => {
+          const program = build(gameSource(file), levels, target.console);
+          const frames = tape(script);
+          expect(await romTrace(program, frames, {}, target)).toBe(trace(new Sim(program), frames));
+        },
+        TIMEOUT[target.console],
+      );
     }
   }
 

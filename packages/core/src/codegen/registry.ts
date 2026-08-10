@@ -17,6 +17,7 @@ import { pceBackend } from "./pce.js";
 import { sg1000Backend } from "./sg1000.js";
 import { smsBackend } from "./sms.js";
 import { snesBackend } from "./snes.js";
+import { vbBackend } from "./vb.js";
 import { wsBackend } from "./ws.js";
 import { wscBackend } from "./wsc.js";
 import type { CodegenBackend } from "./types.js";
@@ -32,6 +33,7 @@ const BACKENDS = new Map<string, CodegenBackend>([
   [sg1000Backend.family, sg1000Backend],
   [smsBackend.family, smsBackend],
   [snesBackend.family, snesBackend],
+  [vbBackend.family, vbBackend],
   [wsBackend.family, wsBackend],
   [wscBackend.family, wscBackend],
 ]);

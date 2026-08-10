@@ -53,11 +53,11 @@ columns are [doc 03](03-console-matrix.md); the plan for the empty cells is
 | Pokémon Mini | `pokemini` | `mono-misc` | yes | — | — | — | — | — | — | — |
 | Sega SG-1000 | `sg1000` | `sg1000` | yes | `bin` `asm` `c` | WLA-DX | genesis-plus-gx | — | yes | — | — |
 | Watara Supervision / QuickShot Supervision | `supervision` | `mono-misc` | yes | — | — | — | — | — | — | — |
-| Virtual Boy | `vb` | `vb` | yes | — | — | — | — | — | — | — |
+| Virtual Boy | `vb` | `vb` | yes | `bin` `asm` `c` | none (demake's own V810 assembler) | beetle-vb | `vb` | yes | — | — |
 
 ## Totals
 
 - **21** consoles have a spec, so all 21 do art.
-- **12** build a display ROM; **12** of those are proven pixel-perfect in an emulator.
-- **15** compile a Demotic game.
-- **17** demake music and sound effects; **15** play it from inside a game, and **7** build a cartridge whose only job is one schedule.
+- **13** build a display ROM; **13** of those are proven pixel-perfect in an emulator.
+- **16** compile a Demotic game.
+- **18** demake music and sound effects; **15** play it from inside a game, and **7** build a cartridge whose only job is one schedule.

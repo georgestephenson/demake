@@ -158,6 +158,7 @@ for (const consoleId of [
   "wsc",
   "ws",
   "ngpc",
+  "vb",
 ] as const) {
   test(`the ${consoleId} ROM the page builds is byte-identical to the CLI's`, async ({ page }) => {
     // Demaking a full-screen picture is seconds of real work and the runner is

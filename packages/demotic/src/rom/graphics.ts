@@ -433,6 +433,39 @@ export function builtinNgp(): Uint8Array {
   return bank;
 }
 
+/**
+ * The same bank again, as Virtual Boy characters — the Neo Geo Pocket's layout
+ * with the row read the other way round.
+ *
+ * Two bits a pixel in a little-endian halfword a row, and here the *leftmost*
+ * pixel is in the lowest two bits. That one reversal is the whole difference
+ * between the two encoders, and getting it wrong mirrors every character in
+ * place rather than producing anything a reader would call corrupt — which is
+ * why these are two functions rather than one with a flag.
+ *
+ * No `ink` parameter, for {@link builtinNgp}'s reason: a palette on this console
+ * is four colours, so the emitter reserves a whole one for the font rather than
+ * a corner of a wider one and these four shades are its four entries, unmapped.
+ * Shade zero stays index zero, which is transparent on both this hardware's
+ * layers and on an object, so one glyph draws correctly wherever it is put.
+ */
+export function builtinVb(): Uint8Array {
+  const bank = new Uint8Array(BUILTIN_TILES * TILE_BYTES);
+  let at = 0;
+  for (const cell of builtinCells()) {
+    for (let y = 0; y < 8; y += 1) {
+      const row = cell[y] ?? "";
+      for (let x = 0; x < 8; x += 1) {
+        const shade = Number.parseInt(row[x] ?? "0", 10) || 0;
+        const index = at + y * 2 + (x >> 2);
+        bank[index] = (bank[index] as number) | ((shade & 3) << ((x & 3) * 2));
+      }
+    }
+    at += TILE_BYTES;
+  }
+  return bank;
+}
+
 /** The cells of the built-in bank, in order, as 8×8 colour-index rows. */
 export function builtinCells(): readonly (readonly string[])[] {
   const cells: (readonly string[])[] = [];

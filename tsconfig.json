@@ -45,6 +45,9 @@
       "path": "./packages/ngp"
     },
     {
+      "path": "./packages/vb"
+    },
+    {
       "path": "./packages/chip"
     },
     {

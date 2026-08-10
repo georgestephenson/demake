@@ -92,6 +92,10 @@ importers:
       '@demake/demotic':
         specifier: workspace:*
         version: link:../demotic
+    devDependencies:
+      '@demake/vb':
+        specifier: workspace:*
+        version: link:../vb
 
   packages/cli-spec: {}
 
@@ -139,6 +143,9 @@ importers:
       '@demake/snes':
         specifier: workspace:*
         version: link:../snes
+      '@demake/vb':
+        specifier: workspace:*
+        version: link:../vb
       '@demake/wsc':
         specifier: workspace:*
         version: link:../wsc
@@ -246,6 +253,12 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/vb:
+    dependencies:
+      '@demake/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/web:
     dependencies:
       '@demake/audio':
@@ -290,6 +303,9 @@ importers:
       '@demake/snes':
         specifier: workspace:*
         version: link:../snes
+      '@demake/vb':
+        specifier: workspace:*
+        version: link:../vb
       '@demake/wsc':
         specifier: workspace:*
         version: link:../wsc

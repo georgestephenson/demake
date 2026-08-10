@@ -20,6 +20,7 @@ import { SCREEN_HEIGHT as NGP_H, SCREEN_WIDTH as NGP_W } from "@demake/ngp";
 import { SCREEN_HEIGHT as PCE_H, SCREEN_WIDTH as PCE_W } from "@demake/pce";
 import { FRAME_HEIGHT as SMS_H, FRAME_WIDTH as SMS_W, GG_HEIGHT, GG_WIDTH } from "@demake/sms";
 import { SCREEN_HEIGHT as SNES_H, SCREEN_WIDTH as SNES_W } from "@demake/snes";
+import { SCREEN_HEIGHT as VB_H, SCREEN_WIDTH as VB_W } from "@demake/vb";
 import { SCREEN_HEIGHT as WSC_H, SCREEN_WIDTH as WSC_W } from "@demake/wsc";
 
 import { screenFor, SCREENS } from "../src/players/player.js";
@@ -37,6 +38,8 @@ describe("the ROM pane's screen table", () => {
     expect(SCREENS["pce"]).toEqual({ width: PCE_W, height: PCE_H });
     expect(SCREENS["wsc"]).toEqual({ width: WSC_W, height: WSC_H });
     expect(SCREENS["ngpc"]).toEqual({ width: NGP_W, height: NGP_H });
+    // One eye's, which is what this core reports and what the pane draws.
+    expect(SCREENS["vb"]).toEqual({ width: VB_W, height: VB_H });
   });
 
   // A Game Gear renders the frame a Master System does and shows the middle of

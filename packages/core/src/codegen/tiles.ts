@@ -275,3 +275,27 @@ export function packPlaneGrouped(
   }
   return out;
 }
+
+/**
+ * Pack a `tileW*tileH` index grid into **row-major packed pixel pairs with the
+ * leftmost pixel in the *lowest* bits**, stored low byte first — the Virtual
+ * Boy's character layout.
+ *
+ * The mirror image of {@link packPacked2Word}, which is the same halfword the
+ * other way round, and the difference is the whole of why this is a second
+ * packer rather than a flag: on the Neo Geo Pocket the first byte of a row holds
+ * its right-hand four pixels and here it holds its left-hand four. A picture
+ * packed with the wrong one of the two is not a wrong picture — every tile is
+ * mirrored in place, which reads as a fitter fault rather than a packer one.
+ */
+export function packPacked2Le(grid: Uint8Array, tileW: number, tileH: number): Uint8Array {
+  const perRow = tileW >> 2;
+  const out = new Uint8Array(tileH * perRow);
+  for (let y = 0; y < tileH; y += 1) {
+    for (let x = 0; x < tileW; x += 1) {
+      const byte = y * perRow + (x >> 2);
+      out[byte] = (out[byte] as number) | ((grid[y * tileW + x]! & 3) << ((x & 3) * 2));
+    }
+  }
+  return out;
+}

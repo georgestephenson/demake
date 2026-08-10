@@ -45,6 +45,10 @@ const CONSOLES = [
   "gba",
   "nds",
   "pce",
+  // The Virtual Boy, whose VSU is the sixth console in the matrix with no shared
+  // register at all — six wavetable voices, a hardware envelope on every one of
+  // them, and nothing two streams both write.
+  "vb",
   // Both WonderSwans: the mono machine has no *video* path yet (doc 13 §Phase 5)
   // and the same sound hardware, and a demaker is per-domain — so `arrange -c ws`
   // works on a console `build -c ws` cannot target.
@@ -347,13 +351,13 @@ describe("the console registry", () => {
     expect(audioConsoles().sort()).toEqual([...CONSOLES].sort());
   });
 
-  // The Virtual Boy, which is now the nearest console with a video spec and no
+  // The Supervision, which is now the nearest console with a video spec and no
   // audio in it — the Game Boy Advance had that job until its own spec landed,
   // then the Nintendo DS, then the PC Engine, then the WonderSwan, then the Neo
-  // Geo Pocket Color. What this wants is a console whose sound hardware has no
-  // model yet, and Tier 2 and 3 are where those are.
+  // Geo Pocket Color, then the Virtual Boy. What this wants is a console whose
+  // sound hardware has no model yet, and Tier 3 is where those are left.
   it("explains a console it cannot demake", () => {
-    expect(() => bindingFor("vb")).toThrow(/no audio spec yet/);
+    expect(() => bindingFor("supervision")).toThrow(/no audio spec yet/);
   });
 });
 

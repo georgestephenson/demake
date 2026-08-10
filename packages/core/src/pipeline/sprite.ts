@@ -185,7 +185,7 @@ export interface SpriteOptions {
  * "which byte layout does this hardware read" is the only question that differs.
  */
 export type Packing =
-  "interleaved" | "grouped" | "planar" | "packed4" | "packed2" | "pairs" | "linear8";
+  "interleaved" | "grouped" | "planar" | "packed4" | "packed2" | "packed2le" | "pairs" | "linear8";
 
 /** A downscaled sprite in linear light, with straight alpha kept separate. */
 interface Sampled {
@@ -387,6 +387,21 @@ function packTile(
         const value = indices[(originY + row) * width + originX + column] as number;
         const at = row * 2 + (1 - (column >> 2));
         bytes[at] = (bytes[at] as number) | ((value & 3) << (6 - (column & 3) * 2));
+      }
+    }
+    return bytes;
+  }
+  // `packed2le` is the mirror of it, and it is a second packing rather than a
+  // flag for the reason `packPacked2Le` gives: the Virtual Boy reads a row's
+  // leftmost pixel out of the *lowest* two bits of a little-endian halfword, so
+  // a tile packed with the wrong one of the two is mirrored in place — which
+  // reads as a fitter fault rather than a packer one.
+  if (packing === "packed2le") {
+    for (let row = 0; row < 8; row += 1) {
+      for (let column = 0; column < 8; column += 1) {
+        const value = indices[(originY + row) * width + originX + column] as number;
+        const at = row * 2 + (column >> 2);
+        bytes[at] = (bytes[at] as number) | ((value & 3) << ((column & 3) * 2));
       }
     }
     return bytes;

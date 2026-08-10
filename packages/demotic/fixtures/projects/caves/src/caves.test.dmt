@@ -52,6 +52,13 @@ expect scene gameover
 -- that ticks faster falls harder per second and jumps exactly as high. Written
 -- as a constant it did not: the WonderSwan cleared four cells and the climb
 -- died two thirds of the way up the cavern, on that console alone.
+--
+-- The impulse carries half a tick of gravity for the same reason, and this is
+-- where the need for it showed. A tick pulls before it moves, so the first one
+-- of a jump is already slowed and a slower machine loses more of the rise —
+-- which put the Virtual Boy, at 50.2 ticks a second, a hundredth of a cell short
+-- of the ledge while every other console cleared it by six thousandths. The
+-- correction is one term and it collapses the spread tenfold.
 test a jump from the floor clears five rows and not six
 press a
 play 4 seconds

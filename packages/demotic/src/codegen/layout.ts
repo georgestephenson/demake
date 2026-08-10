@@ -933,6 +933,73 @@ export const NGPC_MEMORY: MemoryPlan = {
   loopBytes: 6,
 };
 
+/**
+ * Bytes of work RAM the Virtual Boy's plan reaches with one instruction.
+ *
+ * All of it. Work RAM is 64 KiB at `$05000000` and a V810 load reaches ±32 KiB
+ * from a base register, so a base held at the *middle* of it covers the whole
+ * region — which is why this console has no `fastStart` at all: there is no
+ * cheap page to be in, because every address is equally cheap.
+ */
+export const VB_RAM_BASE = 0x05008000;
+
+/**
+ * The Virtual Boy's plan: 64 KiB of work RAM, and one base register over it.
+ *
+ * Three things about it are this machine's.
+ *
+ *   - **The object table is a shadow, and it has to be.** The drawing processor
+ *     reads `$0003E000` for most of the frame, and a frame is built while it is
+ *     doing so — so the objects are staged in work RAM and copied across in the
+ *     gap after it finishes, exactly as the queued cells are. It sits *above* the
+ *     heap rather than in it, because the region has to hold one entry more than
+ *     the hardware is told about: the `SPT` registers name a last entry rather
+ *     than a count, so a frame with no objects is expressed by a terminator with
+ *     both eye bits clear.
+ *   - **Everything is four-byte aligned**, and for a sharper reason than the
+ *     Mega Drive's. A 68000 *faults* on an odd word access; a V810 silently
+ *     masks the low bits of the address, so an unaligned `ld.w` reads four bytes
+ *     that begin somewhere else and nothing anywhere reports it.
+ *   - **The heap is enormous**, so nothing here is a budget. What is scarce on
+ *     this console is the character bank and the four palettes, not the RAM.
+ */
+export const VB_MEMORY: MemoryPlan = {
+  machine: "Virtual Boy",
+  // Past the first page, which the boot leaves for the stack to grow down into
+  // from the top, and stopping short of the last so the two cannot meet.
+  heapStart: 0x05000100,
+  heapEnd: 0x0500f000,
+  // Above the heap and below the stack: a hundred and twenty-nine entries of
+  // eight bytes, which is the hundred and twenty-eight a frame may draw and the
+  // terminator past them.
+  oamShadow: 0x0500f000,
+  // Eight-by-eight only, so a wide object costs its width in entries — and the
+  // hardware holds a thousand and twenty-four, which no demade game approaches.
+  oamEntries: 128,
+  viewW: 48,
+  viewH: 28,
+  // A queued cell is an address and a word. Eighty covers a diagonal scroll on
+  // the widest playfield in the table: a column of twenty-eight and a row of
+  // forty-nine, painted in the same frame.
+  queueMax: 80,
+  plotMax: 48,
+  // No driver embeds in a cartridge for this console yet (doc 13 §Console
+  // rollout item 9), so a game reserves nothing for one — and the trace of a
+  // build with its music left out is the trace of a build with it in, which is
+  // what makes the two comparable.
+  audioBytes: 0,
+  // A BGMap entry is a word — eleven bits of character, two of flip and two of
+  // palette — so a queued cell is a tile *and* an attribute.
+  cellAttributes: true,
+  // The frame flag the video processor's handler sets and the main loop waits
+  // on. Its own byte rather than borrowed scratch, for the Sega's reason.
+  interruptBytes: 1,
+  // A four-byte record pointer and a four-byte index: an address is
+  // thirty-two bits here, and both are aligned because everything is.
+  loopBytes: 8,
+  align: 4,
+};
+
 /** Raised when a game needs more state than the machine has. */
 export class LayoutError extends Error {
   constructor(

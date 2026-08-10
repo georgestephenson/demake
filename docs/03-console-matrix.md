@@ -146,7 +146,7 @@ Three shorthands recur in the generated table and are worth stating once:
 | Intellivision | 159×96 background | 16 fixed colors | 8×8 cards, 2 colors/card from constrained sets; GRAM 64-card budget |
 | Odyssey² | very coarse grid | 12 fixed colors | Char-grid hardware; best-effort mosaic mode |
 | Fairchild Channel F | 102×58 effective | 8 colors, 4/line | Historical-completeness target |
-| Virtual Boy | 384×224 | 4 red shades (2bpp) | DMG-like mono pipeline, red ramp |
+| Virtual Boy | 384×224 | 4 red shades (2bpp) | DMG-like mono pipeline, red ramp — and the only console here with a **depth axis**: the display is two LED arrays and a world declares how far apart its two eyes' copies are. Shade 0 is the LEDs *off*, so the hardware ramp is the fit's reversed (`vbShade`), and the DAC model reproduces beetle-vb at the brightness a cartridge programs |
 | Pokémon Mini | 96×64 | 1bpp (+gray via flicker) | 1bpp threshold/dither pipeline |
 | Watara Supervision | 160×160 | 4 shades | DMG-family reuse for the *fit*. The hardware is a 65C02 driving a linear bitmap held inside the 8 KB of system RAM — no tiles, no sprites, no scroll — so its codegen is a framebuffer path, not a tiled one |
 | Mega Duck / Cougar Boy | 160×144 | 4 shades | A Game Boy clone: same SM83, same 2bpp tiles, same maps, same OAM, same joypad, same interrupt vectors. What differs is the *display program* — LCD registers at $FF10–$FF1B in their own order, LCDC's bits permuted, sound registers at $FF20–$FF46 — and that there is no cartridge header and no boot ROM, so execution starts at $0000. `demake build` compiles games for it; `gen --format rom` is withheld until it has a harness of its own |

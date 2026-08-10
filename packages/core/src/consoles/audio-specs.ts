@@ -1012,6 +1012,118 @@ export const wsAudio: AudioSpec = {
   docs: { sources: WS_SOURCES },
 };
 
+const VB_SOURCES = [
+  "Virtual Boy Sacred Tech Scroll (David Tucker) — VSU register map, waveform and modulation tables, envelope and sweep timing",
+  "Planet Virtual Boy — Sound: https://www.planetvb.com/",
+];
+
+/** The chip's own clock: the console's twenty megahertz over four. */
+const VSU_CLOCK = 5000000;
+
+/**
+ * One of the five wavetable voices, which are the same hardware throughout.
+ *
+ * Two things about the lattice are this chip's. The pitch register is
+ * *subtracted* from 2048 like the WonderSwan's, so what is declared is the
+ * divider the hardware ends up with and `binding/vb.ts` does the subtraction.
+ * And the volume is **two multiplies rather than one**: a four-bit envelope and
+ * a four-bit level a side, both linear and both in the channel's own registers —
+ * so the effective step count is finer than sixteen, and what is declared here
+ * is the *level*, because that is the one a driver writes per note.
+ */
+function vsuChannel(id: string, kind: "wave" | "pulse"): AudioChannelSpec {
+  return {
+    id,
+    kind,
+    chip: 0,
+    pitch: { clockHz: VSU_CLOCK, step: 32, minDivider: 1, maxDivider: 2048 },
+    volume: { steps: 16, law: "linear" },
+    waveform: { samples: 32, bits: 6 },
+    ...(kind === "pulse" ? { duties: [0.125, 0.25, 0.5, 0.75] } : {}),
+    // A real hardware envelope: four bits stepping up *or* down on its own
+    // clock, with a repeat. The Game Boy's has one direction and no repeat, and
+    // the other two wavetable chips in the matrix have none at all — so this is
+    // the one wavetable console where a note's decay costs a driver nothing per
+    // tick.
+    envelope: { kind: "decay", ratePerSecond: 260.4 },
+    panning: "lr-level",
+  };
+}
+
+/**
+ * The Virtual Boy's sound hardware: six voices, five of them wavetables.
+ *
+ * The PC Engine's arrangement with the WonderSwan's channel count and two bits
+ * more depth — and three things neither of them has. The **waveforms are a
+ * shared pool of five** rather than one per channel, so two voices can play one
+ * timbre and a fifth table is a fifth *sound*. **Every channel has a hardware
+ * envelope.** And **channel five can modulate as well as sweep**, from a table
+ * of thirty-two signed steps applied to the frequency register itself.
+ *
+ * **Nothing on this chip is shared between channels**, which is what decides the
+ * shape of a driver for it: panning is two nibbles in the channel's own
+ * register, enabling is its own bit 7, and the one global register is a panic
+ * button. So this console emits no merge routine at all — the sixth in the
+ * matrix to do so, and the fourth whose reason is that its hardware shares less
+ * rather than more.
+ *
+ * **The driver clock is the frame, and the frame is 50.2 Hz** — the slowest in
+ * the whole matrix. The console has a hardware timer with an interrupt of its
+ * own, and it is offered here beside the frame because a *standalone* cartridge
+ * whose loop does nothing else can ride it; what a game gets is
+ * `gameDriverRate`'s answer.
+ */
+export const vbAudio: AudioSpec = {
+  chips: ["vsu"],
+  channels: [
+    // Pulses first, for the reason the PC Engine's and the WonderSwan's specs
+    // give: the sound demaker places a pitched gesture on the *first* pitched
+    // channel, so this is the difference between an effect borrowing a lead and
+    // an effect silencing the bass every time it fires.
+    vsuChannel("pulse1", "pulse"),
+    vsuChannel("pulse2", "pulse"),
+    vsuChannel("wave1", "wave"),
+    vsuChannel("wave2", "wave"),
+    // Channel five is declared as the wavetable voice it is used as, on the
+    // WonderSwan's terms: the schema has one `kind` per channel, and the sweep
+    // and the modulation are expression a binding reaches for rather than a
+    // different sort of voice.
+    vsuChannel("wave3", "wave"),
+    {
+      id: "noise",
+      kind: "noise",
+      chip: 0,
+      volume: { steps: 16, law: "linear" },
+      // Eight *taps* rather than eight rates, exactly as the WonderSwan's: the
+      // register is fifteen bits and the mode decides how long the sequence runs
+      // before it repeats, so the timbre is the length and the pitch is still
+      // the channel's own divider.
+      noise: { periods: 8, tonalMode: false },
+      envelope: { kind: "decay", ratePerSecond: 260.4 },
+      panning: "lr-level",
+    },
+  ],
+  driver: {
+    sources: ["vblank", "timer"],
+    // 20000000 / 398406, which is the 50.2 Hz the display runs at — the slowest
+    // frame in the matrix, and the reason a rule that adds a constant every tick
+    // has to be written against `fps` on this console.
+    frameRate: { num: 20000000, den: 398406 },
+    // Wide, for the PC Engine's reason: this chip's five waveform tables are a
+    // hundred and sixty register writes and they all land on tick zero, because
+    // the wave RAM is reachable only through the register port. A *game* strips
+    // those into its boot routine and never pays them again; what a schedule has
+    // to be allowed to say is that they happened.
+    writesPerTick: 256,
+  },
+  // Half a megabyte of cartridge and 64 KiB of work RAM, so a track is budgeted
+  // like a Mega Drive's rather than like a Game Boy's — this is one of the few
+  // consoles here where the schedule is not the scarce thing.
+  budgets: { romBytes: 32768 },
+  mixing: { channels: 2, linear: true },
+  docs: { sources: VB_SOURCES },
+};
+
 const NEOGEO_SOURCES = [
   "Neo Geo Development Wiki — YM2610: https://wiki.neogeodev.org/index.php?title=YM2610",
   "Neo Geo Development Wiki — YM2610 registers: https://wiki.neogeodev.org/index.php?title=YM2610_registers",

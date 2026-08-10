@@ -15,7 +15,7 @@ real emulator, compared pixel for pixel):
 | Demaker               | Docs   | State                                                                         |
 | --------------------- | ------ | ----------------------------------------------------------------------------- |
 | art (images)          | 03–06  | working, ten consoles proven on hardware                                      |
-| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on fifteen consoles |
+| game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on sixteen consoles |
 | music (`arrange`)     | 16, 17 | MIDI → chip music, seventeen consoles — and a Game Boy ROM that plays it      |
 | sound (`sfx`)         | 16, 18 | WAV → chip effects, seventeen consoles — same ROM, same proof                 |
 
@@ -678,6 +678,117 @@ register and the first to have none because its hardware pans _more_ — so
 handing a borrowed channel back replays _six_ bytes rather than three, because
 both of a voice's levels are things the music stated and the effect overwrote.
 
+**And it demakes the Virtual Boy, which is the first console here with a third
+axis.** `demake gen -c vb --format rom` builds a bootable cartridge and the whole
+shared image battery matches the DAC reference in beetle-vb — _in both eyes_,
+because this display is two scanning LED arrays and its video processor draws
+every scene twice. That is not a rendering detail: a **world** is a display-list
+entry that says where a rectangle of a BGMap goes on the screen _and how far
+apart its two eyes' copies are pulled_, so a layer can sit in front of or behind
+the display plane, and nothing else in this project has a depth to spend at all.
+`VB_NEARER_SIGN` is the sign that means nearer, it has one definition, and
+`packages/cli/test/vb.e2e.test.ts` settles it against a third-party emulator
+rather than against our own model — a scene with two depths in it, run in
+beetle-vb and in `@demake/vb`, compared pixel for pixel in both eyes.
+
+**What goes where is `VB_DEPTH`**, and it is one table rather than a number per
+emitter: **scenery at the display plane, objects in front of it, captions in
+front of them.** Written down once because depth is the one quantity a reader
+has to check against the _rest_ of the scene — a caption behind the object it
+labels is not a wrong number anywhere, it is a wrong number relative to another
+one. And deliberately shallow: this display's two eyes are about sixty pixels
+apart, disparity beyond a handful asks them to converge harder than is
+comfortable for a session, and every commercial game on this console keeps its
+foreground within a few pixels of the plane. A demaker spends the whole machine
+(§Iron rules), and on this one that means using the axis rather than exhausting
+it.
+
+Four things about this console are worth knowing before touching any of it. The
+**encoder is the smallest in the set**: a V810 is a RISC with thirty-two 32-bit
+registers and a hardware multiply _and_ divide, so a game backend here will pull
+in no arithmetic helper at all. The **boot is three lines**, because a 27-bit
+address bus puts the reset fetch inside the cartridge's own last sixteen bytes —
+which is also why the reset stub jumps absolutely, since it runs from a mirror
+the image was not assembled at. The **display ROM has no toolchain behind it**:
+no distribution ships a V810 assembler, so this is the one family whose display
+program demake emits with its own encoder, and what keeps that honest is that a
+third-party emulator still decodes every instruction. And **shade 0 is the LEDs
+being off**, which is the opposite end of the ramp from where every other mono
+console here puts index 0 — `vbShade` is the one place that reversal happens, and
+the emulator caught its absence on the first run as a picture that was a
+photographic negative.
+
+**And it builds games, which is where the third axis stops being a rendering
+detail.** `demake build -c vb` produces a real cartridge — V810 machine code
+written for the game, art demade into 2bpp characters, and a _display list_
+rather than a stack of layers — and the whole example library traces identically
+on it in `@demake/vb`, in the same battery, at the same one frame per tick. This
+is the sixteenth console to run it and the only one that draws every scene twice.
+
+**`VB_DEPTH` is spent rather than described**: the scenery world sits at the
+display plane, every object carries `vbParallax(VB_DEPTH.object)` in its own
+attribute entry, and the captions get a second BGMap world of their own at the
+nearest rung — so a demade game reads as three planes in depth on hardware that
+no other console in the matrix has anything to compare with. `vb-rom.test.ts`
+reads the ladder back off the worlds, off the object table and off the _pixels_,
+because a sign convention that was consistently wrong would satisfy any one of
+the three alone.
+
+Four things about the renderer are this console's. **A scene is a display list**,
+so what it costs is the worlds it uses: seven, written once at boot, and the four
+object worlds among them are four rather than one because the drawing processor
+decides which group a world draws by _how many object worlds came before it_.
+**Scrolling is two halfword stores** — the scenery world's own source origin —
+against a 64×64 map and a 48×28 window, so the leading edge is painted sixteen
+columns off the right-hand side and neither the NES's row pinning nor the Master
+System's seam mask exists. **The HUD gets a plane of its own**, whose origin is
+written at boot and never again, which is the WonderSwan's arrangement with a
+depth on top and the third time in the set the sprite HUD is absent rather than
+reimplemented. And **an unaligned access is masked rather than faulted**: a V810
+clears the low bits of an address instead of raising, so an `ld.h` at an odd
+address reads the halfword below it and reports nothing — which is why the tile
+cell list and both tile-contact lists are read a byte at a time and why the
+shared constant pool grew an `align` hook.
+
+**A caption here is chosen against the picture, not against the backdrop**, and
+that is the one place this console's HUD plane costs something the NES's shared
+backdrop does not. On that machine a caption's paper _is_ the backdrop register,
+so the ink is picked against it; here the caption is on a plane in front of the
+picture and what shows through its paper is the picture. Picking against the
+backdrop gave the caves title screen dark ink over a three-quarters-dark picture
+whose lightest colour was rare — a caption placed correctly, demade correctly and
+invisible, which no register comparison can see. `vb-art.ts` counts the shades the
+demade picture actually places and ramps the font the other way.
+
+What it does not have is an **in-game audio driver**; doc 13 §Console rollout
+item 9 costs it. A V810 stream player would be the processor's first, and unlike
+before it is blocked on nothing but itself — the cartridge it goes in exists.
+
+**And it demakes music and effects.** `@demake/chip` models the VSU — six voices,
+five of them wavetables of thirty-two six-bit samples — and `demake arrange -c vb`,
+`sfx` and `render` all work, on the Neo Geo Pocket's precedent that a demaker is
+per-domain and does not wait for a cartridge. Three things about that chip decide
+what a driver for it will look like. The **waveform tables are a shared pool of
+five** rather than one per channel, so a table is a timbre and the bank is
+register writes a boot performs (`binding/vb-bank.ts`, the fifth kind of bank in
+the set). **Every channel has a hardware envelope**, so a drum's decay is one
+write rather than one a tick — which neither of the other two wavetable consoles
+here can say. And **nothing is shared between channels**: panning is two nibbles
+in the channel's own byte, enabling is its own bit 7, and the one global register
+is a panic button — so this console emits **no merge routine at all**, the sixth
+in the matrix and the fourth whose reason is that its hardware shares _less_
+rather than more.
+
+The binding spends both of the output stage's multiplies rather than one: the
+note's **level goes in the envelope register** and the **pan in the level
+register**, so a volume step and a pan change are one write each and neither
+disturbs the other. Every other wavetable console in the set packs both into one
+byte and rewrites it for either.
+
+What it does not have is an **in-game driver**; doc 13 §Console rollout item 9
+costs it. A V810 stream player would be the _processor's_ first, and the
+cartridge it goes in now exists.
+
 **And it demakes music and sound, on both Neo Geo Pockets.** `@demake/chip`
 models the T6W28: a Master System's four voices with the thing that chip is
 poorest in — **stereo that is a level rather than a switch**, two four-bit
@@ -812,8 +923,8 @@ art-free build in `packages/audio/test/neogeo-driver.test.ts`.
 Still to come: the remaining Tier 2/3 consoles (each =
 a codegen backend, a ROM harness + toolchain, and a libretro core + DAC
 calibration), the remaining framebuffer/scanline layout paths (Lynx, GBA/NDS
-bitmap modes, 2600/7800), and the rest of the Demotic runtime story (the speed
-work doc 14 §Runtime model names).
+bitmap modes, 2600/7800), the Virtual Boy's in-game audio driver, and the rest of
+the Demotic runtime story (the speed work doc 14 §Runtime model names).
 
 **The audio spine is built, and two consoles boot** (docs
 [16](docs/16-audio-engine.md), [17](docs/17-music-demaker.md),
@@ -965,7 +1076,12 @@ packages/core/       @demake/core — the engine (zero platform deps; ESM; ships
                      tolerance and two correct libraries disagree in the low
                      bits, which across the CLI and the page is two different
                      demakes of one photograph. WebP is absent and says so
-  src/consoles/      ConsoleSpec schema + one declarative spec per console (21 of them)
+  src/consoles/      ConsoleSpec schema + one declarative spec per console (21 of
+                     them). vb.ts's ramp is a *tested artifact* on md-vdp's
+                     terms: it reproduces what beetle-vb renders at the
+                     brightness a demade cartridge programs, which is unevenly
+                     spaced because that emulator applies a gamma to the LED
+                     intensities
   src/pipeline/      stages 0–7, the tiled fitter, mono + tiled-mono + TMS
                      row-pair paths, tournament. fit-mono-tiled.ts is the one
                      whose problem is *discrete*: a pool of eight and palettes
@@ -974,7 +1090,11 @@ packages/core/       @demake/core — the engine (zero platform deps; ESM; ships
   src/pipeline/candidate.ts  one candidate, start to finish — the unit of parallel
                      work, and the content-keyed prologue memo that stops a
                      fan-out decoding its source once per candidate
-  src/codegen/       gen: per-family backends (gb, nes, snes, sms, md, sg1000, gba, nds, pce, wsc), detector
+  src/codegen/       gen: per-family backends (gb, nes, snes, sms, md, sg1000, gba,
+                     nds, pce, wsc, vb), detector. vb.ts is the only one that
+                     emits a *world* — on every other console "where the picture
+                     goes" is a scroll register, and here it is a 32-byte
+                     display-list entry with a depth field in it
   src/image/svg/     our SVG rasteriser: XML, shapes, paint, scanline fill (doc 15
                      step 2). The one decoder whose *output size* is a question
                      rather than a fact, which is what `decodeImage`'s `atLeast`
@@ -993,12 +1113,16 @@ packages/cli/        demake — thin CLI over core; re-exports core for scriptin
                      the only place that sees all four domains at once
   man/               generated roff man pages (never hand-edited)
 rom-harness/{gb,nes,snes,sms,md,sg1000,gba,nds,pce,wsc}/  the display programs `gen --format rom` assembles
+                     (the Virtual Boy has none: no distribution ships a V810
+                     assembler, so `cli/src/rom/vb.ts` emits its display program
+                     with core's own encoder rather than assembling a source
+                     file — the one family with no toolchain behind it)
 emu-harness/gb/      SameBoy headless capturer for the GB pixel-perfect E2E (doc 10)
 emu-harness/libretro/  generic retrorun frontend — one capturer for every libretro core
 tools/toolchains/    provisioners (cached): RGBDS, cc65, WLA-DX, SameBoy source builds;
                      GNU m68k + arm-none-eabi binutils and NASM (apt); libretro
                      cores (fceumm, genesis-plus-gx, snes9x, mgba, desmume,
-                     mednafen_pce_fast, mednafen_wswan)
+                     mednafen_pce_fast, mednafen_wswan, mednafen_vb)
 packages/nds/        @demake/nds — a self-hosted Nintendo DS core, and the only
                      one of the seven that is *two* processors: the ARM9 and the
                      2D engine are @demake/gba's, because a DS's engine A *is* a
@@ -1011,6 +1135,26 @@ packages/nds/        @demake/nds — a self-hosted Nintendo DS core, and the onl
                      the second screen, interrupts (on both processors) and every
                      ARM7 peripheral that is not the sound are absent rather than
                      half-implemented, and each raises
+packages/vb/         @demake/vb — a self-hosted Virtual Boy core, and the only one
+                     that renders *two* pictures. Its video processor is a
+                     display list rather than a stack of layers: thirty-two
+                     worlds processed from 31 down to 0, each naming a rectangle
+                     of a BGMap, where it goes, and **how far apart its two eyes'
+                     copies are** — which is this project's only depth axis.
+                     VB_NEARER is that sign, with one definition, asserted about
+                     *pixels* rather than about the constant because two
+                     wrong-but-agreeing definitions would put a cartridge's
+                     sprites behind its scenery and pass everything. Its
+                     framebuffers are *columns* (384 of 256 pixels at 2bpp), so
+                     a reader that walked one row-major would produce noise
+                     rather than a wrong picture, and `vbFramebufferBit` has one
+                     definition for that reason. Its CPU is written against the
+                     published instruction set and driven in its tests by core's
+                     own encoder. The sound processor, the affine and h-bias
+                     world modes, the hardware timer and the LED brightness
+                     curve are absent rather than half-implemented, and the
+                     first of those is the only thing between this console and
+                     any audio at all
 packages/ngp/        @demake/ngp — a self-hosted Neo Geo Pocket core, mono *and*
                      Color, decided by a constructor argument the way @demake/wsc
                      is. Its display has no memory of its own, on that core's
@@ -1246,6 +1390,28 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
                      which is *two* machines: gba/machine.ts is the description
                      that makes a Nintendo DS a variant rather than a seventh
                      backend, on the Mega Duck's terms
+    vb.ts, vb-art.ts, vb/                 the V810 backend and its image path,
+                     and the only renderer here that emits a *display list*
+                     rather than programming layers: seven world entries written
+                     once at boot, of which one is the scenery, four are the
+                     object worlds the drawing processor counts through to reach
+                     group 0, one is the caption plane at its own depth and one
+                     ends the list. Scrolling is two halfword stores into the
+                     scenery world, so the leading-edge painter is the smallest
+                     in the set. Three things in it have no counterpart
+                     elsewhere. The multiply pulls in *nothing* — mul leaves the
+                     whole 64-bit product and a 16.16 product is its middle
+                     thirty-two bits, with no floor correction because an
+                     arithmetic shift of a two's-complement product already is
+                     one. A `jal` returns through a *register*, so a helper that
+                     calls a helper destroys its own return address, which reads
+                     as a hang rather than as a wrong number — ctx.enter/leave
+                     are the answer, and no other backend needs one because every
+                     other console pushes. And an *unaligned* access is masked
+                     rather than faulted, so the three structures that interleave
+                     a count byte with halfword entries are read and written a
+                     byte at a time and the constant pool is aligned before it is
+                     emitted (CodeBuffer.align)
     audio.ts         the hand-off to @demake/audio, art.ts's twin
   demo/              terminal runner (play.mjs) and test runner (test.mjs)
 packages/chip/       @demake/chip — every sound chip as a register-driven model (doc 16)
@@ -1782,7 +1948,13 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   everywhere and four on the WonderSwan, which stopped its climb two thirds of
   the way up the cavern and was invisible from every other console.
   `2.4 / fps` folds to the same constant a 60 Hz console already had, so the
-  code eleven of the twelve emit does not change by one byte. What it costs is
+  code eleven of the twelve emit does not change by one byte.
+  **And an impulse needs the same treatment, for the other half of the same
+  reason.** A tick pulls before it moves, so the first tick of a jump is already
+  slowed and a slower machine loses more of the rise — which put the Virtual Boy
+  at 50.2 Hz a hundredth of a cell short of a ledge every other console cleared,
+  on a staircase whose step _is_ the jump. `- 1.2 / fps` on the impulse is half of
+  what the next tick will subtract, and it collapses the apex spread tenfold. What it costs is
   four bytes of RAM: the emitter folds a constant subexpression
   (`codegen/expr.ts` §emitExpr) but `analyze.ts` measures the tree it was
   handed, so the division buys an expression temporary it never uses — and would
@@ -1791,6 +1963,12 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   **A duration is the same problem**: `guard.value as 120` is two seconds only on
   a machine that ticks 60 times a second, so quest writes `2 * fps` and reads its
   boss timer at `fps * 7 / 6`.
+- **A level is at least as big as the widest screen that will show it.** Which
+  is forty-eight cells by twenty-eight, the Virtual Boy's — a third wider than a
+  Mega Drive's, which held the record until this console arrived and quietly made
+  `quest`'s vault too small (`E_LEVEL_TOO_SMALL`). A level meant to fill the view
+  exactly and never scroll has to be sized against the _widest_ machine in the
+  table rather than the one it was drawn on.
 - **A ledge wants three clear rows above it and a surface within four rows
   below.** A hero is two cells tall and a jump rises five, of which the top one
   is spent getting _above_ the ledge rather than into its side — so a ledge four
@@ -3354,8 +3532,8 @@ Ask the four questions separately — the answer to "is this a variant" is per s
 not per console.
 
 **And a console can gain a chip model, both demakers and a game backend without
-gaining an in-game driver.** The Neo Geo Pocket Color is the case, and the four
-columns are what make it sayable: `arrange -c ngpc` demakes its music, `build -c
+gaining an in-game driver.** The Neo Geo Pocket Color and the Virtual Boy are the
+cases, and the four columns are what make it sayable: `arrange -c ngpc` demakes its music, `build -c
 ngpc` produces a cartridge that traces identically to one that plays it, and the
 in-game-audio column says `—` because `GAME_DRIVERS` does not list it. That last
 list is the fourth registry the support matrix reads and it is keyed by _console_
@@ -3464,7 +3642,7 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   a cartridge from each fixture game **for every console with a backend** — both
   Game Boys, the Mega Duck, the NES, both Sega 8-bits, the Super Nintendo, the
   Mega Drive, the Neo Geo, the Game Boy Advance, the Nintendo DS, the PC Engine,
-  both WonderSwans and the Neo Geo Pocket Color — and runs it in the matching
+  both WonderSwans, the Neo Geo Pocket Color and the Virtual Boy — and runs it in the matching
   self-hosted core, asserting the
   trace
   matches the reference interpreter tick for tick. No toolchain, no emulator
@@ -3678,6 +3856,31 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   opcode bytes `packages/core/test/huc6280.test.ts` pins — and the VDC test is
   where the _increment select_ was found to be one bit out, which no trace and no
   register assertion could have seen.
+- `packages/demotic/test/vb-arith.test.ts` and `vb-rom.test.ts` are the Virtual
+  Boy's pair. Three of the first's
+  vectors are aimed at answers this machine gives that no predecessor does: a
+  multiply with **no** floor correction (an arithmetic shift of the hardware's
+  own 64-bit product already is one, so `THIRD × -THIRD` is where a version that
+  assembled the product from unsigned halves would fail and pass everything
+  else), a divide with _two_ paths of which the example library only ever
+  reaches the first, and a pooled constant that is in the cartridge where a
+  variable is not. Its generator case is what caught the integer part being
+  taken with a logical shift: the Neo Geo Pocket subtracts in a sixteen-bit
+  register and gets the sign extension from the wrap, and `random(-1, 1)` on a
+  thirty-two-bit one computes a count of −65534.
+  The second is the rendering oracle, and it is the only one in the project that
+  can read a **depth** back off the hardware: the two worlds, the object table
+  and the pixels themselves, checked together because a sign convention that was
+  consistently wrong would satisfy any one of the three alone and put a game's
+  captions behind its scenery. Its other cases are the ways this cartridge can be
+  perfect and dark — a display list written one entry short (a scene with no
+  captions), a character bank that never arrived (nothing is uploaded through a
+  port here, so a short copy is a blank screen and nothing else), the plane
+  against the level's own grid, and the caption plane's origin staying at zero
+  while the scenery's moves. It scrolls the caves **vertically** to prove the
+  last one, because this is the widest screen in the matrix — forty-eight cells,
+  so a level that scrolls sideways on a Game Boy has both its edges on screen
+  here and the camera never leaves its horizontal clamp.
 - `packages/demotic/test/nes-arith.test.ts` is one layer below that: it assembles
   each 16.16 operation on its own, runs it in `@demake/nes` and compares with
   `fixed.ts`. A multiply that floors the wrong way for negative operands makes a
@@ -3767,6 +3970,17 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   block rather than a fifth pass, because the stereo latch is the only thing
   about it the Master System's pass does not already run. Also toolchain-free, and
   it is the file to run when touching any driver.
+- `packages/cli/test/vb.e2e.test.ts` is the Virtual Boy's, and the only E2E in
+  the project that checks **two pictures**: the core is asked for a side-by-side
+  capture, so a still picture is compared against the same reference in both
+  eyes — which is the claim a backdrop makes on this console, since a layer at
+  the display plane is one the eyes see in the same place. It is also the only
+  one that needs _no assembler_, and therefore the sharpest test of an encoder
+  there is: every instruction in the cartridge is ours and a third-party
+  emulator is what decodes them. Its depth case is where a scene with two depths
+  is run in beetle-vb **and** in `@demake/vb` and compared pixel for pixel —
+  every other assertion about depth in this repository is against our own model,
+  and that one is against somebody else's.
 - The pixel-perfect emulator E2E (`packages/cli/test/emu.e2e.test.ts`, doc 10)
   boots the ROM in SameBoy and asserts the framebuffer matches the DAC reference
   byte-for-byte; it self-skips without the capturer, so run `pnpm emulator`
@@ -3934,6 +4148,34 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   entries and solves the palette choice exactly under each, because picking the
   backdrop by frequency first is how a fit comes to hold three usable shades on
   hardware that has four.
+- **The Virtual Boy's shade 0 is the LEDs being off**, which inverts the
+  convention every other mono console in this project shares: a fit's index 0 is
+  its _lightest_ colour, and here the lightest is shade 3. `vbShade` is the one
+  place the reversal happens and it has three readers — the `vb` codegen family,
+  `@demake/vb`'s renderer and (later) the game backend's palette emitter. A copy
+  in any one of them is a picture that is a photographic negative, which is
+  exactly what the E2E caught the first time it ran.
+- **And its backdrop is a palette entry, not a register somebody chooses.** Pixel
+  value 0 is transparent on _both_ of this console's layers, so a picture's
+  lightest shade only ever reaches the screen through `BKCOL` — the NES's shared
+  index 0 reached by different hardware. That is why `.pal.bin` is five bytes:
+  four `GPLT` registers and then the backdrop, because a family that emitted the
+  four and left the fifth to a caller would have every picture's paper decided by
+  whoever wrote the display program.
+- **The Virtual Boy's two flip bits mean opposite things on its two layers.** A
+  BGMap entry mirrors horizontally on bit 12 and vertically on bit 13; an object
+  attribute is the other way round. It is the hardware rather than a
+  transcription error, and it is exactly the asymmetry a reader will helpfully
+  "correct" — so it was settled with a probe cartridge rather than by reading:
+  one lit pixel at a character's top-left corner, run in beetle-vb, moves to
+  (0, 7) with bit 12 set and to (7, 0) with bit 13. The background half is
+  settled by the pixel-perfect E2E, whose fits are flip-aware, so a mirrored tile
+  there is a byte-comparison failure.
+- **A Virtual Boy framebuffer is columns.** 384 of them, 256 pixels at two bits
+  each, so consecutive bytes are _vertical_ neighbours — a reader that walked one
+  row-major produces noise rather than a wrong picture. `vbFramebufferBit` has
+  one definition for that reason, and both the core's renderer and its tests read
+  through it.
 - **The PC Engine's BAT is fixed at VRAM word $0000**, so characters cannot start
   there: the harness gives the BAT 32×32 entries (words $0000–$03FF) and puts the
   first character at word $0400 — character 64 — which `cli/src/rom/pce.ts` adds
@@ -4234,7 +4476,7 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   `import()` like every other core, and they were charged to _every_ visitor for
   as long as the two lists disagreed. A budget that overstates itself fails the
   next honest change, which is what it did. Current figures:
-  378 KB for a visitor against a 400 KB budget, 623 KB for the whole site — and
+  387 KB for a visitor against a 400 KB budget, 657 KB for the whole site — and
   a new example game costs about fourteen of those kilobytes, because the page
   bundles every fixture SVG twice (raw text for the ROM build, a URL for the
   preview). Measure with a **clean** `dist`: the checker reads every `.js` it

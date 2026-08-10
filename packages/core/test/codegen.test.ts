@@ -7,6 +7,7 @@ import { gen } from "../src/codegen/gen.js";
 import { detectCompliant } from "../src/codegen/detect.js";
 import {
   extractTiles,
+  packPacked2Le,
   packPacked2Word,
   packPacked4,
   packPacked4Le,
@@ -129,6 +130,80 @@ describe("gen — ngpc family (Neo Geo Pocket Color / K2GE)", () => {
       expect(pal[p * 4 * 2]).toBe(pal[0]);
       expect(pal[p * 4 * 2 + 1]).toBe(pal[1]);
     }
+  });
+});
+
+describe("two-bit packed tile packing, little-endian (Virtual Boy 2bpp)", () => {
+  it("packs a row as a little-endian halfword with the left pixel lowest", () => {
+    const grid = new Uint8Array(64);
+    grid[0] = 3; // row 0, col 0 → the row word's *bottom* two bits
+    grid[7] = 1; // row 0, col 7 → its top two
+    grid[8] = 2; // row 1, col 0
+    const bytes = packPacked2Le(grid, 8, 8);
+    expect(bytes.length).toBe(16); // 2 bytes/row × 8 rows
+    // Row 0's word is $4003, stored low byte first — so the first byte of a row
+    // holds its *left*-hand four pixels, which is the Neo Geo Pocket's halfword
+    // the other way round. A picture packed with the wrong one of the two is
+    // mirrored tile by tile, which reads as a fitter fault rather than a packer
+    // one.
+    expect(bytes[0]).toBe(0x03);
+    expect(bytes[1]).toBe(0x40);
+    expect(bytes[2]).toBe(0x02);
+    expect(bytes[3]).toBe(0x00);
+  });
+});
+
+describe("gen — vb family (Virtual Boy / VIP)", () => {
+  it("emits 16-byte characters, palette-tagged BGMap words, and three-colour palettes", async () => {
+    const png = encodeRgbaPng(64, 64, makeSource(64, 64));
+    const result = await gen(png, { console: "vb", format: "bin", symbol: "demake" });
+    const chars = result.artifacts.find((a) => a.suffix === ".chr.bin")!.bytes;
+    const map = result.artifacts.find((a) => a.suffix === ".map.bin")!.bytes;
+    const pal = result.artifacts.find((a) => a.suffix === ".pal.bin")!.bytes;
+    const world = result.artifacts.find((a) => a.suffix === ".world.bin")!.bytes;
+
+    expect(chars.length % 16).toBe(0);
+    expect(map.length).toBe((64 / 8) * (64 / 8) * 2);
+    expect(pal.length).toBe(5); // GPLT0-3 and then BKCOL
+    for (let i = 0; i < map.length; i += 2) {
+      const word = map[i]! | (map[i + 1]! << 8);
+      expect(word & 0x7ff).toBeLessThan(chars.length / 16); // 11-bit character
+      expect((word >> 11) & 1).toBe(0); // the bit between character and flips
+    }
+    // Pixel value 0 is transparent on this hardware and shows BKCOL, so the
+    // palette byte's bottom two bits name nothing and are left clear.
+    for (let i = 0; i < 4; i += 1) expect(pal[i]! & 3).toBe(0);
+    // And the fifth byte is the backdrop, reversed for a display whose shade 0
+    // is the LEDs being off: a fit's lightest index is this console's brightest.
+    expect(pal[4]).toBeLessThan(4);
+
+    // Two world entries: the picture, then the end of the display list. A
+    // program that shipped only the first would have the drawing processor walk
+    // thirty more worlds of whatever was in memory.
+    expect(world.length).toBe(64);
+    const head = world[0]! | (world[1]! << 8);
+    expect(head & 0xc000).toBe(0xc000); // drawn into both eyes
+    expect(head & 0x0040).toBe(0); // ...and not the end marker
+    expect(world[14]! | (world[15]! << 8)).toBe(63); // width - 1
+    expect(world[16]! | (world[17]! << 8)).toBe(63); // height - 1
+    expect(world[4]! | (world[5]! << 8)).toBe(0); // at the display plane
+    expect((world[32]! | (world[33]! << 8)) & 0x0040).toBe(0x0040); // END
+  });
+
+  it("emits asm and c with matching symbols", async () => {
+    const png = encodeRgbaPng(32, 32, makeSource(32, 32));
+    const asm = await gen(png, { console: "vb", format: "asm", symbol: "shot" });
+    const text = utf8(asm.artifacts[0]!.bytes);
+    expect(text).toContain("shot_chars:");
+    expect(text).toContain("shot_map:");
+    expect(text).toContain("shot_palette:");
+    expect(text).toContain("shot_world:");
+    expect(text).toContain(".equ shot_BKCOL,");
+
+    const c = await gen(png, { console: "vb", format: "c", symbol: "shot" });
+    const header = utf8(c.artifacts.find((a) => a.suffix === ".h")!.bytes);
+    expect(header).toContain("extern const unsigned char shot_chars[");
+    expect(header).toContain("#define shot_BKCOL ");
   });
 });
 

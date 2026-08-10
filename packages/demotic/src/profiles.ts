@@ -359,6 +359,38 @@ const PROFILES: readonly ConsoleProfile[] = [
     romPath: true,
   },
   {
+    // **The widest playfield in the table, and the slowest clock.** Forty-eight
+    // cells by twenty-eight is a third more screen than a Mega Drive's, and
+    // 50.2 ticks a second is a fifth slower than everything else here — which is
+    // exactly the pair that makes this console the one a delta written as a bare
+    // constant goes wrong on first (AGENTS.md §Working on Demotic).
+    id: "vb",
+    name: "Virtual Boy",
+    label: "Virtual Boy",
+    screenWidth: 48,
+    screenHeight: 28,
+    rawWidth: 384,
+    rawHeight: 224,
+    cellSize: 8,
+    fps: 50,
+    // **The runtime's staging, not the hardware's thousand and twenty-four.**
+    // The drawing processor works through a group until it runs out of frame
+    // rather than clipping a scanline, so `perLine` is the whole table as on the
+    // Neo Geo Pocket and a wide object costs entries and is never cut mid-line.
+    // What bounds the total is `VB_MEMORY.oamEntries`: a cartridge stages its
+    // objects in work RAM and copies them into the table in the gap after the
+    // frame, and `layout.oamCount` is one byte. So this says 128 rather than
+    // what the chip holds, because the number a diagnostic quotes has to be the
+    // number a cartridge will actually draw — a budget that promised the
+    // hardware's would pass a game whose sprites then went missing, which is the
+    // one thing a backend gap may never be (doc 14 §Runtime model). Reaching the
+    // rest wants a sixteen-bit object count in `layout.ts`; doc 13 §Console
+    // rollout item 9 records it.
+    sprites: { total: 128, perLine: 128, hFlip: true },
+    startButton: "dedicated",
+    romPath: true,
+  },
+  {
     // The same machine in monochrome: the same display at the same 75.47 Hz,
     // the same screen, the same object budget. Everything that decides how a
     // game *plays* is shared, which is what makes this a variant rather than a

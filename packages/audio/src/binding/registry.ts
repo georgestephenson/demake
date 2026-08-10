@@ -17,6 +17,7 @@ import { ndsBinding } from "./nds.js";
 import { neogeoBinding } from "./neogeo.js";
 import { nesBinding } from "./nes.js";
 import { pceBinding } from "./pce.js";
+import { vbBinding } from "./vb.js";
 import { wscBinding } from "./wsc.js";
 import { psgBinding } from "./psg.js";
 import { t6w28Binding } from "./t6w28.js";
@@ -90,6 +91,8 @@ export function bindingFor(consoleId: string, options: FmBindingOptions = {}): C
       return pceBinding(spec.id, audio);
     case "ws-sound":
       return wscBinding(spec.id, audio);
+    case "vsu":
+      return vbBinding(spec.id, audio);
     case "t6w28":
       return t6w28Binding(spec.id, audio);
     case "ym2610":
