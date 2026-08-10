@@ -848,13 +848,18 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     variant rather than a machine** — see doc 03 §Support and AGENTS.md §How to
     add a console.
 
-    Still withheld is `gen --format rom`: a picture-displaying cartridge needs a
-    `gb`-family harness variant of its own, and proving it needs the **SameDuck**
-    libretro core (a SameBoy fork, no BIOS files) wired into the doc-10 loop.
-    The console spec declares no `rom` format until that exists, so `gen` refuses
-    rather than quietly assembling a Game Boy cartridge that shows nothing here.
-    SameDuck's `Core/gb.h` and `Core/display.c` are where the table above came
-    from and are cited in the spec's `docs.sources`.
+    `gen --format rom` followed on exactly those terms and needed no harness of
+    its own: `rom-harness/gb/main.asm` is the Game Boy's program, and
+    `cli/src/rom/gb.ts` generates the `machine.asm` it includes from the table
+    above. Two of the three differences are structural rather than numeric —
+    there is no cartridge header, so there is no `rgbfix` step and the pad to
+    32 KiB is the builder's; and there is no boot ROM, so nothing has turned the
+    LCD on and the Game Boy's wait-for-vblank would spin for ever, which presents
+    as a cartridge that is perfect and blank. The proof is **SameDuck**, SameBoy's
+    own Mega Duck fork on a branch of the same repository, with
+    `emu-harness/gb/capture.c` compiled against it as well as against SameBoy —
+    one source, two emulators. SameDuck's `Core/gb.h` and `Core/display.c` are
+    where the table above came from and are cited in the spec's `docs.sources`.
 - In-browser ROM assembly for more families; WASM-accelerated hot kernels if
   profiling asks; palette-cycling & per-scanline tricks as opt-in "expert" flags;
   sprite/animation mode (the reserved schema slot); home-computer specs if demand

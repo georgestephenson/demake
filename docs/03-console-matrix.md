@@ -99,15 +99,19 @@ Three shorthands recur in the generated table and are worth stating once:
   eight-entry table of shade numbers. The mono WonderSwan is the same story
   (`ws` against `wsc`). Sharing a family is about the *bytes*, not about the
   silicon.
-- **`rom` is withheld, not missing, in one case.** The Mega Duck's *data*
-  formats are the Game Boy's exactly, so it shares the `gb` family for
-  `bin`/`asm`/`c` — but its display program is not the Game Boy's, so the spec
-  does not declare `rom` and `gen` refuses rather than quietly assembling a
-  cartridge that shows nothing on the target.
+- **A family's display program can serve a console its formats differ on.** The
+  Mega Duck's *data* formats are the Game Boy's exactly, so it shares the `gb`
+  family — and its *display program* is the Game Boy's too, because everything
+  that moved (the LCD registers, `LCDC`'s bits, the absence of a cartridge
+  header) reaches the harness as a generated machine include rather than as a
+  second harness. A variant costs a description and no instructions, which is
+  the rule AGENTS.md §How to add a console states and this is the display-ROM
+  half of it.
 - **A game backend and a display ROM are different things.** `demake gen
   --format rom` builds a cartridge that shows a picture; `demake build` compiles
   a `.dmt` into a cartridge that plays. A console can have either without the
-  other, and the Mega Duck has the second without the first.
+  other — the Neo Geo Pocket Color had the first for a while and the mono
+  WonderSwan still has no game backend of its own.
 
 ## Tier 1 — launch set
 
@@ -149,7 +153,7 @@ Three shorthands recur in the generated table and are worth stating once:
 | Virtual Boy | 384×224 | 4 red shades (2bpp) | DMG-like mono pipeline, red ramp — and the only console here with a **depth axis**: the display is two LED arrays and a world declares how far apart its two eyes' copies are. Shade 0 is the LEDs *off*, so the hardware ramp is the fit's reversed (`vbShade`), and the DAC model reproduces beetle-vb at the brightness a cartridge programs |
 | Pokémon Mini | 96×64 | 1bpp (+gray via flicker) | 1bpp threshold/dither pipeline |
 | Watara Supervision | 160×160 | 4 shades | DMG-family reuse for the *fit*. The hardware is a 65C02 driving a linear bitmap held inside the 8 KB of system RAM — no tiles, no sprites, no scroll — so its codegen is a framebuffer path, not a tiled one |
-| Mega Duck / Cougar Boy | 160×144 | 4 shades | A Game Boy clone: same SM83, same 2bpp tiles, same maps, same OAM, same joypad, same interrupt vectors. What differs is the *display program* — LCD registers at $FF10–$FF1B in their own order, LCDC's bits permuted, sound registers at $FF20–$FF46 — and that there is no cartridge header and no boot ROM, so execution starts at $0000. `demake build` compiles games for it; `gen --format rom` is withheld until it has a harness of its own |
+| Mega Duck / Cougar Boy | 160×144 | 4 shades | A Game Boy clone: same SM83, same 2bpp tiles, same maps, same OAM, same joypad, same interrupt vectors. What differs is the *display program* — LCD registers at $FF10–$FF1B in their own order, LCDC's bits permuted, sound registers at $FF20–$FF46 — and that there is no cartridge header and no boot ROM, so execution starts at $0000. Both `demake build` and `gen --format rom` target it, and both are the Game Boy's own code around a machine description; the proof is SameDuck, SameBoy's fork of this console |
 | Game.com | 200×160 | 4 shades | DMG-family reuse |
 | Casio PV-1000, Epoch Cassette Vision, Arcadia 2001, Bally Astrocade, RCA Studio II, VC 4000, APF-MP1000 | various | various | Spec-only until a trustworthy toolchain+emulator pair is validated; prep (compliant PNG) ships before codegen |
 

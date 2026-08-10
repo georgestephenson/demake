@@ -43,17 +43,25 @@ full proof loop for **all eight Tier 1 consoles**:
   Graphics II per-row two-color path (`pipeline/fit-tms.ts`). NES added
   `fixed-master` color, 16×16 attribute cells, and the shared-backdrop constraint.
 - **Codegen** (`bin`/`asm`/`c`) for the `gb`, `nes`, `snes`, `sms`, `md`,
-  `sg1000`, `gba`, `nds`, `pce`, and `wsc` families, reached via an exact-path
-  detector, a manifest sidecar, or implicit `prep`.
-- **`--format rom`** builds bootable ROMs for GB (RGBDS), NES (cc65 NROM), SMS +
-  GG + SG-1000 (WLA-DX / Z80), SNES (WLA-DX / 65816, LoROM), PC Engine (WLA-DX /
-  HuC6280, 64 KiB HuCard), MD/Genesis (GNU m68k binutils), GBA + NDS (GNU ARM
-  binutils), and WonderSwan Color (NASM — the V30MZ is an 8086-compatible core).
+  `neogeo`, `sg1000`, `gba`, `nds`, `pce`, `ws`, `wsc`, `ngpc` and `vb`
+  families, reached via an exact-path detector, a manifest sidecar, or implicit
+  `prep`.
+- **`--format rom`** builds bootable ROMs for GB + GBC + **Mega Duck** (RGBDS,
+  the last of the three through a generated machine include rather than a
+  harness of its own), NES (cc65 NROM), SMS + GG + SG-1000 (WLA-DX / Z80), SNES
+  (WLA-DX / 65816, LoROM), PC Engine (WLA-DX / HuC6280, 64 KiB HuCard),
+  MD/Genesis and the **Neo Geo** (GNU m68k binutils — one processor, two
+  families), GBA + NDS (GNU ARM binutils), and **both WonderSwans** (NASM — the
+  V30MZ is an 8086-compatible core). Two families need no assembler at all,
+  because no distribution ships one for their processor: the **Virtual Boy** and
+  the **Neo Geo Pocket Color** emit their display programs with `core`'s own
+  V810 and TLCS-900/H encoders — the same ones `demake build` compiles a game
+  with — and a third-party emulator is what keeps that honest.
   The z80/6502/65816/huc6280 assemblers are pinned source builds; the m68k and
   ARM binutils and NASM are stock distro packages (apt, main archive) since
   well-tested ones ship there — all via `pnpm toolchains`, no Docker, and no
-  devkitARM/ndstool (demake packs the GBA, NDS and WonderSwan cartridge headers
-  itself).
+  devkitARM/ndstool (demake packs the GBA, NDS, WonderSwan, Neo Geo Pocket and
+  `.neo` cartridge headers itself).
 - **Pixel-perfect emulator E2E** for every console that builds a display ROM —
   GB/GBC (SameBoy), the **Mega Duck** (SameDuck, SameBoy's own fork of that
   console, whose capturer is the Game Boy's source compiled a second time), and
