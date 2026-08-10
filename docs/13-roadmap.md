@@ -215,7 +215,8 @@ gated on emulators that require copyrighted BIOS images**, which this loop will
 not ship — so for those two the proof is likely to cost more than the backend
 does, and that fact should drive the schedule rather than be discovered in it.
 
-**The Neo Geo was on that list and should not have been**, which is worth
+**The Neo Geo was on that list and should not have been, and is now off it in
+both directions** — its own core and a third-party emulator. It is worth
 recording because the same reasoning frees the other two if anyone acts on it.
 Owning the core changes the question from "can we run somebody else's emulator"
 to "what does the hardware do before it hands control over" — and here that is
@@ -228,6 +229,15 @@ S-SMP's boot ROM and `@demake/ngp` about SNK's other console. The Lynx's boot RO
 exists to decrypt a cartridge's first block and the `.lnx` header is the
 direct-boot path around it; a ColecoVision cartridge's header magic tells the BIOS
 to skip its own title screen. Neither is a reason to need somebody's dump.
+
+**And the display-ROM E2E proved the argument reaches somebody else's emulator
+too.** geolith refuses to load a cartridge without a system ROM archive — but its
+members are read by *name*, with no checksum anywhere, so
+`packages/cli/test/_neogeo-bios.ts` writes one: the same three-line hand-off
+`@demake/neogeo` implements, assembled with core's own 68000 encoder and zipped
+with core's own PNG primitives. What that buys is the only kind of check a shared
+convention can fail, and it failed three of them at once — see
+[§the order, item 8](#the-order).
 
 ### RAM and cartridge, measured
 
@@ -289,10 +299,29 @@ the backend today, and either is a reason to revisit rather than to work around.
 
 ### The order
 
-1. **Mega Duck** — *done*. Same SM83, same tile and map formats, same joypad,
-   same interrupt vectors; a permuted LCD register map, a permuted LCDC, a
-   permuted APU register map, no cartridge header and no boot ROM. A whole
-   console for a machine-description change.
+1. **Mega Duck** — *done, display ROM included*. Same SM83, same tile and map
+   formats, same joypad, same interrupt vectors; a permuted LCD register map, a
+   permuted LCDC, a permuted APU register map, no cartridge header and no boot
+   ROM. A whole console for a machine-description change — and the display ROM
+   kept that bargain exactly: `rom-harness/gb/main.asm` is the Game Boy's,
+   `cli/src/rom/gb.ts` generates the `machine.asm` it includes from
+   `core/src/asm/megaduck.ts`, and not one instruction differs.
+
+   Two of the three differences are structural rather than numeric and are worth
+   knowing before the next variant. **There is no cartridge header**, so there is
+   no `rgbfix` step and the pad to 32 KiB is the builder's. And **there is no
+   boot ROM**, which is not only a fact about the cartridge: a Game Boy is handed
+   over with its LCD *on*, so the harness waits for the blanking interval before
+   turning it off, while here nothing has turned it on and `LY` never leaves
+   zero — the wait would spin for ever, which presents as a cartridge that is
+   perfect and shows a blank screen.
+
+   The proof is **SameDuck**, SameBoy's own fork of this console, on a branch of
+   the same repository. `emu-harness/gb/capture.c` is compiled against it as well
+   as against SameBoy — one source, two emulators — and that is the third-party
+   opinion this console's rewired I/O map most needs, because a register table of
+   ours that was wrong and self-consistent would pass everything else in the
+   project.
 2. **PC Engine** — *done, sound included*, and **TurboExpress** free behind it. It was the highest capability per unit of effort on this list
    and it came out that way: `Asm6280` *extends* `Asm6502` rather than restating
    it, which is what let the whole 16.16 value layer, the rule bodies, the tile
@@ -339,6 +368,16 @@ the backend today, and either is a reason to revisit rather than to work around.
    *description*: these two consoles are one processor and one display
    controller, so the mono machine is a variant (`codegen/wsc/machine.ts` — four
    entries and not one instruction) rather than a ninth backend.
+
+   Both machines build a **display ROM** too, and the mono one is the Color's
+   builder around a harness that writes its palette to *ports* rather than to
+   RAM: four for the shade pool and thirty-two for the sixteen four-entry
+   palettes, with the backdrop read back out of the palette block's own first
+   byte rather than restated. `packages/cli/test/ws.e2e.test.ts` is what proves
+   the **pool** end to end — a shade there is two indirections from a pixel and
+   every one of them is a fit decision, so a pool written to the wrong ports, or
+   ordered against what the palettes index, is a picture in shades nobody chose
+   and no assertion inside the engine can see it.
 
    `demake build -c wsc` produces a playable 512 KiB cartridge and the whole
    example library traces identically on it, in the same battery every other
@@ -465,11 +504,21 @@ the backend today, and either is a reason to revisit rather than to work around.
    its own name claims and what the restart actually is.
 5. **Atari 7800** — the encoder is free, and it buys the display-list layout path
    the image side wants anyway.
-6. **Neo Geo Pocket / Color** — **done.** `demake build -c ngpc` produces a
-   playable cartridge that plays its own music and effects, and the whole example
-   library traces identically on it and is diffed tick for tick by the shared
-   audio battery; `demake arrange -c ngpc`, `sfx` and `render` demake its music
-   and effects, on the mono machine too.
+6. **Neo Geo Pocket / Color** — **done, display ROM included.**
+   `demake build -c ngpc` produces a playable cartridge that plays its own music
+   and effects, and the whole example library traces identically on it and is
+   diffed tick for tick by the shared audio battery; `demake arrange -c ngpc`,
+   `sfx` and `render` demake its music and effects, on the mono machine too.
+
+   `demake gen -c ngpc --format rom` builds a bootable cartridge and the whole
+   shared image battery matches the DAC reference in **beetle-ngp**. This is the
+   *second* family with no third-party assembler behind it, after the Virtual
+   Boy's: no distribution ships a TLCS-900/H one, so `cli/src/rom/ngpc.ts` emits
+   the display program with `Asm900` — the same encoder `demake build` compiles a
+   game with — and what keeps that honest is that somebody else's emulator still
+   decodes every instruction. It is also where the **BGR**444 palette word is
+   settled against something that is not ours, which no byte comparison between
+   an encoder and a renderer of our own could do.
 
    The audio turned out not to be free after all, and it is worth saying why,
    because the estimate above was written from the chip's family name. The T6W28
@@ -536,6 +585,34 @@ the backend today, and either is a reason to revisit rather than to work around.
    layer**, 8×8 and always in front, on a grid that *is* the language's own — so
    the write queue, the erase list and `PlotCell` are absent too. Three
    mechanisms deleted by one piece of hardware.
+
+   **And it has a display ROM.** `demake gen -c neogeo --format rom` builds a
+   `.neo` and the whole shared image battery matches the DAC reference in
+   **geolith**. The picture is twenty sticky-chained sprite strips, so the
+   builder's whole share of the hardware's strangeness is transposing `gen`'s
+   row-major map into one 64-word column per strip; the `neogeo` codegen family
+   beside it is the only one in the set whose *tile is not the console spec's
+   tile*, because a pixel costs what an 8×8 4bpp layout says and the hardware's
+   unit is 16×16.
+
+   That suite found **three things nothing of ours could**, and all three were
+   wrong *and* consistent — our own writer and our own reader agreed, and every
+   test in the project passed while no real Neo Geo would have run the file.
+
+   - **The `.neo` container stores its P ROM byte-swapped**, as a MAME set does;
+     every emulator swaps it back at load. `packNeoRom` applies it and `loadNeo`
+     undoes it, so nothing above the container changed.
+   - **A sprite tile's leftmost pixel is the least significant bit**, not the
+     most — the reference says "stored right to left" and the encoder had it the
+     other way, which draws every tile mirrored.
+   - **The palette bank's last entry is the backdrop**, so the console spec
+     declares 255 sub-palettes rather than 256: a fit given all of them puts a
+     colour where the backdrop goes and has it replaced.
+
+   Two more are the *display program's* rather than the format's, and each is a
+   cartridge that is perfect and dark. **SCB2 has to be written**, because zero
+   is fully shrunk rather than unshrunk. And **the watchdog has to be kicked**,
+   so the lock loop is a loop with a store in it.
 
    Still missing: **sound**. The chip answers a Z80 that `demake build` emits no
    program for, so a cartridge is silent and says so — the request bytes a rule

@@ -40,6 +40,11 @@ import { romBuilderFor } from "./rom/registry.js";
 export const EMULATOR_PROVEN: Readonly<Record<string, string>> = {
   dmg: "SameBoy",
   gbc: "SameBoy",
+  // SameBoy's own Mega Duck fork, on a branch of the same repository. It is the
+  // third-party opinion this console's rewired I/O map most needs: a register
+  // table of ours that was wrong and self-consistent would draw a blank screen
+  // there and nothing else in the project could see it.
+  megaduck: "SameDuck",
   nes: "fceumm",
   snes: "snes9x",
   md: "genesis-plus-gx",
@@ -49,6 +54,9 @@ export const EMULATOR_PROVEN: Readonly<Record<string, string>> = {
   gba: "mGBA",
   nds: "DeSmuME",
   pce: "beetle-pce-fast",
+  neogeo: "geolith",
+  ngpc: "beetle-ngp",
+  ws: "beetle-wswan",
   wsc: "beetle-wswan",
   vb: "beetle-vb",
 };
@@ -121,9 +129,9 @@ function gameAudio(spec: ConsoleSpec, game: string | undefined): number | undefi
 /** The support matrix, in the registry's own order (tier, then id). */
 export function consoleSupport(): ConsoleSupport[] {
   return consoles().map((spec) => {
-    // A builder is necessary and not sufficient: the Mega Duck rides the `gb`
-    // family for its data and still withholds `rom`, because its display program
-    // is not the Game Boy's. The spec's own `formats` is what `gen` gates on.
+    // A builder is necessary and not sufficient, because a family's builder can
+    // serve consoles the family's *spec* does not claim `rom` for. The spec's
+    // own `formats` is what `gen` gates on, and it is the narrower of the two.
     //
     // And a *codegen family* is necessary before any of them: `gen` raises
     // `E_UNSUPPORTED_FAMILY` for a console whose family has no backend, whatever

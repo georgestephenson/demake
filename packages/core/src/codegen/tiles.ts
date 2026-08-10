@@ -71,12 +71,30 @@ const ORIENTATIONS: readonly [boolean, boolean][] = [
   [true, true],
 ];
 
-/** Extract the deduplicated tileset + map from a compliant image. */
-export function extractTiles(img: CompliantImage, layout: TileLayout): TiledData {
-  const tw = layout.tileW;
-  const th = layout.tileH;
-  const tilesX = Math.floor(img.width / tw);
-  const tilesY = Math.floor(img.height / th);
+/**
+ * Extract the deduplicated tileset + map from a compliant image.
+ *
+ * `size` overrides the layout's 8×8, and exactly one console needs it: the Neo
+ * Geo's hardware tile is 16×16 even though a *pixel* costs what an 8×8 layout
+ * says it does, and its attribute cell is 16×16 to match. Passing the bigger
+ * size gets the composition, the flip dedup and the per-attribute-cell palette
+ * in one pass rather than in a second extractor written beside this one.
+ */
+export function extractTiles(
+  img: CompliantImage,
+  layout: TileLayout,
+  size?: { w: number; h: number },
+): TiledData {
+  const tw = size?.w ?? layout.tileW;
+  const th = size?.h ?? layout.tileH;
+  // Rounded *up*, and the pixels past the edge read as index 0. For every
+  // console but the Neo Geo this is the same number a floor gives, because a
+  // compliant image is a whole number of 8×8 cells; there a picture is a whole
+  // number of 8×8 cells and may be half of a 16×16 hardware tile, and a floor
+  // would drop its last row and column — an 8×8 source would produce no tiles
+  // at all.
+  const tilesX = Math.ceil(img.width / tw);
+  const tilesY = Math.ceil(img.height / th);
   const flip = layout.flip === true;
 
   const tiles: Uint8Array[] = [];
@@ -93,7 +111,8 @@ export function extractTiles(img: CompliantImage, layout: TileLayout): TiledData
         for (let x = 0; x < tw; x += 1) {
           const px = tx * tw + x;
           const py = ty * th + y;
-          grid[y * tw + x] = img.pixelIndex[py * img.width + px]!;
+          grid[y * tw + x] =
+            px < img.width && py < img.height ? img.pixelIndex[py * img.width + px]! : 0;
         }
       }
 
@@ -116,7 +135,7 @@ export function extractTiles(img: CompliantImage, layout: TileLayout): TiledData
       // Palette of the attribute cell this tile falls in.
       const cx = Math.floor((tx * tw) / img.grid.attributeW);
       const cy = Math.floor((ty * th) / img.grid.attributeH);
-      cellPalette.push(img.cellPalette[cy * img.grid.cellsX + cx]!);
+      cellPalette.push(img.cellPalette[cy * img.grid.cellsX + cx] ?? 0);
     }
   }
 
