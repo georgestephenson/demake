@@ -10,10 +10,14 @@ asserted:
 
 | Demaker   | Input                                               | Output                                                                   | Status                                              |
 | --------- | --------------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------- |
-| **art**   | any image                                           | hardware-compliant art, palettes, tile maps, asm/C/binary, bootable ROMs | working                                             |
-| **game**  | a [Demotic](docs/14-demotic.md) `.dmt` script + art | one game, every console                                                  | language, preview and playable ROMs on six consoles |
-| **music** | a MIDI track                                        | chip music, audio that sounds exactly like the hardware will, and a ROM  | seven consoles; a Game Boy cartridge that plays it  |
-| **sound** | a WAV effect                                        | a chip sound effect, placed and prioritised, and a ROM                   | seven consoles; a Game Boy cartridge that plays it  |
+| **art**   | any image                                           | hardware-compliant art, palettes, tile maps, asm/C/binary, bootable ROMs | 21 consoles; 17 proven pixel-perfect in an emulator |
+| **game**  | a [Demotic](docs/14-demotic.md) `.dmt` script + art | one game, every console                                                  | language, preview and playable ROMs on 16 consoles  |
+| **music** | a MIDI track                                        | chip music, audio that sounds exactly like the hardware will, and a ROM  | 18 consoles; 15 play it from inside a game          |
+| **sound** | a WAV effect                                        | a chip sound effect, placed and prioritised, and a ROM                   | 18 consoles; the same cartridge, the same proof     |
+
+Those counts are a snapshot of [`docs/console-support.md`](docs/console-support.md),
+which is **generated** from the registries that decide them and is the authority
+if this table and it ever disagree.
 
 Every demaker shares one engine, one determinism guarantee, and one proof: a
 real ROM, booted in a real emulator, compared against what the hardware was
@@ -21,8 +25,8 @@ asked for. For art that comparison is pixel for pixel; for games it is the
 game's own state, tick for tick; for audio it is the stream of register writes
 the emulated sound chip actually receives, diffed against the schedule that
 produced the audio file — which is exact rather than approximate, because the
-compliant artifact _is_ that schedule. The audio ROM is a Game Boy today; the
-other consoles' drivers follow.
+compliant artifact _is_ that schedule. Seven consoles also build a cartridge
+whose only job is one track or one effect.
 
 ## Why
 
@@ -45,12 +49,15 @@ correctly on every console at once.
 > app are live; so are the Demotic language, its reference interpreter, its
 > cross-console test runner, its browser preview — and its console
 > backends. `demake build pong.dmt -o pong.gb` _compiles_ a game to Game Boy
-> machine code and demakes its art on the way — and `-c nes`, `-c sms`, `-c gg`
-> and `-c md` compile the same game to 6502, Z80 and 68000. The web app builds
-> and plays the identical cartridge in the page, and CI proves every example game reproduces
-> the reference interpreter's fixed-point state tick for tick. All eight Tier 1
-> consoles go image → compliant art → native data → bootable ROM → emulator
-> frame, compared pixel-for-pixel in CI. The full design lives in
+> machine code and demakes its art on the way — and `-c nes`, `-c sms`, `-c snes`,
+> `-c md`, `-c gba`, `-c pce`, `-c wsc`, `-c ngpc` and `-c vb` compile the same
+> game to 6502, Z80, 65816, 68000, ARM, HuC6280, V30MZ, TLCS-900/H and V810:
+> sixteen consoles across ten instruction sets. The web app builds and
+> plays the identical cartridge in the page, and CI proves every example game
+> reproduces the reference interpreter's fixed-point state tick for tick. Every
+> console that builds a display ROM goes image → compliant art → native data →
+> bootable ROM → emulator frame, compared pixel-for-pixel in CI — all eight of
+> Tier 1 and nine more besides. The full design lives in
 > [`docs/`](docs/README.md); the milestone plan is
 > [`docs/13-roadmap.md`](docs/13-roadmap.md).
 
@@ -79,36 +86,52 @@ itself and hand you the identical bytes.
 
 `prep` and `inspect` cover every RGB-lattice and mono raster console in
 [doc 03](docs/03-console-matrix.md) — 21 machines from the Game Boy to the
-Nintendo DS. Beyond that, support deepens in two steps:
+Nintendo DS. Beyond that, support deepens a rung at a time:
 
-| Capability                                        | Consoles                                                                                                                                                               |
-| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `prep` + `inspect` (compliant PNG)                | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, GBA, NDS, SG-1000, PC Engine, Neo Geo, WonderSwan/Color, NGP/NGPC, Virtual Boy, Pokémon Mini, Supervision, Game.com, Mega Duck |
-| `gen` (bin/asm/C data + display code)             | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, SG-1000, GBA, NDS, PC Engine, WonderSwan Color, Virtual Boy                                                                    |
-| `--format rom` + **pixel-perfect emulator proof** | GB/GBC, NES, SNES, MD/Genesis, SMS, GG, SG-1000, GBA, NDS, PC Engine, WonderSwan Color, Virtual Boy                                                                    |
-| `build` (a Demotic game as a playable ROM)        | GB, GBC, NES, SMS, GG, MD/Genesis                                                                                                                                      |
+| Capability                                                                 | Consoles                                                                                                                        |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `prep` + `inspect` (compliant PNG)                                         | all 21                                                                                                                          |
+| `gen` (bin/asm/C data) + `--format rom` + **pixel-perfect emulator proof** | 17: the eight Tier 1 machines, plus PC Engine, Neo Geo, NGP Color, both WonderSwans, SG-1000, Mega Duck, Game Gear, Virtual Boy |
+| `build` (a Demotic game as a playable ROM)                                 | 16 — the same list without the SG-1000, which is [out of scope for games](docs/13-roadmap.md)                                   |
+| `arrange` / `sfx` (chip music and effects)                                 | 18 — those seventeen, plus the mono Neo Geo Pocket: it has the Color's sound hardware, and a demaker is per-domain              |
+
+Emitting data, building a cartridge and proving it in an emulator used to be
+three different lists; they are one row now because they name the same seventeen
+consoles — nothing emits data it cannot also boot and prove.
+[`docs/console-support.md`](docs/console-support.md) is the generated,
+per-console version of this table and is the authority.
 
 "Pixel-perfect emulator proof" means what it says: CI assembles a real ROM,
 boots it in an emulator, and asserts the framebuffer matches demake's own output
 byte-for-byte across an extensive image battery. On the Virtual Boy that is
 **both eyes**: its display is two LED arrays and its video processor draws every
 scene twice, offset by a depth the scene declares, so a still picture is proved
-to sit at the display plane rather than merely to be drawn.
+to sit at the display plane rather than merely to be drawn. On the Neo Geo the
+emulator is handed a system ROM demake wrote itself, because that is all a
+demade cartridge needs of one — nothing copyrighted is shipped or required.
 
 ## Packages
 
-| Package                               | What                                                                            |
-| ------------------------------------- | ------------------------------------------------------------------------------- |
-| [`@demake/core`](packages/core)       | The engine. Zero platform deps, ESM, ships types (doc 09).                      |
-| [`demake`](packages/cli)              | The CLI wrapper (doc 05). Re-exports core for scripting.                        |
-| [`@demake/demotic`](packages/demotic) | Demotic: the game language, its interpreter, and the ROM builder (docs 14, 15). |
-| [`@demake/dmg`](packages/dmg)         | A Game Boy core: the conformance harness, and the web app's player.             |
-| [`@demake/nes`](packages/nes)         | An NES core, for the same two jobs.                                             |
-| [`@demake/sms`](packages/sms)         | A Sega 8-bit core: Master System and Game Gear.                                 |
-| [`@demake/md`](packages/md)           | A Mega Drive core: a 68000, a VDP, the PSG and the FM chip.                     |
-| [`@demake/chip`](packages/chip)       | Every sound chip as a register-driven model (doc 16). Depends on nothing.       |
-| [`@demake/audio`](packages/audio)     | The music and sound demakers (docs 16, 17, 18).                                 |
-| [`@demake/web`](packages/web)         | The browser app (doc 07): the same core in a worker, no server.                 |
+| Package                               | What                                                                                         |
+| ------------------------------------- | -------------------------------------------------------------------------------------------- |
+| [`@demake/core`](packages/core)       | The engine. Zero platform deps, ESM, ships types (doc 09).                                   |
+| [`demake`](packages/cli)              | The CLI wrapper (doc 05). Re-exports core for scripting.                                     |
+| [`@demake/demotic`](packages/demotic) | Demotic: the game language, its interpreter, and the ROM builder (docs 14, 15).              |
+| [`@demake/dmg`](packages/dmg)         | A Game Boy core: DMG, Color and Mega Duck. The conformance harness and the web app's player. |
+| [`@demake/nes`](packages/nes)         | An NES core, for the same two jobs.                                                          |
+| [`@demake/sms`](packages/sms)         | A Sega 8-bit core: Master System and Game Gear.                                              |
+| [`@demake/md`](packages/md)           | A Mega Drive core: a 68000, a VDP, the PSG and the FM chip.                                  |
+| [`@demake/snes`](packages/snes)       | A Super Nintendo core, and in `smp.ts` a whole second computer.                              |
+| [`@demake/gba`](packages/gba)         | A Game Boy Advance core: an ARM7TDMI, a mode-0 2D engine, both halves of the sound.          |
+| [`@demake/nds`](packages/nds)         | A Nintendo DS core — the only one that is _two_ processors.                                  |
+| [`@demake/pce`](packages/pce)         | A PC Engine core: a HuC6280 and a VDC.                                                       |
+| [`@demake/wsc`](packages/wsc)         | A WonderSwan core, Color and mono, with no video memory of its own.                          |
+| [`@demake/ngp`](packages/ngp)         | A Neo Geo Pocket core, mono and Color, with a boot ROM of ours.                              |
+| [`@demake/neogeo`](packages/neogeo)   | A Neo Geo core: the LSPC, and a Z80 sound computer on its own bus.                           |
+| [`@demake/vb`](packages/vb)           | A Virtual Boy core — the only one that renders _two_ pictures.                               |
+| [`@demake/chip`](packages/chip)       | Every sound chip as a register-driven model (doc 16). Depends on nothing.                    |
+| [`@demake/audio`](packages/audio)     | The music and sound demakers (docs 16, 17, 18).                                              |
+| [`@demake/web`](packages/web)         | The browser app (doc 07): the same core in a worker, no server.                              |
 
 ## Develop
 
