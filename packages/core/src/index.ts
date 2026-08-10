@@ -156,8 +156,13 @@ export { sourceHash } from "./codegen/provenance.js";
 export { Asm, AsmError, label } from "./asm/sm83.js";
 export type { AluOp, CC, LabelRef, R8, R16, Ref, ShiftOp } from "./asm/sm83.js";
 export {
+  GB_BANK_SIZE,
+  GB_BANK_WINDOW,
+  GB_CARTRIDGE_TYPE,
   GB_HEADER_OFFSETS,
   GB_ROM_SIZE,
+  GB_ROM_SIZES,
+  MBC5,
   stampGbHeader,
   type GbHeaderOptions,
 } from "./asm/gb-cart.js";

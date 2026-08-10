@@ -13,7 +13,13 @@
 import { describe, expect, it } from "vitest";
 
 import { Asm, AsmError, label } from "../src/asm/sm83.js";
-import { GB_HEADER_OFFSETS, GB_ROM_SIZE, stampGbHeader } from "../src/asm/gb-cart.js";
+import {
+  GB_CARTRIDGE_TYPE,
+  GB_HEADER_OFFSETS,
+  GB_ROM_SIZE,
+  GB_ROM_SIZES,
+  stampGbHeader,
+} from "../src/asm/gb-cart.js";
 
 describe("the SM83 assembler", () => {
   it("encodes the addressing forms the backend relies on", () => {
@@ -87,5 +93,36 @@ describe("the cartridge wrapper", () => {
     const rom = new Uint8Array(GB_ROM_SIZE);
     stampGbHeader(rom, "DEMAKE");
     expect(rom.subarray(GB_HEADER_OFFSETS.logo, 0x0134).every((byte) => byte === 0)).toBe(true);
+  });
+
+  // The board follows from the length, so a builder cannot declare one and ship
+  // another. Thirty-two kilobytes is the only ROM-only size the field can say,
+  // and every code above it names a cartridge with a controller in it.
+  it("declares the board its own length is", () => {
+    const small = new Uint8Array(GB_ROM_SIZE);
+    stampGbHeader(small, "DEMAKE");
+    expect(small[GB_HEADER_OFFSETS.cartridgeType]).toBe(GB_CARTRIDGE_TYPE.romOnly);
+    expect(small[GB_HEADER_OFFSETS.romSize]).toBe(0x00);
+
+    const big = new Uint8Array(0x20000); // 128 KiB: eight banks
+    stampGbHeader(big, "DEMAKE");
+    expect(big[GB_HEADER_OFFSETS.cartridgeType]).toBe(GB_CARTRIDGE_TYPE.mbc5);
+    expect(big[GB_HEADER_OFFSETS.romSize]).toBe(0x02);
+  });
+
+  it("names every size the field can describe, and refuses the rest", () => {
+    for (const [index, bytes] of GB_ROM_SIZES.entries()) {
+      // Only the header bytes matter here, so the checksums walk the whole image
+      // for nothing on the big sizes — which is why this stops at 128 KiB for the
+      // round trip and checks the code arithmetically above it.
+      if (bytes > 0x20000) continue;
+      const rom = new Uint8Array(bytes);
+      stampGbHeader(rom, "DEMAKE");
+      expect(rom[GB_HEADER_OFFSETS.romSize]).toBe(index);
+    }
+    // A length no board has. The Sega and NES wrappers refuse the same way, and
+    // for the same reason: a cartridge that describes a size it does not have is
+    // one an emulator maps wrongly rather than one it rejects.
+    expect(() => stampGbHeader(new Uint8Array(0xc000), "DEMAKE")).toThrow(/not 49152 bytes/);
   });
 });

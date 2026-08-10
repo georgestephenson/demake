@@ -35,19 +35,42 @@
  * `$FF10`–`$FF3F` to it, and offers the write tap the audio proof reads
  * (§apuTap).
  *
- * Three things are deliberately absent. There is no MBC: a build is 32 KiB, and
- * the day a game needs banking the runtime gains a mapper and this gains the
- * three lines to match. There is no CGB double speed and no HDMA, because the
- * generated runtime programs neither — `KEY1` and the HDMA registers are plain
- * storage, so a ROM that tried would be visibly wrong here rather than subtly
- * wrong. And VRAM is *not* blocked outside VBlank — a real Game Boy drops those
- * writes, and the runtime is written to do its VRAM work in the VBlank window
+ * **There is one memory bank controller and it is MBC5**, chosen by the
+ * cartridge's own type byte rather than by a setting — the same rule the CGB
+ * flag runs under, and for the same reason: a cartridge already says what board
+ * it is on, and a second answer is one that can disagree. What it buys is a
+ * cartridge that is no longer 32 KiB and nothing else: bank 0 stays wired to
+ * `$0000`–`$3FFF` because the vectors, the entry point and the header are down
+ * there, and `$4000`–`$7FFF` answers whichever of up to 512 banks the nine-bit
+ * register names. A ROM-only cartridge keeps exactly the bus it always had, so
+ * every cartridge this project builds today runs through code that cannot tell
+ * the difference. What is *not* modelled is cartridge RAM at `$A000`: no board
+ * demake produces declares any, because a demade game's state is the console's
+ * own 8 KiB — so those addresses read open, and a build that started using them
+ * would be visibly wrong here rather than subtly wrong.
+ *
+ * Three things are deliberately absent. There is no CGB double speed and no
+ * HDMA, because the generated runtime programs neither — `KEY1` and the HDMA
+ * registers are plain storage, so a ROM that tried would be visibly wrong here
+ * rather than subtly wrong. There is no MBC1, MBC2 or MBC3, because nothing
+ * builds one and a controller nobody drives is a controller nobody is checking.
+ * And VRAM is *not* blocked outside VBlank — a real Game Boy drops those writes,
+ * and the runtime is written to do its VRAM work in the VBlank window
  * regardless, so modelling the block here would only convert a discipline
  * failure into a mystery. The SameBoy E2E is where that gets caught.
  */
 
 import { GbApu, type SampleSink } from "@demake/chip";
-import { MEGADUCK_TO_GB, MEGADUCK_UNMAPPED, lcdcFromDuck, lcdcToDuck } from "@demake/core";
+import {
+  GB_BANK_SIZE,
+  GB_BANK_WINDOW,
+  GB_CARTRIDGE_TYPE,
+  MBC5,
+  MEGADUCK_TO_GB,
+  MEGADUCK_UNMAPPED,
+  lcdcFromDuck,
+  lcdcToDuck,
+} from "@demake/core";
 
 import { type Bus, Cpu, INT } from "./cpu.js";
 
@@ -121,6 +144,20 @@ const WRAM_BANK = 0x1000;
 /** Header byte carrying the CGB flag: `$80` CGB-aware, `$C0` CGB-only. */
 const HEADER_CGB = 0x0143;
 
+/** Header byte naming the board, and the one value this console's mapper answers to. */
+const HEADER_TYPE = 0x0147;
+
+/**
+ * The one cartridge type this core has a controller for.
+ *
+ * `core`'s own constant rather than a literal, because the value is a *shared*
+ * fact between the builder that writes the byte and the machine that reads it —
+ * the Mega Duck register map's argument, one header field along (AGENTS.md
+ * §Gotchas: a machine description that is wrong and consistent passes
+ * everything).
+ */
+const MBC5_TYPE = GB_CARTRIDGE_TYPE.mbc5;
+
 /**
  * Expand a 5-bit channel to eight bits by bit replication.
  *
@@ -135,7 +172,7 @@ function expand5(code: number): number {
   return (value << 3) | (value >> 2);
 }
 
-/** A Game Boy with a 32 KiB cartridge in it — DMG or CGB, per the header. */
+/** A Game Boy with a cartridge in it — DMG or CGB, per the header. */
 export class Gameboy implements Bus {
   readonly cpu = new Cpu(this);
   /** The sound hardware — `@demake/chip`'s model, not a second one. */
@@ -158,6 +195,27 @@ export class Gameboy implements Bus {
   private vramBank = 0;
   private wramBank = 1;
   private interruptEnable = 0;
+
+  /**
+   * Whether this cartridge has an MBC5 on it, from its own header byte.
+   *
+   * A setting would be a second answer to a question the cartridge already
+   * carries — the same reason `cgb` is read off the header rather than passed in.
+   * A ROM-only cartridge keeps exactly the bus it always had: writes below
+   * `$8000` are dropped and `$A000`–`$BFFF` reads as open.
+   */
+  private readonly mbc5: boolean;
+
+  /**
+   * Which ROM bank answers `$4000`–`$7FFF`.
+   *
+   * One rather than zero at reset, which is the controller's own power-up value
+   * and not a convenience: a program that jumps into the window before writing
+   * the register has to find *something* there, and on this controller bank 1 is
+   * what it finds. (MBC5 will map bank 0 into the window if asked, unlike MBC1 —
+   * so this is a starting value rather than a value zero is translated to.)
+   */
+  private romBank = 1;
 
   /**
    * One byte per pixel: the raw colour index the tile carried, 0–3.
@@ -208,6 +266,9 @@ export class Gameboy implements Bus {
     this.rom = rom;
     this.duck = machine === "megaduck";
     this.cgb = !this.duck && ((rom[HEADER_CGB] ?? 0) & 0x80) !== 0;
+    // A Mega Duck cartridge has no header, so there is nothing in it that could
+    // declare a controller — and demake builds none for that console.
+    this.mbc5 = !this.duck && (rom[HEADER_TYPE] ?? 0) === MBC5_TYPE;
     if (this.duck) {
       // There is no boot ROM on this console and no header for one to check, so
       // the CPU starts at $0000 with the LCD off and the program turns it on.
@@ -243,9 +304,29 @@ export class Gameboy implements Bus {
 
   // --- bus -------------------------------------------------------------------
 
+  /**
+   * A cartridge address, translated through the controller.
+   *
+   * Bank 0 is wired to the bottom half and never moves — the vectors, the entry
+   * point and the header are down there, so a mapper that could page it out
+   * would be one nothing could recover from. The top half is `romBank` on a
+   * banked cartridge and the second half of the image on a ROM-only one, which
+   * is the same thing said twice: bank 1 never changes when nothing can write
+   * the register.
+   */
+  private romAt(at: number): number {
+    if (!this.mbc5 || at < GB_BANK_WINDOW) return this.rom[at] ?? 0xff;
+    // The bank number wraps at the image's own size, which is what a controller
+    // reading a smaller mask ROM does: the high address lines simply are not
+    // connected. A read past the end of a partly-filled image is open bus.
+    const banks = Math.max(1, Math.floor(this.rom.length / GB_BANK_SIZE));
+    const bank = this.romBank % banks;
+    return this.rom[bank * GB_BANK_SIZE + (at - GB_BANK_WINDOW)] ?? 0xff;
+  }
+
   read(address: number): number {
     const at = address & 0xffff;
-    if (at < 0x8000) return this.rom[at] ?? 0xff;
+    if (at < 0x8000) return this.romAt(at);
     if (at < 0xa000) return this.vram[this.vramBank * VRAM_BANK + (at - 0x8000)] as number;
     if (at < 0xc000) return 0xff; // no cartridge RAM
     if (at < 0xe000) return this.wram[this.wramOffset(at)] as number;
@@ -260,7 +341,23 @@ export class Gameboy implements Bus {
   write(address: number, value: number): void {
     const at = address & 0xffff;
     const byte = value & 0xff;
-    if (at < 0x8000) return; // ROM is read-only; no mapper to poke
+    if (at < 0x8000) {
+      // The controller's registers *are* the ROM's address space: the cartridge
+      // sees only the addresses the console drives, so a mapper is programmed by
+      // writing to ROM and watching which quarter of it the write landed in. A
+      // ROM-only cartridge has nothing listening, and the write is dropped.
+      if (!this.mbc5) return;
+      if (at >= MBC5.ramBank) return; // cartridge RAM bank: no RAM on this board
+      if (at >= MBC5.romBankHigh) {
+        this.romBank = (this.romBank & 0xff) | ((byte & 1) << 8);
+        return;
+      }
+      if (at >= MBC5.romBankLow) {
+        this.romBank = (this.romBank & 0x100) | byte;
+        return;
+      }
+      return; // RAM enable: no cartridge RAM to open
+    }
     if (at < 0xa000) {
       this.vram[this.vramBank * VRAM_BANK + (at - 0x8000)] = byte;
       return;

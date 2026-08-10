@@ -27,7 +27,7 @@ reads the length of the block it is about to emit out of the first pass's
 measurements, and the two are compared afterwards because a size list that had
 drifted would place the hole somewhere plausible and wrong.
 
-A game whose *code* reaches `$7FF0` is still refused by name — that is now an
+A game whose _code_ reaches `$7FF0` is still refused by name — that is now an
 explicit check on where the code ends rather than a padding error caught by its
 message. Every existing cartridge is byte-identical: a game that fits below
 `$7FF0` never makes the second pass at all.

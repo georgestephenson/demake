@@ -1220,7 +1220,14 @@ packages/dmg/        @demake/dmg — a self-hosted Game Boy core, DMG *and* CGB 
                      decision, never a setting; the Mega Duck is a constructor
                      argument, because that console's cartridges have no header.
                      Its APU is @demake/chip's, not a second one, and `audioSink`
-                     is where its output goes
+                     is where its output goes. It has one memory bank controller
+                     and it is MBC5, decided by the header's type byte for the
+                     same reason: bank 0 stays wired to $0000 because the
+                     vectors, the entry point and the header are down there, and
+                     up to 512 banks answer $4000. Cartridge RAM at $A000 is
+                     absent rather than half-implemented — no board demake
+                     produces declares any — and so are MBC1, MBC2 and MBC3,
+                     because nothing builds one
 packages/sms/        @demake/sms — a self-hosted Sega 8-bit core, Master System *and*
                      Game Gear, decided by the cartridge's region nibble the way
                      @demake/dmg is decided by its header. Mode 4 only: the SG-1000's
@@ -1863,9 +1870,12 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   small one moves the code, it emits the program a second time rather than
   patching the first attempt. Never add a size the hardware did not ship: the
   point is the board a game that size shipped on, not the smallest file that
-  boots. A Game Boy ROM-only cartridge is 32 KiB and cannot move in either
-  direction, because the header's smallest size code _is_ 32 KiB and every code
-  above it names a mapper.
+  boots. A Game Boy ROM-only cartridge is 32 KiB and cannot move _down_, because
+  the header's smallest size code _is_ 32 KiB; every code above it names a
+  mapper, and `stampGbHeader` declares MBC5 for any image longer than that. The
+  emitter does not produce one yet (doc 13 §Banked cartridges), so today the
+  Game Boy's list still has one entry — but the wrapper and `@demake/dmg` are
+  both ready for the day it does.
 - **`free` is measured against the largest board, never the one that shipped.**
   It is the budget-regression signal (§Testing truths), and a headroom figure
   that jumped by sixteen kilobytes the moment a game crossed a boundary would
@@ -2034,10 +2044,12 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   emptiness is the record. The tightest cartridge in the library is the Game
   Boy's shooter at 2182 bytes free — that is where a budget regression shows
   first, which is why the Game Boys sweep the whole library and the NES sweeps
-  two. And a Game Boy is the tightest for a reason that is now structural rather
-  than incidental: it is the one console whose cartridge cannot grow (§Iron
-  rules), so everywhere else a fixture that got bigger takes a bigger board and
-  only here does it run out.
+  two. And a Game Boy is the tightest for a reason that is still structural: it
+  is the one console whose _emitter_ has no bigger board to reach for, so
+  everywhere else a fixture that got bigger takes a bigger board and only here
+  does it run out. The cartridge wrapper and the core can both do MBC5 now; what
+  is missing is the emitter, and doc 13 §Banked cartridges says why that is a
+  bigger change on this console than on a Super Nintendo.
 - **New language features come from the example library, not from theory**
   (`packages/demotic/fixtures/games/`). Each example is there for something the
   others do not exercise; `touches`, the `reaches` crossing rule and `visible`'s
