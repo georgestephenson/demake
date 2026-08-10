@@ -1861,17 +1861,41 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     reduction of that kind is a `--strict` failure or an `info` the way a merged
     voice is needs deciding before it is reported.
 
-    **The first line is the one to do first, and it is bigger than the FM chip.**
-    Nothing anywhere in `@demake/audio` produces vibrato *at all* — not through a
-    chip LFO, and not through per-tick pitch writes on the consoles that have no
-    LFO to use. A period arranger uses it constantly, so this is an arranger
-    question (doc 17) before it is a binding one: where the depth comes from (a
-    source's own modulation controller? its articulation, the way
-    `binding/fm-patch.ts` already reads one?), whether it is a per-part decision
-    or a per-note one, and what it costs a four-channel console in schedule bytes
-    when it has to be written rather than switched on. The last two lines are
-    doc 18's rather than doc 17's — a sample player wants a *sound* demaker
-    pointed at it, not an arranger.
+    **The arranger's half of the first line is closed.** `@demake/audio` produces
+    vibrato now, and it produces it the way the rest of this project reads a
+    source: **MIDI states vibrato**, on controller 1, so the depth is read off
+    the score rather than inferred from a programme or invented from an
+    articulation. It is per *note*, because a wheel can swell across a phrase
+    and a note takes the highest it reached while sounding. `score/midi.ts` keeps
+    that one controller and discards the rest of the control-change bus, since
+    volume, expression and pan are either the mixing desk's job or the arranger's
+    own decision against the hardware.
+
+    Waiting for §A4's transcription front end would have been the wrong way
+    round. An MP3 is where vibrato has to be *inferred*; a MIDI is where it is
+    already written down.
+
+    The rate, the width and the delay are the demaker's, because the source does
+    not state them — controller 76 exists for the rate and almost nothing writes
+    it. The delay is the one that pays twice: a player places a note in tune and
+    leans into it, and a delayed oscillator costs no pitch writes at all, so a
+    schedule pays for vibrato only on notes long enough to have any.
+
+    **The cost is what this section predicted.** A modulated held note is a pitch
+    write per driver tick, so a track of long notes with the wheel at full is two
+    to five times the register writes of the same track dry — 80 against 452 on a
+    Game Boy. What makes that safe rather than merely measured is that it is
+    opt-in by construction: a source that never touches the wheel produces
+    byte-for-byte the schedule it always did, which is *every* MIDI in the
+    example library, so this closed a line and re-baselined nothing.
+
+    **What remains of the line is the binding half**, and it is now an
+    optimisation rather than a gap: a YM2612 and a HuC6280 each have an LFO that
+    would turn most of those per-tick writes into a handful of register writes.
+    The rows above still say `no` for that reason.
+
+    The last two lines are doc 18's rather than doc 17's — a sample player wants
+    a *sound* demaker pointed at it, not an arranger.
   - **A6 — the surfaces** *(Demotic done)*: the Demotic integration is settled
     and built — `music` and `sound` are in the language, every example game has
     a theme and effects, and the cartridge the page hands you is byte-identical

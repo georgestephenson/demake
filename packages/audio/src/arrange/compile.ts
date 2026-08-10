@@ -8,7 +8,7 @@
  * (doc 16 §Two representations).
  */
 
-import type { AudioSpec } from "@demake/core";
+import { math, type AudioSpec } from "@demake/core";
 
 import type { ChannelFrame, ChannelSpan, ChipScript, TickWrites } from "../chipscript.js";
 import { countWrites, peakWritesPerTick } from "../chipscript.js";
@@ -310,7 +310,8 @@ function buildLane(
     }
 
     const frame = frames[tick]!;
-    const hz = centsToHz(chosen.note.pitch + shift);
+    const cents = chosen.note.pitch + shift + vibratoCents(chosen, tick, timing);
+    const hz = centsToHz(cents);
     const folded = channel.pitch ? foldIntoRange(channel.pitch, hz) : { hz, octaves: 0 };
     frame.on = true;
     frame.hz = folded.hz;
@@ -319,6 +320,42 @@ function buildLane(
     frame.level = levelFor(chosen, tick, options);
   }
   return frames;
+}
+
+/**
+ * Vibrato (doc 17 §Vibrato).
+ *
+ * **Depth is the source's; rate and shape are the demaker's.** General MIDI
+ * puts vibrato depth on the modulation wheel and says nothing about how fast it
+ * should be — controller 76 exists for the rate and almost nothing writes it —
+ * so the depth is read off the score and the rest is decided once, here.
+ *
+ * A little over five cycles a second is where instrumental vibrato sits, and a
+ * quarter-tone at the top of the wheel is about as wide as a chip channel goes
+ * before it stops reading as one note. It **starts late**, because a player's
+ * does: a note is placed in tune and leaned into. That is worth more here than
+ * it looks — the delay costs no pitch writes at all, so a schedule pays for
+ * vibrato only on notes long enough to have any, and a sixteenth-note line
+ * carries none however hard the wheel was pushed.
+ */
+const VIBRATO_HZ = 5.5;
+const VIBRATO_MAX_CENTS = 50;
+const VIBRATO_DELAY_SECONDS = 0.15;
+
+/** How far off its written pitch a note sits on this tick, in cents. */
+function vibratoCents(
+  entry: { note: Note; start: number },
+  tick: number,
+  timing: TimingPlan,
+): number {
+  const depth = entry.note.vibrato;
+  if (depth === undefined || depth <= 0) return 0;
+  const seconds = (tick - entry.start) * timing.secondsPerTick - VIBRATO_DELAY_SECONDS;
+  if (seconds <= 0) return 0;
+  // `math.sin` rather than `Math.sin`: this package runs under the determinism
+  // rule, and an oscillator seeded from the host's transcendentals is a track
+  // that renders differently in two browsers (doc 16 §Determinism engineering).
+  return depth * VIBRATO_MAX_CENTS * math.sin(2 * Math.PI * VIBRATO_HZ * seconds);
 }
 
 /**

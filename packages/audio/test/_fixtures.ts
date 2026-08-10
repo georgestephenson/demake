@@ -27,6 +27,32 @@ export function note(
   ];
 }
 
+/** A modulation-wheel move: controller 1, which is where GM puts vibrato depth. */
+export function modulation(channel: number, tick: number, value: number): Event[] {
+  return [{ tick, bytes: [0xb0 | channel, 0x01, value] }];
+}
+
+/**
+ * A held melodic line with the modulation wheel up, and one without.
+ *
+ * Two channels playing the *same* long notes, so the only difference between
+ * them is the wheel — which is what makes "the vibrato'd one moves and the dry
+ * one does not" an assertion about vibrato rather than about the two lines.
+ * Notes are two beats, because vibrato is delayed and a short note correctly
+ * carries none.
+ */
+export function vibratoFixture(bpm = 120, depth = 127): Uint8Array {
+  const events: Event[] = [];
+  // The wheel is set once, before anything sounds — the common way a part that
+  // is played with vibrato throughout is written.
+  events.push(...modulation(0, 0, depth));
+  for (let i = 0; i < 4; i += 1) {
+    events.push(...note(0, 64 + i, i * PPQ * 2, PPQ * 2 - 10, 100));
+    events.push(...note(1, 64 + i, i * PPQ * 2, PPQ * 2 - 10, 100));
+  }
+  return midiFile(events, bpm);
+}
+
 /** Build a one-track Standard MIDI File from events plus a tempo. */
 export function midiFile(events: Event[], bpm = 120): Uint8Array {
   const usPerQuarter = Math.round(60000000 / bpm);

@@ -391,6 +391,52 @@ two noise generators, and a Game Boy Advance's APU noise channel beside the
 mixer's recording of one. Everywhere else the pool is a pool of one and nothing
 about the schedule changes.
 
+### Vibrato
+
+**Built, and it is read rather than invented.** Nothing here produced vibrato at
+all until this landed — not through a chip LFO, and not through pitch writes on
+the consoles that have no LFO to use — which made it the largest of doc 13
+§A5.5's lines and the only one that was the *arranger's* before it was any
+binding's.
+
+**MIDI states vibrato, so the depth comes from the source.** General MIDI puts
+it on the modulation wheel — controller 1 — and `score/midi.ts` keeps that one
+controller and discards the rest of the control-change bus, because the rest is
+either the mixing desk's job (volume, expression, pan) or something the arranger
+decides for itself against the hardware. Reading those would be taking an
+instruction the demake cannot honour. The depth is per **note**, because that is
+the resolution the source has: a wheel can swell across a phrase, so a note
+carries the highest the wheel reached while it sounded rather than its value at
+the onset — a note that begins dry and is leaned into is the common way it is
+written, and sampling only the attack reads it as dry.
+
+Waiting for the transcription front end (§A4) would have been the wrong call.
+An MP3 is where vibrato has to be *inferred*; a MIDI is where it is already
+written down, and the arranger's job is to spend what the source says.
+
+**Rate and shape are the demaker's**, because the source does not state them:
+controller 76 exists for the rate and almost nothing writes it. A little over
+five cycles a second is where instrumental vibrato sits, a quarter-tone at the
+top of the wheel is about as wide as a chip channel goes before it stops reading
+as one note, and it **starts late** — a player places a note in tune and leans
+into it. The delay earns its place twice here: it is what a listener expects,
+and it costs no pitch writes at all, so a schedule pays for vibrato only on notes
+long enough to have any and a sixteenth-note line carries none however hard the
+wheel was pushed.
+
+**What it costs is real and is the reason this is opt-in by construction.** A
+held note being modulated is a pitch write per driver tick, and on a track of
+long notes with the wheel at full that is two to five times the register writes
+of the same track dry — 80 writes against 452 on a Game Boy for the pathological
+case. That is the shape doc 13 predicted for a console that has to *write* the
+modulation rather than switch an LFO on. Two things keep it safe rather than
+merely measured: a source that does not touch the wheel produces byte-for-byte
+the schedule it always did, which is every MIDI in the example library; and a
+game whose cartridge will not hold the result already loses its music with a
+warning rather than failing to build (AGENTS.md §Iron rules). Spending a chip
+LFO where one exists — the YM2612's, the HuC6280's — would turn most of that
+cost into a handful of register writes, and is the obvious next move.
+
 ## Stage 3 — Timbre fitting
 
 Choose what each channel *sounds* like — the counterpart of Stage 3 in doc 04,

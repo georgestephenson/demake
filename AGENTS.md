@@ -1093,9 +1093,11 @@ problem: every cartridge performs exactly the schedule its demaker produced, and
 the models were completed _before_ any binding wanted them, so closing those gaps
 changed no cartridge's audio by a byte. It is expression the hardware offers and
 nothing asks for, which is the rule a demaker spends the whole machine pointing
-the other way. The first line is also the biggest and is the _arranger's_ rather
-than a binding's: nothing in `@demake/audio` produces vibrato at all, by any
-route. Also: tracker and lossy-audio input with
+the other way. The first line's _arranger_ half is closed — `@demake/audio`
+produces vibrato now, read off the source's own modulation wheel (§Working on
+audio) — and what is left of it on those two chips is an optimisation rather
+than a gap: an LFO would turn a per-tick pitch write into a handful of register
+writes. Also: tracker and lossy-audio input with
 the transcription front end, and FLAC/M4A export. Read doc
 16 before touching any of it — several of its decisions are load-bearing and easy
 to undo by accident (§Working on audio).
@@ -3723,6 +3725,20 @@ that keep them from being undone. All of them come from doc 16.
 - **An effect is never placed**, for the reason a borrowed channel is replayed
   rather than silenced: an effect borrows a channel the music is using, so
   placing one moves what the music put there and leaves it moved.
+- **Vibrato is read off the source, never invented.** MIDI states it — General
+  MIDI puts depth on controller 1 — so `score/midi.ts` keeps that one controller
+  and `Note.vibrato` carries it, per note rather than per part, taking the
+  highest the wheel reached while the note sounded (a swell into a held note is
+  the usual way it is written, and sampling the onset alone reads that as dry).
+  What the source does _not_ state is the demaker's: the rate, the width and the
+  delay are constants in `compile.ts`, and `math.sin` rather than `Math.sin`
+  because this package is under the determinism rule. Two things follow. **A
+  source that never touches the wheel is byte-identical**, which is every MIDI
+  in the example library and the reason closing this re-baselined nothing. And
+  **it costs**: a modulated held note is a pitch write per tick, two to five
+  times a dry track's writes on a console that has to write the modulation
+  rather than switch an LFO on. Do not widen the default depth or shorten the
+  delay without measuring what it does to the tightest cartridge in the library.
 - **A kit takes every _dedicated_ drum voice, and takes them by drum class.** A
   General MIDI drum track is one part, so one part on one channel left a Neo
   Geo's other five ADPCM-A voices idle _and_ dropped every hit that collided

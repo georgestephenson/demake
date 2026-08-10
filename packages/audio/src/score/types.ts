@@ -44,6 +44,21 @@ export interface Note {
    * you would hum usually is not. Filled in by analysis, spent by the arranger.
    */
   salience: number;
+  /**
+   * How much vibrato the source asked for on this note, 0–1 (doc 17 §Vibrato).
+   *
+   * **Read, never invented.** General MIDI puts vibrato depth on the modulation
+   * wheel — controller 1 — so a source that wants it says so, and this is that
+   * statement carried through to the arranger rather than a guess made from the
+   * instrument's programme. A part with no modulation in it gets none, which is
+   * why adding this changed no existing output by a byte: nothing in the example
+   * library touches CC1.
+   *
+   * Per *note* rather than per part, because that is the resolution the source
+   * has: a controller can swell across a phrase, and the depth a note is played
+   * with is the highest the wheel reached while it sounded.
+   */
+  vibrato?: number;
 }
 
 /** A tempo-map point: microseconds per quarter note from `tick` onward. */
