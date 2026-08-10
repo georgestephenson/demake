@@ -1776,7 +1776,7 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     | WonderSwan channel 2's PCM voice | yes | no — nothing above the chip layer drives it |
     | PC Engine direct D/A | yes | no — likewise |
     | YM2610 SSG noise | yes | no — `binding/neogeo.ts` writes the mixer once, tone on and noise off |
-    | YM2610 ADPCM-A voices 2-6 | yes | no — the *arranger* gives a percussion part one channel |
+    | YM2610 ADPCM-A voices 2-6 | yes | **closed** — a percussion part takes a pool of voices |
     | Stereo placement | yes, on eleven bindings | **closed** — see below |
 
     **The stereo line is closed, and it was wider than it was written down as.**
@@ -1816,18 +1816,50 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     reviewable: a part the arranger leaves alone encodes byte-for-byte what it
     always did, so only a part that is actually placed moves.
 
-    Two of those are the Neo Geo's and neither is the binding being lazy. The
-    **SSG noise** is refused deliberately: this console has six sample voices
-    playing recordings of drums, so putting a hi-hat on a shift register would be
-    spending the machine downwards, and not writing `$07` per note is also what
-    leaves the console with no shared register to merge. The **five idle sample
-    voices** are the interesting one, and they are an *arranger* gap rather than a
-    binding one: `plan.ts` assigns one part to one channel, and a General MIDI
-    drum track is one part — so a kit lands on one voice and the other five sit
-    there. Nothing before this console had more than one percussion voice, so the
-    question had never come up. What it needs is for a percussion part to be able
-    to take a *pool* of channels, with simultaneous hits spread across them, which
-    reaches `plan.ts` and `compile.ts` together.
+    The Neo Geo's **SSG noise** is refused deliberately: this console has six
+    sample voices playing recordings of drums, so putting a hi-hat on a shift
+    register would be spending the machine downwards, and not writing `$07` per
+    note is also what leaves the console with no shared register to merge.
+
+    **The five idle sample voices are closed**, and they were an *arranger* gap
+    rather than a binding one. `plan.ts` assigned one part to one channel and a
+    General MIDI drum track is one part, so a kit landed on one voice and the
+    other five sat there — and worse than idle, the hits that collided on that
+    one voice were *dropped*: the example library's overworld theme wrote 96 drum
+    notes and the cartridge played 64. A percussion part now takes a **pool**,
+    and all 96 play.
+
+    Three decisions shape it and each is a line that could have gone the other
+    way. The allocation is **by drum class**, not round-robin over arrivals: a
+    kick still ringing is never cut off by the hat on the next eighth, and
+    round-robin would put consecutive kicks on different voices, which for
+    *recordings* is flanging rather than depth. The two hats deliberately
+    **share** a voice, because a closed hat choking a ringing open one is what
+    the pedal on a real kit does — getting that out of the allocation is worth
+    more than giving each its own. And a pool is built only from **dedicated**
+    drum hardware, which is the line the existing suite caught: an FM voice will
+    host a kit and `affinity` offers it at 6, but handing the kit every spare one
+    would take six four-operator voices and six fitted patches for material a
+    single noise generator serves — spending the machine downwards on the
+    consoles this exists to spend it upwards on. A kit on a compromise host keeps
+    its one channel. `interchangeable` draws the same line inside one `kind`: a
+    YM2610's ADPCM-B is a `sample` voice like its ADPCM-A voices and is the only
+    one on the chip with a pitch, so pooling it into the kit denied the
+    arrangement its one pitched sample voice.
+
+    Two other consoles have spare percussion hardware and gain the same way: a
+    Nintendo DS has two noise generators, and a Game Boy Advance has its APU's
+    and the mixer's recording of one. Every other console has exactly one, where
+    the pool is a pool of one and the schedule is unchanged.
+
+    **What this exposed and did not fix**: a hit dropped for colliding with a
+    ringing one is *not counted anywhere*, which the "never lose a part silently"
+    rule forbids — 32 notes vanished from that theme and nothing said so. It is
+    left open deliberately rather than folded in, because `Dropped` feeds
+    `--strict`, which turns any drop into an error: counting choked hi-hats would
+    start failing builds on every console with one noise channel, and whether a
+    reduction of that kind is a `--strict` failure or an `info` the way a merged
+    voice is needs deciding before it is reported.
 
     **The first line is the one to do first, and it is bigger than the FM chip.**
     Nothing anywhere in `@demake/audio` produces vibrato *at all* — not through a

@@ -33,6 +33,14 @@ export interface ChannelAssignment {
   octaveShift: number;
   /** Where across the stereo image this channel sits: `-1` left … `+1` right. */
   pan: number;
+  /**
+   * Which voice of a percussion pool this channel is, where there is one.
+   *
+   * Absent on every console with a single percussion voice, which is all of
+   * them but two — and its absence is what makes those consoles' output
+   * unchanged rather than merely unaffected.
+   */
+  drumVoice?: { index: number; size: number };
 }
 
 export interface ArrangementPlan {
@@ -290,6 +298,7 @@ export function planArrangement(
     else assignment.set(bestIndex, part);
   }
   refineByExchange(assignment, channels, options);
+  const pools = poolPercussion(assignment, channels);
 
   // 4. Time-share what is left before dropping it: two parts that never sound
   //    together are one channel's job (doc 17 §When there are fewer channels).
@@ -342,11 +351,88 @@ export function planArrangement(
               : "direct",
       octaveShift,
       pan: 0,
+      ...(pools.has(channelIndex) ? { drumVoice: pools.get(channelIndex)! } : {}),
     });
   }
   assignments.sort((a, b) => a.channelIndex - b.channelIndex);
   placeStereo(assignments);
   return { assignments, dropped };
+}
+
+/**
+ * Give a percussion part every spare voice its channel's hardware has
+ * (doc 17 §Percussion, doc 13 §A5.5).
+ *
+ * A General MIDI drum track is **one part**, and one part took one channel — so
+ * a Neo Geo, whose YM2610 has six ADPCM-A voices playing real recordings of
+ * drums, played its whole kit on one of them and left five idle. Nothing before
+ * that console had more than one percussion voice, so the question had never
+ * come up: on every other machine in the set the pool is the single noise
+ * generator and this changes nothing at all.
+ *
+ * A pool is only ever built from channels that are **free**, and free is a
+ * strong statement here rather than a hopeful one: the greedy pass assigns each
+ * part to its best remaining channel, so a channel still unassigned afterwards
+ * is one that every unplaced part scored `UNUSABLE` on. Taking it for the kit
+ * therefore cannot starve a part that could have used it — which is why this
+ * runs after the exchange refinement and before time-sharing.
+ *
+ * Interchangeable voices only — see {@link interchangeable}. A kit spread across
+ * a noise generator *and* an FM voice would be two different instruments playing
+ * one part, and which drum landed on which would be decided by a table rather
+ * than by anything musical.
+ */
+function poolPercussion(
+  assignment: Map<number, Part>,
+  channels: readonly { channel: AudioChannelSpec; channelIndex: number }[],
+): Map<number, { index: number; size: number }> {
+  const pools = new Map<number, { index: number; size: number }>();
+  // Snapshot first: the loop claims channels into the same map it is walking.
+  for (const [channelIndex, part] of [...assignment].sort((a, b) => a[0] - b[0])) {
+    if (part.role !== "percussion") continue;
+    const seat = channels.find((entry) => entry.channelIndex === channelIndex);
+    if (seat === undefined) continue;
+    // Only ever over *dedicated* drum hardware. An FM voice will host a kit —
+    // it is struck rather than held, which is why `affinity` offers it at 6 —
+    // but it is a fallback, and handing the kit every spare one would take six
+    // four-operator voices, six fitted patches and six voices' worth of
+    // schedule for material that a single noise generator serves. That is
+    // spending the machine downwards on the very consoles this pool exists to
+    // spend it upwards on, so a kit that landed on a compromise host keeps the
+    // one channel it was given.
+    if (affinity("percussion", seat.channel) !== 0) continue;
+    const spare = channels.filter(
+      (entry) =>
+        !assignment.has(entry.channelIndex) &&
+        interchangeable(entry.channel, seat.channel) &&
+        affinity("percussion", entry.channel) === 0,
+    );
+    if (spare.length === 0) continue;
+    const pool = [seat, ...spare].sort((a, b) => a.channelIndex - b.channelIndex);
+    for (let index = 0; index < pool.length; index += 1) {
+      const entry = pool[index]!;
+      assignment.set(entry.channelIndex, part);
+      pools.set(entry.channelIndex, { index, size: pool.length });
+    }
+  }
+  return pools;
+}
+
+/**
+ * Whether two channels are the same instrument for the kit's purposes.
+ *
+ * The kind, and then **whether the voice has a pitch at all** — which on the
+ * one console this matters for is the difference between two pieces of
+ * hardware that share a `kind`. A YM2610's six ADPCM-A voices are fixed-rate
+ * and play recordings; its single ADPCM-B voice has a phase increment and is
+ * the only sample voice on the chip that can carry a tune. Matching on `kind`
+ * alone swallowed it into the drum pool, where it took a class that fires on
+ * nothing and denied the arrangement its one pitched sample voice — spending
+ * the machine downwards, on hardware the whole point of this pool is to spend
+ * upwards.
+ */
+function interchangeable(a: AudioChannelSpec, b: AudioChannelSpec): boolean {
+  return a.kind === b.kind && (a.pitch === undefined) === (b.pitch === undefined);
 }
 
 /**

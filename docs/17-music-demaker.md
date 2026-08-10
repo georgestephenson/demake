@@ -358,6 +358,39 @@ free, DPCM or sampled kits where the hardware has them and the budget allows, an
 the honest option of no drums at all when every channel is worth more to the
 pitch material. The choice is a candidate axis; the judge decides.
 
+**A kit takes every dedicated drum voice the console has.** A General MIDI drum
+track is *one part*, and one part took one channel — so a Neo Geo, whose YM2610
+has six ADPCM-A voices playing real recordings, played its whole kit on one of
+them and dropped every hit that collided with a ringing one. The example
+library's overworld theme wrote 96 drum notes and the cartridge played 64.
+Nothing before that console had more than one percussion voice, so the question
+had never come up.
+
+The allocation is **by drum class**, which is what a drum machine does: a kick
+that is still ringing is never cut off by the hat on the next eighth, because
+they are not on the same voice. Round-robin over arrivals would be worse than it
+sounds — it puts consecutive kicks on different voices, and for *recordings*
+that is flanging rather than depth. The one deliberate collision is the pair: an
+open hat and a closed hat **share**, because a closed hat choking a ringing open
+one is exactly what the pedal on a real kit does, and getting it out of the
+voice allocation is worth more than giving each its own.
+
+A pool is built only from **dedicated** drum hardware — a noise generator or a
+fixed-rate sample voice, the ones `affinity` scores at zero. An FM voice will
+host a kit and is offered at 6, but it is a fallback: handing the kit every
+spare one would take six four-operator voices and six fitted patches for
+material a single noise generator serves, which is spending the machine
+downwards on exactly the consoles this exists to spend it upwards on. A kit that
+landed on a compromise host keeps the one channel it was given. The same line
+runs *inside* a `kind`: a YM2610's ADPCM-B is a `sample` voice like its six
+ADPCM-A voices, and is the only one on the chip with a pitch, so pooling it into
+the kit would deny the arrangement its one pitched sample voice.
+
+Three consoles have more than one such voice — a Neo Geo's six, a Nintendo DS's
+two noise generators, and a Game Boy Advance's APU noise channel beside the
+mixer's recording of one. Everywhere else the pool is a pool of one and nothing
+about the schedule changes.
+
 ## Stage 3 — Timbre fitting
 
 Choose what each channel *sounds* like — the counterpart of Stage 3 in doc 04,

@@ -60,6 +60,47 @@ const DRUM_MAP: Record<
   perc: { period: 40, envelope: 2, tonal: false, pitch: 8100, ticks: 4 },
 };
 
+/**
+ * Which voice of a percussion pool each drum class prefers (doc 17 §Percussion).
+ *
+ * By **class** rather than by round-robin over hits, which is what a drum
+ * machine does and what a kit wants: a kick that is still ringing is never cut
+ * off by the hat that lands on the next eighth, because they are not on the
+ * same voice. Round-robin would allocate by arrival and put consecutive kicks
+ * on different voices, which sounds like two kick drums slightly out of tune
+ * with each other — these are *recordings*, so two voices playing one at
+ * overlapping offsets is flanging rather than depth.
+ *
+ * The order is how badly a class wants a voice of its own, and the one
+ * deliberate collision is the pair: **an open hat and a closed hat share**,
+ * because a closed hat choking a ringing open one is exactly what the pedal on
+ * a real kit does. Getting that for free out of the voice allocation is worth
+ * more than giving each its own and having them ring through each other.
+ */
+const DRUM_VOICE: Record<DrumClass, number> = {
+  kick: 0,
+  snare: 1,
+  "hat-closed": 2,
+  "hat-open": 2,
+  tom: 3,
+  cymbal: 4,
+  perc: 5,
+};
+
+/**
+ * The voice a class lands on in a pool of `size`.
+ *
+ * Clamped rather than wrapped, so the classes that most want their own voice
+ * keep one and the rest crowd onto the last: a pool of three is kick, snare and
+ * everything-else, where wrapping would put the toms back on the kick's voice
+ * and choke it. **A pool of one sends every class to voice zero**, which is the
+ * property that makes every console but two byte-identical.
+ */
+function drumVoiceFor(drum: DrumClass, size: number): number {
+  const wanted = DRUM_VOICE[drum];
+  return wanted > size - 1 ? size - 1 : wanted;
+}
+
 /** Build the schedule. */
 export function compileScript(
   score: Score,
@@ -171,16 +212,29 @@ function buildLane(
   }
   placed.sort((a, b) => a.start - b.start || b.note.salience - a.note.salience);
 
+  // Where the console gave the kit more than one voice, this channel plays only
+  // the classes that landed on it. A pool of one keeps every class, so the
+  // filter is the identity on every console but the two with spare percussion
+  // hardware — which is what leaves their schedules untouched.
+  const pool = assignment.drumVoice;
+  const mine =
+    pool === undefined || pool.size < 2
+      ? placed
+      : placed.filter((entry) => drumVoiceFor(entry.note.drum ?? "perc", pool.size) === pool.index);
+
   // A percussion part on a channel that has no noise generator. The gesture is
   // the noise path's — struck, and left to decay — and only the voicing differs,
   // because there is a pitch to choose instead of a colour.
   if (assignment.parts.some((part) => part.role === "percussion")) {
     if (channel.kind !== "noise") {
-      for (const entry of placed) {
-        // One voice, so two hits on one tick are one hit. `placed` is in salience
-        // order within a tick, so the first is the one to keep: a snare and a hat
-        // land together on every backbeat, and the hat is not the one you would
-        // hear a drummer play there.
+      for (const entry of mine) {
+        // Two hits on one tick are one hit *on this voice*. `placed` is in
+        // salience order within a tick, so the first is the one to keep: a snare
+        // and a hat land together on every backbeat, and the hat is not the one
+        // you would hear a drummer play there. Where the console has voices to
+        // spare they are not on the same one and both are heard, which is the
+        // whole point of the pool — this line stops being reached rather than
+        // stops being true.
         if (frames[entry.start]!.retrigger) continue;
         const drum = DRUM_MAP[entry.note.drum ?? "perc"];
         const hz = centsToHz(drum.pitch + assignment.octaveShift * 1200);
@@ -204,7 +258,7 @@ function buildLane(
   }
 
   if (channel.kind === "noise") {
-    for (const entry of placed) {
+    for (const entry of mine) {
       const drum = DRUM_MAP[entry.note.drum ?? "perc"];
       const frame = frames[entry.start]!;
       frame.on = true;

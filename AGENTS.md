@@ -3723,6 +3723,21 @@ that keep them from being undone. All of them come from doc 16.
 - **An effect is never placed**, for the reason a borrowed channel is replayed
   rather than silenced: an effect borrows a channel the music is using, so
   placing one moves what the music put there and leaves it moved.
+- **A kit takes every _dedicated_ drum voice, and takes them by drum class.** A
+  General MIDI drum track is one part, so one part on one channel left a Neo
+  Geo's other five ADPCM-A voices idle _and_ dropped every hit that collided
+  with a ringing one — 96 notes in, 64 out. `plan.ts`'s `poolPercussion` spreads
+  it and `compile.ts`'s `DRUM_VOICE` says which class goes where. Three things
+  are load-bearing. **By class, never round-robin**: these are recordings, so
+  consecutive kicks on alternating voices is flanging rather than depth, and a
+  ringing kick must not be cut by the next hat. **The two hats share on
+  purpose**, because that is the pedal on a real kit. And **only voices
+  `affinity` scores at zero** — a noise generator or a fixed-rate sample voice.
+  An FM voice hosts a kit at 6 and must never be pooled: six four-operator
+  voices and six fitted patches for what one noise channel serves is spending
+  the machine downwards, which the existing suite caught. `interchangeable`
+  draws the same line inside one `kind`, because a YM2610's ADPCM-B is a
+  `sample` voice too and is the only one with a pitch.
 - **`NR51` is merged, never stored, whenever two streams share the chip.** One
   byte carries every channel's panning. Each stream keeps a shadow and the driver
   folds them under the steal mask, which is what makes the register stream exactly
