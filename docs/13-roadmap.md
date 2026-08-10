@@ -1898,11 +1898,14 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   Every console's cartridge wrapper declares the boards it came on and every
   backend takes the smallest that fits, in both directions: the NES gained
   NROM-128, the Mega Drive dropped its floor from half a megabyte to one megabit,
-  and a silent Super Nintendo cartridge is two banks rather than four. What it
-  does *not* do is make a bigger game fit, because none of those boards needs a
-  mapper — growing past the last one is still the work above. What it does buy is
-  the honest artifact: a game gets the board a game that size shipped on rather
-  than a constant somebody picked once.
+  and a silent Super Nintendo cartridge is two banks rather than four. On three
+  consoles that is now the whole story rather than half of it — a Mega Drive
+  grows to four megabytes, a Super Nintendo opens a bank per scene and grows the
+  same way, and a Game Boy's wrapper declares MBC5 for any image past 32 KiB. On
+  the other two the sizing is still all it is: growing past the last flat board
+  needs the paging above, and until then a game that outgrows it is refused by
+  name. What the sizing buys on its own is the honest artifact — a game gets the
+  board a game that size shipped on rather than a constant somebody picked once.
 
 - **3D asset demake (new domain, exploratory)**: apply the same treatment to the
   32/64-bit 3D era — take a common modern 3D asset and emit PS1/N64/Saturn-

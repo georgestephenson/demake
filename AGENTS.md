@@ -2930,13 +2930,15 @@ hands it to a second processor at boot. Everything here is a consequence of that
   the tile art's bank until the example library's music grew enough parts to fill
   eight voices, at which point a track's schedule doubled and took the picture's
   room with it — a game refused for having too much art when what it had too much
-  of was music. Bank zero is the program, bank one is the art, bank two is the
-  sound processor's image, and the two are refused separately. A cartridge here is
-  128 KiB rather than 64: this console takes four megabytes, so the old size was a
-  choice and the wrong one. The image is bounded by its bank because the upload
-  indexes it with `long,X` and `X` is sixteen bits — the addressing's limit and
-  the bank's happen to be the same number, which is why it starts at the bank's
-  first byte.
+  of was music. Bank zero is the program, bank one is the art, bank two (and
+  three, where it is long enough) is the sound processor's image, and the three
+  are refused separately. **The image is bounded by the _addressing_ and not by a
+  bank**: the upload indexes it with `long,X` and `X` is sixteen bits, so it
+  reaches 64 KiB from the first byte of bank two — which is why it starts there,
+  and why capping it at one bank was an arbitrary halving that went when the
+  cartridge stopped being a fixed four banks. What refuses a longer one now is the
+  sound processor's own 64 KiB, which is `@demake/audio`'s number rather than a
+  board's.
 
 ### The 68000 half
 
