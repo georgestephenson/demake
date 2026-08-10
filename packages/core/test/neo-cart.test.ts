@@ -43,39 +43,42 @@ describe("the sprite tile format", () => {
   it("stores the top-right 8×8 block first, which is the quirk", () => {
     // Pixel (8, 0) is the first pixel of block 0 — the top *right* block. Block
     // 0 occupies bytes 0–15, row 0 is bytes 0–1, and column 0 of the block is
-    // bit 7. Value 1 sets plane 0 only, which is c1's first byte of the pair.
+    // bit **0**: this format stores a row right to left. Value 1 sets plane 0
+    // only, which is c1's first byte of the pair.
     const { c1, c2 } = packNeoCharacters(oneSpritePixel(8, 0, 1));
-    expect(c1[0]).toBe(0x80);
+    expect(c1[0]).toBe(0x01);
     expect(c1[1]).toBe(0x00);
     expect(c2[0]).toBe(0x00);
 
     // Pixel (0, 0) is the first pixel of block *2*, the top left, at byte 32.
     const left = packNeoCharacters(oneSpritePixel(0, 0, 1));
-    expect(left.c1[32]).toBe(0x80);
+    expect(left.c1[32]).toBe(0x01);
     expect(left.c1[0]).toBe(0x00);
   });
 
   it("puts the bottom-right block second and the bottom-left last", () => {
     // (8, 8) is block 1's origin, byte 16.
-    expect(packNeoCharacters(oneSpritePixel(8, 8, 1)).c1[16]).toBe(0x80);
+    expect(packNeoCharacters(oneSpritePixel(8, 8, 1)).c1[16]).toBe(0x01);
     // (0, 8) is block 3's origin, byte 48.
-    expect(packNeoCharacters(oneSpritePixel(0, 8, 1)).c1[48]).toBe(0x80);
+    expect(packNeoCharacters(oneSpritePixel(0, 8, 1)).c1[48]).toBe(0x01);
   });
 
   it("splits the planes across the ROM pair, two bytes a row each", () => {
     // Value 15 sets all four planes: plane 0 and 1 in c1, plane 2 and 3 in c2.
     const { c1, c2 } = packNeoCharacters(oneSpritePixel(8, 0, 0xf));
-    expect([c1[0], c1[1], c2[0], c2[1]]).toEqual([0x80, 0x80, 0x80, 0x80]);
+    expect([c1[0], c1[1], c2[0], c2[1]]).toEqual([0x01, 0x01, 0x01, 0x01]);
 
     // Value 4 is plane 2 alone, which lives in c2's *first* byte of the pair.
     const plane2 = packNeoCharacters(oneSpritePixel(8, 0, 4));
-    expect([plane2.c1[0], plane2.c1[1], plane2.c2[0], plane2.c2[1]]).toEqual([0, 0, 0x80, 0]);
+    expect([plane2.c1[0], plane2.c1[1], plane2.c2[0], plane2.c2[1]]).toEqual([0, 0, 0x01, 0]);
   });
 
-  it("puts the leftmost pixel of a row in the most significant bit", () => {
-    // Block 0 spans x 8–15, so x=15 is its column 7 — bit 0.
-    expect(packNeoCharacters(oneSpritePixel(15, 0, 1)).c1[0]).toBe(0x01);
-    expect(packNeoCharacters(oneSpritePixel(9, 0, 1)).c1[0]).toBe(0x40);
+  it("puts the leftmost pixel of a row in the *least* significant bit", () => {
+    // This is the format's second quirk and the one the display-ROM E2E found:
+    // the reference says a row is "stored right to left", so block 0 spans
+    // x 8–15 and x=15 is its column 7 — bit 7, not bit 0.
+    expect(packNeoCharacters(oneSpritePixel(15, 0, 1)).c1[0]).toBe(0x80);
+    expect(packNeoCharacters(oneSpritePixel(9, 0, 1)).c1[0]).toBe(0x02);
   });
 
   it("uses 64 bytes a tile in each ROM of the pair", () => {

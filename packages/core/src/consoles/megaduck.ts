@@ -4,12 +4,13 @@
  *
  * Its *data* formats are the DMG's exactly — 2bpp planar tiles, a background
  * map, a two-bit-per-shade palette register — so it shares the `gb` codegen
- * family and `bin`/`asm`/`c` are correct for it. Its *display program* is not:
- * the LCD registers sit at $FF10–$FF1B rather than $FF40–$FF4B and LCDC's bits
- * are shuffled, so the `gb` ROM harness would assemble a cartridge that runs on
- * a Game Boy and shows nothing here. `rom` is therefore withheld until the
- * console has its own harness and an emulator to prove it against (doc 13
- * §Phase 7+); SameDuck's `Core/gb.h` is the register map to build it from.
+ * family and `bin`/`asm`/`c` are correct for it. Its *display program* very
+ * nearly is too: the LCD registers sit at $FF10–$FF1B rather than $FF40–$FF4B
+ * and LCDC's bits are shuffled, so `rom` is the family's own harness around a
+ * generated machine include built from `asm/megaduck.ts` — a description and not
+ * one instruction, which is the same bargain the game backend already strikes.
+ * The proof is SameDuck, SameBoy's own fork of this console, which the E2E boots
+ * the cartridge in and compares pixel for pixel.
  */
 import { gbAudio } from "./audio-specs.js";
 import type { ConsoleSpec, RGB8 } from "./types.js";
@@ -39,7 +40,7 @@ export const megaduck = {
     tileBudget: 256,
     flip: false,
   },
-  codegen: { family: "gb", formats: ["bin", "asm", "c"] },
+  codegen: { family: "gb", formats: ["bin", "asm", "c", "rom"] },
   // The Game Boy's APU, unchanged: same four channels, same lattices, same
   // 4.194304 MHz clock, same timer to drive a driver from. An `AudioSpec`
   // describes what the hardware can *do* and never where its registers are, so

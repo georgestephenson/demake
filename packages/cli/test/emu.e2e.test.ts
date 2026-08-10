@@ -1,47 +1,70 @@
 /**
- * Pixel-perfect emulator E2E (doc 10 — the credo).
+ * Pixel-perfect emulator E2E (doc 10 — the credo) for all three `gb`-family
+ * consoles.
  *
  * The whole loop, end to end, across a battery of deliberately extreme images:
  * gen → ROM → boot in SameBoy (the accuracy reference) → capture the framebuffer
  * → assert it is byte-identical to demake's DAC reference. SameBoy runs with
  * color correction disabled, so its output is the raw hardware readout (CGB:
- * RGB555 expanded exactly as demake's `expandChannel`; DMG: the exact green
- * ramp), directly comparable to `renderCompliant`.
+ * RGB555 expanded exactly as demake's `expandChannel`; a mono model: the exact
+ * ramp the console spec declares, handed to the capturer rather than restated in
+ * it), directly comparable to `renderCompliant`.
  *
- * The ROM is assembled here from the same `gen` result the reference uses, so
- * prep runs once per case (the CLI's `--format rom` wiring is covered separately
- * by rom.e2e.test.ts). Self-skips unless RGBDS and the SameBoy capturer are
+ * **The Mega Duck runs here rather than in a suite of its own**, because it is
+ * the same harness, the same assembler and the same battery — the console is a
+ * machine description (`core/src/asm/megaduck.ts`), and a second file would be
+ * asserting that a description is a console. What is different is the emulator:
+ * SameDuck, SameBoy's own fork, whose capturer is this repository's
+ * `emu-harness/gb/capture.c` compiled against it. That fork is the *third-party*
+ * opinion the whole doc-10 loop rests on: a register table of ours that was
+ * wrong and self-consistent would still show the wrong picture there.
+ *
+ * The ROM comes from `buildGbRom`, so what is booted is the cartridge
+ * `--format rom` really writes rather than a second assembly of the same
+ * harness. Self-skips per console unless RGBDS and that console's capturer are
  * provisioned (`pnpm toolchains && pnpm emulator`). No Docker.
  */
 
 import { execFileSync } from "node:child_process";
-import {
-  copyFileSync,
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { encodeRgbaPng, gen, renderCompliant } from "@demake/core";
+import { encodeRgbaPng, gen, getConsole, renderCompliant, type ConsoleSpec } from "@demake/core";
 import { describe, expect, it } from "vitest";
 
 import { makeNodeEnv } from "../src/env.js";
+import { buildGbRom } from "../src/rom/gb.js";
 
 const SAMEBOY_VERSION = "1.0.1";
-const EMU_DIR =
-  process.env.DEMAKE_EMU_DIR ??
-  join(homedir(), ".cache", "demake", "toolchains", `sameboy-${SAMEBOY_VERSION}`);
+const TOOLCHAINS = join(homedir(), ".cache", "demake", "toolchains");
+const EMU_DIR = process.env.DEMAKE_EMU_DIR ?? join(TOOLCHAINS, `sameboy-${SAMEBOY_VERSION}`);
+const DUCK_DIR = process.env.DEMAKE_SAMEDUCK_DIR ?? join(TOOLCHAINS, "sameduck");
 const CAPTURE = join(EMU_DIR, "capture");
+const DUCK_CAPTURE = join(DUCK_DIR, "capture");
 const HARNESS = join(makeNodeEnv().harnessDir() ?? "", "gb", "main.asm");
 const FRAMES = 280;
 
 const hasToolchain = makeNodeEnv().which("rgbasm") !== null;
 const hasEmu = existsSync(CAPTURE) && existsSync(join(EMU_DIR, "dmg_boot.bin"));
-const maybe = hasToolchain && hasEmu && existsSync(HARNESS) ? it : it.skip;
+const hasDuck = existsSync(DUCK_CAPTURE);
+const ready = hasToolchain && existsSync(HARNESS);
+const maybe = ready && hasEmu ? it : it.skip;
+const maybeDuck = ready && hasDuck ? it : it.skip;
+
+/**
+ * The console's own shade ramp, as the capturer takes it: lightest first.
+ *
+ * The DAC model is a tested artifact of the spec, so it is passed rather than
+ * carried a second time in C — one ramp, two readers, exactly as
+ * `renderCompliant` on the other side of the comparison reads it.
+ */
+function shadeRamp(spec: ConsoleSpec): string {
+  const dac = spec.color.dac;
+  if (dac.kind !== "mono-ramp") throw new Error(`${spec.id} has no mono ramp`);
+  const hex = (v: number): string => v.toString(16).toUpperCase().padStart(2, "0");
+  return dac.shades.map((c) => `${hex(c.r)}${hex(c.g)}${hex(c.b)}`).join(",");
+}
 
 const clamp = (v: number): number => (v < 0 ? 0 : v > 255 ? 255 : v | 0);
 
@@ -92,21 +115,6 @@ const CASES: Record<string, Uint8Array> = {
   tiny: image(8, 8, (x, y) => [x * 32, y * 32, 0]),
 };
 
-/** Assemble the harness + generated data into a ROM via the local RGBDS. */
-function assemble(dir: string, asm: Uint8Array, isColor: boolean): string {
-  writeFileSync(join(dir, "demake.asm"), asm);
-  copyFileSync(HARNESS, join(dir, "main.asm"));
-  const opts = { cwd: dir, stdio: "pipe" as const };
-  execFileSync("rgbasm", ["-o", "main.o", "main.asm"], opts);
-  execFileSync("rgblink", ["-o", "out.gb", "main.o"], opts);
-  execFileSync(
-    "rgbfix",
-    isColor ? ["-v", "-C", "-p", "0xFF", "out.gb"] : ["-v", "-p", "0xFF", "out.gb"],
-    opts,
-  );
-  return join(dir, "out.gb");
-}
-
 /** Parse a binary PPM (P6). */
 function readPpm(bytes: Uint8Array): { w: number; data: Uint8Array } {
   const tokens: string[] = [];
@@ -122,17 +130,22 @@ function readPpm(bytes: Uint8Array): { w: number; data: Uint8Array } {
   return { w: Number(tokens[1]), data: bytes.subarray(pos) };
 }
 
-describe("pixel-perfect emulator E2E (needs RGBDS + SameBoy)", () => {
+describe("pixel-perfect emulator E2E (needs RGBDS + SameBoy/SameDuck)", () => {
   for (const [consoleId, model] of [
     ["dmg", "dmg"],
     ["gbc", "cgb"],
+    ["megaduck", "duck"],
   ] as const) {
+    const isDuck = model === "duck";
+    const emulator = isDuck ? "SameDuck" : "SameBoy";
+    const runner = isDuck ? maybeDuck : maybe;
     for (const [name, png] of Object.entries(CASES)) {
-      maybe(
-        `${consoleId}/${name}: ROM boots in SameBoy and matches the DAC reference`,
+      runner(
+        `${consoleId}/${name}: ROM boots in ${emulator} and matches the DAC reference`,
         async () => {
           const dir = mkdtempSync(join(tmpdir(), "demake-emu-"));
           try {
+            const spec = getConsole(consoleId);
             const isColor = consoleId === "gbc";
             // One gen result drives both the ROM and the reference (same prep run).
             const result = await gen(png, {
@@ -141,15 +154,18 @@ describe("pixel-perfect emulator E2E (needs RGBDS + SameBoy)", () => {
               symbol: "demake",
               prep: { effort: "fast" },
             });
-            const rom = assemble(dir, result.artifacts[0]!.bytes, isColor);
+            const rom = join(dir, isDuck ? "out.duck" : "out.gb");
+            writeFileSync(rom, buildGbRom(makeNodeEnv(), spec, result.artifacts[0]!.bytes));
 
             const ppmPath = join(dir, "frame.ppm");
-            execFileSync(CAPTURE, [
+            execFileSync(isDuck ? DUCK_CAPTURE : CAPTURE, [
               model,
-              join(EMU_DIR, `${model}_boot.bin`),
+              // The Mega Duck has no boot ROM: a cartridge begins at $0000.
+              isDuck ? "-" : join(EMU_DIR, `${model}_boot.bin`),
               rom,
               String(FRAMES),
               ppmPath,
+              ...(isColor ? [] : [shadeRamp(spec)]),
             ]);
             const frame = readPpm(readFileSync(ppmPath));
             const ref = renderCompliant(result.image, isColor);

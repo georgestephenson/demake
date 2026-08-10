@@ -20,9 +20,11 @@
  *     NES's arrangement reached by completely different hardware. The art path
  *     composes each 2×2 group into one hardware tile, as `pce-art.ts` already
  *     does for a console with no 8×8 sprite.
- *   - **256 sub-palettes of 16**, against a Mega Drive's four. Nothing else here
- *     is within an order of magnitude, and the fit is correspondingly easy: a
- *     320×224 picture is 280 cells and cannot exhaust them.
+ *   - **255 sub-palettes of 16**, against a Mega Drive's four — one short of the
+ *     bank, because its last entry is the backdrop register and not a colour an
+ *     art path may spend. Nothing else here is within an order of magnitude, and
+ *     the fit is correspondingly easy: a 320×224 picture is 280 cells and cannot
+ *     exhaust them.
  *   - **Tiles are not in VRAM.** They are read from the cartridge's C ROM by the
  *     video hardware, so nothing is ever uploaded and the tile budget is a
  *     cartridge size rather than a bank. `tileBudget` is the sixteen-bit tile
@@ -53,14 +55,19 @@ export const neogeo = {
     tileW: 8,
     tileH: 8,
     bpp: 4,
-    // Two banks of 256; one is usable at a time, so 256 is what a frame has.
-    subPalettes: { count: 256, size: 16, sharedIndex0: "transparent" },
+    // Two banks of 256, one usable at a time — and the bank's **last entry is
+    // the backdrop**, which is what colour zero of every palette shows through
+    // to. So a frame has 255 palettes an art path may fill and a 256th whose
+    // sixteenth colour belongs to the hardware: a fit given all 256 puts a
+    // colour where the backdrop goes and has it replaced, which the display-ROM
+    // E2E found as five wrong pixels in a screenful of noise.
+    subPalettes: { count: 255, size: 16, sharedIndex0: "transparent" },
     // The palette lives in the 16×16 sprite tile's attribute word, not the 8×8.
     attribute: { w: 16, h: 16 },
     tileBudget: 65536,
     flip: true,
   },
-  codegen: { family: "neogeo", formats: ["bin", "asm", "c"] },
+  codegen: { family: "neogeo", formats: ["bin", "asm", "c", "rom"] },
   audio: neogeoAudio,
   docs: {
     sources: [

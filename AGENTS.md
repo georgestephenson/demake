@@ -14,7 +14,7 @@ real emulator, compared pixel for pixel):
 
 | Demaker               | Docs   | State                                                                         |
 | --------------------- | ------ | ----------------------------------------------------------------------------- |
-| art (images)          | 03–06  | working, ten consoles proven on hardware                                      |
+| art (images)          | 03–06  | working, seventeen consoles proven on hardware                                |
 | game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on sixteen consoles |
 | music (`arrange`)     | 16, 17 | MIDI → chip music, seventeen consoles — and a Game Boy ROM that plays it      |
 | sound (`sfx`)         | 16, 18 | WAV → chip effects, seventeen consoles — same ROM, same proof                 |
@@ -43,22 +43,32 @@ full proof loop for **all eight Tier 1 consoles**:
   Graphics II per-row two-color path (`pipeline/fit-tms.ts`). NES added
   `fixed-master` color, 16×16 attribute cells, and the shared-backdrop constraint.
 - **Codegen** (`bin`/`asm`/`c`) for the `gb`, `nes`, `snes`, `sms`, `md`,
-  `sg1000`, `gba`, `nds`, `pce`, and `wsc` families, reached via an exact-path
-  detector, a manifest sidecar, or implicit `prep`.
-- **`--format rom`** builds bootable ROMs for GB (RGBDS), NES (cc65 NROM), SMS +
-  GG + SG-1000 (WLA-DX / Z80), SNES (WLA-DX / 65816, LoROM), PC Engine (WLA-DX /
-  HuC6280, 64 KiB HuCard), MD/Genesis (GNU m68k binutils), GBA + NDS (GNU ARM
-  binutils), and WonderSwan Color (NASM — the V30MZ is an 8086-compatible core).
+  `neogeo`, `sg1000`, `gba`, `nds`, `pce`, `ws`, `wsc`, `ngpc` and `vb`
+  families, reached via an exact-path detector, a manifest sidecar, or implicit
+  `prep`.
+- **`--format rom`** builds bootable ROMs for GB + GBC + **Mega Duck** (RGBDS,
+  the last of the three through a generated machine include rather than a
+  harness of its own), NES (cc65 NROM), SMS + GG + SG-1000 (WLA-DX / Z80), SNES
+  (WLA-DX / 65816, LoROM), PC Engine (WLA-DX / HuC6280, 64 KiB HuCard),
+  MD/Genesis and the **Neo Geo** (GNU m68k binutils — one processor, two
+  families), GBA + NDS (GNU ARM binutils), and **both WonderSwans** (NASM — the
+  V30MZ is an 8086-compatible core). Two families need no assembler at all,
+  because no distribution ships one for their processor: the **Virtual Boy** and
+  the **Neo Geo Pocket Color** emit their display programs with `core`'s own
+  V810 and TLCS-900/H encoders — the same ones `demake build` compiles a game
+  with — and a third-party emulator is what keeps that honest.
   The z80/6502/65816/huc6280 assemblers are pinned source builds; the m68k and
   ARM binutils and NASM are stock distro packages (apt, main archive) since
   well-tested ones ship there — all via `pnpm toolchains`, no Docker, and no
-  devkitARM/ndstool (demake packs the GBA, NDS and WonderSwan cartridge headers
-  itself).
-- **Pixel-perfect emulator E2E** for every Tier 1 console plus the PC Engine and
-  WonderSwan Color — GB/GBC (SameBoy) and NES + SMS + GG + MD + SG-1000 + SNES +
-  GBA + NDS + PCE + WSC (libretro cores via one generic `emu-harness/libretro/`
-  runner) — all marching through the same shared extensive image battery
-  (`packages/cli/test/_emu-battery.ts`).
+  devkitARM/ndstool (demake packs the GBA, NDS, WonderSwan, Neo Geo Pocket and
+  `.neo` cartridge headers itself).
+- **Pixel-perfect emulator E2E** for every console that builds a display ROM —
+  GB/GBC (SameBoy), the **Mega Duck** (SameDuck, SameBoy's own fork of that
+  console, whose capturer is the Game Boy's source compiled a second time), and
+  NES + SMS + GG + MD + SG-1000 + SNES + GBA + NDS + PCE + both WonderSwans +
+  NGPC + Neo Geo + Virtual Boy (libretro cores via one generic
+  `emu-harness/libretro/` runner) — all marching through the same shared
+  extensive image battery (`packages/cli/test/_emu-battery.ts`).
 
 Phase 5 then opened Tier 2 with the **PC Engine** and the **WonderSwan Color**,
 both riding that same loop end to end (`wla-huc6280` on the existing WLA-DX
@@ -1035,8 +1045,13 @@ to undo by accident (§Working on audio).
 packages/core/       @demake/core — the engine (zero platform deps; ESM; ships types)
   src/asm/           the SM83, 6502, HuC6280, Z80, 65816, SPC700, 68000, ARM,
                      V30MZ and TLCS-900/H assemblers + the GB, iNES, Sega, LoROM,
-                     Mega Drive, GBA, DS, WonderSwan and Neo Geo Pocket
-                     cartridge wrappers —
+                     Mega Drive, GBA, DS, WonderSwan, Neo Geo Pocket and Neo Geo
+                     cartridge wrappers — neo-lspc.ts beside the last of those is
+                     that console's *video memory* rather than its cartridge, here
+                     for megaduck.ts's reason: the emulator reads a sprite strip,
+                     the game backend writes one and the display-ROM builder
+                     places a picture, and three copies of an SCB word encoder
+                     disagree in one entry in one of them —
                      shared by the Demotic game backends and the audio drivers, so
                      no backend owns the encoder for its own CPU. megaduck.ts is
                      the Mega Duck's I/O map, here because three things read it
@@ -1090,11 +1105,16 @@ packages/core/       @demake/core — the engine (zero platform deps; ESM; ships
   src/pipeline/candidate.ts  one candidate, start to finish — the unit of parallel
                      work, and the content-keyed prologue memo that stops a
                      fan-out decoding its source once per candidate
-  src/codegen/       gen: per-family backends (gb, nes, snes, sms, md, sg1000, gba,
-                     nds, pce, wsc, vb), detector. vb.ts is the only one that
-                     emits a *world* — on every other console "where the picture
-                     goes" is a scroll register, and here it is a 32-byte
-                     display-list entry with a depth field in it
+  src/codegen/       gen: per-family backends (gb, nes, snes, sms, md, neogeo,
+                     sg1000, gba, nds, pce, ws, wsc, ngpc, vb), detector. vb.ts is
+                     the only one that emits a *world* — on every other console
+                     "where the picture goes" is a scroll register, and here it is
+                     a 32-byte display-list entry with a depth field in it.
+                     neogeo.ts is the only one whose *tile is not the console
+                     spec's tile*: a pixel costs what an 8×8 4bpp layout says, but
+                     the hardware's unit is 16×16 and so is the attribute cell, so
+                     it asks `extractTiles` for the bigger tile and gets the
+                     composition, the flip dedup and the palette in one pass
   src/image/svg/     our SVG rasteriser: XML, shapes, paint, scanline fill (doc 15
                      step 2). The one decoder whose *output size* is a question
                      rather than a fact, which is what `decodeImage`'s `atLeast`
@@ -1112,17 +1132,26 @@ packages/cli/        demake — thin CLI over core; re-exports core for scriptin
   src/support.ts     the console support matrix, derived from four registries —
                      the only place that sees all four domains at once
   man/               generated roff man pages (never hand-edited)
-rom-harness/{gb,nes,snes,sms,md,sg1000,gba,nds,pce,wsc}/  the display programs `gen --format rom` assembles
-                     (the Virtual Boy has none: no distribution ships a V810
-                     assembler, so `cli/src/rom/vb.ts` emits its display program
-                     with core's own encoder rather than assembling a source
-                     file — the one family with no toolchain behind it)
-emu-harness/gb/      SameBoy headless capturer for the GB pixel-perfect E2E (doc 10)
+rom-harness/{gb,nes,snes,sms,md,neogeo,sg1000,gba,nds,pce,ws,wsc}/  the display
+                     programs `gen --format rom` assembles. The `gb` one is three
+                     consoles, because the Mega Duck is a machine description
+                     rather than a display program of its own — `cli/src/rom/gb.ts`
+                     generates the `machine.asm` it includes. Two families have
+                     none: no distribution ships a V810 or a TLCS-900/H
+                     assembler, so `cli/src/rom/vb.ts` and `ngpc.ts` emit their
+                     display programs with core's own encoders rather than
+                     assembling a source file
+emu-harness/gb/      the headless capturer for the `gb` family's pixel-perfect E2E
+                     (doc 10), compiled *twice*: against SameBoy for the two Game
+                     Boys and against SameDuck for the Mega Duck. One source, two
+                     emulators — nothing about capturing a frame differs, and
+                     each build refuses the models its library is not
 emu-harness/libretro/  generic retrorun frontend — one capturer for every libretro core
-tools/toolchains/    provisioners (cached): RGBDS, cc65, WLA-DX, SameBoy source builds;
-                     GNU m68k + arm-none-eabi binutils and NASM (apt); libretro
-                     cores (fceumm, genesis-plus-gx, snes9x, mgba, desmume,
-                     mednafen_pce_fast, mednafen_wswan, mednafen_vb)
+tools/toolchains/    provisioners (cached): RGBDS, cc65, WLA-DX, SameBoy and
+                     SameDuck source builds; GNU m68k + arm-none-eabi binutils and
+                     NASM (apt); libretro cores (fceumm, genesis-plus-gx, snes9x,
+                     mgba, desmume, mednafen_pce_fast, mednafen_wswan,
+                     mednafen_vb, mednafen_ngp, geolith)
 packages/nds/        @demake/nds — a self-hosted Nintendo DS core, and the only
                      one of the seven that is *two* processors: the ARM9 and the
                      2D engine are @demake/gba's, because a DS's engine A *is* a
@@ -1689,7 +1718,7 @@ pnpm eval:prep     # prep quality battery: scoreboard + side-by-side sheets (bui
 pnpm play          # Demotic: play the Pong fixture in a terminal (build first)
 pnpm test:dmt      # Demotic: run the .test.dmt suite on every console (build first)
 pnpm gen:demotic-docs  # regenerate the language reference from the registry (build first)
-pnpm gen:console-docs  # regenerate docs/console-support.md from the registries (build first)
+pnpm gen:console-docs  # regenerate docs/console-support.md + the README tables (build first)
 pnpm cli -- build packages/demotic/fixtures/projects/pong/src/pong.dmt -o pong.gb  # a playable cartridge
 pnpm cli -- build packages/demotic/fixtures/projects/pong/src/pong.dmt -c nes -o pong.nes  # the same game, 6502
 pnpm cli -- build packages/demotic/fixtures/projects/pong/src/pong.dmt -c snes -o pong.sfc # the same game, 65816
@@ -1737,13 +1766,26 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   parser, `--help`, and man pages are generated from it. Man pages are never
   hand-edited — run `pnpm gen:man` and a test enforces they match the spec.
 - **What each console supports is derived, never written down.**
-  `docs/console-support.md` is generated by `pnpm gen:console-docs` from the four
-  registries that decide it — the console specs, `cli/src/rom/registry.ts`,
-  `demotic/src/codegen/registry.ts` and the audio driver table — and
-  `packages/cli/test/support.test.ts` fails if it goes stale. Never state a
-  console's support level in prose: prose drifts, and this one had (eight specs
-  claimed a `rom` format with no builder behind it). Doc 03 §Support explains
-  what the columns mean and what _supported_ is.
+  `docs/console-support.md` and the **README's two tables** are generated by
+  `pnpm gen:console-docs` from the four registries that decide it — the console
+  specs, `cli/src/rom/registry.ts`, `demotic/src/codegen/registry.ts` and the
+  audio driver table — and `packages/cli/test/support.test.ts` fails if either
+  goes stale. Never state a console's support level in prose: prose drifts, and
+  both of these had (eight specs claimed a `rom` format with no builder behind
+  it; the README claimed six game consoles when there were sixteen). Doc 03
+  §Support explains what the columns mean and what _supported_ is.
+
+  The README is **spliced** rather than written, between
+  `<!-- generated:name -->` markers, because unlike the matrix it is mostly prose
+  somebody meant — so only the part that is a _fact_ is generated and the voice
+  around it stays hand-written. Two things about `support.ts`'s splicer are
+  load-bearing. It **throws on a missing marker** rather than appending, because
+  a generator that silently wrote nothing would leave the staleness test passing
+  for ever over a frozen table. And the ladder's rows are stated as **deltas
+  computed against each other** (`against()`) rather than as four lists: a
+  console that gained a game backend without a display ROM turns that row into a
+  list of names instead of a sentence that had quietly become false.
+
 - **A console is called every name it was sold under, and the join has one
   answer** (doc 03 §Names). Half these machines had two — a Mega Drive is a
   Genesis, a PC Engine is a TurboGrafx-16, an NES is a Family Computer — so a
@@ -3986,7 +4028,27 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   byte-for-byte; it self-skips without the capturer, so run `pnpm emulator`
   (which needs `pnpm toolchains` first) to exercise it. The capturer is built
   from `emu-harness/gb/capture.c` against `libsameboy`; web sessions get it via
-  the `.claude/` SessionStart hook.
+  the `.claude/` SessionStart hook. **The Mega Duck is in that file rather than
+  one of its own**, because it is the same harness, the same assembler and the
+  same battery — the console is a machine description, and a second suite would
+  be asserting that a description is a console. What differs is the emulator, and
+  it skips separately: SameDuck's capturer is the same source compiled against
+  SameBoy's own Mega Duck fork. **The shade ramp is passed to the capturer**
+  rather than carried in C, because a DAC model is a tested artifact of the
+  console spec and a second copy of one disagrees in an entry.
+- `packages/cli/test/neogeo.e2e.test.ts` is the Neo Geo's, and it is the only one
+  that has to **write the emulator a system ROM** — geolith will not load a
+  cartridge without a system ROM archive, and its members are read by _name_ with
+  no checksum, so `_neogeo-bios.ts` builds the same three-line hand-off
+  `@demake/neogeo` implements and puts it in a zip made with core's own PNG
+  primitives. Nothing copyrighted is shipped or needed, which is the position doc
+  13 §Axis 3 already takes about this console. It is also the suite that found
+  three things nothing of ours could: the container stores its P ROM
+  **byte-swapped**, a sprite tile's leftmost pixel is the **least** significant
+  bit, and the palette bank's **last entry is the backdrop** rather than a colour
+  an art path may spend. All three were wrong _and consistent_ — our own writer
+  and our own reader agreed — which is the failure mode a third-party emulator
+  exists to catch (§Gotchas).
 - **The ARM encoder has two oracles, and the second is the reference
   assembler.** `packages/core/test/arm.test.ts` pins hand-read encodings, which
   is what every other encoder here gets; `arm-gnu.test.ts` assembles the same
@@ -4533,6 +4595,18 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   and compares against those rather than against the table's own inverse — and
   it caught exactly that, twice. Any future variant console needs the same
   treatment: pin the description against the hardware, not against itself.
+- **And a _format_ that is wrong and consistent passes everything too**, which is
+  what the Neo Geo's display ROM found three times over. Its `.neo` container
+  stores the P ROM **byte-swapped** (a MAME set's convention, and every emulator
+  swaps it back at load); a sprite tile's **leftmost pixel is the least
+  significant bit**, not the most; and the palette bank's **last entry is the
+  backdrop** rather than a colour a fit may spend. In each case `packNeo…` and
+  `unpackNeo…` agreed with each other, `@demake/neogeo` agreed with both, and
+  every test in the project passed while no real Neo Geo would have run the file.
+  The rule the encoders' own header already states — pin an encoder against byte
+  offsets computed from the format description rather than against a decoder of
+  ours — is necessary and was not sufficient; what settled it was booting the
+  cartridge in somebody else's emulator.
 - **Inverting a sparse map by flipping every entry lets the identity clobber it.**
   Building `GB_TO_MEGADUCK` from all 128 entries of `MEGADUCK_TO_GB` put `OBP0`
   back at `$48` — its Game Boy address — because offset `$48` identity-maps to
