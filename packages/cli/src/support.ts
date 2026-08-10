@@ -259,3 +259,155 @@ export function supportMarkdown(): string {
   out.push("");
   return out.join("\n");
 }
+
+// --- the README's two tables -------------------------------------------------
+
+/**
+ * A count and the consoles behind it, phrased against a set the reader has
+ * already been given.
+ *
+ * The README's capability ladder is four rows that overlap almost entirely —
+ * every console that compiles a game also builds a display ROM, and every one
+ * that demakes music does too bar one — so naming seventeen machines four times
+ * is both unreadable and the thing that went stale. This says what is *different*
+ * instead: "those seventeen, plus the Neo Geo Pocket", "those seventeen without
+ * the Sega SG-1000".
+ *
+ * It falls back to naming the whole set when the relationship stops holding,
+ * which is the property that makes it safe to leave unattended: a console that
+ * gained a game backend without a display ROM would turn the row into a list
+ * rather than into a sentence that had quietly become false.
+ */
+export function describeAgainst(
+  base: readonly ConsoleSupport[],
+  subset: readonly ConsoleSupport[],
+): string {
+  const baseIds = new Set(base.map((row) => row.id));
+  const extra = subset.filter((row) => !baseIds.has(row.id));
+  const missing = base.filter((row) => !subset.some((other) => other.id === row.id));
+  const names = (rows: readonly ConsoleSupport[]): string =>
+    rows.map((row) => `the ${row.name}`).join(", ");
+  if (extra.length === 0 && missing.length === 0) return `the same ${base.length}`;
+  if (extra.length > 0 && missing.length === 0) return `those ${base.length}, plus ${names(extra)}`;
+  if (extra.length === 0 && missing.length > 0) {
+    return `those ${base.length} without ${names(missing)}`;
+  }
+  return subset.map((row) => row.name).join(", ");
+}
+
+/** Where a generated region starts and ends in a hand-written file. */
+const BEGIN = (name: string): string => `<!-- generated:${name} -->`;
+const END = (name: string): string => `<!-- /generated:${name} -->`;
+
+/**
+ * The four-row demaker table at the top of the README.
+ *
+ * The first three columns are editorial and live here as literals, exactly as
+ * `console-support.md`'s "what the columns mean" table does; only the status
+ * column is derived, and it is the only one that had gone stale — it claimed six
+ * game consoles when there were sixteen.
+ */
+export function readmeDemakerTable(): string {
+  const rows = consoleSupport();
+  const n = (predicate: (row: ConsoleSupport) => unknown): number => rows.filter(predicate).length;
+  const specs = rows.length;
+  const proven = n((row) => row.emulator);
+  const games = n((row) => row.game);
+  const audio = n((row) => row.audio);
+  const inGame = n((row) => row.gameAudioHz !== undefined);
+  const audioRom = n((row) => row.audioRom);
+  const table: [string, string, string, string][] = [
+    [
+      "**art**",
+      "any image",
+      "hardware-compliant art, palettes, tile maps, asm/C/binary, bootable ROMs",
+      `${specs} consoles; ${proven} proven pixel-perfect in an emulator`,
+    ],
+    [
+      "**game**",
+      "a [Demotic](docs/14-demotic.md) `.dmt` script + art",
+      "one game, every console",
+      `language, preview and playable ROMs on ${games} consoles`,
+    ],
+    [
+      "**music**",
+      "a MIDI track",
+      "chip music, audio that sounds exactly like the hardware will, and a ROM",
+      `${audio} consoles; ${inGame} play it from inside a game, ${audioRom} from a cartridge of its own`,
+    ],
+    [
+      "**sound**",
+      "a WAV effect",
+      "a chip sound effect, placed and prioritised, and a ROM",
+      `${audio} consoles; the same driver, the same cartridge, the same proof`,
+    ],
+  ];
+  const out = ["| Demaker | Input | Output | Status |", "|---|---|---|---|"];
+  for (const cells of table) out.push(`| ${cells.join(" | ")} |`);
+  return out.join("\n");
+}
+
+/**
+ * The README's capability ladder: what each rung means, and how many machines
+ * are on it.
+ *
+ * Counts and deltas rather than four long lists — see {@link describeAgainst}. Which
+ * console is on which rung is `console-support.md`'s job and is generated there
+ * per console, so this table is the shape and that one is the detail.
+ */
+export function readmeLadderTable(): string {
+  const rows = consoleSupport();
+  const rom = rows.filter((row) => row.toolchain);
+  const game = rows.filter((row) => row.game);
+  const audio = rows.filter((row) => row.audio);
+  const out = ["| Capability | Consoles |", "|---|---|"];
+  out.push(
+    `| \`prep\` + \`inspect\` (compliant PNG) | **${rows.length}** — every console with a spec |`,
+  );
+  out.push(
+    "| `gen` (bin/asm/C data) + `--format rom` + **pixel-perfect emulator proof** | " +
+      `**${rom.length}** — one rung, not three: nothing emits data it cannot also boot and prove |`,
+  );
+  out.push(
+    `| \`build\` (a Demotic game as a playable ROM) | **${game.length}** — ${describeAgainst(rom, game)} |`,
+  );
+  out.push(
+    `| \`arrange\` / \`sfx\` (chip music and effects) | **${audio.length}** — ${describeAgainst(rom, audio)} |`,
+  );
+  return out.join("\n");
+}
+
+/** Every generated region of `README.md`, keyed by its marker name. */
+export function readmeRegions(): Record<string, string> {
+  return { "demaker-table": readmeDemakerTable(), "console-ladder": readmeLadderTable() };
+}
+
+/**
+ * Replace each `<!-- generated:name -->…<!-- /generated:name -->` region.
+ *
+ * Throws rather than appending when a marker is missing, because a generator
+ * that silently wrote nothing is exactly the failure the staleness test exists
+ * to prevent — it would pass while the table it was meant to keep current sat
+ * frozen in the file.
+ *
+ * Each body is emitted behind a `prettier-ignore`, and that is not cosmetic: the
+ * README is *not* in `.prettierignore` (it is prose somebody meant, and its
+ * prose should stay formatted), so without this Prettier would repad every
+ * generated table on `lint:fix` and the byte-exact staleness check would fail the
+ * moment anyone formatted the repo. Exempting the two blocks keeps the check a
+ * byte comparison rather than a fuzzy one — `docs/console-support.md` gets the
+ * same guarantee by being in an ignored directory.
+ */
+export function spliceRegions(text: string, regions: Record<string, string>): string {
+  let out = text;
+  for (const [name, body] of Object.entries(regions)) {
+    const begin = out.indexOf(BEGIN(name));
+    const end = out.indexOf(END(name));
+    if (begin < 0 || end < 0 || end < begin) {
+      throw new Error(`no '${name}' generated region: expected ${BEGIN(name)} … ${END(name)}`);
+    }
+    const region = `\n\n<!-- prettier-ignore -->\n${body}\n\n`;
+    out = out.slice(0, begin + BEGIN(name).length) + region + out.slice(end);
+  }
+  return out;
+}

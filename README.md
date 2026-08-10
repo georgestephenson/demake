@@ -8,16 +8,22 @@
 could display and play, verified on emulated hardware rather than merely
 asserted:
 
-| Demaker   | Input                                               | Output                                                                   | Status                                              |
-| --------- | --------------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------- |
-| **art**   | any image                                           | hardware-compliant art, palettes, tile maps, asm/C/binary, bootable ROMs | 21 consoles; 17 proven pixel-perfect in an emulator |
-| **game**  | a [Demotic](docs/14-demotic.md) `.dmt` script + art | one game, every console                                                  | language, preview and playable ROMs on 16 consoles  |
-| **music** | a MIDI track                                        | chip music, audio that sounds exactly like the hardware will, and a ROM  | 18 consoles; 15 play it from inside a game          |
-| **sound** | a WAV effect                                        | a chip sound effect, placed and prioritised, and a ROM                   | 18 consoles; the same cartridge, the same proof     |
+<!-- generated:demaker-table -->
 
-Those counts are a snapshot of [`docs/console-support.md`](docs/console-support.md),
-which is **generated** from the registries that decide them and is the authority
-if this table and it ever disagree.
+<!-- prettier-ignore -->
+| Demaker | Input | Output | Status |
+|---|---|---|---|
+| **art** | any image | hardware-compliant art, palettes, tile maps, asm/C/binary, bootable ROMs | 21 consoles; 17 proven pixel-perfect in an emulator |
+| **game** | a [Demotic](docs/14-demotic.md) `.dmt` script + art | one game, every console | language, preview and playable ROMs on 16 consoles |
+| **music** | a MIDI track | chip music, audio that sounds exactly like the hardware will, and a ROM | 18 consoles; 15 play it from inside a game, 7 from a cartridge of its own |
+| **sound** | a WAV effect | a chip sound effect, placed and prioritised, and a ROM | 18 consoles; the same driver, the same cartridge, the same proof |
+
+<!-- /generated:demaker-table -->
+
+That table is **generated** from the registries that decide it, by
+`pnpm gen:console-docs`, and CI fails if it drifts — as does
+[`docs/console-support.md`](docs/console-support.md), which is the same facts one
+console at a time.
 
 Every demaker shares one engine, one determinism guarantee, and one proof: a
 real ROM, booted in a real emulator, compared against what the hardware was
@@ -25,8 +31,7 @@ asked for. For art that comparison is pixel for pixel; for games it is the
 game's own state, tick for tick; for audio it is the stream of register writes
 the emulated sound chip actually receives, diffed against the schedule that
 produced the audio file — which is exact rather than approximate, because the
-compliant artifact _is_ that schedule. Seven consoles also build a cartridge
-whose only job is one track or one effect.
+compliant artifact _is_ that schedule.
 
 ## Why
 
@@ -88,18 +93,25 @@ itself and hand you the identical bytes.
 [doc 03](docs/03-console-matrix.md) — 21 machines from the Game Boy to the
 Nintendo DS. Beyond that, support deepens a rung at a time:
 
-| Capability                                                                 | Consoles                                                                                                                        |
-| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `prep` + `inspect` (compliant PNG)                                         | all 21                                                                                                                          |
-| `gen` (bin/asm/C data) + `--format rom` + **pixel-perfect emulator proof** | 17: the eight Tier 1 machines, plus PC Engine, Neo Geo, NGP Color, both WonderSwans, SG-1000, Mega Duck, Game Gear, Virtual Boy |
-| `build` (a Demotic game as a playable ROM)                                 | 16 — the same list without the SG-1000, which is [out of scope for games](docs/13-roadmap.md)                                   |
-| `arrange` / `sfx` (chip music and effects)                                 | 18 — those seventeen, plus the mono Neo Geo Pocket: it has the Color's sound hardware, and a demaker is per-domain              |
+<!-- generated:console-ladder -->
 
-Emitting data, building a cartridge and proving it in an emulator used to be
-three different lists; they are one row now because they name the same seventeen
-consoles — nothing emits data it cannot also boot and prove.
-[`docs/console-support.md`](docs/console-support.md) is the generated,
-per-console version of this table and is the authority.
+<!-- prettier-ignore -->
+| Capability | Consoles |
+|---|---|
+| `prep` + `inspect` (compliant PNG) | **21** — every console with a spec |
+| `gen` (bin/asm/C data) + `--format rom` + **pixel-perfect emulator proof** | **17** — one rung, not three: nothing emits data it cannot also boot and prove |
+| `build` (a Demotic game as a playable ROM) | **16** — those 17 without the Sega SG-1000 |
+| `arrange` / `sfx` (chip music and effects) | **18** — those 17, plus the Neo Geo Pocket |
+
+<!-- /generated:console-ladder -->
+
+Generated too, and the deltas are computed rather than written: a console that
+gained a game backend without a display ROM would turn that third row into a
+list of names instead of a sentence that had quietly become false.
+[`docs/console-support.md`](docs/console-support.md) says which console is on
+which rung; the SG-1000 is
+[out of scope for games](docs/13-roadmap.md), and the mono Neo Geo Pocket has the
+Color's sound hardware and no game backend, because a demaker is per-domain.
 
 "Pixel-perfect emulator proof" means what it says: CI assembles a real ROM,
 boots it in an emulator, and asserts the framebuffer matches demake's own output
