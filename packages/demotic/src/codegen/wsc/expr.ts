@@ -302,7 +302,7 @@ function emitCall(ctx: WscCtx, expr: CExpr & { kind: "call" }, bind: Binding, in
         copy32(ctx, ctx.layout.mathA, low);
         copy32(ctx, ctx.layout.mathB, high);
       });
-      asm.call(ctx.need("RngPick", emitRngPick));
+      ctx.call(ctx.need("RngPick", emitRngPick));
       copy32(ctx, target, ctx.layout.mathA);
       break;
     }
@@ -405,7 +405,7 @@ function emitRngPick(ctx: WscCtx): void {
 
   // The generator advances first, and unconditionally — `rng.ts`'s `draw` is the
   // definition, and the advance is not conditional on the bounds.
-  asm.call(ctx.need("RngAdvance", emitRngAdvance));
+  ctx.call(ctx.need("RngAdvance", emitRngAdvance));
 
   // count = floor(hi) - floor(lo), in whole cells, and then one more.
   asm.movm("ax", abs(mem(lo, 2)));
@@ -435,7 +435,7 @@ function emitRngPick(ctx: WscCtx): void {
   asm.label(store);
   asm.movmi(abs(mem(lo, 0)), 0);
   asm.movmr(abs(mem(lo, 2)), "ax");
-  asm.ret();
+  ctx.ret();
 }
 
 /**
@@ -475,5 +475,5 @@ function emitRngAdvance(ctx: WscCtx): void {
   asm.aluMI("add", abs(acc), ADD_LOW);
   asm.aluMI("adc", abs(acc + 2), ADD_HIGH);
   copy32(ctx, rng, acc);
-  asm.ret();
+  ctx.ret();
 }

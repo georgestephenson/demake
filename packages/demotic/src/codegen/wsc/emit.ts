@@ -83,6 +83,7 @@ import {
   dec16,
   emitLevelData,
   emitRuleTileTable,
+  levelCopy,
   emitTileAt,
   emitTileSeparate,
   emitTileSide,
@@ -227,8 +228,59 @@ export function emitProgram(ctx: WscCtx, options: WscEmitOptions = {}): void {
   if (options.audio) options.audio.emitCode(asm);
   ctx.finish();
 
-  // --- data ------------------------------------------------------------------
-  for (const level of levels) {
+  // The data a *paged* segment's own code reads, once per segment (§emitSegmentData).
+  emitSegmentData(ctx, options, scenes, levels, "");
+
+  // And the data only the fixed half reads: the boot uploads the tile bank, the
+  // scene change reads the track table, and the driver walks the schedules.
+  if (options.audio) {
+    if (program.tracks.length > 0) {
+      asm.label("SceneTracks");
+      // One byte per scene: the request value that starts its track, or the one
+      // that stops the music. A table rather than a dispatch because a scene
+      // change already costs a redraw, and this is the cheapest thing in it.
+      for (const scene of scenes) {
+        const track = options.sceneTracks?.[scene.index] ?? -1;
+        asm.db(track < 0 ? AUDIO_STOP : track + 1);
+      }
+    }
+    options.audio.emitData(asm);
+  }
+
+  asm.label("TileBank");
+  asm.bytes(options.bank ?? new Uint8Array(0));
+  asm.label("Palette");
+  asm.bytes(options.palette ?? defaultPalette());
+}
+
+/**
+ * The tables a segment's own code reads, under names of that segment's own.
+ *
+ * Emitted once in the fixed half and once more in every paged segment, because
+ * on this machine a cartridge table is read with a `cs:` override and a block
+ * copy takes `DS` from `CS` — so a routine in segment `$E` reads the copy in
+ * segment `$E` or nothing. That is the NES's duplication reached by completely
+ * different hardware (doc 13 §Banked cartridges), and it is why `suffix` runs
+ * through `levelCopy`, `emitInstanceDefaults` and `ctx.dataSuffix` alike.
+ *
+ * What is *not* here is the tile bank, the game's fallback palette, the scene
+ * track table and the packed audio schedules: every one of those is read by code
+ * in the fixed half — the boot, the scene change, the audio driver — so a second
+ * copy would be bytes nothing can reach.
+ */
+function emitSegmentData(
+  ctx: WscCtx,
+  options: WscEmitOptions,
+  scenes: readonly SceneCtx[],
+  levels: readonly LevelData[],
+  suffix: string,
+): void {
+  const { asm, program } = ctx;
+  // First, because that is where `CtxBase.finish` used to put them and the order
+  // of this section is output bytes.
+  ctx.emitConstants(suffix);
+  for (const shared of levels) {
+    const level = levelCopy(shared, suffix);
     const boundTile = (index: number): { tile: number; palette: number } => {
       const art = level.file.tiles[index]?.art;
       const bound = art
@@ -258,7 +310,10 @@ export function emitProgram(ctx: WscCtx, options: WscEmitOptions = {}): void {
       }
     }
   }
-  emitInstanceDefaults(asm, program, PROPS, ctx.layout.entitySizes);
+  emitInstanceDefaults(asm, program, PROPS, ctx.layout.entitySizes, {
+    ids: program.instances.map((instance) => instance.id),
+    label: (id) => `Defaults_${id}${suffix}`,
+  });
 
   for (const scene of scenes) {
     const art = options.backdrops?.get(scene.def.name);
@@ -268,34 +323,22 @@ export function emitProgram(ctx: WscCtx, options: WscEmitOptions = {}): void {
       // cell's number. Packing it a second time here encodes the *stream* as a
       // run of literal cells, which is a title screen that boots as its own
       // compression format.
-      asm.label(backdropLabel(scene));
+      asm.label(backdropLabel(scene, suffix));
       asm.bytes(art.map);
     }
     const palette = options.scenePalettes?.get(scene.def.name);
     if (palette) {
-      asm.label(scenePaletteLabel(scene));
+      asm.label(scenePaletteLabel(scene, suffix));
       asm.bytes(palette);
     }
   }
-
-  if (options.audio) {
-    if (program.tracks.length > 0) {
-      asm.label("SceneTracks");
-      // One byte per scene: the request value that starts its track, or the one
-      // that stops the music. A table rather than a dispatch because a scene
-      // change already costs a redraw, and this is the cheapest thing in it.
-      for (const scene of scenes) {
-        const track = options.sceneTracks?.[scene.index] ?? -1;
-        asm.db(track < 0 ? AUDIO_STOP : track + 1);
-      }
-    }
-    options.audio.emitData(asm);
+  // The fallback palette is read by a scene with no picture, which is a *paged*
+  // renderer — so a paged segment needs its own. The fixed half's stays at the
+  // end of the program, where it has always been.
+  if (suffix !== "") {
+    asm.label(`Palette${suffix}`);
+    asm.bytes(options.palette ?? defaultPalette());
   }
-
-  asm.label("TileBank");
-  asm.bytes(options.bank ?? new Uint8Array(0));
-  asm.label("Palette");
-  asm.bytes(options.palette ?? defaultPalette());
 }
 
 /**
@@ -400,18 +443,18 @@ function emitReset(ctx: WscCtx, options: WscEmitOptions): void {
   emitClearState(ctx);
   emitSeedRng(ctx);
 
-  asm.call("ResetScene");
+  ctx.call("ResetScene");
   // The interpreter's camera starts at the origin and only moves at the *end* of
   // a tick, so a rule reading it on tick one sees zero.
   if (layout.camera !== null) {
     for (let index = 0; index < 8; index += 2) asm.movmi(abs(layout.camera + index), 0);
   }
-  asm.call("BuildFrame");
-  asm.call("UploadFrame");
+  ctx.call("BuildFrame");
+  ctx.call("UploadFrame");
 
   if (options.audio) {
-    asm.call("AudioInit");
-    if (program.tracks.length > 0) asm.call("SceneMusic");
+    ctx.call("AudioInit");
+    if (program.tracks.length > 0) ctx.call("SceneMusic");
   }
 
   // The screen comes on last, so nothing above it was ever visible.
@@ -530,19 +573,19 @@ function emitMainLoop(ctx: WscCtx, audio: boolean): void {
   asm.in8(PORT.LINE_CUR);
   asm.aluI8("cmp", "al", ctx.layout.memory.viewH * 8);
   ctx.far("b", blank);
-  asm.call("UploadFrame");
+  ctx.call("UploadFrame");
   if (audio) {
     // The frame the loop just waited for, counted before anything else spends
     // it. `AudioFrame` reads the vertical-blank timer's counter rather than
     // being told, so a frame the game overran is owed rather than lost — and
     // `AudioService` performs what is owed *outside* the blanking interval,
     // which belongs to the picture.
-    asm.call("AudioFrame");
-    asm.call("AudioService");
+    ctx.call("AudioFrame");
+    ctx.call("AudioService");
   }
-  asm.call("ReadInput");
-  asm.call("Tick");
-  asm.call("BuildFrame");
+  ctx.call("ReadInput");
+  ctx.call("Tick");
+  ctx.call("BuildFrame");
   asm.jmp("Main");
 }
 
@@ -604,7 +647,7 @@ function emitInput(ctx: WscCtx): void {
   asm.unary8("not", "al");
   asm.alu8("and", "al", "bl");
   asm.movmr8(abs(layout.released), "al");
-  asm.ret();
+  ctx.ret();
 }
 
 function emitTickDispatch(ctx: WscCtx, scenes: readonly SceneCtx[]): void {
@@ -619,12 +662,12 @@ function emitTickDispatch(ctx: WscCtx, scenes: readonly SceneCtx[]): void {
   );
 
   asm.label("TickDone");
-  asm.call("SceneChange");
+  ctx.call("SceneChange");
   // The tick counter, then the handshake byte the harness watches — in that
   // order, so a reader can never see the counter half-updated.
   inc16(ctx, layout.tick);
   asm.incM8(abs(layout.ready));
-  asm.ret();
+  ctx.ret();
 }
 
 function emitSceneChange(ctx: WscCtx, scenes: readonly SceneCtx[], program: Program): void {
@@ -635,17 +678,17 @@ function emitSceneChange(ctx: WscCtx, scenes: readonly SceneCtx[], program: Prog
   asm.aluI8("cmp", "al", 0xff);
   const go = ctx.unique("changeGo");
   ctx.far("nz", go);
-  asm.ret();
+  ctx.ret();
   asm.label(go);
   asm.movmr8(abs(layout.scene), "al");
   asm.movmi8(abs(layout.pending), 0xff);
-  if (audio) asm.call("SceneMusic");
-  asm.call("ResetScene");
+  if (audio) ctx.call("SceneMusic");
+  ctx.call("ResetScene");
   emitSeedRng(ctx);
   emitClearState(ctx);
-  asm.call("UpdateCamera");
+  ctx.call("UpdateCamera");
   asm.movmi8(abs(layout.redraw), 1);
-  asm.ret();
+  ctx.ret();
 
   // Music follows the scene, so it starts where the scene does. Asking for it
   // rather than starting it here is what keeps the request one byte: the driver
@@ -657,7 +700,7 @@ function emitSceneChange(ctx: WscCtx, scenes: readonly SceneCtx[], program: Prog
     asm.mov("bx", "ax");
     asm.movm8("al", romAt("bx", label("SceneTracks")));
     asm.movmr8(abs(ctx.audio?.music as number), "al");
-    asm.ret();
+    ctx.ret();
   }
 
   asm.label("ResetScene");
@@ -729,14 +772,14 @@ function emitSceneReset(ctx: WscCtx, scene: SceneCtx): void {
       layout.entitySizes[id] as number,
     );
   }
-  asm.ret();
+  ctx.ret();
 }
 
 function emitSceneCamera(ctx: WscCtx, scene: SceneCtx): void {
   const { asm } = ctx;
   asm.label(`SceneCamera_${scene.index}`);
   emitCamera(ctx, scene);
-  asm.ret();
+  ctx.ret();
 }
 
 // --- 6. tiles ----------------------------------------------------------------
@@ -902,7 +945,7 @@ function emitTileRules(ctx: WscCtx, scene: SceneCtx, level: LevelData): void {
         emitRecordContact(ctx);
         if (!event.level) {
           asm.movi("si", listBase + 1);
-          asm.call("TileContactSeen");
+          ctx.call("TileContactSeen");
           ctx.far("nz", next);
         }
         const bind: Binding = {
@@ -1067,11 +1110,11 @@ function emitTileContactHelper(ctx: WscCtx): void {
   asm.loop(loop);
   asm.label(missing);
   asm.alu8("xor", "al", "al");
-  asm.ret();
+  ctx.ret();
   asm.label(found);
   asm.movi8("al", 1);
   asm.alu8("or", "al", "al");
-  asm.ret();
+  ctx.ret();
 }
 
 // --- rendering ---------------------------------------------------------------
@@ -1116,7 +1159,7 @@ function emitSceneRender(
   emitHud(ctx, scene, "dynamic");
   emitSwapPlots(ctx);
   emitOam(ctx, scene, options);
-  asm.ret();
+  ctx.ret();
 }
 
 /** `dst16 = floor(value * 8 / 65536)` — cells to pixels. */
@@ -1154,15 +1197,18 @@ function emitFullRedraw(
   // build's — the level tiles' and the objects' fit. Leaving palette RAM alone
   // would mean a level scene wore whichever title screen the player came from.
   const palette = options.scenePalettes?.get(scene.def.name);
-  emitPaletteBlock(ctx, label(palette ? scenePaletteLabel(scene) : "Palette"));
+  emitPaletteBlock(
+    ctx,
+    label(palette ? scenePaletteLabel(scene, ctx.dataSuffix) : `Palette${ctx.dataSuffix}`),
+  );
 
   const backdrop = options.backdrops?.get(scene.def.name);
   if (backdrop) {
     // A backdrop is packed as whole map rows, so painting it is one walk with a
     // destination that only ever moves forward.
     asm.movi("di", RAM.SCR1);
-    asm.movi("si", label(backdropLabel(scene)));
-    asm.call(needBlitBackdrop(ctx));
+    asm.movi("si", label(backdropLabel(scene, ctx.dataSuffix)));
+    ctx.call(needBlitBackdrop(ctx));
   } else {
     // A scene with a level paints from its grid, and one with neither is blank.
     // The window, and the one column and row the first scroll step will need
@@ -1187,7 +1233,7 @@ function emitFullRedraw(
     asm.movmi8(abs(columns), width);
     asm.label(colLoop);
     emitBackgroundTile(ctx, level);
-    asm.call("PokeCellAt");
+    ctx.call("PokeCellAt");
     inc16(ctx, layout.words + W.tileCol * 2);
     asm.decM8(abs(columns));
     ctx.far("nz", colLoop);
@@ -1254,16 +1300,16 @@ function needBlitBackdrop(ctx: WscCtx): Ref {
     asm.jmp(next);
 
     asm.label(out);
-    asm.ret();
+    ctx.ret();
   });
 }
 
 /** The labels holding one scene's map and palette RAM. */
-function backdropLabel(scene: SceneCtx): string {
-  return `Backdrop_${scene.index}`;
+function backdropLabel(scene: SceneCtx, suffix = ""): string {
+  return `Backdrop_${scene.index}${suffix}`;
 }
-function scenePaletteLabel(scene: SceneCtx): string {
-  return `ScenePal_${scene.index}`;
+function scenePaletteLabel(scene: SceneCtx, suffix = ""): string {
+  return `ScenePal_${scene.index}${suffix}`;
 }
 
 /**
@@ -1279,7 +1325,7 @@ function emitBackgroundTile(ctx: WscCtx, level: LevelData | undefined): void {
     asm.movi("ax", 0);
     return;
   }
-  asm.call(tileAtLabel(level));
+  ctx.call(tileAtLabel(level));
   emitLegendToTile(ctx, level);
 }
 
@@ -1403,9 +1449,9 @@ function emitPaintEdge(ctx: WscCtx, level: LevelData, isColumn: boolean, offset:
   const loop = ctx.unique("paintLoop");
   asm.movmi8(abs(remaining), count);
   asm.label(loop);
-  asm.call(tileAtLabel(level));
+  ctx.call(tileAtLabel(level));
   emitLegendToTile(ctx, level);
-  asm.call("QueueCellAt");
+  ctx.call("QueueCellAt");
   inc16(ctx, along);
   asm.decM8(abs(remaining));
   ctx.far("nz", loop);
@@ -1430,7 +1476,7 @@ function emitHudErase(ctx: WscCtx): void {
   // blank cell rather than a lookup into whatever the world put there — which
   // is the whole saving of giving the HUD a plane of its own.
   asm.movi("ax", 0);
-  asm.call("QueueHudAt");
+  ctx.call("QueueHudAt");
   asm.aluMI("add", abs(cursor), 4);
   asm.movm8("al", abs(layout.plotPrevCount));
   asm.movi8("ah", 0);
@@ -1492,11 +1538,11 @@ function emitHud(ctx: WscCtx, scene: SceneCtx, want: "static" | "dynamic"): void
       const text = instance.strings["text"] ?? "";
       for (const character of [...text].slice(0, MAP_W)) {
         asm.movi("ax", mapWord(glyphTile(character), SYSTEM_PALETTE));
-        asm.call(plot);
+        ctx.call(plot);
       }
     } else {
       asm.movi("si", base + propOffset("value") + 2);
-      asm.call(want === "static" ? needPokeNumber(ctx) : "DrawNumber");
+      ctx.call(want === "static" ? needPokeNumber(ctx) : "DrawNumber");
     }
     asm.label(skip);
   }
@@ -1505,10 +1551,10 @@ function emitHud(ctx: WscCtx, scene: SceneCtx, want: "static" | "dynamic"): void
 /** `ax` = a map word: write it into the HUD plane and advance the column. */
 function needPokeGlyph(ctx: WscCtx): Ref {
   return ctx.need("PokeGlyph", (inner) => {
-    const { asm, layout } = inner;
-    asm.call("PokeHudAt");
+    const { layout } = inner;
+    ctx.call("PokeHudAt");
     inc16(inner, layout.words + W.tileCol * 2);
-    asm.ret();
+    ctx.ret();
   });
 }
 
@@ -1554,10 +1600,10 @@ function needOnscreen(ctx: WscCtx): Ref {
 
     asm.movi8("al", 1);
     asm.alu8("or", "al", "al");
-    asm.ret();
+    ctx.ret();
     asm.label(apart);
     asm.alu8("xor", "al", "al");
-    asm.ret();
+    ctx.ret();
   });
 }
 
@@ -1591,7 +1637,7 @@ function emitOam(ctx: WscCtx, scene: SceneCtx, options: WscEmitOptions): void {
     if (layout.camera !== null && fixedCells(ctx, id)) {
       asm.movi("bx", base);
       asm.movi("cx", (height << 8) | width);
-      asm.call(needOnscreen(ctx));
+      ctx.call(needOnscreen(ctx));
       ctx.far("z", skip);
     }
     // Screen pixels are level pixels minus the camera's.
@@ -1616,7 +1662,7 @@ function emitOam(ctx: WscCtx, scene: SceneCtx, options: WscEmitOptions): void {
         asm.movm8("ch", abs(layout.words + W.cell * 2));
         asm.aluI8("add", "ch", (column * 8) & 0xff);
         asm.movi("ax", mapWord(tile, palette));
-        asm.call(needPushSprite(ctx));
+        ctx.call(needPushSprite(ctx));
       }
     }
     asm.label(skip);
@@ -1650,7 +1696,7 @@ function needPushSprite(ctx: WscCtx): Ref {
     asm.movmr(at("bx", RAM.SHADOW + 2), "cx");
     asm.incM8(abs(layout.oamCount));
     asm.label(skip);
-    asm.ret();
+    ctx.ret();
   });
 }
 
@@ -1674,15 +1720,15 @@ export function emitRenderHelpers(ctx: WscCtx): void {
   asm.alu("add", "ax", "bx");
   asm.shift("shl", "ax", 1);
   asm.mov("bx", "ax");
-  asm.ret();
+  ctx.ret();
 
   // `ax` = a map word: write it into the world plane, or the HUD's.
   const poke = (name: string, base: number): void => {
     asm.label(name);
     asm.mov("dx", "ax");
-    asm.call("CellOffset");
+    ctx.call("CellOffset");
     asm.movmr(at("bx", base), "dx");
-    asm.ret();
+    ctx.ret();
   };
   poke("PokeCellAt", RAM.SCR1);
   poke("PokeHudAt", RAM.SCR2);
@@ -1693,7 +1739,7 @@ export function emitRenderHelpers(ctx: WscCtx): void {
   const queue = (name: string, base: number): void => {
     asm.label(name);
     asm.mov("dx", "ax");
-    asm.call("CellOffset");
+    ctx.call("CellOffset");
     asm.aluI("add", "bx", base);
     asm.mov("ax", "dx");
     asm.jmp("QueueEntry");
@@ -1709,7 +1755,7 @@ export function emitRenderHelpers(ctx: WscCtx): void {
   // No room: repaint the whole background next frame rather than leave a strip
   // of it stale for ever.
   asm.movmi8(abs(layout.redraw), 1);
-  asm.ret();
+  ctx.ret();
   asm.label(room);
   asm.mov("dx", "ax");
   asm.movm8("al", abs(layout.queueCount));
@@ -1718,13 +1764,13 @@ export function emitRenderHelpers(ctx: WscCtx): void {
   asm.movmr(at("si", layout.queue), "bx");
   asm.movmr(at("si", layout.queue + 2), "dx");
   asm.aluMI8("add", abs(layout.queueCount), layout.queueStride);
-  asm.ret();
+  ctx.ret();
 
   // `ax` = a map word: queue it as one HUD cell, record the cell for erasing,
   // and advance the column.
   asm.label("PlotCell");
   const plotFull = ctx.unique("plotFull");
-  asm.call("QueueHudAt");
+  ctx.call("QueueHudAt");
   asm.aluMI8("cmp", abs(layout.plotCount), layout.memory.plotMax);
   ctx.far("nb", plotFull);
   asm.movm8("al", abs(layout.plotCount));
@@ -1738,7 +1784,7 @@ export function emitRenderHelpers(ctx: WscCtx): void {
   asm.incM8(abs(layout.plotCount));
   asm.label(plotFull);
   inc16(ctx, layout.words + W.tileCol * 2);
-  asm.ret();
+  ctx.ret();
 
   // Flush the queue, copy the objects across, and set the scroll. All three fit
   // inside the blanking interval by construction: the queue is capped at what
@@ -1779,7 +1825,7 @@ export function emitRenderHelpers(ctx: WscCtx): void {
   asm.label(noObjects);
 
   emitScrollWrite(ctx);
-  asm.ret();
+  ctx.ret();
 
   asm.label("DrawNumber");
   emitDecimal(ctx, "PlotCell");
@@ -1843,7 +1889,7 @@ function emitDecimal(ctx: WscCtx, plot: Ref): void {
   asm.unary("neg", "ax");
   asm.movmr(abs(value), "ax");
   asm.movi("ax", mapWord(glyphTile("-"), SYSTEM_PALETTE));
-  asm.call(plot);
+  ctx.call(plot);
   asm.movm("ax", abs(value));
   asm.label(positive);
 
@@ -1879,11 +1925,11 @@ function emitDecimal(ctx: WscCtx, plot: Ref): void {
   asm.movmr(abs(value), "dx");
   asm.movi8("ah", 0);
   asm.aluI("add", "ax", mapWord(glyphTile("0"), SYSTEM_PALETTE));
-  asm.call(plot);
+  ctx.call(plot);
   asm.aluMI8("add", abs(power), 2);
   asm.aluMI8("cmp", abs(power), 10);
   ctx.far("nz", digitLoop);
-  asm.ret();
+  ctx.ret();
 }
 
 /** The powers of ten a decimal render walks, as little-endian words. */

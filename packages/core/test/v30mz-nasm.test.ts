@@ -175,6 +175,8 @@ const CASES: readonly Case[] = [
 
   // Control flow that needs no label.
   { text: "jmp 0xf000:0x0000", build: (a) => void a.jmpFar(0xf000, 0x0000) },
+  { text: "call 0xe000:0x1234", build: (a) => void a.callFar(0xe000, 0x1234) },
+  { text: "retf", build: (a) => void a.retf() },
   { text: "jmp bx", build: (a) => void a.jmpr("bx") },
   { text: "ret", build: (a) => void a.ret() },
   { text: "iret", build: (a) => void a.iret() },

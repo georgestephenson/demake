@@ -192,9 +192,38 @@ export abstract class CtxBase<Self, A extends CodeBuffer> {
     }
     // After the helpers, because a helper may have asked for a table of its own.
     for (const table of this.tables) table(this.asm);
+    if (!this.poolIsPlaced) this.emitConstants();
+  }
+
+  /**
+   * Whether the backend places the constant pool itself.
+   *
+   * False everywhere but one console. A V30MZ reads a pooled constant with a
+   * `cs:` override, so a program spread across segments needs a copy of the pool
+   * in each of them — which is a thing only the backend knows how to arrange, so
+   * it takes the pool over and {@link finish} stops emitting one
+   * (`codegen/wsc/emit.ts` §emitSegmentData).
+   */
+  protected poolIsPlaced = false;
+
+  /**
+   * The pool itself, as a block a backend can ask for again.
+   *
+   * Once is the normal answer and {@link finish} is where. What wants a second
+   * copy is a console whose paged code cannot *reach* the first: on a V30MZ a
+   * pooled constant is read with a `cs:` override, so a routine running in
+   * another segment reads the pool of the segment it is in (doc 13 §Banked
+   * cartridges). `suffix` is what tells those copies apart, and it is the same
+   * shape `levelCopy` gives a level's tables one console along.
+   *
+   * Every value the program pooled, whenever it was asked for — so a backend
+   * emitting per-segment copies has to emit them *after* everything that could
+   * still call {@link constant}, which in practice means after `finish`.
+   */
+  emitConstants(suffix = ""): void {
     if (this.constants.size > 0) this.asm.align?.(4);
     for (const [value, name] of this.constants) {
-      this.asm.label(name);
+      this.asm.label(name + suffix);
       this.asm.dd(value);
     }
   }

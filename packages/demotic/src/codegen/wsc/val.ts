@@ -275,7 +275,7 @@ export function clamp32(ctx: WscCtx, dst: Ref): void {
   const { asm } = ctx;
   dest(dst); // a clamp writes, so this can only be RAM
   asm.movi("bx", dst);
-  asm.call(ctx.need("Clamp32", emitClamp32));
+  ctx.call(ctx.need("Clamp32", emitClamp32));
 }
 
 /**
@@ -304,18 +304,18 @@ function emitClamp32(ctx: WscCtx): void {
   asm.label(setHigh);
   asm.movmi(at("bx", 0), 0);
   asm.movmi(at("bx", 2), limit);
-  asm.ret();
+  ctx.ret();
 
   asm.label(notHigh);
   asm.aluI("cmp", "dx", negative);
   asm.jcc("l", setLow);
   asm.label(done);
-  asm.ret();
+  ctx.ret();
 
   asm.label(setLow);
   asm.movmi(at("bx", 0), 0);
   asm.movmi(at("bx", 2), negative);
-  asm.ret();
+  ctx.ret();
 }
 
 // --- multiply and divide -----------------------------------------------------
@@ -347,10 +347,10 @@ function callBinary(
   name: string,
   body: (ctx: WscCtx) => void,
 ): void {
-  const { asm, layout } = ctx;
+  const { layout } = ctx;
   copy32(ctx, layout.mathA, dst);
   copy32(ctx, layout.mathB, src);
-  asm.call(ctx.need(name, body));
+  ctx.call(ctx.need(name, body));
   copy32(ctx, dst, layout.mathA);
 }
 
@@ -428,7 +428,7 @@ function emitMul32(ctx: WscCtx): void {
   asm.label(positive);
   copy32(ctx, a, product + 2);
   clamp32(ctx, a);
-  asm.ret();
+  ctx.ret();
 }
 
 /**
@@ -557,9 +557,9 @@ function emitDiv32(ctx: WscCtx): void {
   addConst32(ctx, a, -1);
   asm.label(done);
   clamp32(ctx, a);
-  asm.ret();
+  ctx.ret();
 
   asm.label(zero);
   set32(ctx, a, 0);
-  asm.ret();
+  ctx.ret();
 }

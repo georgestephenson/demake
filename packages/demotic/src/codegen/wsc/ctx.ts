@@ -19,7 +19,7 @@
  *     emitter says which of the two it means.
  */
 
-import { Asm30, type Ref } from "@demake/core";
+import { Asm30, AsmError, type Ref } from "@demake/core";
 
 import type { ConsoleProfile } from "../../profiles.js";
 import type { Program } from "../../program.js";
@@ -29,6 +29,21 @@ import type { Layout } from "../layout.js";
 
 import { WSC_MACHINE, type WsMachine } from "./machine.js";
 import { invert, type CC } from "./ops.js";
+
+/**
+ * The label a reference names, for the two transfers that need it by name.
+ *
+ * A far call resolves its segment from where the label was *defined*, so it
+ * takes the name rather than the reference an offset fixup would take — and a
+ * numeric target has no segment to look up, which is a transfer to an address
+ * this backend never emits.
+ */
+function nameOf(target: Ref): string {
+  if (typeof target === "string") return target;
+  if (typeof target === "number")
+    throw new AsmError("a far transfer needs a label, not an address");
+  return target.label;
+}
 
 /** Emits a helper's body. Called once, after the main program. */
 export type WscHelperBody = (ctx: WscCtx) => void;
@@ -71,5 +86,76 @@ export class WscCtx extends CtxBase<WscCtx, Asm30> {
     this.asm.jcc(invert(cond), over);
     this.asm.jmp(target);
     this.asm.label(over);
+  }
+
+  /**
+   * Whether this program's routines are spread across segments.
+   *
+   * The Super Nintendo's `banked`, on a machine where the other half of an
+   * address is a register rather than the top eight bits — and it is
+   * **all-or-nothing** for the same reason: `call`/`ret` push two bytes and
+   * `callFar`/`retf` push four, so which pair a routine ends with has to match
+   * how *every* caller reaches it, and "which callers are in this routine's
+   * segment" is not a question an emitter can answer while it is still deciding
+   * where things go. Converting the whole program makes the answer the same
+   * everywhere and costs nothing at all for a game that fits one segment, whose
+   * cartridge is byte-identical to the one it always built.
+   */
+  banked = false;
+
+  /** The segment the fixed half is in, which is what an unsectioned label means. */
+  homeSegment = 0;
+
+  /** Call a routine — near inside one segment, far when the program is spread. */
+  call(target: Ref): void {
+    if (!this.banked) {
+      this.asm.call(target);
+      return;
+    }
+    this.asm.callFarLabel(nameOf(target), this.homeSegment);
+  }
+
+  /** Return from a routine, matching how {@link call} reached it. */
+  ret(): void {
+    if (this.banked) this.asm.retf();
+    else this.asm.ret();
+  }
+
+  /**
+   * Jump to a routine that may not be in this segment.
+   *
+   * For the transfers that are between *routines* rather than inside one: the
+   * scene dispatch, and a scene's tail jump back to the shared tail of the tick.
+   * Everything else `jmp`s, because a branch inside a routine cannot leave the
+   * segment the routine is in.
+   */
+  jump(target: Ref): void {
+    if (!this.banked) {
+      this.asm.jmp(target);
+      return;
+    }
+    this.asm.jmpFarLabel(nameOf(target), this.homeSegment);
+  }
+
+  /**
+   * Which copy of the cartridge's tables this segment reads.
+   *
+   * Empty in the fixed half and on every unbanked build. A routine in another
+   * segment reads a pooled constant, a level's grid and its instance defaults
+   * with a `cs:` override, which reaches *its own* segment — so each segment
+   * carries the tables its code reads and this is what tells the copies apart
+   * (doc 13 §Banked cartridges). The NES's `LevelData.suffix`, arrived at by
+   * completely different hardware.
+   */
+  dataSuffix = "";
+
+  // This backend emits the pool per segment, so `finish` leaves it alone.
+  protected override poolIsPlaced = true;
+
+  /** A pooled 16.16 constant, from the copy this segment can reach. */
+  override constant(value: number): Ref {
+    const shared = super.constant(value);
+    if (this.dataSuffix === "") return shared;
+    return { label: (shared as { label: string }).label + this.dataSuffix, addend: 0 };
   }
 }
