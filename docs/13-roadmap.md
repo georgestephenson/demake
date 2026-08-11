@@ -1704,27 +1704,39 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     against a correct model's 0.9992 and is exactly the bug this level exists to
     catch. Doc 16 §The proof has the table.
 
-    **And it has already found one thing, which is what a level like this is
+    **And it has already found two things, which is what a level like this is
     for.** The sixth standalone cartridge is the WonderSwan's, beetle-wswan is
-    provisioned by the same script as the other four cores, and the row costs
-    one line — so it was written, measured, and left out. It scores **0.6469**,
-    below every wrong answer in the table except white noise, and none of the
-    ordinary explanations survive contact: the core is plainly playing the music
-    (0.169 RMS against our 0.124), giving it enough frames to cover the whole
-    schedule moves the number by 0.001, the waveform page the render installs is
-    byte-identical to the one the cartridge copies, and restricting the
-    comparison to below 1.7 kHz — where the output filtering doc 16 warns about
-    would have to agree — only reaches 0.7168. What the spectra say is that the
-    two play the same notes with a different **balance between the voices**: the
-    core's strongest content is at 194, 258 and 215 Hz, and ours at 43 Hz and
-    7321 Hz, which is a loud noise channel over a bass.
+    provisioned by the same script as the other four cores, and the row costs one
+    line — so it was written, measured, and the measurement went somewhere.
 
-    Level A is green on that console for a track *and* an effect, so the
-    cartridge performs its schedule exactly and what is in question is what the
-    chip does with it — a disagreement between `@demake/chip`'s `WsSound` and
-    Mednafen's, in one direction or the other. It is open rather than closed, and
-    it is recorded here rather than admitted by lowering the gate: a threshold
-    that accepted 0.65 would delete the only measurement this level makes.
+    The first finding was the suite's own. A cartridge performs its chip's
+    initialisation in the boot and the rest of its schedule from its clock, so
+    `BuiltAudioRom.performed` is the schedule _minus_ those writes — exactly the
+    right comparand for Level A, where a capture begins at the first tick, and
+    exactly the wrong one for a render, because they are chip **state**. On four
+    of the five families it made no difference at all: their boot is a handful of
+    latches the schedule's own tick 0 repeats, so nothing is stripped and the two
+    renders are sample-identical. On the two whose boot carries _waveforms_ it is
+    the difference between a track and silence — a PC Engine render lost 37% of
+    its level (0.0905 RMS against 0.1431) and a WonderSwan's lost all four
+    pitched channels, since that chip reads its tables from an address the
+    stripped schedule never states. The WonderSwan row scored 0.6469 that way and
+    **0.9038** rendered properly, and the PC Engine row had been shipping against
+    a render with no wave RAM in it.
+
+    The second is the chip. 0.9038 is still under the gate, and it is not the
+    output filtering doc 16 warns about — restricting the comparison to below
+    1.7 kHz moves it by 0.002. It is the **noise channel**, and dropping the drum
+    part is what says so: the same tune, same core, same everything else, scores
+    **0.9978**. Pointed at one held note at a time the two agree to the hertz on
+    every pitched voice — 441 Hz against 441, 215 against 215, with the 6% level
+    difference this level's opening caveat already allows — and pointed at the
+    noise voice alone they do not, ours peaking at 1497 Hz where the core peaks
+    at 140. So what is open is a disagreement between `@demake/chip`'s `WsSound`
+    and Mednafen's about one generator, in one direction or the other, and
+    settling it wants a hardware reference rather than a threshold. Level A is
+    green on that console for a track _and_ an effect, so the cartridge performs
+    its schedule exactly and the question is what the chip does with it.
 
     **And one console could not be rendered at all — fixed, and it was the one
     renderer rather than that console.** `demake render -c gba` wrote a WAV in

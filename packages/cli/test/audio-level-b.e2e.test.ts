@@ -54,31 +54,45 @@
  * *plausible* wrong answer that needs no mutation: the same music, same tempo,
  * same structure, arranged for a different chip.
  *
- * ### The WonderSwan is deliberately absent, and that is a finding
+ * ### What is rendered is the schedule *with* its boot, and that is not obvious
+ *
+ * A cartridge performs its chip's initialisation in the boot and the rest of the
+ * schedule from its clock, so `BuiltAudioRom.performed` is the schedule **minus**
+ * the boot writes. That is exactly right for Level A, where a capture starts at
+ * the first tick and diffing against the caller's copy would ask the driver for
+ * writes it correctly made earlier — and it is exactly wrong here, because those
+ * writes are chip *state* and a render that never performs them plays something
+ * else.
+ *
+ * On four of the five families it makes no difference at all: their boot is a
+ * handful of latches the schedule's own first tick repeats, so `stripBoot`
+ * removes nothing and the two renders are sample-identical. On the two whose
+ * boot carries waveforms it is the difference between the track and silence —
+ * a PC Engine render loses 37% of its level (0.0905 RMS against 0.1431) and a
+ * WonderSwan's loses the four pitched channels outright, because that chip reads
+ * its tables from an address the stripped schedule never states. So this renders
+ * `arranged.script`, which is the boot followed by everything else.
+ *
+ * ### The WonderSwan is absent, and what is left of that is one channel
  *
  * `rom/wsc.ts` builds a standalone cartridge and beetle-wswan is provisioned by
  * the same script as the four cores above, so the row costs one line — and it
- * scores **0.6469**, far below every wrong answer in the table except white
- * noise. It is not a boot failure and not a coverage artefact: the core is
- * plainly playing the music (0.169 RMS against our 0.124), giving it enough
- * frames to cover the whole schedule moves the number by 0.001, and the
- * waveform page the render installs is byte-identical to the one the cartridge
- * copies.
+ * scores **0.9038**, which is under the gate. It is not the output filtering
+ * this file already warns about: restricting the comparison to below 1.7 kHz
+ * moves it by 0.002.
  *
- * What the spectra say is that the two are playing the same notes with a
- * different balance between the voices: the core's strongest content is at 194,
- * 258 and 215 Hz — pitches — while ours is at 43 Hz and 7321 Hz, which is a
- * loud noise channel and a bass. Restricting the comparison to below 1.7 kHz
- * only reaches 0.7168, so it is not the output filtering doc 16 already warns
- * about either.
+ * It is the **noise channel**, and dropping the drum part from the arrangement
+ * is what says so — the same tune, same core, same everything else, scores
+ * **0.9978**. Pointed at one held note at a time the two agree to the hertz on
+ * every pitched voice (441 Hz against 441, 215 against 215, with a 6% level
+ * difference that is this file's opening caveat); pointed at the noise voice
+ * alone they do not, ours peaking at 1497 Hz where the core peaks at 140.
  *
- * That is a disagreement between `@demake/chip`'s `WsSound` and Mednafen's, and
- * it is exactly what this level exists to surface — Level A is green on that
- * console for a track *and* an effect, so the cartridge performs its schedule
- * exactly and the argument is about what the chip does with it. Adding the row
- * before the disagreement is diagnosed would be committing a failing test;
- * adding it with a threshold that admits 0.65 would be deleting the gate. Doc 13
- * §A2.5 records it as the open question it is.
+ * That is a disagreement between `@demake/chip`'s `WsSound` and Mednafen's about
+ * one generator, in one direction or the other, and settling it wants a hardware
+ * reference rather than a threshold. Level A is green on that console for a
+ * track *and* an effect, so the cartridge performs its schedule exactly and what
+ * is in question is what the chip does with it. Doc 13 §A2.5 records it.
  *
  * Needs `pnpm toolchains && pnpm emulator`; self-skips without them.
  */
@@ -215,10 +229,11 @@ describe("Level B — chip models against a third-party core", () => {
         expect(theirs.samples.length).toBeGreaterThan(theirs.rate); // at least a second
 
         // Rendered at the *core's* rate, so no resampler sits between the two
-        // things being compared. The schedule rendered is the one the cartridge
-        // actually performs — the boot prefix is stripped from it, so comparing
-        // against the caller's copy would diff a chip power-up as well.
-        const ours = render(built.performed ?? arranged.script, { sampleRate: theirs.rate });
+        // things being compared — and rendered from the schedule *including* its
+        // boot, because those writes are chip state rather than a power-up to be
+        // discounted (§What is rendered). `built.performed` is the right
+        // comparand for a register diff and the wrong one for a render.
+        const ours = render(arranged.script, { sampleRate: theirs.rate });
 
         const match = similarity(
           averageSpectrum(ours.channels[0] as Float32Array),

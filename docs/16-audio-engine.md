@@ -975,23 +975,33 @@ schedule, and a third-party core because our own would be comparing a model with
 itself. That is the NES, both Sega 8-bits, the Mega Drive and the PC Engine
 today, and each joins by appearing in one table.
 
-**The WonderSwan qualifies and is not in it, which is the first thing this level
-has found.** That console has a standalone cartridge and beetle-wswan is
-provisioned by the same script as the four cores above, so the row costs one
-line — and it scores **0.6469**, below every wrong answer in the table but white
-noise. None of the ordinary explanations survives: the core is plainly playing
-the music (0.169 RMS against our 0.124), giving it enough frames to cover the
-whole schedule moves the number by 0.001, the waveform page a render installs is
-byte-identical to the one the cartridge copies, and restricting the comparison to
-below 1.7 kHz — where the filtering caveat above would have to agree — only
-reaches 0.7168. What the spectra say is that the two play the same notes with a
-different *balance between the voices*: the core's strongest content is at 194,
-258 and 215 Hz and ours at 43 Hz and 7321 Hz. Level A is green there for a track
-and for an effect, so the cartridge performs its schedule exactly and the
-question is what the chip does with it — a disagreement between `WsSound` and
-Mednafen's model, in one direction or the other. It is recorded rather than
-admitted: a threshold that accepted 0.65 would delete the only measurement this
-level makes. Where a core exposes scripted
+**What is rendered is the schedule *with* its boot, which is not the same as
+what Level A diffs against.** A cartridge performs its chip's initialisation in
+the boot and the rest of the schedule from its clock, so `BuiltAudioRom.performed`
+is the schedule *minus* those writes — the right comparand for a register diff
+that begins at the first tick, and the wrong one for a render, because they are
+chip **state**. On four of the five families it makes no difference at all:
+their boot is a handful of latches the schedule's own tick 0 repeats, so nothing
+is stripped and the two renders are sample-identical. On the two whose boot
+carries *waveforms* it is the difference between the track and silence — a PC
+Engine render loses 37% of its level and a WonderSwan's loses all four pitched
+channels, since that chip reads its tables from an address the stripped schedule
+never states.
+
+**The WonderSwan qualifies and is not in the table, and what is left of that is
+one channel.** Rendered properly it scores **0.9038**, which is under the gate,
+and it is not the filtering caveat above: restricting the comparison to below
+1.7 kHz moves it by 0.002. It is the **noise channel**, and dropping the drum
+part from the arrangement is what says so — the same tune, same core, same
+everything else, scores **0.9978**. Pointed at one held note at a time the two
+agree to the hertz on every pitched voice (441 Hz against 441, 215 against 215,
+with the 6% level difference this level already allows for); pointed at the noise
+voice alone they do not, ours peaking at 1497 Hz where the core peaks at 140.
+That is a disagreement between `WsSound` and Mednafen's model about one
+generator, in one direction or the other, and settling it wants a hardware
+reference rather than a threshold. Level A is green there for a track and for an
+effect, so the cartridge performs its schedule exactly and the question is what
+the chip does with it. Where a core exposes scripted
 register access (Mesen 2's Lua interface, for instance), that console gets Level A
 too and Level B becomes a cross-check rather than the primary oracle.
 
