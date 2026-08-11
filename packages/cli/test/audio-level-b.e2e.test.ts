@@ -73,26 +73,36 @@
  * its tables from an address the stripped schedule never states. So this renders
  * `arranged.script`, which is the boot followed by everything else.
  *
- * ### The WonderSwan is absent, and what is left of that is one channel
+ * ### The WonderSwan is absent, and what is left of that is one voice's level
  *
  * `rom/wsc.ts` builds a standalone cartridge and beetle-wswan is provisioned by
  * the same script as the four cores above, so the row costs one line — and it
- * scores **0.9038**, which is under the gate. It is not the output filtering
+ * scores **0.8973**, which is under the gate. It is not the output filtering
  * this file already warns about: restricting the comparison to below 1.7 kHz
  * moves it by 0.002.
  *
  * It is the **noise channel**, and dropping the drum part from the arrangement
  * is what says so — the same tune, same core, same everything else, scores
- * **0.9978**. Pointed at one held note at a time the two agree to the hertz on
- * every pitched voice (441 Hz against 441, 215 against 215, with a 6% level
- * difference that is this file's opening caveat); pointed at the noise voice
- * alone they do not, ours peaking at 1497 Hz where the core peaks at 140.
+ * **0.9978**.
  *
- * That is a disagreement between `@demake/chip`'s `WsSound` and Mednafen's about
- * one generator, in one direction or the other, and settling it wants a hardware
- * reference rather than a threshold. Level A is green on that console for a
- * track *and* an effect, so the cartridge performs its schedule exactly and what
- * is in question is what the chip does with it. Doc 13 §A2.5 records it.
+ * Half of that gap is closed and the half that is left is measured. Pointed at
+ * one held note at a time, this comparison found `WsSound`'s shift register
+ * feeding back the wrong pair of bits: it reproduced one of the eight documented
+ * sequence lengths and missed seven, which is white noise where the hardware has
+ * eight colours (`packages/chip/test/ws-sound.test.ts` now pins all eight
+ * against the table). With that fixed the noise voice's *spectrum* lands beside
+ * the core's — 54 Hz against 43, 118 against 54 — where it had been 1497 against
+ * 140.
+ *
+ * What remains is a **level**, and it is consistent enough to be one number: our
+ * pitched voices come out 1.063× the core's and our noise voice 1.734×, on every
+ * mode. The first is this file's opening caveat about cores normalising to their
+ * own level; the second is that ratio times 1.63, which is a disagreement about
+ * how loud this chip's shift register is against its wavetables. Settling it
+ * wants a hardware reference rather than a threshold, and Level A is green on
+ * that console for a track *and* an effect — so the cartridge performs its
+ * schedule exactly and the question is what the chip does with it. Doc 13 §A2.5
+ * records it.
  *
  * Needs `pnpm toolchains && pnpm emulator`; self-skips without them.
  */

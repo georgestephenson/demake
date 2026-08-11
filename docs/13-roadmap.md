@@ -1724,19 +1724,34 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     **0.9038** rendered properly, and the PC Engine row had been shipping against
     a render with no wave RAM in it.
 
-    The second is the chip. 0.9038 is still under the gate, and it is not the
-    output filtering doc 16 warns about — restricting the comparison to below
-    1.7 kHz moves it by 0.002. It is the **noise channel**, and dropping the drum
-    part is what says so: the same tune, same core, same everything else, scores
-    **0.9978**. Pointed at one held note at a time the two agree to the hertz on
-    every pitched voice — 441 Hz against 441, 215 against 215, with the 6% level
-    difference this level's opening caveat already allows — and pointed at the
-    noise voice alone they do not, ours peaking at 1497 Hz where the core peaks
-    at 140. So what is open is a disagreement between `@demake/chip`'s `WsSound`
-    and Mednafen's about one generator, in one direction or the other, and
-    settling it wants a hardware reference rather than a threshold. Level A is
-    green on that console for a track _and_ an effect, so the cartridge performs
-    its schedule exactly and the question is what the chip does with it.
+    The second is the chip, and half of it is now closed. What was left after the
+    render was fixed is the **noise channel** — dropping the drum part takes the
+    same tune, in the same core, to **0.9978** — and pointed at one held note at
+    a time the two models agree to the hertz on every pitched voice (441 Hz
+    against 441, 215 against 215, with the 6% level difference this level's
+    opening caveat already allows) while the noise voice peaked at 1497 Hz where
+    the core peaked at 140.
+
+    That was `WsSound`'s shift register feeding back the wrong pair of bits. The
+    hardware's feedback is the **inverted** exclusive-or of bit 7 with the tap
+    bit, and the check that says so is not a spectrum: a fifteen-bit register
+    with a tap has exactly one observable that is not a matter of taste, which is
+    how many steps it takes before it repeats, and the eight modes produce eight
+    documented lengths. Ours reproduced one of them — mode 0, by coincidence,
+    because a maximal-length sequence is 32767 whatever the tap — and missed
+    seven, which is white noise on every mode where the hardware has eight
+    colours. `packages/chip/test/ws-sound.test.ts` pins all eight now, and with
+    the generator right the noise voice's spectrum lands beside the core's: 54 Hz
+    against 43, 118 against 54.
+
+    What is still open is a **level**, and it is consistent enough to be one
+    number: our pitched voices come out 1.063× the core's and our noise voice
+    1.734×, on every mode. The first is a core normalising to its own level and
+    the second is that ratio times 1.63 — a disagreement about how loud this
+    chip's shift register is against its wavetables. Settling it wants a hardware
+    reference rather than a threshold, and Level A is green on that console for a
+    track _and_ an effect, so the cartridge performs its schedule exactly and the
+    question is what the chip does with it.
 
     **And one console could not be rendered at all — fixed, and it was the one
     renderer rather than that console.** `demake render -c gba` wrote a WAV in

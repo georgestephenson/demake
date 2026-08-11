@@ -185,6 +185,18 @@ export class WsSound implements ChipModel {
   private noiseTap = 0;
   private lfsr = 1;
   private noiseOutput = 0;
+
+  /**
+   * The shift register's current state.
+   *
+   * Exposed because a sequence *length* is the one thing about this generator
+   * that is observable and not a matter of taste, and reading it off the audio
+   * cannot distinguish 28 steps from 42 — both are a buzz. `ws-sound.test.ts`
+   * walks it against the eight lengths the hardware documents.
+   */
+  get noiseRegister(): number {
+    return this.lfsr;
+  }
   private speakerEnabled = true;
   private speakerShift = 0;
   private headphoneEnabled = false;
@@ -344,10 +356,23 @@ export class WsSound implements ChipModel {
     }
   }
 
-  /** One step of the fifteen-bit shift register, tapped where the mode says. */
+  /**
+   * One step of the fifteen-bit shift register, tapped where the mode says.
+   *
+   * The feedback is the **inverted** exclusive-or of bit 7 with the tap bit, and
+   * both halves of that are load-bearing rather than stylistic: the sequence
+   * lengths in {@link NOISE_TAPS}' comment are what the pair produces, and no
+   * other reading of "bit 7 and the tap" reproduces them. `ws-sound.test.ts`
+   * checks all eight against the documented table, which is the only oracle here
+   * that cannot be satisfied by agreeing with ourselves — a generator that
+   * XOR-ed the top bit with `14 - tap` instead is white noise on every mode
+   * rather than the eight colours the hardware has, and it is what this chip
+   * shipped with until Mednafen's own output disagreed with it (doc 16 §The
+   * proof, Level B).
+   */
   private clockNoise(): void {
     const tap = NOISE_TAPS[this.noiseTap] as number;
-    const feedback = ((this.lfsr >> 14) ^ (this.lfsr >> (14 - tap))) & 1;
+    const feedback = 1 ^ (((this.lfsr >> 7) ^ (this.lfsr >> tap)) & 1);
     this.lfsr = ((this.lfsr << 1) | feedback) & 0x7fff;
     this.noiseOutput = feedback;
   }

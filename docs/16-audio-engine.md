@@ -989,16 +989,31 @@ channels, since that chip reads its tables from an address the stripped schedule
 never states.
 
 **The WonderSwan qualifies and is not in the table, and what is left of that is
-one channel.** Rendered properly it scores **0.9038**, which is under the gate,
-and it is not the filtering caveat above: restricting the comparison to below
-1.7 kHz moves it by 0.002. It is the **noise channel**, and dropping the drum
-part from the arrangement is what says so — the same tune, same core, same
-everything else, scores **0.9978**. Pointed at one held note at a time the two
-agree to the hertz on every pitched voice (441 Hz against 441, 215 against 215,
-with the 6% level difference this level already allows for); pointed at the noise
-voice alone they do not, ours peaking at 1497 Hz where the core peaks at 140.
-That is a disagreement between `WsSound` and Mednafen's model about one
-generator, in one direction or the other, and settling it wants a hardware
+one voice's level.** Rendered properly it scores **0.8973**, which is under the
+gate, and it is not the filtering caveat above: restricting the comparison to
+below 1.7 kHz moves it by 0.002. It is the **noise channel**, and dropping the
+drum part from the arrangement is what says so — the same tune, same core, same
+everything else, scores **0.9978**.
+
+Half of that is now closed, and this is the first thing Level B has *fixed*
+rather than reported. Pointed at one held note at a time the two models agreed to
+the hertz on every pitched voice and not at all on the noise voice, ours peaking
+at 1497 Hz where the core peaked at 140 — which was `WsSound`'s shift register
+feeding back the wrong pair of bits. The hardware's feedback is the **inverted**
+exclusive-or of bit 7 with the tap bit, and what settles that is not a spectrum:
+a fifteen-bit register with a tap has one observable that is not a matter of
+taste, which is how many steps it takes to repeat, and the eight modes produce
+eight documented lengths. Ours reproduced *one* — mode 0, by coincidence, since a
+maximal-length sequence is 32767 whatever the tap — and missed seven, which is
+white noise on every mode where the hardware has eight colours.
+`packages/chip/test/ws-sound.test.ts` pins all eight against the table now, and
+with the generator right the noise voice's spectrum lands beside the core's: 54
+Hz against 43, 118 against 54.
+
+What is still open is a level. Our pitched voices come out 1.063× the core's and
+our noise voice 1.734×, on every mode — the first is a core normalising to its
+own, and the second is that ratio times 1.63, a disagreement about how loud this
+chip's shift register is against its wavetables. Settling it wants a hardware
 reference rather than a threshold. Level A is green there for a track and for an
 effect, so the cartridge performs its schedule exactly and the question is what
 the chip does with it. Where a core exposes scripted
