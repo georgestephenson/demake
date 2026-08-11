@@ -21,8 +21,9 @@ real emulator, compared pixel for pixel):
 
 The four are not four tools that share a repo any more: a `.dmt` says
 `music theme.mid` and `sound bounce.wav on ball hits paddle`, and `demake build`
-demakes the art, the track and the effects into one 32 KiB cartridge (doc 14
-§Sound, doc 16 §Two streams, one clock).
+demakes the art, the track and the effects into one cartridge — 32 KiB for a game
+that fits one, and the smallest banked board its console shipped for a game that
+does not (doc 14 §Sound, doc 16 §Two streams, one clock).
 
 Every domain has the same shape, which is why they share a repo: **constrain →
 fit → emit → prove it on emulated hardware**. Each reuses the layer below — a
@@ -81,9 +82,10 @@ _pool_, and it is checked rather than assumed because a fit that reached for a
 ninth level would otherwise be silently truncated.
 
 Phase 7+ then opened the **Demotic backend**: `demake build` _compiles_ a `.dmt`
-into a real 32 KiB Game Boy cartridge — SM83 machine code written for that game,
-with the art it names demade by the image pipeline on the way — and the web app
-plays it in the page. There is no fixed engine and nothing is patched: the
+into a real Game Boy cartridge — 32 KiB and mapper-less for a game that fits,
+MBC5 with its tick's steps paged for one that does not — SM83 machine code
+written for that game, with the art it names demade by the image pipeline on the
+way, and the web app plays it in the page. There is no fixed engine and nothing is patched: the
 assembler is ours and written in TypeScript (`packages/demotic/src/codegen/`), so
 the browser produces byte-identical cartridges with no toolchain. Every game in
 the example library is proven against the reference interpreter tick for tick by
@@ -919,6 +921,30 @@ terms. A game is tens of kilobytes of a megabyte P region with its sound program
 in 32 KiB of its own, so there is no budget to catch — and what the sweep would
 still have bought, that a driver's reported sizes are real, is asserted on an
 art-free build in `packages/audio/test/neogeo-driver.test.ts`.
+
+**And a game bigger than one cartridge takes a bigger one, on every family that
+had a bigger one to take** (doc 13 §Banked cartridges). `quest` — three levels, a
+boss, a secret room, four tracks and eight effects — is the example that needed
+it, and it now builds and plays on all six: a Mega Drive at 140 KiB, a Super
+Nintendo at 128 with a bank per scene, both Sega 8-bits and all three Game Boys
+at 128 with a tick's individual _steps_ paged, and an NES at 256 KiB on an MMC1.
+The Super Nintendo is the only one where a scene fits a bank; everywhere else the
+window is sixteen kilobytes and the largest scene is twenty-seven, so the unit is
+one step of one tick — which is why `TickSteps.boundary` exists and why the seam
+is _there_ rather than somewhere convenient: a step boundary is the only point
+inside a tick at which nothing is live, because the steps hand work to each other
+through the entity records and the contact bitfield and never through a register.
+
+What each console then paid is its own, and the three 16 KiB-window machines
+differ most. A Sega 8-bit pays nothing: slots 0 and 1 are 32 KiB of fixed space and
+hold everything that cannot move. A Game Boy has half that, so its tile art, its
+packed audio schedules and its instance defaults become paged _data_ units, and
+its audio driver — entered by a timer interrupt — saves and restores the running
+bank from a RAM shadow, because MBC5's register cannot be read. An NES has the
+same half and a bigger program, so it goes further still: it is the one console
+that **duplicates**, giving each bank its own copy of the level tables its steps
+read, because a paged routine cannot reach a table in another bank. Every
+cartridge that fitted a mapper-less board before is byte-identical, on all six.
 
 Still to come: the remaining Tier 2/3 consoles (each =
 a codegen backend, a ROM harness + toolchain, and a libretro core + DAC
