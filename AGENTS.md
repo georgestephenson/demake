@@ -3717,7 +3717,15 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   example game _with its art and its audio_ on every console with a driver, and
   demaking a picture is the whole `prep` tournament. That is the price of the size
   assertions — they are the only thing that would catch a cartridge overflowing —
-  so before trimming it, check that what you are removing is not the coverage. Two
+  so before trimming it, check that what you are removing is not the coverage.
+  **The size assertion is `stats.cartridge` against `BOARD`, not `stats.free`.**
+  Paging is what moved it: every family grows onto a bigger board now, so `free`
+  is measured against megabytes and a Game Boy fixture clears its kilobyte floor
+  by eight million bytes. What a regression looks like today is a fixture that
+  _takes a mapper_ — a cartridge four times the size, two extra assembly passes,
+  for a game the library says should fit — so the board it shipped on is asserted
+  exactly. Only the consoles with a fixture near an edge are listed, on `SWEEP`'s
+  own terms. Two
   consoles run the whole register-conformance battery but **one fixture** of the
   size sweep, for opposite reasons that `SWEEP` states in the file: the Mega Drive
   because a game is twenty-odd kilobytes of a half-megabyte image and there is no

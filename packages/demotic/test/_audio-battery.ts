@@ -1630,15 +1630,47 @@ export function audioSweep(target: Target): void {
      * with it.
      *
      * **Measured against the largest board the console has**, not the one the
-     * cartridge shipped on (doc 14 §Elastic cartridges) — so on the Sega 8-bits
-     * this is headroom against 48 KiB even though every fixture ships on 32, and
-     * the number it reports is larger than it used to be for that reason alone.
-     * What it still catches is the only thing it ever could: a game that has
-     * stopped fitting the console. The cliff *within* a console — crossing `$7FF0`
-     * and paying for the 48 KiB board — is a bigger file rather than a failure,
-     * and is visible in `stats.cartridge`.
+     * cartridge shipped on (doc 14 §Elastic cartridges) — which is what stopped
+     * this from being the size assertion that matters. Every console pages now, so
+     * the largest board is megabytes and every fixture clears a kilobyte by three
+     * or four orders of magnitude: a Game Boy build reports eight million bytes
+     * free. It is kept because it costs nothing and still catches the one thing it
+     * ever could — a game that has stopped fitting the console at all — but
+     * {@link BOARD} below is where a size regression is actually caught now.
      */
     const HEADROOM: Readonly<Record<string, number>> = {};
+
+    /**
+     * The board each swept fixture must still ship on.
+     *
+     * This is the size assertion, and it exists because paging took the teeth out
+     * of the one above. A fixture that grows past its console's flat board no
+     * longer *fails* — it takes a mapper and pages, which is the whole point of
+     * the banking work — so the thing to notice is that it happened at all: a
+     * cartridge four times the size, built through two extra assembly passes, for
+     * a game the library says should fit. `stats.cartridge` is the artifact's own
+     * length, so this is exact rather than a threshold.
+     *
+     * Only the consoles where a fixture is near an edge are listed, on `SWEEP`'s
+     * own terms. A Mega Drive game is twenty-odd kilobytes of a 128 KiB floor and
+     * a Neo Geo's is tens of a megabyte P region — there is no boundary near
+     * enough for a code-generator change to cross, so a number there would be a
+     * number to maintain and nothing else.
+     */
+    const BOARD: Readonly<Record<string, number>> = {
+      // 32 KiB, the mapper-less cartridge: a fixture that pages here takes MBC5.
+      gb: 0x8000,
+      gbc: 0x8000,
+      megaduck: 0x8000,
+      // The same, on the flat Sega board before slot 2 has to be paged.
+      sms: 0x8000,
+      gg: 0x8000,
+      // The whole `.nes` file rather than the program: a sixteen-byte header, an
+      // NROM-256's 32 KiB of program and 8 KiB of characters. The platformer is
+      // smaller still — it is the one fixture that fits an NROM-128 — and this is
+      // the cap the largest of the three must not cross.
+      nes: 40976,
+    };
 
     /**
      * What one of these builds is allowed to take.
@@ -1809,6 +1841,11 @@ export function audioSweep(target: Target): void {
           // Headroom, deliberately asserted: a fixture built to the last hundred
           // bytes turns the next code-generator change into a mystery.
           expect(built.stats.free).toBeGreaterThan(HEADROOM[target.id] ?? 1024);
+          // And the board it shipped on, which is the sharper half now that a
+          // fixture which outgrows one takes a bigger one rather than failing
+          // (§BOARD).
+          const board = BOARD[target.id];
+          if (board !== undefined) expect(built.stats.cartridge).toBeLessThanOrEqual(board);
           // And nothing was dropped to get there. A game that outgrows the biggest
           // board its console has loses its music rather than failing to build
           // (doc 14 §When it does not fit, the music goes first), which is the
