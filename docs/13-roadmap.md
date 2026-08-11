@@ -1756,11 +1756,62 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
 
   Three of the seven overrun a Game Boy bank, and the largest overruns it by
   two thirds. Splitting at the four routines a scene already has does not rescue
-  it — `SceneTick_1` alone is 22153 bytes — so on a 16 KiB-window console
+  it either — `SceneTick_1` alone is 22153 bytes — so on a 16 KiB-window console
   (the Game Boy, and the NES with UNROM or MMC1) the granularity has to go
-  *below* a routine: the seven tick steps would each have to become a callable
-  routine of its own, which is `emitTickSteps` in `backend.ts` and therefore all
-  thirteen backends at once.
+  *below* a routine.
+
+  **A tick's steps are the place, and they are small enough.** `TickSteps.boundary`
+  is the seam: `emitTickSteps` names each step as it reaches it, and a backend
+  that wants the cut says where "here" is. It is where the cut *has* to be, and
+  for a reason rather than for convenience — a step boundary is the only point
+  inside a tick at which nothing is live, because the steps hand work to each
+  other through the entity records and the contact bitfield and never through a
+  register. They have no choice: the interpreter they are written against has no
+  registers. The Game Boy backend implements the hook as a label, which costs no
+  bytes and makes a profile bucketed by symbol name the *step* rather than the
+  whole tick (AGENTS.md §Profile before optimising). Quest's worst scene, in
+  bytes of SM83:
+
+  | Step | controls | levelRules | integrate | collisions | tileRules | edgeRules | camera |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | scene 1 | 129 | 1692 | 2168 | 7505 | **9694** | 592 | 373 |
+  | scene 3 | 129 | 1692 | 1920 | 6081 | 8244 | 482 | 373 |
+
+  Nine and a half kilobytes is the largest unit in the whole game, against a
+  sixteen-kilobyte window — so **cutting a tick at its steps is enough**, and the
+  granularity does not have to go lower. `tick-steps.test.ts` pins both halves of
+  that: the boundaries exist in doc 14's order for every scene, and no step of
+  any example reaches a window.
+
+  **What is left is the fixed bank, and that is the real blocker now.** Whatever
+  the scenes cost, some of the cartridge cannot move: the boot, the main loop, the
+  shared helpers, the audio driver (which an interrupt enters, so it has to be
+  mapped whatever the game was doing), and every table an always-mapped address
+  reaches. For quest on the Game Boy, in bytes:
+
+  | boot + shared | helpers + audio code | level data | defaults | audio data | backdrops | tile bank |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | 2267 | 6480 | 5748 | 1716 | 13556 | 367 | 2960 |
+
+  That is 29.8 KiB of things that want to be always mapped, against a Game Boy's
+  **16 KiB** fixed bank — and 30-odd against a Sega 8-bit's 32, which is the
+  fixed half of slots 0 and 1 and leaves almost nothing spare. So neither 8-bit
+  console gets there by moving code alone. Two of those rows have to become
+  paged, and each has a catch worth knowing before it is attempted:
+
+  - **The audio schedules** (13556 bytes, the biggest single item) are read by a
+    driver an *interrupt* enters, so paging them means the driver saving the
+    current bank, mapping its own, and putting the old one back — which is
+    standard on this hardware, and needs the running bank shadowed in RAM because
+    MBC5's register cannot be read.
+  - **The level data** (5748) is read by more than one step of a scene — the
+    collisions, the tile rules and the render — so it has to be either in the
+    fixed bank or duplicated into each bank whose steps read it. Duplication is
+    about 1.4 KiB a level a bank, which is affordable and is probably the answer.
+
+  Do those two and the Game Boy's fixed bank comes to about 10 KiB of 16, which
+  is room to work in. The Sega 8-bits then need neither, because 32 KiB fixed
+  holds the lot.
 
   The Super Nintendo does not have that problem, because a LoROM bank is 32 KiB
   and its largest scene is 19766 bytes. So the ordering that followed from the
@@ -1768,10 +1819,18 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   cartridge needs no controller at all (LoROM past bank 1 is address decoding),
   and the 65816 has `jsl`/`rtl` — a real far call, where the other three CPUs
   need a trampoline in the fixed bank. **That one is done** (§Super Nintendo
-  below). The two 16 KiB-window consoles come after the tick steps are routines,
-  and the Sega 8-bits sit between the two: its window is 16 KiB as well, but
-  slots 0 and 1 are 32 KiB of *fixed* space rather than 16, so the shared half is
-  twice the size before anything has to move.
+  below).
+
+  The order for the rest follows from the fixed-bank numbers rather than from the
+  window: **the Sega 8-bits next**, because slots 0 and 1 are 32 KiB of *fixed*
+  space and hold everything that cannot move, its core already implements the
+  mapper (`@demake/sms` decodes `$FFFC`–`$FFFF` out of the RAM mirror and pages
+  all three slots), and the header hole its fixed region carries is already
+  placed a block at a time. Then the Game Boy, which has the controller and the
+  core but only 16 KiB of fixed bank, so it needs the two paging jobs above
+  first. Then the NES, which needs a mapper in `@demake/nes` as well — and which
+  is the one console where the *RAM* wall comes first, so MMC1's `$6000` work RAM
+  is worth doing on its own before a byte of code moves.
 
   What that costs, per family:
 
@@ -1816,6 +1875,19 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     (`E_GAME_TOO_LARGE`, naming `$7FF0`). Past 48 KiB the cartridge has to page
     slot 2, which inherits the same hole — and now inherits the placement with
     it.
+
+    **And this is the next console to bank**, which it was not when this entry
+    was written. What decides it is not the window — 16 KiB, the same as a Game
+    Boy's — but the *fixed* half: slots 0 and 1 come up holding banks 0 and 1 and
+    are never paged, so 32 KiB holds the boot, the helpers, the audio driver and
+    all of its schedules, the level data and the instance defaults with a little
+    to spare, where a Game Boy's 16 holds about half of them. The three other
+    pieces are already here: `@demake/sms` decodes `$FFFC`–`$FFFF` out of the RAM
+    mirror and pages all three slots, so the core needs nothing; the header hole
+    at `$7FF0` is inside the fixed region and is placed a block at a time; and the
+    seam a tick is cut at exists. What it needs is `AsmZ80` sections, a bank plan
+    over the step units, a trampoline that writes `$FFFF` before it calls, and
+    `SMS_ROM_SIZES` past 48 KiB.
   - **Game Boy** — **the cartridge half is done and the codegen half is not.**
     `stampGbHeader` takes the board from the image's own length, so 32 KiB is
     the ROM-only cartridge it always was and anything above it declares MBC5 and
@@ -1838,17 +1910,21 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     builds one and a controller nobody drives is a controller nobody is
     checking.
 
-    What is left is the emitter, and the measurement above says it cannot be a
-    bank per scene on this console: three of quest's seven scenes overrun a
-    16 KiB window and `SceneTick_1` overruns it on its own. So the Game Boy
-    waits on the tick steps becoming callable routines, which is `backend.ts`'s
-    change rather than this backend's.
+    What is left is the emitter, and what it waits on is *not* the tick-step
+    split any more — that seam exists and this backend already names it
+    (`TickSteps.boundary`), and the measurement above says nine and a half
+    kilobytes is the largest piece it has to place against a sixteen-kilobyte
+    window. What it waits on is the **fixed bank**: 16 KiB against about 30 of
+    things that want to be always mapped, so the audio schedules have to be
+    paged by the driver and the level data duplicated into the banks that read
+    it (§What is left is the fixed bank). That is this backend's own work rather
+    than `backend.ts`'s, and it comes after the Sega 8-bits, which need neither.
   - **NES** — the only family that needs a *new* mapper in the core as well:
     UNROM/MMC1 for PRG, and MMC1's `$6000` work RAM is the only way the console's
-    two kilobytes stop being the binding constraint. Its window is 16 KiB, so it
-    is behind the same tick-step split the Game Boy is — and it is the one
-    console where the RAM wall comes *first*, which means the `$6000` half is
-    worth doing on its own even before a byte of code moves.
+    two kilobytes stop being the binding constraint. Its window is 16 KiB and its
+    fixed bank is too, so it is behind the same paging work the Game Boy is — and
+    it is the one console where the RAM wall comes *first*, which means the
+    `$6000` half is worth doing on its own before a byte of code moves.
   - **Super Nintendo** — **done.** A LoROM bank is 32 KiB and quest's largest
     scene is nineteen and a half, so a bank per scene fits without the tick ever
     being split, and this console needs no controller at all: banks past the

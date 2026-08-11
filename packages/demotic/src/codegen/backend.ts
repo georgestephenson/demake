@@ -569,7 +569,26 @@ export interface TickSteps {
   edgeRules(scene: SceneCtx): void;
   /** 8. Move the camera, which is the last thing a tick does. */
   camera(scene: SceneCtx): void;
+  /**
+   * Called before each step, naming it — for a backend that wants the seam.
+   *
+   * Optional, and doing nothing is the normal answer. What it exists for is that
+   * a step boundary is the only place inside a tick where *nothing* is live: the
+   * steps hand work to each other through the entity records and the contact
+   * bitfield, never through a register, because the interpreter they are written
+   * against has no registers. So a backend that needs to cut a scene's tick into
+   * pieces — one whose bank is smaller than a scene (doc 13 §Banked cartridges) —
+   * can only cut it here, and this is the hook that says where "here" is.
+   *
+   * The names are the step's own, so a profile bucketed by symbol names the step
+   * rather than the whole tick.
+   */
+  boundary?(step: TickStep, scene: SceneCtx): void;
 }
+
+/** The steps of a tick, named — the argument {@link TickSteps.boundary} takes. */
+export type TickStep =
+  "controls" | "levelRules" | "integrate" | "collisions" | "tileRules" | "edgeRules" | "camera";
 
 /**
  * Emit one scene's tick in the order the interpreter runs it.
@@ -580,13 +599,28 @@ export interface TickSteps {
  * order" stops being a claim about two files and becomes a property of one.
  */
 export function emitTickSteps(steps: TickSteps, scene: SceneCtx, level: LevelData | undefined) {
+  const at = (step: TickStep): void => {
+    steps.boundary?.(step, scene);
+  };
+  at("controls");
   steps.controls(scene);
+  at("levelRules");
   steps.levelRules(scene);
+  at("integrate");
   steps.integrate(scene);
+  at("collisions");
+  // The two contact-set steps ride with the collisions rather than being
+  // boundaries of their own: they are a handful of instructions each, and the
+  // history they keep is only consistent either side of the pair.
   steps.beginContacts();
   steps.collisions(scene);
   steps.endContacts();
-  if (level) steps.tileRules(scene, level);
+  if (level) {
+    at("tileRules");
+    steps.tileRules(scene, level);
+  }
+  at("edgeRules");
   steps.edgeRules(scene);
+  at("camera");
   steps.camera(scene);
 }

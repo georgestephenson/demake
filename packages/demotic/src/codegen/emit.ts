@@ -18,7 +18,7 @@ import type { InstanceDef, RuleDef } from "../program.js";
 import type { Ctx } from "./ctx.js";
 import { emitTest, propOffset, type Binding } from "./expr.js";
 import { isMutable } from "./analyze.js";
-import { emitTickSteps, type TickSteps } from "./backend.js";
+import { emitTickSteps, type TickStep, type TickSteps } from "./backend.js";
 import {
   artKey,
   emitInstanceDefaults,
@@ -922,7 +922,18 @@ function tickSteps(ctx: Ctx): TickSteps {
     tileRules: (scene, level) => emitTileRules(ctx, scene, level),
     edgeRules: (scene) => emitEdgeRules(ctx, scene),
     camera: (scene) => emitCamera(ctx, scene),
+    // A label and nothing else, which costs no bytes and buys two things. A
+    // profile bucketed by symbol names the *step* rather than the whole tick,
+    // which is the workflow AGENTS.md §Profile before optimising describes and
+    // this is the console it describes it on. And it is the seam a banked build
+    // has to cut at, measured rather than assumed (doc 13 §Banked cartridges).
+    boundary: (step, scene) => asm.label(stepLabel(scene.index, step)),
   };
+}
+
+/** Where one of a scene's tick steps begins. */
+export function stepLabel(scene: number, step: TickStep): string {
+  return `Step_${scene}_${step}`;
 }
 
 function emitSceneTick(ctx: Ctx, scene: SceneCtx, level: LevelData | undefined): void {
