@@ -48,12 +48,12 @@
  * budget of sixteen rather than eight.
  */
 
-import { Asm6280, abs, absX, imm, indY, label, type Ref } from "@demake/core";
+import { Asm6280, AsmError, abs, absX, imm, indY, label, type Ref } from "@demake/core";
 import { AUDIO_STOP, type PceGameAudio } from "@demake/audio";
 
 import type { InstanceDef } from "../../program.js";
 import { isMutable } from "../analyze.js";
-import { emitTickSteps, type TickSteps } from "../backend.js";
+import { emitOneTickStep, emitTickSteps, tickStepNames, type TickSteps } from "../backend.js";
 import { PROPS, W } from "../layout.js";
 import { propOffset } from "../mos/expr.js";
 import {
@@ -92,7 +92,7 @@ import {
   type SceneCtx,
 } from "../shape.js";
 
-import type { PceCtx } from "./ctx.js";
+import { PAGED_MPR, PCE_WINDOW_SIZE, type PceCtx } from "./ctx.js";
 
 /**
  * Hardware addresses, as a program sees them once its `tam`s have run.
@@ -239,6 +239,22 @@ export interface PceEmitOptions {
   scenePalettes?: ReadonlyMap<string, { art: Uint8Array; font: Uint8Array }>;
   /** The character bank: the built-in patterns, then the art's. */
   bank?: Uint8Array;
+  /**
+   * Measure a banked build without placing it.
+   *
+   * The measuring pass: the same instructions a banked one emits, laid end to
+   * end, so `pce.ts` can read each unit's length off and plan the windows from
+   * numbers rather than an estimate.
+   */
+  split?: boolean;
+  /**
+   * Where each unit goes, for a game that outgrew the 48 KiB window.
+   *
+   * Absent for a game that fits, and then this emitter does exactly what it
+   * always did — one section, no mapper writes, and a cartridge byte-identical
+   * to the one it built before paging existed.
+   */
+  banks?: PceBankPlan;
   /** The object patterns art contributed, already 16×16. */
   patterns?: Uint8Array;
   /** The object layer's colour table, and the palette a level's tiles use. */
@@ -271,22 +287,104 @@ function batWord(tile: number, palette: number): number {
 function emitSceneDispatch(ctx: PceCtx, labels: readonly string[]): void {
   const { asm, layout } = ctx;
   if (labels.length === 1) {
-    asm.jmp(labels[0] as string);
+    ctx.jumpUnit(labels[0] as string);
     return;
   }
   asm.lda(mem(layout.scene));
+  const paged = labels.some((name) => ctx.banks.has(name));
   for (const [index, target] of labels.entries()) {
     if (index === labels.length - 1) {
-      asm.jmp(target);
+      ctx.jumpUnit(target);
       break;
     }
     asm.cmp(imm(index));
-    ctx.far("eq", target);
+    if (!paged) {
+      ctx.far("eq", target);
+      continue;
+    }
+    // With paging there are two mapper writes to reach as well as the jump, so
+    // the condition is inverted over the group rather than taken to the target —
+    // and the comparison's own result is reloaded, because `enter` uses A.
+    const over = ctx.unique("dispatch");
+    ctx.far("ne", over);
+    ctx.jumpUnit(target);
+    asm.label(over);
+    asm.lda(mem(layout.scene));
   }
 }
 
-/** Emit the whole program. */
-export function emitProgram(ctx: PceCtx, options: PceEmitOptions = {}): void {
+/**
+ * The unit carrying the character bank, and the unit carrying the schedules.
+ *
+ * Both are data rather than routines and both are in the paged half, for the
+ * Game Boy's two reasons one console along. The **characters** — the tile bank,
+ * the object patterns, the HUD's glyphs and the sprite palette — the boot streams
+ * into video RAM with two `tia`s and nothing reads again, so they cost one
+ * `enter` and no more. The **schedules** are read by `AudioService`, which this
+ * console runs from the *main loop* rather than from an interrupt, so they cost
+ * one `enter` as well: there is no bank to save and put back, which is the whole
+ * of what a Game Boy's timer-driven driver needs a shadow for.
+ *
+ * Between them they are eleven of the thirty-six kilobytes a demade game would
+ * otherwise want always mapped, against a pre-boot fixed half of twenty-four.
+ */
+export const TILE_BANK_UNIT = "TileBank";
+export const AUDIO_DATA_UNIT = "AudioData";
+
+/**
+ * Every routine a banked build places, in the order it emits them.
+ *
+ * A scene's routines are too big for the window this console can spare, so the
+ * unit is smaller than a scene: each of its tick's steps, plus the reset, the
+ * camera and the render — the Sega's split and the NES's, on a mapper that is
+ * cheaper than either.
+ *
+ * What is *not* here is any data. This console's fixed half is twenty-four
+ * kilobytes of program plus the boot bank, against a Game Boy's sixteen and an
+ * NES's sixteen — so the level tables, the packed schedules, the instance
+ * defaults and the character bank all stay mapped, and none of the three data
+ * mechanisms those two consoles needed exists here.
+ */
+function unitNames(
+  scenes: readonly SceneCtx[],
+  levelFor: ReadonlyMap<number, LevelData>,
+  options: PceEmitOptions,
+): string[] {
+  const names: string[] = [];
+  for (const scene of scenes) {
+    names.push(...tickStepNames(scene, levelFor.get(scene.index)));
+    names.push(`SceneReset_${scene.index}`);
+    names.push(`SceneCamera_${scene.index}`);
+    names.push(`SceneRender_${scene.index}`);
+  }
+  if (options.audio) names.push(AUDIO_DATA_UNIT);
+  names.push(TILE_BANK_UNIT);
+  return names;
+}
+
+/** What a pass over the program measured. */
+export interface EmittedPceProgram {
+  /** How long each pageable unit came out, by name. Empty unless split. */
+  units: ReadonlyMap<string, number>;
+  /** Bytes the fixed half took: everything that is not a unit. */
+  fixed: number;
+}
+
+/** Which window each of a program's units goes in. */
+export interface PceBankPlan {
+  /** The units in each paged window, in the order they are emitted. */
+  banks: readonly (readonly string[])[];
+  /** Which cartridge page each unit's window starts at, by unit name. */
+  bankOf: ReadonlyMap<string, number>;
+}
+
+/**
+ * Emit the whole program, and report what a bank plan would need to know.
+ *
+ * With no plan and no split this is exactly the emitter it always was: one
+ * section, one 48 KiB window, the same bytes.
+ */
+export function emitProgram(ctx: PceCtx, options: PceEmitOptions = {}): EmittedPceProgram {
   const { asm, program } = ctx;
   const scenes = sceneContexts(ctx);
   const levels = collectLevels(program.scenes);
@@ -296,6 +394,88 @@ export function emitProgram(ctx: PceCtx, options: PceEmitOptions = {}): void {
     if (found) levelFor.set(scene.index, found);
   }
 
+  const units = new Map<string, number>();
+  const unit = (name: string, emit: () => void): void => {
+    const at = asm.length;
+    emit();
+    units.set(name, asm.length - at);
+  };
+  /** The characters, the object patterns, the HUD's glyphs and their palette. */
+  const emitCharacters = (): void => {
+    asm.label("Chars");
+    asm.bytes(options.bank ?? new Uint8Array(0));
+    // The object patterns and the HUD's glyph patterns, adjacent — one upload
+    // covers both, and the glyphs are only here at all if a scrolling scene drew
+    // one (`needGlyphPattern`).
+    asm.label("Patterns");
+    asm.bytes(options.patterns ?? new Uint8Array(0));
+    emitGlyphPatterns(ctx);
+    asm.label("SpritePalette");
+    asm.bytes(options.spritePalette ?? defaultPalette(1));
+  };
+
+  /** One scene's demade BAT, which its renderer is the only reader of. */
+  const emitBackdrop = (scene: SceneCtx): void => {
+    const art = options.backdrops?.get(scene.def.name);
+    if (!art) return;
+    asm.label(backdropLabel(scene));
+    asm.bytes(art.map);
+  };
+
+  /** Emit whichever routine or block a unit's name refers to. */
+  const emitUnit = (name: string): void => {
+    if (name === TILE_BANK_UNIT) {
+      unit(name, emitCharacters);
+      return;
+    }
+    if (name === AUDIO_DATA_UNIT) {
+      unit(name, () => options.audio?.emitData(asm));
+      return;
+    }
+    const scene = scenes[Number(name.split("_")[1])] as SceneCtx;
+    const level = levelFor.get(scene.index);
+    if (name.startsWith("SceneReset_")) unit(name, () => emitSceneReset(ctx, scene));
+    else if (name.startsWith("SceneCamera_")) unit(name, () => emitSceneCamera(ctx, scene));
+    else if (name.startsWith("SceneRender_")) {
+      // The scene's demade BAT rides with its renderer rather than being a unit
+      // of its own, because the renderer is the only thing that reads it and a
+      // window is the unit of *mapping*: two units that have to be visible at
+      // once cannot be planned independently.
+      unit(name, () => {
+        emitSceneRender(ctx, scene, level, options);
+        emitBackdrop(scene);
+      });
+    } else unit(name, () => emitTickStepBody(ctx, scene, level, name));
+  };
+
+  const plan = options.banks;
+  const split = options.split === true || plan !== undefined;
+  // On the measuring pass there is no plan yet, so the context is told which
+  // routines *will* be paged rather than where: `ctx.enter` emits the mapper
+  // writes for anything it names, and the number does not change the length.
+  if (split && !plan) {
+    for (const name of unitNames(scenes, levelFor, options)) ctx.banks.set(name, FIRST_PAGED_PAGE);
+  }
+  if (split) {
+    asm.section(CODE_ORIGIN);
+    if (plan) {
+      for (const bank of plan.banks) {
+        const start = asm.length;
+        for (const name of bank) emitUnit(name);
+        const used = asm.length - start;
+        if (used > PCE_WINDOW_SIZE) {
+          throw new AsmError(`a paged window holds ${used} bytes of a possible ${PCE_WINDOW_SIZE}`);
+        }
+        asm.ds(PCE_WINDOW_SIZE - used, 0xff);
+        asm.section(CODE_ORIGIN);
+      }
+    } else {
+      for (const name of unitNames(scenes, levelFor, options)) emitUnit(name);
+    }
+    // The fixed half begins where the paged window ends.
+    asm.section(FIXED_ORIGIN);
+  }
+
   emitInterrupts(ctx, options);
   emitMainLoop(ctx, options);
   emitInput(ctx);
@@ -303,6 +483,10 @@ export function emitProgram(ctx: PceCtx, options: PceEmitOptions = {}): void {
   emitSceneChange(ctx, scenes);
 
   for (const scene of scenes) {
+    if (split) {
+      emitSceneTickCalls(ctx, scene, levelFor.get(scene.index));
+      continue;
+    }
     emitSceneTick(ctx, scene, levelFor.get(scene.index));
     emitSceneReset(ctx, scene);
     emitSceneCamera(ctx, scene);
@@ -335,11 +519,8 @@ export function emitProgram(ctx: PceCtx, options: PceEmitOptions = {}): void {
   emitInstanceDefaults(asm, program, PROPS, ctx.layout.entitySizes);
 
   for (const scene of scenes) {
-    const art = options.backdrops?.get(scene.def.name);
-    if (art) {
-      asm.label(backdropLabel(scene));
-      asm.bytes(art.map);
-    }
+    // Unless it rode with the renderer that reads it (§emitUnit).
+    if (!units.has(`SceneRender_${scene.index}`)) emitBackdrop(scene);
     const palettes = options.scenePalettes?.get(scene.def.name);
     asm.label(scenePaletteLabel(scene));
     asm.bytes(palettes?.art ?? options.levelPalette ?? defaultPalette(1));
@@ -347,16 +528,7 @@ export function emitProgram(ctx: PceCtx, options: PceEmitOptions = {}): void {
     asm.bytes(palettes?.font ?? options.fontPalette ?? defaultFont());
   }
 
-  asm.label("Chars");
-  asm.bytes(options.bank ?? new Uint8Array(0));
-  // The object patterns and the HUD's glyph patterns, adjacent — one upload
-  // covers both, and the glyphs are only here at all if a scrolling scene drew
-  // one (`needGlyphPattern`).
-  asm.label("Patterns");
-  asm.bytes(options.patterns ?? new Uint8Array(0));
-  emitGlyphPatterns(ctx);
-  asm.label("SpritePalette");
-  asm.bytes(options.spritePalette ?? defaultPalette(1));
+  if (!units.has(TILE_BANK_UNIT)) emitCharacters();
 
   if (options.audio) {
     if (program.tracks.length > 0) {
@@ -369,16 +541,46 @@ export function emitProgram(ctx: PceCtx, options: PceEmitOptions = {}): void {
         asm.db(track < 0 ? AUDIO_STOP : track + 1);
       }
     }
-    options.audio.emitData(asm);
+    if (!units.has(AUDIO_DATA_UNIT)) options.audio.emitData(asm);
   }
 
   // The boot stub, in the one bank reset maps: the top 8 KiB of the image, which
   // packs into cartridge bank 0 (`asm/pce-cart.ts`). Everything above is the
   // program, so this is where the one overflow this backend finds itself is.
   ctx.dataEnd = asm.pc;
-  if (asm.pc > BOOT_ORIGIN) throw new WindowOverflow(asm.pc - CODE_ORIGIN);
+  if (asm.pc > BOOT_ORIGIN) throw new WindowOverflow(asm.pc - (split ? FIXED_ORIGIN : CODE_ORIGIN));
   asm.padTo(BOOT_ORIGIN, 0xff);
   emitReset(ctx, options);
+
+  // What the fixed half took is everything the paged section did not, and the
+  // paged section is whole windows by construction — each is padded out.
+  let paged = 0;
+  if (plan) paged = plan.banks.length * PCE_WINDOW_SIZE;
+  else if (split) for (const bytes of units.values()) paged += bytes;
+  return { units, fixed: asm.length - paged };
+}
+
+/** The sequence that runs a scene's steps, which stays in the fixed half. */
+function emitSceneTickCalls(ctx: PceCtx, scene: SceneCtx, level: LevelData | undefined): void {
+  const { asm } = ctx;
+  asm.label(`SceneTick_${scene.index}`);
+  for (const step of tickStepNames(scene, level)) ctx.callUnit(step);
+  asm.jmp("TickDone");
+}
+
+/** One step of a tick, as a routine of its own — which is what a banked build places. */
+function emitTickStepBody(
+  ctx: PceCtx,
+  scene: SceneCtx,
+  level: LevelData | undefined,
+  wanted: string,
+): void {
+  const { asm } = ctx;
+  const emitted = emitOneTickStep(tickSteps(ctx), scene, level, wanted, (name: string) =>
+    asm.label(name),
+  );
+  if (!emitted) throw new AsmError(`'${wanted}' is not a step this scene runs`);
+  asm.rts();
 }
 
 /**
@@ -404,6 +606,24 @@ export const BOOT_ORIGIN = 0xe000;
 
 /** Where the program is assembled: the first byte a `tam` can reach. */
 export const CODE_ORIGIN = 0x4000;
+
+/**
+ * The first cartridge page a banked build's window may be pointed at.
+ *
+ * Four, because the fixed half is four pages and they are the first four: bank 0
+ * is the boot, which reset maps at `$E000`, and banks 1–3 are `$8000`–`$DFFF`,
+ * which the boot's own `tam`s put in `MPR4`–`MPR6`. Everything above is a window.
+ */
+export const FIRST_PAGED_PAGE = 4;
+
+/**
+ * Where the fixed half is assembled: above the window a banked build pages.
+ *
+ * `$8000`, so what stays mapped is `MPR4` through `MPR7` — twenty-four kilobytes
+ * of program and the boot bank. A game that fits the whole window is assembled at
+ * {@link CODE_ORIGIN} and never sees this.
+ */
+export const FIXED_ORIGIN = CODE_ORIGIN + PCE_WINDOW_SIZE;
 
 /** A colour table of `count` sub-palettes, all black — a build with no art. */
 function defaultPalette(count: number): Uint8Array {
@@ -478,8 +698,15 @@ function emitReset(ctx: PceCtx, options: PceEmitOptions): void {
   asm.tam(Asm6280.mprBit(1));
   asm.ldx(imm(0xff));
   asm.txs();
-  for (let page = 2; page <= 6; page += 1) {
-    asm.lda(imm(page - 1));
+  // Flat, the five program pages are cartridge banks 1–5 in order. Banked, the
+  // bottom two are the *window* and belong to whatever routine is running, so
+  // only `MPR4`–`MPR6` are mapped here — cartridge banks 1–3, because the paged
+  // windows are numbered after them (§{@link FIRST_PAGED_PAGE}). The window is
+  // pointed somewhere by the first `ctx.enter` any dispatch reaches, and nothing
+  // reads it before then.
+  const first = ctx.banks.size > 0 ? PAGED_MPR + 2 : 2;
+  for (let page = first; page <= 6; page += 1) {
+    asm.lda(imm(page - first + 1));
     asm.tam(Asm6280.mprBit(page));
   }
   // Every interrupt masked but the ones this cartridge answers: the video chip's
@@ -523,6 +750,10 @@ function emitReset(ctx: PceCtx, options: PceEmitOptions): void {
   // The character bank and the sprite patterns, one instruction each. The
   // destination is the data port's two bytes and the source walks, which is what
   // `tia` is for — and it is why nothing here is a loop.
+  // Banked, the characters are in a window of their own and the boot points at
+  // it — once, because both uploads and the sprite palette are in the same unit
+  // and nothing reads any of it again (§{@link TILE_BANK_UNIT}).
+  ctx.enter(TILE_BANK_UNIT);
   const bankBytes = options.bank?.length ?? 0;
   if (bankBytes > 0) {
     vdcAddress(ctx, CHAR_BASE * CHAR_WORDS);
@@ -762,7 +993,14 @@ function emitMainLoop(ctx: PceCtx, options: PceEmitOptions): void {
   // After the tick, so an effect a rule asked for is heard this pass rather than
   // next; before the frame is built, so the ticks the timer counted are performed
   // while the picture is still showing the last one.
-  if (options.audio) asm.jsr(options.audio.routines.service);
+  // Banked, the schedules are in a window of their own — and one `enter` is the
+  // whole cost, because this console performs its ticks *here* rather than in the
+  // handler that counts them, so nothing can arrive with another window mapped
+  // (§{@link AUDIO_DATA_UNIT}).
+  if (options.audio) {
+    ctx.enter(AUDIO_DATA_UNIT);
+    asm.jsr(options.audio.routines.service);
+  }
   asm.jsr("BuildFrame");
   // The objects go to video RAM here, in active display, because the chip fetches
   // them at the *top* of the next blank — so this is what lands them on the same

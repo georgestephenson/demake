@@ -31,6 +31,7 @@ import {
   mdTarget,
   ndsTarget,
   nesTarget,
+  pceTarget,
   smsTarget,
   snesTarget,
   megaduckTarget,
@@ -339,7 +340,7 @@ describe("ROM conformance across the example library", async () => {
    * reachable instruction stream is *executed*, so getting it wrong is not a
    * wrong number but a game that runs its own constants.
    */
-  for (const target of [gbaTarget, ndsTarget]) {
+  for (const target of [gbaTarget, ndsTarget, pceTarget]) {
     it(`matches the interpreter for the quest fixture on ${target.console}`, async () => {
       const program = build(gameSource("quest"), questLevels(), target.console);
       const frames = tape(QUEST_TAPE);
