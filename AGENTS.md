@@ -925,15 +925,26 @@ art-free build in `packages/audio/test/neogeo-driver.test.ts`.
 **And a game bigger than one cartridge takes a bigger one, on every family that
 had a bigger one to take** (doc 13 §Banked cartridges). `quest` — three levels, a
 boss, a secret room, four tracks and eight effects — is the example that needed
-it, and it now builds and plays on all six: a Mega Drive at 140 KiB, a Super
-Nintendo at 128 with a bank per scene, both Sega 8-bits and all three Game Boys
-at 128 with a tick's individual _steps_ paged, and an NES at 256 KiB on an MMC1.
-The Super Nintendo is the only one where a scene fits a bank; everywhere else the
-window is sixteen kilobytes and the largest scene is twenty-seven, so the unit is
-one step of one tick — which is why `TickSteps.boundary` exists and why the seam
-is _there_ rather than somewhere convenient: a step boundary is the only point
-inside a tick at which nothing is live, because the steps hand work to each other
-through the entity records and the contact bitfield and never through a register.
+it, and it now builds and plays on **fourteen of the sixteen consoles that build
+games**: a Mega Drive at 140 KiB, a Super Nintendo at 128 with a bank per scene,
+both Sega 8-bits and all three Game Boys at 128 with a tick's individual _steps_
+paged, an NES at 256 KiB on an MMC1, a PC Engine at 256 on a HuCard, and the
+Neo Geo, the Neo Geo Pocket Color, the Virtual Boy and both ARM handhelds on
+boards big enough to need no paging at all. The Super Nintendo is the only paging
+console where a scene fits a bank; everywhere else the window is sixteen kilobytes
+and the largest scene is twenty-seven, so the unit is one step of one tick — which
+is why `TickSteps.boundary` exists and why the seam is _there_ rather than
+somewhere convenient: a step boundary is the only point inside a tick at which
+nothing is live, because the steps hand work to each other through the entity
+records and the contact bitfield and never through a register.
+
+**Two consoles are left and they are one family**, the WonderSwans, and what
+stops them is neither a mapper nor a board: segments `$8`–`$F` are all cartridge
+and all mapped from reset, so a 512 KiB image is entirely addressable — what a
+game outgrows is a **segment**, and this backend reads a cartridge table with a
+`cs:` override. Doc 13 §Banked cartridges has the measurements and the shape of
+the answer, which is the Super Nintendo's far calls plus the NES's per-segment
+duplication.
 
 What each console then paid is its own, and the three 16 KiB-window machines
 differ most. A Sega 8-bit pays nothing: slots 0 and 1 are 32 KiB of fixed space and
@@ -943,8 +954,11 @@ its audio driver — entered by a timer interrupt — saves and restores the run
 bank from a RAM shadow, because MBC5's register cannot be read. An NES has the
 same half and a bigger program, so it goes further still: it is the one console
 that **duplicates**, giving each bank its own copy of the level tables its steps
-read, because a paged routine cannot reach a table in another bank. Every
-cartridge that fitted a mapper-less board before is byte-identical, on all six.
+read, because a paged routine cannot reach a table in another bank. And a PC
+Engine pays least of all, because its mapper is in the CPU — `lda` and `tam`
+against MMC1's five serial stores — and keeps `$8000`–`$FFFF` mapped, so only its
+character bank and its schedules go up. Every cartridge that fitted a
+mapper-less board before is byte-identical, on all seven.
 
 Still to come: the remaining Tier 2/3 consoles (each =
 a codegen backend, a ROM harness + toolchain, and a libretro core + DAC

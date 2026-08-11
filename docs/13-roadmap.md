@@ -1718,10 +1718,14 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   Nintendo** — 128 KiB, a bank per scene — **on both Sega 8-bits**, where the
   unit is finer still: 128 KiB with a tick's individual steps paged through slot
   2 — **on all three Game Boys**, which is the same unit again on the hardest
-  board in the set, and **on the NES**, which is the same unit a third time and
-  the only console that had to duplicate a table to manage it. All six families
-  are traced tick for tick against the interpreter by `rom.test.ts`, and **the
-  list is finished**:
+  board in the set, **on the NES**, which is the same unit a third time and the
+  only console that had to duplicate a table to manage it, and **on the PC
+  Engine**, which is the same unit a fourth time on the cheapest mapper in the
+  set. Every one is traced tick for tick against the interpreter by
+  `rom.test.ts`.
+
+  **Fourteen of the sixteen consoles that build games now build this one**, and
+  the two that do not are one family:
 
   | Console | Walls it hit | Result |
   | --- | --- | --- |
@@ -1729,6 +1733,19 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   | ~~Master System / Game Gear~~ | ~~cartridge~~ | 128 KiB, of 512 |
   | ~~NES~~ | ~~work RAM, page zero, then the fixed bank~~ | 256 KiB, of 256 |
   | ~~Super Nintendo~~ | ~~direct page, then cartridge~~ | 128 KiB, of 4 MiB |
+  | ~~PC Engine~~ | ~~the 48 KiB window~~ | 256 KiB, of 1 MiB |
+  | ~~Game Boy Advance / Nintendo DS~~ | ~~the literal pool~~ | 224 / 256 KiB |
+  | WonderSwan Color | the 64 KiB segment | 97 KiB of code and data |
+  | WonderSwan | work RAM, then the same | 3957 B of heap, 2048 B |
+
+  The ARM handhelds are in that list and were never a *cartridge* problem: a Game
+  Boy Advance has thirty-two megabytes and a Nintendo DS four, so neither pages
+  anything and neither will. What stopped `quest` there was the **literal pool** —
+  a 32-bit constant is loaded PC-relative from a pool within 4 KiB, a backend
+  flushes at safe points it chooses, and this game has a stretch of one rule body
+  4160 bytes long. The assembler places a pool itself now when the next
+  instruction would put a queued load out of reach (`asm/arm.ts` §rescuePool), so
+  the guess is kept for placement and cannot fail.
 
   The NES had three walls where every other console had one or two, and the third
   was only ever visible once the first two were down — which is the argument for
@@ -2122,6 +2139,50 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     happens: `MD_ROM_SIZES` runs 128 KiB to 4 MiB and the build takes the
     smallest board that holds the game. Past 4 MiB it wants paging through
     `$A130F1`, and says so.
+  - **PC Engine** — **done**, and the mapper cost least of any in the set. It is
+    *in the CPU*, so a switch is `lda` and `tam` against MMC1's five serial
+    stores; the window is two of this mapper's 8 KiB pages, because one page is
+    smaller than a tick's largest step. What stays mapped is `$8000`–`$FFFF`:
+    twenty-four kilobytes of program and the boot bank, which is half again what
+    a Game Boy or an NES keeps — but not enough for a game's data too, so the
+    character bank and the packed schedules are paged units. Both cost one
+    `enter` and no more, and the second is why: this console performs its audio
+    ticks in the **main loop** rather than in the interrupt that counts them, so
+    unlike a Game Boy's there is no bank to save and put back. quest ships on a
+    256 KiB HuCard with 26 KiB of fixed half used.
+  - **WonderSwan / Color** — **the one family left, and it is not a mapper
+    problem.** Segments `$8`–`$F` are all cartridge and all mapped at once —
+    `BANK_LINEAR` comes up all-ones, so a 512 KiB image is *entirely* addressable
+    from reset with no banking register ever written (`@demake/wsc`
+    §romAddress). What a game outgrows is a **segment**: 64 KiB, and quest's code
+    alone is 77 of them before its art. So this console wants the Super Nintendo's
+    answer — far calls across segments — rather than the Sega's.
+
+    What makes it more than the Super Nintendo's is the **`cs:` override**. This
+    backend reads a table in the cartridge with a one-byte code-segment prefix and
+    a variable in RAM with none (`codegen/wsc/val.ts` §source/dest), so a routine
+    running in segment `$E` reads its constant pool, its level grid and its
+    instance defaults out of segment `$E` — which is where they are not. There is
+    no spare segment register to point at the data instead: this CPU has four, and
+    a demade cartridge already spends `DS`, `ES` and `SS` on RAM. `ES` looks free
+    because it only has to be zero for a block copy, and it is not: the collision
+    box is staged with `rep movsw`, which is the hottest routine in the tick.
+
+    So the answer is the NES's, one machine along: **each code segment carries the
+    tables its own code reads.** `levelCopy` is already generic (`shape.ts`
+    §LevelData.suffix) and per-scene defaults already exist; what is new is the
+    **constant pool**, which is `CtxBase`'s and emitted once. A per-segment pool
+    wants a hook there rather than a redesign — the map is already keyed by value,
+    so emitting it again under a suffix is the same shape `levelCopy` has.
+
+    Two other things are wanted before it will build, and neither is the backend's:
+    `Asm/V30MZ` has `jmpFar` and needs **`callFar` and `retf`** (with entries in
+    both of that encoder's oracles — the hand-read battery and the NASM
+    differential one), and the **mono machine hits a RAM wall first**: 3957 bytes
+    of heap against 2048, because that console has sixteen kilobytes with its tile
+    bank in the top half. Its cartridges can carry SRAM at segment `$1`, which is
+    the NES's `$6000` story with a different port — and it is the same shape
+    `MemoryPlan.heapSpill` already describes.
 
   **The sizing half of that mechanism is built** (doc 14 §Elastic cartridges).
   Every console's cartridge wrapper declares the boards it came on and every
