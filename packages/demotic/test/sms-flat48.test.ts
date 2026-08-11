@@ -146,8 +146,23 @@ describe("a flat 48 KiB Sega cartridge", () => {
     );
   }, 120_000);
 
-  it("refuses a game whose code runs past the header, and names why", async () => {
+  /*
+   * A game whose code runs past the header used to be refused here, and is not
+   * any more: past 48 KiB the cartridge pages slot 2 (doc 13 §Banked cartridges),
+   * so what it gets is a bigger board rather than an error. What this generated
+   * game hits instead is the wall paging *does* have, and it is the interesting
+   * one — thirty-six rocks with a collision rule each are one scene's collision
+   * step, unrolled, and a step is the unit this console pages. Twenty kilobytes
+   * of it will not go in a sixteen-kilobyte window however many banks there are.
+   *
+   * That is a fair thing for this fixture to prove and a silly shape for a game:
+   * the example library's worst real step is a third of it, which is why `quest`
+   * pages perfectly well (`rom.test.ts`).
+   */
+  it("refuses a single tick step that outgrows the window, and names it", async () => {
     const program = compile(source(36), { profile: getProfile("sms") });
-    await expect(buildGame(program, { title: "TOOBIG", assets })).rejects.toThrow(/past \$7FF0/);
-  });
+    await expect(buildGame(program, { title: "TOOBIG", assets })).rejects.toThrow(
+      /Step_0_collisions compiles to \d+ bytes|'Step_0_collisions'/,
+    );
+  }, 60_000);
 });

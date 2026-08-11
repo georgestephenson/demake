@@ -56,6 +56,54 @@ export const SMS_ROM_SIZE = 0x8000;
  */
 export const SMS_FLAT_ROM_SIZES: readonly number[] = [0x8000, 0xc000];
 
+/** Bytes of one bank, which is also the size of each of the mapper's three slots. */
+export const SMS_BANK_SIZE = 0x4000;
+
+/**
+ * Where the switchable window begins, and which register moves it.
+ *
+ * Slots 0 and 1 come up holding banks 0 and 1 and a demade cartridge never moves
+ * them: the boot, the interrupt vectors, the shared helpers, the audio driver and
+ * every table an always-mapped address reaches are down there, and a program that
+ * paged its own interrupt handler out would be one nothing could recover from.
+ * Slot 2 is the one that moves, so a banked build's scenes live at `$8000` and
+ * reaching one means writing its bank to `$FFFF` first.
+ *
+ * The registers are at the top of the address space and are *decoded out of the
+ * RAM mirror* — `$FFFC`–`$FFFF` is `$DFFC`–`$DFFF` in real RAM — so they read
+ * back as ordinary memory and are not the allocator's to hand out.
+ */
+export const SMS_SLOT2_BASE = 0x8000;
+
+/** The mapper register that pages slot 2. */
+export const SMS_SLOT2_BANK = 0xffff;
+
+/**
+ * Cartridge sizes, smallest first — the flat two, then the paged ones.
+ *
+ * Past 48 KiB a cartridge is genuinely banked and the sizes are powers of two,
+ * because the size nibble is a code and a mask ROM was a power of two. Five
+ * hundred and twelve kilobytes is where this list stops: the mapper's bank
+ * register is eight bits, so it reaches further, but nothing above 512 KiB is a
+ * size this header's nibble can express without the codes that mean "the same
+ * board again".
+ */
+export const SMS_ROM_SIZES: readonly number[] = [
+  0x8000, 0xc000, 0x10000, 0x20000, 0x40000, 0x80000,
+];
+
+/**
+ * The smallest cartridge that holds `banks` banks, or `undefined` for too many.
+ *
+ * Skips the 48 KiB board for anything that needs paging at all: three banks is a
+ * *flat* cartridge by definition — slots 0, 1 and 2 holding banks 0, 1 and 2 —
+ * so a game that pages cannot be one, and the next size up is 64 KiB.
+ */
+export function smsRomSizeFor(banks: number): number | undefined {
+  const wanted = banks * SMS_BANK_SIZE;
+  return SMS_ROM_SIZES.find((size) => size >= wanted && (banks <= 3 || size > 0xc000));
+}
+
 /** Where the header sits inside the image. */
 export const SMS_HEADER_OFFSET = 0x7ff0;
 
@@ -105,11 +153,18 @@ const REGION_CODE: Readonly<Record<SegaRegion, number>> = {
 /**
  * The size nibble, which is a code and not a number of kilobytes.
  *
- * Only the sizes this builder can produce are listed: the codes run on past
- * these for banked cartridges, and a builder that cannot make one has no
- * business naming them.
+ * The codes wrap: `$0` is 256 KiB and `$1` is 512, which sit *above* `$F`'s 128
+ * rather than below it, so this is a table rather than arithmetic. Only the
+ * sizes this builder can produce are listed, which is {@link SMS_ROM_SIZES}.
  */
-const SIZE_CODES: Readonly<Record<number, number>> = { 0x8000: 0x0c, 0xc000: 0x0d };
+const SIZE_CODES: Readonly<Record<number, number>> = {
+  0x8000: 0x0c,
+  0xc000: 0x0d,
+  0x10000: 0x0e,
+  0x20000: 0x0f,
+  0x40000: 0x00,
+  0x80000: 0x01,
+};
 
 /** What a cartridge declares about itself. */
 export interface SegaHeaderOptions {
@@ -146,21 +201,25 @@ export function segaChecksum(rom: Uint8Array): number {
 }
 
 /**
- * Stamp the header into a flat image and return the finished cartridge.
+ * Stamp the header into an image and return the finished cartridge.
  *
- * `image` must be one of {@link SMS_FLAT_ROM_SIZES}: a flat cartridge has no
- * short banks, and rejecting anything else here rather than in a caller is how
- * two builders that produce one stay identical. The size nibble follows from the
- * length, so a 48 KiB image cannot be stamped as a 32 KiB one. The sixteen bytes at {@link SMS_HEADER_OFFSET}
- * are overwritten, so a program that ran code or stored data there would have it
- * replaced — which the game backend avoids by reserving the region up front
- * rather than discovering the overlap in an emulator.
+ * `image` must be one of {@link SMS_ROM_SIZES}: a cartridge has no short banks,
+ * and rejecting anything else here rather than in a caller is how two builders
+ * that produce one stay identical. The size nibble follows from the length, so a
+ * 48 KiB image cannot be stamped as a 32 KiB one. The sixteen bytes at
+ * {@link SMS_HEADER_OFFSET} are overwritten, so a program that ran code or stored
+ * data there would have it replaced — which the game backend avoids by reserving
+ * the region up front rather than discovering the overlap in an emulator.
+ *
+ * The checksum covers `$0000`–`$7FEF` whatever the board is, which is why a
+ * banked cartridge can be stamped by the same function: the region it sums is
+ * the fixed half, and the paged banks are outside it by construction.
  */
 export function packSegaRom(image: Uint8Array, options: SegaHeaderOptions = {}): Uint8Array {
   const sizeCode = SIZE_CODES[image.length];
   if (sizeCode === undefined) {
     throw new Error(
-      `a flat Sega cartridge is ${SMS_FLAT_ROM_SIZES.map((n) => n / 1024 + " KiB").join(" or ")}` +
+      `a Sega cartridge is ${SMS_ROM_SIZES.map((n) => n / 1024 + " KiB").join(", ")}` +
         `, not ${image.length} bytes`,
     );
   }

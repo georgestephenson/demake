@@ -178,13 +178,34 @@ interface Fixup {
  * Every instruction's length is fixed by the method that emits it, so one pass
  * plus a fixup sweep is enough; nothing relaxes, and an address never moves
  * under a reference that was already resolved.
+ *
+ * ## Slots
+ *
+ * A Sega cartridge past 48 KiB is *paged*: slots 0 and 1 are the first two banks
+ * and never move, and slot 2 shows whichever bank `$FFFF` names. So a program
+ * that outgrows the flat image is emitted in pieces that live at two different
+ * addresses — the fixed half at `$0000` and each paged bank at `$8000` — and
+ * {@link section} is how a caller says which. It changes what an address *means*
+ * and moves no bytes; the image stays one linear buffer and the backend copies
+ * each 16 KiB chunk to the bank its plan named.
+ *
+ * Unlike the 65816's, a label here does **not** carry its bank: a Z80 address is
+ * sixteen bits and that is all the hardware has. Which bank a paged routine is in
+ * is the *caller's* to know, because reaching it means writing `$FFFF` first —
+ * so the emitter carries the plan and this class carries only the address.
  */
 export class AsmZ80 {
   private code: number[] = [];
   private readonly labels = new Map<string, number>();
   private readonly fixups: Fixup[] = [];
+  /** Address of `code[sectionAt]`, which is {@link origin} until `section` moves it. */
+  private base: number;
+  /** Where the current section began, as a byte offset. */
+  private sectionAt = 0;
 
-  constructor(readonly origin = 0) {}
+  constructor(readonly origin = 0) {
+    this.base = origin;
+  }
 
   /** Bytes emitted so far. */
   get length(): number {
@@ -193,7 +214,20 @@ export class AsmZ80 {
 
   /** The address the next byte will occupy. */
   get pc(): number {
-    return this.origin + this.code.length;
+    return this.base + (this.code.length - this.sectionAt);
+  }
+
+  /**
+   * Continue at `address`, which is where the next byte will be *seen*.
+   *
+   * For a cartridge whose pieces are mapped at different addresses (§Slots). It
+   * moves no bytes: a caller that wants a bank boundary in the image pads to it
+   * first, because only the caller knows how big a bank is on its console.
+   */
+  section(address: number): this {
+    this.base = address;
+    this.sectionAt = this.code.length;
+    return this;
   }
 
   /** Define a label at the current address. */

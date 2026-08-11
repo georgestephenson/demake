@@ -28,6 +28,7 @@ import {
   gbTarget,
   gbcTarget,
   mdTarget,
+  smsTarget,
   snesTarget,
   megaduckTarget,
   RomRunner,
@@ -228,6 +229,23 @@ describe("ROM conformance across the example library", async () => {
     const program = build(gameSource("quest"), questLevels(), "snes");
     const frames = tape(QUEST_TAPE);
     expect(await romTrace(program, frames, {}, snesTarget)).toBe(trace(new Sim(program), frames));
+  }, 180_000);
+
+  /**
+   * And on the Master System, where the banking is finer still.
+   *
+   * A LoROM bank holds a whole scene and a Sega window does not — sixteen
+   * kilobytes against a largest scene of twenty-six — so here the unit is one
+   * *step* of one tick, and a scene's tick is a run of calls in the fixed half
+   * that pages each of its seven steps in turn. What that can get wrong is not
+   * arithmetic either: it is a step running with the wrong bank in slot 2, which
+   * executes whatever is at that address. So the oracle is the same one, tick for
+   * tick, and the claim is again that the paging is invisible.
+   */
+  it("matches the interpreter for the quest fixture on sms, across paged banks", async () => {
+    const program = build(gameSource("quest"), questLevels(), "sms");
+    const frames = tape(QUEST_TAPE);
+    expect(await romTrace(program, frames, {}, smsTarget)).toBe(trace(new Sim(program), frames));
   }, 180_000);
 
   it("builds a Mega Duck cartridge that a Game Boy could not run", async () => {

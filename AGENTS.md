@@ -1871,9 +1871,9 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
 - **A cartridge is as big as the game needs and no bigger, in every direction the
   hardware allows** (doc 14 §Elastic cartridges). Every console that shipped its games on more than one board takes
   the smallest that holds the program — an NROM-128 rather than an NROM-256, 32
-  KiB of Sega rather than 48, one megabit of Mega Drive rather than four, two
-  LoROM banks rather than four, and up to four megabytes for a game whose code
-  outgrows a bank — and grows only when the game does. Which boards
+  KiB of Sega rather than 48 and up to 512 for a game that pages, one megabit of
+  Mega Drive rather than four, two LoROM banks rather than four, and up to four
+  megabytes for a game whose code outgrows a bank — and grows only when the game does. Which boards
   exist is the **console's** answer and lives beside its header in
   `core/src/asm/*-cart.ts`; a backend's job is to pick, and where picking the
   small one moves the code, it emits the program a second time rather than
@@ -2605,6 +2605,21 @@ is the game.
   one iteration and the next and helps itself to every register the Z80 has. Not
   `layout.scratch`, which is documented as valid for the length of one routine and
   is exactly what that rule body uses.
+- **Past 48 KiB the cartridge pages slot 2, and the unit is a tick step.** This
+  console's window is 16 KiB and the biggest scene in the library is 26, so
+  unlike the Super Nintendo it cannot take a scene per bank: a scene's tick
+  becomes a run of calls in the fixed half that pages each of its seven steps in
+  turn, plus its reset, camera and render. What decides the split is that **slots
+  0 and 1 never move**, so 32 KiB holds everything an always-mapped address
+  reaches — the boot, the vectors, the helpers, the audio driver _and its
+  schedules_, because an interrupt enters it — while the tile art goes _up_,
+  since the boot uploads it once and nothing reads it again. Three things follow.
+  Nothing saves or restores the bank, because only the fixed half enters a paged
+  routine. A paged routine calls and reads downwards, so not one byte of the
+  value layer or the rule bodies changed. And `AsmZ80.section` moves no bytes, so
+  the paged banks are emitted first and the fixed half last — `ctx.finish()` has
+  to be last — and `sms.ts` copies each bank into place. A game that fits a flat
+  board pages nothing and is byte-identical.
 - **Forty-eight kilobytes is flat, and that is the mapper's doing not ours.** The
   mapper is in the cartridge rather than the console and comes up with its three
   slots holding banks 0, 1 and 2, so `$0000`–`$BFFF` is one continuous image and a

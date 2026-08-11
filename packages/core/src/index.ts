@@ -288,8 +288,13 @@ export {
   type NeoRegions,
 } from "./asm/neo-cart.js";
 export {
+  SMS_BANK_SIZE,
   SMS_HEADER_OFFSET,
   SMS_FLAT_ROM_SIZES,
+  SMS_ROM_SIZES,
+  SMS_SLOT2_BANK,
+  SMS_SLOT2_BASE,
+  smsRomSizeFor,
   SMS_HEADER_SIZE,
   SMS_IRQ_VECTOR,
   SMS_NMI_VECTOR,

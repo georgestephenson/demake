@@ -1714,16 +1714,17 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
 - **Banked cartridges, and the game that needs one**: `quest.dmt` — three
   levels, a boss, a secret room, four tracks and eight effects — is the first
   example the mapper-less cartridge cannot hold. It builds and plays on the Mega
-  Drive (140 KiB, on the 256 KiB board its size asks for) and **on the Super
-  Nintendo, where it is the first banked cartridge this project produces** — 128
-  KiB, its scenes spread across banks, traced tick for tick against the
-  interpreter by `rom.test.ts`. The numbers say what each of the rest is short of
-  rather than by how little:
+  Drive (140 KiB, on the 256 KiB board its size asks for), **on the Super
+  Nintendo** — 128 KiB, a bank per scene — and **on both Sega 8-bits**, where the
+  unit is finer still: 128 KiB with a tick's individual steps paged through slot
+  2. All three are traced tick for tick against the interpreter by
+  `rom.test.ts`. The numbers say what each of the rest is short of rather than by
+  how little:
 
   | Console | Wall it hits | Needs | Has |
   | --- | --- | --- | --- |
-  | Game Boy / Color / Mega Duck | cartridge | ~122 KiB | 32 KiB |
-  | Master System / Game Gear | cartridge | ~117 KiB | 48 KiB |
+  | Game Boy / Color / Mega Duck | cartridge, then the fixed bank | ~122 KiB, 30 KiB immovable | 32 KiB, 16 KiB fixed |
+  | ~~Master System / Game Gear~~ | ~~cartridge~~ | **done** | 128 KiB, of 512 |
   | NES | work RAM, then cartridge | 1288 B of heap, ~120 KiB of PRG | 1280 B, 32 KiB |
   | ~~Super Nintendo~~ | ~~direct page, then cartridge~~ | **done** | 128 KiB, of 4 MiB |
 
@@ -1876,18 +1877,43 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     slot 2, which inherits the same hole — and now inherits the placement with
     it.
 
-    **And this is the next console to bank**, which it was not when this entry
-    was written. What decides it is not the window — 16 KiB, the same as a Game
-    Boy's — but the *fixed* half: slots 0 and 1 come up holding banks 0 and 1 and
-    are never paged, so 32 KiB holds the boot, the helpers, the audio driver and
-    all of its schedules, the level data and the instance defaults with a little
-    to spare, where a Game Boy's 16 holds about half of them. The three other
-    pieces are already here: `@demake/sms` decodes `$FFFC`–`$FFFF` out of the RAM
-    mirror and pages all three slots, so the core needs nothing; the header hole
-    at `$7FF0` is inside the fixed region and is placed a block at a time; and the
-    seam a tick is cut at exists. What it needs is `AsmZ80` sections, a bank plan
-    over the step units, a trampoline that writes `$FFFF` before it calls, and
-    `SMS_ROM_SIZES` past 48 KiB.
+    **And it is banked.** What decided this console rather than the Game Boy is
+    not the window — 16 KiB, the same — but the *fixed* half: slots 0 and 1 come
+    up holding banks 0 and 1 and a demade cartridge never moves them, so 32 KiB
+    holds everything that cannot be paged and a Game Boy's 16 holds about half of
+    it. Three of the four pieces were already here: `@demake/sms` decodes
+    `$FFFC`–`$FFFF` out of the RAM mirror and pages all three slots, so the core
+    needed *nothing*; the header hole at `$7FF0` is inside the fixed half and is
+    already placed a block at a time; and the seam a tick is cut at exists.
+
+    **The unit is a tick step**, because a scene will not fit: a scene's tick is
+    now a run of calls in the fixed half that pages each of its seven steps in
+    turn, plus its reset, camera and render, and the largest piece the library
+    produces is nine and a half kilobytes of the sixteen. A step that will not fit
+    a window is refused by name, which is what `sms-flat48.test.ts`'s
+    thirty-six-rock game now hits — one scene's collisions, unrolled, at twenty
+    kilobytes.
+
+    What stays below is everything an always-mapped address reaches: the boot, the
+    vectors, the shared helpers, the audio driver **and its schedules** (an
+    interrupt enters it, so it has to be mapped whatever the game was doing), the
+    level tables and the instance defaults. The tile art goes *up* instead,
+    because the boot uploads it once and nothing reads it again — seven kilobytes
+    of the thirty-two that cannot move, bought back for two instructions.
+
+    Three things follow and each is what makes it cheap. **Nothing saves or
+    restores the bank**: only the fixed half enters a paged routine and only a
+    paged routine cares what the window holds, so a caller writes the bank it
+    wants and never puts one back. **A paged routine calls and reads downwards**,
+    so not one byte of the value layer, the rule bodies or the tile walk changed.
+    And **`AsmZ80.section` moves no bytes**, so the paged banks are emitted first
+    and the fixed half last — helpers are pulled by whatever calls them, so
+    `ctx.finish()` has to be last — and `sms.ts` copies each bank into place.
+
+    `SMS_ROM_SIZES` runs 32 KiB to 512 KiB and the build takes the smallest board
+    that holds the banks it opened. Every cartridge that fitted a flat board
+    before is byte-identical, because a game that fits pages nothing and its tick
+    stays one run of code.
   - **Game Boy** — **the cartridge half is done and the codegen half is not.**
     `stampGbHeader` takes the board from the image's own length, so 32 KiB is
     the ROM-only cartridge it always was and anything above it declares MBC5 and
