@@ -12,6 +12,7 @@ import { math, type AudioSpec } from "@demake/core";
 
 import type { ChannelFrame, ChannelSpan, ChipScript, TickWrites } from "../chipscript.js";
 import { countWrites, peakWritesPerTick } from "../chipscript.js";
+import type { Dropped } from "../chipscript.js";
 import type { ChipBinding } from "../binding/types.js";
 import { silentFrames } from "../binding/types.js";
 import { centsToHz, foldIntoRange } from "../pitch.js";
@@ -20,6 +21,19 @@ import type { Score } from "../score/types.js";
 import type { TimingPlan } from "../timing.js";
 import { VIBRATO_DELAY_SECONDS, VIBRATO_HZ, VIBRATO_MAX_CENTS } from "../vibrato.js";
 import type { ArrangementPlan, ChannelAssignment } from "./plan.js";
+
+/** A compiled schedule, and what compiling it cost. */
+export interface CompiledScript {
+  script: ChipScript;
+  /**
+   * Notes the schedule could not carry.
+   *
+   * Separate from the plan's drops because these are decided *here*: whether
+   * two hits collide depends on the driver's tick grid, which the plan does not
+   * know about.
+   */
+  dropped: Dropped[];
+}
 
 export interface CompileOptions {
   /** Ticks between arpeggio steps; 1 is the classic chip shimmer. */
@@ -110,15 +124,17 @@ export function compileScript(
   plan: ArrangementPlan,
   timing: TimingPlan,
   options: CompileOptions,
-): ChipScript {
+): CompiledScript {
   const totalTicks = timing.totalTicks;
   const ticks: TickWrites[] = [];
   const spans: ChannelSpan[] = [];
+  /** Hits lost to a voice that was already struck, by the part that wrote them. */
+  const choked = new Map<string, number>();
 
   // Pre-resolve each channel's note stream onto driver ticks. Doing it per
   // channel rather than per tick keeps the inner loop free of searching.
   const lanes = plan.assignments.map((assignment) =>
-    buildLane(assignment, timing, totalTicks, options, binding.lfoChannels),
+    buildLane(assignment, timing, totalTicks, options, binding.lfoChannels, choked),
   );
 
   for (const assignment of plan.assignments) {
@@ -172,7 +188,48 @@ export function compileScript(
   };
   script.budgets.writes = countWrites(script);
   script.budgets.peakWritesPerTick = peakWritesPerTick(script);
-  return script;
+  return { script, dropped: chokedDrops(score, choked) };
+}
+
+/** Record one hit lost to a voice that was already ringing. */
+function choke(choked: Map<string, number>, partId: string): void {
+  choked.set(partId, (choked.get(partId) ?? 0) + 1);
+}
+
+/**
+ * Choked hits as drops, so nothing is lost silently (doc 16 §Never lose a part).
+ *
+ * A kit is one part and a console has one noise generator, so two drums landing
+ * on one tick is the *normal* case rather than an exceptional one: a kick under
+ * a hat is most bars of most music. Until this was counted the loss was
+ * invisible — the example library's overworld theme wrote 96 drum notes and a
+ * Game Boy played 64, and nothing anywhere said so.
+ *
+ * `kind` is `note` rather than `part`, because what went is some of a part's
+ * notes and not the part: it still plays, and the arrangement still has drums.
+ * That distinction is what `--strict` and the diagnostics read.
+ */
+function chokedDrops(score: Score, choked: Map<string, number>): Dropped[] {
+  const out: Dropped[] = [];
+  for (const [partId, count] of [...choked].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    const part = score.parts.find((candidate) => candidate.id === partId);
+    out.push({
+      kind: "note",
+      partId,
+      count,
+      salience: part === undefined ? 0 : meanSalience(part),
+      reason: "the voice was already ringing when this hit landed",
+    });
+  }
+  return out;
+}
+
+/** Mean salience of a part's notes, for the drop report's cost column. */
+function meanSalience(part: Part): number {
+  if (part.notes.length === 0) return 0;
+  let sum = 0;
+  for (const note of part.notes) sum += note.salience;
+  return sum / part.notes.length;
 }
 
 /** Resolve one channel's whole timeline into per-tick frames. */
@@ -182,6 +239,7 @@ function buildLane(
   totalTicks: number,
   options: CompileOptions,
   lfoChannels: ReadonlySet<number> | undefined,
+  choked: Map<string, number>,
 ): ChannelFrame[] {
   const channel = assignment.channel;
   const frames: ChannelFrame[] = new Array<ChannelFrame>(totalTicks);
@@ -237,7 +295,10 @@ function buildLane(
         // spare they are not on the same one and both are heard, which is the
         // whole point of the pool — this line stops being reached rather than
         // stops being true.
-        if (frames[entry.start]!.retrigger) continue;
+        if (frames[entry.start]!.retrigger) {
+          choke(choked, entry.part.id);
+          continue;
+        }
         const drum = DRUM_MAP[entry.note.drum ?? "perc"];
         const hz = centsToHz(drum.pitch + assignment.octaveShift * 1200);
         const folded = channel.pitch ? foldIntoRange(channel.pitch, hz) : { hz, octaves: 0 };
@@ -263,6 +324,11 @@ function buildLane(
     for (const entry of mine) {
       const drum = DRUM_MAP[entry.note.drum ?? "perc"];
       const frame = frames[entry.start]!;
+      // A second hit on one tick overwrites the first here, where the pitched
+      // path above keeps the first and skips the rest. Either way one of them
+      // is gone, and both are counted — the inconsistency about *which* is
+      // older than this and is not what a drop report is for.
+      if (frame.retrigger === true) choke(choked, entry.part.id);
       frame.on = true;
       frame.retrigger = true;
       frame.level = entry.note.velocity / 127;

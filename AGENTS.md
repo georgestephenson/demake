@@ -3635,6 +3635,18 @@ that keep them from being undone. All of them come from doc 16.
 - **Never lose a part silently.** Every dropped note, merged voice and stolen
   channel is counted in the manifest and `--json`; `--strict` turns any of them
   into an error. The image path's tile-merge reporting is the precedent.
+- **A choked drum hit is a loss, not a reduction.** Two hits on one tick and one
+  drum voice means one of them never sounds, which for most music is most bars —
+  the example library's overworld theme wrote 96 drum notes and a Game Boy played
+  64, uncounted, until `compile.ts` started reporting it. It is `kind: "note"`
+  (the part still plays; some of its hits went), it carries its own diagnostic
+  code `choked-note` at `warning` rather than borrowing `merged-voice`'s `info`,
+  and `--strict` refuses it — a merge still plays the material on some voice and
+  this does not. It is decided in `compile.ts` rather than in the plan because
+  whether two hits collide depends on the **driver's tick grid**, so
+  `compileScript` returns its drops and the tournament merges them into the
+  winning candidate's plan. A game build sets no `--strict`, so cartridges are
+  unaffected.
 - **The driver is generated, and helpers are pulled.** `packages/audio/src/rom/`
   emits SM83 _for this schedule_: a track that never rests ships no rest
   handling, a one-shot ships a stop path and a track does not. Never add a

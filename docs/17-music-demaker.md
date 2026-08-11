@@ -273,6 +273,23 @@ the arranger reaches for:
    it occupied. Silent loss is the one unacceptable outcome; `--strict` turns any
    drop into an error.
 
+**A choked drum hit is one of those drops**, and was the last thing here that
+was not counted. Two hits landing on one tick with one drum voice means one of
+them never sounds — which for most music is most bars, since a kick under a hat
+is an ordinary backbeat. It is a **loss** rather than a reduction: a merged
+voice still plays its material somewhere, and this does not, so it warns under
+its own code (`choked-note`) and `--strict` refuses it. It carries `kind:
+"note"` because the part still plays and only some of its hits went, which is
+why `--strict` counts parts and notes apart rather than reporting thirty-two
+notes as thirty-two parts.
+
+It is decided in Stage 7 rather than here, and that is not an accident of where
+the code sits: whether two hits collide depends on the **driver's tick grid**, so
+it cannot be known until the piece has been laid on one. `compileScript` returns
+its own drops and the tournament merges them into the winning candidate's plan —
+the only plan they are true of, since a different channel assignment collides
+differently.
+
 ### When there are more channels than parts
 
 The instruction is to use them, and the ways are: detune-doubling a lead across

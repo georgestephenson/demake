@@ -26,6 +26,7 @@ import { getConsole } from "@demake/core";
 import { arrangeScore } from "../src/arrange/index.js";
 import { planArrangement } from "../src/arrange/plan.js";
 import { audioConsoles } from "../src/binding/registry.js";
+import { countWrites } from "../src/chipscript.js";
 import { analyze } from "../src/analysis.js";
 import { parseMidi } from "../src/score/midi.js";
 import { octetFixture } from "./_fixtures.js";
@@ -161,5 +162,63 @@ describe("the Neo Geo's kit", () => {
     expect(hits[0]).toBeGreaterThan(0);
     expect(hits[1]).toBeGreaterThan(0);
     expect(hits[2]).toBeGreaterThan(0);
+  });
+});
+
+describe("what a choked hit reports", () => {
+  /**
+   * A hit lost to a voice that was already ringing is a *counted* drop
+   * (AGENTS.md §Never lose a part silently).
+   *
+   * It was uncounted until the pool work measured it: a kit is one part and
+   * most consoles have one noise generator, so a kick under a hat — most bars
+   * of most music — silently lost one of the two. The example library's
+   * overworld theme writes 96 drum notes and a Game Boy plays 64.
+   */
+  function choked(consoleId: string) {
+    return arrangeScore(source, { console: consoleId, strategy: "full-band" }).dropped.filter(
+      (entry) => entry.kind === "note",
+    );
+  }
+
+  it("counts them on a console with one drum voice", () => {
+    const drops = choked("dmg");
+    expect(drops.length).toBeGreaterThan(0);
+    const lost = drops.reduce((sum, entry) => sum + entry.count, 0);
+    expect(lost).toBeGreaterThan(0);
+    // Named by the part that wrote them, so a report says *whose* hits went.
+    const drums = score.parts.filter((part) => part.role === "percussion").map((part) => part.id);
+    for (const drop of drops) expect(drums).toContain(drop.partId);
+  });
+
+  it("counts none on a console whose pool absorbed them", () => {
+    // The other half of the pool's claim, and the reason these two features
+    // belong in one file: six ADPCM-A voices mean no hit collides at all, so
+    // the drop report going empty *is* the pool working.
+    expect(choked("neogeo")).toHaveLength(0);
+  });
+
+  it("is a warning rather than an info, and has a code of its own", () => {
+    // A merge still plays the material on some voice; a choked hit does not
+    // sound at all, so it must not borrow `merged-voice`.
+    const result = arrangeScore(source, { console: "dmg", strategy: "full-band" });
+    const notes = result.diagnostics.filter((entry) => entry.code === "choked-note");
+    expect(notes.length).toBeGreaterThan(0);
+    for (const entry of notes) expect(entry.severity).toBe("warning");
+  });
+
+  it("fails --strict, counting parts and notes apart", () => {
+    // The maintainer's call: a choked hit is a loss `--strict` must refuse.
+    expect(() =>
+      arrangeScore(source, { console: "dmg", strategy: "full-band", strict: true }),
+    ).toThrow(/note\(s\) could not be kept/);
+  });
+
+  it("does not change a single register write", () => {
+    // Counting a loss must not alter what the chip receives — the drops are a
+    // report about the schedule, not a change to it.
+    const plain = arrangeScore(source, { console: "dmg", strategy: "full-band" }).script;
+    const again = arrangeScore(source, { console: "dmg", strategy: "full-band" }).script;
+    expect(countWrites(again)).toBe(countWrites(plain));
   });
 });

@@ -1865,14 +1865,29 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     and the mixer's recording of one. Every other console has exactly one, where
     the pool is a pool of one and the schedule is unchanged.
 
-    **What this exposed and did not fix**: a hit dropped for colliding with a
-    ringing one is *not counted anywhere*, which the "never lose a part silently"
-    rule forbids — 32 notes vanished from that theme and nothing said so. It is
-    left open deliberately rather than folded in, because `Dropped` feeds
-    `--strict`, which turns any drop into an error: counting choked hi-hats would
-    start failing builds on every console with one noise channel, and whether a
-    reduction of that kind is a `--strict` failure or an `info` the way a merged
-    voice is needs deciding before it is reported.
+    **And what it exposed is now reported.** A hit dropped for colliding with a
+    ringing one was *not counted anywhere*, which the "never lose a part
+    silently" rule forbids — 32 notes vanished from that theme and nothing said
+    so. The question it raised was a policy one rather than a technical one,
+    because `Dropped` feeds `--strict`: is a choked hi-hat a build failure, or an
+    `info` the way a merged voice is? **It is a failure.** A merge still plays
+    the material on some voice; a choked hit does not sound at all, so it is a
+    loss and `--strict` refuses it.
+
+    Three consequences follow and each is deliberate. The drop carries
+    `kind: "note"` rather than `"part"`, because the part still plays and only
+    some of its hits went — so `--strict` counts parts and notes apart rather
+    than calling thirty-two notes thirty-two parts. It has a diagnostic code of
+    its own, `choked-note`, at `warning` rather than borrowing `merged-voice`'s
+    `info`. And the collision is decided in `compile.ts` rather than in the plan,
+    because whether two hits collide depends on the *driver's tick grid* — so
+    `compileScript` returns its drops and the tournament merges them into the
+    winning candidate's, which is the only plan they are true of.
+
+    Nothing about a schedule changes: this is a report about what was already
+    happening. A game build sets no `--strict`, so cartridges are unaffected —
+    and the pool above is what makes the number fall rather than the reporting,
+    which the Neo Geo demonstrates by dropping to zero.
 
     **The arranger's half of the first line is closed.** `@demake/audio` produces
     vibrato now, and it produces it the way the rest of this project reads a
