@@ -6,10 +6,16 @@
  * cartridge in Vitest with no toolchain and no emulator install, and play one in
  * the page without fetching a core from anywhere.
  *
- * Scope is set by what the generated runtime uses. **NROM only**: 32 KiB of
- * program at `$8000` and 8 KiB of character ROM, because that is the cartridge
- * the backend builds and a mapper nothing emits is a mapper that cannot be
- * tested. There is no PPU write-blocking outside VBlank for the reason the Game
+ * Scope is set by what the generated runtime uses. **Two mappers**, because the
+ * backend builds two cartridges: NROM for a game that fits 32 KiB of program,
+ * and **MMC1** for one that does not — sixteen kilobytes switched at `$8000`,
+ * sixteen fixed at `$C000`, and the eight kilobytes of cartridge RAM at `$6000`
+ * that are the only reason a game with four levels has anywhere to keep its
+ * state (doc 13 §Banked cartridges). Which one a cartridge is comes out of its
+ * own header and is never a setting, exactly as a Game Boy's controller does.
+ * MMC1's one-screen mirroring modes are absent rather than half-implemented: no
+ * cartridge this project builds selects one, and the other two are what the
+ * renderer is written against. There is no PPU write-blocking outside VBlank for the reason the Game
  * Boy core gives about VRAM: the runtime is written to do its PPU work in the
  * VBlank window regardless, so modelling the block here would turn a discipline
  * failure into a mystery rather than catching it — the libretro E2E is where that
@@ -56,7 +62,22 @@ export type Button = (typeof BUTTONS)[number];
 /** Where the header, the program and the characters sit in a `.nes` file. */
 const HEADER_SIZE = 16;
 
-/** An NES with an NROM cartridge in it. */
+/**
+ * MMC1's control register at reset, and the bits that matter in it.
+ *
+ * The shift register resets to a sentinel whose walk out of the low end is what
+ * counts the five writes, and the control register comes up with the PRG mode
+ * that fixes the *last* bank at `$C000` — which is the arrangement every
+ * cartridge here uses and the only one under which a reset vector read before a
+ * single register has been written finds the code that was assembled for it.
+ */
+const MMC1_SHIFT_RESET = 0x10;
+const MMC1_CONTROL_RESET = 0x0c;
+
+/** Which sixteen-kilobyte half of the window the PRG bank register names. */
+const MMC1_PRG_MODE = { switch32: 0, fixFirst: 2, fixLast: 3 } as const;
+
+/** An NES with an NROM or MMC1 cartridge in it. */
 export class Nes implements Bus {
   readonly cpu = new Cpu(this);
   readonly ppu: Ppu;
@@ -68,6 +89,31 @@ export class Nes implements Bus {
   readonly ram = new Uint8Array(0x0800);
   /** The cartridge's program, mapped at `$8000` and mirrored at `$C000`. */
   private readonly prg: Uint8Array;
+  /** The mapper this cartridge declares: 0 for NROM, 1 for MMC1. */
+  private readonly mapper: number;
+  /**
+   * The cartridge's own work RAM at `$6000`, on a board that carries some.
+   *
+   * Empty on NROM, which is why a demade game's whole state used to be the
+   * console's two kilobytes. Not battery-backed: nothing this project builds
+   * declares a save, so what a fresh machine reads here is zero.
+   */
+  private readonly prgRam: Uint8Array;
+  /** MMC1's five-bit serial register, and the registers it feeds. */
+  private mmcShift = MMC1_SHIFT_RESET;
+  private control = MMC1_CONTROL_RESET;
+  private prgBank = 0;
+  /**
+   * Whether the board is answering at `$6000` — MMC1's own switch for it.
+   *
+   * Bit 4 of the CHR bank 0 register on a board whose character memory is one
+   * eight-kilobyte ROM, which is every cartridge this project builds: that line
+   * has no bank to select, so it is wired to the RAM enable instead. The other
+   * four bits of that register and the whole of CHR bank 1 select banks this
+   * board does not have, so they are not stored — a field nothing can read back
+   * is a field nobody is checking.
+   */
+  private prgRamEnabled = true;
 
   /** Frames completed since power-on — the harness's clock. */
   frames = 0;
@@ -103,9 +149,14 @@ export class Nes implements Bus {
     }
     const prgBanks = rom[4] as number;
     const chrBanks = rom[5] as number;
-    if ((rom[6] as number) >> 4 !== 0 || (rom[7] as number) >> 4 !== 0) {
-      throw new Error("nes: only mapper 0 (NROM) is supported");
+    this.mapper = ((rom[6] as number) >> 4) | ((rom[7] as number) & 0xf0);
+    if (this.mapper !== 0 && this.mapper !== 1) {
+      throw new Error(`nes: only mappers 0 (NROM) and 1 (MMC1) are supported, not ${this.mapper}`);
     }
+    // Bit 1 of flags 6 is the battery, and its presence is what a board with RAM
+    // on it declares — but demake's cartridges declare RAM without a save, so the
+    // mapper is what decides: MMC1 boards carry eight kilobytes and NROM none.
+    this.prgRam = new Uint8Array(this.mapper === 1 ? 0x2000 : 0);
     const prgBytes = prgBanks * 0x4000;
     this.prg = rom.subarray(HEADER_SIZE, HEADER_SIZE + prgBytes);
     const chr = rom.subarray(HEADER_SIZE + prgBytes, HEADER_SIZE + prgBytes + chrBanks * 0x2000);
@@ -131,9 +182,44 @@ export class Nes implements Bus {
     // exposes no reads, and a generated driver has no reason to ask — it knows
     // when a note ends because it wrote the schedule that ends it.
     if (at < 0x4018) return 0;
-    if (at < 0x8000) return 0; // no cartridge RAM on NROM
-    // A 16 KiB program is mirrored into both halves of the window.
-    return this.prg[(at - 0x8000) % this.prg.length] as number;
+    if (at < 0x8000) {
+      // Cartridge RAM, on a board that has some; open bus on one that does not.
+      const answering = this.prgRam.length > 0 && this.prgRamEnabled;
+      return answering ? (this.prgRam[at - 0x6000] as number) : 0;
+    }
+    if (this.mapper === 0) {
+      // A 16 KiB program is mirrored into both halves of the window.
+      return this.prg[(at - 0x8000) % this.prg.length] as number;
+    }
+    return this.prg[this.prgOffset(at)] as number;
+  }
+
+  /**
+   * Which byte of the program a window address reaches, under MMC1.
+   *
+   * The control register's PRG mode decides whether the two halves of the window
+   * are one thirty-two-kilobyte bank or a switched half and a fixed one — and
+   * which half is fixed. A demade cartridge uses {@link MMC1_PRG_MODE.fixLast}
+   * and only that, because the vectors are at the top of the image and a fixed
+   * high half is what makes them reachable however the bank register is left.
+   */
+  private prgOffset(address: number): number {
+    const banks = this.prg.length / 0x4000;
+    const mode = (this.control >> 2) & 3;
+    const high = address >= 0xc000;
+    const offset = address & 0x3fff;
+    if (mode === MMC1_PRG_MODE.fixLast) {
+      const bank = high ? banks - 1 : this.prgBank & 0x0f;
+      return (bank % banks) * 0x4000 + offset;
+    }
+    if (mode === MMC1_PRG_MODE.fixFirst) {
+      const bank = high ? this.prgBank & 0x0f : 0;
+      return (bank % banks) * 0x4000 + offset;
+    }
+    // Modes 0 and 1 are the same thing: the register's low bit is ignored and
+    // both halves of the window come from one aligned pair.
+    const pair = (this.prgBank & 0x0e) % banks;
+    return pair * 0x4000 + (high ? 0x4000 : 0) + offset;
   }
 
   write(address: number, value: number): void {
@@ -170,7 +256,57 @@ export class Nes implements Bus {
       this.apuTap?.(at - 0x4000, byte);
       return;
     }
-    // The cartridge has nothing writable; a store here is a no-op on hardware.
+    if (at < 0x8000) {
+      if (this.prgRam.length > 0 && this.prgRamEnabled) this.prgRam[at - 0x6000] = byte;
+      return;
+    }
+    if (this.mapper === 1) {
+      this.writeMmc1(at, byte);
+      return;
+    }
+    // An NROM cartridge has nothing writable; a store here is a no-op on hardware.
+  }
+
+  /**
+   * MMC1's one register, written a bit at a time.
+   *
+   * Five writes to anywhere in `$8000`–`$FFFF` shift bit 0 in from the top, and
+   * the **fifth** one lands the accumulated five bits in whichever of the four
+   * registers the *last* address selects — so a driver builds the value with
+   * `lsr` between stores and the destination is decided by where it stored, not
+   * by what it stored. A write with bit 7 set abandons the sequence and forces
+   * the PRG mode that fixes the last bank, which is what a reset does.
+   *
+   * The sentinel is what counts: the register starts at `$10` and every write
+   * shifts right, so the bit that reaches the low end after five is the one this
+   * began with. That is the hardware's own mechanism rather than a counter, and
+   * it is why a sequence interrupted halfway leaves the register in a state no
+   * caller can predict — which is the reason a demade cartridge never touches the
+   * mapper from its NMI handler (doc 13 §Banked cartridges).
+   */
+  private writeMmc1(address: number, value: number): void {
+    if ((value & 0x80) !== 0) {
+      this.mmcShift = MMC1_SHIFT_RESET;
+      this.control |= MMC1_CONTROL_RESET;
+      return;
+    }
+    const complete = (this.mmcShift & 1) !== 0;
+    this.mmcShift = ((this.mmcShift >> 1) | ((value & 1) << 4)) & 0x1f;
+    if (!complete) return;
+    const written = this.mmcShift;
+    this.mmcShift = MMC1_SHIFT_RESET;
+    if (address < 0xa000) {
+      this.control = written;
+      this.ppu.mirroring = (written & 3) === 2 ? "vertical" : "horizontal";
+      if ((written & 3) < 2) {
+        throw new Error("nes: MMC1 one-screen mirroring is not implemented");
+      }
+      return;
+    }
+    // The CHR registers select four-kilobyte banks of a character ROM this board
+    // has exactly one of, so the only line that does anything is the RAM enable.
+    if (address < 0xc000) this.prgRamEnabled = (written & 0x10) === 0;
+    else if (address >= 0xe000) this.prgBank = written;
   }
 
   /** Cycles the CPU owes for a DMA it just started. */

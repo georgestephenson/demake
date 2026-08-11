@@ -45,6 +45,50 @@ export const NES_PRG_SIZE = 0x8000;
  */
 export const NES_PRG_SIZES: readonly number[] = [0x4000, 0x8000];
 
+/**
+ * **MMC1**, which is the cartridge a game reaches for when NROM runs out.
+ *
+ * Two things, and a demade game needs both. Sixteen kilobytes of program are
+ * switched at `$8000` while the top sixteen stay put — so the vectors, the boot
+ * and everything an always-mapped address reaches live at `$C000` and the rest is
+ * paged, which is the Game Boy's arrangement with the halves the other way up.
+ * And the board carries **eight kilobytes of RAM at `$6000`**, which is the only
+ * reason a game with four levels has anywhere to keep its state: the console's
+ * own two kilobytes are what an NROM game gets, and they are the first wall this
+ * console hits (doc 13 §Banked cartridges).
+ *
+ * The register is written a bit at a time — five stores to anywhere in the window,
+ * bit 0 each, with the *last* address deciding which of four registers the five
+ * bits land in. That is why a cartridge here never touches the mapper from an
+ * interrupt: a sequence broken in the middle leaves a state no caller can predict.
+ *
+ * Source: NESdev Wiki — MMC1 (https://www.nesdev.org/wiki/MMC1).
+ */
+export const NES_MAPPER_MMC1 = 1;
+
+/**
+ * Program sizes an MMC1 cartridge came in, smallest first.
+ *
+ * From 32 KiB — where the board is pointless but the header is legal — up to the
+ * 256 KiB its four PRG bank bits reach. Half a megabyte is SUROM, which steals a
+ * CHR line for the fifth bit and is a different board rather than a bigger one;
+ * no game here is close, so it is absent rather than half-implemented.
+ */
+export const NES_MMC1_PRG_SIZES: readonly number[] = [0x8000, 0x10000, 0x20000, 0x40000];
+
+/** Bytes of program in the largest MMC1 cartridge this builder writes. */
+export const NES_MMC1_PRG_MAX = NES_MMC1_PRG_SIZES[NES_MMC1_PRG_SIZES.length - 1] as number;
+
+/** Bytes of the switchable window, which is where a paged unit is assembled. */
+export const NES_BANK_SIZE = 0x4000;
+
+/** Where the switchable window starts, and where the fixed half does. */
+export const NES_BANK_WINDOW = 0x8000;
+export const NES_FIXED_WINDOW = 0xc000;
+
+/** The eight kilobytes of cartridge RAM an MMC1 board carries. */
+export const NES_PRG_RAM = { start: 0x6000, end: 0x8000 } as const;
+
 /** Bytes of character ROM the PPU sees: two 4 KiB pattern tables. */
 export const NES_CHR_SIZE = 0x2000;
 
@@ -88,6 +132,15 @@ export type NesMirroring = "horizontal" | "vertical";
 /** What a cartridge declares. */
 export interface NesHeaderOptions {
   mirroring?: NesMirroring;
+  /**
+   * Which mapper the board carries: `0` (NROM) unless said otherwise.
+   *
+   * The *board* rather than a preference, so the sizes this accepts follow from
+   * it — an NROM program is one of two lengths and an MMC1 one is any power of
+   * two up to 256 KiB. A builder that declared one and shipped the other would
+   * produce a cartridge whose reset vector is not where the console looks.
+   */
+  mapper?: number;
 }
 
 /**
@@ -105,9 +158,12 @@ export function packInesRom(
   chr: Uint8Array,
   options: NesHeaderOptions = {},
 ): Uint8Array {
-  if (!NES_PRG_SIZES.includes(prg.length)) {
+  const mapper = options.mapper ?? 0;
+  const sizes = mapper === NES_MAPPER_MMC1 ? NES_MMC1_PRG_SIZES : NES_PRG_SIZES;
+  if (!sizes.includes(prg.length)) {
+    const board = mapper === NES_MAPPER_MMC1 ? "an MMC1" : "an NROM";
     throw new Error(
-      `an NROM program is ${NES_PRG_SIZES.map((n) => n / 1024 + " KiB").join(" or ")}` +
+      `${board} program is ${sizes.map((n) => n / 1024 + " KiB").join(" or ")}` +
         `, not ${prg.length} bytes`,
     );
   }
@@ -121,9 +177,10 @@ export function packInesRom(
   rom[3] = 0x1a;
   rom[4] = prg.length / 0x4000; // 16 KiB program banks
   rom[5] = chr.length / 0x2000; // 8 KiB character banks
-  // Flags 6: mapper 0, no trainer, no battery; bit 0 is the mirroring.
-  rom[6] = options.mirroring === "vertical" ? 0x01 : 0x00;
-  rom[7] = 0x00; // mapper high nibble, NES 2.0 marker
+  // Flags 6: no trainer, no battery; bit 0 is the mirroring and the high nibble
+  // is the mapper's low four bits.
+  rom[6] = (options.mirroring === "vertical" ? 0x01 : 0x00) | ((mapper & 0x0f) << 4);
+  rom[7] = mapper & 0xf0; // the mapper's high nibble; no NES 2.0 marker
   rom.set(prg, NES_HEADER_SIZE);
   rom.set(chr, NES_HEADER_SIZE + prg.length);
   return rom;

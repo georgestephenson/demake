@@ -193,8 +193,11 @@ describe("the console around them", () => {
   });
 
   it("refuses a cartridge with a mapper it does not have", () => {
+    // Mapper 4 is MMC3, which nothing here builds. The two this core does have
+    // are the two the backend produces — NROM and MMC1 — and a cartridge naming
+    // any other is a cartridge this machine would run as some other game.
     const rom = cartridge(SPIN, characters());
-    rom[6] = 0x10; // mapper 1
-    expect(() => new Nes(rom)).toThrow(/NROM/);
+    rom[6] = 0x40;
+    expect(() => new Nes(rom)).toThrow(/not 4/);
   });
 });

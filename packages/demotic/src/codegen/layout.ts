@@ -182,19 +182,40 @@ export interface MemoryPlan {
   /**
    * Whether running out of the cheap region costs bytes rather than the build.
    *
-   * The Super Nintendo's, and only its. There the direct page is a pure size
-   * optimisation — `$nn` is two bytes where `$nnnn` is three, and the index
-   * registers are sixteen bits wide so `$nnnn,x` reaches all of bank zero — so a
-   * game that overruns 238 bytes of it should get a slightly larger program and
-   * not a refusal. On a 6502 the same overrun is fatal and has to stay fatal:
-   * page zero is the only place a pointer can live, because `($nn),y` is that
-   * CPU's one indirect mode, so an address that spilled to the heap could not be
-   * dereferenced at all.
+   * On the Super Nintendo the direct page is a pure size optimisation — `$nn` is
+   * two bytes where `$nnnn` is three, and the index registers are sixteen bits
+   * wide so `$nnnn,x` reaches all of bank zero — so a game that overruns 238
+   * bytes of it should get a slightly larger program and not a refusal.
+   *
+   * On a 6502 page zero is **both**: `($nn),y` is that CPU's one indirect mode,
+   * so a *pointer* that spilled could not be dereferenced at all — but almost
+   * nothing the allocator hands out is a pointer. The contact bitfields are read
+   * with `$nnnn,x`, a temporary is reached through {@link
+   * "./mos/val.js".clamp32}, which already asks `inFastPage` and takes the
+   * pointer path for anything else, and the rest is plain absolute. So the split
+   * is by *request* rather than by console: {@link planLayout} takes a pointer
+   * through `pin`, which never spills and refuses by name, and everything else
+   * through `fast`, which does.
    *
    * It changes no address in a game that fits, because only a request the cheap
    * region cannot hold moves.
    */
   fastSpills?: boolean;
+  /**
+   * Work RAM a *cartridge* adds, which the console itself does not have.
+   *
+   * The NES's, and only its: an NROM board carries none, so a game's whole state
+   * is the console's two kilobytes — but the mapper a game reaches for when its
+   * code outgrows 32 KiB brings eight more at `$6000`, and it would be a strange
+   * cartridge that paged its program and left that unused. So this is the second
+   * half of the same board rather than a separate feature, and {@link
+   * Layout.spilled} is what says the build has to declare it.
+   *
+   * It changes no address in a game that fits the console's own RAM, because only
+   * a request the first region cannot hold moves — the {@link fastSpills} rule
+   * one region along.
+   */
+  heapSpill?: { start: number; end: number };
   /** Where the object shadow lives; the DMA source must be page-aligned. */
   oamShadow: number;
   /** Hardware object entries the shadow covers. */
@@ -366,8 +387,18 @@ export const NES_MEMORY: MemoryPlan = {
   machine: "NES",
   heapStart: 0x0300,
   heapEnd: 0x0800,
+  // And the eight kilobytes the mapper a big game reaches for puts at `$6000`.
+  // A game that fits the console's own two never touches it and keeps every
+  // address it had (§heapSpill).
+  heapSpill: { start: 0x6000, end: 0x8000 },
   fastStart: ZP_FREE,
   fastEnd: 0x0100,
+  // Page zero is 237 usable bytes here and a game with four levels wants 274 of
+  // them, most of it the two contact bitfields — which are read with `$nnnn,x`
+  // and never followed, so they are exactly what should move (§fastSpills). What
+  // may not is the tile walk's cursor, and that is `pin`'s job rather than this
+  // flag's.
+  fastSpills: true,
   oamShadow: 0x0200,
   oamEntries: 64,
   viewW: 32,
@@ -421,6 +452,12 @@ export const PCE_MEMORY: MemoryPlan = {
   // access takes them as absolute ones.
   fastStart: 0x2000 + ZP_FREE,
   fastEnd: 0x2100,
+  // The NES's reason, and it is the CPU's rather than either console's: this page
+  // is 256 bytes on both machines whatever the rest of the memory map is, so a
+  // game big enough to overrun it here would be refused for wanting a cheap
+  // address it does not need. Nothing in the example library reaches it, so no
+  // cartridge moved.
+  fastSpills: true,
   oamShadow: 0x2200,
   oamEntries: 64,
   viewW: 32,
@@ -1077,6 +1114,16 @@ export interface Layout {
   used: number;
   /** Bytes of the cheaply-addressed region in use; zero where there is none. */
   fastUsed: number;
+  /**
+   * Whether anything landed in the *cartridge's* RAM rather than the console's.
+   *
+   * False for every game that fits the console alone, which is every game on
+   * every console but one board (§{@link MemoryPlan.heapSpill}). True is the
+   * backend's cue that this cartridge has to declare a mapper with RAM on it —
+   * the same build then almost certainly needs one for its program too, but the
+   * two are separate facts and this is the one the *allocator* knows.
+   */
+  spilled: boolean;
 
   // --- always present -------------------------------------------------------
   tick: number;
@@ -1304,11 +1351,11 @@ class Bump {
   /**
    * The same, answering `undefined` rather than raising when it will not fit.
    *
-   * For a region that is an *optimisation* rather than a capability — a
-   * 65816's direct page, where running out costs a byte an access and nothing
-   * else (§{@link MemoryPlan.fastSpills}). Nothing else may use it: on a 6502
-   * page zero is the only place a pointer can live, so falling back there is a
-   * program that cannot be assembled rather than one that is bigger.
+   * For a region something else stands behind — a 65816's direct page, where
+   * running out costs a byte an access (§{@link MemoryPlan.fastSpills}), or a
+   * console's own work RAM where a cartridge can add more (§{@link
+   * MemoryPlan.heapSpill}). What may *not* answer `undefined` is a pointer on a
+   * 6502, and `pin` in {@link planLayout} is where that is said.
    */
   tryTake(bytes: number): number | undefined {
     // Only what is read as a word or a long has to be aligned; a run of single
@@ -1363,7 +1410,37 @@ function numberContacts(program: Program): { ranges: Map<number, ContactRange>; 
  */
 export function planLayout(program: Program, analysis: Analysis, memory: MemoryPlan): Layout {
   const align = memory.align ?? 1;
-  const heap = new Bump(memory.heapStart, memory.heapEnd, memory.machine, "work RAM", align);
+  const onboard = new Bump(memory.heapStart, memory.heapEnd, memory.machine, "work RAM", align);
+  /**
+   * The cartridge's own RAM, where the board has some (§{@link
+   * MemoryPlan.heapSpill}).
+   *
+   * A second region rather than a longer first one, because the two are not
+   * adjacent and the console's has to be filled first: that is what makes a game
+   * which fits the console alone keep every address it had.
+   */
+  const cartridge = memory.heapSpill
+    ? new Bump(
+        memory.heapSpill.start,
+        memory.heapSpill.end,
+        memory.machine,
+        "cartridge work RAM",
+        align,
+      )
+    : undefined;
+  let spilled = false;
+  const heap = {
+    take(bytes: number): number {
+      if (!cartridge) return onboard.take(bytes);
+      const near = onboard.tryTake(bytes);
+      if (near !== undefined) return near;
+      spilled = true;
+      return cartridge.take(bytes);
+    },
+    get used(): number {
+      return onboard.used + (cartridge?.used ?? 0);
+    },
+  };
   const quick =
     memory.fastStart !== undefined && memory.fastEnd !== undefined
       ? new Bump(memory.fastStart, memory.fastEnd, memory.machine, "page zero", align)
@@ -1383,6 +1460,20 @@ export function planLayout(program: Program, analysis: Analysis, memory: MemoryP
     if (!memory.fastSpills) return quick.take(bytes);
     return quick.tryTake(bytes) ?? heap.take(bytes);
   };
+  /**
+   * The same, for something that has to be *dereferenced*.
+   *
+   * A 6502 reaches memory indirectly through `($nn),y` and through nothing else,
+   * so a pointer the allocator placed outside page zero could not be followed at
+   * all — `mos/zp.ts`'s `slotOf` raises rather than assembling an instruction
+   * that reads the wrong two bytes. This is the same refusal one step earlier and
+   * in the language a build report can use: it names page zero and the game,
+   * rather than an address in hexadecimal.
+   *
+   * On a console whose cheap region never spills this is exactly {@link fast},
+   * which is why every existing map is unchanged.
+   */
+  const pin = (bytes: number): number => (quick ? quick.take(bytes) : heap.take(bytes));
 
   const entities: number[] = [];
   const entitySizes: number[] = [];
@@ -1460,7 +1551,9 @@ export function planLayout(program: Program, analysis: Analysis, memory: MemoryP
   // This tick's list is built here and copied over the stored one at the end
   // of the pair, so the comparison is never against a half-overwritten list.
   const tileScratch = analysis.usesTiles ? heap.take(tileContactStride) : 0;
-  const tilePtr = analysis.usesLevels ? fast(2) : 0;
+  // The one allocation on this family that is *followed* rather than read: the
+  // tile walk's cursor is `($nn),y` in `mos/tiles.ts`, so it is pinned (§pin).
+  const tilePtr = analysis.usesLevels ? pin(2) : 0;
 
   // One cell list per object any tile rule names as a subject.
   const tileCellSlots = new Map<number, number>();
@@ -1523,6 +1616,7 @@ export function planLayout(program: Program, analysis: Analysis, memory: MemoryP
     entitySizes,
     used: heap.used,
     fastUsed: quick?.used ?? 0,
+    spilled,
     interrupt,
     loop,
     bank,

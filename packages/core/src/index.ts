@@ -210,10 +210,17 @@ export {
   type PceCartOptions,
 } from "./asm/pce-cart.js";
 export {
+  NES_BANK_SIZE,
+  NES_BANK_WINDOW,
   NES_CHR_SIZE,
+  NES_FIXED_WINDOW,
   NES_HEADER_SIZE,
+  NES_MAPPER_MMC1,
+  NES_MMC1_PRG_MAX,
+  NES_MMC1_PRG_SIZES,
   NES_PRG_OFFSET,
   NES_PRG_ORIGIN,
+  NES_PRG_RAM,
   NES_PRG_SIZE,
   NES_PRG_SIZES,
   NES_VECTORS,
