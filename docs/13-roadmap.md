@@ -1688,8 +1688,21 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     machine.
 
     What each remaining console costs is now the same three things over one
-    shared walk. Level B (sample comparison against a third-party core, via the
-    libretro harness's audio callback) is the other thing that remains.
+    shared walk.
+
+    **Level B is built.** The libretro harness captures its audio callback, and
+    a standalone audio cartridge booted in a *third-party* core is compared with
+    `render()`'s output from the same schedule — which is the half Level A
+    cannot see, since a duty table off by one produces a perfect register stream
+    and the wrong sound. The comparison is the long-term average magnitude
+    spectrum as a cosine similarity, because a waveform diff is not available
+    here and would be flaky rather than strict: against fceumm the level differs
+    by 19% and cross-correlation locks onto the music's own periodicity, its best
+    lag wandering between 899 and 4456 samples across one capture. The threshold
+    is 0.99 and it was set by measuring what wrong answers score — the deciding
+    row is `nes-apu.ts` with its duty selection inverted, which scores 0.9801
+    against a correct model's 0.9992 and is exactly the bug this level exists to
+    catch. Doc 16 §The proof has the table.
 
     **And one console could not be rendered at all — fixed, and it was the one
     renderer rather than that console.** `demake render -c gba` wrote a WAV in

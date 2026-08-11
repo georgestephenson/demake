@@ -21,6 +21,7 @@ CACHE_ROOT="${DEMAKE_TOOLCHAIN_DIR:-$HOME/.cache/demake/toolchains}"
 PREFIX="$CACHE_ROOT/libretro"
 CORES_DIR="$PREFIX/cores"
 RUNNER="$PREFIX/retrorun"
+RUNNER_INC="$PREFIX/include"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -135,6 +136,10 @@ for entry in "${CORES[@]}"; do
   if [ "$built_runner" = "0" ]; then
     inc="$(dirname "$(find "$WORK/$name" -name libretro.h | head -1)")"
     [ -n "$inc" ] || die "no libretro.h found to build the runner"
+    # Keep the header: the work tree is a temp dir, and without a cached copy
+    # the runner can only ever be rebuilt as a side effect of rebuilding a core.
+    mkdir -p "$RUNNER_INC"
+    cp "$inc/libretro.h" "$RUNNER_INC/libretro.h"
     cc -O2 -I"$inc" "$RUNNER_SRC" -ldl -o "$RUNNER" 2>>/tmp/libretro-runner.log ||
       die "compiling retrorun.c failed (see /tmp/libretro-runner.log)"
     built_runner=1
@@ -144,4 +149,16 @@ for entry in "${CORES[@]}"; do
 done
 
 # If every core was cached, the runner already exists; report it.
+# Rebuild the runner when its *source* has moved, which a cached core would
+# otherwise hide: the loop above only compiles it as a side effect of building a
+# core, so editing `retrorun.c` on a warm cache left the old binary in place and
+# the change simply did not take.
+if [ "$built_runner" = "0" ] && [ -f "$RUNNER_INC/libretro.h" ] &&
+  { [ ! -x "$RUNNER" ] || [ "$RUNNER_SRC" -nt "$RUNNER" ]; }; then
+  log "retrorun.c is newer than the runner — rebuilding…"
+  cc -O2 -I"$RUNNER_INC" "$RUNNER_SRC" -ldl -o "$RUNNER" 2>>/tmp/libretro-runner.log ||
+    die "compiling retrorun.c failed (see /tmp/libretro-runner.log)"
+  log "rebuilt retrorun -> $RUNNER"
+fi
+
 [ -x "$RUNNER" ] && log "runner ready: $RUNNER"

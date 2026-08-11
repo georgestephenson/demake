@@ -268,6 +268,10 @@ export { mdChannelTag, mdPort, MD_FM_CHANNELS, MD_PSG_PORT } from "./rom/md-chip
 
 // --- hearing it --------------------------------------------------------------
 export { render, type RenderAudioOptions } from "./render.js";
+// The deterministic transforms, exported for Level B: comparing our audio with a
+// third-party core's is a *spectral* comparison (doc 16 §The proof), and it must
+// run on the same FFT everything else here does rather than a second one.
+export { fft, hann, spectrum, resample, ANALYSIS_RATE } from "./dsp.js";
 export { encodeWav, type WavOptions } from "./encode/wav.js";
 export { encodeFlac, type FlacOptions } from "./encode/flac.js";
 export { encodeVgm, type VgmOptions } from "./encode/vgm.js";

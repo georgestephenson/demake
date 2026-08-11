@@ -1209,7 +1209,9 @@ emu-harness/gb/      the headless capturer for the `gb` family's pixel-perfect E
                      Boys and against SameDuck for the Mega Duck. One source, two
                      emulators — nothing about capturing a frame differs, and
                      each build refuses the models its library is not
-emu-harness/libretro/  generic retrorun frontend — one capturer for every libretro core
+emu-harness/libretro/  generic retrorun frontend — one capturer for every libretro
+                     core, pixels *and* (with `audio_out=`) the audio callback,
+                     which is doc 16's Level B
 tools/toolchains/    provisioners (cached): RGBDS, cc65, WLA-DX, SameBoy and
                      SameDuck source builds; GNU m68k + arm-none-eabi binutils and
                      NASM (apt); libretro cores (fceumm, genesis-plus-gx, snes9x,
@@ -3636,6 +3638,17 @@ that keep them from being undone. All of them come from doc 16.
   runs in `pnpm test`. Comparing our audio to a third-party core's is a
   tolerance-based cross-check and must never be written as if it were bit-exact —
   cores resample and filter on their own terms.
+- **Level B compares _spectra_, and the threshold was measured rather than
+  chosen.** `audio-level-b.e2e.test.ts` boots a standalone audio cartridge in a
+  third-party core, captures its audio callback and compares the long-term
+  average magnitude spectrum with `render()`'s, as a cosine similarity. A
+  waveform diff was tried and is not available: against fceumm the level differs
+  by 19% and cross-correlation locks onto the music's own periodicity, its best
+  lag wandering between 899 and 4456 samples in one capture. The gate is 0.99
+  because the _chip model mutated_ — `nes-apu.ts` with its duty bit inverted,
+  which keeps Level A green — scores 0.9801 against a correct 0.9992. Do not
+  raise it without re-measuring that row, and do not swap the metric for a
+  waveform one without reading doc 16 §The proof first.
 - **Audio DSP is where determinism breaks first.** FFT twiddles, windows, mel
   banks, dB conversions and resampler kernels all come from
   `packages/core/src/math/kernels.ts`. An FFT seeded with `Math.cos` returns

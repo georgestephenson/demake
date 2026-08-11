@@ -55,7 +55,7 @@ Engine**, both **Sega 8-bits** and the **Mega Drive** build one; every other
 console with a driver plays it only from inside a game, and
 [`console-support.md`](console-support.md)'s **audio ROM** column is where that
 is stated rather than here), driver backends for the remaining consoles,
-`bin`/`asm`/`c` emit, Level B sample comparison, and the lossy encoders.
+`bin`/`asm`/`c` emit, and the lossy encoders.
 
 **And a sixth driver, on a console whose second device is not a chip.** `demake
 build -c gba` emits an ARM player, and it is the first one that has to *compute*
@@ -933,20 +933,49 @@ silence with silence. That is why the example library is written around ten part
 wide rather than four (AGENTS.md §Writing music), and why the proof still *names*
 the track it is pointed at rather than trusting any track to reach the mixer.
 
-**Level B — sample comparison against third-party cores (CI).** The existing
-libretro harness already receives an audio callback and currently discards it;
-writing those samples out is a small extension to `emu-harness/libretro/`. The
-core's audio is compared against our chip model's render.
+**Level B — sample comparison against third-party cores — built.**
+`emu-harness/libretro/retrorun.c` now captures its audio callback and writes a
+WAV at the core's own rate (opt-in through the same `key=value` channel core
+options use, so a capture that only wants pixels is unchanged), and
+`packages/cli/test/audio-level-b.e2e.test.ts` boots a standalone audio cartridge
+in a third-party core and compares what comes out with `render()`'s output from
+the same schedule.
 
 Honesty about what this level can claim, in the spirit of doc 10's existing notes
-about RGB565 and RGB555 comparisons: **it is not bit-exact, and it should not
+about RGB565 and RGB555 comparisons: **it is not bit-exact, and it does not
 pretend to be.** Cores resample and filter on their own terms, and several model
-the analog stage we deliberately leave out of `raw`. The comparison is therefore
-a pinned spectral-and-envelope distance with a per-core threshold, plus **exact
-equality of transient onset ticks**, which is the part that would actually catch a
-driver-timing bug. Where a core exposes scripted register access (Mesen 2's Lua
-interface, for instance), that console gets Level A too and Level B becomes a
-cross-check rather than the primary oracle.
+the analog stage we deliberately leave out of `raw`.
+
+**The comparison is the long-term average magnitude spectrum**, as a cosine
+similarity. A waveform diff was tried first and is not available: measured
+against fceumm the level differs by 19%, and cross-correlation locks onto the
+music's own periodicity rather than the true alignment — the best lag wanders
+between 899 and 4456 samples across one capture, which is a flaky test rather
+than a strict one. A spectrum is blind to phase, to alignment and to a constant
+gain, and is exactly what a wrong chip model moves: pitch, timbre and the
+balance between voices all live in it.
+
+**The threshold is 0.99, and it was chosen after measuring what wrong answers
+score.** The row that decides it is not a constructed comparison but a *mutation
+of the chip model itself* — `nes-apu.ts` with its duty selection inverted, which
+is precisely the bug this level exists to catch, since the register stream stays
+perfect and Level A still passes:
+
+| compared with the core | similarity |
+| --- | --- |
+| our render of the same schedule | **0.9992** |
+| the APU with its duty bit inverted | 0.9801 |
+| the same tune arranged for a Game Boy | 0.9492 |
+| our render, 6% sharp | 0.8826 |
+| white noise | 0.4236 |
+
+A console qualifies when it has **both** a standalone audio cartridge (§A5) and a
+libretro core: the cartridge because this needs a ROM whose only job is the
+schedule, and a third-party core because our own would be comparing a model with
+itself. That is the NES, both Sega 8-bits, the Mega Drive and the PC Engine
+today, and each joins by appearing in one table. Where a core exposes scripted
+register access (Mesen 2's Lua interface, for instance), that console gets Level A
+too and Level B becomes a cross-check rather than the primary oracle.
 
 **Level C — chip-model validation.** §Claim 2's three-way validation, run as its
 own suite.
