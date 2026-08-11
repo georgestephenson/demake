@@ -332,6 +332,33 @@ three ways:
 - **Cross-validation against reference cores.** Same ROM, same frames, our model
   versus the emulator's own audio output at native rate (§The proof).
 
+#### Resampling: one rule, both directions
+
+`renderSchedule` box-integrates a chip's native output onto evenly spaced
+samples, with boundaries at `floor(i × clockHz / sampleRate)` computed fresh from
+`i` rather than accumulated — so the mapping between clocks and samples is exact
+for the whole render however awkward the ratio.
+
+Almost every chip here clocks in **megahertz**, so a box is thousands of clocks
+wide and integration is plainly a downsample. One is not: `GbaPcm` is a *mixer*
+rather than an oscillator, and runs at 32768 Hz — below the 48 kHz a render
+defaults to. Its boxes are narrower than a clock, and the same rule covers it
+without a second mechanism: a box that falls **entirely inside one clock** has
+that clock's value as its mean, because the mean of a constant is the constant.
+Holding the value there is not a special case bolted on for one console; it is
+what box integration already meant.
+
+Two things about it are load-bearing and were each a real bug. Dividing by the
+box's width without asking whether the width is **zero** is `0 / 0`, which is how
+`demake render -c gba` came to write an all-`NaN` WAV for as long as that console
+existed. And **the accumulator must survive a zero-width box** — no clock elapsed
+in it, so whatever it holds belongs to a box still to come, and clearing it
+renders every second sample as silence. The second failure is much quieter than
+the first and no check for `NaN` finds it, which is why
+`packages/chip/test/mix.test.ts` asserts the property that distinguishes them: a
+constant rendered through a slow clock and a fast one produces the *same*
+samples, since the mean of a constant does not depend on how the boxes fall.
+
 ### Claim 3 — every surface plays that model's output and nothing else
 
 One renderer, all three faces, mirroring the image path's "one engine, four

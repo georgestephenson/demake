@@ -1680,25 +1680,37 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     shared walk. Level B (sample comparison against a third-party core, via the
     libretro harness's audio callback) is the other thing that remains.
 
-    **And one console cannot be rendered at all, which Level B would have found
-    the hard way.** `demake render -c gba` writes a WAV in which every sample
-    after the first is `NaN`, and it always has. The cause is in the *one
-    renderer* rather than in that console's binding or its chip model:
-    `GbaPcm.clockHz` is 32768 — the only model in the set whose clock is
-    **below** the 48 kHz the renderer defaults to, because it is a mixer rather
-    than an oscillator — and `BoxSink` computes its integration boundaries as
+    **And one console could not be rendered at all — fixed, and it was the one
+    renderer rather than that console.** `demake render -c gba` wrote a WAV in
+    which every sample after the first was `NaN`, and had since the console was
+    added. `GbaPcm.clockHz` is 32768 — the only model in the set whose clock is
+    **below** the 48 kHz a render defaults to, because it is a mixer rather than
+    an oscillator — and `BoxSink` computes its boundaries as
     `floor(i × clockHz / sampleRate)`. Consecutive boundaries therefore collide,
-    the width of the box is zero, and each sample is `0 / 0`. Every other chip
-    here clocks in megahertz, so box integration has only ever had to
+    the box has zero width, and the mean of no clocks is `0 / 0`. Every other
+    chip here clocks in megahertz, so box integration had only ever had to
     *downsample* and the case was never written.
 
-    Nothing downstream hides it and nothing upstream causes it: the register
-    schedule is correct, and `audio-gba.test.ts`'s byte-for-byte mixer proof
-    still passes because it compares the driver against the model's own integer
-    mix rather than against a float render. What is needed is a decision about
-    what `render()` does when it has to upsample — hold the sample, interpolate,
-    or render at the chip's rate and resample once — and that is doc 16's
-    §The render contract rather than a patch to one chip.
+    The answer needed no new mechanism, which is the argument for it: when the
+    output rate is above the chip's, a sample's box falls **entirely inside one
+    clock**, and the mean of a constant is that constant. Holding the value is
+    not a fallback for a degenerate case — it is what box integration *means*
+    when the box is narrower than a clock, so upsampling and downsampling are
+    one rule rather than two.
+
+    The trap is the accumulator. Clearing it on a zero-width box throws away
+    clocks that belong to the box after it, which renders every second sample as
+    silence — a far quieter failure than the `NaN` it replaces, and one no
+    check for `NaN` would notice. `packages/chip/test/mix.test.ts` pins both,
+    and its sharp assertion needs no tolerance argument: a constant rendered
+    through a slow clock and a fast one must produce the *same samples*, because
+    the mean of a constant does not depend on how the boxes fall.
+
+    Nothing upstream caused it and nothing downstream hid it — the register
+    schedule was always correct, and `audio-gba.test.ts`'s byte-for-byte mixer
+    proof kept passing because it compares the driver against the model's own
+    integer mix rather than against a float render. That is also why Level B
+    would have found this the hard way.
   - **A3 — `sfx`** *(built for WAV; the Game Boy boots)*: eight gesture families, the class gate,
     deterministic coordinate descent with every candidate rendered through the
     chip model, and the placement contract each effect declares. A single effect

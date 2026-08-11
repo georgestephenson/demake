@@ -1603,7 +1603,14 @@ packages/chip/       @demake/chip — every sound chip as a register-driven mode
                      address, so the model is told where the memory it was handed
                      begins. IMA-ADPCM, the capture units and the 32.7 kHz output
                      stage are absent rather than half-implemented
-  src/mix.ts         exact box-integration render, DC block, the one renderer
+  src/mix.ts         exact box-integration render, DC block, the one renderer.
+                     Its one subtlety is a box *narrower than a clock*, which
+                     only `GbaPcm` reaches (32768 Hz against a 48 kHz render,
+                     because it is a mixer rather than an oscillator): such a
+                     box lies inside one clock, so its mean is that clock's
+                     value. Dividing by the zero width is `0/0` — an all-NaN
+                     WAV — and clearing the accumulator there silences the
+                     *next* sample, which is the quieter of the two bugs
   src/stream.ts      the same renderer for a chip that is still running: the
                      ring buffer the web app's ROM pane plays from
 packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 18)
@@ -3592,6 +3599,19 @@ that keep them from being undone. All of them come from doc 16.
   sample-exact and byte-golden. M4A/Opus/MP3 are convenience exports and must be
   labelled as approximations everywhere they appear — the project does not make
   "transparent to most listeners" claims anywhere else.
+- **A box narrower than a clock is still a box.** `renderSchedule` integrates a
+  chip's output between boundaries at `floor(i × clockHz / sampleRate)`, and
+  every model but one clocks in megahertz — so a box is thousands of clocks wide
+  and nobody had to think about the other direction. `GbaPcm` is a _mixer_ at
+  32768 Hz, below the 48 kHz a render defaults to, so its boundaries collide and
+  the box has **zero width**. The rule still covers it: such a box lies entirely
+  inside one clock, and the mean of a constant is that constant. Two things go
+  wrong here and each did. Dividing by the width without asking whether it is
+  zero is `0/0`, which is how `render -c gba` wrote an all-NaN WAV for as long
+  as that console existed. And **the accumulator must survive a zero-width
+  box** — no clock elapsed in it, so what it holds belongs to a box still to
+  come, and clearing it silences every second sample, which is much quieter than
+  a NaN and no NaN check finds it.
 - **Exactness lives in the schedule, not in a waveform diff.** Level A (diff the
   register writes an owned core observes against the `ChipScript`) is exact and
   runs in `pnpm test`. Comparing our audio to a third-party core's is a
