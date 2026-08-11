@@ -624,3 +624,92 @@ export function emitTickSteps(steps: TickSteps, scene: SceneCtx, level: LevelDat
   at("camera");
   steps.camera(scene);
 }
+
+/** What one step of one scene's tick is called, on every console that pages. */
+export function stepLabel(scene: number, step: TickStep): string {
+  return `Step_${scene}_${step}`;
+}
+
+/**
+ * The steps this scene runs, in order — what a banked build has to place.
+ *
+ * Shared rather than per backend because the answer is: *which* of doc 14's steps
+ * a scene has is a fact about the scene (a scene with no level runs no tile
+ * rules), and `emitTickSteps` is the one place that knows it. Four consoles page
+ * below the level of a scene now, and a fourth copy of this would be a fourth
+ * chance to disagree with the sequence it is asking about.
+ */
+export function tickStepNames(scene: SceneCtx, level: LevelData | undefined): string[] {
+  const names: string[] = [];
+  const nothing = (): void => {};
+  emitTickSteps(
+    {
+      controls: nothing,
+      levelRules: nothing,
+      integrate: nothing,
+      beginContacts: nothing,
+      collisions: nothing,
+      endContacts: nothing,
+      tileRules: nothing,
+      edgeRules: nothing,
+      camera: nothing,
+      boundary: (step) => names.push(stepLabel(scene.index, step)),
+    },
+    scene,
+    level,
+  );
+  return names;
+}
+
+/**
+ * Run the whole sequence and emit only the step named, with a label on it.
+ *
+ * The other half of what a banked build needs, and it runs the *whole* sequence
+ * rather than calling one step's emitter directly. That is deliberate: which of
+ * doc 14's steps ride together — the two contact-set steps go with the
+ * collisions, because the history they keep is only consistent either side of the
+ * pair — is {@link emitTickSteps}'s to decide, and a switch that dispatched by
+ * name would be a second copy of that decision waiting to disagree with it.
+ *
+ * Answers whether it emitted anything, because a caller asking for a step this
+ * scene does not run is a bank plan built from something that is not there, and
+ * each backend raises that in its own assembler's language.
+ */
+export function emitOneTickStep(
+  steps: TickSteps,
+  scene: SceneCtx,
+  level: LevelData | undefined,
+  wanted: string,
+  onOpen: (name: string) => void,
+): boolean {
+  let live = false;
+  let emitted = false;
+  /** Run a step's emitter only while the one we were asked for is open. */
+  const gate =
+    <A extends unknown[]>(body: (...args: A) => void) =>
+    (...args: A): void => {
+      if (live) body(...args);
+    };
+  emitTickSteps(
+    {
+      controls: gate(steps.controls),
+      levelRules: gate(steps.levelRules),
+      integrate: gate(steps.integrate),
+      beginContacts: gate(steps.beginContacts),
+      collisions: gate(steps.collisions),
+      endContacts: gate(steps.endContacts),
+      tileRules: gate(steps.tileRules),
+      edgeRules: gate(steps.edgeRules),
+      camera: gate(steps.camera),
+      boundary: (step, sc) => {
+        live = stepLabel(sc.index, step) === wanted;
+        if (!live) return;
+        onOpen(wanted);
+        emitted = true;
+      },
+    },
+    scene,
+    level,
+  );
+  return emitted;
+}

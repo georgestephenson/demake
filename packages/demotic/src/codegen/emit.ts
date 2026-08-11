@@ -26,7 +26,13 @@ import type { InstanceDef, RuleDef } from "../program.js";
 import type { Ctx } from "./ctx.js";
 import { emitTest, propOffset, type Binding } from "./expr.js";
 import { isMutable } from "./analyze.js";
-import { emitTickSteps, type TickStep, type TickSteps } from "./backend.js";
+import {
+  emitOneTickStep,
+  emitTickSteps,
+  stepLabel,
+  tickStepNames,
+  type TickSteps,
+} from "./backend.js";
 import {
   artKey,
   emitInstanceDefaults,
@@ -1173,9 +1179,6 @@ function tickSteps(ctx: Ctx): TickSteps {
 }
 
 /** Where one of a scene's tick steps begins. */
-export function stepLabel(scene: number, step: TickStep): string {
-  return `Step_${scene}_${step}`;
-}
 
 function emitSceneTick(ctx: Ctx, scene: SceneCtx, level: LevelData | undefined): void {
   const { asm } = ctx;
@@ -1190,27 +1193,6 @@ function emitSceneTick(ctx: Ctx, scene: SceneCtx, level: LevelData | undefined):
  * `emitTickSteps` is the only thing that knows the sequence, and a banked build
  * needs the *names* before it can emit the calls that run them.
  */
-function tickStepNames(scene: SceneCtx, level: LevelData | undefined): string[] {
-  const names: string[] = [];
-  const nothing = () => {};
-  emitTickSteps(
-    {
-      controls: nothing,
-      levelRules: nothing,
-      integrate: nothing,
-      beginContacts: nothing,
-      collisions: nothing,
-      endContacts: nothing,
-      tileRules: nothing,
-      edgeRules: nothing,
-      camera: nothing,
-      boundary: (step) => names.push(stepLabel(scene.index, step)),
-    },
-    scene,
-    level,
-  );
-  return names;
-}
 
 /**
  * One step of a tick, as a routine of its own — what a banked build places.
@@ -1229,34 +1211,8 @@ function emitTickStepBody(
   wanted: string,
 ): void {
   const { asm } = ctx;
-  const steps = tickSteps(ctx);
-  let live = false;
-  let emitted = false;
-  const gate =
-    <A extends unknown[]>(body: (...args: A) => void) =>
-    (...args: A) => {
-      if (live) body(...args);
-    };
-  emitTickSteps(
-    {
-      controls: gate(steps.controls),
-      levelRules: gate(steps.levelRules),
-      integrate: gate(steps.integrate),
-      beginContacts: gate(steps.beginContacts),
-      collisions: gate(steps.collisions),
-      endContacts: gate(steps.endContacts),
-      tileRules: gate(steps.tileRules),
-      edgeRules: gate(steps.edgeRules),
-      camera: gate(steps.camera),
-      boundary: (step, sc) => {
-        live = stepLabel(sc.index, step) === wanted;
-        if (!live) return;
-        asm.label(wanted);
-        emitted = true;
-      },
-    },
-    scene,
-    level,
+  const emitted = emitOneTickStep(tickSteps(ctx), scene, level, wanted, (name: string) =>
+    asm.label(name),
   );
   if (!emitted) throw new AsmError(`'${wanted}' is not a step this scene runs`);
   asm.ret();
