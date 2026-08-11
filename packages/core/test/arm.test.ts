@@ -308,10 +308,50 @@ describe("the literal pool", () => {
   });
 
   it("refuses a load that cannot reach the pool it was given", () => {
+    // `ds` is data rather than instructions, so nothing is emitted that could
+    // rescue the pool — which is what makes this still the refusal it always was.
     const asm = new AsmArm();
     asm.ldrConst(R0, 0x12345678);
     asm.ds(0x1004);
     expect(() => asm.ltorg()).toThrow(/call ltorg\(\) more often/);
+  });
+
+  /**
+   * A routine longer than a pooled load can reach places its own pool.
+   *
+   * The backstop under `ltorg`'s contract, and the case the example library could
+   * not reach until `quest`: a backend flushes at safe points it chooses, and how
+   * far apart those are is a property of the game being compiled. Sixty-four
+   * bytes over was a build error in the middle of a program that merely grew.
+   *
+   * What is asserted is the property rather than the placement — every load
+   * reaches its own pool — because *where* the rescue lands is the assembler's
+   * business and a test that pinned it would fail on any improvement to it.
+   */
+  it("places a pool itself when the next instruction would put one out of reach", () => {
+    const asm = new AsmArm();
+    asm.ldrConst(R0, 0x12345678);
+    // Instructions rather than `ds`: a thousand words is 4 KiB, which is further
+    // than the load above can see.
+    for (let at = 0; at < 1200; at += 1) asm.nop();
+    asm.ret();
+    asm.ltorg();
+    const code = asm.assemble();
+    // The load is still the first instruction and still a `ldr rd, [pc, #n]`.
+    const load = code[0] | (code[1] << 8) | (code[2] << 16) | (code[3] << 24);
+    expect(((load >>> 0) & 0xfffff000) >>> 0).toBe(0xe59f0000);
+    // And it reads the value it was given, from wherever the rescue put it.
+    const delta = (load >>> 0) & 0xfff;
+    const at = 8 + delta;
+    expect(code[at] | (code[at + 1] << 8) | (code[at + 2] << 16) | (code[at + 3] << 24)).toBe(
+      0x12345678,
+    );
+    // The pool was jumped over rather than fallen into: the word before it is a
+    // branch, so nothing executes the constant.
+    const before = at - 4;
+    const branch = code[before] | (code[before + 1] << 8) | (code[before + 2] << 16);
+    expect((code[before + 3] as number) & 0x0f).toBe(0x0a);
+    expect(branch).toBeGreaterThanOrEqual(0);
   });
 
   it("flushes what is left when the program ends", () => {

@@ -438,8 +438,48 @@ export class AsmArm {
     if (this.code.length % 4 !== 0) {
       throw new AsmError(`an instruction at $${this.pc.toString(16)} is not word-aligned`);
     }
+    this.rescuePool();
     return this.dw(word >>> 0);
   }
+
+  /**
+   * Put the pool down *here* if the oldest waiting load is about to lose it.
+   *
+   * The backstop under {@link ltorg}'s contract, and the reason it exists is that
+   * the contract cannot be kept by looking: a backend flushes at safe points it
+   * chooses, and how far apart those are is a property of the game being
+   * compiled rather than of the emitter. `quest` is the game that found it — a
+   * stretch of one rule body 4160 bytes long, sixty-four over — and the failure
+   * is a build error in the middle of a program that merely grew.
+   *
+   * So the guess is kept for *placement* and this makes it safe. A backend's
+   * `poolCheck` still decides where a pool normally lands, which is what keeps it
+   * out of hot code and every existing cartridge byte-identical; this fires only
+   * when the next instruction would put a queued load out of reach, and then the
+   * pool goes down over a branch right where it is still legal.
+   *
+   * Inserting a branch and some words between two instructions is safe here for
+   * three reasons and all three are properties of this assembler: every jump is
+   * to a symbolic label, so nothing holds a numeric offset that could go stale; a
+   * branch sets no flags, so a predicated instruction after it still reads the
+   * comparison before it; and the pool is jumped over rather than fallen into.
+   */
+  private rescuePool(): void {
+    if (this.flushing || this.pool.length === 0) return;
+    // The pool would land after this instruction and the branch over it, and the
+    // twelve-bit displacement is measured from the load's own PC — which is two
+    // instructions ahead of it. `+ 16` is those, with the alignment word that
+    // `ltorg` may insert.
+    if (this.poolAge + 16 <= 0xfff) return;
+    this.flushing = true;
+    const over = `__pool_${this.rescues++}`;
+    this.b(over);
+    this.ltorg();
+    this.label(over);
+    this.flushing = false;
+  }
+  private flushing = false;
+  private rescues = 0;
 
   /** The condition field, in place. */
   private static cc(cond: ArmCond): number {

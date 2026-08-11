@@ -25,9 +25,11 @@ import { tape, trace } from "../src/trace.js";
 import { romReady } from "../src/rom/trace.js";
 
 import {
+  gbaTarget,
   gbTarget,
   gbcTarget,
   mdTarget,
+  ndsTarget,
   nesTarget,
   smsTarget,
   snesTarget,
@@ -319,6 +321,31 @@ describe("ROM conformance across the example library", async () => {
       trace(new Sim(program), frames),
     );
   }, 180_000);
+
+  /**
+   * And on both ARM handhelds, where the cartridge was never the problem.
+   *
+   * A Game Boy Advance has thirty-two megabytes and a Nintendo DS four, so
+   * neither pages anything and neither ever will for a game this size. What
+   * stopped `quest` here was the **literal pool**: a 32-bit constant does not fit
+   * in a 32-bit instruction, so it is loaded PC-relative from a pool within
+   * 4 KiB, and this game has a stretch of one rule body 4160 bytes long. Sixty-
+   * four bytes over, and the build reported invalid code rather than a cartridge.
+   *
+   * The backend flushes at safe points it chooses and cannot know how far apart
+   * they are, so the assembler now places a pool itself when the next instruction
+   * would put a queued load out of reach (`asm/arm.ts` §rescuePool). This is the
+   * case that says the rescue lands somewhere a program can survive: a pool in a
+   * reachable instruction stream is *executed*, so getting it wrong is not a
+   * wrong number but a game that runs its own constants.
+   */
+  for (const target of [gbaTarget, ndsTarget]) {
+    it(`matches the interpreter for the quest fixture on ${target.console}`, async () => {
+      const program = build(gameSource("quest"), questLevels(), target.console);
+      const frames = tape(QUEST_TAPE);
+      expect(await romTrace(program, frames, {}, target)).toBe(trace(new Sim(program), frames));
+    }, 180_000);
+  }
 
   it("builds a Mega Duck cartridge that a Game Boy could not run", async () => {
     // The guard the test above cannot be: identical traces are also what a map
