@@ -1356,13 +1356,20 @@ class Bump {
    * console's own work RAM where a cartridge can add more (§{@link
    * MemoryPlan.heapSpill}). What may *not* answer `undefined` is a pointer on a
    * 6502, and `pin` in {@link planLayout} is where that is said.
+   *
+   * `keep` is how the two live together. A spilling request that emptied the
+   * region would leave a later *pinned* one with nowhere to go — and reordering
+   * so the pins come first is not open to us, because the order of these calls
+   * is the order of the addresses and every game that fits has to keep the map
+   * it had. So a request that may spill declines the last `keep` bytes, which
+   * are the pins still to come.
    */
-  tryTake(bytes: number): number | undefined {
+  tryTake(bytes: number, keep = 0): number | undefined {
     // Only what is read as a word or a long has to be aligned; a run of single
     // bytes still packs tightly, which is what keeps every other console's map
     // exactly what it was.
     const at = bytes > 1 && this.align > 1 ? Math.ceil(this.at / this.align) * this.align : this.at;
-    if (at + bytes > this.end) return undefined;
+    if (at + bytes + keep > this.end) return undefined;
     this.at = at + bytes;
     return at;
   }
@@ -1458,8 +1465,22 @@ export function planLayout(program: Program, analysis: Analysis, memory: MemoryP
   const fast = (bytes: number): number => {
     if (!quick) return heap.take(bytes);
     if (!memory.fastSpills) return quick.take(bytes);
-    return quick.tryTake(bytes) ?? heap.take(bytes);
+    return quick.tryTake(bytes, pinning) ?? heap.take(bytes);
   };
+  /**
+   * Bytes of the cheap region the pinned requests still to come will want.
+   *
+   * Counted up front rather than discovered, because a `fast` request that
+   * emptied the page would leave a `pin` after it with nowhere to go — and the
+   * order of these calls is the order of the addresses, so serving the pins first
+   * would move every address in every game that fits. Both pins are known from
+   * the program: whether it walks a level, and whether it has any audio.
+   */
+  let pinning =
+    (analysis.usesLevels ? 2 : 0) +
+    (memory.audioBytes > 0 && program.tracks.length + program.sounds.length > 0
+      ? memory.audioBytes
+      : 0);
   /**
    * The same, for something that has to be *dereferenced*.
    *
@@ -1473,7 +1494,10 @@ export function planLayout(program: Program, analysis: Analysis, memory: MemoryP
    * On a console whose cheap region never spills this is exactly {@link fast},
    * which is why every existing map is unchanged.
    */
-  const pin = (bytes: number): number => (quick ? quick.take(bytes) : heap.take(bytes));
+  const pin = (bytes: number): number => {
+    pinning -= bytes;
+    return quick ? quick.take(bytes) : heap.take(bytes);
+  };
 
   const entities: number[] = [];
   const entitySizes: number[] = [];
@@ -1598,9 +1622,15 @@ export function planLayout(program: Program, analysis: Analysis, memory: MemoryP
   // so anything added anywhere else would move every entity record. Which is
   // also why the interrupt bytes go after the driver's rather than beside the
   // scratch they were taken out of — a console that needs none is unchanged.
+  // Pinned rather than merely fast, and the reason is the same one the tile
+  // walk's cursor has: a stream player walks its packed data through a pointer,
+  // and on a 6502 that is `($nn),y` or nothing. A driver's state that spilled to
+  // cartridge RAM would be a driver whose every read went to an address it could
+  // not name — refused here, in the language a build report can use, rather than
+  // three layers down at the instruction that could not be assembled.
   const audio =
     memory.audioBytes > 0 && program.tracks.length + program.sounds.length > 0
-      ? fast(memory.audioBytes)
+      ? pin(memory.audioBytes)
       : null;
   const interrupt = memory.interruptBytes > 0 ? fast(memory.interruptBytes) : null;
   // After the interrupt bytes, for the same reason they come after the driver's:

@@ -28,6 +28,7 @@ import {
   gbTarget,
   gbcTarget,
   mdTarget,
+  nesTarget,
   smsTarget,
   snesTarget,
   megaduckTarget,
@@ -282,6 +283,39 @@ describe("ROM conformance across the example library", async () => {
     );
     expect(assets.size).toBe(12);
     expect(await romTrace(program, frames, { assets }, gbTarget)).toBe(
+      trace(new Sim(program), frames),
+    );
+  }, 180_000);
+
+  /**
+   * And on the NES, which is the only one that had to duplicate a table.
+   *
+   * Its window and its fixed half are the Game Boy's sixteen kilobytes each, but
+   * its 6502 program is some four kilobytes bigger and its characters cost the
+   * program nothing — so what would not fit below was the **level tables**, which
+   * more than one step of a scene reads. There is nowhere else for them to go, so
+   * each bank that reads a level carries its own copy (`shape.ts`
+   * §LevelData.suffix). What that can get wrong is a copy nobody made — a `jsr`
+   * to a `TileAt` in a bank that is not in the window — which reads whatever is at
+   * that address and does not crash. So the oracle is the same one, tick for tick,
+   * over a tape that walks the meadow's tiles.
+   *
+   * Handed the audio for the Game Boy's reason and one of its own: this console's
+   * driver is entered from the NMI, and MMC1's bank register is written five
+   * stores at a time, so a sequence an interrupt landed in the middle of cannot be
+   * put back. That the schedules are read from the *main loop* rather than the
+   * handler is what makes them pageable at all here, and a tick of music is what
+   * puts an interrupt in the middle of a paged step to prove it.
+   */
+  it("matches the interpreter for the quest fixture on nes, across paged banks", async () => {
+    const program = build(gameSource("quest"), questLevels(), "nes");
+    const frames = tape(QUEST_TAPE);
+    const assets = new Map(
+      projectFiles("quest")
+        .filter((path) => path.endsWith(".mid") || path.endsWith(".wav"))
+        .map((path) => [path.split("/").pop() as string, projectBytes("quest", path)]),
+    );
+    expect(await romTrace(program, frames, { assets }, nesTarget)).toBe(
       trace(new Sim(program), frames),
     );
   }, 180_000);

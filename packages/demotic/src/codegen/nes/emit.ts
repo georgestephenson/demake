@@ -80,6 +80,7 @@ import {
   emitLevelData,
   emitRuleTileTable,
   emitTileAt,
+  levelCopy,
   GRID_EMPTY,
   inc16,
   tileAtLabel,
@@ -264,7 +265,18 @@ function unitNames(
 export interface EmittedNesProgram {
   /** How long each pageable unit came out, by name. Empty unless split. */
   units: ReadonlyMap<string, number>;
-  /** Bytes the fixed half took: everything that is not a unit. */
+  /**
+   * How long one level's grid and legend tables came out, by level index.
+   *
+   * Not units, because they are not *placed*: a bank gets a copy of a level
+   * because something in it reads one (§{@link LevelData.suffix}), so the plan
+   * has to charge a bank for the copies its units drag in as well as for the
+   * units themselves.
+   */
+  levels: ReadonlyMap<number, number>;
+  /** Which level each unit reads, where it reads one. */
+  needs: ReadonlyMap<string, number>;
+  /** Bytes the fixed half took: everything that is neither a unit nor a copy. */
   fixed: number;
 }
 
@@ -272,8 +284,15 @@ export interface EmittedNesProgram {
 export interface NesBankPlan {
   /** The units in each paged bank, in the order they are emitted. */
   banks: readonly (readonly string[])[];
+  /** Which levels each paged bank carries a copy of, in level order. */
+  levels: readonly (readonly number[])[];
   /** Which bank each unit landed in, by unit name. */
   bankOf: ReadonlyMap<string, number>;
+}
+
+/** What one bank's copy of a level's tables is called. */
+export function levelSuffix(bank: number): string {
+  return `_b${bank}`;
 }
 
 /**
@@ -327,13 +346,22 @@ export function emitProgram(ctx: NesCtx, options: NesEmitOptions = {}): EmittedN
   }
 
   const units = new Map<string, number>();
+  const needs = new Map<string, number>();
+  const levelBytes = new Map<number, number>();
   const unit = (name: string, emit: () => void): void => {
     const at = asm.length;
     emit();
     units.set(name, asm.length - at);
   };
-  /** Emit whichever routine or block a unit's name refers to. */
-  const emitUnit = (name: string): void => {
+  /**
+   * Emit whichever routine or block a unit's name refers to.
+   *
+   * `suffix` names the bank's own copy of the level tables, because a routine
+   * cannot read a table in a bank that is not in the window it is running from
+   * (§{@link LevelData.suffix}). Every reader takes the level off this one
+   * object, so redirecting it here is the whole of it.
+   */
+  const emitUnit = (name: string, suffix: string): void => {
     if (name === AUDIO_DATA_UNIT) {
       unit(name, () => options.audio?.emitData(asm));
       return;
@@ -343,7 +371,9 @@ export function emitProgram(ctx: NesCtx, options: NesEmitOptions = {}): EmittedN
       return;
     }
     const scene = scenes[Number(name.split("_")[1])] as SceneCtx;
-    const level = levelFor.get(scene.index);
+    const shared = levelFor.get(scene.index);
+    if (shared) needs.set(name, shared.index);
+    const level = shared ? levelCopy(shared, suffix) : undefined;
     if (name.startsWith("SceneReset_")) unit(name, () => emitSceneReset(ctx, scene));
     else if (name.startsWith("SceneCamera_")) unit(name, () => emitSceneCamera(ctx, scene));
     else if (name.startsWith("SceneRender_")) {
@@ -359,6 +389,25 @@ export function emitProgram(ctx: NesCtx, options: NesEmitOptions = {}): EmittedN
     } else unit(name, () => emitTickStepBody(ctx, scene, level, name));
   };
 
+  /** One level's grid, legend tables, lookup routine and per-rule tables. */
+  const emitLevelTables = (data: LevelData): void => {
+    const boundTile = (index: number): number => {
+      const art = data.file.tiles[index]?.art;
+      const bound = art
+        ? (options.tiles?.get(artKey(art, 1, 1)) ?? options.tiles?.get(art))
+        : undefined;
+      // A legend entry with no art draws a built-in pattern.
+      return bound?.tile ?? ctx.bank.pattern(index, data.file.tiles[index]?.solid ?? false);
+    };
+    emitLevelData(asm, data, (index) => boundTile(index) & 0xff);
+    emitTileAt(ctx, data);
+    for (const rule of program.rules) {
+      if (rule.event.kind === "hits" && rule.event.tiles.length > 0) {
+        emitRuleTileTable(asm, rule, data);
+      }
+    }
+  };
+
   const plan = options.banks;
   const split = options.split === true || plan !== undefined;
   // On the measuring pass there is no plan yet, so the context is told which
@@ -370,9 +419,13 @@ export function emitProgram(ctx: NesCtx, options: NesEmitOptions = {}): EmittedN
   if (split) {
     asm.section(NES_BANK_WINDOW);
     if (plan) {
-      for (const bank of plan.banks) {
+      for (const [index, bank] of plan.banks.entries()) {
         const start = asm.length;
-        for (const name of bank) emitUnit(name);
+        const suffix = levelSuffix(index);
+        for (const name of bank) emitUnit(name, suffix);
+        for (const at of plan.levels[index] ?? []) {
+          emitLevelTables(levelCopy(levels[at] as LevelData, suffix));
+        }
         const used = asm.length - start;
         if (used > NES_BANK_SIZE) {
           throw new AsmError(`a paged bank holds ${used} bytes of a possible ${NES_BANK_SIZE}`);
@@ -381,7 +434,16 @@ export function emitProgram(ctx: NesCtx, options: NesEmitOptions = {}): EmittedN
         asm.section(NES_BANK_WINDOW);
       }
     } else {
-      for (const name of unitNames(scenes, levelFor, options)) emitUnit(name);
+      for (const name of unitNames(scenes, levelFor, options)) emitUnit(name, "");
+      // Measured here rather than left in the fixed half, because a banked build
+      // puts a copy of them in each bank that reads one — so what the plan has to
+      // know is how big a copy is, and what the fixed half has to be charged for
+      // is nothing at all.
+      for (const data of levels) {
+        const at = asm.length;
+        emitLevelTables(data);
+        levelBytes.set(data.index, asm.length - at);
+      }
     }
     asm.section(ctx.asm.origin);
   }
@@ -410,23 +472,9 @@ export function emitProgram(ctx: NesCtx, options: NesEmitOptions = {}): EmittedN
   ctx.finish();
 
   // --- data ------------------------------------------------------------------
-  for (const level of levels) {
-    const boundTile = (index: number): number => {
-      const art = level.file.tiles[index]?.art;
-      const bound = art
-        ? (options.tiles?.get(artKey(art, 1, 1)) ?? options.tiles?.get(art))
-        : undefined;
-      // A legend entry with no art draws a built-in pattern.
-      return bound?.tile ?? ctx.bank.pattern(index, level.file.tiles[index]?.solid ?? false);
-    };
-    emitLevelData(asm, level, (index) => boundTile(index) & 0xff);
-    emitTileAt(ctx, level);
-    for (const rule of program.rules) {
-      if (rule.event.kind === "hits" && rule.event.tiles.length > 0) {
-        emitRuleTileTable(asm, rule, level);
-      }
-    }
-  }
+  // The level tables, unless this build pages — in which case every copy of them
+  // is up in a bank and the fixed half carries none (§{@link LevelData.suffix}).
+  if (!split) for (const level of levels) emitLevelTables(level);
   if (!units.has(DEFAULTS_UNIT)) emitInstanceDefaults(asm, program, PROPS, ctx.layout.entitySizes);
 
   // One demade nametable per scene that has a backdrop, and one attribute table
@@ -453,19 +501,20 @@ export function emitProgram(ctx: NesCtx, options: NesEmitOptions = {}): EmittedN
     }
     if (!units.has(AUDIO_DATA_UNIT)) options.audio.emitData(asm);
   }
-  return { units, fixed: asm.length - unitBytes(units) - padding(plan, units) };
+  // What the fixed half took is everything the paged section did not. Planned,
+  // the paged section is whole banks by construction — each is padded out — and
+  // measuring, it is the units and one copy of each level's tables.
+  const paged = plan
+    ? plan.banks.length * NES_BANK_SIZE
+    : total(units.values()) + total(levelBytes.values());
+  return { units, levels: levelBytes, needs, fixed: asm.length - (split ? paged : 0) };
 }
 
-/** How many bytes of the image the paged units took. */
-function unitBytes(units: ReadonlyMap<string, number>): number {
-  let total = 0;
-  for (const bytes of units.values()) total += bytes;
-  return total;
-}
-
-/** And how many the padding to whole banks added, which is nobody's. */
-function padding(plan: NesBankPlan | undefined, units: ReadonlyMap<string, number>): number {
-  return plan ? plan.banks.length * NES_BANK_SIZE - unitBytes(units) : 0;
+/** The sum of a run of byte counts. */
+function total(counts: Iterable<number>): number {
+  let sum = 0;
+  for (const bytes of counts) sum += bytes;
+  return sum;
 }
 
 /**

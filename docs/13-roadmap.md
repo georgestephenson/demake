@@ -1717,17 +1717,34 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   Drive (140 KiB, on the 256 KiB board its size asks for), **on the Super
   Nintendo** — 128 KiB, a bank per scene — **on both Sega 8-bits**, where the
   unit is finer still: 128 KiB with a tick's individual steps paged through slot
-  2 — and **on all three Game Boys**, which is the same unit again on the
-  hardest board in the set. All four are traced tick for tick against the
-  interpreter by `rom.test.ts`. One console is left, and the number says what it
-  is short of rather than by how little:
+  2 — **on all three Game Boys**, which is the same unit again on the hardest
+  board in the set, and **on the NES**, which is the same unit a third time and
+  the only console that had to duplicate a table to manage it. All six families
+  are traced tick for tick against the interpreter by `rom.test.ts`, and **the
+  list is finished**:
 
-  | Console | Wall it hits | Needs | Has |
-  | --- | --- | --- | --- |
-  | ~~Game Boy / Color / Mega Duck~~ | ~~cartridge, then the fixed bank~~ | **done** | 128 KiB, of 8 MiB |
-  | ~~Master System / Game Gear~~ | ~~cartridge~~ | **done** | 128 KiB, of 512 |
-  | NES | ~~work RAM~~, ~~page zero~~, then the fixed bank | 16630 B immovable | 16384 B |
-  | ~~Super Nintendo~~ | ~~direct page, then cartridge~~ | **done** | 128 KiB, of 4 MiB |
+  | Console | Walls it hit | Result |
+  | --- | --- | --- |
+  | ~~Game Boy / Color / Mega Duck~~ | ~~cartridge, then the fixed bank~~ | 128 KiB, of 8 MiB |
+  | ~~Master System / Game Gear~~ | ~~cartridge~~ | 128 KiB, of 512 |
+  | ~~NES~~ | ~~work RAM, page zero, then the fixed bank~~ | 256 KiB, of 256 |
+  | ~~Super Nintendo~~ | ~~direct page, then cartridge~~ | 128 KiB, of 4 MiB |
+
+  The NES had three walls where every other console had one or two, and the third
+  was only ever visible once the first two were down — which is the argument for
+  measuring rather than estimating, twice over. Its **work RAM** went first
+  (MMC1's eight kilobytes at `$6000`), because a board with a second sixteen
+  kilobytes of program is the same board that brings the RAM, so those are one
+  decision. Its **page zero** went next and is `fastSpills` reaching a second
+  console: almost nothing a 6502 backend allocates is dereferenced — the contact
+  bitfields are read `$nnnn,x`, a temporary goes through `clamp32` — so a game
+  refused for wanting 274 bytes of a 237-byte page was a game refused for wanting
+  cheap addresses it did not need. What may *not* spill is a pointer, and there
+  are exactly two: the tile walk's cursor and the audio driver's state, both of
+  which walk memory through `($nn),y` and nothing else. `pin` is where that is
+  said, and `Bump.tryTake`'s `keep` is what makes the two live together — a
+  spilling request declines the last bytes of the page, because the pins are still
+  to come and the order of these calls is the order of the addresses.
 
   The Super Nintendo's first wall is gone, and it went for a reason worth
   keeping: the direct page there is a pure size optimisation — `$nn` is two bytes
@@ -1989,32 +2006,42 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     holds the banks it opened, and `free` is measured against the largest — so a
     game that grows never looks like a game with more room (AGENTS.md §Iron
     rules). Quest takes 128 KiB.
-  - **NES** — **the mapper is in, both RAM walls are down, and one thing is
-    left.** This was the only family that needed a *new* mapper in the core as
+  - **NES** — **done, and it is the only console that had to duplicate a table.**
+    This was the only family that needed a *new* mapper in the core as
     well, and it has one: `@demake/nes` implements **MMC1** — sixteen kilobytes
     switched at `$8000`, sixteen fixed at `$C000`, and the eight of cartridge RAM
     at `$6000` — pinned against the hardware's own rules by `mmc1.test.ts`,
     because the cartridge and the core are both ours and a mapper that is wrong
     and consistent would pass everything.
 
-    It is also the one console with **three** walls rather than two, and the
-    middle one was not in this table until it was measured:
+    It is also the one console with **three** walls rather than two, and neither
+    of the last two was in this table until the one before it came down:
 
     | Wall | Wants | Has | |
     | --- | --- | --- | --- |
-    | work RAM | 1288 B | 1280 B | the `$6000` RAM, done |
-    | page zero | 274 B | 237 B | spilling, done |
-    | fixed bank | 16630 B | 16384 B | the level tables, left |
+    | work RAM | 1288 B | 1280 B | the `$6000` RAM |
+    | page zero | 274 B | 237 B | spilling, with two pins |
+    | fixed bank | 16630 B | 16384 B | the level tables, copied per bank |
 
     **Page zero** is the one nothing had noticed, because the RAM wall hides it:
     the entities alone overrun the console's two kilobytes, so a build never got
     far enough to ask. What wants it is mostly the two contact bitfields — 71
     bytes each, and read with `$nnnn,x` — so they are exactly what should move.
     `fastSpills` now applies to this family too, and what may *not* move goes
-    through `pin`: the tile walk's cursor is `($nn),y` and is the only allocation
-    on this CPU that is ever dereferenced, so a pointer that would not fit is
-    refused by name rather than assembling an instruction that reads the wrong two
-    bytes (`layout.ts` §fastSpills).
+    through `pin`. There are **two** pins and the second was found by building:
+    the tile walk's cursor is `($nn),y`, and so is the audio driver's state,
+    because a stream player walks its packed data through a pointer. A pointer
+    that would not fit is refused by name rather than assembling an instruction
+    that reads the wrong two bytes (`layout.ts` §fastSpills).
+
+    The two rules also had to be taught to live together, which is `Bump.tryTake`'s
+    `keep`. A spilling request that emptied the page would leave a *pinned* one
+    after it with nowhere to go — and serving the pins first is not open to us,
+    because the order of these calls is the order of the addresses and every game
+    that fits has to keep the map it had. So a request that may spill declines the
+    last bytes of the region, which are the pins still to come. Without it the
+    build refused quest for wanting 274 bytes of a 237-byte page *after* the
+    spilling was working, which reads like the mechanism not being there at all.
 
     **The emitter pages**, on the Game Boy's unit with the halves the other way
     up: a tick's individual steps plus each scene's reset, camera and render, with
@@ -2025,15 +2052,22 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     PPU addresses directly rather than bytes in the program, which is the one
     thing that makes this cartridge's fixed half easier than a Game Boy's.
 
-    **What is left is the level tables**, and they are about ten kilobytes of the
-    sixteen. A Game Boy could leave them mapped and this cannot: quest's fixed
-    half comes to 16630 bytes with no art and no audio in it, which is 246 over,
-    and audio would put it thousands over. So this console has to take the option
-    the Game Boy did not need — duplicate each level's grid, its legend and its
-    rule tables into every bank whose steps read them, at about 1.4 KiB a level a
-    bank — because more than one step of a scene reads them and a paged routine
-    cannot reach a table in another bank. That is a per-bank label set rather than
-    a shared one, which is why it is a piece of work rather than a line.
+    **And the level tables are copied per bank**, which is the thing no other
+    console needed. A Game Boy could leave them mapped and this cannot: quest's
+    fixed half came to 16630 bytes, 246 over. So each bank that reads a level
+    carries its own copy of that level's grid, its legend tables, its `TileAt`
+    routine and its per-rule tile tables — 1575 to 2997 bytes a level — because
+    more than one step of a scene reads them and a paged routine cannot reach a
+    table in another bank. What made it a change rather than a piece of work is
+    that every reader already takes a `LevelData` and reads its labels off it, so
+    one `suffix` field and a `levelCopy` are the whole mechanism and no emitter
+    has to know that copies exist (`shape.ts` §LevelData.suffix). The planner is
+    where it shows: a bank is charged for the copies its units drag in as well as
+    for the units, so "does this fit" is a question about the pair.
+
+    That took the fixed half to **8109 bytes of 16384**, which is the roomiest of
+    the three 16 KiB-window consoles rather than the tightest — the level tables
+    really were the whole of the problem. quest ships on a 256 KiB board.
 
     **A mapper write is ten instructions here**, which no other console in the set
     can say: MMC1's register is *serial*, five stores of one bit with the
@@ -2093,14 +2127,14 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   Every console's cartridge wrapper declares the boards it came on and every
   backend takes the smallest that fits, in both directions: the NES gained
   NROM-128, the Mega Drive dropped its floor from half a megabyte to one megabit,
-  and a silent Super Nintendo cartridge is two banks rather than four. On five of
-  the six that is now the whole story rather than half of it — a Mega Drive grows
+  and a silent Super Nintendo cartridge is two banks rather than four. **On all
+  six that is now the whole story rather than half of it** — a Mega Drive grows
   to four megabytes, a Super Nintendo opens a bank per scene and grows the same
-  way, a Sega 8-bit and a Game Boy page a tick's steps and grow to 512 KiB and
-  8 MiB. Only the NES is still sizing alone, and no longer for want of a mapper:
-  it has MMC1 and picks a board from four MMC1 sizes, but a game that pages there
-  is refused until its level tables can leave the fixed bank (§NES above). What the sizing buys on its own is the honest artifact — a game gets the
-  board a game that size shipped on rather than a constant somebody picked once.
+  way, and a Sega 8-bit, a Game Boy and an NES page a tick's steps and grow to
+  512 KiB, 8 MiB and 256 KiB. Nothing in the set is refused for its size any more
+  short of the largest board its hardware shipped on. What the sizing buys on its
+  own is the honest artifact — a game gets the board a game that size shipped on
+  rather than a constant somebody picked once.
 
 - **3D asset demake (new domain, exploratory)**: apply the same treatment to the
   32/64-bit 3D era — take a common modern 3D asset and emit PS1/N64/Saturn-

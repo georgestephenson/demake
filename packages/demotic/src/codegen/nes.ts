@@ -37,6 +37,7 @@ import {
   NES_CHR_SIZE,
   NES_FIXED_WINDOW,
   NES_MAPPER_MMC1,
+  NES_MMC1_PRG_MAX,
   NES_MMC1_PRG_SIZES,
   NES_PRG_SIZE,
   NES_PRG_SIZES,
@@ -64,7 +65,12 @@ import {
 import { NES_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
 import { bindNesArt, PATTERNS_PER_TABLE, type BoundNesArt } from "./nes-art.js";
 import { NesCtx } from "./nes/ctx.js";
-import { emitProgram, type NesBankPlan, type NesEmitOptions } from "./nes/emit.js";
+import {
+  emitProgram,
+  type EmittedNesProgram,
+  type NesBankPlan,
+  type NesEmitOptions,
+} from "./nes/emit.js";
 import type { ArtSettings } from "./settings.js";
 
 /** Bytes of program the largest NROM cartridge holds. */
@@ -77,11 +83,13 @@ export const ROM_SIZE = NES_PRG_SIZE;
  * bootable at all — so they are subtracted from the budget rather than left for a
  * game to overwrite and discover the problem in an emulator.
  *
- * Measured against the *big* board even when the small one ships, which is
- * `backend.ts` §Elastic cartridges' rule: what this answers is how much room is
- * left before the game stops fitting an NROM cartridge at all.
+ * Measured against the **largest MMC1 board** and not against the NROM one the
+ * small games ship on, which is `backend.ts` §Elastic cartridges' rule: a game
+ * that grows past thirty-two kilobytes takes a mapper and pages, so a headroom
+ * figure that stopped there would report a game getting bigger as a game with
+ * less room and then jump by a quarter of a megabyte when it crossed.
  */
-export const CODE_SIZE = NES_PRG_SIZE - 6;
+export const CODE_SIZE = NES_MMC1_PRG_MAX - 6;
 
 /** Bytes the three vectors occupy at the top of whichever image was chosen. */
 const VECTOR_BYTES = 6;
@@ -99,7 +107,7 @@ const FIXED_BANKS = 1;
  * tables and the dispatches that page everything else. A game whose immovable
  * half overruns it is refused by name.
  */
-function planBanks(measured: { units: ReadonlyMap<string, number>; fixed: number }): NesBankPlan {
+function planBanks(measured: EmittedNesProgram): NesBankPlan {
   if (measured.fixed > NES_BANK_SIZE) {
     throw new BuildError(
       "E_GAME_TOO_LARGE",
@@ -110,27 +118,49 @@ function planBanks(measured: { units: ReadonlyMap<string, number>; fixed: number
     );
   }
   const banks: string[][] = [];
+  const carried: Set<number>[] = [];
   const room: number[] = [];
   const bankOf = new Map<string, number>();
+  /** What putting this unit in that bank costs: itself, and any copy it drags in. */
+  const cost = (name: string, bytes: number, slot: number): number => {
+    const level = measured.needs.get(name);
+    if (level === undefined || carried[slot]?.has(level) === true) return bytes;
+    return bytes + (measured.levels.get(level) ?? 0);
+  };
   for (const [name, bytes] of measured.units) {
-    if (bytes > NES_BANK_SIZE) {
+    const level = measured.needs.get(name);
+    const withCopy = bytes + (level === undefined ? 0 : (measured.levels.get(level) ?? 0));
+    if (withCopy > NES_BANK_SIZE) {
       throw new BuildError(
         "E_GAME_TOO_LARGE",
         `'${name}' compiles to ${bytes} bytes and the window holds ${NES_BANK_SIZE}`,
-        "fewer rules or fewer objects in that scene; the window is the unit this " +
-          "console pages, so one step of one tick has to fit one window.",
+        level === undefined
+          ? "fewer rules or fewer objects in that scene; the window is the unit this " +
+              "console pages, so one step of one tick has to fit one window."
+          : "fewer rules or a smaller level in that scene; the window is the unit " +
+              "this console pages, and a step that walks a level shares it with a " +
+              "copy of that level's tables.",
       );
     }
-    let slot = room.findIndex((left) => left >= bytes);
+    // First fit, as on the other five consoles, and the only thing this one adds
+    // is that "fits" means the unit *and* whatever copy it drags in. Two cleverer
+    // rules were tried — best fit on the true cost, and a two-pass fit preferring
+    // a bank that already carries the level — and neither is worth having: they
+    // move the paged bank count by one either way and land on the same board,
+    // which is the only number a reader of the cartridge can see. If a game ever
+    // straddles a board boundary here, that is the day to measure them again.
+    let slot = room.findIndex((left, at) => left >= cost(name, bytes, at));
     if (slot < 0) {
       slot = room.push(NES_BANK_SIZE) - 1;
       banks.push([]);
+      carried.push(new Set());
     }
-    room[slot] = (room[slot] as number) - bytes;
+    room[slot] = (room[slot] as number) - cost(name, bytes, slot);
+    if (level !== undefined) (carried[slot] as Set<number>).add(level);
     (banks[slot] as string[]).push(name);
     bankOf.set(name, slot);
   }
-  return { banks, bankOf };
+  return { banks, levels: carried.map((set) => [...set].sort((a, b) => a - b)), bankOf };
 }
 
 /**
@@ -154,7 +184,7 @@ interface NesAudio extends BoundAudioShape {
 export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
   family: "nes",
   consoles: ["nes"],
-  cartridge: "an NROM cartridge",
+  cartridge: "the largest MMC1 cartridge",
 
   extension(): string {
     return "nes";
@@ -288,7 +318,7 @@ export const nesBackend: Backend<NesEmitOptions, NesAudio> = {
       origin: number,
       plan?: NesBankPlan,
       split?: boolean,
-    ): { ctx: NesCtx; code: Uint8Array; units: ReadonlyMap<string, number>; fixed: number } => {
+    ): EmittedNesProgram & { ctx: NesCtx; code: Uint8Array } => {
       const ctx = new NesCtx(
         program,
         analysis,

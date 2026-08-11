@@ -1341,7 +1341,12 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
                      mutability questions, a tick of movement, the level tables.
                      Anything that would emit an instruction is *not* here
     layout.ts        one RAM allocator over a per-console MemoryPlan (8 KiB of
-                     work RAM, or a console with 2 KiB and no cartridge RAM)
+                     work RAM, or a console with 2 KiB until its cartridge brings
+                     eight more). Its cheap region has three behaviours rather
+                     than one: it can refuse, it can *spill* to the heap, and a
+                     request can *pin* itself to it — which is a 6502's `($nn),y`
+                     stated one layer up, where a build report can name page zero
+                     rather than an address in hexadecimal
     registry.ts      which backend builds which console; the CLI reads this
     gb.ts, emit/rules/expr/val/tiles.ts   the SM83 backend
     nes.ts, nes-art.ts, nes/              the 6502 backend and its image path
@@ -2048,18 +2053,19 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   is a 960-cell nametable against 360. The shooter used to be a couple of hundred
   bytes _over_ there and the battery asserted the overflow; the packed name
   tables, the looped collision pairs and the grouped integrator won it back, and
-  it now has 13457 bytes free. `OVER_BUDGET` is empty as a result, and the
-  emptiness is the record. The tightest cartridge in the library is the Game
-  Boy's shooter at 2182 bytes free — that is where a budget regression shows
-  first, which is why the Game Boys sweep the whole library and the NES sweeps
-  two. A Game Boy is the tightest for a reason that used to be structural — it
-  was the one console whose _emitter_ had no bigger board to reach for — and is
-  now the ordinary one: a fixture that grows past 32 KiB here takes an MBC5
-  cartridge and pages its tick's steps, exactly as everywhere else. The number to
-  watch has moved with it. What a banked Game Boy cannot grow is **bank zero**:
-  quest's is 15973 bytes of 16384, and that 411 is the tightest figure in the
-  project, because nothing about taking a bigger board adds a byte to the half
-  that cannot move (doc 13 §Banked cartridges).
+  it won that back. `OVER_BUDGET` is empty as a result, and the emptiness is the
+  record.
+- **And `free` is no longer where a budget regression shows, on any console.**
+  Every family now pages, so `free` is measured against the largest board its
+  hardware shipped on — eight megabytes on a Game Boy, 512 KiB on a Sega 8-bit,
+  256 on an NES — and a fixture with a quarter of a megabyte spare is not a
+  fixture anybody is watching. **What a banked cartridge cannot grow is its fixed
+  bank**, and that is the number to watch instead: quest's is 15973 bytes of
+  16384 on a Game Boy and 8109 of 16384 on an NES, so 411 bytes is the tightest
+  figure in the project. Nothing about taking a bigger board adds a byte to the
+  half that cannot move (doc 13 §Banked cartridges), so an emitter that puts
+  something new in the always-mapped half is spending that 411 — and a size sweep
+  measuring `free` will not notice.
 - **New language features come from the example library, not from theory**
   (`packages/demotic/fixtures/games/`). Each example is there for something the
   others do not exercise; `touches`, the `reaches` crossing rule and `visible`'s
@@ -2457,6 +2463,46 @@ packages/demotic/test/rom.test.ts` builds every fixture game and diffs raw
   be _told_ the address of goes through `ZP.p0`/`p1`/`p2` — and the plan puts the
   expression temporaries there too, which is most of why the arithmetic is
   cheaper here than on the Game Boy.
+- **But it _spills_, and what may not spill is decided per request.** Almost
+  nothing the allocator places on this CPU is ever dereferenced — a contact
+  bitfield is read `$nnnn,x`, a temporary goes through `clamp32` — so a game
+  refused for wanting 274 bytes of a 237-byte page was a game refused for wanting
+  cheap addresses it did not need. `fastSpills` is set here now and the overflow
+  goes to the board's own RAM. What may not move goes through `pin`, and there
+  are exactly **two**: the tile walk's cursor, and the audio driver's state,
+  because a stream player walks packed data through a pointer like everything
+  else on this machine. Add a third and it has to be `pin` as well — a pointer
+  that spilled would assemble an instruction reading the wrong two bytes rather
+  than failing.
+- **A spilling request leaves room for the pins still to come.** `Bump.tryTake`'s
+  `keep` is that, and it exists because serving the pins first is not open to us:
+  the order of these calls is the order of the addresses, so reordering would move
+  every address in every game that already fits. Without it the build refuses a
+  game for wanting a page it was perfectly willing to spill out of, which reads
+  like the spilling not being there at all.
+- **A game that outgrows 32 KiB takes an MMC1 and pages its tick's steps, and
+  the halves are the other way up.** The fixed sixteen kilobytes is at `$C000`,
+  because that is where the vectors are and what mode 3 leaves in place, so a
+  paged unit is assembled at `$8000` and the boot, the helpers, the audio driver's
+  code and the dispatches stay above it. Two data blocks go up with the scenes —
+  the packed schedules and the instance defaults — and the tile art does not,
+  because characters here are a separate ROM the PPU addresses directly.
+- **A mapper write is ten instructions, and never one an interrupt can split.**
+  MMC1's register is _serial_: five stores of one bit each, so `ctx.enter` builds
+  the value with `lsr` between them, and a sequence broken halfway leaves the
+  register holding bits from two different values with nothing able to put it
+  back. That is affordable only because this console counts its audio tick in the
+  NMI and _performs_ it in the main loop, so the handler touches nothing but a
+  counter and the frame upload — both in the fixed half. An emitter that put a
+  bank write in a handler would break a cartridge in a way no register diff can
+  see.
+- **The level tables are copied into every bank that reads one.** More than one
+  step of a scene reads a level — the tile rules and the render — and a paged
+  routine cannot reach a table in another bank, so this is the one console in the
+  set that duplicates rather than shares. It is one field: `LevelData.suffix`,
+  set by `levelCopy`, and every reader already takes a `LevelData` and reads its
+  labels off it — so no emitter knows copies exist. The planner is where it
+  shows, because a bank is charged for the copies its units drag in.
 - **A shared register written through `$4000,x` costs the caller its index.**
   The audio driver's merge folds two shadows and writes `$4015`; doing that with
   `ldx #$15` / `sta $4000,x` destroys `x` — and `AudioSfxStart` carries a table
