@@ -31,12 +31,22 @@
  */
 
 import { AUDIO_STOP, type NesGameAudio } from "@demake/audio";
-import { abs, absX, imm, indY, label, type Ref } from "@demake/core";
+import {
+  abs,
+  absX,
+  AsmError,
+  imm,
+  indY,
+  label,
+  NES_BANK_SIZE,
+  NES_BANK_WINDOW,
+  type Ref,
+} from "@demake/core";
 
 import type { InstanceDef } from "../../program.js";
 import type { SelectedBank } from "../../rom/graphics.js";
 import { isMutable } from "../analyze.js";
-import { emitTickSteps, type TickSteps } from "../backend.js";
+import { emitTickSteps, type TickStep, type TickSteps } from "../backend.js";
 import { PROPS, W } from "../layout.js";
 import {
   artKey,
@@ -51,6 +61,7 @@ import {
   type SpriteArt,
 } from "../shape.js";
 
+import type { MosCtx } from "../mos/ctx.js";
 import type { NesCtx } from "./ctx.js";
 import { propOffset } from "../mos/expr.js";
 import { emitTileContactHelper, emitTileRules } from "../mos/tilerules.js";
@@ -178,28 +189,134 @@ export interface NesEmitOptions {
   effectIndices?: readonly number[];
   /** Which track each scene plays, as an index, or `-1` for a silent one. */
   sceneTracks?: readonly number[];
+  /**
+   * The measuring pass of a banked build: the same instructions a banked one
+   * emits, laid end to end, so `nes.ts` can read each unit's length off and plan
+   * the banks from numbers rather than an estimate.
+   */
+  split?: boolean;
+  /**
+   * Where each unit goes, for a game that outgrew a mapper-less cartridge.
+   *
+   * Absent for a game that fits, and then this emitter does exactly what it
+   * always did — one section, no mapper writes, and a cartridge byte-identical to
+   * the one it built before paging existed.
+   */
+  banks?: NesBankPlan;
 }
 
-/** Dispatch on the running scene to one of a set of labels. */
+/**
+ * The unit carrying the packed schedules, and the unit carrying the defaults.
+ *
+ * Both are data rather than routines and both are in the paged half, on the Game
+ * Boy's terms one console along. The **schedules** are the biggest single item a
+ * demade game has and are read by `AudioService`, which this console runs from
+ * the *main loop* rather than from the interrupt — which is what makes paging
+ * them possible at all here, because MMC1's register is written five stores at a
+ * time and a sequence an NMI landed in the middle of cannot be put back. The
+ * **defaults** are read by two things that cannot share a copy, so a banked build
+ * makes two: the whole table as a unit the boot pages in, and each scene's own
+ * riding in the bank its reset landed in.
+ *
+ * The tile art is not among them, because on this console characters are a
+ * *separate ROM* the PPU addresses directly rather than bytes in the program —
+ * which is the one thing that makes this cartridge's fixed half easier than a
+ * Game Boy's.
+ */
+export const AUDIO_DATA_UNIT = "AudioData";
+export const DEFAULTS_UNIT = "InstanceDefaults";
+
+/** Where a scene's reset keeps its own copy of an instance's defaults. */
+function sceneDefaultsLabel(scene: SceneCtx, id: number): string {
+  return `SceneDefaults_${scene.index}_${id}`;
+}
+
+/** The first bank the window may be pointed at. */
+export const FIRST_PAGED_BANK = 0;
+
+/**
+ * Every routine and block a banked build places, in the order it emits them.
+ *
+ * A scene's routines are too big for this console's window, so the unit is
+ * smaller than a scene: each of its tick's steps, plus the reset, the camera and
+ * the render — which carries the scene's demade nametable with it, because a bank
+ * is the unit of mapping and two things that must be visible at once cannot be
+ * planned apart.
+ */
+function unitNames(
+  scenes: readonly SceneCtx[],
+  levelFor: ReadonlyMap<number, LevelData>,
+  options: NesEmitOptions,
+): string[] {
+  const names: string[] = [];
+  for (const scene of scenes) {
+    names.push(...tickStepNames(scene, levelFor.get(scene.index)));
+    names.push(`SceneReset_${scene.index}`);
+    names.push(`SceneCamera_${scene.index}`);
+    names.push(`SceneRender_${scene.index}`);
+  }
+  if (options.audio) names.push(AUDIO_DATA_UNIT);
+  names.push(DEFAULTS_UNIT);
+  return names;
+}
+
+/** What a pass over the program measured. */
+export interface EmittedNesProgram {
+  /** How long each pageable unit came out, by name. Empty unless split. */
+  units: ReadonlyMap<string, number>;
+  /** Bytes the fixed half took: everything that is not a unit. */
+  fixed: number;
+}
+
+/** Which bank each of a program's units goes in. */
+export interface NesBankPlan {
+  /** The units in each paged bank, in the order they are emitted. */
+  banks: readonly (readonly string[])[];
+  /** Which bank each unit landed in, by unit name. */
+  bankOf: ReadonlyMap<string, number>;
+}
+
+/**
+ * Dispatch on the running scene to one of a set of labels.
+ *
+ * A *tail* jump rather than a call, which is what makes this one of the two
+ * places that has to page: a scene's routines are what leaves the fixed half on a
+ * banked cartridge, so every transfer here is `ctx.jumpUnit` and the routine's
+ * own `rts` still lands back at whatever called the dispatch. Unbanked,
+ * `jumpUnit` is a bare `jmp` and the bytes are what they always were.
+ */
 function emitSceneDispatch(ctx: NesCtx, labels: readonly string[]): void {
   const { asm, layout } = ctx;
   if (labels.length === 1) {
-    asm.jmp(labels[0] as string);
+    ctx.jumpUnit(labels[0] as string);
     return;
   }
   asm.lda(mem(layout.scene));
+  const paged = labels.some((name) => ctx.banks.has(name));
   for (const [index, target] of labels.entries()) {
     if (index === labels.length - 1) {
-      asm.jmp(target);
+      ctx.jumpUnit(target);
       break;
     }
     asm.cmp(imm(index));
-    ctx.far("eq", target);
+    if (!paged) {
+      ctx.far("eq", target);
+      continue;
+    }
+    // With paging there are ten instructions of mapper write to reach as well as
+    // the jump, so the condition is inverted over the pair rather than taken to
+    // the target — and the accumulator the comparison used is destroyed by the
+    // write, so it is reloaded for the next one.
+    const over = ctx.unique("dispatch");
+    ctx.far("ne", over);
+    ctx.jumpUnit(target);
+    asm.label(over);
+    asm.lda(mem(layout.scene));
   }
 }
 
 /** Emit the whole program. */
-export function emitProgram(ctx: NesCtx, options: NesEmitOptions = {}): void {
+export function emitProgram(ctx: NesCtx, options: NesEmitOptions = {}): EmittedNesProgram {
   const { asm, program } = ctx;
   const scenes = sceneContexts(ctx);
   const levels = collectLevels(program.scenes);
@@ -207,6 +324,66 @@ export function emitProgram(ctx: NesCtx, options: NesEmitOptions = {}): void {
   for (const scene of scenes) {
     const found = levels.find((data) => data.file === scene.level);
     if (found) levelFor.set(scene.index, found);
+  }
+
+  const units = new Map<string, number>();
+  const unit = (name: string, emit: () => void): void => {
+    const at = asm.length;
+    emit();
+    units.set(name, asm.length - at);
+  };
+  /** Emit whichever routine or block a unit's name refers to. */
+  const emitUnit = (name: string): void => {
+    if (name === AUDIO_DATA_UNIT) {
+      unit(name, () => options.audio?.emitData(asm));
+      return;
+    }
+    if (name === DEFAULTS_UNIT) {
+      unit(name, () => emitInstanceDefaults(asm, program, PROPS, ctx.layout.entitySizes));
+      return;
+    }
+    const scene = scenes[Number(name.split("_")[1])] as SceneCtx;
+    const level = levelFor.get(scene.index);
+    if (name.startsWith("SceneReset_")) unit(name, () => emitSceneReset(ctx, scene));
+    else if (name.startsWith("SceneCamera_")) unit(name, () => emitSceneCamera(ctx, scene));
+    else if (name.startsWith("SceneRender_")) {
+      // The scene's demade nametable, its palette and its attribute table ride
+      // with its renderer rather than being units of their own, because the
+      // renderer is the only thing that reads them and a bank is the unit of
+      // *mapping*: two units that have to be visible at once cannot be planned
+      // independently.
+      unit(name, () => {
+        emitSceneRender(ctx, scene, level, options);
+        emitSceneBlocks(ctx, scene, options);
+      });
+    } else unit(name, () => emitTickStepBody(ctx, scene, level, name));
+  };
+
+  const plan = options.banks;
+  const split = options.split === true || plan !== undefined;
+  // On the measuring pass there is no plan yet, so the context is told which
+  // routines *will* be paged rather than where: `ctx.enter` emits a mapper write
+  // for anything it names, and the number does not change the length.
+  if (split && !plan) {
+    for (const name of unitNames(scenes, levelFor, options)) ctx.banks.set(name, FIRST_PAGED_BANK);
+  }
+  if (split) {
+    asm.section(NES_BANK_WINDOW);
+    if (plan) {
+      for (const bank of plan.banks) {
+        const start = asm.length;
+        for (const name of bank) emitUnit(name);
+        const used = asm.length - start;
+        if (used > NES_BANK_SIZE) {
+          throw new AsmError(`a paged bank holds ${used} bytes of a possible ${NES_BANK_SIZE}`);
+        }
+        asm.ds(NES_BANK_SIZE - used);
+        asm.section(NES_BANK_WINDOW);
+      }
+    } else {
+      for (const name of unitNames(scenes, levelFor, options)) emitUnit(name);
+    }
+    asm.section(ctx.asm.origin);
   }
 
   emitReset(ctx, options);
@@ -217,6 +394,10 @@ export function emitProgram(ctx: NesCtx, options: NesEmitOptions = {}): void {
   emitSceneChange(ctx, scenes);
 
   for (const scene of scenes) {
+    if (split) {
+      emitSceneTickCalls(ctx, scene, levelFor.get(scene.index));
+      continue;
+    }
     emitSceneTick(ctx, scene, levelFor.get(scene.index));
     emitSceneReset(ctx, scene);
     emitSceneCamera(ctx, scene);
@@ -246,20 +427,13 @@ export function emitProgram(ctx: NesCtx, options: NesEmitOptions = {}): void {
       }
     }
   }
-  emitInstanceDefaults(asm, program, PROPS, ctx.layout.entitySizes);
+  if (!units.has(DEFAULTS_UNIT)) emitInstanceDefaults(asm, program, PROPS, ctx.layout.entitySizes);
 
   // One demade nametable per scene that has a backdrop, and one attribute table
   // per scene whatever it draws — see {@link sceneAttributes}.
   for (const scene of scenes) {
-    const art = options.backdrops?.get(scene.def.name);
-    if (art) {
-      asm.label(backdropLabel(scene));
-      asm.bytes(packCells(art.map));
-      asm.label(backdropPaletteLabel(scene));
-      asm.bytes(art.palette);
-    }
-    asm.label(sceneAttrLabel(scene));
-    asm.bytes(packCells(sceneAttributes(ctx, scene, options)));
+    if (units.has(`SceneRender_${scene.index}`)) continue; // rode with its renderer
+    emitSceneBlocks(ctx, scene, options);
   }
   asm.label("LevelPalette");
   asm.bytes(options.levelPalette ?? defaultBackgroundPalette());
@@ -277,8 +451,40 @@ export function emitProgram(ctx: NesCtx, options: NesEmitOptions = {}): void {
         asm.db(track < 0 ? AUDIO_STOP : track + 1);
       }
     }
-    options.audio.emitData(asm);
+    if (!units.has(AUDIO_DATA_UNIT)) options.audio.emitData(asm);
   }
+  return { units, fixed: asm.length - unitBytes(units) - padding(plan, units) };
+}
+
+/** How many bytes of the image the paged units took. */
+function unitBytes(units: ReadonlyMap<string, number>): number {
+  let total = 0;
+  for (const bytes of units.values()) total += bytes;
+  return total;
+}
+
+/** And how many the padding to whole banks added, which is nobody's. */
+function padding(plan: NesBankPlan | undefined, units: ReadonlyMap<string, number>): number {
+  return plan ? plan.banks.length * NES_BANK_SIZE - unitBytes(units) : 0;
+}
+
+/**
+ * One scene's demade nametable, its palette and its attribute table.
+ *
+ * Together because they are read together — by that scene's renderer and by
+ * nothing else — which is what lets them ride into its bank on a banked build.
+ */
+function emitSceneBlocks(ctx: NesCtx, scene: SceneCtx, options: NesEmitOptions): void {
+  const { asm } = ctx;
+  const art = options.backdrops?.get(scene.def.name);
+  if (art) {
+    asm.label(backdropLabel(scene));
+    asm.bytes(packCells(art.map));
+    asm.label(backdropPaletteLabel(scene));
+    asm.bytes(art.palette);
+  }
+  asm.label(sceneAttrLabel(scene));
+  asm.bytes(packCells(sceneAttributes(ctx, scene, options)));
 }
 
 /**
@@ -791,6 +997,14 @@ function tickSteps(ctx: NesCtx): TickSteps {
   };
 }
 
+/**
+ * A scene's tick, inline — which is what a mapper-less cartridge gets.
+ *
+ * One label and one straight run of code, exactly as it always was. A banked
+ * build cannot do this because sixteen kilobytes of window will not hold a
+ * scene, and takes {@link emitTickStepBody} and {@link emitSceneTickCalls}
+ * instead.
+ */
 function emitSceneTick(ctx: NesCtx, scene: SceneCtx, level: LevelData | undefined): void {
   const { asm } = ctx;
   asm.label(`SceneTick_${scene.index}`);
@@ -798,18 +1012,128 @@ function emitSceneTick(ctx: NesCtx, scene: SceneCtx, level: LevelData | undefine
   asm.jmp("TickDone");
 }
 
+/** Where one of a scene's tick steps begins, when the steps are routines. */
+export function stepLabel(scene: number, step: TickStep): string {
+  return `Step_${scene}_${step}`;
+}
+
+/**
+ * The steps a scene's tick runs, in order — asked for rather than emitted.
+ *
+ * `emitTickSteps` is the only thing that knows the sequence, and a banked build
+ * needs the *names* before it can emit the calls that run them. So this runs the
+ * sequence over a set of steps that emit nothing and record instead, which is
+ * how the caller learns the list without a second copy of doc 14's order.
+ */
+function tickStepNames(scene: SceneCtx, level: LevelData | undefined): string[] {
+  const names: string[] = [];
+  const nothing = () => {};
+  emitTickSteps(
+    {
+      controls: nothing,
+      levelRules: nothing,
+      integrate: nothing,
+      beginContacts: nothing,
+      collisions: nothing,
+      endContacts: nothing,
+      tileRules: nothing,
+      edgeRules: nothing,
+      camera: nothing,
+      boundary: (step) => names.push(stepLabel(scene.index, step)),
+    },
+    scene,
+    level,
+  );
+  return names;
+}
+
+/**
+ * One step of a tick, as a routine of its own — which is what a banked build
+ * places.
+ *
+ * A step boundary is the only place inside a tick where nothing is live, because
+ * the steps hand work to each other through the entity records and the contact
+ * bitfield and never through a register (`backend.ts` §{@link TickSteps.boundary}).
+ * So a step can be lifted out and called, and this is how one is lifted.
+ *
+ * It runs the *whole* sequence and emits only the step it was asked for, rather
+ * than calling that step's emitter directly. That is deliberate: which of doc
+ * 14's steps ride together — the two contact-set steps go with the collisions,
+ * because the history they keep is only consistent either side of the pair — is
+ * `emitTickSteps`'s to decide, and a switch here that dispatched by name would be
+ * a second copy of that decision waiting to disagree with it.
+ */
+function emitTickStepBody(
+  ctx: NesCtx,
+  scene: SceneCtx,
+  level: LevelData | undefined,
+  wanted: string,
+): void {
+  const { asm } = ctx;
+  const steps = tickSteps(ctx);
+  let live = false;
+  let emitted = false;
+  /** Run a step's emitter only while the one we were asked for is open. */
+  const gate =
+    <A extends unknown[]>(body: (...args: A) => void) =>
+    (...args: A) => {
+      if (live) body(...args);
+    };
+  emitTickSteps(
+    {
+      controls: gate(steps.controls),
+      levelRules: gate(steps.levelRules),
+      integrate: gate(steps.integrate),
+      beginContacts: gate(steps.beginContacts),
+      collisions: gate(steps.collisions),
+      endContacts: gate(steps.endContacts),
+      tileRules: gate(steps.tileRules),
+      edgeRules: gate(steps.edgeRules),
+      camera: gate(steps.camera),
+      boundary: (step, sc) => {
+        live = stepLabel(sc.index, step) === wanted;
+        if (!live) return;
+        asm.label(wanted);
+        emitted = true;
+      },
+    },
+    scene,
+    level,
+  );
+  if (!emitted) throw new AsmError(`'${wanted}' is not a step this scene runs`);
+  asm.rts();
+}
+
+/** The sequence that runs them, which stays in the fixed half. */
+function emitSceneTickCalls(ctx: NesCtx, scene: SceneCtx, level: LevelData | undefined): void {
+  const { asm } = ctx;
+  asm.label(`SceneTick_${scene.index}`);
+  for (const step of tickStepNames(scene, level)) ctx.callUnit(step);
+  asm.jmp("TickDone");
+}
+
 function emitSceneReset(ctx: NesCtx, scene: SceneCtx): void {
-  const { asm, layout } = ctx;
+  const { asm, layout, program } = ctx;
+  // Paged, this routine reads a copy of its own scene's defaults that rides in
+  // its own bank — the shared table is in another one and is not in the window
+  // while this is running (§{@link DEFAULTS_UNIT}). Unpaged there is one table
+  // and this reads it, exactly as it always did.
+  const own = ctx.banks.has(`SceneReset_${scene.index}`);
   asm.label(`SceneReset_${scene.index}`);
   for (const id of scene.def.instanceIds) {
     emitCopyBlock(
       ctx,
-      label(`Defaults_${id}`),
+      label(own ? sceneDefaultsLabel(scene, id) : `Defaults_${id}`),
       layout.entities[id] as number,
       layout.entitySizes[id] as number,
     );
   }
   asm.rts();
+  if (!own) return;
+  emitInstanceDefaults(asm, program, PROPS, layout.entitySizes, {
+    ids: scene.def.instanceIds,
+    label: (id) => sceneDefaultsLabel(scene, id),
+  });
 }
 
 function emitSceneCamera(ctx: NesCtx, scene: SceneCtx): void {
@@ -1520,7 +1844,7 @@ function emitHud(ctx: NesCtx, scene: SceneCtx, want: "static" | "dynamic"): void
 }
 
 /** `A = tile`: write it at the current cell and advance the column. */
-function needPokeCell(ctx: NesCtx): Ref {
+function needPokeCell(ctx: MosCtx): Ref {
   return ctx.need("PokeCell", (inner) => {
     const { asm, layout } = inner;
     asm.sta(mem(ZP.t2));
@@ -1533,7 +1857,7 @@ function needPokeCell(ctx: NesCtx): Ref {
 }
 
 /** The decimal renderer again, writing straight to the PPU. */
-function needPokeNumber(ctx: NesCtx): Ref {
+function needPokeNumber(ctx: MosCtx): Ref {
   return ctx.need("DrawNumberPoke", (inner) => {
     emitDecimal(inner, needPokeCell(inner));
   });
@@ -1548,7 +1872,7 @@ function needPokeNumber(ctx: NesCtx): Ref {
  * outward by a cell, so an object straddling the edge is never culled — the test
  * may say "maybe" when the answer is no, and never the other way round.
  */
-function needOnscreen(ctx: NesCtx, pinnedRows: boolean): Ref {
+function needOnscreen(ctx: MosCtx, pinnedRows: boolean): Ref {
   // A pinned scene shows every row its level has, so there is nothing for the
   // vertical half to reject — and asking it anyway would reject the top of the
   // level, whose cells are *above* a game camera that has scrolled down.
@@ -1559,7 +1883,7 @@ function needOnscreen(ctx: NesCtx, pinnedRows: boolean): Ref {
 }
 
 /** The cull itself: the horizontal axis always, the vertical one on request. */
-function emitOnscreenBody(ctx: NesCtx, rows: boolean): void {
+function emitOnscreenBody(ctx: MosCtx, rows: boolean): void {
   const { asm, layout } = ctx;
   const camera = layout.camera as number;
   const apart = ctx.unique("cullOff");
@@ -1714,7 +2038,7 @@ function emitHudSprites(ctx: NesCtx, scene: SceneCtx): void {
 }
 
 /** `A = tile`: put one glyph at the pen, on the object layer, and advance it. */
-function needHudGlyph(ctx: NesCtx): Ref {
+function needHudGlyph(ctx: MosCtx): Ref {
   return ctx.need("HudGlyph", (inner) => {
     const { asm, layout } = inner;
     asm.sta(mem(ZP.t2));
@@ -1752,7 +2076,7 @@ function needHudGlyph(ctx: NesCtx): Ref {
 }
 
 /** The decimal renderer again, plotting sprites instead of background cells. */
-function needHudNumber(ctx: NesCtx): Ref {
+function needHudNumber(ctx: MosCtx): Ref {
   return ctx.need("DrawNumberOam", (inner) => {
     emitDecimal(inner, needHudGlyph(inner));
   });
@@ -1829,7 +2153,7 @@ function emitSpriteCell(
 }
 
 /** `t0` = y, `t1` = x, `t2` = tile, `t3` = palette; append an object entry. */
-function needPushSprite(ctx: NesCtx): Ref {
+function needPushSprite(ctx: MosCtx): Ref {
   return ctx.need("PushSprite", (inner) => {
     const { asm, layout } = inner;
     const room = inner.unique("oamRoom");
@@ -2208,7 +2532,7 @@ function emitCellAddress(ctx: NesCtx): void {
  * is a parameter rather than a second copy of the digit loop. Leading zeroes are
  * suppressed and a lone zero still prints.
  */
-function emitDecimal(ctx: NesCtx, plot: Ref): void {
+function emitDecimal(ctx: MosCtx, plot: Ref): void {
   const { asm, layout } = ctx;
   // Everything here has to survive a call to `plot`, and `plot` reaches the cell
   // address routine, the write queue and the object builder — which between them
@@ -2297,7 +2621,7 @@ function emitDecimal(ctx: NesCtx, plot: Ref): void {
 }
 
 /** The powers of ten a decimal render walks, as little-endian words. */
-function emitDecimalPowers(ctx: NesCtx): void {
+function emitDecimalPowers(ctx: MosCtx): void {
   ctx.asm.label("DecimalPowers");
   for (const power of [10000, 1000, 100, 10, 1]) ctx.asm.dw(power);
 }

@@ -30,3 +30,11 @@ header and is never a setting. One-screen mirroring is refused rather than
 approximated.
 
 Every cartridge that built before is byte-identical.
+
+The emitter pages too: a tick's individual steps plus each scene's reset,
+camera and render, with the fixed half at the _top_ because that is where the
+vectors are and what MMC1 mode 3 leaves in place. The packed schedules and the
+instance defaults are paged data units. A game that outgrows the fixed bank is
+refused by name, which quest still is — its immovable half is 16630 bytes of
+16384, and what has to move next is the level tables (doc 13 §Banked
+cartridges).

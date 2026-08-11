@@ -1726,7 +1726,7 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   | --- | --- | --- | --- |
   | ~~Game Boy / Color / Mega Duck~~ | ~~cartridge, then the fixed bank~~ | **done** | 128 KiB, of 8 MiB |
   | ~~Master System / Game Gear~~ | ~~cartridge~~ | **done** | 128 KiB, of 512 |
-  | NES | work RAM, then cartridge | 1288 B of heap, ~120 KiB of PRG | 1280 B, 32 KiB |
+  | NES | ~~work RAM~~, ~~page zero~~, then the fixed bank | 16630 B immovable | 16384 B |
   | ~~Super Nintendo~~ | ~~direct page, then cartridge~~ | **done** | 128 KiB, of 4 MiB |
 
   The Super Nintendo's first wall is gone, and it went for a reason worth
@@ -1989,12 +1989,61 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     holds the banks it opened, and `free` is measured against the largest — so a
     game that grows never looks like a game with more room (AGENTS.md §Iron
     rules). Quest takes 128 KiB.
-  - **NES** — the only family that needs a *new* mapper in the core as well:
-    UNROM/MMC1 for PRG, and MMC1's `$6000` work RAM is the only way the console's
-    two kilobytes stop being the binding constraint. Its window is 16 KiB and its
-    fixed bank is too, so it is behind the same paging work the Game Boy is — and
-    it is the one console where the RAM wall comes *first*, which means the
-    `$6000` half is worth doing on its own before a byte of code moves.
+  - **NES** — **the mapper is in, both RAM walls are down, and one thing is
+    left.** This was the only family that needed a *new* mapper in the core as
+    well, and it has one: `@demake/nes` implements **MMC1** — sixteen kilobytes
+    switched at `$8000`, sixteen fixed at `$C000`, and the eight of cartridge RAM
+    at `$6000` — pinned against the hardware's own rules by `mmc1.test.ts`,
+    because the cartridge and the core are both ours and a mapper that is wrong
+    and consistent would pass everything.
+
+    It is also the one console with **three** walls rather than two, and the
+    middle one was not in this table until it was measured:
+
+    | Wall | Wants | Has | |
+    | --- | --- | --- | --- |
+    | work RAM | 1288 B | 1280 B | the `$6000` RAM, done |
+    | page zero | 274 B | 237 B | spilling, done |
+    | fixed bank | 16630 B | 16384 B | the level tables, left |
+
+    **Page zero** is the one nothing had noticed, because the RAM wall hides it:
+    the entities alone overrun the console's two kilobytes, so a build never got
+    far enough to ask. What wants it is mostly the two contact bitfields — 71
+    bytes each, and read with `$nnnn,x` — so they are exactly what should move.
+    `fastSpills` now applies to this family too, and what may *not* move goes
+    through `pin`: the tile walk's cursor is `($nn),y` and is the only allocation
+    on this CPU that is ever dereferenced, so a pointer that would not fit is
+    refused by name rather than assembling an instruction that reads the wrong two
+    bytes (`layout.ts` §fastSpills).
+
+    **The emitter pages**, on the Game Boy's unit with the halves the other way
+    up: a tick's individual steps plus each scene's reset, camera and render, with
+    the fixed half at the *top* because that is where the vectors are and what
+    MMC1 mode 3 leaves in place. The packed audio schedules and the instance
+    defaults are paged data units, exactly as they are on a Game Boy — and the
+    tile art is *not*, because on this console characters are a separate ROM the
+    PPU addresses directly rather than bytes in the program, which is the one
+    thing that makes this cartridge's fixed half easier than a Game Boy's.
+
+    **What is left is the level tables**, and they are about ten kilobytes of the
+    sixteen. A Game Boy could leave them mapped and this cannot: quest's fixed
+    half comes to 16630 bytes with no art and no audio in it, which is 246 over,
+    and audio would put it thousands over. So this console has to take the option
+    the Game Boy did not need — duplicate each level's grid, its legend and its
+    rule tables into every bank whose steps read them, at about 1.4 KiB a level a
+    bank — because more than one step of a scene reads them and a paged routine
+    cannot reach a table in another bank. That is a per-bank label set rather than
+    a shared one, which is why it is a piece of work rather than a line.
+
+    **A mapper write is ten instructions here**, which no other console in the set
+    can say: MMC1's register is *serial*, five stores of one bit with the
+    destination decided by the last store's address, so `ctx.enter` builds the
+    value with `lsr` between the stores. And it is never emitted inside an
+    interrupt handler — a sequence broken halfway leaves the register holding bits
+    from two different values and nothing can put it back. That is affordable only
+    because this console already counts its audio tick in the NMI and *performs*
+    it in the main loop (`nes/emit.ts` §emitNmi), so the handler touches nothing
+    but the frame upload and a counter, both of which stay in the fixed half.
   - **Super Nintendo** — **done.** A LoROM bank is 32 KiB and quest's largest
     scene is nineteen and a half, so a bank per scene fits without the tick ever
     being split, and this console needs no controller at all: banks past the
@@ -2048,9 +2097,9 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   the six that is now the whole story rather than half of it — a Mega Drive grows
   to four megabytes, a Super Nintendo opens a bank per scene and grows the same
   way, a Sega 8-bit and a Game Boy page a tick's steps and grow to 512 KiB and
-  8 MiB. Only the NES is still sizing alone: growing past its last flat board
-  needs a mapper in the core, and until then a game that outgrows it is refused
-  by name. What the sizing buys on its own is the honest artifact — a game gets the
+  8 MiB. Only the NES is still sizing alone, and no longer for want of a mapper:
+  it has MMC1 and picks a board from four MMC1 sizes, but a game that pages there
+  is refused until its level tables can leave the fixed bank (§NES above). What the sizing buys on its own is the honest artifact — a game gets the
   board a game that size shipped on rather than a constant somebody picked once.
 
 - **3D asset demake (new domain, exploratory)**: apply the same treatment to the
