@@ -1781,7 +1781,8 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
 
     | Hardware | Modelled | Spent by a demaker |
     | --- | --- | --- |
-    | YM2612 LFO (vibrato and tremolo) | yes | no — `binding/md.ts` writes `$22 = 0` and every channel's sensitivity nibble as zero |
+    | YM2612 LFO (vibrato) | yes | **closed** — `binding/md.ts` programs `$22` and the sensitivity nibble when a part asks |
+    | YM2612 LFO (tremolo) | yes | no — nothing above the chip layer asks for amplitude modulation |
     | YM2612 SSG-EG envelope modes | yes | no — those registers are never written |
     | YM2612 channel 3's four-pitch mode | yes | no — `$27`'s mode bits are always zero |
     | HuC6280 LFO | yes | no — the LFO registers appear only in `binding/pce.ts`'s channel *tag*, never in a write |
@@ -1901,10 +1902,39 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     byte-for-byte the schedule it always did, which is *every* MIDI in the
     example library, so this closed a line and re-baselined nothing.
 
-    **What remains of the line is the binding half**, and it is now an
-    optimisation rather than a gap: a YM2612 and a HuC6280 each have an LFO that
-    would turn most of those per-tick writes into a handful of register writes.
-    The rows above still say `no` for that reason.
+    **And the Mega Drive spends its LFO**, which is what that cost was an
+    argument for. A YM2612's LFO setting 1 is 5.56 Hz, within a tenth of a hertz
+    of the rate the arranger states — so `binding/md.ts` declares its six FM
+    voices in `ChipBinding.lfoChannels`, `compile.ts` leaves their pitch alone
+    and states a depth instead, and the binding programs `$22` and the
+    sensitivity nibble in `$B4`. The measured cost falls from **+122% to +4%**
+    over a dry track. `$22` is written lazily rather than at boot, so a track
+    with no modulation still writes exactly the registers it always did.
+
+    Two things about the seam are worth keeping. The **delay applies to both
+    routes**, so a chip that bends itself starts when one bent by the driver
+    would — otherwise the same note is two different notes depending on the
+    console. And `lfoChannels` belongs to the **binding** rather than to
+    `AudioSpec`, because what it answers is "will this encoder do it in
+    hardware", which is a decision about the register map.
+
+    **The Neo Geo deliberately does not**, and it is the sharpest thing this
+    section has to say about the two OPN parts. An OPNB is an OPN2 with the LFO
+    *removed*: `ym2610.ts` refuses `$22` by design, because routing it through
+    would offer a binding hardware the console does not own. Claiming it anyway
+    is a silent failure of the worst kind — the binding stops the per-tick pitch
+    writes, the chip ignores the registers, and the note comes out straight with
+    nothing anywhere reporting a problem. It was written that way first and the
+    chip model's own refusal is what caught it. So that console pays the full
+    per-tick price (+154%), and `packages/audio/test/vibrato.test.ts` holds both
+    halves: no LFO programmed there, *and* the pitch still moving.
+
+    **What remains of the line is the HuC6280's LFO**, and it is a refusal
+    rather than a gap. That chip has no oscillator: channel two *is* the
+    modulator, so switching vibrato on costs a whole voice to modulate one
+    other. On a six-voice console that is spending the machine downwards — the
+    same reasoning this section already applies to the YM2610's SSG noise — and
+    the per-tick route costs a schedule rather than a voice.
 
     The last two lines are doc 18's rather than doc 17's — a sample player wants
     a *sound* demaker pointed at it, not an arranger.

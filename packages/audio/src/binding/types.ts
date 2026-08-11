@@ -50,6 +50,22 @@ export interface ChipBinding {
    * would no longer be one model (doc 16 §Packages).
    */
   chipGains?: readonly number[];
+  /**
+   * Channel indices whose hardware performs vibrato without per-tick writes.
+   *
+   * The seam between the arranger's vibrato and a chip LFO. `compile.ts` bends
+   * the pitch itself for every channel *not* named here, because a chip with no
+   * LFO can only be given a moving pitch; for the ones that are, it leaves `hz`
+   * as written and states the depth in `ChannelFrame.vibrato` for the binding to
+   * program. The difference is what a track costs: a modulated held note is a
+   * pitch write per tick one way and a single sensitivity nibble the other.
+   *
+   * Absent on every binding but the two OPN ones. It is a property of the
+   * *binding* rather than of `AudioSpec` because what it answers is "will this
+   * encoder do it in hardware", which is a decision about the register map —
+   * and the register map is exactly what a binding is the only place to know.
+   */
+  lfoChannels?: ReadonlySet<number>;
   /** Writes that put the chip in a known state before anything plays. */
   init(): BoundWrite[];
   /**

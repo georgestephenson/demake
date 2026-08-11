@@ -161,3 +161,76 @@ function serialise(script: {
     .map((tick) => tick.writes.map((w) => `${w.chip ?? 0}:${w.reg}=${w.value}`).join(","))
     .join("|");
 }
+
+describe("a chip with an LFO", () => {
+  /**
+   * The Mega Drive is the only console here that bends its own notes.
+   *
+   * Its YM2612 has an LFO whose setting 1 is 5.56 Hz, within a tenth of a hertz
+   * of the rate the arranger states — so the six FM voices are handed a depth
+   * and left to it. **The Neo Geo is deliberately not on this list**, and that
+   * is the one fact this block exists to hold: an OPNB is an OPN2 with the LFO
+   * removed, so `ym2610.ts` refuses `$22` by design. A binding that claimed it
+   * anyway would stop the per-tick pitch writes, have its register writes
+   * ignored, and play the note straight — vibrato vanishing in silence.
+   */
+  function fmRegisters(consoleId: string, midi: Uint8Array) {
+    const script = schedule(consoleId, midi);
+    const lfo: number[] = [];
+    const fms = new Set<number>();
+    for (const tick of script.ticks) {
+      let address = -1;
+      for (const write of tick.writes) {
+        if ((write.chip ?? 0) !== 0) continue;
+        if ((write.reg & 1) === 0) address = write.value;
+        else if (address === 0x22) lfo.push(write.value);
+        else if (address >= 0xb4 && address <= 0xb6) fms.add(write.value & 0x07);
+      }
+    }
+    return { lfo, fms };
+  }
+
+  it("switches the Mega Drive's LFO on and states a depth", () => {
+    const { lfo, fms } = fmRegisters("md", vibratoFixture(120, 127));
+    // Bit 3 enables; the low three bits select the rate. Setting 1 is 5.56 Hz.
+    expect(lfo).toContain(0x09);
+    // A sensitivity beyond zero, which is the whole point — the table is coarse
+    // and the arranger's quarter-tone lands on 6 (40 cents).
+    expect([...fms].some((value) => value > 0)).toBe(true);
+  });
+
+  it("leaves the Mega Drive's LFO alone when nothing asks for vibrato", () => {
+    // Lazily rather than at boot: a track with no modulation must write exactly
+    // the registers it always did, which is every MIDI in the example library.
+    const { lfo, fms } = fmRegisters("md", vibratoFixture(120, 0));
+    // Never *enabled*, rather than never written: `init()` has always stated
+    // `$22 = 0` at boot, because silencing the chip is what stops a soft reset
+    // leaving something ringing. Bit 3 is the enable, and it must stay clear.
+    expect(lfo.every((value) => (value & 0x08) === 0)).toBe(true);
+    expect([...fms].every((value) => value === 0)).toBe(true);
+  });
+
+  it("never programs an LFO on the Neo Geo, which has none", () => {
+    const { lfo, fms } = fmRegisters("neogeo", vibratoFixture(120, 127));
+    expect(lfo).toHaveLength(0);
+    expect([...fms].every((value) => value === 0)).toBe(true);
+  });
+
+  it("still bends the Neo Geo, by moving the pitch instead", () => {
+    // The other half of the same fact: refusing the LFO must not mean losing
+    // the vibrato. This console pays the per-tick price every non-FM one pays.
+    const wet = schedule("neogeo", vibratoFixture(120, 127));
+    const dry = schedule("neogeo", vibratoFixture(120, 0));
+    expect(countWrites(wet)).toBeGreaterThan(countWrites(dry) * 1.5);
+  });
+
+  it("costs the Mega Drive almost nothing, which is the point", () => {
+    // Hardware vibrato is a handful of register writes; the per-tick route is
+    // two to five times a dry track. A regression here means the LFO stopped
+    // being used and the pitch writes came back.
+    const wet = countWrites(schedule("md", vibratoFixture(120, 127)));
+    const dry = countWrites(schedule("md", vibratoFixture(120, 0)));
+    expect(wet).toBeGreaterThan(dry);
+    expect(wet).toBeLessThan(dry * 1.2);
+  });
+});

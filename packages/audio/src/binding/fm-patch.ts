@@ -515,4 +515,85 @@ export function totalLevelFor(level: number): number {
   return steps < 0 ? 0 : steps > 0x7f ? 0x7f : steps;
 }
 
+/**
+ * The LFO rate settings, in Hz, by the three-bit value in `$22`.
+ *
+ * Shared by both OPN parts, because the LFO is one of the things a YM2610's FM
+ * section takes from the YM2612 unchanged. The top two are past vibrato and
+ * into a buzz — a sound effect's, not an arrangement's.
+ */
+const LFO_RATE_HZ: readonly number[] = [3.98, 5.56, 6.02, 6.37, 6.88, 9.63, 48.1, 72.2];
+
+/**
+ * Peak pitch deviation, in cents, by the three-bit FMS (PMS) value in `$B4`.
+ *
+ * The published table for this core. What makes it usable as *the* vibrato
+ * control rather than an approximation of one is that the chip applies it to
+ * the F-number rather than to the phase increment, so one setting is the same
+ * interval in every octave (`@demake/chip`'s `LFO_PM_OUTPUT` is where that is
+ * modelled).
+ */
+const FMS_CENTS: readonly number[] = [0, 3.4, 6.7, 10, 14, 20, 40, 80];
+
+/** `$22`'s value for a given rate: bit 3 enables, bits 0-2 select. */
+export function lfoRegister(rateIndex: number): number {
+  return 0x08 | (rateIndex & 0x07);
+}
+
+/**
+ * Whether any of these frames is asking for hardware vibrato.
+ *
+ * `$22` belongs to the whole chip, so the question is about the tick rather
+ * than about a channel — and it is asked of the previous tick too, so the
+ * register is written exactly on the edges rather than restated.
+ */
+export function lfoWanted(frames: readonly { vibratoCents?: number }[] | undefined): boolean {
+  return frames !== undefined && frames.some((frame) => (frame.vibratoCents ?? 0) > 0);
+}
+
+/**
+ * The rate setting closest to the vibrato rate the arranger produces.
+ *
+ * The LFO is **global** — one rate for every channel on the chip — which would
+ * be a real constraint if the demaker varied its vibrato speed per part, and is
+ * none at all because it does not: `compile.ts` states one rate for the whole
+ * piece (doc 17 §Vibrato). Setting 1 is 5.56 Hz against the 5.5 Hz it asks for,
+ * which is inside a tenth of a hertz and far below what anybody hears as a
+ * different vibrato.
+ */
+export function lfoRateIndex(hz: number): number {
+  let best = 0;
+  let bestError = Infinity;
+  for (let index = 0; index < LFO_RATE_HZ.length; index += 1) {
+    const error = Math.abs((LFO_RATE_HZ[index] as number) - hz);
+    if (error < bestError) {
+      bestError = error;
+      best = index;
+    }
+  }
+  return best;
+}
+
+/**
+ * A depth in cents as this chip's three-bit sensitivity.
+ *
+ * Nearest rather than floor: the table is coarse and widely spaced at the top —
+ * 20, 40, then 80 cents — so flooring a request for 50 lands on 20 and throws
+ * away more than half of what was asked for. Zero maps to zero exactly, which
+ * is what keeps a channel with no vibrato writing the same `$B4` it always did.
+ */
+export function fmsFor(cents: number): number {
+  if (!(cents > 0)) return 0;
+  let best = 0;
+  let bestError = Infinity;
+  for (let index = 0; index < FMS_CENTS.length; index += 1) {
+    const error = Math.abs((FMS_CENTS[index] as number) - cents);
+    if (error < bestError) {
+      bestError = error;
+      best = index;
+    }
+  }
+  return best;
+}
+
 export { YM2612_CLOCK_HZ };

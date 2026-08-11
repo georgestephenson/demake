@@ -18,6 +18,7 @@ import { centsToHz, foldIntoRange } from "../pitch.js";
 import type { DrumClass, Note, Part } from "../score/types.js";
 import type { Score } from "../score/types.js";
 import type { TimingPlan } from "../timing.js";
+import { VIBRATO_DELAY_SECONDS, VIBRATO_HZ, VIBRATO_MAX_CENTS } from "../vibrato.js";
 import type { ArrangementPlan, ChannelAssignment } from "./plan.js";
 
 export interface CompileOptions {
@@ -117,7 +118,7 @@ export function compileScript(
   // Pre-resolve each channel's note stream onto driver ticks. Doing it per
   // channel rather than per tick keeps the inner loop free of searching.
   const lanes = plan.assignments.map((assignment) =>
-    buildLane(assignment, timing, totalTicks, options),
+    buildLane(assignment, timing, totalTicks, options, binding.lfoChannels),
   );
 
   for (const assignment of plan.assignments) {
@@ -180,6 +181,7 @@ function buildLane(
   timing: TimingPlan,
   totalTicks: number,
   options: CompileOptions,
+  lfoChannels: ReadonlySet<number> | undefined,
 ): ChannelFrame[] {
   const channel = assignment.channel;
   const frames: ChannelFrame[] = new Array<ChannelFrame>(totalTicks);
@@ -283,6 +285,7 @@ function buildLane(
   }
 
   const shift = assignment.octaveShift * 1200;
+  const lfo = lfoChannels?.has(assignment.channelIndex) === true;
   // A sweep rather than a filter per tick: the piece is walked once and the
   // active set is maintained, so cost is notes + ticks rather than their
   // product. A three-minute track has tens of thousands of ticks.
@@ -310,11 +313,22 @@ function buildLane(
     }
 
     const frame = frames[tick]!;
-    const cents = chosen.note.pitch + shift + vibratoCents(chosen, tick, timing);
+    // A chip with an LFO is handed the written pitch and the depth, and does the
+    // moving itself; everything else is handed a pitch that is already moving,
+    // because that is the only vibrato it can be given.
+    const depth = chosen.note.vibrato ?? 0;
+    // The delay applies to both routes, so a chip that bends itself starts when
+    // one that is bent by the driver would.
+    const engaged = vibratoElapsed(chosen, tick, timing) !== null;
+    const cents = chosen.note.pitch + shift + (lfo ? 0 : vibratoCents(chosen, tick, timing));
     const hz = centsToHz(cents);
     const folded = channel.pitch ? foldIntoRange(channel.pitch, hz) : { hz, octaves: 0 };
     frame.on = true;
     frame.hz = folded.hz;
+    if (lfo && engaged && depth > 0) {
+      frame.vibrato = depth;
+      frame.vibratoCents = depth * VIBRATO_MAX_CENTS;
+    }
     frame.duty = options.duty;
     frame.retrigger = tick === chosen.start;
     frame.level = levelFor(chosen, tick, options);
@@ -338,9 +352,25 @@ function buildLane(
  * vibrato only on notes long enough to have any, and a sixteenth-note line
  * carries none however hard the wheel was pushed.
  */
-const VIBRATO_HZ = 5.5;
-const VIBRATO_MAX_CENTS = 50;
-const VIBRATO_DELAY_SECONDS = 0.15;
+/**
+ * Seconds since the modulation should have started, or `null` before it does.
+ *
+ * One definition with two readers, because the delay is the *demaker's*
+ * decision and must be the same on both routes to a chip. A console that bends
+ * its own pitch would otherwise start vibrating on the attack while every other
+ * console waited — the same note played two ways, which is precisely what
+ * having two routes must not mean.
+ */
+function vibratoElapsed(
+  entry: { note: Note; start: number },
+  tick: number,
+  timing: TimingPlan,
+): number | null {
+  const depth = entry.note.vibrato;
+  if (depth === undefined || depth <= 0) return null;
+  const seconds = (tick - entry.start) * timing.secondsPerTick - VIBRATO_DELAY_SECONDS;
+  return seconds > 0 ? seconds : null;
+}
 
 /** How far off its written pitch a note sits on this tick, in cents. */
 function vibratoCents(
@@ -349,9 +379,8 @@ function vibratoCents(
   timing: TimingPlan,
 ): number {
   const depth = entry.note.vibrato;
-  if (depth === undefined || depth <= 0) return 0;
-  const seconds = (tick - entry.start) * timing.secondsPerTick - VIBRATO_DELAY_SECONDS;
-  if (seconds <= 0) return 0;
+  const seconds = vibratoElapsed(entry, tick, timing);
+  if (depth === undefined || seconds === null) return 0;
   // `math.sin` rather than `Math.sin`: this package runs under the determinism
   // rule, and an oscillator seeded from the host's transcendentals is a track
   // that renders differently in two browsers (doc 16 §Determinism engineering).

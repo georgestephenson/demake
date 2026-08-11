@@ -433,9 +433,28 @@ modulation rather than switch an LFO on. Two things keep it safe rather than
 merely measured: a source that does not touch the wheel produces byte-for-byte
 the schedule it always did, which is every MIDI in the example library; and a
 game whose cartridge will not hold the result already loses its music with a
-warning rather than failing to build (AGENTS.md §Iron rules). Spending a chip
-LFO where one exists — the YM2612's, the HuC6280's — would turn most of that
-cost into a handful of register writes, and is the obvious next move.
+warning rather than failing to build (AGENTS.md §Iron rules).
+
+**One console does not pay it, because its chip bends its own notes.** A
+YM2612's LFO setting 1 is 5.56 Hz, within a tenth of a hertz of the rate stated
+above — so a Mega Drive's six FM voices are handed a *depth* rather than a
+moving pitch, and the cost falls from two-to-five times a dry track to four per
+cent of one. `ChipBinding.lfoChannels` is the seam: `compile.ts` bends the pitch
+itself for every channel not named there, and states `ChannelFrame.vibrato` for
+the ones that are. It belongs to the binding rather than to `AudioSpec` because
+what it answers is "will this encoder do it in hardware", which is a question
+about the register map. The delay applies to **both** routes, or the same note
+would start vibrating at different moments on different consoles.
+
+**The Neo Geo does pay it, and that is the hardware rather than an omission.**
+An OPNB is an OPN2 with the LFO removed, so `@demake/chip` refuses `$22` on that
+part by design. Claiming it there is a silent failure: the binding stops writing
+pitches, the chip ignores the registers, and the note comes out straight.
+
+The **HuC6280's** LFO is a refusal rather than a gap. That chip has no
+oscillator — channel two *is* the modulator — so vibrato costs a whole voice to
+modulate one other, which on a six-voice console is spending the machine
+downwards. Paying in schedule bytes is the better trade.
 
 ## Stage 3 — Timbre fitting
 

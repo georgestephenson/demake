@@ -39,6 +39,10 @@ import {
   carriersOf,
   fnumAt,
   type FmBindingOptions,
+  fmsFor,
+  lfoRateIndex,
+  lfoRegister,
+  lfoWanted,
   patchWrites,
   pitchWrites,
   totalLevelFor,
@@ -49,6 +53,7 @@ import {
 export { totalLevelFor };
 
 import { panSides } from "./pan.js";
+import { VIBRATO_HZ } from "../vibrato.js";
 import { psgBinding } from "./psg.js";
 import type { BoundWrite, ChipBinding, DriverRateFit } from "./types.js";
 
@@ -95,6 +100,9 @@ export function mdBinding(
     chips: spec.chips,
     spec,
     chipGains: MD_CHIP_GAINS,
+    // The six FM voices bend themselves; the PSG half has no LFO and is left to
+    // `compile.ts`'s per-tick pitch writes (doc 17 §Vibrato).
+    lfoChannels: new Set(Array.from({ length: FM_CHANNELS }, (_, index) => index)),
 
     init(): BoundWrite[] {
       const out: BoundWrite[] = [];
@@ -120,6 +128,15 @@ export function mdBinding(
 
     encode(next, prev): BoundWrite[] {
       const out: BoundWrite[] = [];
+      // `$22` is the whole chip's, so it is switched on the first tick anything
+      // asks for vibrato and never touched again. Lazily rather than at boot,
+      // because `init()` writing it unconditionally would change the register
+      // stream of every track that has no vibrato in it — which is all of them
+      // in the example library — for no audible difference at all.
+      const wants = lfoWanted(next);
+      if (wants !== lfoWanted(prev)) {
+        out.push(...ym(0x22, wants ? lfoRegister(lfoRateIndex(VIBRATO_HZ)) : 0x00));
+      }
       for (let channel = 0; channel < FM_CHANNELS; channel += 1) {
         encodeFm(out, channel, next[channel]!, prev?.[channel], patches[channel], installed);
       }
@@ -249,11 +266,19 @@ function encodeFm(
   // An FM voice has one output bit a side and nothing between them, so a
   // position is quantised rather than spent — this is the one part of this
   // console's stereo the PSG half does not share (its own is `psg.ts`'s).
+  //
+  // The same byte carries the LFO sensitivity, so the two are one write: the
+  // panning in bits 7-6 and the vibrato depth in bits 2-0. Writing either
+  // without the other is what would silently cancel a placement or a vibrato,
+  // which is why neither is emitted on its own.
   const sides = panSides(frame.pan);
-  const panBits = (sides.left ? 0x80 : 0) | (sides.right ? 0x40 : 0);
+  const panBits =
+    (sides.left ? 0x80 : 0) | (sides.right ? 0x40 : 0) | fmsFor(frame.vibratoCents ?? 0);
   const wasSides = panSides(before?.pan);
   const beforePan =
-    before?.on === true ? (wasSides.left ? 0x80 : 0) | (wasSides.right ? 0x40 : 0) : -1;
+    before?.on === true
+      ? (wasSides.left ? 0x80 : 0) | (wasSides.right ? 0x40 : 0) | fmsFor(before.vibratoCents ?? 0)
+      : -1;
   if (panBits !== beforePan) out.push(...ymChannel(channel, 0xb4, panBits));
 
   if (changed) out.push(...pitchWrites(channel, pitch.fnum, pitch.block).map(withChip));

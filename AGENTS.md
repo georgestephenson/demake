@@ -1093,11 +1093,11 @@ problem: every cartridge performs exactly the schedule its demaker produced, and
 the models were completed _before_ any binding wanted them, so closing those gaps
 changed no cartridge's audio by a byte. It is expression the hardware offers and
 nothing asks for, which is the rule a demaker spends the whole machine pointing
-the other way. The first line's _arranger_ half is closed — `@demake/audio`
-produces vibrato now, read off the source's own modulation wheel (§Working on
-audio) — and what is left of it on those two chips is an optimisation rather
-than a gap: an LFO would turn a per-tick pitch write into a handful of register
-writes. Also: tracker and lossy-audio input with
+the other way. The first line is closed: `@demake/audio` produces vibrato now,
+read off the source's own modulation wheel, and the Mega Drive spends its LFO
+for it (§Working on audio). The HuC6280's LFO is a refusal rather than a gap —
+channel two _is_ the modulator on that chip, so it costs a voice.
+Also: tracker and lossy-audio input with
 the transcription front end, and FLAC/M4A export. Read doc
 16 before touching any of it — several of its decisions are load-bearing and easy
 to undo by accident (§Working on audio).
@@ -3757,8 +3757,19 @@ that keep them from being undone. All of them come from doc 16.
   in the example library and the reason closing this re-baselined nothing. And
   **it costs**: a modulated held note is a pitch write per tick, two to five
   times a dry track's writes on a console that has to write the modulation
-  rather than switch an LFO on. Do not widen the default depth or shorten the
-  delay without measuring what it does to the tightest cartridge in the library.
+  rather than switch an LFO on — **except on the Mega Drive**, whose YM2612 has
+  an LFO at 5.56 Hz and takes a depth instead, for four per cent. Do not widen
+  the default depth or shorten the delay without measuring what it does to the
+  tightest cartridge in the library.
+- **`lfoChannels` is the seam, and the Neo Geo is deliberately not in it.** A
+  binding that names a channel there promises to perform the vibrato in
+  hardware, so `compile.ts` stops moving that channel's pitch. An OPNB is an
+  OPN2 with the LFO _removed_ — `ym2610.ts` refuses `$22` by design — so
+  claiming it on that console stops the pitch writes, has the register writes
+  ignored, and plays the note straight with nothing reporting a problem. The
+  chip model's own refusal is what caught it. The HuC6280's LFO is a separate
+  refusal: channel two _is_ the modulator there, so vibrato costs a whole voice
+  to modulate one other.
 - **A kit takes every _dedicated_ drum voice, and takes them by drum class.** A
   General MIDI drum track is one part, so one part on one channel left a Neo
   Geo's other five ADPCM-A voices idle _and_ dropped every hit that collided

@@ -19,6 +19,22 @@
  * mapping that had to be corrected afterwards would be a sign the two chips were
  * merely similar.
  *
+ * ### …but it has no LFO, so vibrato is written rather than switched on
+ *
+ * The one place the OPNB is *less* than the OPN2 in a way a binding can feel.
+ * A Mega Drive programs `$22` and a sensitivity nibble and the chip bends the
+ * note itself; this part has neither, so `lfoChannels` is absent here and
+ * `compile.ts` moves the pitch every tick instead (doc 17 §Vibrato). That costs
+ * real schedule bytes — on the Mega Drive hardware vibrato is a few per cent
+ * over a dry track and here it is the same two-to-five times every other
+ * console pays.
+ *
+ * It is worth stating rather than leaving to be rediscovered, because the
+ * failure mode of getting it wrong is silent: write `$22` and the FMS bits on
+ * this chip and `ym2610.ts` *refuses* them by design — so the schedule looks
+ * like it is asking for vibrato, the per-tick pitch writes are gone because the
+ * binding claimed to handle it, and the note simply comes out straight.
+ *
  * ### This console has no shared register, and the reason is per section
  *
  * Six of the fifteen consoles emit no merge routine and each has its own reason.

@@ -58,6 +58,17 @@ export interface ChannelFrame {
    */
   pan?: number;
   /**
+   * Vibrato depth, 0–1, for a channel whose chip performs it in hardware.
+   *
+   * Present only where the binding said it would (`ChipBinding.lfoChannels`).
+   * Everywhere else the modulation is already *in* `hz`, because a chip with no
+   * LFO can only be given a moving pitch — so a binding that ignores this field
+   * is correct on every console but the two FM ones, and those two say so.
+   */
+  vibrato?: number;
+  /** Peak deviation the vibrato asks for, in cents, where `vibrato` is set. */
+  vibratoCents?: number;
+  /**
    * A note starts on this tick.
    *
    * The arranger knows where notes begin and the binding does not, so it is
