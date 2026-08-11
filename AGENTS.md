@@ -3754,6 +3754,23 @@ that keep them from being undone. All of them come from doc 16.
   fired. That is why `performed` exists on a game's driver: the schedules the ROM
   really plays are the ones with the boot prefix taken off and an effect narrowed
   to its own channel, and it is what the conformance harness must diff against.
+- **A trigger belongs to the note, not to the pitch — and which state that
+  restarts is the channel's.** A key-on bit rides along on the register a pitch
+  write lands in on several of these chips, so an encoder that sets it
+  unconditionally restarts something every time a note bends. What that costs
+  differs per channel and the differences are the hardware's: a Game Boy pulse's
+  trigger reloads the frequency timer and does _not_ touch the duty step, which
+  is what makes re-triggering it every tick safe (`binding/gb.ts` §header); its
+  **wave** channel's resets the wave position, so a bend restarts the waveform;
+  its noise channel's restarts the shift register, which `encodeNoise` has always
+  guarded; and an NES pulse's `$4003` resets the sequencer phase, which
+  `binding/nes.ts` guards by writing the high byte only when it changes. Two
+  things reach a mid-note bend and only one of them is a feature: vibrato, and a
+  sustained chord whose chosen note moves while it is still sounding. The second
+  needed nothing new and was live in the example library — `keep.mid` restarted
+  the Game Boy's waveform 47 times and `vault.mid` 11. None of it is visible to
+  doc 16's Level A, because the cartridge performs the schedule exactly and the
+  schedule is what is wrong.
 - **A borrowed channel is given back holding the music's own registers.** The
   packed music is a delta stream, so a register the music's own value did not
   change is one it never states again — and after an effect has borrowed the
