@@ -143,18 +143,54 @@ describe("what a program needs", async () => {
     }
   });
 
-  it("does not spill a 6502 page zero, because a pointer has to be in it", () => {
-    // `($nn),y` is that CPU's one indirect mode, so an address that fell through
-    // to the heap could not be dereferenced at all — a program that cannot be
-    // assembled rather than one that is bigger. The NES is the console quest
-    // runs out of *work RAM* on first, which is what it is refused for.
-    expect(NES_MEMORY.fastSpills).toBeFalsy();
+  /**
+   * A 6502's page zero spills too, and what may not is decided per *request*.
+   *
+   * Both halves matter and they pull opposite ways. Almost nothing the allocator
+   * places on this CPU is dereferenced — the contact bitfields are read with
+   * `$nnnn,x`, a temporary goes through `clamp32`, which asks `inFastPage` and
+   * takes the pointer path for anything else — so a game refused for wanting 274
+   * bytes of a 237-byte page is a game refused for wanting cheap addresses it does
+   * not need. But `($nn),y` really is this CPU's one indirect mode, so the tile
+   * walk's cursor cannot fall through to the heap: that would assemble an
+   * instruction reading the wrong two bytes rather than failing.
+   *
+   * `quest` is the game that reaches it, and its own numbers are the assertion:
+   * 274 wanted of 237, and every entity in eight kilobytes of cartridge RAM
+   * because the console's own two would not hold them either.
+   */
+  it("spills a 6502 page zero for everything but a pointer", () => {
+    expect(NES_MEMORY.fastSpills).toBe(true);
     const quest = exampleProject("quest");
     const program = compile(quest.source, {
       profile: getProfile("nes"),
       files: quest.files,
       levels: quest.levels,
     });
-    expect(() => planLayout(program, analyze(program), NES_MEMORY)).toThrow(/work RAM/);
+    const layout = planLayout(program, analyze(program), NES_MEMORY);
+    // It planned at all, which it could not before — and it took the board's RAM
+    // to do it, which is what tells the backend to declare a mapper.
+    expect(layout.spilled).toBe(true);
+    // The tile walk's cursor is in the page it has to be in.
+    expect(layout.tilePtr).toBeGreaterThanOrEqual(NES_MEMORY.fastStart as number);
+    expect(layout.tilePtr).toBeLessThan(0x0100);
+    // And the beginning of the page is still the page, because only a request the
+    // region cannot hold moves.
+    expect(layout.tick).toBeLessThan(0x0100);
+  });
+
+  it("refuses a pointer that will not fit the page rather than spilling it", () => {
+    // The half no game in the library reaches, so it is reached here: a page with
+    // room for the first few requests and nothing like enough for all of them
+    // leaves the cursor with nowhere to go, and that has to be a build error with
+    // page zero's name on it rather than a `($nn),y` against a heap address.
+    const quest = exampleProject("quest");
+    const program = compile(quest.source, {
+      profile: getProfile("nes"),
+      files: quest.files,
+      levels: quest.levels,
+    });
+    const cramped = { ...NES_MEMORY, fastEnd: (NES_MEMORY.fastStart as number) + 16 };
+    expect(() => planLayout(program, analyze(program), cramped)).toThrow(/page zero/);
   });
 });
