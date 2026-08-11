@@ -501,10 +501,24 @@ export function emitInstanceDefaults(
   program: Program,
   props: readonly string[],
   sizes: readonly number[],
+  /**
+   * Which instances to emit and what to call each table.
+   *
+   * Absent is the whole program under the shared names, which is what every
+   * console emits once in its data section. A banked Game Boy passes a scene's
+   * own instances under names of that scene's, because a paged reset cannot read
+   * a table in another bank (`emit.ts` §{@link DEFAULTS_UNIT}) — and it goes
+   * through here rather than restating the encoding, so the copy is a copy.
+   */
+  subset?: { ids: readonly number[]; label: (id: number) => string },
 ) {
-  for (const instance of program.instances) {
-    asm.label(`Defaults_${instance.id}`);
-    const slots = (sizes[instance.id] ?? props.length * 4) / 4;
+  const byId = new Map(program.instances.map((instance) => [instance.id, instance]));
+  const ids = subset?.ids ?? program.instances.map((instance) => instance.id);
+  for (const id of ids) {
+    const instance = byId.get(id);
+    if (!instance) continue;
+    asm.label(subset ? subset.label(id) : `Defaults_${id}`);
+    const slots = (sizes[id] ?? props.length * 4) / 4;
     for (const prop of props.slice(0, slots)) asm.dd(instance.numbers[prop] ?? 0);
   }
 }

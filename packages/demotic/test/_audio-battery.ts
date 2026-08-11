@@ -1520,6 +1520,70 @@ export function audioBattery(target: Target): void {
 }
 
 /**
+ * The proof for a cartridge whose *schedules are not in the mapped bank*.
+ *
+ * One console needs it and it is the Game Boy, because it is the only one whose
+ * fixed half is too small to keep a game's packed music in: a banked build makes
+ * the schedules a paged unit, and the driver is entered by an **interrupt**, so a
+ * tick can arrive with any bank at all in the window. The handler therefore pages
+ * the audio's own bank, ticks, and puts back whatever it interrupted — read out
+ * of a shadow, because MBC5's bank register cannot be read (`ctx.ts`
+ * §bankShadow).
+ *
+ * What this case owns is the **stream**: that a driver reading its data through a
+ * window still performs the schedule the demaker produced, tick for tick. The
+ * failure it is pointed at is a schedule that landed at the wrong offset inside
+ * the right bank — the game plays on, and the music is wrong. The other half of
+ * the paging, that the handler puts the interrupted bank *back*, belongs to
+ * `rom.test.ts`'s quest case rather than here, and the reason is worth knowing:
+ * a driver that never restores leaves its own bank mapped for ever, which is
+ * exactly the state its next tick wants, so it keeps playing perfectly while the
+ * game around it returns into another bank's instructions and hangs. A register
+ * diff cannot see a hung game; a trace can, and that one is handed this game's
+ * audio so that there is an interrupt to arrive at all.
+ *
+ * The game is `quest`, which is the only fixture that pages at all, and it is
+ * driven into its first level because its title screen has no track: `a` is
+ * pressed and held, which enters the level *and* leaves no press edge behind it,
+ * so no effect fires and what the chip receives afterwards is the track alone.
+ */
+export function bankedAudio(target: Target): void {
+  describe(`a banked cartridge's music, on ${target.name} hardware`, async () => {
+    it(
+      "performs a schedule that is not in the mapped bank, tick for tick",
+      async () => {
+        const { built, bound } = await build(target, gameSource("quest"), "quest");
+        expect(built.bytes.length).toBeGreaterThan(0x8000);
+        const script = bound.driver?.performed.tracks[0];
+        expect(script).toBeDefined();
+        const address = target.tickAddress(built, bound);
+
+        // Long enough to cross the title screen, the press, the scene change and
+        // the redraw the level's first frame costs, and then some.
+        const groups = capture(target, built.bytes, address, 900, 60, endOf(target, built, bound));
+        const expected = (script as ChipScript).ticks.map((tick) =>
+          observed(target, tick.writes as Write[]),
+        );
+        // The driver takes the request on whichever tick follows the scene
+        // change, so where the track starts is a fact about the game rather than
+        // about the schedule. Find it, then require everything after it.
+        const first = expected[0] as Write[];
+        const start = groups.findIndex(
+          (writes, at) => at > 60 && show(writes) === show(first) && writes.length > 0,
+        );
+        expect(start).toBeGreaterThan(60);
+        const ticks = Math.min(300, groups.length - start, expected.length);
+        expect(ticks).toBeGreaterThan(100);
+        expect(firstDivergence(expected.slice(0, ticks), groups.slice(start, start + ticks))).toBe(
+          null,
+        );
+      },
+      BUILDS_TIMEOUT,
+    );
+  });
+}
+
+/**
  * The size sweep: every example game, built with its art and its audio.
  *
  * The counterpart of the battery above and the reason this file is minutes
@@ -1528,11 +1592,18 @@ export function audioBattery(target: Target): void {
 export function audioSweep(target: Target): void {
   describe(`the example library, on ${target.name} hardware`, async () => {
     /**
-     * `quest` is not swept here, and the reason is the cartridge rather than the
-     * audio: three levels, a boss and a secret room do not fit a mapper-less 32 KiB
-     * on any 8-bit console in the set (doc 13 §Banked cartridges). The one machine
-     * with the room is the Mega Drive, where `rom.test.ts` runs it — and a game
-     * that cannot be built cannot have its register stream compared.
+     * `quest` is not swept here, and the reason is the *budget* rather than the
+     * cartridge.
+     *
+     * It used to be the cartridge: three levels, a boss and a secret room do not
+     * fit a mapper-less 32 KiB on any 8-bit console in the set, and a game that
+     * cannot be built cannot have its register stream compared. Every console with
+     * a backend builds it now, on a banked board where one does not exist (doc 13
+     * §Banked cartridges) — but the sweep's whole subject is *headroom*, and a
+     * game that takes a bigger board when it grows has none to measure. What
+     * `quest`'s cartridge does have to say is said where it can be: `bankedAudio`
+     * above diffs its register stream on the one console that pages its schedules,
+     * and `rom.test.ts` traces it on all four that page anything.
      */
     const cases = EXAMPLES.filter((name) => name !== "quest");
 

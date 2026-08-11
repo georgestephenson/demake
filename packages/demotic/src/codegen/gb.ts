@@ -24,8 +24,10 @@
 import { buildGameAudio } from "@demake/audio";
 import {
   AsmError,
+  GB_BANK_SIZE,
   GB_HEADER_OFFSETS,
   GB_ROM_SIZE,
+  GB_ROM_SIZES,
   megaduckRegister,
   stampGbHeader,
   type Executor,
@@ -51,7 +53,7 @@ import {
   type RomStats,
 } from "./backend.js";
 import { Ctx } from "./ctx.js";
-import { emitProgram, type EmitOptions, type SpriteArt } from "./emit.js";
+import { emitProgram, type EmitOptions, type GbBankPlan, type SpriteArt } from "./emit.js";
 import { GB_MEMORY, GBC_MEMORY, MEGADUCK_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
 import type { ArtSettings } from "./settings.js";
 
@@ -235,32 +237,87 @@ export const gbBackend: Backend<EmitOptions, GbAudio> = {
 
   assemble({ program, analysis, layout, art, audio, title }): Assembled {
     const emitOptions: EmitOptions = { ...art, ...audio.options };
-    const ctx = new Ctx(program, analysis, layout, getProfile(program.profile.id), 0);
-    if (audio.hooks) {
-      ctx.audio = {
-        driver: audio.hooks.driver,
-        music: audio.hooks.music,
-        request: audio.hooks.request,
-        trace: layout.sound,
-        effects: audio.hooks.effects,
-      };
-    }
-    let code: Uint8Array;
-    try {
-      emitProgram(ctx, emitOptions);
-      code = ctx.asm.assemble();
-    } catch (error) {
-      if (error instanceof AsmError) {
+    const hooks = audio.hooks
+      ? {
+          driver: audio.hooks.driver,
+          music: audio.hooks.music,
+          request: audio.hooks.request,
+          trace: layout.sound,
+          effects: audio.hooks.effects,
+        }
+      : undefined;
+
+    /** Assemble once, flat or split, with or without a bank plan. */
+    const assembleWith = (plan?: GbBankPlan, split?: boolean) => {
+      const inner = new Ctx(program, analysis, layout, getProfile(program.profile.id), 0);
+      if (hooks) inner.audio = hooks;
+      if (plan) inner.banks = new Map(plan.bankOf);
+      if (plan || split) inner.bankShadow = layout.bank;
+      try {
+        const emitted = emitProgram(inner, {
+          ...emitOptions,
+          ...(plan ? { banks: plan } : {}),
+          ...(split ? { split: true } : {}),
+        });
+        return { inner, ...emitted, code: inner.asm.assemble() };
+      } catch (error) {
+        if (error instanceof AsmError) {
+          throw new BuildError(
+            "E_INTERNAL",
+            `the code generator produced invalid code: ${error.message}`,
+          );
+        }
+        throw error;
+      }
+    };
+
+    // The 32 KiB cartridge first, and its bytes are exactly what they always
+    // were: no controller, no bank writes, one section. Only a game that does not
+    // fit pays for the passes below.
+    let built = assembleWith();
+    let plan: GbBankPlan | undefined;
+    let size = ROM_SIZE;
+    if (built.code.length > ROM_SIZE) {
+      // The units are measured on a pass shaped exactly like the banked one —
+      // same routines, same bank writes, laid end to end — because a plan built
+      // from the flat build's scenes would be built from instructions that no
+      // longer exist.
+      const probe = assembleWith(undefined, true);
+      plan = planBanks(probe);
+      built = assembleWith(plan);
+      if (built.fixed !== probe.fixed) {
         throw new BuildError(
           "E_INTERNAL",
-          `the code generator produced invalid code: ${error.message}`,
+          "the program changed size between the measuring pass and the banked one",
         );
       }
-      throw error;
+      const banks = FIXED_BANKS + plan.banks.length;
+      const chosen = GB_ROM_SIZES.find((bytes) => bytes >= banks * GB_BANK_SIZE);
+      if (chosen === undefined) {
+        throw new BuildError(
+          "E_GAME_TOO_LARGE",
+          `this game needs ${banks} banks and the largest MBC5 cartridge holds 512`,
+          "fewer objects in one rule, or a smaller level.",
+        );
+      }
+      size = chosen;
     }
 
-    const rom = new Uint8Array(ROM_SIZE);
-    rom.set(code.subarray(0, Math.min(code.length, ROM_SIZE)), 0);
+    const { inner: ctx, code } = built;
+    const rom = new Uint8Array(size);
+    if (plan) {
+      // The emitter puts the paged banks first and bank zero last, so that the
+      // helpers — pulled by whatever code calls them — are still the last thing
+      // emitted. Undoing that here is a copy per bank.
+      for (const [index] of plan.banks.entries()) {
+        const at = index * GB_BANK_SIZE;
+        rom.set(code.subarray(at, at + GB_BANK_SIZE), (FIXED_BANKS + index) * GB_BANK_SIZE);
+      }
+      const fixed = code.subarray(plan.banks.length * GB_BANK_SIZE);
+      rom.set(fixed.subarray(0, Math.min(fixed.length, GB_BANK_SIZE)), 0);
+    } else {
+      rom.set(code.subarray(0, Math.min(code.length, size)), 0);
+    }
     // A Mega Duck cartridge has no header at all — no logo, no title, no type
     // byte, no checksums — because the console has no boot ROM to check one.
     // Stamping the Game Boy's would overwrite this cartridge's own code, which
@@ -275,12 +332,63 @@ export const gbBackend: Backend<EmitOptions, GbAudio> = {
     return {
       bytes: rom,
       code: code.length,
-      capacity: ROM_SIZE,
+      // The largest cartridge this backend can build, never the one that shipped
+      // (`backend.ts` §Elastic cartridges): bank zero is short by nothing here,
+      // and every bank above it is the window's own sixteen kilobytes.
+      capacity: GB_ROM_SIZES[GB_ROM_SIZES.length - 1] as number,
       symbols: ctx.asm.symbols(),
       helpers: ctx.helperNames(),
     };
   },
 };
+
+/** Banks that never move: bank zero, wired to `$0000`. */
+const FIXED_BANKS = 1;
+
+/**
+ * Give every unit a bank, first fit, in the order the emitter walks them.
+ *
+ * The Sega's shape with a smaller fixed half. Bank zero takes *nothing*: sixteen
+ * kilobytes is the boot, the helpers, the audio driver, the level tables and the
+ * dispatches that page everything else, and what is left of it is measured in
+ * hundreds of bytes. So the plan cannot make bank zero fit, and a game whose
+ * immovable half overruns it is refused by name — which is this console's real
+ * wall, and the reason three blocks of *data* are paged units rather than
+ * cartridge tables (doc 13 §Banked cartridges).
+ */
+function planBanks(measured: { units: ReadonlyMap<string, number>; fixed: number }): GbBankPlan {
+  if (measured.fixed > GB_BANK_SIZE) {
+    throw new BuildError(
+      "E_GAME_TOO_LARGE",
+      `this game's fixed bank is ${measured.fixed} bytes and bank zero holds ${GB_BANK_SIZE}`,
+      "smaller levels, shorter music, or fewer objects; paging moves a game's " +
+        "scenes, and the boot, the helpers, the audio driver and every table it " +
+        "reads have to stay mapped.",
+    );
+  }
+  const banks: string[][] = [];
+  const room: number[] = [];
+  const bankOf = new Map<string, number>();
+  for (const [name, bytes] of measured.units) {
+    if (bytes > GB_BANK_SIZE) {
+      throw new BuildError(
+        "E_GAME_TOO_LARGE",
+        `'${name}' compiles to ${bytes} bytes and the window holds ${GB_BANK_SIZE}`,
+        "fewer rules or fewer objects in that scene; the window is the unit this " +
+          "console pages, so one step of one tick has to fit one window.",
+      );
+    }
+    let slot = room.findIndex((left) => left >= bytes);
+    if (slot < 0) {
+      slot = room.push(GB_BANK_SIZE) - 1;
+      banks.push([]);
+    }
+    room[slot] = (room[slot] as number) - bytes;
+    (banks[slot] as string[]).push(name);
+    bankOf.set(name, FIXED_BANKS + slot);
+  }
+  return { banks, bankOf };
+}
 
 /**
  * What to stamp in the cartridge header, and what source bytes to demake.

@@ -37,7 +37,7 @@ import {
   wscTarget,
   type RomTarget,
 } from "./_rom-harness.js";
-import { gameSource, projectBytes, projectText } from "./_projects.js";
+import { gameSource, projectBytes, projectFiles, projectText } from "./_projects.js";
 
 /** The tape the golden trace was recorded with (see determinism.test.ts). */
 const PONG_TAPE = "1:a,90:,90:left,120:right";
@@ -246,6 +246,44 @@ describe("ROM conformance across the example library", async () => {
     const program = build(gameSource("quest"), questLevels(), "sms");
     const frames = tape(QUEST_TAPE);
     expect(await romTrace(program, frames, {}, smsTarget)).toBe(trace(new Sim(program), frames));
+  }, 180_000);
+
+  /**
+   * And on the Game Boy, which is the hardest board in the set to page.
+   *
+   * The window is the Master System's sixteen kilobytes and the *fixed* half is
+   * sixteen rather than thirty-two, so what has to leave bank zero here is not
+   * only the scenes: the tile art, the packed audio schedules and the instance
+   * defaults are paged data units as well, and the timer interrupt that drives
+   * the audio saves and restores the running bank around its own — from a shadow,
+   * because MBC5's register cannot be read. What that can get wrong is a step
+   * running with another step's bank in the window, or a tick interrupted between
+   * a bank write and the call that needed it. So the oracle is the same one every
+   * other backend answers to, tick for tick.
+   *
+   * This is the one case in the file that is handed a game's **audio**, and that
+   * is what makes it the oracle for the restore rather than only for the paging.
+   * Without a driver there is no timer interrupt at all, so nothing ever arrives
+   * in the middle of a paged step and the shadow is never read; with one, half of
+   * every tick is spent running from the window, and a handler that left the
+   * audio's own bank behind it returns into another bank's instructions at the
+   * same offset. The art is left out because it is a `prep` tournament a trace
+   * cannot see either way.
+   */
+  it("matches the interpreter for the quest fixture on gb, across paged banks", async () => {
+    const program = build(gameSource("quest"), questLevels(), "gb");
+    const frames = tape(QUEST_TAPE);
+    // Keyed by the name the `.dmt` wrote, because this program was compiled with
+    // no file list to resolve against — the same names `projectFiles` ends in.
+    const assets = new Map(
+      projectFiles("quest")
+        .filter((path) => path.endsWith(".mid") || path.endsWith(".wav"))
+        .map((path) => [path.split("/").pop() as string, projectBytes("quest", path)]),
+    );
+    expect(assets.size).toBe(12);
+    expect(await romTrace(program, frames, { assets }, gbTarget)).toBe(
+      trace(new Sim(program), frames),
+    );
   }, 180_000);
 
   it("builds a Mega Duck cartridge that a Game Boy could not run", async () => {

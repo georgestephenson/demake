@@ -6,10 +6,13 @@
  * with a second half on the renderer, not a console of its own (doc 14 §Colour).
  */
 
-import { audioBattery, audioSweep, colourBudget, target } from "./_audio-battery.js";
+import { audioBattery, audioSweep, bankedAudio, colourBudget, target } from "./_audio-battery.js";
 
 const gb = target("gb");
 
 audioBattery(gb);
+// The one console whose banked cartridge pages its *schedules* — sixteen
+// kilobytes of fixed bank is not enough to hold them (doc 13 §Banked cartridges).
+bankedAudio(gb);
 audioSweep(gb);
 colourBudget();

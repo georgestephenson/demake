@@ -1881,10 +1881,9 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   point is the board a game that size shipped on, not the smallest file that
   boots. A Game Boy ROM-only cartridge is 32 KiB and cannot move _down_, because
   the header's smallest size code _is_ 32 KiB; every code above it names a
-  mapper, and `stampGbHeader` declares MBC5 for any image longer than that. The
-  emitter does not produce one yet (doc 13 §Banked cartridges), so today the
-  Game Boy's list still has one entry — but the wrapper and `@demake/dmg` are
-  both ready for the day it does.
+  mapper, and `stampGbHeader` declares MBC5 for any image longer than that — up
+  to the eight megabytes the field can say, which is where a game that pages its
+  tick's steps grows (doc 13 §Banked cartridges).
 - **`free` is measured against the largest board, never the one that shipped.**
   It is the budget-regression signal (§Testing truths), and a headroom figure
   that jumped by sixteen kilobytes the moment a game crossed a boundary would
@@ -2053,12 +2052,14 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   emptiness is the record. The tightest cartridge in the library is the Game
   Boy's shooter at 2182 bytes free — that is where a budget regression shows
   first, which is why the Game Boys sweep the whole library and the NES sweeps
-  two. And a Game Boy is the tightest for a reason that is still structural: it
-  is the one console whose _emitter_ has no bigger board to reach for, so
-  everywhere else a fixture that got bigger takes a bigger board and only here
-  does it run out. The cartridge wrapper and the core can both do MBC5 now; what
-  is missing is the emitter, and doc 13 §Banked cartridges says why that is a
-  bigger change on this console than on a Super Nintendo.
+  two. A Game Boy is the tightest for a reason that used to be structural — it
+  was the one console whose _emitter_ had no bigger board to reach for — and is
+  now the ordinary one: a fixture that grows past 32 KiB here takes an MBC5
+  cartridge and pages its tick's steps, exactly as everywhere else. The number to
+  watch has moved with it. What a banked Game Boy cannot grow is **bank zero**:
+  quest's is 15973 bytes of 16384, and that 411 is the tightest figure in the
+  project, because nothing about taking a bigger board adds a byte to the half
+  that cannot move (doc 13 §Banked cartridges).
 - **New language features come from the example library, not from theory**
   (`packages/demotic/fixtures/games/`). Each example is there for something the
   others do not exercise; `touches`, the `reaches` crossing rule and `visible`'s
@@ -2406,6 +2407,37 @@ packages/demotic/test/rom.test.ts` builds every fixture game and diffs raw
   before fetching the offset moves every relative jump one byte, which presents
   as an infinite loop somewhere unrelated. `packages/dmg/test/cpu.test.ts` pins
   it because it actually happened.
+- **A game that outgrows 32 KiB pages its tick's steps, and the hard part is
+  bank zero.** The Sega's unit reached one console along — a step, plus each
+  scene's reset, camera and render, all entered through `ctx.callUnit` /
+  `ctx.jumpUnit` — but the _fixed_ half here is sixteen kilobytes against that
+  machine's thirty-two, so three blocks of **data** are paged units as well: the
+  tile art, the packed audio schedules, and the instance defaults. Quest's bank
+  zero is 15973 bytes of 16384, which is the tightest figure in the project, so
+  anything a new emitter puts in the always-mapped half is worth counting. The
+  level tables are what is left to page if it ever runs out, and they cost
+  duplication rather than two instructions, because more than one step of a scene
+  reads them (doc 13 §Banked cartridges).
+- **The instance defaults are paged _twice_, and the second copy is the point.**
+  The boot restore wants every entity's at once and pages the whole table in; a
+  scene's reset wants its own scene's and is itself a paged routine, so it cannot
+  read a table in another bank and carries a copy of just those. Both go through
+  `shape.ts`'s `emitInstanceDefaults` rather than restating the encoding, so the
+  copy really is a copy.
+- **The timer handler saves the bank and puts it back, from a shadow.** MBC5's
+  bank register is write-only, so `Ctx.bankShadow` is the only record of what is
+  in the window — and this console's audio is entered by an _interrupt_, so a
+  tick can arrive with any bank at all. Nearly half of every game tick runs from
+  `$4000`, so skipping the restore returns into another bank's instructions at
+  the same offset. It is invisible to an audio diff, because a driver that never
+  restores leaves its own bank mapped for ever and plays on perfectly while the
+  game is dead — which is why `rom.test.ts`'s quest case is the one there that is
+  handed a game's audio.
+- **Emit the paged banks first and bank zero last.** `Asm.section` moves no
+  bytes, so the order is free — and it has to be this one, because helpers are
+  _pulled_ by whatever calls them and `ctx.finish()` has to be the last thing
+  that runs. `gb.ts` copies each bank into place afterwards, which is a copy per
+  bank and no more.
 
 ### The 6502 half
 
@@ -2647,9 +2679,9 @@ is the game.
   plausible and wrong. The audio driver's schedules are the one block that places
   _itself_ — dozens of small label-addressed blocks rather than one, so
   `emitData` is handed the hole and steps over it at whichever of its own
-  boundaries falls there, exactly as the standalone cartridge already did. Doc 13
-  §Banked cartridges says why this comes before slot-2 paging: paging inherits
-  the same hole.
+  boundaries falls there, exactly as the standalone cartridge already did. It had
+  to come before slot-2 paging, because paging inherits the same hole: a banked
+  cartridge's fixed half is still slots 0 and 1, and `$7FF0` is still inside it.
 - **The mapper's registers are decoded out of the RAM mirror.** `$FFFC`–`$FFFF`
   is `$DFFC`–`$DFFF` in real RAM, so those four bytes read back as ordinary
   memory and page a ROM bank out from under the program when written. The heap

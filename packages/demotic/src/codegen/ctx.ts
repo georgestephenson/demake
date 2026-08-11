@@ -19,7 +19,7 @@
  * constant pool exactly, and share not one opcode.
  */
 
-import { Asm, label, type Ref } from "@demake/core";
+import { Asm, label, MBC5, type Ref } from "@demake/core";
 
 import type { ConsoleProfile } from "../profiles.js";
 import type { Program } from "../program.js";
@@ -206,6 +206,60 @@ export type HelperBody = (ctx: Ctx) => void;
 /** The Game Boy compilation context. */
 export class Ctx extends CtxBase<Ctx, Asm> {
   readonly asm: Asm;
+
+  /**
+   * Which paged bank each routine outside bank zero lives in.
+   *
+   * Empty for a game that fits a 32 KiB ROM-only cartridge, which is every
+   * example but one, and then this backend emits exactly what it always did. With
+   * entries, the routines it names answer `$4000` once MBC5 has been pointed at
+   * their bank — so {@link enter} is how anything reaches them (doc 13 §Banked
+   * cartridges).
+   *
+   * A *routine*'s map rather than a scene's, because this console's window is
+   * sixteen kilobytes and the library's biggest scene is twenty-seven: the units
+   * are a scene's tick steps and its three other routines, as on the Sega 8-bits.
+   */
+  banks = new Map<string, number>();
+
+  /**
+   * Where the running bank is shadowed, or `null` when nothing pages.
+   *
+   * MBC5's bank register is **write-only**, so the only way to know what is in
+   * the window is to have written down what was put there. That matters here and
+   * not on the Sega for one reason: this console's audio driver is entered by an
+   * *interrupt*, which can arrive with any bank mapped — so the handler pages the
+   * audio's own bank and has to put back whatever it interrupted, and this is
+   * where it reads it from.
+   */
+  bankShadow: number | null = null;
+
+  /** Point the window at the bank holding `target`, when it is paged. */
+  enter(target: string): void {
+    const bank = this.banks.get(target);
+    if (bank === undefined) return;
+    this.asm.ldn("a", bank);
+    if (this.bankShadow !== null) this.asm.sta(this.bankShadow);
+    this.asm.sta(MBC5.romBankLow);
+  }
+
+  /** Call a routine, paging it in first if it is not in bank zero. */
+  callUnit(target: string): void {
+    this.enter(target);
+    this.asm.call(target);
+  }
+
+  /**
+   * Jump to a routine, paging it in first.
+   *
+   * For the dispatches that *tail* into a scene's routine: the routine's own
+   * `ret` lands back at whatever called the dispatch, so a jump is a call that
+   * costs nothing, banked or not.
+   */
+  jumpUnit(target: string): void {
+    this.enter(target);
+    this.asm.jp(target);
+  }
 
   constructor(
     program: Program,

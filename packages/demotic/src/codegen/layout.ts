@@ -247,6 +247,16 @@ export interface MemoryPlan {
    * that came out wrong every few seconds, at no tick anyone could name.
    */
   interruptBytes: number;
+  /**
+   * Whether the running ROM bank has to be shadowed in work RAM.
+   *
+   * The Game Boy's, and only when a build pages: MBC5's bank register is
+   * write-only, so the only way for an interrupt handler to put back what it
+   * interrupted is for the code that set it to have written it down. Nothing else
+   * here needs it — the Sega's paged half is never entered from an interrupt, and
+   * the Super Nintendo has no controller at all.
+   */
+  bankBytes?: boolean;
 
   /**
    * Bytes the emitters that walk a *list* of entities keep their cursor in: a
@@ -312,6 +322,9 @@ export const GB_MEMORY: MemoryPlan = {
   cellAttributes: false,
   interruptBytes: 0,
   loopBytes: 0,
+  // One byte, because MBC5's bank register cannot be read and a banked build's
+  // audio interrupt has to put back what it interrupted (§bankBytes).
+  bankBytes: true,
 };
 
 /** The same, for a Game Boy Color: an attribute byte per queued cell. */
@@ -1097,6 +1110,15 @@ export interface Layout {
    */
   interrupt: number | null;
   /**
+   * Where the running ROM bank is shadowed, or `null` on a build that never
+   * pages.
+   *
+   * See {@link MemoryPlan.bankBytes}: MBC5's register is write-only, so an
+   * interrupt handler that pages its own data in can only put back what it found
+   * if the code that set it wrote it down.
+   */
+  bank: number | null;
+  /**
    * The entity-list cursor: a two-byte record pointer, then a one-byte index.
    *
    * `null` where the backend has somewhere cheaper; see
@@ -1491,6 +1513,9 @@ export function planLayout(program: Program, analysis: Analysis, memory: MemoryP
   // After the interrupt bytes, for the same reason they come after the driver's:
   // a console that needs none has exactly the map it had before this existed.
   const loop = memory.loopBytes > 0 ? fast(memory.loopBytes) : null;
+  // Last of all, so a console that never pages — which today is every one but
+  // the Game Boy's banked builds — keeps the map it had byte for byte.
+  const bank = memory.bankBytes === true ? heap.take(1) : null;
 
   return {
     memory,
@@ -1500,6 +1525,7 @@ export function planLayout(program: Program, analysis: Analysis, memory: MemoryP
     fastUsed: quick?.used ?? 0,
     interrupt,
     loop,
+    bank,
     tick,
     scene,
     pending,
