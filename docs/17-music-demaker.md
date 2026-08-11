@@ -448,9 +448,20 @@ of the same track dry — 80 writes against 452 on a Game Boy for the pathologic
 case. That is the shape doc 13 predicted for a console that has to *write* the
 modulation rather than switch an LFO on. Two things keep it safe rather than
 merely measured: a source that does not touch the wheel produces byte-for-byte
-the schedule it always did, which is every MIDI in the example library; and a
-game whose cartridge will not hold the result already loses its music with a
-warning rather than failing to build (AGENTS.md §Iron rules).
+the schedule it always did, which is nine of the eleven MIDIs in the example
+library; and a game whose cartridge will not hold the result already loses its
+music with a warning rather than failing to build (AGENTS.md §Iron rules).
+
+**The other two are what the library proves it with.** `pong/rally.mid` and
+`platformer/meadow.mid` put the wheel on their synth lead, at depth 64 of 127 —
+`pong` because it is the project the game-audio battery builds on every console
+with a driver, so a vibrato's writes are diffed against the schedule tick for
+tick on eleven machines and on both routes to a chip, and the platformer because
+its NES build is the one small-board cartridge in the size sweep. On `rally.mid`
+that is 5.2% more writes on a Mega Drive against 42% on a Master System, which
+is the difference between the two routes stated on one tune. The rest of the
+library stays dry, because not every tune is played with vibrato and this is not
+free.
 
 **One console does not pay it, because its chip bends its own notes.** A
 YM2612's LFO setting 1 is 5.56 Hz, within a tenth of a hertz of the rate stated

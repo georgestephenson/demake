@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import { arrangeScore, countWrites, parseMidi } from "@demake/audio";
+
 import { check } from "../src/compile.js";
 import { profiles } from "../src/profiles.js";
 import { parseTests } from "../src/testing/parse.js";
 import { runTests } from "../src/testing/run.js";
-import { EXAMPLES, exampleProject, gameTests, projectFiles } from "./_projects.js";
+import { EXAMPLES, exampleProject, gameTests, projectBytes, projectFiles } from "./_projects.js";
 
 /**
  * The example library, checked on every console.
@@ -112,5 +114,31 @@ describe("example games", () => {
       expect(named.length, name).toBeGreaterThan(0);
       for (const path of named) expect(path.includes(".."), `${name} → ${path}`).toBe(false);
     }
+  });
+
+  /**
+   * The library still moves the modulation wheel (AGENTS.md §Writing music).
+   *
+   * `pong` is the project `_audio-battery.ts` builds for its register battery on
+   * every console with a driver, so the wheel on `rally.mid`'s lead is what puts
+   * a vibrato's writes under a tick-for-tick diff on eleven machines. That
+   * coverage is a property of a *fixture*, so nothing in the suite would notice
+   * it going away: a track regenerated without the controller produces a
+   * perfectly good schedule with no vibrato in it, and every audio assertion
+   * there is still passes. This is the assertion that would not.
+   *
+   * It checks the arrangement rather than the file, because a wheel on a part
+   * the arranger drops buys nothing.
+   */
+  it("still plays a melody with vibrato, on a channel", () => {
+    const bytes = projectBytes("pong", "music/rally.mid");
+    const arranged = arrangeScore(parseMidi(bytes), { console: "gb" });
+    const modulated = arranged.plan.assignments.filter((seat) =>
+      seat.parts.some((part) => part.notes.some((note) => note.vibrato !== undefined)),
+    );
+    expect(modulated).toHaveLength(1);
+    // And the schedule has to carry it: on a console with no LFO that is a
+    // pitch write per tick, so a dry arrangement of the same notes is smaller.
+    expect(countWrites(arranged.script)).toBeGreaterThan(1500);
   });
 });
