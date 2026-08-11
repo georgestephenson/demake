@@ -4696,7 +4696,7 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   `import()` like every other core, and they were charged to _every_ visitor for
   as long as the two lists disagreed. A budget that overstates itself fails the
   next honest change, which is what it did. Current figures:
-  390 KB for a visitor against a 400 KB budget, 665 KB for the whole site — and
+  391 KB for a visitor against a 400 KB budget, 668 KB for the whole site — and
   a new example game costs about fourteen of those kilobytes, because the page
   bundles every fixture SVG twice (raw text for the ROM build, a URL for the
   preview). The worst family is the Game Boy at 86 KB on top of the 304 every
