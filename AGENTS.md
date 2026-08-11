@@ -4680,10 +4680,13 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   `import()` like every other core, and they were charged to _every_ visitor for
   as long as the two lists disagreed. A budget that overstates itself fails the
   next honest change, which is what it did. Current figures:
-  388 KB for a visitor against a 400 KB budget, 657 KB for the whole site — and
+  390 KB for a visitor against a 400 KB budget, 665 KB for the whole site — and
   a new example game costs about fourteen of those kilobytes, because the page
   bundles every fixture SVG twice (raw text for the ROM build, a URL for the
-  preview). Measure with a **clean** `dist`: the checker reads every `.js` it
+  preview). The worst family is the Game Boy at 86 KB on top of the 304 every
+  visitor fetches, which is where paging landed: a banked backend is three
+  assembly passes and a bank planner, and it is charged to the console that has
+  one rather than to everybody. Measure with a **clean** `dist`: the checker reads every `.js` it
   finds, so comparing two runs without deleting it in between compares two
   builds' chunks added together, which is how a passing gate can look like a
   failing one.
