@@ -925,12 +925,13 @@ art-free build in `packages/audio/test/neogeo-driver.test.ts`.
 **And a game bigger than one cartridge takes a bigger one, on every family that
 had a bigger one to take** (doc 13 §Banked cartridges). `quest` — three levels, a
 boss, a secret room, four tracks and eight effects — is the example that needed
-it, and it now builds and plays on **fourteen of the sixteen consoles that build
+it, and it now builds and plays on **fifteen of the sixteen consoles that build
 games**: a Mega Drive at 140 KiB, a Super Nintendo at 128 with a bank per scene,
 both Sega 8-bits and all three Game Boys at 128 with a tick's individual _steps_
-paged, an NES at 256 KiB on an MMC1, a PC Engine at 256 on a HuCard, and the
-Neo Geo, the Neo Geo Pocket Color, the Virtual Boy and both ARM handhelds on
-boards big enough to need no paging at all. The Super Nintendo is the only paging
+paged, an NES at 256 KiB on an MMC1, a PC Engine at 256 on a HuCard, a
+WonderSwan Color spread over three of its 64 KiB segments, and the Neo Geo, the
+Neo Geo Pocket Color, the Virtual Boy and both ARM handhelds on boards big
+enough to need no paging at all. The Super Nintendo is the only paging
 console where a scene fits a bank; everywhere else the window is sixteen kilobytes
 and the largest scene is twenty-seven, so the unit is one step of one tick — which
 is why `TickSteps.boundary` exists and why the seam is _there_ rather than
@@ -938,13 +939,14 @@ somewhere convenient: a step boundary is the only point inside a tick at which
 nothing is live, because the steps hand work to each other through the entity
 records and the contact bitfield and never through a register.
 
-**Two consoles are left and they are one family**, the WonderSwans, and what
-stops them is neither a mapper nor a board: segments `$8`–`$F` are all cartridge
-and all mapped from reset, so a 512 KiB image is entirely addressable — what a
-game outgrows is a **segment**, and this backend reads a cartridge table with a
-`cs:` override. Doc 13 §Banked cartridges has the measurements and the shape of
-the answer, which is the Super Nintendo's far calls plus the NES's per-segment
-duplication.
+**One console is left and it is out of RAM rather than out of cartridge**: the
+mono WonderSwan wants 3957 bytes of heap and has 2048, on a machine with sixteen
+kilobytes of which the tile bank is the top half. No cartridge size fixes that,
+and both cheaper answers were measured rather than assumed — running the heap to
+the object shadow buys 192 bytes of the 1717 needed, and taking the unused tail
+of the tile bank buys 128, because `quest` uses 504 of that machine's 512 tiles.
+The hardware's own answer is cartridge SRAM at segment `$1`, which is a memory
+_model_ change rather than a memory plan (doc 13 §Banked cartridges).
 
 What each console then paid is its own, and the three 16 KiB-window machines
 differ most. A Sega 8-bit pays nothing: slots 0 and 1 are 32 KiB of fixed space and

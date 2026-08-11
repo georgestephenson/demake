@@ -1724,8 +1724,8 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   set. Every one is traced tick for tick against the interpreter by
   `rom.test.ts`.
 
-  **Fourteen of the sixteen consoles that build games now build this one**, and
-  the two that do not are one family:
+  **Fifteen of the sixteen consoles that build games now build this one**, and
+  the one that does not is out of *RAM* rather than out of cartridge:
 
   | Console | Walls it hit | Result |
   | --- | --- | --- |
@@ -1735,8 +1735,8 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   | ~~Super Nintendo~~ | ~~direct page, then cartridge~~ | 128 KiB, of 4 MiB |
   | ~~PC Engine~~ | ~~the 48 KiB window~~ | 256 KiB, of 1 MiB |
   | ~~Game Boy Advance / Nintendo DS~~ | ~~the literal pool~~ | 224 / 256 KiB |
-  | WonderSwan Color | the 64 KiB segment | 97 KiB of code and data |
-  | WonderSwan | work RAM, then the same | 3957 B of heap, 2048 B |
+  | ~~WonderSwan Color~~ | ~~the 64 KiB segment~~ | 512 KiB, spread over three |
+  | WonderSwan | **work RAM**, and no cartridge can fix it | 3957 B of heap, 2048 B |
 
   The ARM handhelds are in that list and were never a *cartridge* problem: a Game
   Boy Advance has thirty-two megabytes and a Nintendo DS four, so neither pages
@@ -2150,39 +2150,66 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     ticks in the **main loop** rather than in the interrupt that counts them, so
     unlike a Game Boy's there is no bank to save and put back. quest ships on a
     256 KiB HuCard with 26 KiB of fixed half used.
-  - **WonderSwan / Color** — **the one family left, and it is not a mapper
-    problem.** Segments `$8`–`$F` are all cartridge and all mapped at once —
-    `BANK_LINEAR` comes up all-ones, so a 512 KiB image is *entirely* addressable
-    from reset with no banking register ever written (`@demake/wsc`
-    §romAddress). What a game outgrows is a **segment**: 64 KiB, and quest's code
-    alone is 77 of them before its art. So this console wants the Super Nintendo's
-    answer — far calls across segments — rather than the Sega's.
+  - **WonderSwan Color** — **done, and it was never a mapper problem.** Segments
+    `$8`–`$F` are all cartridge and all mapped at once: `BANK_LINEAR` comes up
+    all-ones, so a 512 KiB image is entirely addressable from reset and a demade
+    cartridge never writes a banking register (`@demake/wsc` §romAddress). What a
+    game outgrows is a **segment** — 64 KiB, against quest's 77 of code alone — so
+    this console takes the Super Nintendo's answer rather than the Sega's: a
+    **scene per segment**, reached by `call far` and returned from by `retf`,
+    all-or-nothing because the two pairs push different amounts of stack.
 
-    What makes it more than the Super Nintendo's is the **`cs:` override**. This
-    backend reads a table in the cartridge with a one-byte code-segment prefix and
-    a variable in RAM with none (`codegen/wsc/val.ts` §source/dest), so a routine
-    running in segment `$E` reads its constant pool, its level grid and its
-    instance defaults out of segment `$E` — which is where they are not. There is
-    no spare segment register to point at the data instead: this CPU has four, and
-    a demade cartridge already spends `DS`, `ES` and `SS` on RAM. `ES` looks free
-    because it only has to be zero for a block copy, and it is not: the collision
-    box is staged with `rep movsw`, which is the hottest routine in the tick.
+    What is this console's rather than the Super Nintendo's is the **`cs:`
+    override**. A cartridge table is read through the code segment and a block
+    copy takes `DS` from `CS`, so a routine in segment `$E` reads segment `$E`'s
+    tables or nothing. There is no spare segment register to point at the data
+    instead: this CPU has four and a demade cartridge already spends `DS`, `ES`
+    and `SS` on RAM — `ES` looks free and is not, because it is the destination of
+    the `rep movsw` that stages every collision box, which is the hottest routine
+    in the tick. So **each segment carries the tables its own code reads**: the
+    level grids, the instance defaults, the backdrops and the constant pool. That
+    is the NES's duplication reached by completely different hardware, and it is
+    why `CtxBase.emitConstants` exists.
 
-    So the answer is the NES's, one machine along: **each code segment carries the
-    tables its own code reads.** `levelCopy` is already generic (`shape.ts`
-    §LevelData.suffix) and per-scene defaults already exist; what is new is the
-    **constant pool**, which is `CtxBase`'s and emitted once. A per-segment pool
-    wants a hook there rather than a redesign — the map is already keyed by value,
-    so emitting it again under a suffix is the same shape `levelCopy` has.
+    Three things went wrong building it and each is worth knowing, because each
+    produced a cartridge that boots. A **segment register counts paragraphs**, so
+    the bank below `$E000` is `$D000` and not `$DFFF` — off by that and a dispatch
+    lands sixteen bytes into the right bank. The **groups go into the image back
+    to front**, because the emitter walks segments downwards and a file is
+    addressed upwards. And a scene handed the **shared** level tables reads them
+    out of its own segment, which is not a crash but a tile walk that never
+    terminates.
 
-    Two other things are wanted before it will build, and neither is the backend's:
-    `Asm/V30MZ` has `jmpFar` and needs **`callFar` and `retf`** (with entries in
-    both of that encoder's oracles — the hand-read battery and the NASM
-    differential one), and the **mono machine hits a RAM wall first**: 3957 bytes
-    of heap against 2048, because that console has sixteen kilobytes with its tile
-    bank in the top half. Its cartridges can carry SRAM at segment `$1`, which is
-    the NES's `$6000` story with a different port — and it is the same shape
-    `MemoryPlan.heapSpill` already describes.
+    `wsc-rom.test.ts` follows every far jump in the finished cartridge, and that
+    is not belt and braces: the example tape enters one level, a level's routines
+    are all in the first paged segment, and a scene in the second is compiled,
+    placed and never executed by any test that plays the game. The mutation that
+    put a dispatch in the wrong segment passed the trace and failed that.
+  - **WonderSwan (mono)** — **the one console `quest` does not build on, and the
+    wall is work RAM.** 3957 bytes of heap against 2048, on a machine with sixteen
+    kilobytes of which the tile bank is the top half:
+
+    | region | bytes | |
+    | --- | --- | --- |
+    | system + heap | 832 + 2048 | `$0000`–`$0B40` |
+    | shadow, object table | 512 + 512 | `$0C00`–`$1000` |
+    | two screen maps | 2048 + 2048 | `$1000`–`$2000` |
+    | tile bank | 8192 | `$2000`–`$3FFF` |
+
+    No cartridge size fixes that, and the two things that might were measured
+    rather than assumed. Letting the heap run to the object shadow buys 192 bytes
+    of the 1717 needed. Letting it take the **unused tail of the tile bank** buys
+    128, because quest uses 504 of this machine's 512 tiles — and it would also
+    need the art bound before the layout is planned, which is `backend.ts`'s
+    shared order.
+
+    So the hardware's own answer is the only one: **cartridge SRAM at segment
+    `$1`**, which is the NES's `$6000` story with a different port. What makes it
+    a bigger change here than there is that a 6502 reaches SRAM with the same
+    instruction it reaches anything, and a V30MZ reaches it through a segment
+    register — so it means `DS` on the game's state and an `es:` override on
+    everything the display reads, which is a memory model rather than a memory
+    plan. It is the last thing on this list and it is a maintainer's call.
 
   **The sizing half of that mechanism is built** (doc 14 §Elastic cartridges).
   Every console's cartridge wrapper declares the boards it came on and every
