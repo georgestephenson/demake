@@ -360,10 +360,12 @@ const BUILD_FLAGS: readonly FlagSpec[] = [
 /**
  * Flags the audio demakers share (docs 16, 17, 18).
  *
- * `--preview-format` is the one worth reading twice: `wav` is sample-exact and
- * carries the doc-16 guarantee that the file sounds like the cartridge, and the
- * lossy formats cannot, so they say so in `--json` rather than being quietly
- * treated as equivalent.
+ * `--preview-format` is the one worth reading twice: `wav` and `flac` are
+ * sample-exact and carry the doc-16 guarantee that the file sounds like the
+ * cartridge, and the lossy formats cannot, so they say so in `--json` rather
+ * than being quietly treated as equivalent. The two lossless ones are the *same
+ * samples* — one quantizer, `encode/pcm.ts` — so which to ask for is a question
+ * about size and about what will open it, never about fidelity.
  */
 const AUDIO_COMMON_FLAGS: readonly FlagSpec[] = [
   {
@@ -383,9 +385,9 @@ const AUDIO_COMMON_FLAGS: readonly FlagSpec[] = [
   {
     name: "preview-format",
     type: "enum",
-    values: ["wav"],
+    values: ["wav", "flac"],
     default: "wav",
-    help: "Preview encoding. WAV is sample-exact; lossy formats land with their encoders.",
+    help: "Preview encoding. WAV and FLAC are sample-exact; lossy formats land with their encoders.",
   },
   {
     name: "output-stage",

@@ -14,6 +14,7 @@ import {
   candidates,
   demakeSfx,
   encodeAudioManifest,
+  encodeFlac,
   encodeWav,
   parseMidi,
   render,
@@ -122,19 +123,22 @@ function writePreview(
   const path = str(values, "preview");
   if (!path) return null;
   const format = str(values, "preview-format") ?? "wav";
-  if (format !== "wav") {
+  if (format !== "wav" && format !== "flac") {
     throw new CliError(
       EXIT.UNAVAILABLE,
       "E_PREVIEW_FORMAT",
       `--preview-format ${format} is not available yet`,
-      "WAV is sample-exact and carries the guarantee; the other encoders land with their WASM builds.",
+      "WAV and FLAC are sample-exact and carry the guarantee; the lossy encoders land with their WASM builds.",
     );
   }
   const stage = str(values, "output-stage");
   const pcm = render(script, {
     ...(stage === "board" ? { outputStage: "board" as const } : {}),
   });
-  env.writeFileAtomic(path, encodeWav(pcm), values.force === true);
+  // Both are lossless and both go through one quantizer, so this chooses a
+  // container rather than a fidelity (doc 16 §Artifacts).
+  const bytes = format === "flac" ? encodeFlac(pcm) : encodeWav(pcm);
+  env.writeFileAtomic(path, bytes, values.force === true);
   return path;
 }
 

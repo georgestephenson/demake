@@ -161,14 +161,15 @@ export function sfxCommand(ui: SfxOptionsUi, sourceName: string): string {
 export function wavCommand(
   ui: { outputStage: string; sampleRate: string; loops: string },
   sourceName: string,
+  extension: "wav" | "flac" = "wav",
 ): string {
   const stem = stemOf(sourceName);
   const rate = ui.sampleRate.trim();
   const loops = Number(ui.loops.trim()) || 0;
   if (rate === String(DEFAULT_SAMPLE_RATE) && loops === 0) {
-    return `(written by --preview ${stem}.wav above)`;
+    return `(written by --preview ${stem}.${extension} above)`;
   }
-  const parts = ["demake render", `${stem}.json`, "-o", `${stem}.wav`];
+  const parts = ["demake render", `${stem}.json`, "-o", `${stem}.${extension}`];
   if (rate !== String(DEFAULT_SAMPLE_RATE)) parts.push("--sample-rate", rate);
   if (loops > 0) parts.push("--loops", String(loops));
   if (ui.outputStage === "board") parts.push("--output-stage", "board");

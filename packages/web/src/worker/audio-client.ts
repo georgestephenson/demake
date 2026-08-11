@@ -92,7 +92,7 @@ export class AudioEngineClient {
 
   async artifact(
     token: number,
-    what: "wav" | "manifest" | "rom",
+    what: "wav" | "flac" | "manifest" | "rom",
     stem: string,
     title: string,
     render: { sampleRate?: number; outputStage?: "board"; loops?: number } = {},

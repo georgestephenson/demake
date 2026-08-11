@@ -559,6 +559,7 @@ export function MusicDemaker({ project, path }: EditorProps) {
           render={toRenderOptions(options)}
           commands={{
             wav: wavCommand(options, source?.name ?? "track.mid"),
+            flac: wavCommand(options, source?.name ?? "track.mid", "flac"),
             rom: romCommand(options.console, source?.name ?? "track.mid", ".gb"),
           }}
           onDeviceRate={(rate) => {

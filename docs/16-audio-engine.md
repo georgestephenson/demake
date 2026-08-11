@@ -449,6 +449,32 @@ The guarantee is a property of *lossless* audio. Stating it precisely:
 | **M4A / AAC**, **Opus**, **MP3** | `--preview-format m4a\|opus\|mp3` | **no** — lossy by construction | convenience for sharing and for size; encoder pinned so the *bytes* stay deterministic, but the *audio* is an approximation of the exact render |
 | `.vgm` / `.spc` | the primary artifact | exact (it *is* the schedule) | plays in chip-music players; feeds `gen` |
 
+**FLAC is built, and it is ours** (`encode/flac.ts`), for the reason every other
+codec in this project is: a byte-identical artifact across the CLI, the browser
+and the desktop cannot depend on a library that ships a different version in
+each. Every arithmetic operation in it is integer, so the file is the same file
+on every engine.
+
+"Sample-identical to the WAV" is true *by construction* rather than by two
+encoders agreeing: both go through one quantizer in `encode/pcm.ts`. What the
+stream then carries is an **MD5 of the unencoded audio**, which the format makes
+optional and this encoder writes anyway — because it turns the reference decoder
+into an end-to-end oracle rather than merely a parser. `flac -t` decodes the
+whole stream and checks its own digest against that one, so it can pass only if
+what came out is bit-for-bit what went in.
+
+Subframes are constant, fixed (orders 0–4) and verbatim, with Rice-coded
+residuals over a searched partition order, and every choice is made by
+**measuring the encoded size** rather than estimating it. What is absent is the
+**LPC** subframe, and its absence is a decision: LPC coefficients come from
+autocorrelation and Levinson-Durbin in floating point, and a predictor derived
+from `Math` would be a different file on a different engine — which is the
+property this format is here to provide. It costs less than it sounds, because
+fixed predictors suit chip audio: a square wave is piecewise constant, so its
+first difference is zero almost everywhere. Measured on a demade Game Boy track,
+this encoder lands at **61.7%** of the WAV against the reference encoder's
+**59.8%** at `-8`.
+
 So the answer to "give me a standard file I can play in a browser or on my
 desktop that is guaranteed to sound like the ROM" is **FLAC** — and this is worth
 saying loudly in the README, because the instinct is to reach for M4A and M4A

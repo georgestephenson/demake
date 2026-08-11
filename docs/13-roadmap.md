@@ -1612,8 +1612,19 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     are done, and `render` is the single path every surface makes sound through.
     Eighteen analytic vectors pass, and `@demake/dmg` now *is* a consumer: its
     APU is `@demake/chip`'s `GbApu`, so the emulator and the preview cannot
-    disagree about a chip they share. Outstanding: the hardware test ROMs and
-    their provisioner, and FLAC.
+    disagree about a chip they share. **FLAC is built and it is ours**
+    (`encode/flac.ts`): constant, fixed and verbatim subframes with Rice-coded
+    residuals over a searched partition order, stereo decorrelation, and every
+    choice made by measuring the encoded size rather than estimating it. LPC is
+    deliberately absent — its coefficients come from floating-point
+    autocorrelation, and a predictor derived from `Math` would be a different
+    file on a different engine, which is the property the format is here to
+    provide. It costs little on this material: 61.7% of the WAV against the
+    reference encoder's 59.8% at `-8`. The stream carries an MD5 of its own
+    audio, which the format leaves optional, precisely so `flac -t` verifies the
+    decode end to end rather than merely parsing — and a self-skipping suite
+    beside the encoder holds it to libFLAC, on `arm-gnu.test.ts`'s terms.
+    Outstanding: the hardware test ROMs and their provisioner.
   - **A2 — `arrange`** *(built for MIDI; the Game Boy boots)*: ingest, analysis,
     the arrangement tournament, absolute-placement timing, the judge and the
     `.vgm` artifact run on all eight consoles with a chip model — and on the one

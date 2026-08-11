@@ -215,7 +215,7 @@ export type AudioWorkerRequest =
       id: number;
       kind: "artifact";
       token: number;
-      what: "wav" | "manifest" | "rom";
+      what: "wav" | "flac" | "manifest" | "rom";
       stem: string;
       /** Cartridge title, for `rom`. */
       title: string;

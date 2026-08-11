@@ -1752,6 +1752,16 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
   src/dsp.ts         deterministic FFT/resampler/pitch, all on core's kernels
   src/manifest.ts    the --emit-manifest sidecar: one shape, two callers (CLI, web)
   src/render.ts      ChipScript → PCM; the only way anything makes sound
+  src/encode/        the artifacts. flac.ts is ours for the reason every codec
+                     here is — a byte-identical file across three surfaces
+                     cannot depend on a library that ships three versions — and
+                     is integer throughout. It writes the stream's own MD5,
+                     which the format leaves optional, so `flac -t` verifies a
+                     decode end to end rather than parsing; LPC is absent
+                     because its coefficients are floating-point and this
+                     package is under the determinism rule. pcm.ts is the one
+                     quantizer, which is what makes "a FLAC and a WAV of one
+                     render are sample-identical" true by construction
 packages/web/        the site (doc 07): a window — title bar, menus, explorer,
                      one editor, status bar — over seven editors, all but the art
                      demaker code-split (docs 07 §The workbench, 19)
@@ -3599,6 +3609,15 @@ that keep them from being undone. All of them come from doc 16.
   sample-exact and byte-golden. M4A/Opus/MP3 are convenience exports and must be
   labelled as approximations everywhere they appear — the project does not make
   "transparent to most listeners" claims anywhere else.
+- **The two lossless encoders share one quantizer** (`encode/pcm.ts`), so
+  "sample-identical" is true by construction rather than by two rounding rules
+  agreeing — which they do right up until somebody fixes one of them. And the
+  FLAC stream carries an **MD5 of its own audio** even though the format lets it
+  be zero: that is what makes `flac -t` an end-to-end oracle for our encoder
+  instead of a parser of it, and it is why `flac-reference.test.ts` can hold a
+  codec we wrote to somebody else's decoder. Do not add an LPC subframe without
+  reading doc 16 first — its coefficients are floating-point, and this package
+  is under the determinism rule.
 - **A box narrower than a clock is still a box.** `renderSchedule` integrates a
   chip's output between boundaries at `floor(i × clockHz / sampleRate)`, and
   every model but one clocks in megahertz — so a box is thousands of clocks wide

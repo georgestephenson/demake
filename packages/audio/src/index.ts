@@ -269,6 +269,7 @@ export { mdChannelTag, mdPort, MD_FM_CHANNELS, MD_PSG_PORT } from "./rom/md-chip
 // --- hearing it --------------------------------------------------------------
 export { render, type RenderAudioOptions } from "./render.js";
 export { encodeWav, type WavOptions } from "./encode/wav.js";
+export { encodeFlac, type FlacOptions } from "./encode/flac.js";
 export { encodeVgm, type VgmOptions } from "./encode/vgm.js";
 export { encodeSpc, artifactFormat, type SpcOptions } from "./encode/spc.js";
 
