@@ -68,6 +68,16 @@ export interface WsCartOptions {
   cartridgeId?: number;
   /** `0x04` portrait, `0x05` landscape — the orientation the game is played in. */
   orientation?: number;
+  /**
+   * How many 64 KiB banks `code` is, for a program bigger than one segment.
+   *
+   * One is the whole of it for a game that fits, and then this changes nothing.
+   * A larger program is laid out *backwards from the end* of the cartridge —
+   * segment `$F` is the last bank, `$E` the one below it — because those are the
+   * segments the processor answers with no banking register ever written, so the
+   * image has to end where the address space does (doc 13 §Banked cartridges).
+   */
+  segments?: number;
 }
 
 /**
@@ -79,12 +89,21 @@ export interface WsCartOptions {
  * the checksum over the finished image.
  */
 export function packWsRom(code: Uint8Array, options: WsCartOptions = {}): Uint8Array {
-  if (code.length > WS_CODE_SIZE) {
-    throw new Error(`WonderSwan program is ${code.length} bytes; the bank holds ${WS_CODE_SIZE}`);
+  const segments = options.segments ?? 1;
+  const image = segments * WS_BANK_SIZE;
+  // The last bank's own budget, whatever the program's total: the entry jump and
+  // the footer are at the top of it and a program may not reach them.
+  const last = segments === 1 ? code.length : code.length - image + WS_BANK_SIZE;
+  if (last > WS_CODE_SIZE) {
+    throw new Error(`WonderSwan program is ${last} bytes; the bank holds ${WS_CODE_SIZE}`);
+  }
+  if (code.length > WS_ROM_SIZE) {
+    throw new Error(`WonderSwan cartridge is ${WS_ROM_SIZE} bytes; this image is ${code.length}`);
   }
   const rom = new Uint8Array(WS_ROM_SIZE).fill(0xff);
   const bank = WS_ROM_SIZE - WS_BANK_SIZE;
-  rom.set(code, bank);
+  rom.set(code, WS_ROM_SIZE - image);
+  void bank;
 
   // `jmp $F000:$0000` — five bytes, at the address the processor fetches from.
   const entry = bank + WS_ENTRY_OFFSET;

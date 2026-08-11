@@ -28,7 +28,14 @@
  */
 
 import { buildWscGameAudio } from "@demake/audio";
-import { AsmError, packWsRom, WS_CODE_SIZE, type Executor } from "@demake/core";
+import {
+  AsmError,
+  packWsRom,
+  WS_CODE_SEGMENT,
+  WS_CODE_SIZE,
+  WS_ROM_SIZE,
+  type Executor,
+} from "@demake/core";
 
 import { getProfile } from "../profiles.js";
 import type { Program } from "../program.js";
@@ -52,7 +59,14 @@ import type { ArtSettings } from "./settings.js";
 import { ART_TILES, bindWscArt } from "./wsc-art.js";
 import { WscCtx } from "./wsc/ctx.js";
 import { machineFor, WSC_MACHINE } from "./wsc/machine.js";
-import { BANK_TILES, emitProgram, type WscEmitOptions } from "./wsc/emit.js";
+import {
+  BANK_TILES,
+  emitProgram,
+  WS_SEGMENT_SIZE,
+  type EmittedWsProgram,
+  type WsSegmentPlan,
+  type WscEmitOptions,
+} from "./wsc/emit.js";
 
 /** Bytes a program may occupy: the bank, up to the reset jump. */
 export const CODE_SIZE = WS_CODE_SIZE;
@@ -185,46 +199,160 @@ export const wscBackend: Backend<WscEmitOptions, WscAudio> = {
     if (machine === undefined) {
       throw new BuildError("E_INTERNAL", `no WonderSwan machine for ${program.profile.id}`);
     }
-    const ctx = new WscCtx(program, analysis, layout, getProfile(program.profile.id), machine);
-    if (audio.hooks) {
-      ctx.audio = {
-        driver: audio.hooks.driver,
-        music: audio.hooks.music,
-        request: audio.hooks.request,
-        trace: layout.sound,
-        effects: audio.hooks.effects,
-      };
-    }
-    try {
-      emitProgram(ctx, { ...art, ...audio.options });
-    } catch (error) {
-      if (error instanceof AsmError) {
+    /** A fresh context, because emitting is what *pulls* a helper into the output. */
+    const fresh = (): WscCtx => {
+      const made = new WscCtx(program, analysis, layout, getProfile(program.profile.id), machine);
+      made.homeSegment = WS_CODE_SEGMENT;
+      if (audio.hooks) {
+        made.audio = {
+          driver: audio.hooks.driver,
+          music: audio.hooks.music,
+          request: audio.hooks.request,
+          trace: layout.sound,
+          effects: audio.hooks.effects,
+        };
+      }
+      return made;
+    };
+
+    /** Assemble once, flat or split, with or without a segment plan. */
+    const assembleWith = (plan?: WsSegmentPlan, split?: boolean) => {
+      const inner = fresh();
+      inner.banked = split === true || plan !== undefined;
+      try {
+        const emitted = emitProgram(inner, {
+          ...art,
+          ...audio.options,
+          ...(plan ? { segments: plan } : {}),
+          ...(split ? { split: true } : {}),
+        });
+        return { inner, ...emitted, code: inner.asm.assemble() };
+      } catch (error) {
+        if (error instanceof AsmError) {
+          throw new BuildError(
+            "E_INTERNAL",
+            `the code generator produced invalid code: ${error.message}`,
+          );
+        }
+        throw error;
+      }
+    };
+
+    // The flat cartridge first, and its bytes are exactly what they always were:
+    // one segment, near calls, no copies. Only a game that does not fit pays for
+    // the passes below.
+    let built = assembleWith();
+    let plan: WsSegmentPlan | undefined;
+    if (built.code.length > CODE_SIZE) {
+      // The scenes are measured on a pass shaped exactly like the segmented one —
+      // same routines, same far calls, laid end to end — because a plan built
+      // from the flat build's scenes would be built from instructions that no
+      // longer exist.
+      const probe = assembleWith(undefined, true);
+      plan = planSegments(probe);
+      built = assembleWith(plan);
+      if (built.fixed !== probe.fixed) {
         throw new BuildError(
           "E_INTERNAL",
-          `the code generator produced invalid code: ${error.message}`,
+          "the program changed size between the measuring pass and the segmented one",
         );
       }
-      throw error;
     }
-    const code = ctx.asm.assemble();
-    if (code.length > CODE_SIZE) {
+    const { inner: ctx, code } = built;
+    const paged = (plan?.segments.length ?? 0) * WS_SEGMENT_SIZE;
+    if (code.length - paged > CODE_SIZE) {
       // Refused here rather than in `packWsRom`, so the message names the game's
       // budget rather than the wrapper's precondition.
       throw new BuildError(
         "E_GAME_TOO_LARGE",
-        `this game compiles to ${code.length} bytes and ${wscBackend.cartridge} holds ${CODE_SIZE}`,
-        "fewer objects in one rule, or a smaller level; the cartridge's other banks want paging.",
+        `this game's fixed segment is ${code.length - paged} bytes and it holds ${CODE_SIZE}`,
+        "fewer objects in one rule, or a smaller level; spreading a game across " +
+          "segments moves its scenes, and the boot, the helpers, the audio driver " +
+          "and the tile bank have to stay where the cartridge resets to.",
       );
+    }
+    if (paged > 0) {
+      // Segment $F is the cartridge's last 64 KiB and each paged segment is the
+      // one *below* it, so the groups go into the image back to front: the
+      // emitter walks them from $E downwards and the file is addressed upwards.
+      // Handed over unpadded, because the last bank's own budget stops at the
+      // entry jump and the wrapper is what checks that.
+      const banks = plan?.segments.length ?? 0;
+      const image = new Uint8Array(code.length).fill(0xff);
+      for (let at = 0; at < banks; at += 1) {
+        const from = at * WS_SEGMENT_SIZE;
+        image.set(code.subarray(from, from + WS_SEGMENT_SIZE), (banks - 1 - at) * WS_SEGMENT_SIZE);
+      }
+      image.set(code.subarray(paged), paged);
+      return {
+        bytes: packWsRom(image, {
+          minimumSystem: machine.minimumSystem,
+          orientation: 0x05,
+          segments: plan ? plan.segments.length + 1 : 1,
+        }),
+        code: code.length,
+        capacity: CARTRIDGE_SIZE,
+        symbols: ctx.asm.symbols(),
+        helpers: ctx.helperNames(),
+      };
     }
     return {
       bytes: packWsRom(code, { minimumSystem: machine.minimumSystem, orientation: 0x05 }),
       code: code.length,
-      capacity: CODE_SIZE,
+      capacity: CARTRIDGE_SIZE,
       symbols: ctx.asm.symbols(),
       helpers: ctx.helperNames(),
     };
   },
 };
+
+/**
+ * Bytes of cartridge a game may use, which is not the same as a segment's.
+ *
+ * Measured against the **whole cartridge** rather than the 64 KiB the processor
+ * resets into, which is `backend.ts` §Elastic cartridges' rule and used not to
+ * bite here: a game bigger than one segment now spreads across the ones below it
+ * rather than being refused (doc 13 §Banked cartridges). The last sixteen bytes
+ * are the entry jump and the footer, which is what makes a cartridge bootable.
+ * What refuses a game now is the *fixed* segment, and it says so separately.
+ */
+export const CARTRIDGE_SIZE = WS_ROM_SIZE - 16;
+
+/**
+ * Give every scene a segment, first fit, in the order the emitter walks them.
+ *
+ * The Super Nintendo's shape: a segment here is sixty-four kilobytes and the
+ * library's largest scene is twenty-two, so a scene never has to be cut and the
+ * tick-step seam three other consoles need is absent. What each segment pays is
+ * a copy of the tables its own code reads (`wsc/emit.ts` §emitSegmentData), so
+ * that is charged before a scene is placed rather than after.
+ */
+function planSegments(measured: EmittedWsProgram): WsSegmentPlan {
+  const segments: number[][] = [];
+  const room: number[] = [];
+  const segmentOf = new Map<number, number>();
+  for (const [index, bytes] of measured.scenes.entries()) {
+    if (bytes + measured.data > WS_SEGMENT_SIZE) {
+      throw new BuildError(
+        "E_GAME_TOO_LARGE",
+        `scene ${index} compiles to ${bytes} bytes and a segment holds ${WS_SEGMENT_SIZE}`,
+        "fewer rules or fewer objects in that scene; a segment is the unit this " +
+          "console spreads a program over, and it shares one with a copy of the " +
+          "tables its code reads.",
+      );
+    }
+    let slot = room.findIndex((left) => left >= bytes);
+    if (slot < 0) {
+      // A new segment starts by paying for its own copy of the shared tables.
+      slot = room.push(WS_SEGMENT_SIZE - measured.data) - 1;
+      segments.push([]);
+    }
+    room[slot] = (room[slot] as number) - bytes;
+    (segments[slot] as number[]).push(index);
+    segmentOf.set(index, slot);
+  }
+  return { segments, segmentOf };
+}
 
 /** What to stamp in the cartridge, and what source bytes to demake. */
 export type WscRomOptions = BuildOptions;

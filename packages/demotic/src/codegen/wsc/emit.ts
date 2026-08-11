@@ -42,7 +42,7 @@
  */
 
 import { AUDIO_STOP, type WscGameAudio } from "@demake/audio";
-import { label, type Ref } from "@demake/core";
+import { AsmError, label, type Ref } from "@demake/core";
 
 import type { InstanceDef, Program, RuleDef } from "../../program.js";
 import { glyphTile, OBJECT_TILE, patternTile } from "../../rom/graphics.js";
@@ -153,6 +153,22 @@ export function mapWord(tile: number, palette: number): number {
 
 /** Everything the emitter needs beyond the program itself. */
 export interface WscEmitOptions {
+  /**
+   * Measure a segmented build without placing it.
+   *
+   * The measuring pass: the same instructions a segmented one emits, laid end to
+   * end, so `wsc.ts` can read each scene's length off and plan the segments from
+   * numbers rather than an estimate.
+   */
+  split?: boolean;
+  /**
+   * Where each scene goes, for a game that outgrew one segment.
+   *
+   * Absent for a game that fits, and then this emitter does exactly what it
+   * always did — one segment, near calls, and a cartridge byte-identical to the
+   * one it built before this existed.
+   */
+  segments?: WsSegmentPlan;
   /** Converted object art, keyed by the asset name a `.dmt` wrote. */
   sprites?: ReadonlyMap<string, SpriteArt>;
   /** Converted level tile art, keyed by the art file a `.dmtl` legend named. */
@@ -185,22 +201,73 @@ export interface WscEmitOptions {
 function emitSceneDispatch(ctx: WscCtx, labels: readonly string[]): void {
   const { asm, layout } = ctx;
   if (labels.length === 1) {
-    asm.jmp(labels[0] as string);
+    ctx.jump(labels[0] as string);
     return;
   }
   asm.movm8("al", abs(layout.scene));
   for (const [index, target] of labels.entries()) {
     if (index === labels.length - 1) {
-      asm.jmp(target);
+      ctx.jump(target);
       break;
     }
     asm.aluI8("cmp", "al", index);
-    ctx.far("z", target);
+    if (!ctx.banked) {
+      ctx.far("z", target);
+      continue;
+    }
+    // Spread across segments the transfer is five bytes rather than three, so
+    // the condition is inverted over it and the comparison's own result is
+    // reloaded — `jump` leaves nothing, but the next test needs `al` again.
+    const over = ctx.unique("dispatch");
+    asm.jcc("nz", over);
+    ctx.jump(target);
+    asm.label(over);
+    asm.movm8("al", abs(layout.scene));
   }
 }
 
-/** Emit the whole program. */
-export function emitProgram(ctx: WscCtx, options: WscEmitOptions = {}): void {
+/**
+ * Every routine a segmented build places, in the order it emits them.
+ *
+ * A whole *scene* here, not a step of one: a segment is sixty-four kilobytes and
+ * the library's largest scene is twenty-two, so this console takes the Super
+ * Nintendo's unit rather than the Sega's. What a scene is, is its tick, its
+ * reset, its camera and its render — the four routines the dispatches reach.
+ */
+export function sceneUnits(scenes: readonly SceneCtx[]): string[][] {
+  return scenes.map((scene) => [
+    `SceneTick_${scene.index}`,
+    `SceneReset_${scene.index}`,
+    `SceneCamera_${scene.index}`,
+    `SceneRender_${scene.index}`,
+  ]);
+}
+
+/** What a pass over the program measured. */
+export interface EmittedWsProgram {
+  /** How long each scene's four routines came out, by scene index. */
+  scenes: readonly number[];
+  /** How long one segment's copy of the shared tables came out. */
+  data: number;
+  /** Bytes the fixed half took: everything that is not a scene. */
+  fixed: number;
+}
+
+/** Which segment each scene's routines go in. */
+export interface WsSegmentPlan {
+  /** The scene indices in each paged segment, in the order they are emitted. */
+  segments: readonly (readonly number[])[];
+  /** Which segment each scene landed in, by scene index. */
+  segmentOf: ReadonlyMap<number, number>;
+}
+
+/**
+ * Emit the whole program, and report what a segment plan would need to know.
+ *
+ * With no plan and no split this is exactly the emitter it always was: one
+ * segment, near calls, and the same bytes.
+ */
+export function emitProgram(ctx: WscCtx, options: WscEmitOptions = {}): EmittedWsProgram {
   const { asm, program } = ctx;
   const scenes = sceneContexts(ctx);
   const levels = collectLevels(program.scenes);
@@ -210,18 +277,74 @@ export function emitProgram(ctx: WscCtx, options: WscEmitOptions = {}): void {
     if (found) levelFor.set(scene.index, found);
   }
 
+  /**
+   * One scene's four routines, wherever they are being put.
+   *
+   * The level they are handed is the copy in *their* segment: this code reads a
+   * grid and a legend with a `cs:` override, so a scene in segment `$E` given the
+   * shared tables would read whatever is at those offsets in `$E`
+   * (§emitSegmentData). It reads them rather than crashing, which is a tile walk
+   * that never terminates.
+   */
+  const emitScene = (scene: SceneCtx): void => {
+    const shared = levelFor.get(scene.index);
+    const level = shared ? levelCopy(shared, ctx.dataSuffix) : undefined;
+    emitSceneTick(ctx, scene, level);
+    emitSceneReset(ctx, scene);
+    emitSceneCamera(ctx, scene);
+    emitSceneRender(ctx, scene, level, options);
+  };
+
+  const plan = options.segments;
+  const split = options.split === true || plan !== undefined;
+  const sceneBytes: number[] = scenes.map(() => 0);
+  let dataBytes = 0;
+  if (split) {
+    // The paged segments first, and the fixed half last — helpers are *pulled*
+    // by whatever calls them, so `ctx.finish()` has to be the last thing that
+    // runs and everything it emits belongs in the segment that never moves.
+    const groups = plan
+      ? plan.segments.map((indices) => [...indices])
+      : [scenes.map((scene) => scene.index)];
+    for (const [at, indices] of groups.entries()) {
+      // A segment register counts sixteen-byte paragraphs, so the segment below
+      // `$E000` is `$D000` rather than `$DFFF`: one 64 KiB bank is `$1000` of
+      // them. Off by that and a dispatch jumps sixteen bytes into the right bank.
+      const segment = PAGED_SEGMENT - at * SEGMENT_STEP;
+      const suffix = segmentSuffix(segment);
+      asm.section(segment);
+      ctx.dataSuffix = suffix;
+      const start = asm.length;
+      for (const index of indices) {
+        const before = asm.length;
+        emitScene(scenes[index] as SceneCtx);
+        sceneBytes[index] = asm.length - before;
+      }
+      const beforeData = asm.length;
+      emitSegmentData(ctx, options, scenes, levels, suffix);
+      dataBytes = asm.length - beforeData;
+      // Only a *planned* pass is placing anything: the measuring one lays every
+      // scene end to end on purpose, so its length is a measurement rather than
+      // an overflow.
+      if (plan) {
+        const used = asm.length - start;
+        if (used > WS_SEGMENT_SIZE) {
+          throw new AsmError(`a segment holds ${used} bytes of a possible ${WS_SEGMENT_SIZE}`);
+        }
+        asm.ds(WS_SEGMENT_SIZE - used, 0xff);
+      }
+    }
+    ctx.dataSuffix = "";
+    asm.section(ctx.homeSegment);
+  }
+
   emitReset(ctx, options);
   emitMainLoop(ctx, options.audio !== undefined);
   emitInput(ctx);
   emitTickDispatch(ctx, scenes);
   emitSceneChange(ctx, scenes, program);
 
-  for (const scene of scenes) {
-    emitSceneTick(ctx, scene, levelFor.get(scene.index));
-    emitSceneReset(ctx, scene);
-    emitSceneCamera(ctx, scene);
-    emitSceneRender(ctx, scene, levelFor.get(scene.index), options);
-  }
+  if (!split) for (const scene of scenes) emitScene(scene);
 
   emitRenderHelpers(ctx);
   emitTileContactHelper(ctx);
@@ -251,6 +374,29 @@ export function emitProgram(ctx: WscCtx, options: WscEmitOptions = {}): void {
   asm.bytes(options.bank ?? new Uint8Array(0));
   asm.label("Palette");
   asm.bytes(options.palette ?? defaultPalette());
+
+  // What the fixed half took is everything the paged segments did not, and a
+  // planned pass pads each of those out to a whole segment.
+  const paged = plan
+    ? plan.segments.length * WS_SEGMENT_SIZE
+    : split
+      ? sceneBytes.reduce((sum, bytes) => sum + bytes, 0) + dataBytes
+      : 0;
+  return { scenes: sceneBytes, data: dataBytes, fixed: asm.length - paged };
+}
+
+/** The segment a paged build's first extra segment is, counting down from home. */
+export const PAGED_SEGMENT = 0xe000;
+
+/** What one 64 KiB bank is worth in a segment register: paragraphs, not bytes. */
+export const SEGMENT_STEP = 0x1000;
+
+/** Bytes a segment addresses, which is what one holds. */
+export const WS_SEGMENT_SIZE = 0x10000;
+
+/** What one segment's copy of the shared tables is called. */
+export function segmentSuffix(segment: number): string {
+  return `_s${(segment >> 12).toString(16)}`;
 }
 
 /**
@@ -453,7 +599,7 @@ function emitReset(ctx: WscCtx, options: WscEmitOptions): void {
   ctx.call("UploadFrame");
 
   if (options.audio) {
-    ctx.call("AudioInit");
+    ctx.callNear("AudioInit");
     if (program.tracks.length > 0) ctx.call("SceneMusic");
   }
 
@@ -580,8 +726,8 @@ function emitMainLoop(ctx: WscCtx, audio: boolean): void {
     // being told, so a frame the game overran is owed rather than lost — and
     // `AudioService` performs what is owed *outside* the blanking interval,
     // which belongs to the picture.
-    ctx.call("AudioFrame");
-    ctx.call("AudioService");
+    ctx.callNear("AudioFrame");
+    ctx.callNear("AudioService");
   }
   ctx.call("ReadInput");
   ctx.call("Tick");
@@ -758,16 +904,20 @@ function emitSceneTick(ctx: WscCtx, scene: SceneCtx, level: LevelData | undefine
   const { asm } = ctx;
   asm.label(`SceneTick_${scene.index}`);
   emitTickSteps(tickSteps(ctx), scene, level);
-  asm.jmp("TickDone");
+  // The shared tail of the tick is in the fixed half and this routine may not
+  // be, so it is the one *jump* in a scene that has to be able to leave.
+  ctx.jump("TickDone");
 }
 
 function emitSceneReset(ctx: WscCtx, scene: SceneCtx): void {
   const { asm, layout } = ctx;
   asm.label(`SceneReset_${scene.index}`);
   for (const id of scene.def.instanceIds) {
+    // This segment's copy: the block copy takes `DS` from `CS` (§emitRomCopy),
+    // so a reset running in another segment reads that segment's defaults.
     emitRomCopy(
       ctx,
-      label(`Defaults_${id}`),
+      label(`Defaults_${id}${ctx.dataSuffix}`),
       layout.entities[id] as number,
       layout.entitySizes[id] as number,
     );

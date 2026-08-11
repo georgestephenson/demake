@@ -47,7 +47,7 @@ import { PORT, Wsc } from "@demake/wsc";
 
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
-import { buildWscRom, CODE_SIZE } from "../src/codegen/wsc.js";
+import { buildWscRom, CARTRIDGE_SIZE } from "../src/codegen/wsc.js";
 import { bindWscArt } from "../src/codegen/wsc-art.js";
 import { MAP_H, MAP_W, SYSTEM_OBJECT_PALETTE, SYSTEM_PALETTE } from "../src/codegen/wsc/emit.js";
 import { WS_MACHINE, WSC_MACHINE } from "../src/codegen/wsc/machine.js";
@@ -119,18 +119,24 @@ describe("the WonderSwan cartridge", async () => {
     expect(stored).toBe(wsChecksum(built.bytes));
   });
 
-  it("measures headroom against the mapped bank rather than against the file", () => {
-    // Half a megabyte of cartridge and 64 KiB the processor answers, minus the
-    // entry jump — so `free` is about the bank, which is the number a size
-    // regression actually moves.
-    expect(CODE_SIZE).toBe(WS_CODE_SIZE);
-    expect(built.stats.bytes).toBeLessThan(CODE_SIZE);
-    expect(built.stats.free).toBe(CODE_SIZE - built.stats.bytes);
+  it("measures headroom against the whole cartridge, not the mapped bank", () => {
+    // It used to be the bank, and that was right for as long as a game bigger
+    // than one segment was refused. A game bigger than one segment now spreads
+    // across the ones below it (doc 13 §Banked cartridges), so a figure that
+    // stopped at `$FFF0` would report a game getting bigger as a game with less
+    // room and then jump by most of a megabyte when it crossed.
+    expect(CARTRIDGE_SIZE).toBe(WS_ROM_SIZE - 16);
+    expect(built.stats.bytes).toBeLessThan(CARTRIDGE_SIZE);
+    expect(built.stats.free).toBe(CARTRIDGE_SIZE - built.stats.bytes);
     expect(built.stats.cartridge).toBe(WS_ROM_SIZE);
   });
 
-  it("leaves room for a game to grow", () => {
-    expect(built.stats.free).toBeGreaterThan(1024);
+  it("keeps this game inside the one segment it resets into", () => {
+    // Which is the number that still bites: a fixture that outgrew `WS_CODE_SIZE`
+    // would start spreading across segments — three assembly passes and a copy of
+    // its tables per segment — for a game the library says should fit one.
+    expect(built.stats.bytes).toBeLessThan(WS_CODE_SIZE);
+    expect(WS_CODE_SIZE - built.stats.bytes).toBeGreaterThan(1024);
   });
 });
 
@@ -592,5 +598,90 @@ describe("the mono WonderSwan", async () => {
       shades.add(machine.framebuffer[at] as number);
     }
     expect(shades.size).toBeGreaterThan(3);
+  });
+});
+
+/**
+ * A game spread across segments, which is what `quest` is on this console.
+ *
+ * Every case here is one a trace cannot reach. The example tape enters one level
+ * and a level's routines are all in the *first* paged segment, so a scene in the
+ * second is compiled, placed, and never executed by any test that plays the game
+ * — which is exactly where a wrong segment number hides. So this reads the
+ * dispatches out of the finished cartridge and follows each of them.
+ */
+describe("a program bigger than one segment", async () => {
+  const example = exampleProject("quest");
+  const built = await buildWscRom(
+    compile(example.source, {
+      profile: getProfile("wsc"),
+      files: example.files,
+      levels: example.levels,
+    }),
+  );
+  /** Where a segment's bytes are in the file, the way the hardware decodes it. */
+  const fileAt = (segment: number, offset: number): number =>
+    (((segment << 4) + offset) & (built.bytes.length - 1)) >>> 0;
+
+  /**
+   * Every far jump in the fixed segment, as (segment, offset).
+   *
+   * `$EA` is the only opcode this backend emits with an absolute far target, and
+   * the dispatches are the only things that emit it — so scanning for it finds
+   * exactly the transfers a scene is reached through, without the test having to
+   * know where the four dispatch tables are.
+   */
+  const farJumps = (): { segment: number; offset: number }[] => {
+    const base = built.bytes.length - 0x10000;
+    const out: { segment: number; offset: number }[] = [];
+    for (let at = 0; at < 0xfff0 - 5; at += 1) {
+      if (built.bytes[base + at] !== 0xea) continue;
+      const offset =
+        (built.bytes[base + at + 1] as number) | ((built.bytes[base + at + 2] as number) << 8);
+      const segment =
+        (built.bytes[base + at + 3] as number) | ((built.bytes[base + at + 4] as number) << 8);
+      // A paged segment is a whole bank below the fixed one, so it is a multiple
+      // of `$1000` in `$8000`–`$EFFF`. Without that filter this finds every `$EA`
+      // byte that happens to sit inside a table or another instruction's operand.
+      if (segment >= 0x8000 && segment < 0xf000 && (segment & 0x0fff) === 0) {
+        out.push({ segment, offset });
+      }
+    }
+    return out;
+  };
+
+  it("spreads it across more than one segment, or this proves nothing", () => {
+    // The premise. `quest` is 97 KiB against a 64 KiB segment; if it ever fits
+    // one again, these cases stop testing anything and should be re-pointed.
+    const segments = new Set(farJumps().map((jump) => jump.segment));
+    expect(segments.size).toBeGreaterThan(1);
+  });
+
+  it("aims every far jump at code rather than at padding", () => {
+    // The failure this is for: a segment number off by one lands sixteen bytes
+    // into the right bank, and off by `$1000` lands in the wrong one — both of
+    // which read as a scene that ticks perfectly until it is entered. A paged
+    // segment is padded with `$FF`, which decodes as an invalid opcode, so
+    // "the byte here is not padding" is the whole check and it is enough.
+    const jumps = farJumps();
+    expect(jumps.length).toBeGreaterThan(4);
+    for (const { segment, offset } of jumps) {
+      const byte = built.bytes[fileAt(segment, offset)] as number;
+      expect(
+        byte,
+        `far jump to $${segment.toString(16)}:$${offset.toString(16)} lands on padding`,
+      ).not.toBe(0xff);
+    }
+  });
+
+  it("gives every segment its own copy of the tables its code reads", () => {
+    // A segment reads a level grid and a pooled constant with a `cs:` override,
+    // so a copy per segment is not an optimisation — it is the only thing those
+    // reads can reach. The suffix is what tells the copies apart.
+    const names = [...built.symbols.keys()];
+    for (const stem of ["LevelGrid_0", "Defaults_0"]) {
+      const copies = names.filter((name) => name === stem || name.startsWith(`${stem}_s`));
+      expect(copies.length, `${stem} has ${copies.length} copies`).toBeGreaterThan(1);
+    }
   });
 });

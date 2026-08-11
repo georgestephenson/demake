@@ -115,6 +115,20 @@ export class WscCtx extends CtxBase<WscCtx, Asm30> {
     this.asm.callFarLabel(nameOf(target), this.homeSegment);
   }
 
+  /**
+   * Call a routine that returns *near* whatever the rest of the program does.
+   *
+   * The audio driver's three entry points, and only those. `@demake/audio` emits
+   * that driver with this assembler directly and ends its routines with `ret`,
+   * which is right: the driver is in the fixed segment and so is every caller —
+   * the boot, the main loop and the scene change. A far call to a near return
+   * pops the caller's segment off the stack as an offset and lands wherever that
+   * word points, which is a cartridge that boots and then jumps into nothing.
+   */
+  callNear(target: Ref): void {
+    this.asm.call(target);
+  }
+
   /** Return from a routine, matching how {@link call} reached it. */
   ret(): void {
     if (this.banked) this.asm.retf();
