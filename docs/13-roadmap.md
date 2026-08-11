@@ -1704,6 +1704,28 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     against a correct model's 0.9992 and is exactly the bug this level exists to
     catch. Doc 16 §The proof has the table.
 
+    **And it has already found one thing, which is what a level like this is
+    for.** The sixth standalone cartridge is the WonderSwan's, beetle-wswan is
+    provisioned by the same script as the other four cores, and the row costs
+    one line — so it was written, measured, and left out. It scores **0.6469**,
+    below every wrong answer in the table except white noise, and none of the
+    ordinary explanations survive contact: the core is plainly playing the music
+    (0.169 RMS against our 0.124), giving it enough frames to cover the whole
+    schedule moves the number by 0.001, the waveform page the render installs is
+    byte-identical to the one the cartridge copies, and restricting the
+    comparison to below 1.7 kHz — where the output filtering doc 16 warns about
+    would have to agree — only reaches 0.7168. What the spectra say is that the
+    two play the same notes with a different **balance between the voices**: the
+    core's strongest content is at 194, 258 and 215 Hz, and ours at 43 Hz and
+    7321 Hz, which is a loud noise channel over a bass.
+
+    Level A is green on that console for a track *and* an effect, so the
+    cartridge performs its schedule exactly and what is in question is what the
+    chip does with it — a disagreement between `@demake/chip`'s `WsSound` and
+    Mednafen's, in one direction or the other. It is open rather than closed, and
+    it is recorded here rather than admitted by lowering the gate: a threshold
+    that accepted 0.65 would delete the only measurement this level makes.
+
     **And one console could not be rendered at all — fixed, and it was the one
     renderer rather than that console.** `demake render -c gba` wrote a WAV in
     which every sample after the first was `NaN`, and had since the console was
@@ -1755,11 +1777,21 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     the Nintendo DS's SPU each have a chip model, a
     binding and a generated driver — 6502, Z80, SPC700, 68000 and ARM twice — and
     `demake build` puts music and
-    effects in the cartridge with doc 16's Level A proof over all of them. Five of
+    effects in the cartridge with doc 16's Level A proof over all of them. Six of
     them now also build a *standalone* audio cartridge — `demake gen … --format
-    rom` reaches the Game Boy, the NES, the PC Engine, both Sega 8-bits and the
-    Mega Drive — and the rest do not, because a cartridge whose only job is one
-    track is what a later caller needed and not what a game did. That last one is
+    rom` reaches the Game Boy, the NES, the PC Engine, both Sega 8-bits, the
+    Mega Drive and both WonderSwans — and the rest do not, because a cartridge whose only job is one
+    track is what a later caller needed and not what a game did. **The sixth is
+    where the measurement stopped being a claim**: `wsc-driver.ts` moved not one
+    instruction, so what that console added is a boot sequence, a clock and a
+    cartridge wrapper. Its clock is the Mega Drive's *caller* argument reached by
+    different hardware — this cartridge takes no interrupt at all, so its idle
+    loop reads the vertical-blank timer's counter and pays what it finds owed,
+    and where a game does that from a loop that is also running a game its drift
+    is bounded by a frame and this one's by a poll. Here that buys accuracy
+    rather than a rate, because the counter still only moves once a frame. And
+    both WonderSwans get it for one byte in a footer, because their sound
+    hardware is the same hardware. The Mega Drive is
     where the difference between the two callers stops being a matter of
     packaging: on that board the FM chip's timer interrupt goes to the Z80, so a
     driver polls the status byte, and a game's loop is also running a game while a
@@ -1938,8 +1970,20 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     to five times the register writes of the same track dry — 80 against 452 on a
     Game Boy. What makes that safe rather than merely measured is that it is
     opt-in by construction: a source that never touches the wheel produces
-    byte-for-byte the schedule it always did, which is *every* MIDI in the
+    byte-for-byte the schedule it always did, which was *every* MIDI in the
     example library, so this closed a line and re-baselined nothing.
+
+    **Which is also what was wrong with it.** A feature the library never
+    reaches is one proved by the tests written for it and by nothing that ships,
+    and the rule the fixtures are held to is that they carry what a modern game
+    would have — a modern game's MIDI moves the wheel. Two of them do now:
+    `pong/rally.mid` and `platformer/meadow.mid`, on their synth lead at depth
+    64 of 127. `pong` because it is the project `_audio-battery.ts` builds for
+    its register battery on every console with a driver, so a vibrato's writes
+    are diffed against the schedule tick for tick on eleven machines and on both
+    routes to a chip; the platformer because its NES build is the one
+    small-board cartridge in the size sweep. The other nine stay dry, because
+    not every tune is played with vibrato and the cost above is real.
 
     **And the Mega Drive spends its LFO**, which is what that cost was an
     argument for. A YM2612's LFO setting 1 is 5.56 Hz, within a tenth of a hertz

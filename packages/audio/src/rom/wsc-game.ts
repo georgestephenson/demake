@@ -334,7 +334,7 @@ export function buildWscGameAudio(input: WscGameAudioInput): WscGameAudio {
  * architecture is a byte — so unlike the Game Boy's high-RAM offsets and the
  * NES's `$4000` bias there is nothing to subtract.
  */
-function portOf(reg: number): number {
+export function portOf(reg: number): number {
   return reg & 0xff;
 }
 

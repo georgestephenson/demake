@@ -973,7 +973,25 @@ A console qualifies when it has **both** a standalone audio cartridge (§A5) and
 libretro core: the cartridge because this needs a ROM whose only job is the
 schedule, and a third-party core because our own would be comparing a model with
 itself. That is the NES, both Sega 8-bits, the Mega Drive and the PC Engine
-today, and each joins by appearing in one table. Where a core exposes scripted
+today, and each joins by appearing in one table.
+
+**The WonderSwan qualifies and is not in it, which is the first thing this level
+has found.** That console has a standalone cartridge and beetle-wswan is
+provisioned by the same script as the four cores above, so the row costs one
+line — and it scores **0.6469**, below every wrong answer in the table but white
+noise. None of the ordinary explanations survives: the core is plainly playing
+the music (0.169 RMS against our 0.124), giving it enough frames to cover the
+whole schedule moves the number by 0.001, the waveform page a render installs is
+byte-identical to the one the cartridge copies, and restricting the comparison to
+below 1.7 kHz — where the filtering caveat above would have to agree — only
+reaches 0.7168. What the spectra say is that the two play the same notes with a
+different *balance between the voices*: the core's strongest content is at 194,
+258 and 215 Hz and ours at 43 Hz and 7321 Hz. Level A is green there for a track
+and for an effect, so the cartridge performs its schedule exactly and the
+question is what the chip does with it — a disagreement between `WsSound` and
+Mednafen's model, in one direction or the other. It is recorded rather than
+admitted: a threshold that accepted 0.65 would delete the only measurement this
+level makes. Where a core exposes scripted
 register access (Mesen 2's Lua interface, for instance), that console gets Level A
 too and Level B becomes a cross-check rather than the primary oracle.
 

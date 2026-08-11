@@ -23,6 +23,7 @@ import { Md } from "@demake/md";
 import { Nes } from "@demake/nes";
 import { Pce } from "@demake/pce";
 import { Sms } from "@demake/sms";
+import { Wsc } from "@demake/wsc";
 
 import type { ChipScript, TickWrites } from "../src/chipscript.js";
 import { PSG_CHIP, YM_CHIP } from "../src/rom/md-chips.js";
@@ -44,7 +45,6 @@ interface Capture {
 /** What a core has to offer for a schedule to be read back out of it. */
 interface TappedMachine {
   stepInstruction(): unknown;
-  readonly cpu: { pc: number };
 }
 
 /** A ROM that can be stepped one driver tick at a time. */
@@ -62,6 +62,16 @@ export class AudioRomRunner {
    */
   readonly performed: ChipScript;
   private readonly tickAddress: number;
+  /**
+   * Where the driver is, which is not always a field called `pc`.
+   *
+   * Five of the six families name it that; the WonderSwan's V30MZ is an 8086 and
+   * names it `ip`, because on that architecture an address is a segment and an
+   * offset and this is the offset. The driver is in the same segment as
+   * everything else a cartridge runs, so the offset is the whole address —
+   * `_audio-battery.ts` §`pc` says the same thing one layer up.
+   */
+  private readonly pc: () => number;
   /**
    * Where a tick *ends*, when the driver says so.
    *
@@ -88,10 +98,10 @@ export class AudioRomRunner {
    * runner comes from.
    */
   static async create(script: ChipScript, options: AudioRomOptions = {}): Promise<AudioRomRunner> {
-    return new AudioRomRunner(await buildAudioRom(script, options));
+    return new AudioRomRunner(await buildAudioRom(script, options), script.console);
   }
 
-  private constructor(built: Awaited<ReturnType<typeof buildAudioRom>>) {
+  private constructor(built: Awaited<ReturnType<typeof buildAudioRom>>, consoleId: string) {
     this.rom = built.bytes;
     this.performed = built.performed;
     const tick = built.symbols.get("Tick");
@@ -125,6 +135,14 @@ export class AudioRomRunner {
       machine.ymTap = (port, value) => push(port, value, YM_CHIP);
       machine.psgTap = (reg, value) => push(reg, value, PSG_CHIP);
       this.machine = machine;
+    } else if (built.family === "wsc") {
+      // Which *WonderSwan* it comes up as is a constructor argument rather than
+      // anything in the cartridge, because these two machines do not differ in
+      // a byte a footer could record — so the console the schedule was fitted
+      // to is what decides, exactly as `@demake/wsc`'s own tests do.
+      const machine = new Wsc(built.bytes, consoleId === "ws" ? "ws" : "wsc");
+      machine.soundTap = push;
+      this.machine = machine;
     } else if (built.family === "sms") {
       // Which *Sega* it comes up as is the cartridge's own region nibble, never
       // an argument — the same rule `@demake/dmg` follows for its header, so a
@@ -137,6 +155,12 @@ export class AudioRomRunner {
       machine.apuTap = push;
       this.machine = machine;
     }
+
+    const machine = this.machine;
+    this.pc =
+      machine instanceof Wsc
+        ? () => machine.cpu.ip
+        : () => (machine as { cpu: { pc: number } }).cpu.pc;
   }
 
   /**
@@ -151,7 +175,7 @@ export class AudioRomRunner {
     const writes: Capture[] = [];
     this.current = writes;
     let guard = 0;
-    while (this.machine.cpu.pc !== this.tickAddress) {
+    while (this.pc() !== this.tickAddress) {
       this.machine.stepInstruction();
       guard += 1;
       if (guard > 10_000_000) throw new Error("audio rom: the driver never reached its first tick");
@@ -173,10 +197,10 @@ export class AudioRomRunner {
     let guard = 0;
     while (groups.length <= count) {
       this.machine.stepInstruction();
-      if (this.machine.cpu.pc === this.tickAddress) {
+      if (this.pc() === this.tickAddress) {
         this.current = [];
         groups.push(this.current);
-      } else if (this.machine.cpu.pc === this.endAddress) {
+      } else if (this.pc() === this.endAddress) {
         this.current = undefined;
       }
       guard += 1;

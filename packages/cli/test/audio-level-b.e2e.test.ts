@@ -54,6 +54,32 @@
  * *plausible* wrong answer that needs no mutation: the same music, same tempo,
  * same structure, arranged for a different chip.
  *
+ * ### The WonderSwan is deliberately absent, and that is a finding
+ *
+ * `rom/wsc.ts` builds a standalone cartridge and beetle-wswan is provisioned by
+ * the same script as the four cores above, so the row costs one line — and it
+ * scores **0.6469**, far below every wrong answer in the table except white
+ * noise. It is not a boot failure and not a coverage artefact: the core is
+ * plainly playing the music (0.169 RMS against our 0.124), giving it enough
+ * frames to cover the whole schedule moves the number by 0.001, and the
+ * waveform page the render installs is byte-identical to the one the cartridge
+ * copies.
+ *
+ * What the spectra say is that the two are playing the same notes with a
+ * different balance between the voices: the core's strongest content is at 194,
+ * 258 and 215 Hz — pitches — while ours is at 43 Hz and 7321 Hz, which is a
+ * loud noise channel and a bass. Restricting the comparison to below 1.7 kHz
+ * only reaches 0.7168, so it is not the output filtering doc 16 already warns
+ * about either.
+ *
+ * That is a disagreement between `@demake/chip`'s `WsSound` and Mednafen's, and
+ * it is exactly what this level exists to surface — Level A is green on that
+ * console for a track *and* an effect, so the cartridge performs its schedule
+ * exactly and the argument is about what the chip does with it. Adding the row
+ * before the disagreement is diagnosed would be committing a failing test;
+ * adding it with a threshold that admits 0.65 would be deleting the gate. Doc 13
+ * §A2.5 records it as the open question it is.
+ *
  * Needs `pnpm toolchains && pnpm emulator`; self-skips without them.
  */
 

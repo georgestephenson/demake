@@ -93,17 +93,24 @@ const DRIVERS: Readonly<Record<string, AudioRomFamily>> = {
   sms: "sms",
   gg: "sms",
   md: "md",
+  wsc: "wsc",
+  // The mono machine's sound hardware *is* the colour machine's, so this is one
+  // more console for the same driver and the same cartridge — the Game Gear's
+  // bargain with a different byte in the footer (`rom/wsc.ts` §Two machines).
+  ws: "wsc",
 };
 
 /**
  * The driver families a standalone cartridge can be built with.
  *
- * Five, over four stream players: the NES and the PC Engine share
- * `mos-player.ts` because a HuC6280 *is* a 6502, and the two Sega 8-bits share
- * `sms-driver.ts` because a Game Gear *is* a Master System — so what a family is
- * here is a boot sequence, a clock and a cartridge wrapper rather than a driver.
+ * Six, over five stream players: the NES and the PC Engine share
+ * `mos-player.ts` because a HuC6280 *is* a 6502, the two Sega 8-bits share
+ * `sms-driver.ts` because a Game Gear *is* a Master System, and the two
+ * WonderSwans share `wsc-driver.ts` because they are one machine with different
+ * memory — so what a family is here is a boot sequence, a clock and a cartridge
+ * wrapper rather than a driver.
  */
-export type AudioRomFamily = "gb" | "nes" | "pce" | "sms" | "md";
+export type AudioRomFamily = "gb" | "nes" | "pce" | "sms" | "md" | "wsc";
 
 /**
  * The clock a *game's* driver rides on each chip that has one.
@@ -305,6 +312,8 @@ const SUFFIXES: Readonly<Record<string, string>> = {
   sms: ".sms",
   gg: ".gg",
   md: ".md",
+  wsc: ".wsc",
+  ws: ".ws",
 };
 
 /**
@@ -367,5 +376,7 @@ async function buildFor(
       return (await import("./sms.js")).buildSmsAudioRom(script, options);
     case "md":
       return (await import("./md.js")).buildMdAudioRom(script, options);
+    case "wsc":
+      return (await import("./wsc.js")).buildWscAudioRom(script, options);
   }
 }

@@ -1066,14 +1066,16 @@ four pinned byte-identical to the CLI's by
 
 Still to come for audio: `bin`/`asm`/`c` emit, a _standalone_ audio cartridge for
 the consoles that still have none — the Game Boy, the **NES**, the **PC Engine**,
-both **Sega 8-bits** and the **Mega Drive** build one today, and the WonderSwans,
-the Neo Geo Pocket Color and both ARM handhelds have drivers only inside a game,
-while the Super Nintendo's writes an `.spc` rather than a cartridge. What each of
+both **Sega 8-bits**, the **Mega Drive** and both **WonderSwans** build one today,
+and the Neo Geo Pocket Color and both ARM handhelds have drivers only inside a
+game, while the Super Nintendo's writes an `.spc` rather than a cartridge. What
+each of
 them costs is no longer an estimate but a measurement: the stream player belongs
 to the _processor_ and is already written, so a console adds a boot sequence, a
 clock and a cartridge wrapper and nothing else — which is why the third of them
-reused the second's player unchanged, the fourth reused a _game's_, and the fifth
-changed not one instruction of one. What the last two did was find, twice, the
+reused the second's player unchanged, the fourth reused a _game's_, the fifth
+changed not one instruction of one, and the sixth changed not one instruction of
+a _game's_ either. What the two before it did was find, twice, the
 bill for a clock nobody had ever had to keep. The Sega binding would fit a rate
 to the VDP's line interrupt, and that interrupt fires only inside the active
 display, so the first cartridge to ride one would have played at half the rate it
@@ -1708,10 +1710,20 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
                      write belongs to — and the only one whose write has to
                      *settle*, which the hardware documentation warns is why some
                      homebrew plays in an emulator and not on a board;
-                     V30MZ: wsc-driver.ts and wsc-game.ts, and the only driver
-                     whose clock is not an interrupt — this cartridge takes none,
-                     so it reads the vertical-blank timer's counter and pays what
-                     it finds owed. shared.ts is what none of
+                     V30MZ: wsc-driver.ts, with two callers, a game
+                     (wsc-game.ts) and the sixth standalone cartridge (wsc.ts) —
+                     the only driver whose clock is not an interrupt, because
+                     this cartridge takes none and reads the vertical-blank
+                     timer's counter instead, paying what it finds owed. The pair
+                     is the Mega Drive's caller distinction on hardware that
+                     reaches it differently: a game polls from a loop that is
+                     also running a game and its drift is bounded by a frame,
+                     while this one's loop does nothing else and its drift is
+                     bounded by a poll — which here buys accuracy rather than a
+                     rate, since the counter only moves once a frame. One file
+                     for *two* machines, on sms.ts's terms: the two WonderSwans
+                     have the same sound hardware, so all it asks the console is
+                     the footer's minimum-system byte. shared.ts is what none of
                      them owns — the boot strip, the channel restriction, the
                      player's shape — and psg.ts is what the *chip* owns, shared
                      by the two CPUs that drive an SN76489; md-chips.ts is the
@@ -2332,6 +2344,22 @@ them do the work. Generators live in the session scratchpad; the `.mid` and
   the kit. Both are fixed (`analysis.ts` §scoreSalience, `plan.ts`
   §byWorthThenBreadth). Neither was reachable with four-part fixtures, which is
   the argument for widening them in one line.
+- **Two of the melodies move the modulation wheel, and the rest are dry on
+  purpose.** Vibrato is read off controller 1, so a library that never touched
+  it left the feature proved by tests written for it and by nothing that ships —
+  the four-part problem again. `pong/rally.mid` and `platformer/meadow.mid` put
+  it on track 3, which is programme 80 in both: the synth lead, the one
+  instrument in these arrangements a player leans on a held note with. Those two
+  files rather than any others because each is where a suite already looks —
+  `pong` is the project `_audio-battery.ts` builds for its register battery on
+  every console with a driver, so a vibrato's writes are diffed tick for tick on
+  eleven machines and on both routes to a chip; and the platformer is the one
+  fixture whose NES build fits an NROM-128, so it is where the size sweep pays
+  for vibrato on a small board. Leave the rest dry: not every tune is played
+  with vibrato, and a modulated held note is a pitch write per tick wherever the
+  hardware will not do it — `rally.mid` costs the Mega Drive 5.2% more writes
+  and a Master System 42%, which is the difference between spending an LFO and
+  writing the modulation.
 - **Do not synthesize square waves for effects either.** The sounds are built
   from harmonics, filtered noise and decay envelopes, so the class gate has
   something to classify and the gesture tournament has something to choose

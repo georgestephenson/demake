@@ -35,11 +35,17 @@ import {
   SMS_IRQ_VECTOR,
   SMS_NMI_VECTOR,
   SMS_ROM_SIZE,
+  WS_CODE_SIZE,
+  WS_FOOTER_OFFSET,
+  WS_ROM_SIZE,
 } from "@demake/core";
 import { FRAME_CYCLES, Sms } from "@demake/sms";
+import { CPU_HZ as WS_CPU_HZ } from "@demake/wsc";
 
 import { arrangeScore } from "../src/arrange/index.js";
 import { bindingFor } from "../src/binding/registry.js";
+import { WS_BANK_BYTES, WS_WAVE_BASE, wsWaveBank } from "../src/binding/wsc-bank.js";
+import { wsWaveforms } from "../src/binding/wsc.js";
 import type { ChipScript } from "../src/chipscript.js";
 import { parseMidi } from "../src/score/midi.js";
 import { demakeSfx } from "../src/sfx/index.js";
@@ -125,7 +131,7 @@ describe("gb audio cartridge", () => {
 
   it("names the consoles it can build for", async () => {
     expect(audioRomConsoles()).toEqual(
-      expect.arrayContaining(["dmg", "gbc", "nes", "pce", "sms", "gg", "md"]),
+      expect.arrayContaining(["dmg", "gbc", "nes", "pce", "sms", "gg", "md", "wsc", "ws"]),
     );
   });
 });
@@ -439,6 +445,73 @@ describe("md audio cartridge", () => {
     const script = trackFor("md");
     const framed = { ...script, driver: { ...script.driver, source: "vblank" as const } };
     await expect(buildAudioRom(framed)).rejects.toThrow(/has no 'vblank' clock/);
+  });
+});
+
+describe("wsc audio cartridge", () => {
+  it("copies its waveforms into RAM before it plays a note", async () => {
+    // The half no tick diff can see. This chip reads its tables out of the
+    // console's own memory rather than a register file, so a cartridge that
+    // skipped the copy would write every register of the schedule exactly and
+    // play four channels of whatever powered up at `$0300` (`binding/wsc-bank.ts`).
+    const script = trackFor("wsc");
+    const runner = await AudioRomRunner.create(script);
+    runner.captureBoot();
+    const ram = (runner.machine as unknown as { ram: Uint8Array }).ram;
+    const shapes = wsWaveforms(bindingFor("wsc").spec);
+    expect([...ram.subarray(WS_WAVE_BASE, WS_WAVE_BASE + WS_BANK_BYTES)]).toEqual([
+      ...wsWaveBank(shapes),
+    ]);
+  });
+
+  it("says which of the two machines will run it", async () => {
+    // These consoles differ in nothing a cartridge could otherwise record — same
+    // CPU, same chip, same ports — so the footer's minimum-system byte is the
+    // whole distinction, and a mono build stamped `1` is a cartridge the machine
+    // it was arranged for refuses. `@demake/dmg`'s CGB flag inverted.
+    const system = async (id: string): Promise<number> =>
+      (await buildAudioRom(trackFor(id))).bytes[
+        WS_ROM_SIZE - 64 * 1024 + WS_FOOTER_OFFSET + 1
+      ] as number;
+    expect(await system("ws")).toBe(0);
+    expect(await system("wsc")).toBe(1);
+  });
+
+  it("takes the frame, and keeps it", async () => {
+    // The clock this cartridge rests on, and the one a register diff cannot
+    // check: the idle loop reads the vertical-blank timer's *counter* rather
+    // than taking an interrupt, so a tally that read the wrong port, subtracted
+    // the wrong way round or never saw the timer move would still perform every
+    // write in order — at whatever rate the loop happened to run at.
+    const script = trackFor("wsc");
+    const runner = await AudioRomRunner.create(script);
+    const machine = runner.machine as unknown as { stepInstruction(): number; cpu: { ip: number } };
+    const at = (runner as unknown as { tickAddress: number }).tickAddress;
+    const spans: number[] = [];
+    let cycles = 0;
+    while (spans.length < 8) {
+      cycles += machine.stepInstruction();
+      if (machine.cpu.ip === at) {
+        spans.push(cycles);
+        cycles = 0;
+      }
+    }
+    const period = WS_CPU_HZ / (script.driver.rate.num / script.driver.rate.den);
+    // Everything after the boot span is a frame, to within one pass of a loop
+    // that does nothing but poll — which is what makes this cartridge's drift
+    // smaller than a game's on the same hardware without being a finer rate.
+    for (const span of spans.slice(2)) expect(Math.abs(span - period)).toBeLessThan(period / 20);
+  });
+
+  it("leaves the program inside the bank the reset jump points at", async () => {
+    const { bytes, family, suffix } = await buildAudioRom(trackFor("wsc"));
+    expect(family).toBe("wsc");
+    expect(suffix).toBe(".wsc");
+    expect(bytes.length).toBe(WS_ROM_SIZE);
+    // `packWsRom` puts `jmp $F000:$0000` at `$FFF0` of the last bank, so a build
+    // that ran past `$FFF0` would have its own code overwritten by the entry.
+    const bank = WS_ROM_SIZE - 64 * 1024;
+    expect(bytes[bank + WS_CODE_SIZE]).toBe(0xea);
   });
 });
 
