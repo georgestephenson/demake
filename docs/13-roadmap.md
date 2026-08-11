@@ -1719,10 +1719,12 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   unit is finer still: 128 KiB with a tick's individual steps paged through slot
   2 — **on all three Game Boys**, which is the same unit again on the hardest
   board in the set, **on the NES**, which is the same unit a third time and the
-  only console that had to duplicate a table to manage it, and **on the PC
-  Engine**, which is the same unit a fourth time on the cheapest mapper in the
-  set. Every one is traced tick for tick against the interpreter by
-  `rom.test.ts`.
+  only console that had to duplicate a table to manage it, **on the PC Engine**,
+  which is the same unit a fourth time on the cheapest mapper in the set, and
+  **on the WonderSwan Color**, which is the one family where the answer was not a
+  mapper at all — every segment is mapped from reset, so what a game outgrows is
+  a segment and the unit is a scene again. Every one is traced tick for tick
+  against the interpreter by `rom.test.ts`.
 
   **Fifteen of the sixteen consoles that build games now build this one**, and
   the one that does not is out of *RAM* rather than out of cartridge:
@@ -2215,14 +2217,18 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   Every console's cartridge wrapper declares the boards it came on and every
   backend takes the smallest that fits, in both directions: the NES gained
   NROM-128, the Mega Drive dropped its floor from half a megabyte to one megabit,
-  and a silent Super Nintendo cartridge is two banks rather than four. **On all
-  six that is now the whole story rather than half of it** — a Mega Drive grows
-  to four megabytes, a Super Nintendo opens a bank per scene and grows the same
-  way, and a Sega 8-bit, a Game Boy and an NES page a tick's steps and grow to
-  512 KiB, 8 MiB and 256 KiB. Nothing in the set is refused for its size any more
-  short of the largest board its hardware shipped on. What the sizing buys on its
-  own is the honest artifact — a game gets the board a game that size shipped on
-  rather than a constant somebody picked once.
+  and a silent Super Nintendo cartridge is two banks rather than four. **On every
+  family that grows at all, that is now the whole story rather than half of it** —
+  a Mega Drive grows to four megabytes, a Super Nintendo opens a bank per scene
+  and grows the same way, a Sega 8-bit, a Game Boy, an NES and a PC Engine page a
+  tick's steps and grow to 512 KiB, 8 MiB, 256 KiB and 1 MiB, and a WonderSwan
+  Color opens a segment per scene inside the one board its header can describe.
+  The rest were never a cartridge problem: the Neo Geo, the Neo Geo Pocket Color,
+  the Virtual Boy and both ARM handhelds hold `quest` on a flat image. Nothing in
+  the set is refused for its size any more short of the largest board its
+  hardware shipped on. What the sizing buys on its own is the honest artifact — a
+  game gets the board a game that size shipped on rather than a constant somebody
+  picked once.
 
 - **3D asset demake (new domain, exploratory)**: apply the same treatment to the
   32/64-bit 3D era — take a common modern 3D asset and emit PS1/N64/Saturn-
