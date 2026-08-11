@@ -29,7 +29,7 @@ import { describe, expect, it } from "vitest";
 import { GB_BANK_SIZE } from "@demake/core";
 
 import { buildGbRom } from "../src/codegen/gb.js";
-import { stepLabel } from "../src/codegen/emit.js";
+import { stepLabel } from "../src/codegen/backend.js";
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
 
