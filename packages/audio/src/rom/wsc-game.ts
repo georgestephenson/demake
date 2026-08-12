@@ -88,6 +88,22 @@ export interface WscGameAudioInput {
   effects: readonly GameEffect[];
   /** First RAM byte the driver may use; it needs {@link WSC_AUDIO_BYTES}. */
   state: number;
+  /**
+   * The segment `DS` and `ES` hold, where that is not the console's own memory.
+   *
+   * Absent on every build but one. A mono WonderSwan game too big for the
+   * console's sixteen kilobytes puts its whole heap — this driver's state
+   * included — in the cartridge's save RAM at segment `$1`, and points both data
+   * segment registers there (`demotic/src/codegen/layout.ts` §WS_SAVE_MEMORY).
+   *
+   * Everything the driver does with {@link WscGameAudioInput.state} is then
+   * right without knowing it, because an unprefixed operand still means the
+   * heap. The one thing that is not is the waveform copy: `rep movsb` writes
+   * `ES:DI`, and its destination is {@link WS_WAVE_BASE} — a page of the
+   * *console's* memory that the sound hardware reads, and the one address in
+   * this driver that is not the game's to choose.
+   */
+  heapSegment?: number;
 }
 
 /**
@@ -210,7 +226,7 @@ export function buildWscGameAudio(input: WscGameAudioInput): WscGameAudio {
 
   const emitCode = (asm: Asm30): void => {
     const start = asm.pc;
-    emitInit(asm, state, boot, bootControl, shadow);
+    emitInit(asm, state, boot, bootControl, shadow, input.heapSegment ?? 0);
     emitClock(asm, state, clock.ticksPerFrame);
     emitTick(asm, state, input);
     if (input.tracks.length > 0) {
@@ -432,6 +448,7 @@ function emitInit(
   boot: readonly { reg: number; value: number }[],
   bootControl: number,
   shadow: ShadowPlan,
+  heapSegment = 0,
 ): void {
   asm.label("AudioInit");
   // The waveforms first, because a channel enabled before its table is in place
@@ -442,7 +459,16 @@ function emitInit(
   asm.pushSeg("ds");
   asm.movi("ax", 0xf000);
   asm.movsr("ds", "ax");
+  // `ES` is the heap, and the waveform page is not in it on a game whose heap is
+  // in the cartridge (§WscGameAudioInput.heapSegment). Saved and restored rather
+  // than reloaded, so the driver never has to know what it was.
+  if (heapSegment !== 0) {
+    asm.pushSeg("es");
+    asm.movi("ax", 0);
+    asm.movsr("es", "ax");
+  }
   asm.rep().movsb();
+  if (heapSegment !== 0) asm.popSeg("es");
   asm.popSeg("ds");
 
   for (const write of boot) {

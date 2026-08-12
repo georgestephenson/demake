@@ -39,7 +39,15 @@
  */
 
 import { AUDIO_STOP, type SmsGameAudio } from "@demake/audio";
-import { label, SMS_HEADER_OFFSET, SMS_HEADER_SIZE, type Ref } from "@demake/core";
+import {
+  AsmError,
+  label,
+  SMS_BANK_SIZE,
+  SMS_ORIGIN,
+  SMS_SLOT2_BASE,
+  type AsmZ80,
+  type Ref,
+} from "@demake/core";
 
 import type { InstanceDef, RuleDef } from "../../program.js";
 import {
@@ -49,7 +57,7 @@ import {
   patternTile,
 } from "../../rom/graphics.js";
 import { isMutable } from "../analyze.js";
-import { emitTickSteps, type TickSteps } from "../backend.js";
+import { emitOneTickStep, emitTickSteps, tickStepNames, type TickSteps } from "../backend.js";
 import { packCellPairs } from "../pack.js";
 import { PROPS, TILE_CONTACT_MAX, W } from "../layout.js";
 import {
@@ -243,38 +251,309 @@ export interface SmsEmitOptions {
   /** Which track each scene plays, as an index into the driver's table. */
   sceneTracks?: readonly number[];
   /**
-   * Leave the sixteen bytes the cartridge header occupies free.
+   * Leave the sixteen bytes the cartridge header occupies free, block by block.
    *
    * The header is *inside* the image at `$7FF0`, not a wrapper around it, so a
-   * 32 KiB build simply stops short of it and needs nothing here. A 48 KiB one
+   * 32 KiB build simply stops short of it and needs nothing here; a 48 KiB one
    * runs straight through, and whatever landed there would be replaced by the
-   * stamp — so the data section is padded across the hole instead. Set by
-   * `sms.ts` on the second pass, once the first has shown the game does not fit
-   * below it; a build that fits is byte-for-byte the build it always was.
+   * stamp. Set by `sms.ts` on the second pass, once the first has shown the game
+   * does not fit below it; a build that fits is byte-for-byte the build it always
+   * was.
+   *
+   * What it carries is the *sizes* the first pass measured, which is what makes
+   * the placement tight rather than wholesale (§Placing the header hole).
    */
-  reserveHeader?: boolean;
+  hole?: HeaderHole;
+  /**
+   * Emit a scene's routines as separately placeable units, without placing them.
+   *
+   * The measuring pass of a banked build: the same instructions a banked one
+   * emits, laid end to end, so `sms.ts` can read each unit's length off and plan
+   * the banks from numbers rather than from an estimate. A step that is a routine
+   * has a return the inline version does not, so measuring the *flat* build's
+   * scenes instead would plan from the wrong sizes.
+   */
+  split?: boolean;
+  /**
+   * Where each unit goes, for a game that outgrew a flat cartridge.
+   *
+   * Absent for a game that fits, and then this emitter does exactly what it
+   * always did — one section, no bank writes, and a cartridge byte-identical to
+   * the one it built before paging existed.
+   */
+  banks?: SmsBankPlan;
 }
 
-/** Dispatch on the running scene to one of a set of labels. */
+/**
+ * Which paged bank each of a program's units goes in.
+ *
+ * ## Paging a Sega cartridge
+ *
+ * The mapper is in the cartridge and its three slots come up holding banks 0, 1
+ * and 2, so `$0000`–`$BFFF` is a flat 48 KiB and a program that fits it pages
+ * nothing (`sms-cart.ts` §{@link SMS_FLAT_ROM_SIZES}). Past that, slots 0 and 1
+ * stay where they are and **slot 2 is the window**: 16 KiB at `$8000`, pointed at
+ * whichever bank `$FFFF` names.
+ *
+ * That split decides everything else. The fixed 32 KiB holds what cannot move —
+ * the boot, the interrupt vectors, the main loop, the shared helpers, the audio
+ * driver *and its schedules* (an interrupt enters it, so it has to be mapped
+ * whatever the game was doing), the level tables, the instance defaults and every
+ * other table an always-mapped address reaches. What pages is the scene code and
+ * the tile art, and the units are smaller than a scene because the window is:
+ * sixteen kilobytes against a largest scene of twenty-six, so a unit is one of a
+ * tick's steps, or a scene's reset, camera or render.
+ *
+ * Three things follow and each is what makes it cheap:
+ *
+ *   - **Nothing has to save and restore the bank.** Only the fixed half enters a
+ *     paged routine and only a paged routine cares what the window holds, so a
+ *     caller writes the bank it wants and never puts one back. An interrupt
+ *     arriving mid-scene runs the audio tick out of the fixed half and never
+ *     looks at the window.
+ *   - **A paged routine calls and reads downwards.** A helper is at `$0000`–
+ *     `$7FFF` and so is every table, so a `call` or an absolute load out of a
+ *     paged unit is the same instruction it was — not one byte of the value
+ *     layer, the rule bodies or the tile walk changed.
+ *   - **The header hole is in the fixed half**, at `$7FF0`, which is where it
+ *     always was and where the data section already steps over it a block at a
+ *     time ({@link HeaderHole}).
+ */
+export interface SmsBankPlan {
+  /**
+   * The units in each paged bank, in the order they are emitted.
+   *
+   * Empty on the *measuring* pass, which is a plan with no placement: `bankOf`
+   * still names every unit so the bank writes are emitted and the fixed half
+   * comes out the length it really will be, but the units are laid end to end
+   * rather than sectioned. Measuring without them would understate the fixed half
+   * by five bytes a call — three hundred on the game that needs this — and plan
+   * bank zero's share from a number that was never going to be true.
+   */
+  banks: readonly (readonly string[])[];
+  /** Which bank each unit landed in, by unit name. */
+  bankOf: ReadonlyMap<string, number>;
+}
+
+/**
+ * Where the cartridge header sits, and how long each data block is.
+ *
+ * ## Placing the header hole
+ *
+ * The data section used to be padded past `$8000` in one step, which is correct
+ * and throws away everything between the end of the code and `$7FF0` — up to
+ * thirty-two kilobytes for a game whose code is short and whose tables are long.
+ * Placing it tightly means asking, in front of each block, whether *that* block
+ * would be laid across the hole, and moving only the ones that would. Blocks are
+ * addressed by label, so moving one costs the gap in front of it and nothing
+ * else.
+ *
+ * The catch is that a block's length is not known until it has been emitted, and
+ * by then it is too late. So the sizes come from the pass that has already
+ * happened: `sms.ts` assembles once with no hole to find out whether the game
+ * fits below `$7FF0` at all, and that pass emits exactly the same data in exactly
+ * the same order. {@link blocks} is what it measured, and the second pass reads
+ * the length of the block it is about to emit out of it. The two passes are
+ * checked against each other afterwards, because a size list that had drifted
+ * would place the hole somewhere plausible and wrong.
+ */
+export interface HeaderHole {
+  /** First byte the data may not occupy. */
+  from: number;
+  /** First byte after the hole. */
+  to: number;
+  /** Byte length of each data block, in emission order, from the pass with no hole. */
+  blocks: readonly number[];
+}
+
+/**
+ * The size recorded for a block that steps over the hole itself.
+ *
+ * Not a length: the whole point of such a block is that its length is different
+ * in the two passes, so a length would be the one number the cross-check has to
+ * ignore. Recording an impossible one instead means the check can stay an
+ * equality.
+ */
+const SELF_PLACED = -1;
+
+/**
+ * The data section, laid out around the header.
+ *
+ * One instance per pass. With no hole it is a measuring tape: every block is
+ * emitted where it falls and {@link sizes} records what it took. With one, it is
+ * also the placer — the size of the block about to be emitted is read out of the
+ * previous pass, and a block that would straddle the hole is moved past it whole.
+ */
+class DataSection {
+  /** What each block took, in emission order. */
+  readonly sizes: number[] = [];
+
+  constructor(
+    private readonly asm: AsmZ80,
+    private readonly hole: HeaderHole | undefined,
+  ) {}
+
+  /** Emit one block, stepping over the hole if this one would be laid across it. */
+  block(emit: () => void): void {
+    const size = this.hole?.blocks[this.sizes.length];
+    if (this.hole && size !== undefined) {
+      if (this.asm.pc < this.hole.to && this.asm.pc + size > this.hole.from) {
+        this.asm.padTo(this.hole.to);
+      }
+    }
+    const at = this.asm.pc;
+    emit();
+    this.sizes.push(this.asm.pc - at);
+  }
+
+  /**
+   * Emit a block that places itself.
+   *
+   * The audio driver's packed schedules are the only one: they are dozens of
+   * small label-addressed blocks rather than one, so the driver is handed the
+   * hole and steps over it at whichever of its own boundaries falls there. Taking
+   * it as a single block instead would move a whole track's schedule past the
+   * header to save sixteen bytes.
+   *
+   * Its size is recorded as {@link SELF_PLACED} rather than as a length, because
+   * the length is the one thing about it that legitimately differs between the
+   * two passes — the pass with the hole is longer by whatever gap it left. The
+   * entry is still recorded, so every later block keeps its index.
+   */
+  placed(emit: (hole: HeaderHole | undefined) => void): void {
+    emit(this.hole);
+    this.sizes.push(SELF_PLACED);
+  }
+}
+
+/**
+ * Dispatch on the running scene to one of a set of labels.
+ *
+ * A *tail* jump rather than a call, which is what makes this one of the two
+ * places that has to page: a scene's routines are what leaves the fixed half on a
+ * banked cartridge, so every transfer here is `ctx.jumpUnit` and the routine's own
+ * `ret` still lands back at whatever called the dispatch. On a flat build
+ * `jumpUnit` is a bare `jp` and the bytes are what they always were.
+ *
+ * The comparison chain reaches its targets by *falling through* the ones it does
+ * not take, so the bank write has to sit on the taken side of each test rather
+ * than in front of the chain — which is why the last entry is a jump of its own
+ * rather than a fall-through into the first.
+ */
 function emitSceneDispatch(ctx: SmsCtx, labels: readonly string[]): void {
   const { asm, layout } = ctx;
   if (labels.length === 1) {
-    asm.jp(labels[0] as string);
+    ctx.jumpUnit(labels[0] as string);
     return;
   }
   asm.lda(layout.scene);
+  const paged = labels.some((name) => ctx.banks.has(name));
   for (const [index, target] of labels.entries()) {
     if (index === labels.length - 1) {
-      asm.jp(target);
+      ctx.jumpUnit(target);
       break;
     }
     asm.aluN("cp", index);
-    ctx.far("z", target);
+    if (!paged) {
+      ctx.far("z", target);
+      continue;
+    }
+    // With paging there are two instructions to reach rather than one, so the
+    // condition is inverted over them: `jp nz` past the pair the taken branch
+    // would have run.
+    const over = ctx.unique("dispatch");
+    ctx.far("nz", over);
+    ctx.jumpUnit(target);
+    asm.label(over);
   }
 }
 
-/** Emit the whole program. */
-export function emitProgram(ctx: SmsCtx, options: SmsEmitOptions = {}): void {
+/** What a pass over the program measured, beyond the bytes themselves. */
+export interface EmittedProgram {
+  /**
+   * The address the code ends and the tables begin.
+   *
+   * The boundary between what is addressed by branches and what is addressed by
+   * label, so it is also the highest address the header hole can be placed above:
+   * a program whose *code* reaches `$7FF0` has nowhere to put the header that is
+   * not in the middle of something a branch points at, and `sms.ts` refuses it by
+   * name.
+   */
+  dataStart: number;
+  /** How long each data block came out, in emission order ({@link HeaderHole}). */
+  blocks: readonly number[];
+  /**
+   * How long each pageable unit came out, by name ({@link SmsBankPlan}).
+   *
+   * Empty unless the pass was asked to split the scenes, because a flat build has
+   * no units — its tick is one run of code.
+   */
+  units: ReadonlyMap<string, number>;
+  /**
+   * Bytes the fixed half took: everything that is not a unit.
+   *
+   * What a bank plan needs before it can put anything in bank zero's half of the
+   * cartridge, and the number a build is refused on when the things that cannot
+   * move do not fit the things that cannot move.
+   */
+  fixed: number;
+}
+
+/**
+ * The unit that carries the tile art, which is data rather than a routine.
+ *
+ * It is in the paged half because it is the one big thing the fixed half does not
+ * need: the boot uploads it to video RAM once and nothing reads it again, so
+ * paging it in for the length of one copy costs two instructions and buys back
+ * seven kilobytes of the thirty-two that cannot move.
+ */
+export const TILE_BANK_UNIT = "TileBank";
+
+/**
+ * The first bank slot 2 may be pointed at.
+ *
+ * Slots 0 and 1 are banks 0 and 1 and never move, so a paged bank is two or
+ * higher. Used as the placeholder on the measuring pass, where only the presence
+ * of a bank write matters and not its value.
+ */
+export const FIRST_PAGED_BANK = 2;
+
+/** Which scene a unit belongs to, from its own name. */
+function sceneOfUnit(name: string): number {
+  return Number(name.split("_")[1]);
+}
+
+/**
+ * Every routine a banked build places, in the order it emits them.
+ *
+ * A scene's four routines are too big for this console's window — the largest in
+ * the library is twenty-six kilobytes against sixteen — so the unit is smaller
+ * than a scene: each of its tick's steps, plus the reset, the camera and the
+ * render. The tile art comes last because it is the one unit that is data.
+ */
+function unitNames(
+  scenes: readonly SceneCtx[],
+  levelFor: ReadonlyMap<number, LevelData>,
+  options: SmsEmitOptions,
+): string[] {
+  const names: string[] = [];
+  for (const scene of scenes) {
+    names.push(...tickStepNames(scene, levelFor.get(scene.index)));
+    names.push(`SceneReset_${scene.index}`);
+    names.push(`SceneCamera_${scene.index}`);
+    names.push(`SceneRender_${scene.index}`);
+  }
+  if ((options.bank?.length ?? 0) > 0) names.push(TILE_BANK_UNIT);
+  return names;
+}
+
+/**
+ * Emit the whole program, and report what a second pass would need to know.
+ *
+ * The block lengths are what places the header hole tightly ({@link HeaderHole});
+ * a caller that is not going to make one can ignore them.
+ */
+export function emitProgram(ctx: SmsCtx, options: SmsEmitOptions = {}): EmittedProgram {
   const { asm, program } = ctx;
   const scenes = sceneContexts(ctx);
   const levels = collectLevels(program.scenes);
@@ -284,14 +563,78 @@ export function emitProgram(ctx: SmsCtx, options: SmsEmitOptions = {}): void {
     if (found) levelFor.set(scene.index, found);
   }
 
+  /** Emit one unit's body and record what it took. */
+  const units = new Map<string, number>();
+  const unit = (name: string, emit: () => void): void => {
+    const at = asm.length;
+    emit();
+    units.set(name, asm.length - at);
+  };
+  /** Emit whichever routine a unit's name refers to. */
+  const emitUnit = (name: string): void => {
+    if (name === TILE_BANK_UNIT) {
+      unit(name, () => {
+        asm.label("TileBank");
+        asm.bytes(options.bank ?? new Uint8Array(0));
+      });
+      return;
+    }
+    const scene = scenes[sceneOfUnit(name)] as SceneCtx;
+    const level = levelFor.get(scene.index);
+    if (name.startsWith("SceneReset_")) unit(name, () => emitSceneReset(ctx, scene));
+    else if (name.startsWith("SceneCamera_")) unit(name, () => emitSceneCamera(ctx, scene));
+    else if (name.startsWith("SceneRender_")) {
+      unit(name, () => emitSceneRender(ctx, scene, level, options));
+    } else unit(name, () => emitTickStepBody(ctx, scene, level, name));
+  };
+
+  // The paged banks, before anything else and in the plan's own order — for the
+  // reason the Super Nintendo's emitter gives, which is that helpers are pulled
+  // by whatever code calls them and `ctx.finish()` has to be the last thing that
+  // runs. `section` moves no bytes, so undoing the order is a copy per bank in
+  // `sms.ts` and nothing more.
+  const plan = options.banks;
+  const split = options.split === true || plan !== undefined;
+  // On the measuring pass there is no plan yet, so the context is told which
+  // routines *will* be paged rather than where: `ctx.enter` emits a bank write
+  // for anything it names, and the number it writes does not change the length.
+  // Without this the fixed half measures five bytes a call short of what it will
+  // be, and bank zero's share is planned from a number that was never true.
+  if (split && !plan) {
+    for (const name of unitNames(scenes, levelFor, options)) ctx.banks.set(name, FIRST_PAGED_BANK);
+  }
+  if (plan && plan.banks.length > 0) {
+    for (const bank of plan.banks) {
+      asm.section(SMS_SLOT2_BASE);
+      const start = asm.length;
+      for (const name of bank) emitUnit(name);
+      const used = asm.length - start;
+      if (used > SMS_BANK_SIZE) {
+        throw new AsmError(`a paged bank holds ${used} bytes of a possible ${SMS_BANK_SIZE}`);
+      }
+      asm.ds(SMS_BANK_SIZE - used);
+    }
+    asm.section(SMS_ORIGIN);
+  } else if (split) {
+    // The measuring pass: the same routines, the same instructions, in the same
+    // place — laid end to end rather than padded per bank, so their sizes can be
+    // read off. The section matters as much as the order: the fixed half has to
+    // start at `$0000` whether or not units came before it, because the vectors
+    // are at fixed addresses and `padTo` is how they get there.
+    asm.section(SMS_SLOT2_BASE);
+    for (const name of unitNames(scenes, levelFor, options)) emitUnit(name);
+    asm.section(SMS_ORIGIN);
+  }
+
   emitVectors(ctx, options);
   emitReset(ctx, options);
   emitMainLoop(ctx, options.audio !== undefined);
   emitInput(ctx);
-  emitTickDispatch(ctx, scenes);
+  emitTickDispatch(ctx, scenes, levelFor, split);
   emitSceneChange(ctx, scenes);
 
   for (const scene of scenes) {
+    if (split) continue;
     emitSceneTick(ctx, scene, levelFor.get(scene.index));
     emitSceneReset(ctx, scene);
     emitSceneCamera(ctx, scene);
@@ -304,11 +647,13 @@ export function emitProgram(ctx: SmsCtx, options: SmsEmitOptions = {}): void {
   ctx.finish();
 
   // --- data ------------------------------------------------------------------
-  // The header hole, skipped here rather than anywhere else: this is the boundary
-  // between the code, which is addressed by every branch in the program, and the
-  // tables, which are addressed by label — so a gap costs nothing but the sixteen
-  // bytes, and no instruction moves relative to another.
-  if (options.reserveHeader) asm.padTo(SMS_HEADER_OFFSET + SMS_HEADER_SIZE);
+  // Everything from here on is addressed by label rather than by a branch, which
+  // is what lets the cartridge header be stepped over one block at a time: a
+  // block that moves takes its label with it and nothing else notices. The code
+  // above cannot do that, so a game whose *code* reaches `$7FF0` is refused by
+  // name (`sms.ts` §the one shape the two-size scheme cannot take).
+  const dataStart = asm.pc;
+  const data = new DataSection(asm, options.hole);
 
   for (const level of levels) {
     const boundTile = (index: number): number => {
@@ -319,46 +664,82 @@ export function emitProgram(ctx: SmsCtx, options: SmsEmitOptions = {}): void {
       // A legend entry with no art draws a built-in pattern.
       return bound?.tile ?? patternTile(index, level.file.tiles[index]?.solid ?? false);
     };
-    emitLevelData(asm, level, (index) => boundTile(index) & 0xff);
-    emitTileAt(ctx, level);
+    data.block(() => {
+      emitLevelData(asm, level, (index) => boundTile(index) & 0xff);
+    });
+    // A routine rather than a table, and the only one down here — so it is a
+    // block for the same reason the tables are, and for one more: its own
+    // branches are relative.
+    data.block(() => {
+      emitTileAt(ctx, level);
+    });
     for (const rule of program.rules) {
       if (rule.event.kind === "hits" && rule.event.tiles.length > 0) {
-        emitRuleTileTable(asm, rule, level);
+        data.block(() => {
+          emitRuleTileTable(asm, rule, level);
+        });
       }
     }
   }
-  emitInstanceDefaults(asm, program, PROPS, ctx.layout.entitySizes);
+  data.block(() => {
+    emitInstanceDefaults(asm, program, PROPS, ctx.layout.entitySizes);
+  });
 
   for (const scene of scenes) {
     const art = options.backdrops?.get(scene.def.name);
     if (art) {
-      asm.label(backdropLabel(scene));
-      asm.bytes(packCells(art.map));
+      data.block(() => {
+        asm.label(backdropLabel(scene));
+        asm.bytes(packCells(art.map));
+      });
     }
     const palette = options.scenePalettes?.get(scene.def.name);
     if (palette) {
-      asm.label(scenePaletteLabel(scene));
-      asm.bytes(palette);
+      data.block(() => {
+        asm.label(scenePaletteLabel(scene));
+        asm.bytes(palette);
+      });
     }
   }
   if (options.audio) {
     if (program.tracks.length > 0) {
-      asm.label("SceneTracks");
-      // One byte per scene: the request value that starts its track, or the one
-      // that stops the music. A table rather than a dispatch because a scene
-      // change already costs a redraw, and this is the cheapest thing in it.
-      for (const scene of scenes) {
-        const track = options.sceneTracks?.[scene.index] ?? -1;
-        asm.db(track < 0 ? AUDIO_STOP : track + 1);
-      }
+      data.block(() => {
+        asm.label("SceneTracks");
+        // One byte per scene: the request value that starts its track, or the one
+        // that stops the music. A table rather than a dispatch because a scene
+        // change already costs a redraw, and this is the cheapest thing in it.
+        for (const scene of scenes) {
+          const track = options.sceneTracks?.[scene.index] ?? -1;
+          asm.db(track < 0 ? AUDIO_STOP : track + 1);
+        }
+      });
     }
-    options.audio.emitData(asm);
+    const audio = options.audio;
+    data.placed((hole) => {
+      audio.emitData(asm, hole);
+    });
   }
 
-  asm.label("TileBank");
-  asm.bytes(options.bank ?? new Uint8Array(0));
-  asm.label("Palette");
-  asm.bytes(options.palette ?? defaultPalette(ctx.gameGear));
+  // The tile art, unless a bank plan took it: it is the one big thing the fixed
+  // half does not need, because the boot uploads it once and nothing reads it
+  // again (§{@link TILE_BANK_UNIT}).
+  if (!units.has(TILE_BANK_UNIT)) {
+    data.block(() => {
+      asm.label("TileBank");
+      asm.bytes(options.bank ?? new Uint8Array(0));
+    });
+  }
+  data.block(() => {
+    asm.label("Palette");
+    asm.bytes(options.palette ?? defaultPalette(ctx.gameGear));
+  });
+  // What the fixed half took is everything emitted that is not a unit — which on
+  // a planned pass is also everything after the padded banks, and on a measuring
+  // pass is the whole image less the units laid end to end in front of it.
+  let unitBytes = 0;
+  for (const bytes of units.values()) unitBytes += bytes;
+  const padding = plan && plan.banks.length > 0 ? plan.banks.length * SMS_BANK_SIZE - unitBytes : 0;
+  return { dataStart, blocks: data.sizes, units, fixed: asm.length - unitBytes - padding };
 }
 
 /**
@@ -586,6 +967,10 @@ function emitTileUpload(ctx: SmsCtx, bytes: number): void {
   const { asm } = ctx;
   if (bytes === 0) return;
   const loop = ctx.unique("bankLoop");
+  // Page it in first, where the plan put it in the window rather than in the
+  // fixed half. Nothing puts the window back afterwards, because the first thing
+  // that enters a scene's routine writes the bank it wants (`ctx.ts` §enter).
+  ctx.enter(TILE_BANK_UNIT);
   emitVramAddress(ctx, VRAM.TILES);
   asm.ld16("hl", label("TileBank"));
   asm.ld16("bc", bytes);
@@ -790,7 +1175,12 @@ function emitInput(ctx: SmsCtx): void {
   asm.ret();
 }
 
-function emitTickDispatch(ctx: SmsCtx, scenes: readonly SceneCtx[]): void {
+function emitTickDispatch(
+  ctx: SmsCtx,
+  scenes: readonly SceneCtx[],
+  levelFor: ReadonlyMap<number, LevelData>,
+  split: boolean,
+): void {
   const { asm, layout } = ctx;
   asm.label("Tick");
   // Nothing has asked for a sound yet this tick. Cleared here rather than after
@@ -813,6 +1203,13 @@ function emitTickDispatch(ctx: SmsCtx, scenes: readonly SceneCtx[]): void {
   asm.inc("a");
   asm.sta(layout.ready);
   asm.ret();
+
+  // The sequences the dispatch above jumps to, when a tick's steps are routines
+  // rather than one run of code. They belong in the fixed half whatever the plan
+  // says, because they are what *reaches* the paged half.
+  if (split) {
+    for (const scene of scenes) emitSceneTickCalls(ctx, scene, levelFor.get(scene.index));
+  }
 }
 
 function emitSceneChange(ctx: SmsCtx, scenes: readonly SceneCtx[]): void {
@@ -903,10 +1300,67 @@ function tickSteps(ctx: SmsCtx): TickSteps {
   };
 }
 
+/** Where one of a scene's tick steps begins, when the steps are routines. */
+
+/**
+ * The steps a scene's tick runs, in order — asked for rather than emitted.
+ *
+ * `emitTickSteps` is the only thing that knows the sequence, and a banked build
+ * needs the *names* before it can emit the calls that run them. So this runs the
+ * sequence over a set of steps that emit nothing and record instead, which is
+ * how the caller learns the list without a second copy of doc 14's order.
+ */
+
+/**
+ * A scene's tick, inline — which is what a flat cartridge gets.
+ *
+ * One label and one straight run of code, exactly as it always was. A banked
+ * build cannot do this because sixteen kilobytes of window will not hold a
+ * scene, and takes {@link emitSceneTickBodies} and {@link emitSceneTickCalls}
+ * instead.
+ */
 function emitSceneTick(ctx: SmsCtx, scene: SceneCtx, level: LevelData | undefined): void {
   const { asm } = ctx;
   asm.label(`SceneTick_${scene.index}`);
   emitTickSteps(tickSteps(ctx), scene, level);
+  asm.jp("TickDone");
+}
+
+/**
+ * One step of a tick, as a routine of its own — which is what a banked build
+ * places.
+ *
+ * A step boundary is the only place inside a tick where nothing is live, because
+ * the steps hand work to each other through the entity records and the contact
+ * bitfield and never through a register (`backend.ts` §{@link TickSteps.boundary}).
+ * So a step can be lifted out and called, and this is how one is lifted.
+ *
+ * It runs the *whole* sequence and emits only the step it was asked for, rather
+ * than calling that step's emitter directly. That is deliberate: which of doc
+ * 14's steps ride together — the two contact-set steps go with the collisions,
+ * because the history they keep is only consistent either side of the pair — is
+ * `emitTickSteps`'s to decide, and a switch here that dispatched by name would be
+ * a second copy of that decision waiting to disagree with it.
+ */
+function emitTickStepBody(
+  ctx: SmsCtx,
+  scene: SceneCtx,
+  level: LevelData | undefined,
+  wanted: string,
+): void {
+  const { asm } = ctx;
+  const emitted = emitOneTickStep(tickSteps(ctx), scene, level, wanted, (name: string) =>
+    asm.label(name),
+  );
+  if (!emitted) throw new AsmError(`'${wanted}' is not a step this scene runs`);
+  asm.ret();
+}
+
+/** The sequence that runs them, which stays in the fixed half. */
+function emitSceneTickCalls(ctx: SmsCtx, scene: SceneCtx, level: LevelData | undefined): void {
+  const { asm } = ctx;
+  asm.label(`SceneTick_${scene.index}`);
+  for (const step of tickStepNames(scene, level)) ctx.callUnit(step);
   asm.jp("TickDone");
 }
 

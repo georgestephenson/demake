@@ -188,7 +188,15 @@ export class Ppu {
 
   constructor(
     private readonly chr: Uint8Array,
-    private readonly mirroring: Mirroring,
+    /**
+     * How the cartridge wires the four nametables onto two.
+     *
+     * Settable rather than fixed, because a board with a mapper on it decides
+     * this at run time: MMC1 keeps it in the low two bits of its control
+     * register. An NROM cartridge sets it once, from the header, and never
+     * again — which is what it was before this could move.
+     */
+    public mirroring: Mirroring,
   ) {
     this.framebuffer.fill(0xff);
   }

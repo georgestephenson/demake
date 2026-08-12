@@ -294,7 +294,7 @@ function asLabelRef(ref: string | LabelRef): LabelRef {
 
 interface Fixup {
   at: number;
-  kind: "abs16" | "rel8" | "rel16";
+  kind: "abs16" | "rel8" | "rel16" | "seg16";
   ref: LabelRef;
   /** Address of the instruction after the operand — for relative branches. */
   next: number;
@@ -311,24 +311,55 @@ interface Fixup {
 export class Asm30 {
   private code: number[] = [];
   private readonly labels = new Map<string, number>();
+  /** Which segment each label was defined in; absent means {@link origin}'s. */
+  private readonly segments = new Map<string, number>();
   private readonly fixups: Fixup[] = [];
+  /** The segment labels are being defined in, and where its bytes began. */
+  private segment: number | undefined = undefined;
+  private segmentAt = 0;
 
   constructor(readonly origin = 0) {}
+
+  /**
+   * Start emitting into a segment of its own.
+   *
+   * Moves no bytes: it says what the offsets *mean*, so a label defined after it
+   * is a 16-bit offset from this segment's own first byte and carries the segment
+   * for {@link callFarLabel} to find. That is the same thing `Asm65816.section`
+   * does for a bank, on a machine where the second half of an address is a
+   * register rather than the top eight bits.
+   *
+   * A program that never calls this is one flat segment and every label means
+   * what it always did, which is what keeps an unbanked cartridge byte-identical.
+   */
+  section(segment: number): this {
+    this.segment = segment;
+    this.segmentAt = this.code.length;
+    return this;
+  }
+
+  /** The segment a label was defined in, for a caller that has to name it. */
+  segmentOf(name: string): number | undefined {
+    return this.segments.get(name);
+  }
 
   /** Bytes emitted so far. */
   get length(): number {
     return this.code.length;
   }
 
-  /** The offset the next byte will occupy. */
+  /** The offset the next byte will occupy, within whichever segment that is. */
   get pc(): number {
-    return this.origin + this.code.length;
+    return this.segment === undefined
+      ? this.origin + this.code.length
+      : this.code.length - this.segmentAt;
   }
 
   /** Define a label at the current offset. */
   label(name: string): this {
     if (this.labels.has(name)) throw new AsmError(`duplicate label '${name}'`);
     this.labels.set(name, this.pc);
+    if (this.segment !== undefined) this.segments.set(name, this.segment);
     return this;
   }
 
@@ -1008,8 +1039,73 @@ export class Asm30 {
     return this;
   }
 
+  /**
+   * `call seg:off` — the call that crosses a segment, and {@link retf} returns.
+   *
+   * A program bigger than the 64 KiB a segment addresses has its scenes in
+   * segments of their own, and this is how one is reached: the offset and the
+   * segment are pushed, so the routine's own `retf` lands back where it was
+   * called from. Five bytes against a near call's three, and the difference is
+   * the segment word — the same bargain a 65816 makes between `jsr` and `jsl`.
+   */
+  callFar(segment: number, offset: Ref): this {
+    this.db(0x9a);
+    this.imm16(offset);
+    this.imm16(segment);
+    return this;
+  }
+
+  /**
+   * The same, naming the routine rather than where it is.
+   *
+   * A far call needs both halves of an address and only one of them is the
+   * offset a label already is, so the segment is looked up from where the label
+   * was *defined* ({@link section}) — which is the only place that knows, and
+   * which is why this cannot be spelled `callFar(?, target)` at the call site.
+   * A label in no section at all is in this buffer's own segment, and the caller
+   * says which that is.
+   */
+  callFarLabel(target: string, own: number): this {
+    this.db(0x9a);
+    this.imm16(label(target));
+    this.fixups.push({
+      at: this.code.length,
+      kind: "seg16",
+      ref: { label: target, addend: 0 },
+      next: own,
+    });
+    this.dw(0);
+    return this;
+  }
+
+  /** `jmp` to a label that may be in another segment, resolved the same way. */
+  jmpFarLabel(target: string, own: number): this {
+    this.db(0xea);
+    this.imm16(label(target));
+    this.fixups.push({
+      at: this.code.length,
+      kind: "seg16",
+      ref: { label: target, addend: 0 },
+      next: own,
+    });
+    this.dw(0);
+    return this;
+  }
+
   ret(): this {
     return this.db(0xc3);
+  }
+
+  /**
+   * `retf` — the return a routine reached by {@link callFar} ends with.
+   *
+   * Which of `ret` and `retf` a routine takes has to match how *every* caller
+   * reaches it, because the two pop different amounts of stack — so a backend
+   * converts the whole program or none of it, exactly as the Super Nintendo's
+   * does between `rts` and `rtl` (doc 13 §Banked cartridges).
+   */
+  retf(): this {
+    return this.db(0xcb);
   }
 
   /** `iret` — the return an interrupt handler takes, flags included. */
@@ -1150,6 +1246,14 @@ export class Asm30 {
       if (base === undefined) throw new AsmError(`undefined label '${fixup.ref.label}'`);
       const value = base + fixup.ref.addend;
       switch (fixup.kind) {
+        case "seg16": {
+          // The *segment* half of a far address: where the label was defined, or
+          // this buffer's own when the label is in no section (§section).
+          const segment = this.segments.get(fixup.ref.label) ?? fixup.next;
+          this.code[fixup.at] = segment & 0xff;
+          this.code[fixup.at + 1] = (segment >> 8) & 0xff;
+          break;
+        }
         case "abs16":
           this.code[fixup.at] = value & 0xff;
           this.code[fixup.at + 1] = (value >> 8) & 0xff;

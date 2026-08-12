@@ -14,9 +14,10 @@
  * bass plays a corner of its own title screen.
  */
 
-import { audioBattery, audioSweep, target } from "./_audio-battery.js";
+import { audioBattery, audioSweep, savedHeapAudio, target } from "./_audio-battery.js";
 
 const ws = target("ws");
 
 audioBattery(ws);
+savedHeapAudio(ws);
 audioSweep(ws);

@@ -59,6 +59,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  bindingFor,
   buildGameAudio,
   mdChannelTag,
   buildGbaGameAudio,
@@ -77,6 +78,10 @@ import {
   nesChannelOf,
   pceChannelTag,
   wscChannelTag,
+  wsWaveBank,
+  wsWaveforms,
+  WS_BANK_BYTES,
+  WS_WAVE_BASE,
   type NeogeoGameAudio,
   psgChannelTag,
   psgShadowSlot,
@@ -100,7 +105,7 @@ import {
   StreamSink,
   type SampleSink,
 } from "@demake/chip";
-import { megaduckRegister } from "@demake/core";
+import { megaduckRegister, wsSaveCode, WS_SAVE_SEGMENT } from "@demake/core";
 import { Gameboy } from "@demake/dmg";
 import { Gba, ROM_BASE } from "@demake/gba";
 import { Md } from "@demake/md";
@@ -1520,6 +1525,154 @@ export function audioBattery(target: Target): void {
 }
 
 /**
+ * The proof for a cartridge whose *schedules are not in the mapped bank*.
+ *
+ * One console needs it and it is the Game Boy, because it is the only one whose
+ * fixed half is too small to keep a game's packed music in: a banked build makes
+ * the schedules a paged unit, and the driver is entered by an **interrupt**, so a
+ * tick can arrive with any bank at all in the window. The handler therefore pages
+ * the audio's own bank, ticks, and puts back whatever it interrupted — read out
+ * of a shadow, because MBC5's bank register cannot be read (`ctx.ts`
+ * §bankShadow).
+ *
+ * What this case owns is the **stream**: that a driver reading its data through a
+ * window still performs the schedule the demaker produced, tick for tick. The
+ * failure it is pointed at is a schedule that landed at the wrong offset inside
+ * the right bank — the game plays on, and the music is wrong. The other half of
+ * the paging, that the handler puts the interrupted bank *back*, belongs to
+ * `rom.test.ts`'s quest case rather than here, and the reason is worth knowing:
+ * a driver that never restores leaves its own bank mapped for ever, which is
+ * exactly the state its next tick wants, so it keeps playing perfectly while the
+ * game around it returns into another bank's instructions and hangs. A register
+ * diff cannot see a hung game; a trace can, and that one is handed this game's
+ * audio so that there is an interrupt to arrive at all.
+ *
+ * The game is `quest`, which is the only fixture that pages at all, and it is
+ * driven into its first level because its title screen has no track: `a` is
+ * pressed and held, which enters the level *and* leaves no press edge behind it,
+ * so no effect fires and what the chip receives afterwards is the track alone.
+ */
+export function bankedAudio(target: Target): void {
+  describe(`a banked cartridge's music, on ${target.name} hardware`, async () => {
+    it(
+      "performs a schedule that is not in the mapped bank, tick for tick",
+      async () => {
+        const { built, bound } = await build(target, gameSource("quest"), "quest");
+        expect(built.bytes.length).toBeGreaterThan(0x8000);
+        const script = bound.driver?.performed.tracks[0];
+        expect(script).toBeDefined();
+        const address = target.tickAddress(built, bound);
+
+        // Long enough to cross the title screen, the press, the scene change and
+        // the redraw the level's first frame costs, and then some.
+        const groups = capture(target, built.bytes, address, 900, 60, endOf(target, built, bound));
+        const expected = (script as ChipScript).ticks.map((tick) =>
+          observed(target, tick.writes as Write[]),
+        );
+        // The driver takes the request on whichever tick follows the scene
+        // change, so where the track starts is a fact about the game rather than
+        // about the schedule. Find it, then require everything after it.
+        const first = expected[0] as Write[];
+        const start = groups.findIndex(
+          (writes, at) => at > 60 && show(writes) === show(first) && writes.length > 0,
+        );
+        expect(start).toBeGreaterThan(60);
+        const ticks = Math.min(300, groups.length - start, expected.length);
+        expect(ticks).toBeGreaterThan(100);
+        expect(firstDivergence(expected.slice(0, ticks), groups.slice(start, start + ticks))).toBe(
+          null,
+        );
+      },
+      BUILDS_TIMEOUT,
+    );
+  });
+}
+
+/**
+ * A game whose heap is in the cartridge still plays what the demakers produced.
+ *
+ * The mono WonderSwan's case, and the counterpart of {@link bankedAudio} for a
+ * console whose wall was work RAM rather than cartridge. `quest` does not fit
+ * that machine's two kilobytes, so its whole heap — the audio driver's state
+ * included — is in the cartridge's **save RAM** at segment `$1`, and `DS` and
+ * `ES` point there for the length of the program (`codegen/layout.ts`
+ * §WS_SAVE_MEMORY).
+ *
+ * What this case owns is the **one address in the driver that is not the game's
+ * to choose**. Everything the driver does with its own state is right without
+ * knowing where that state is, because an unprefixed operand still means the
+ * heap; the exception is the waveform copy, whose destination is a page of the
+ * *console's* memory that the sound hardware reads. `rep movsb` writes `ES:DI`
+ * and no prefix reaches that, so the driver has to put `ES` back on the console
+ * for the length of the copy (`audio` §WscGameAudioInput.heapSegment).
+ *
+ * Without it every channel plays the sixty-four bytes at `$0300` of a memory
+ * nothing wrote — which is a cartridge that boots, traces perfectly, performs
+ * every register write in the schedule in the right order at the right tick, and
+ * is *silent*. No trace and no register diff can see that, so what this asserts
+ * is the waveform page itself, beside the register stream that carries it.
+ */
+export function savedHeapAudio(target: Target): void {
+  describe(`a cartridge whose heap is in its save RAM, on ${target.name} hardware`, async () => {
+    it(
+      "puts the waveforms in the console's memory and performs the schedule",
+      async () => {
+        const { built, bound } = await build(target, gameSource("quest"), "quest");
+        // The upgrade really happened: a build that still fitted the console's
+        // own memory would prove nothing below.
+        expect(built.layout.memory.heapSegment).toBe(WS_SAVE_SEGMENT);
+        // And the cartridge says so, in the one byte a real WonderSwan reads to
+        // decide whether there is a chip at segment $1 at all.
+        expect(built.bytes[built.bytes.length - 10 + 5]).toBe(
+          wsSaveCode(built.layout.used) as number,
+        );
+
+        const address = target.tickAddress(built, bound);
+        const script = bound.driver?.performed.tracks[0];
+        expect(script).toBeDefined();
+        // `a` at tick 60 and held: the title screen has no track, so the level's
+        // is the first thing the chip is told anything about. At or after that
+        // tick rather than strictly after it, because this driver runs at the
+        // frame rate — one driver tick per game tick — so the request the press
+        // causes is performed on the same tick number, where a Game Boy's 120 Hz
+        // driver has already taken one by then.
+        const PRESS = 60;
+        const groups = capture(
+          target,
+          built.bytes,
+          address,
+          900,
+          PRESS,
+          endOf(target, built, bound),
+        );
+        const expected = (script as ChipScript).ticks.map((tick) =>
+          observed(target, tick.writes as Write[]),
+        );
+        const first = expected[0] as Write[];
+        const start = groups.findIndex(
+          (writes, at) => at >= PRESS && show(writes) === show(first) && writes.length > 0,
+        );
+        expect(start).toBeGreaterThanOrEqual(PRESS);
+        const ticks = Math.min(300, groups.length - start, expected.length);
+        expect(ticks).toBeGreaterThan(100);
+        expect(firstDivergence(expected.slice(0, ticks), groups.slice(start, start + ticks))).toBe(
+          null,
+        );
+
+        // The waveforms themselves, in the console's own memory rather than in
+        // the cartridge's. Compared against the bank the binding produced, which
+        // is what the schedule above was written against.
+        const machine = new Wsc(built.bytes, "ws");
+        for (let frame = 0; frame < 8; frame += 1) machine.runFrame();
+        const page = machine.readMemory(WS_WAVE_BASE, WS_BANK_BYTES);
+        expect([...page]).toEqual([...wsWaveBank(wsWaveforms(bindingFor("ws").spec))]);
+      },
+      BUILDS_TIMEOUT,
+    );
+  });
+}
+
+/**
  * The size sweep: every example game, built with its art and its audio.
  *
  * The counterpart of the battery above and the reason this file is minutes
@@ -1528,11 +1681,18 @@ export function audioBattery(target: Target): void {
 export function audioSweep(target: Target): void {
   describe(`the example library, on ${target.name} hardware`, async () => {
     /**
-     * `quest` is not swept here, and the reason is the cartridge rather than the
-     * audio: three levels, a boss and a secret room do not fit a mapper-less 32 KiB
-     * on any 8-bit console in the set (doc 13 §Banked cartridges). The one machine
-     * with the room is the Mega Drive, where `rom.test.ts` runs it — and a game
-     * that cannot be built cannot have its register stream compared.
+     * `quest` is not swept here, and the reason is the *budget* rather than the
+     * cartridge.
+     *
+     * It used to be the cartridge: three levels, a boss and a secret room do not
+     * fit a mapper-less 32 KiB on any 8-bit console in the set, and a game that
+     * cannot be built cannot have its register stream compared. Every console with
+     * a backend builds it now, on a banked board where one does not exist (doc 13
+     * §Banked cartridges) — but the sweep's whole subject is *headroom*, and a
+     * game that takes a bigger board when it grows has none to measure. What
+     * `quest`'s cartridge does have to say is said where it can be: `bankedAudio`
+     * above diffs its register stream on the one console that pages its schedules,
+     * and `rom.test.ts` traces it on all four that page anything.
      */
     const cases = EXAMPLES.filter((name) => name !== "quest");
 
@@ -1559,15 +1719,47 @@ export function audioSweep(target: Target): void {
      * with it.
      *
      * **Measured against the largest board the console has**, not the one the
-     * cartridge shipped on (doc 14 §Elastic cartridges) — so on the Sega 8-bits
-     * this is headroom against 48 KiB even though every fixture ships on 32, and
-     * the number it reports is larger than it used to be for that reason alone.
-     * What it still catches is the only thing it ever could: a game that has
-     * stopped fitting the console. The cliff *within* a console — crossing `$7FF0`
-     * and paying for the 48 KiB board — is a bigger file rather than a failure,
-     * and is visible in `stats.cartridge`.
+     * cartridge shipped on (doc 14 §Elastic cartridges) — which is what stopped
+     * this from being the size assertion that matters. Every console pages now, so
+     * the largest board is megabytes and every fixture clears a kilobyte by three
+     * or four orders of magnitude: a Game Boy build reports eight million bytes
+     * free. It is kept because it costs nothing and still catches the one thing it
+     * ever could — a game that has stopped fitting the console at all — but
+     * {@link BOARD} below is where a size regression is actually caught now.
      */
     const HEADROOM: Readonly<Record<string, number>> = {};
+
+    /**
+     * The board each swept fixture must still ship on.
+     *
+     * This is the size assertion, and it exists because paging took the teeth out
+     * of the one above. A fixture that grows past its console's flat board no
+     * longer *fails* — it takes a mapper and pages, which is the whole point of
+     * the banking work — so the thing to notice is that it happened at all: a
+     * cartridge four times the size, built through two extra assembly passes, for
+     * a game the library says should fit. `stats.cartridge` is the artifact's own
+     * length, so this is exact rather than a threshold.
+     *
+     * Only the consoles where a fixture is near an edge are listed, on `SWEEP`'s
+     * own terms. A Mega Drive game is twenty-odd kilobytes of a 128 KiB floor and
+     * a Neo Geo's is tens of a megabyte P region — there is no boundary near
+     * enough for a code-generator change to cross, so a number there would be a
+     * number to maintain and nothing else.
+     */
+    const BOARD: Readonly<Record<string, number>> = {
+      // 32 KiB, the mapper-less cartridge: a fixture that pages here takes MBC5.
+      gb: 0x8000,
+      gbc: 0x8000,
+      megaduck: 0x8000,
+      // The same, on the flat Sega board before slot 2 has to be paged.
+      sms: 0x8000,
+      gg: 0x8000,
+      // The whole `.nes` file rather than the program: a sixteen-byte header, an
+      // NROM-256's 32 KiB of program and 8 KiB of characters. The platformer is
+      // smaller still — it is the one fixture that fits an NROM-128 — and this is
+      // the cap the largest of the three must not cross.
+      nes: 40976,
+    };
 
     /**
      * What one of these builds is allowed to take.
@@ -1649,12 +1841,16 @@ export function audioSweep(target: Target): void {
      * `assemble` (`backend.ts` §BoundAudioShape). Five more builds a piece bought
      * neither, at ten minutes of `pnpm test`.
      *
-     * A Mega Drive and a Super Nintendo take the shooter alone, for opposite
-     * reasons: a Mega Drive game is twenty-odd kilobytes against four megabytes of
-     * boards and there is no overflow to catch at all, and a Super Nintendo picture is
-     * thirty seconds of tournament against five. Both build the shooter because it
-     * is the tightest fixture everywhere else — two demade backdrops, nine aliens,
-     * a theme and four effects.
+     * A Mega Drive and a Super Nintendo take the shooter alone, and they now
+     * share the Mega Drive's reason as well as keeping the Super Nintendo's own.
+     * Neither is a budget any more: a Mega Drive game is twenty-odd kilobytes
+     * against four megabytes of boards, and a Super Nintendo game whose code
+     * outgrows a bank takes another bank rather than overflowing (doc 13 §Banked
+     * cartridges), so `free` there is measured against four megabytes too. What
+     * still keeps the Super Nintendo down to one fixture is build cost — a
+     * picture there is thirty seconds of tournament against five. Both build the
+     * shooter because it is the tightest fixture everywhere else — two demade
+     * backdrops, nine aliens, a theme and four effects.
      *
      * Re-measure before widening or narrowing this: the numbers above move with
      * every code-generator change, and the day a console's tightest fixture
@@ -1734,6 +1930,11 @@ export function audioSweep(target: Target): void {
           // Headroom, deliberately asserted: a fixture built to the last hundred
           // bytes turns the next code-generator change into a mystery.
           expect(built.stats.free).toBeGreaterThan(HEADROOM[target.id] ?? 1024);
+          // And the board it shipped on, which is the sharper half now that a
+          // fixture which outgrows one takes a bigger one rather than failing
+          // (§BOARD).
+          const board = BOARD[target.id];
+          if (board !== undefined) expect(built.stats.cartridge).toBeLessThanOrEqual(board);
           // And nothing was dropped to get there. A game that outgrows the biggest
           // board its console has loses its music rather than failing to build
           // (doc 14 §When it does not fit, the music goes first), which is the

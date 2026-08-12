@@ -206,13 +206,20 @@ describe("the Sega cartridge header", () => {
     expect(rom[SMS_HEADER_OFFSET + 14]).toBe(0x12);
   });
 
-  it("takes either flat size, and takes the size nibble from the image", () => {
-    // Thirty-two kilobytes is $C and forty-eight is $D. The nibble follows the
-    // length rather than being a caller's option, so a 48 KiB cartridge cannot
-    // describe itself as a 32 KiB one — which a real BIOS would checksum-fail.
+  it("takes every board's size, and takes the size nibble from the image", () => {
+    // The nibble follows the length rather than being a caller's option, so a
+    // 48 KiB cartridge cannot describe itself as a 32 KiB one — which a real BIOS
+    // would checksum-fail. And the codes *wrap*: $F is 128 KiB and $0 is 256, so
+    // the two paged sizes above 128 sit below the flat ones numerically. A
+    // builder that computed the nibble instead of looking it up would get those
+    // two exactly backwards.
     for (const [bytes, nibble] of [
       [0x8000, 0x0c],
       [0xc000, 0x0d],
+      [0x10000, 0x0e],
+      [0x20000, 0x0f],
+      [0x40000, 0x00],
+      [0x80000, 0x01],
     ] as const) {
       const rom = packSegaRom(new Uint8Array(bytes));
       expect(rom.length).toBe(bytes);
@@ -220,11 +227,25 @@ describe("the Sega cartridge header", () => {
     }
   });
 
-  it("refuses an image that is neither flat size", () => {
-    // Not a policy: 16 KiB is half a bank short of what slot 0 and slot 1 cover,
-    // and anything past 48 KiB runs into work RAM at $C000 unless the program
-    // pages slot 2 — which this builder does not do.
-    expect(() => packSegaRom(new Uint8Array(0x4000))).toThrow(/32 KiB or 48 KiB/);
-    expect(() => packSegaRom(new Uint8Array(0x10000))).toThrow(/32 KiB or 48 KiB/);
+  it("refuses an image that is no board's size", () => {
+    // Not a policy: 16 KiB is half a bank short of what slots 0 and 1 cover, and
+    // 96 is a bank and a half past the board below it — the mapper pages whole
+    // banks and a mask ROM was a power of two, so there is nothing in between.
+    expect(() => packSegaRom(new Uint8Array(0x4000))).toThrow(/not 16384 bytes/);
+    expect(() => packSegaRom(new Uint8Array(0x18000))).toThrow(/not 98304 bytes/);
+  });
+
+  it("sums only the fixed half, whatever the board", () => {
+    // The checksum range stops at the header, which is why one function can stamp
+    // a paged cartridge as well as a flat one: the region it covers is slots 0
+    // and 1, and the banks that page are outside it by construction.
+    const image = new Uint8Array(0x20000);
+    image.fill(0x5a, 0x8000, 0x20000); // everything above the fixed half
+    const rom = packSegaRom(image);
+    const sum =
+      (rom[SMS_HEADER_OFFSET + 10] as number) | ((rom[SMS_HEADER_OFFSET + 11] as number) << 8);
+    expect(sum).toBe(segaChecksum(rom));
+    // And filling the paged half did not move it, because it is not summed.
+    expect(sum).toBe(segaChecksum(new Uint8Array(0x20000).fill(0, 0, 0x8000)));
   });
 });

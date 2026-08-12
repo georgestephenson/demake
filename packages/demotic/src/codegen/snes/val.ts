@@ -236,7 +236,7 @@ export function abs32(ctx: SnesCtx, dst: Ref): void {
 export function clamp32(ctx: SnesCtx, dst: Ref): void {
   const { asm } = ctx;
   asm.ldx(imm16(dst));
-  asm.jsr(ctx.need("Clamp32", emitClamp32));
+  ctx.call(ctx.need("Clamp32", emitClamp32));
 }
 
 /**
@@ -272,7 +272,7 @@ function emitClamp32(ctx: SnesCtx): void {
   asm.sta(absX(2));
   asm.stz(absX(0));
   asm.label(done);
-  asm.rts();
+  ctx.ret();
 }
 
 /**
@@ -294,10 +294,10 @@ export function div32(ctx: SnesCtx, dst: Ref, src: Ref): void {
 
 /** Copy both operands into the helper's workspace, call it, take the result. */
 function callBinary(ctx: SnesCtx, dst: Ref, src: Ref, routine: Ref): void {
-  const { asm, layout } = ctx;
+  const { layout } = ctx;
   copy32(ctx, layout.mathA, dst);
   copy32(ctx, layout.mathB, src);
-  asm.jsr(routine);
+  ctx.call(routine);
   copy32(ctx, dst, layout.mathA);
 }
 
@@ -376,7 +376,7 @@ function emitMul32(ctx: SnesCtx): void {
   neg32(ctx, a);
   asm.label(positive);
   clamp32(ctx, a);
-  asm.rts();
+  ctx.ret();
 
   asm.label(general);
   for (let word = 0; word < 8; word += 2) {
@@ -440,7 +440,7 @@ function emitMul32(ctx: SnesCtx): void {
   asm.lda(mem(product, 4));
   asm.sta(mem(a, 2));
   clamp32(ctx, a);
-  asm.rts();
+  ctx.ret();
 }
 
 /**
@@ -584,11 +584,11 @@ function emitDiv32(ctx: SnesCtx): void {
   asm.sta(mem(a, 2));
   asm.label(done);
   clamp32(ctx, a);
-  asm.rts();
+  ctx.ret();
 
   asm.label(zero);
   set32(ctx, a, 0);
-  asm.rts();
+  ctx.ret();
 }
 
 /**

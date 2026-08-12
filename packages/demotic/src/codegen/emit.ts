@@ -11,14 +11,28 @@
  * implementation that reorders it diverges within seconds.
  */
 
-import { label, lcdcToDuck, megaduckRegister } from "@demake/core";
+import {
+  AsmError,
+  GB_BANK_SIZE,
+  GB_BANK_WINDOW,
+  label,
+  MBC5,
+  lcdcToDuck,
+  megaduckRegister,
+} from "@demake/core";
 
 import type { InstanceDef, RuleDef } from "../program.js";
 
 import type { Ctx } from "./ctx.js";
 import { emitTest, propOffset, type Binding } from "./expr.js";
 import { isMutable } from "./analyze.js";
-import { emitTickSteps, type TickSteps } from "./backend.js";
+import {
+  emitOneTickStep,
+  emitTickSteps,
+  stepLabel,
+  tickStepNames,
+  type TickSteps,
+} from "./backend.js";
 import {
   artKey,
   emitInstanceDefaults,
@@ -257,28 +271,167 @@ export interface EmitOptions {
   effectIndices?: readonly number[];
   /** Track index each scene asks for, or `-1`; indexed by scene. */
   sceneTracks?: readonly number[];
+  /**
+   * Emit a scene's routines as separately placeable units, without placing them.
+   *
+   * The measuring pass of a banked build: the same instructions a banked one
+   * emits, laid end to end, so `gb.ts` can read each unit's length off and plan
+   * the banks from numbers rather than an estimate.
+   */
+  split?: boolean;
+  /**
+   * Where each unit goes, for a game that outgrew a 32 KiB cartridge.
+   *
+   * Absent for a game that fits, and then this emitter does exactly what it
+   * always did — one section, no bank writes, and a cartridge byte-identical to
+   * the one it built before paging existed.
+   */
+  banks?: GbBankPlan;
 }
 
-/** Dispatch on the running scene to one of a set of labels. */
+/**
+ * The unit carrying the tile art, and the unit carrying the packed schedules.
+ *
+ * Both are data rather than routines and both are in the paged half, for
+ * different reasons. The tile art the boot uploads to video RAM once and nothing
+ * reads again, so it costs two instructions to page. The audio schedules are read
+ * by a driver an *interrupt* enters — which is why this console needs a bank
+ * shadow and the Sega does not — so the handler pages the audio's own bank and
+ * puts back whatever it interrupted (§{@link Ctx.bankShadow}).
+ *
+ * Between them they are sixteen of the thirty kilobytes a demade game would
+ * otherwise want always mapped, against a fixed bank of sixteen — and
+ * {@link DEFAULTS_UNIT} is the third, which is what takes the rest of the
+ * overrun off.
+ */
+export const TILE_BANK_UNIT = "TileBank";
+export const AUDIO_DATA_UNIT = "AudioData";
+
+/**
+ * The unit carrying every entity's declared starting values.
+ *
+ * Two things read it and they cannot share a copy, so a banked build makes two.
+ * The **boot restore** wants all of them at once — a rule may name an object in
+ * a scene the game has not reached — and pages this unit in to do it. A **scene
+ * reset** wants its own scene's, and is itself a paged unit, so it carries a
+ * second copy of just those: a bank is the unit of mapping, and a routine cannot
+ * read a table that is not in the window it is running from.
+ *
+ * The duplicate costs paged bytes, which a banked cartridge has, and buys back
+ * fixed ones, which is what it is short of (doc 13 §Banked cartridges).
+ */
+export const DEFAULTS_UNIT = "InstanceDefaults";
+
+/** Where a scene's reset keeps its own copy of an instance's defaults. */
+function sceneDefaultsLabel(scene: SceneCtx, id: number): string {
+  return `SceneDefaults_${scene.index}_${id}`;
+}
+
+/** The first bank the window may be pointed at; bank zero is wired to `$0000`. */
+export const FIRST_PAGED_BANK = 1;
+
+/**
+ * Every routine and block a banked build places, in the order it emits them.
+ *
+ * A scene's routines are too big for this console's window, so the unit is
+ * smaller than a scene: each of its tick's steps, plus the reset, the camera and
+ * the render — which carries the scene's demade tilemap with it, because a bank
+ * is the unit of mapping and two things that must be visible at once cannot be
+ * planned apart.
+ */
+function unitNames(
+  scenes: readonly SceneCtx[],
+  levelFor: ReadonlyMap<number, LevelData>,
+  options: EmitOptions,
+): string[] {
+  const names: string[] = [];
+  for (const scene of scenes) {
+    names.push(...tickStepNames(scene, levelFor.get(scene.index)));
+    names.push(`SceneReset_${scene.index}`);
+    names.push(`SceneCamera_${scene.index}`);
+    names.push(`SceneRender_${scene.index}`);
+  }
+  if (options.audio) names.push(AUDIO_DATA_UNIT);
+  names.push(TILE_BANK_UNIT);
+  names.push(DEFAULTS_UNIT);
+  return names;
+}
+
+/** What a pass over the program measured. */
+export interface EmittedGbProgram {
+  /** How long each pageable unit came out, by name. Empty unless split. */
+  units: ReadonlyMap<string, number>;
+  /** Bytes bank zero took: everything that is not a unit. */
+  fixed: number;
+}
+
+/** Which bank each of a program's units goes in. */
+export interface GbBankPlan {
+  /** The units in each paged bank, in the order they are emitted. */
+  banks: readonly (readonly string[])[];
+  /** Which bank each unit landed in, by unit name. */
+  bankOf: ReadonlyMap<string, number>;
+}
+
+/** The tile bank: the built-in patterns, then whatever the art added. */
+function emitTileBank(ctx: Ctx, options: EmitOptions): void {
+  ctx.asm.label("TileBank");
+  ctx.asm.bytes(builtinTiles());
+  if (options.extraTiles) ctx.asm.bytes(options.extraTiles);
+}
+
+/** One scene's demade tilemap, and its attributes on a colour build. */
+function emitBackdrop(ctx: Ctx, scene: SceneCtx, options: EmitOptions): void {
+  const art = options.backdrops?.get(scene.def.name);
+  if (!art) return;
+  ctx.asm.label(backdropLabel(scene));
+  ctx.asm.bytes(art.map);
+  if (ctx.color && art.attr) ctx.asm.bytes(art.attr);
+}
+
+/**
+ * Dispatch on the running scene to one of a set of labels.
+ *
+ * A *tail* jump rather than a call, which is what makes this one of the two
+ * places that has to page: a scene's routines are what leaves bank zero on a
+ * banked cartridge, so every transfer here is `ctx.jumpUnit` and the routine's
+ * own `ret` still lands back at whatever called the dispatch. Unbanked,
+ * `jumpUnit` is a bare `jp` and the bytes are what they always were.
+ */
 function emitSceneDispatch(ctx: Ctx, labels: readonly string[]): void {
   const { asm, layout } = ctx;
   if (labels.length === 1) {
-    asm.jp(labels[0] as string);
+    ctx.jumpUnit(labels[0] as string);
     return;
   }
   asm.lda(layout.scene);
+  const paged = labels.some((name) => ctx.banks.has(name));
   for (const [index, target] of labels.entries()) {
     if (index === labels.length - 1) {
-      asm.jp(target);
+      ctx.jumpUnit(target);
       break;
     }
     asm.aluN("cp", index);
-    asm.jp(target, "z");
+    if (!paged) {
+      asm.jp(target, "z");
+      continue;
+    }
+    // With paging there is a bank write to reach as well as the jump, so the
+    // condition is inverted over the pair rather than taken to the target.
+    const over = ctx.unique("dispatch");
+    asm.jp(over, "nz");
+    ctx.jumpUnit(target);
+    asm.label(over);
   }
 }
 
-/** Emit the whole program. */
-export function emitProgram(ctx: Ctx, options: EmitOptions = {}): void {
+/**
+ * Emit the whole program, and report what a bank plan would need to know.
+ *
+ * With no plan and no split this is exactly the emitter it always was: one
+ * section, one 32 KiB cartridge, the same bytes.
+ */
+export function emitProgram(ctx: Ctx, options: EmitOptions = {}): EmittedGbProgram {
   const { asm, program, layout } = ctx;
   const scenes = sceneContexts(ctx);
   const levels = collectLevels(program.scenes);
@@ -286,6 +439,69 @@ export function emitProgram(ctx: Ctx, options: EmitOptions = {}): void {
   for (const scene of scenes) {
     const found = levels.find((data) => data.file === scene.level);
     if (found) levelFor.set(scene.index, found);
+  }
+
+  const units = new Map<string, number>();
+  const unit = (name: string, emit: () => void): void => {
+    const at = asm.length;
+    emit();
+    units.set(name, asm.length - at);
+  };
+  /** Emit whichever routine or block a unit's name refers to. */
+  const emitUnit = (name: string): void => {
+    if (name === TILE_BANK_UNIT) {
+      unit(name, () => emitTileBank(ctx, options));
+      return;
+    }
+    if (name === AUDIO_DATA_UNIT) {
+      unit(name, () => options.audio?.emitData(asm));
+      return;
+    }
+    if (name === DEFAULTS_UNIT) {
+      unit(name, () => emitInstanceDefaults(asm, program, PROPS, ctx.layout.entitySizes));
+      return;
+    }
+    const scene = scenes[Number(name.split("_")[1])] as SceneCtx;
+    const level = levelFor.get(scene.index);
+    if (name.startsWith("SceneReset_")) unit(name, () => emitSceneReset(ctx, scene));
+    else if (name.startsWith("SceneCamera_")) unit(name, () => emitSceneCamera(ctx, scene));
+    else if (name.startsWith("SceneRender_")) {
+      // The scene's demade tilemap rides with its renderer rather than being a
+      // unit of its own, because the renderer is the only thing that reads it and
+      // a bank is the unit of *mapping*: two units that have to be visible at
+      // once cannot be planned independently.
+      unit(name, () => {
+        emitSceneRender(ctx, scene, level, options);
+        emitBackdrop(ctx, scene, options);
+      });
+    } else unit(name, () => emitTickStepBody(ctx, scene, level, name));
+  };
+
+  const plan = options.banks;
+  const split = options.split === true || plan !== undefined;
+  // On the measuring pass there is no plan yet, so the context is told which
+  // routines *will* be paged rather than where: `ctx.enter` emits a bank write
+  // for anything it names, and the number does not change the length.
+  if (split && !plan) {
+    for (const name of unitNames(scenes, levelFor, options)) ctx.banks.set(name, FIRST_PAGED_BANK);
+  }
+  if (split) {
+    asm.section(GB_BANK_WINDOW);
+    if (plan) {
+      for (const bank of plan.banks) {
+        const start = asm.length;
+        for (const name of bank) emitUnit(name);
+        const used = asm.length - start;
+        if (used > GB_BANK_SIZE) {
+          throw new AsmError(`a paged bank holds ${used} bytes of a possible ${GB_BANK_SIZE}`);
+        }
+        asm.ds(GB_BANK_SIZE - used);
+        asm.section(GB_BANK_WINDOW);
+      }
+    } else {
+      for (const name of unitNames(scenes, levelFor, options)) emitUnit(name);
+    }
+    asm.section(0);
   }
 
   // --- cartridge header ------------------------------------------------------
@@ -308,10 +524,25 @@ export function emitProgram(ctx: Ctx, options: EmitOptions = {}): void {
   asm.reti();
   if (options.audio) {
     // The timer vector, where the driver's tick is driven from. Every pair is
-    // saved because the game's own code is what was interrupted.
+    // saved because the game's own code is what was interrupted — and on a banked
+    // cartridge so is the *bank*, because the schedules this tick reads are in
+    // one of their own and what the window held was whatever the game was in the
+    // middle of. MBC5's register cannot be read, so the value put back comes from
+    // the shadow every `enter` writes (`ctx.ts` §bankShadow).
     asm.padTo(0x0050);
     asm.push("af").push("bc").push("de").push("hl");
+    const audioBank = ctx.banks.get(AUDIO_DATA_UNIT);
+    if (audioBank !== undefined && ctx.bankShadow !== null) {
+      asm.lda(ctx.bankShadow);
+      asm.push("af");
+      asm.ldn("a", audioBank);
+      asm.sta(MBC5.romBankLow);
+    }
     asm.call("AudioTick");
+    if (audioBank !== undefined && ctx.bankShadow !== null) {
+      asm.pop("af");
+      asm.sta(MBC5.romBankLow);
+    }
     asm.pop("hl").pop("de").pop("bc").pop("af");
     asm.reti();
   }
@@ -326,10 +557,11 @@ export function emitProgram(ctx: Ctx, options: EmitOptions = {}): void {
   emitEntry(ctx, scenes, levelFor, options);
   emitMainLoop(ctx, options.audio !== undefined);
   emitInput(ctx);
-  emitTickDispatch(ctx, scenes);
+  emitTickDispatch(ctx, scenes, levelFor, split);
   emitSceneChange(ctx, scenes);
 
   for (const scene of scenes) {
+    if (split) continue;
     emitSceneTick(ctx, scene, levelFor.get(scene.index));
     emitSceneReset(ctx, scene);
     emitSceneCamera(ctx, scene);
@@ -375,17 +607,14 @@ export function emitProgram(ctx: Ctx, options: EmitOptions = {}): void {
       }
     }
   }
-  emitInstanceDefaults(asm, program, PROPS, ctx.layout.entitySizes);
+  if (!units.has(DEFAULTS_UNIT)) emitInstanceDefaults(asm, program, PROPS, ctx.layout.entitySizes);
 
   // One demade tilemap per scene that has a backdrop: a screenful of bytes,
   // each naming a tile in the bank the conversion filled — followed, on a
   // colour build, by the same screenful of attributes.
   for (const scene of scenes) {
-    const art = options.backdrops?.get(scene.def.name);
-    if (!art) continue;
-    asm.label(backdropLabel(scene));
-    asm.bytes(art.map);
-    if (ctx.color && art.attr) asm.bytes(art.attr);
+    if (units.has(`SceneRender_${scene.index}`)) continue; // rode with its renderer
+    emitBackdrop(ctx, scene, options);
   }
 
   if (ctx.color) {
@@ -421,13 +650,16 @@ export function emitProgram(ctx: Ctx, options: EmitOptions = {}): void {
         asm.db(track < 0 ? AUDIO_STOP : track + 1);
       }
     }
-    options.audio.emitData(asm);
+    if (!units.has(AUDIO_DATA_UNIT)) options.audio.emitData(asm);
   }
 
-  asm.label("TileBank");
-  asm.bytes(builtinTiles());
-  if (options.extraTiles) asm.bytes(options.extraTiles);
+  if (!units.has(TILE_BANK_UNIT)) emitTileBank(ctx, options);
   void layout;
+
+  let unitBytes = 0;
+  for (const bytes of units.values()) unitBytes += bytes;
+  const padding = plan ? plan.banks.length * GB_BANK_SIZE - unitBytes : 0;
+  return { units, fixed: asm.length - unitBytes - padding };
 }
 
 // --- boot --------------------------------------------------------------------
@@ -519,7 +751,10 @@ function emitEntry(
   asm.call("CopyBytes");
 
   // Every entity starts from its declared values, not just the entry scene's:
-  // a rule may name an object in a scene the game has not reached.
+  // a rule may name an object in a scene the game has not reached. Banked, the
+  // whole table is in a paged bank, so the window is pointed at it for the
+  // length of the restore; `ResetScene` below pages itself in afterwards.
+  ctx.enter(DEFAULTS_UNIT);
   for (const instance of program.instances) {
     asm.ld16("hl", label(`Defaults_${instance.id}`));
     asm.ld16("de", layout.entities[instance.id] as number);
@@ -810,7 +1045,12 @@ function emitInput(ctx: Ctx): void {
   asm.ret();
 }
 
-function emitTickDispatch(ctx: Ctx, scenes: readonly SceneCtx[]): void {
+function emitTickDispatch(
+  ctx: Ctx,
+  scenes: readonly SceneCtx[],
+  levelFor: ReadonlyMap<number, LevelData>,
+  split: boolean,
+): void {
   const { asm, layout } = ctx;
   asm.label("Tick");
   // Nothing has asked for a sound yet this tick. Cleared here rather than after
@@ -838,6 +1078,13 @@ function emitTickDispatch(ctx: Ctx, scenes: readonly SceneCtx[]): void {
   asm.ld16("hl", layout.ready);
   asm.inc("hlp");
   asm.ret();
+
+  // The sequences the dispatch above jumps to, when a tick's steps are routines
+  // rather than one run of code. They belong in bank zero whatever the plan
+  // says, because they are what *reaches* the paged half.
+  if (split) {
+    for (const scene of scenes) emitSceneTickCalls(ctx, scene, levelFor.get(scene.index));
+  }
 }
 
 function emitSceneChange(ctx: Ctx, scenes: readonly SceneCtx[]): void {
@@ -922,8 +1169,16 @@ function tickSteps(ctx: Ctx): TickSteps {
     tileRules: (scene, level) => emitTileRules(ctx, scene, level),
     edgeRules: (scene) => emitEdgeRules(ctx, scene),
     camera: (scene) => emitCamera(ctx, scene),
+    // A label and nothing else, which costs no bytes and buys two things. A
+    // profile bucketed by symbol names the *step* rather than the whole tick,
+    // which is the workflow AGENTS.md §Profile before optimising describes and
+    // this is the console it describes it on. And it is the seam a banked build
+    // has to cut at, measured rather than assumed (doc 13 §Banked cartridges).
+    boundary: (step, scene) => asm.label(stepLabel(scene.index, step)),
   };
 }
+
+/** Where one of a scene's tick steps begins. */
 
 function emitSceneTick(ctx: Ctx, scene: SceneCtx, level: LevelData | undefined): void {
   const { asm } = ctx;
@@ -932,16 +1187,65 @@ function emitSceneTick(ctx: Ctx, scene: SceneCtx, level: LevelData | undefined):
   asm.jp("TickDone");
 }
 
+/**
+ * The steps a scene's tick runs, in order — asked for rather than emitted.
+ *
+ * `emitTickSteps` is the only thing that knows the sequence, and a banked build
+ * needs the *names* before it can emit the calls that run them.
+ */
+
+/**
+ * One step of a tick, as a routine of its own — what a banked build places.
+ *
+ * The Sega backend's, for the Sega backend's reason: this console's window is
+ * sixteen kilobytes and the library's biggest scene is twenty-seven, so a bank
+ * cannot hold a scene and the unit has to be smaller. It runs the *whole*
+ * sequence and emits only the step it was asked for rather than calling that
+ * step's emitter directly, because which of doc 14's steps ride together is
+ * `emitTickSteps`'s decision and a switch here would be a second copy of it.
+ */
+function emitTickStepBody(
+  ctx: Ctx,
+  scene: SceneCtx,
+  level: LevelData | undefined,
+  wanted: string,
+): void {
+  const { asm } = ctx;
+  const emitted = emitOneTickStep(tickSteps(ctx), scene, level, wanted, (name: string) =>
+    asm.label(name),
+  );
+  if (!emitted) throw new AsmError(`'${wanted}' is not a step this scene runs`);
+  asm.ret();
+}
+
+/** The sequence that runs them, which stays in bank zero. */
+function emitSceneTickCalls(ctx: Ctx, scene: SceneCtx, level: LevelData | undefined): void {
+  const { asm } = ctx;
+  asm.label(`SceneTick_${scene.index}`);
+  for (const step of tickStepNames(scene, level)) ctx.callUnit(step);
+  asm.jp("TickDone");
+}
+
 function emitSceneReset(ctx: Ctx, scene: SceneCtx): void {
-  const { asm, layout } = ctx;
+  const { asm, layout, program } = ctx;
+  // Paged, this routine reads a copy of its own scene's defaults that rides in
+  // its own bank — the shared table is in another one and is not in the window
+  // while this is running (§{@link DEFAULTS_UNIT}). Unpaged there is one table
+  // and this reads it, exactly as it always did.
+  const own = ctx.banks.has(`SceneReset_${scene.index}`);
   asm.label(`SceneReset_${scene.index}`);
   for (const id of scene.def.instanceIds) {
-    asm.ld16("hl", label(`Defaults_${id}`));
+    asm.ld16("hl", label(own ? sceneDefaultsLabel(scene, id) : `Defaults_${id}`));
     asm.ld16("de", layout.entities[id] as number);
     asm.ld16("bc", layout.entitySizes[id] as number);
     asm.call("CopyBytes");
   }
   asm.ret();
+  if (!own) return;
+  emitInstanceDefaults(asm, program, PROPS, layout.entitySizes, {
+    ids: scene.def.instanceIds,
+    label: (id) => sceneDefaultsLabel(scene, id),
+  });
 }
 
 function emitSceneCamera(ctx: Ctx, scene: SceneCtx): void {

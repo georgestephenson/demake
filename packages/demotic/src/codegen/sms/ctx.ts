@@ -25,7 +25,7 @@
  * trustworthy.
  */
 
-import { AsmZ80, type Ref } from "@demake/core";
+import { AsmZ80, SMS_SLOT2_BANK, type Ref } from "@demake/core";
 
 import type { ConsoleProfile } from "../../profiles.js";
 import type { Program } from "../../program.js";
@@ -49,6 +49,57 @@ export type SmsHelperBody = (ctx: SmsCtx) => void;
 
 export class SmsCtx extends CtxBase<SmsCtx, AsmZ80> {
   readonly asm: AsmZ80;
+
+  /**
+   * Which paged bank each routine that is not in the fixed half lives in.
+   *
+   * Empty for a game that fits a flat cartridge, which is every example but one,
+   * and then this backend emits exactly what it always did. With entries, the
+   * routines it names are at `$8000` in a bank slot 2 has to be pointed at first
+   * — so {@link enter} is how anything reaches them and this is the only place
+   * that knows which bank is which (doc 13 §Banked cartridges).
+   *
+   * A *routine*'s map rather than a scene's, because what a Sega bank holds is
+   * smaller than a scene: this console's window is sixteen kilobytes and the
+   * biggest scene in the library is twenty-six, so the units are a scene's tick
+   * steps and its three other routines rather than the scene itself.
+   */
+  banks = new Map<string, number>();
+
+  /**
+   * Point slot 2 at the bank holding `target`, when it is not already fixed.
+   *
+   * Nothing to restore afterwards, and that is a property of where things are
+   * rather than an optimisation: the boot, the shared helpers, the audio driver
+   * and every table live in slots 0 and 1, which never move. So the only code
+   * that cares what slot 2 holds is the routine about to be entered, and the only
+   * code that enters one is in the fixed half — an interrupt arriving mid-scene
+   * runs the audio tick out of the fixed half and never looks at the window.
+   */
+  enter(target: string): void {
+    const bank = this.banks.get(target);
+    if (bank === undefined) return;
+    this.asm.ldn("a", bank);
+    this.asm.sta(SMS_SLOT2_BANK);
+  }
+
+  /** Call a routine, paging it in first if it is not in the fixed half. */
+  callUnit(target: string): void {
+    this.enter(target);
+    this.asm.call(target);
+  }
+
+  /**
+   * Jump to a routine, paging it in first.
+   *
+   * For the three dispatches that *tail* into a scene's routine: the routine's
+   * own `ret` lands back at whatever called the dispatch, so a jump is a call
+   * that costs nothing, banked or not.
+   */
+  jumpUnit(target: string): void {
+    this.enter(target);
+    this.asm.jp(target);
+  }
 
   constructor(
     program: Program,

@@ -132,8 +132,14 @@ export class Asm {
   private code: number[] = [];
   private readonly labels = new Map<string, number>();
   private readonly fixups: Fixup[] = [];
+  /** Address of `code[sectionAt]`, which is {@link origin} until `section` moves it. */
+  private base: number;
+  /** Where the current section began, as a byte offset. */
+  private sectionAt = 0;
 
-  constructor(readonly origin = 0) {}
+  constructor(readonly origin = 0) {
+    this.base = origin;
+  }
 
   /** Bytes emitted so far. */
   get length(): number {
@@ -142,7 +148,28 @@ export class Asm {
 
   /** The address the next byte will occupy. */
   get pc(): number {
-    return this.origin + this.code.length;
+    return this.base + (this.code.length - this.sectionAt);
+  }
+
+  /**
+   * Continue at `address`, which is where the next byte will be *seen*.
+   *
+   * A cartridge past 32 KiB has a memory bank controller on it, and its pieces
+   * are mapped at two different addresses: bank 0 is wired to `$0000` and never
+   * moves, and every other bank answers `$4000` when the controller is pointed at
+   * it. So a banked build is emitted in sections and this is how a caller says
+   * which one it is in.
+   *
+   * It moves no bytes: the image stays one linear buffer and the backend copies
+   * each bank into place, because only the backend knows how big a bank is. And a
+   * label carries no bank — an SM83 address is sixteen bits and that is all the
+   * hardware has — so which bank a paged routine is in is the *caller's* to know
+   * and to write to the controller before reaching it.
+   */
+  section(address: number): this {
+    this.base = address;
+    this.sectionAt = this.code.length;
+    return this;
   }
 
   /** Define a label at the current address. */

@@ -401,6 +401,22 @@ export interface LevelData {
   /** Parallel to {@link tileLabel}: the attribute each legend entry draws with.
    * Emitted only where the hardware attributes a cell at a time. */
   attrLabel: string;
+  /**
+   * Which *copy* of these tables this is; empty on every console but one.
+   *
+   * A level's grid and its four legend tables are read by more than one step of
+   * a scene, so a console that pages code below the level of a scene has to put
+   * a copy in each bank whose steps read it — a routine cannot read a table that
+   * is not in the window it is running from. The NES is that console (`nes.ts`
+   * §Banked cartridges): its fixed half is sixteen kilobytes and these tables are
+   * six of them, where a Game Boy had somewhere else to find the room.
+   *
+   * It is a field on the *data* rather than a rename at each call site because
+   * every reader already takes a `LevelData` and reads its labels off it — which
+   * is what makes {@link levelCopy} enough, and means no emitter has to know that
+   * copies exist at all.
+   */
+  suffix: string;
 }
 
 /** Collect the distinct levels a program uses, in scene order. */
@@ -416,11 +432,31 @@ export function collectLevels(scenes: readonly { level?: LevelFile }[]): LevelDa
       solidLabel: `LevelSolid_${out.length}`,
       tileLabel: `LevelTiles_${out.length}`,
       attrLabel: `LevelAttrs_${out.length}`,
+      suffix: "",
     };
     seen.set(scene.level, data);
     out.push(data);
   }
   return out;
+}
+
+/**
+ * The same level's tables under names of their own, for one bank's copy.
+ *
+ * An empty suffix hands back the original object, so a console that never pages
+ * — which is every one but a banked NES — emits and reads exactly the labels it
+ * always did (§{@link LevelData.suffix}).
+ */
+export function levelCopy(data: LevelData, suffix: string): LevelData {
+  if (suffix === "") return data;
+  return {
+    ...data,
+    suffix,
+    gridLabel: data.gridLabel + suffix,
+    solidLabel: data.solidLabel + suffix,
+    tileLabel: data.tileLabel + suffix,
+    attrLabel: data.attrLabel + suffix,
+  };
 }
 
 /**
@@ -466,7 +502,7 @@ export function emitLevelData(
  * list becomes an indexed load instead of a search.
  */
 export function ruleTileTableLabel(rule: RuleDef, data: LevelData): string {
-  return `RuleTiles_${rule.id}_${data.index}`;
+  return `RuleTiles_${rule.id}_${data.index}${data.suffix}`;
 }
 
 export function emitRuleTileTable(asm: DataBuffer, rule: RuleDef, data: LevelData): void {
@@ -478,7 +514,7 @@ export function emitRuleTileTable(asm: DataBuffer, rule: RuleDef, data: LevelDat
 
 /** The label of the routine that reads one level's grid. */
 export function tileAtLabel(data: LevelData): string {
-  return `TileAt_${data.index}`;
+  return `TileAt_${data.index}${data.suffix}`;
 }
 
 /** The tile contact list for one `(rule, subject)` pair. */
@@ -501,10 +537,24 @@ export function emitInstanceDefaults(
   program: Program,
   props: readonly string[],
   sizes: readonly number[],
+  /**
+   * Which instances to emit and what to call each table.
+   *
+   * Absent is the whole program under the shared names, which is what every
+   * console emits once in its data section. A banked Game Boy passes a scene's
+   * own instances under names of that scene's, because a paged reset cannot read
+   * a table in another bank (`emit.ts` §{@link DEFAULTS_UNIT}) — and it goes
+   * through here rather than restating the encoding, so the copy is a copy.
+   */
+  subset?: { ids: readonly number[]; label: (id: number) => string },
 ) {
-  for (const instance of program.instances) {
-    asm.label(`Defaults_${instance.id}`);
-    const slots = (sizes[instance.id] ?? props.length * 4) / 4;
+  const byId = new Map(program.instances.map((instance) => [instance.id, instance]));
+  const ids = subset?.ids ?? program.instances.map((instance) => instance.id);
+  for (const id of ids) {
+    const instance = byId.get(id);
+    if (!instance) continue;
+    asm.label(subset ? subset.label(id) : `Defaults_${id}`);
+    const slots = (sizes[id] ?? props.length * 4) / 4;
     for (const prop of props.slice(0, slots)) asm.dd(instance.numbers[prop] ?? 0);
   }
 }

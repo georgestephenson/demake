@@ -25,17 +25,24 @@ import { tape, trace } from "../src/trace.js";
 import { romReady } from "../src/rom/trace.js";
 
 import {
+  gbaTarget,
   gbTarget,
   gbcTarget,
   mdTarget,
+  ndsTarget,
+  nesTarget,
+  pceTarget,
+  smsTarget,
+  snesTarget,
   megaduckTarget,
   RomRunner,
   romTrace,
   TARGETS,
   wscTarget,
+  wsTarget,
   type RomTarget,
 } from "./_rom-harness.js";
-import { gameSource, projectBytes, projectText } from "./_projects.js";
+import { gameSource, projectBytes, projectFiles, projectText } from "./_projects.js";
 
 /** The tape the golden trace was recorded with (see determinism.test.ts). */
 const PONG_TAPE = "1:a,90:,90:left,120:right";
@@ -179,31 +186,185 @@ describe("ROM conformance across the example library", async () => {
   });
 
   /**
-   * And the biggest game in the library, on the one console that can hold it.
+   * And the biggest game in the library, on the two consoles that can hold it.
    *
    * Not in the matrix above, and the reason is the cartridge rather than the
    * code: three levels, a boss and a room behind a pipe compile to around
    * 122 KiB of SM83 and 117 of Z80 against a mapper-less 32 (doc 13 §Banked
-   * cartridges). The Mega Drive has 512 KiB and uses 96 of them, so this is the
-   * only place the claim can be made at all — and it is worth making, because
-   * nothing else in the library has four playfields, two of them sharing a tile
-   * bank, or a rule set written against classes rather than named objects.
+   * cartridges). Nothing else in the library has four playfields, two of them
+   * sharing a tile bank, or a rule set written against classes rather than named
+   * objects.
    *
    * The tape runs the meadow: fall, run, jump the first pit, and keep going into
    * the second one — which is a tile walk, a camera that scrolls on one axis,
    * an object collected, a level restart and a counter that outlives it.
    */
-  it("matches the interpreter for the quest fixture on md", async () => {
-    const levels = Object.fromEntries(
+  const questLevels = () =>
+    Object.fromEntries(
       ["meadow.dmtl", "vault.dmtl", "hollow.dmtl", "keep.dmtl"].map((name) => [
         name,
         projectText("quest", `levels/${name}`),
       ]),
     );
-    const program = build(gameSource("quest"), levels, "md");
-    const frames = tape("2:,1:a,85:right,1:a,90:right,60:right,120:right");
+  const QUEST_TAPE = "2:,1:a,85:right,1:a,90:right,60:right,120:right";
+
+  it("matches the interpreter for the quest fixture on md", async () => {
+    // The Mega Drive holds it without paging anything: 512 KiB of flat cartridge
+    // and 96 in use, so this is the game running with nothing clever underneath
+    // it — which is what makes it the control for the case below.
+    const program = build(gameSource("quest"), questLevels(), "md");
+    const frames = tape(QUEST_TAPE);
     expect(await romTrace(program, frames, {}, mdTarget)).toBe(trace(new Sim(program), frames));
   }, 120_000);
+
+  /**
+   * And on the Super Nintendo, where it is a *banked* cartridge.
+   *
+   * The one case in this file whose subject is the cartridge rather than the
+   * code. A LoROM bank is thirty-two kilobytes and this game's program is eighty,
+   * so its scenes are spread across banks and every call in the program is a
+   * `jsl` returning through `rtl` — a different instruction stream from the one
+   * every other Super Nintendo fixture here compiles to. What that can get wrong
+   * is not arithmetic: it is a routine returning to the right offset in the wrong
+   * bank, which executes whatever is at that address and diverges with nothing to
+   * point at. So the oracle is the same one every other backend answers to, tick
+   * for tick, and the claim it makes is that the banking is invisible.
+   */
+  it("matches the interpreter for the quest fixture on snes, across banks", async () => {
+    const program = build(gameSource("quest"), questLevels(), "snes");
+    const frames = tape(QUEST_TAPE);
+    expect(await romTrace(program, frames, {}, snesTarget)).toBe(trace(new Sim(program), frames));
+  }, 180_000);
+
+  /**
+   * And on the Master System, where the banking is finer still.
+   *
+   * A LoROM bank holds a whole scene and a Sega window does not — sixteen
+   * kilobytes against a largest scene of twenty-six — so here the unit is one
+   * *step* of one tick, and a scene's tick is a run of calls in the fixed half
+   * that pages each of its seven steps in turn. What that can get wrong is not
+   * arithmetic either: it is a step running with the wrong bank in slot 2, which
+   * executes whatever is at that address. So the oracle is the same one, tick for
+   * tick, and the claim is again that the paging is invisible.
+   */
+  it("matches the interpreter for the quest fixture on sms, across paged banks", async () => {
+    const program = build(gameSource("quest"), questLevels(), "sms");
+    const frames = tape(QUEST_TAPE);
+    expect(await romTrace(program, frames, {}, smsTarget)).toBe(trace(new Sim(program), frames));
+  }, 180_000);
+
+  /**
+   * And on the Game Boy, which is the hardest board in the set to page.
+   *
+   * The window is the Master System's sixteen kilobytes and the *fixed* half is
+   * sixteen rather than thirty-two, so what has to leave bank zero here is not
+   * only the scenes: the tile art, the packed audio schedules and the instance
+   * defaults are paged data units as well, and the timer interrupt that drives
+   * the audio saves and restores the running bank around its own — from a shadow,
+   * because MBC5's register cannot be read. What that can get wrong is a step
+   * running with another step's bank in the window, or a tick interrupted between
+   * a bank write and the call that needed it. So the oracle is the same one every
+   * other backend answers to, tick for tick.
+   *
+   * This is the one case in the file that is handed a game's **audio**, and that
+   * is what makes it the oracle for the restore rather than only for the paging.
+   * Without a driver there is no timer interrupt at all, so nothing ever arrives
+   * in the middle of a paged step and the shadow is never read; with one, half of
+   * every tick is spent running from the window, and a handler that left the
+   * audio's own bank behind it returns into another bank's instructions at the
+   * same offset. The art is left out because it is a `prep` tournament a trace
+   * cannot see either way.
+   */
+  it("matches the interpreter for the quest fixture on gb, across paged banks", async () => {
+    const program = build(gameSource("quest"), questLevels(), "gb");
+    const frames = tape(QUEST_TAPE);
+    // Keyed by the name the `.dmt` wrote, because this program was compiled with
+    // no file list to resolve against — the same names `projectFiles` ends in.
+    const assets = new Map(
+      projectFiles("quest")
+        .filter((path) => path.endsWith(".mid") || path.endsWith(".wav"))
+        .map((path) => [path.split("/").pop() as string, projectBytes("quest", path)]),
+    );
+    expect(assets.size).toBe(12);
+    expect(await romTrace(program, frames, { assets }, gbTarget)).toBe(
+      trace(new Sim(program), frames),
+    );
+  }, 180_000);
+
+  /**
+   * And on the NES, which is the only one that had to duplicate a table.
+   *
+   * Its window and its fixed half are the Game Boy's sixteen kilobytes each, but
+   * its 6502 program is some four kilobytes bigger and its characters cost the
+   * program nothing — so what would not fit below was the **level tables**, which
+   * more than one step of a scene reads. There is nowhere else for them to go, so
+   * each bank that reads a level carries its own copy (`shape.ts`
+   * §LevelData.suffix). What that can get wrong is a copy nobody made — a `jsr`
+   * to a `TileAt` in a bank that is not in the window — which reads whatever is at
+   * that address and does not crash. So the oracle is the same one, tick for tick,
+   * over a tape that walks the meadow's tiles.
+   *
+   * Handed the audio for the Game Boy's reason and one of its own: this console's
+   * driver is entered from the NMI, and MMC1's bank register is written five
+   * stores at a time, so a sequence an interrupt landed in the middle of cannot be
+   * put back. That the schedules are read from the *main loop* rather than the
+   * handler is what makes them pageable at all here, and a tick of music is what
+   * puts an interrupt in the middle of a paged step to prove it.
+   */
+  it("matches the interpreter for the quest fixture on nes, across paged banks", async () => {
+    const program = build(gameSource("quest"), questLevels(), "nes");
+    const frames = tape(QUEST_TAPE);
+    const assets = new Map(
+      projectFiles("quest")
+        .filter((path) => path.endsWith(".mid") || path.endsWith(".wav"))
+        .map((path) => [path.split("/").pop() as string, projectBytes("quest", path)]),
+    );
+    expect(await romTrace(program, frames, { assets }, nesTarget)).toBe(
+      trace(new Sim(program), frames),
+    );
+  }, 180_000);
+
+  /**
+   * And on both ARM handhelds, where the cartridge was never the problem.
+   *
+   * A Game Boy Advance has thirty-two megabytes and a Nintendo DS four, so
+   * neither pages anything and neither ever will for a game this size. What
+   * stopped `quest` here was the **literal pool**: a 32-bit constant does not fit
+   * in a 32-bit instruction, so it is loaded PC-relative from a pool within
+   * 4 KiB, and this game has a stretch of one rule body 4160 bytes long. Sixty-
+   * four bytes over, and the build reported invalid code rather than a cartridge.
+   *
+   * The backend flushes at safe points it chooses and cannot know how far apart
+   * they are, so the assembler now places a pool itself when the next instruction
+   * would put a queued load out of reach (`asm/arm.ts` §rescuePool). This is the
+   * case that says the rescue lands somewhere a program can survive: a pool in a
+   * reachable instruction stream is *executed*, so getting it wrong is not a
+   * wrong number but a game that runs its own constants.
+   */
+  /**
+   * And on the mono WonderSwan, whose wall was **work RAM** and not cartridge.
+   *
+   * The last console in the set to build this game, and the only one whose
+   * blocker no size of cartridge could move: sixteen kilobytes, of which the tile
+   * bank is the top half and the display's own structures are most of the rest,
+   * leaving 2 KiB of heap for a game that wants four. So this cartridge brings
+   * **save RAM** — the hardware's own answer, at segment `$1` — and puts the
+   * whole heap in it (`codegen/layout.ts` §WS_SAVE_MEMORY).
+   *
+   * A trace is what proves it and it proves rather a lot, because on this build
+   * the game's variables are in a different memory from the picture: every
+   * property read, every collision box staged, every cell walked and the audio
+   * driver's whole state are in the cartridge, and the six operands the display
+   * decodes are not. A cartridge that had one of those the wrong way round would
+   * boot, and the first thing it computed with would be somebody else's byte.
+   */
+  for (const target of [gbaTarget, ndsTarget, pceTarget, wscTarget, wsTarget]) {
+    it(`matches the interpreter for the quest fixture on ${target.console}`, async () => {
+      const program = build(gameSource("quest"), questLevels(), target.console);
+      const frames = tape(QUEST_TAPE);
+      expect(await romTrace(program, frames, {}, target)).toBe(trace(new Sim(program), frames));
+    }, 180_000);
+  }
 
   it("builds a Mega Duck cartridge that a Game Boy could not run", async () => {
     // The guard the test above cannot be: identical traces are also what a map

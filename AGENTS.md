@@ -21,8 +21,9 @@ real emulator, compared pixel for pixel):
 
 The four are not four tools that share a repo any more: a `.dmt` says
 `music theme.mid` and `sound bounce.wav on ball hits paddle`, and `demake build`
-demakes the art, the track and the effects into one 32 KiB cartridge (doc 14
-§Sound, doc 16 §Two streams, one clock).
+demakes the art, the track and the effects into one cartridge — 32 KiB for a game
+that fits one, and the smallest banked board its console shipped for a game that
+does not (doc 14 §Sound, doc 16 §Two streams, one clock).
 
 Every domain has the same shape, which is why they share a repo: **constrain →
 fit → emit → prove it on emulated hardware**. Each reuses the layer below — a
@@ -91,9 +92,10 @@ _pool_, and it is checked rather than assumed because a fit that reached for a
 ninth level would otherwise be silently truncated.
 
 Phase 7+ then opened the **Demotic backend**: `demake build` _compiles_ a `.dmt`
-into a real 32 KiB Game Boy cartridge — SM83 machine code written for that game,
-with the art it names demade by the image pipeline on the way — and the web app
-plays it in the page. There is no fixed engine and nothing is patched: the
+into a real Game Boy cartridge — 32 KiB and mapper-less for a game that fits,
+MBC5 with its tick's steps paged for one that does not — SM83 machine code
+written for that game, with the art it names demade by the image pipeline on the
+way, and the web app plays it in the page. There is no fixed engine and nothing is patched: the
 assembler is ours and written in TypeScript (`packages/demotic/src/codegen/`), so
 the browser produces byte-identical cartridges with no toolchain. Every game in
 the example library is proven against the reference interpreter tick for tick by
@@ -930,6 +932,62 @@ in 32 KiB of its own, so there is no budget to catch — and what the sweep woul
 still have bought, that a driver's reported sizes are real, is asserted on an
 art-free build in `packages/audio/test/neogeo-driver.test.ts`.
 
+**And a game bigger than one cartridge takes a bigger one, on every family that
+had a bigger one to take** (doc 13 §Banked cartridges). `quest` — three levels, a
+boss, a secret room, four tracks and eight effects — is the example that needed
+it, and it now builds and plays on **every one of the sixteen consoles that build
+games**: a Mega Drive at 140 KiB, a Super Nintendo at 128 with a bank per scene,
+both Sega 8-bits and all three Game Boys at 128 with a tick's individual _steps_
+paged, an NES at 256 KiB on an MMC1, a PC Engine at 256 on a HuCard, a
+WonderSwan Color spread over three of its 64 KiB segments, and the Neo Geo, the
+Neo Geo Pocket Color, the Virtual Boy and both ARM handhelds on boards big
+enough to need no paging at all. The Super Nintendo is the only paging
+console where a scene fits a bank; everywhere else the window is sixteen kilobytes
+and the largest scene is twenty-seven, so the unit is one step of one tick — which
+is why `TickSteps.boundary` exists and why the seam is _there_ rather than
+somewhere convenient: a step boundary is the only point inside a tick at which
+nothing is live, because the steps hand work to each other through the entity
+records and the contact bitfield and never through a register.
+
+**The last one was out of RAM rather than out of cartridge, and it takes the
+board's**: the mono WonderSwan wants six kilobytes of heap and has two, on a
+machine with sixteen of which the tile bank is the top half. No cartridge size
+fixes that, and both cheaper answers were measured rather than assumed — running
+the heap to the object shadow buys 192 bytes and taking the unused tail of the
+tile bank buys 128, because `quest` uses 504 of that machine's 512 tiles. So the
+cartridge brings **save RAM**, which this console maps at segment `$1`, and a
+game the console's own memory cannot hold puts its whole heap there
+(`codegen/layout.ts` §WS_SAVE_MEMORY). That is the NES's `$6000` story with a
+different port, and it is the elastic-board rule reaching the RAM: the footer
+declares the smallest of the five sizes it can name that holds the game.
+
+**`DS` and `ES` are the heap and `SS` is the console**, which is what makes it
+cost nothing above the memory plan. An unprefixed operand still means the heap,
+so the value layer, the expression compiler, the rule bodies and the tile walk
+are unchanged prefix for prefix on a game whose variables are in a cartridge;
+what moves is the six operands that are the _display's_ rather than the
+allocator's — two screen maps, the object shadow, the object table and the tile
+bank — and those take an `ss:` override, because that is the segment register a
+demade cartridge already points at the console's memory and never moves. The heap
+goes **whole or not at all**, which is why it is a second `MemoryPlan` rather
+than the NES's `heapSpill`: an override reaches a memory operand and even a
+`movs`'s source, but its destination is `ES` and no prefix changes that, so a
+copy between two heap addresses cannot have one end in each memory.
+
+What each console then paid is its own, and the three 16 KiB-window machines
+differ most. A Sega 8-bit pays nothing: slots 0 and 1 are 32 KiB of fixed space and
+hold everything that cannot move. A Game Boy has half that, so its tile art, its
+packed audio schedules and its instance defaults become paged _data_ units, and
+its audio driver — entered by a timer interrupt — saves and restores the running
+bank from a RAM shadow, because MBC5's register cannot be read. An NES has the
+same half and a bigger program, so it goes further still: it is the one console
+that **duplicates**, giving each bank its own copy of the level tables its steps
+read, because a paged routine cannot reach a table in another bank. And a PC
+Engine pays least of all, because its mapper is in the CPU — `lda` and `tam`
+against MMC1's five serial stores — and keeps `$8000`–`$FFFF` mapped, so only its
+character bank and its schedules go up. Every cartridge that fitted a
+mapper-less board before is byte-identical, on all seven.
+
 Still to come: the remaining Tier 2/3 consoles (each =
 a codegen backend, a ROM harness + toolchain, and a libretro core + DAC
 calibration), the remaining framebuffer/scanline layout paths (Lynx, GBA/NDS
@@ -1249,7 +1307,14 @@ packages/dmg/        @demake/dmg — a self-hosted Game Boy core, DMG *and* CGB 
                      decision, never a setting; the Mega Duck is a constructor
                      argument, because that console's cartridges have no header.
                      Its APU is @demake/chip's, not a second one, and `audioSink`
-                     is where its output goes
+                     is where its output goes. It has one memory bank controller
+                     and it is MBC5, decided by the header's type byte for the
+                     same reason: bank 0 stays wired to $0000 because the
+                     vectors, the entry point and the header are down there, and
+                     up to 512 banks answer $4000. Cartridge RAM at $A000 is
+                     absent rather than half-implemented — no board demake
+                     produces declares any — and so are MBC1, MBC2 and MBC3,
+                     because nothing builds one
 packages/sms/        @demake/sms — a self-hosted Sega 8-bit core, Master System *and*
                      Game Gear, decided by the cartridge's region nibble the way
                      @demake/dmg is decided by its header. Mode 4 only: the SG-1000's
@@ -1261,7 +1326,10 @@ packages/snes/       @demake/snes — a self-hosted Super Nintendo core: a 65816
                      computer: an SPC700 with its own 64 KiB, three timers, and a
                      boot ROM of *ours* that speaks the documented upload
                      handshake rather than transcribing Nintendo's. Its S-DSP is
-                     @demake/chip's, not a second one
+                     @demake/chip's, not a second one. Its LoROM decoding is
+                     generic — bank `k` shows ROM offset `k x $8000` — so a
+                     banked cartridge needed nothing here at all, which is what
+                     "no controller, just address decoding" means in practice
 packages/neogeo/     @demake/neogeo — a self-hosted Neo Geo core, and the eleventh.
                      sound.ts is a whole second computer: a Z80 with its own ROM
                      on its own bus, a YM2610, and one byte in each direction
@@ -1360,12 +1428,22 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
                      mutability questions, a tick of movement, the level tables.
                      Anything that would emit an instruction is *not* here
     layout.ts        one RAM allocator over a per-console MemoryPlan (8 KiB of
-                     work RAM, or a console with 2 KiB and no cartridge RAM)
+                     work RAM, or a console with 2 KiB until its cartridge brings
+                     eight more). Its cheap region has three behaviours rather
+                     than one: it can refuse, it can *spill* to the heap, and a
+                     request can *pin* itself to it — which is a 6502's `($nn),y`
+                     stated one layer up, where a build report can name page zero
+                     rather than an address in hexadecimal
     registry.ts      which backend builds which console; the CLI reads this
     gb.ts, emit/rules/expr/val/tiles.ts   the SM83 backend
     nes.ts, nes-art.ts, nes/              the 6502 backend and its image path
     sms.ts, sms-art.ts, sms/              the Z80 backend and its image path
-    snes.ts, snes-art.ts, snes/           the 65816 backend and its image path
+    snes.ts, snes-art.ts, snes/           the 65816 backend and its image path,
+                     and the only one that emits a *banked* cartridge: a game
+                     whose program outgrows one 32 KiB LoROM bank gets a bank per
+                     scene, reached by `jsl` and returned from by `rtl`. The
+                     switch is all-or-nothing and off for a game that fits, so
+                     every cartridge that fitted before is byte-identical
     m68k/            the *68000's*, not one console's, and the second directory
                      of its kind after mos/: the 16.16 value layer, the
                      expression compiler, the rule bodies, the tile walk and the
@@ -1392,7 +1470,10 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
                      decide the *segment* a 16.16 read means, because a table is
                      in the cartridge and a variable is not; ops.ts is
                      snes/ops.ts's file for the third CPU whose `abs` means
-                     something else again
+                     something else again, and is also where `vram` lives —
+                     the six operands that mean the *console's* memory rather
+                     than the heap, which are the whole cost of the mono
+                     machine's heap moving to the cartridge's save RAM
     ngpc.ts, ngpc-art.ts, ngpc/           the TLCS-900/H backend and its image
                      path, and the one whose renderer writes almost nothing at
                      all: there is no video memory, so the tile bank is one
@@ -1895,19 +1976,22 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   cannot do what a `.dmt` asks for, `unsupportedFeatures` names it and the build
   stops. A cartridge that plays a different game from the preview would make the
   trace oracle report a divergence three layers from its cause.
-- **A cartridge is as big as the game needs and no bigger** (doc 14 §Elastic
-  cartridges). Every console that shipped its games on more than one board takes
+- **A cartridge is as big as the game needs and no bigger, in every direction the
+  hardware allows** (doc 14 §Elastic cartridges). Every console that shipped its games on more than one board takes
   the smallest that holds the program — an NROM-128 rather than an NROM-256, 32
-  KiB of Sega rather than 48, one megabit of Mega Drive rather than four, two
-  LoROM banks rather than four — and grows only when the game does. Which boards
+  KiB of Sega rather than 48 and up to 512 for a game that pages, one megabit of
+  Mega Drive rather than four, two LoROM banks rather than four, and up to four
+  megabytes for a game whose code outgrows a bank — and grows only when the game does. Which boards
   exist is the **console's** answer and lives beside its header in
   `core/src/asm/*-cart.ts`; a backend's job is to pick, and where picking the
   small one moves the code, it emits the program a second time rather than
   patching the first attempt. Never add a size the hardware did not ship: the
   point is the board a game that size shipped on, not the smallest file that
-  boots. A Game Boy ROM-only cartridge is 32 KiB and cannot move in either
-  direction, because the header's smallest size code _is_ 32 KiB and every code
-  above it names a mapper.
+  boots. A Game Boy ROM-only cartridge is 32 KiB and cannot move _down_, because
+  the header's smallest size code _is_ 32 KiB; every code above it names a
+  mapper, and `stampGbHeader` declares MBC5 for any image longer than that — up
+  to the eight megabytes the field can say, which is where a game that pages its
+  tick's steps grows (doc 13 §Banked cartridges).
 - **`free` is measured against the largest board, never the one that shipped.**
   It is the budget-regression signal (§Testing truths), and a headroom figure
   that jumped by sixteen kilobytes the moment a game crossed a boundary would
@@ -2072,14 +2156,19 @@ pnpm emulator      # provision the SameBoy capturer + libretro cores for the E2E
   is a 960-cell nametable against 360. The shooter used to be a couple of hundred
   bytes _over_ there and the battery asserted the overflow; the packed name
   tables, the looped collision pairs and the grouped integrator won it back, and
-  it now has 13457 bytes free. `OVER_BUDGET` is empty as a result, and the
-  emptiness is the record. The tightest cartridge in the library is the Game
-  Boy's shooter at 2182 bytes free — that is where a budget regression shows
-  first, which is why the Game Boys sweep the whole library and the NES sweeps
-  two. And a Game Boy is the tightest for a reason that is now structural rather
-  than incidental: it is the one console whose cartridge cannot grow (§Iron
-  rules), so everywhere else a fixture that got bigger takes a bigger board and
-  only here does it run out.
+  it won that back. `OVER_BUDGET` is empty as a result, and the emptiness is the
+  record.
+- **And `free` is no longer where a budget regression shows, on any console.**
+  Every family now pages, so `free` is measured against the largest board its
+  hardware shipped on — eight megabytes on a Game Boy, 512 KiB on a Sega 8-bit,
+  256 on an NES — and a fixture with a quarter of a megabyte spare is not a
+  fixture anybody is watching. **What a banked cartridge cannot grow is its fixed
+  bank**, and that is the number to watch instead: quest's is 15973 bytes of
+  16384 on a Game Boy and 8109 of 16384 on an NES, so 411 bytes is the tightest
+  figure in the project. Nothing about taking a bigger board adds a byte to the
+  half that cannot move (doc 13 §Banked cartridges), so an emitter that puts
+  something new in the always-mapped half is spending that 411 — and a size sweep
+  measuring `free` will not notice.
 - **New language features come from the example library, not from theory**
   (`packages/demotic/fixtures/games/`). Each example is there for something the
   others do not exercise; `touches`, the `reaches` crossing rule and `visible`'s
@@ -2427,6 +2516,37 @@ packages/demotic/test/rom.test.ts` builds every fixture game and diffs raw
   before fetching the offset moves every relative jump one byte, which presents
   as an infinite loop somewhere unrelated. `packages/dmg/test/cpu.test.ts` pins
   it because it actually happened.
+- **A game that outgrows 32 KiB pages its tick's steps, and the hard part is
+  bank zero.** The Sega's unit reached one console along — a step, plus each
+  scene's reset, camera and render, all entered through `ctx.callUnit` /
+  `ctx.jumpUnit` — but the _fixed_ half here is sixteen kilobytes against that
+  machine's thirty-two, so three blocks of **data** are paged units as well: the
+  tile art, the packed audio schedules, and the instance defaults. Quest's bank
+  zero is 15973 bytes of 16384, which is the tightest figure in the project, so
+  anything a new emitter puts in the always-mapped half is worth counting. The
+  level tables are what is left to page if it ever runs out, and they cost
+  duplication rather than two instructions, because more than one step of a scene
+  reads them (doc 13 §Banked cartridges).
+- **The instance defaults are paged _twice_, and the second copy is the point.**
+  The boot restore wants every entity's at once and pages the whole table in; a
+  scene's reset wants its own scene's and is itself a paged routine, so it cannot
+  read a table in another bank and carries a copy of just those. Both go through
+  `shape.ts`'s `emitInstanceDefaults` rather than restating the encoding, so the
+  copy really is a copy.
+- **The timer handler saves the bank and puts it back, from a shadow.** MBC5's
+  bank register is write-only, so `Ctx.bankShadow` is the only record of what is
+  in the window — and this console's audio is entered by an _interrupt_, so a
+  tick can arrive with any bank at all. Nearly half of every game tick runs from
+  `$4000`, so skipping the restore returns into another bank's instructions at
+  the same offset. It is invisible to an audio diff, because a driver that never
+  restores leaves its own bank mapped for ever and plays on perfectly while the
+  game is dead — which is why `rom.test.ts`'s quest case is the one there that is
+  handed a game's audio.
+- **Emit the paged banks first and bank zero last.** `Asm.section` moves no
+  bytes, so the order is free — and it has to be this one, because helpers are
+  _pulled_ by whatever calls them and `ctx.finish()` has to be the last thing
+  that runs. `gb.ts` copies each bank into place afterwards, which is a copy per
+  bank and no more.
 
 ### The 6502 half
 
@@ -2446,6 +2566,46 @@ packages/demotic/test/rom.test.ts` builds every fixture game and diffs raw
   be _told_ the address of goes through `ZP.p0`/`p1`/`p2` — and the plan puts the
   expression temporaries there too, which is most of why the arithmetic is
   cheaper here than on the Game Boy.
+- **But it _spills_, and what may not spill is decided per request.** Almost
+  nothing the allocator places on this CPU is ever dereferenced — a contact
+  bitfield is read `$nnnn,x`, a temporary goes through `clamp32` — so a game
+  refused for wanting 274 bytes of a 237-byte page was a game refused for wanting
+  cheap addresses it did not need. `fastSpills` is set here now and the overflow
+  goes to the board's own RAM. What may not move goes through `pin`, and there
+  are exactly **two**: the tile walk's cursor, and the audio driver's state,
+  because a stream player walks packed data through a pointer like everything
+  else on this machine. Add a third and it has to be `pin` as well — a pointer
+  that spilled would assemble an instruction reading the wrong two bytes rather
+  than failing.
+- **A spilling request leaves room for the pins still to come.** `Bump.tryTake`'s
+  `keep` is that, and it exists because serving the pins first is not open to us:
+  the order of these calls is the order of the addresses, so reordering would move
+  every address in every game that already fits. Without it the build refuses a
+  game for wanting a page it was perfectly willing to spill out of, which reads
+  like the spilling not being there at all.
+- **A game that outgrows 32 KiB takes an MMC1 and pages its tick's steps, and
+  the halves are the other way up.** The fixed sixteen kilobytes is at `$C000`,
+  because that is where the vectors are and what mode 3 leaves in place, so a
+  paged unit is assembled at `$8000` and the boot, the helpers, the audio driver's
+  code and the dispatches stay above it. Two data blocks go up with the scenes —
+  the packed schedules and the instance defaults — and the tile art does not,
+  because characters here are a separate ROM the PPU addresses directly.
+- **A mapper write is ten instructions, and never one an interrupt can split.**
+  MMC1's register is _serial_: five stores of one bit each, so `ctx.enter` builds
+  the value with `lsr` between them, and a sequence broken halfway leaves the
+  register holding bits from two different values with nothing able to put it
+  back. That is affordable only because this console counts its audio tick in the
+  NMI and _performs_ it in the main loop, so the handler touches nothing but a
+  counter and the frame upload — both in the fixed half. An emitter that put a
+  bank write in a handler would break a cartridge in a way no register diff can
+  see.
+- **The level tables are copied into every bank that reads one.** More than one
+  step of a scene reads a level — the tile rules and the render — and a paged
+  routine cannot reach a table in another bank, so this is the one console in the
+  set that duplicates rather than shares. It is one field: `LevelData.suffix`,
+  set by `levelCopy`, and every reader already takes a `LevelData` and reads its
+  labels off it — so no emitter knows copies exist. The planner is where it
+  shows, because a bank is charged for the copies its units drag in.
 - **A shared register written through `$4000,x` costs the caller its index.**
   The audio driver's merge folds two shadows and writes `$4015`; doing that with
   `ldx #$15` / `sta $4000,x` destroys `x` — and `AudioSfxStart` carries a table
@@ -2626,6 +2786,21 @@ is the game.
   one iteration and the next and helps itself to every register the Z80 has. Not
   `layout.scratch`, which is documented as valid for the length of one routine and
   is exactly what that rule body uses.
+- **Past 48 KiB the cartridge pages slot 2, and the unit is a tick step.** This
+  console's window is 16 KiB and the biggest scene in the library is 26, so
+  unlike the Super Nintendo it cannot take a scene per bank: a scene's tick
+  becomes a run of calls in the fixed half that pages each of its seven steps in
+  turn, plus its reset, camera and render. What decides the split is that **slots
+  0 and 1 never move**, so 32 KiB holds everything an always-mapped address
+  reaches — the boot, the vectors, the helpers, the audio driver _and its
+  schedules_, because an interrupt enters it — while the tile art goes _up_,
+  since the boot uploads it once and nothing reads it again. Three things follow.
+  Nothing saves or restores the bank, because only the fixed half enters a paged
+  routine. A paged routine calls and reads downwards, so not one byte of the
+  value layer or the rule bodies changed. And `AsmZ80.section` moves no bytes, so
+  the paged banks are emitted first and the fixed half last — `ctx.finish()` has
+  to be last — and `sms.ts` copies each bank into place. A game that fits a flat
+  board pages nothing and is byte-identical.
 - **Forty-eight kilobytes is flat, and that is the mapper's doing not ours.** The
   mapper is in the cartridge rather than the console and comes up with its three
   slots holding banks 0, 1 and 2, so `$0000`–`$BFFF` is one continuous image and a
@@ -2633,10 +2808,29 @@ is the game.
   is the list; the build assembles the 32 KiB cartridge first and only
   reassembles when the game does not fit, which is what keeps every existing
   cartridge byte-identical. The catch is the header: sixteen bytes _inside_ the
-  image at `$7FF0`, so a 48 KiB build pads across the hole and the data section
-  starts at `$8000` — the gap below `$7FF0` is wasted, and a game whose code runs
-  past the header cannot be laid out this way at all and is told so by name. Doc
-  13 §Banked cartridges has the fix and why it comes before slot-2 paging.
+  image at `$7FF0`, and a game whose _code_ runs past it cannot be laid out this
+  way at all and is told so by name.
+- **The header hole is stepped over one data block at a time, and the sizes come
+  from the pass before.** Everything after `ctx.finish()` is addressed by label
+  rather than by a branch, so a block that moves takes its label with it and
+  nothing else notices — which means the question is per block ("would _this_ one
+  be laid across `$7FF0`?") rather than one wholesale pad to `$8000`. It has to
+  be, because padding the whole data section past the header throws away
+  everything between the end of the code and `$7FF0`: up to thirty-two kilobytes
+  for a game whose code is short and whose tables are long, and 1223 bytes on the
+  smallest game that reaches the larger board at all. What makes it possible is
+  that the answer needs a length the emitter does not have until the block has
+  been emitted — so it is taken from the pass that has already happened.
+  `sms.ts` assembles once with no hole to find out whether the game fits below
+  `$7FF0`, that pass emits the same blocks in the same order, and
+  `EmittedProgram.blocks` is what it measured. The two passes are compared
+  afterwards, because a size list that had drifted would place the hole somewhere
+  plausible and wrong. The audio driver's schedules are the one block that places
+  _itself_ — dozens of small label-addressed blocks rather than one, so
+  `emitData` is handed the hole and steps over it at whichever of its own
+  boundaries falls there, exactly as the standalone cartridge already did. It had
+  to come before slot-2 paging, because paging inherits the same hole: a banked
+  cartridge's fixed half is still slots 0 and 1, and `$7FF0` is still inside it.
 - **The mapper's registers are decoded out of the RAM mirror.** `$FFFC`–`$FFFF`
   is `$DFFC`–`$DFFF` in real RAM, so those four bytes read back as ordinary
   memory and page a ROM bank out from under the program when written. The heap
@@ -2800,6 +2994,41 @@ Clamp32` is the whole calling convention and there is one clamp routine where
   `ldx` and an indexed load rather than four indirections. `X` is reloaded per
   access rather than kept live, because a rule body between two accesses uses
   every register there is.
+- **The direct page is the one cheap region in the project that is an
+  optimisation and not a capability, so filling it costs bytes rather than the
+  build.** Two hundred and thirty-eight bytes, and `$nn` is two where `$nnnn` is
+  three — but the index registers reach all of bank zero, so nothing the
+  allocator hands out _has_ to be down there and `at65816` already picks the long
+  form for an address that is not. `MemoryPlan.fastSpills` is set here and
+  nowhere else: on a 6502 the same overrun has to stay fatal, because `($nn),y`
+  is that CPU's one indirect mode and a pointer that spilled to the heap could
+  not be dereferenced at all. Only a request the region cannot hold moves, so a
+  game that fits keeps every address it had — which is what let this land with no
+  trace re-baselined. `quest` was one byte over.
+- **A program that outgrows a bank calls with `jsl` and returns with `rtl`, and
+  the switch is all-or-nothing.** `jsr`, `rts` and `jmp` carry sixteen bits and
+  take the seventeenth from whichever bank the processor is already in, so a
+  scene emitted into bank four cannot be reached or returned from by any of them.
+  Which of `rts` and `rtl` a routine ends with has to match how _every_ caller
+  reaches it, and "which callers share this routine's bank" is not a question an
+  emitter can answer while it is still deciding where things go — so `ctx.banked`
+  converts the whole program or none of it, and `snes.ts` assembles a game that
+  fits one bank exactly as it always did. Every existing cartridge is
+  byte-identical because of that, and `snes-banked.test.ts` reads the opcode at
+  `TickDone` on both kinds of build to say so.
+- **All the data stays in bank zero, which is what makes banking cheap here.** A
+  level's grid, a packed backdrop, the instance defaults and the constant pool
+  are read with the data bank register at zero, so a scene in bank four reads its
+  own level with the same absolute instruction it used when it was in bank zero.
+  Not one data access changes. The corollary is the constraint: anything an
+  emitter puts in a high bank has to be reached by `long`, and nothing does.
+- **`Asm65816.section` moves no bytes.** It says which bank the code after it
+  lives in, so a label carries all twenty-four bits for `jsl`/`jml` and still
+  means its low sixteen everywhere else — which is the hardware's own rule. The
+  image stays one linear buffer, and `snes.ts` copies each 32 KiB chunk to the
+  bank its plan named. That is also why the emitter puts the **extra banks first
+  and bank zero last**: helpers are pulled by whatever code calls them, so
+  `ctx.finish()` has to be the last thing that runs.
 - **Reset lands in emulation mode.** There is no native reset vector, so a
   cartridge's first instructions are `clc; xce; rep #$38`. `snes-rom.test.ts`
   pins those three bytes, because a build that forgot them fetches every
@@ -2897,13 +3126,15 @@ hands it to a second processor at boot. Everything here is a consequence of that
   the tile art's bank until the example library's music grew enough parts to fill
   eight voices, at which point a track's schedule doubled and took the picture's
   room with it — a game refused for having too much art when what it had too much
-  of was music. Bank zero is the program, bank one is the art, bank two is the
-  sound processor's image, and the two are refused separately. A cartridge here is
-  128 KiB rather than 64: this console takes four megabytes, so the old size was a
-  choice and the wrong one. The image is bounded by its bank because the upload
-  indexes it with `long,X` and `X` is sixteen bits — the addressing's limit and
-  the bank's happen to be the same number, which is why it starts at the bank's
-  first byte.
+  of was music. Bank zero is the program, bank one is the art, bank two (and
+  three, where it is long enough) is the sound processor's image, and the three
+  are refused separately. **The image is bounded by the _addressing_ and not by a
+  bank**: the upload indexes it with `long,X` and `X` is sixteen bits, so it
+  reaches 64 KiB from the first byte of bank two — which is why it starts there,
+  and why capping it at one bank was an arbitrary halving that went when the
+  cartridge stopped being a fixed four banks. What refuses a longer one now is the
+  sound processor's own 64 KiB, which is `@demake/audio`'s number rather than a
+  board's.
 
 ### The 68000 half
 
@@ -3589,7 +3820,15 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   example game _with its art and its audio_ on every console with a driver, and
   demaking a picture is the whole `prep` tournament. That is the price of the size
   assertions — they are the only thing that would catch a cartridge overflowing —
-  so before trimming it, check that what you are removing is not the coverage. Two
+  so before trimming it, check that what you are removing is not the coverage.
+  **The size assertion is `stats.cartridge` against `BOARD`, not `stats.free`.**
+  Paging is what moved it: every family grows onto a bigger board now, so `free`
+  is measured against megabytes and a Game Boy fixture clears its kilobyte floor
+  by eight million bytes. What a regression looks like today is a fixture that
+  _takes a mapper_ — a cartridge four times the size, two extra assembly passes,
+  for a game the library says should fit — so the board it shipped on is asserted
+  exactly. Only the consoles with a fixture near an edge are listed, on `SWEEP`'s
+  own terms. Two
   consoles run the whole register-conformance battery but **one fixture** of the
   size sweep, for opposite reasons that `SWEEP` states in the file: the Mega Drive
   because a game is twenty-odd kilobytes of a half-megabyte image and there is no
@@ -4538,10 +4777,13 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   `import()` like every other core, and they were charged to _every_ visitor for
   as long as the two lists disagreed. A budget that overstates itself fails the
   next honest change, which is what it did. Current figures:
-  387 KB for a visitor against a 400 KB budget, 657 KB for the whole site — and
+  391 KB for a visitor against a 400 KB budget, 668 KB for the whole site — and
   a new example game costs about fourteen of those kilobytes, because the page
   bundles every fixture SVG twice (raw text for the ROM build, a URL for the
-  preview). Measure with a **clean** `dist`: the checker reads every `.js` it
+  preview). The worst family is the Game Boy at 86 KB on top of the 304 every
+  visitor fetches, which is where paging landed: a banked backend is three
+  assembly passes and a bank planner, and it is charged to the console that has
+  one rather than to everybody. Measure with a **clean** `dist`: the checker reads every `.js` it
   finds, so comparing two runs without deleting it in between compares two
   builds' chunks added together, which is how a passing gate can look like a
   failing one.

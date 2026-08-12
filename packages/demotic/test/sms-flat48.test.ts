@@ -95,16 +95,44 @@ describe("a flat 48 KiB Sega cartridge", () => {
 
   // The one that would bite: the header is *inside* the image, so a program that
   // ran through `$7FF0` would have sixteen of its bytes replaced by the stamp.
-  // Padding across the hole is what stops that, and this is how you tell — the
-  // sixteen bytes before the header are the filler, not the tail of a table.
-  it("pads across the header rather than being written over", async () => {
+  // Stepping over the hole is what stops that, and this is how you tell — no
+  // label the emitter placed lands in the sixteen bytes, and the eight bytes of
+  // "TMR SEGA" are still where a BIOS would look for them.
+  it("steps over the header rather than being written over", async () => {
     const program = compile(source(32), { profile: getProfile("sms") });
     const built = await buildGame(program, { title: "FLAT48", assets });
-    const filler = built.bytes.subarray(SMS_HEADER_OFFSET - SMS_HEADER_SIZE, SMS_HEADER_OFFSET);
-    expect([...filler].every((byte) => byte === 0)).toBe(true);
-    // And there is real data on the far side of it, or the padding proved nothing.
+    const inHole = [...built.symbols].filter(
+      ([, at]) => at >= SMS_HEADER_OFFSET && at < SMS_HEADER_OFFSET + SMS_HEADER_SIZE,
+    );
+    expect(inHole).toEqual([]);
+    expect(
+      String.fromCharCode(...built.bytes.subarray(SMS_HEADER_OFFSET, SMS_HEADER_OFFSET + 8)),
+    ).toBe("TMR SEGA");
+    // And there is real data on the far side of it, or the step proved nothing.
     const beyond = built.bytes.subarray(0x8000);
     expect([...beyond].some((byte) => byte !== 0)).toBe(true);
+  });
+
+  /*
+   * The reason the step is per block rather than wholesale.
+   *
+   * The data section used to be padded past `$8000` in one move, which threw away
+   * everything between the end of the code and `$7FF0` — up to thirty-two
+   * kilobytes for a game whose code is short and whose tables are long. Placing
+   * each block on whichever side of the header it fits is what recovers that, and
+   * the observable shape of it is a data section with blocks on *both* sides. A
+   * build that padded wholesale would have every one of its labels above `$8000`,
+   * so this is the assertion that separates the two.
+   */
+  it("puts data on both sides of the header, not all of it above", async () => {
+    const program = compile(source(32), { profile: getProfile("sms") });
+    const built = await buildGame(program, { title: "FLAT48", assets });
+    // `Defaults_0` is the first table this game emits and `Palette` the last.
+    expect(built.symbols.get("Defaults_0") as number).toBeLessThan(SMS_HEADER_OFFSET);
+    expect(built.symbols.get("Palette") as number).toBeGreaterThanOrEqual(0x8000);
+    // And the code really did stop short of the header, or the tables are simply
+    // where the code did not reach.
+    expect(built.symbols.get("Defaults_0") as number).toBeGreaterThan(0x4000);
   });
 
   // The claim the rest of it rests on: three banks mapped from reset means the
@@ -118,8 +146,23 @@ describe("a flat 48 KiB Sega cartridge", () => {
     );
   }, 120_000);
 
-  it("refuses a game whose code runs past the header, and names why", async () => {
+  /*
+   * A game whose code runs past the header used to be refused here, and is not
+   * any more: past 48 KiB the cartridge pages slot 2 (doc 13 §Banked cartridges),
+   * so what it gets is a bigger board rather than an error. What this generated
+   * game hits instead is the wall paging *does* have, and it is the interesting
+   * one — thirty-six rocks with a collision rule each are one scene's collision
+   * step, unrolled, and a step is the unit this console pages. Twenty kilobytes
+   * of it will not go in a sixteen-kilobyte window however many banks there are.
+   *
+   * That is a fair thing for this fixture to prove and a silly shape for a game:
+   * the example library's worst real step is a third of it, which is why `quest`
+   * pages perfectly well (`rom.test.ts`).
+   */
+  it("refuses a single tick step that outgrows the window, and names it", async () => {
     const program = compile(source(36), { profile: getProfile("sms") });
-    await expect(buildGame(program, { title: "TOOBIG", assets })).rejects.toThrow(/past \$7FF0/);
-  });
+    await expect(buildGame(program, { title: "TOOBIG", assets })).rejects.toThrow(
+      /Step_0_collisions compiles to \d+ bytes|'Step_0_collisions'/,
+    );
+  }, 60_000);
 });

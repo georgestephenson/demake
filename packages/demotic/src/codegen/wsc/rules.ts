@@ -652,7 +652,7 @@ function needContactSlot(ctx: WscCtx): Ref {
     asm.movm8("dl", romAt("bx+di"));
     asm.mov8("bl", "al");
     asm.movi8("bh", 0);
-    asm.ret();
+    ctx.ret();
   });
 }
 
@@ -668,7 +668,7 @@ function emitContactBitPtr(
   const suffix = edge === undefined ? "" : String(edge);
   asm.movi("si", label(`${table}Byte${suffix}`));
   asm.movi("di", label(`${table}Mask${suffix}`));
-  asm.call(needContactSlot(ctx));
+  ctx.call(needContactSlot(ctx));
   if (what === "seen") {
     asm.movm8("al", at("bx", layout.contactsPrev));
     asm.alu8("and", "al", "dl");
@@ -777,7 +777,7 @@ function emitEdgeSeparate(ctx: WscCtx, entity: EntityAddr, edge: Edge, scene: Sc
 function emitStageBox(ctx: WscCtx, src: number, slot: "a" | "b"): void {
   const { asm } = ctx;
   asm.movi("si", src);
-  asm.call(needCopyBox(ctx, slot));
+  ctx.call(needCopyBox(ctx, slot));
 }
 
 /** The routine that stages a box; it takes the record's address in `si`. */
@@ -787,7 +787,7 @@ function needCopyBox(ctx: WscCtx, slot: "a" | "b"): Ref {
     inner.asm.movi("di", dst);
     inner.asm.movi("cx", BOX_SIZE / 2);
     inner.asm.rep().movsw();
-    inner.asm.ret();
+    inner.ret();
   });
 }
 
@@ -795,7 +795,7 @@ function needCopyBox(ctx: WscCtx, slot: "a" | "b"): Ref {
 function emitStageBoxPtr(ctx: WscCtx, slot: "a" | "b"): void {
   const { asm, layout } = ctx;
   asm.movm("si", abs(layout.loop as number));
-  asm.call(needCopyBox(ctx, slot));
+  ctx.call(needCopyBox(ctx, slot));
 }
 
 function emitStagePair(ctx: WscCtx, a: number, b: number): void {
@@ -836,10 +836,10 @@ function needOverlapPair(ctx: WscCtx): Ref {
     }
     asm.movi8("al", 1);
     asm.alu8("or", "al", "al");
-    asm.ret();
+    ctx.ret();
     asm.label(apart);
     asm.alu8("xor", "al", "al");
-    asm.ret();
+    ctx.ret();
   });
 }
 
@@ -856,11 +856,11 @@ function needSeparatePair(ctx: WscCtx): Ref {
     const { xPush, yPush } = emitPairPushes(inner, useY);
     add32(inner, boxProp(a, "x"), xPush);
     clamp32(inner, boxProp(a, "x"));
-    asm.ret();
+    ctx.ret();
     asm.label(useY);
     add32(inner, boxProp(a, "y"), yPush);
     clamp32(inner, boxProp(a, "y"));
-    asm.ret();
+    ctx.ret();
   });
 }
 
@@ -932,18 +932,18 @@ function needContactSide(ctx: WscCtx): Ref {
     asm.aluMI("cmp", dest(xPush, 2), 0);
     inner.far("s", negative);
     asm.movi8("al", SIDE_BITS["right"] as number);
-    asm.ret();
+    ctx.ret();
     asm.label(negative);
     asm.movi8("al", SIDE_BITS["left"] as number);
-    asm.ret();
+    ctx.ret();
     asm.label(useY);
     asm.aluMI("cmp", dest(yPush, 2), 0);
     inner.far("ns", below);
     asm.movi8("al", SIDE_BITS["above"] as number);
-    asm.ret();
+    ctx.ret();
     asm.label(below);
     asm.movi8("al", SIDE_BITS["below"] as number);
-    asm.ret();
+    ctx.ret();
   });
 }
 
@@ -958,7 +958,7 @@ function needContactSide(ctx: WscCtx): Ref {
 function emitSideGate(ctx: WscCtx, sides: readonly string[], skip: string): void {
   const mask = sideMask(sides);
   if (mask === 0) return;
-  ctx.asm.call(needContactSide(ctx));
+  ctx.call(needContactSide(ctx));
   // `and` rather than a `test`, which this instruction set does not have as an
   // immediate form; the accumulator is dead after the branch either way.
   ctx.asm.aluI8("and", "al", mask);
@@ -1005,10 +1005,10 @@ function needNearBox(ctx: WscCtx): Ref {
 
     asm.movi8("al", 1);
     asm.alu8("or", "al", "al");
-    asm.ret();
+    ctx.ret();
     asm.label(apart);
     asm.alu8("xor", "al", "al");
-    asm.ret();
+    ctx.ret();
   });
 }
 
@@ -1017,12 +1017,12 @@ function emitCommitPair(ctx: WscCtx, entity: number): void {
   const { asm, layout } = ctx;
   const source = layout.pairA as number;
   asm.movi("di", entity);
-  asm.call(
+  ctx.call(
     ctx.need("CommitPair", (inner) => {
       inner.asm.movi("si", source);
       inner.asm.movi("cx", (2 * PROP_SIZE) / 2);
       inner.asm.rep().movsw();
-      inner.asm.ret();
+      inner.ret();
     }),
   );
 }
@@ -1089,11 +1089,11 @@ function emitPairLoop(
   if (margins) {
     asm.movm("bx", abs(layout.loop));
     asm.movi("cx", (margins.y << 8) | margins.x);
-    asm.call(needNearBox(ctx));
+    ctx.call(needNearBox(ctx));
     ctx.far("z", next);
   }
   emitStageBoxPtr(ctx, "b");
-  asm.call(needOverlapPair(ctx));
+  ctx.call(needOverlapPair(ctx));
   ctx.far("z", next);
   emitSideGate(ctx, event.sides, next);
 
@@ -1110,9 +1110,9 @@ function emitPairLoop(
   emitStageBoxPtr(ctx, "b");
   guardVisible(ctx, subjectId, noSeparate);
   if (guarded) guardVisiblePtr(ctx, noSeparate);
-  asm.call(needOverlapPair(ctx));
+  ctx.call(needOverlapPair(ctx));
   ctx.far("z", noSeparate);
-  asm.call(needSeparatePair(ctx));
+  ctx.call(needSeparatePair(ctx));
   emitCommitPair(ctx, subjectBase);
   emitStageBox(ctx, subjectBase, "a");
   emitContactBitPtr(ctx, table, "set");
@@ -1313,13 +1313,13 @@ export function emitCollisions(ctx: WscCtx, scene: SceneCtx): void {
         if (margins) {
           asm.movi("bx", otherBase);
           asm.movi("cx", (margins.y << 8) | margins.x);
-          asm.call(needNearBox(ctx));
+          ctx.call(needNearBox(ctx));
           ctx.far("z", skip);
         }
         // Only the other box is staged here: the subject's was staged before the
         // loop and every path below leaves it current.
         emitStageBox(ctx, otherBase, "b");
-        asm.call(needOverlapPair(ctx));
+        ctx.call(needOverlapPair(ctx));
         ctx.far("z", skip);
         emitSideGate(ctx, event.sides, skip);
         const afterFire = ctx.unique("otherFired");
@@ -1336,9 +1336,9 @@ export function emitCollisions(ctx: WscCtx, scene: SceneCtx): void {
         // a rule that collected a coin by hiding it has said so by now.
         guardVisible(ctx, subjectId, noSeparate);
         guardVisible(ctx, otherId, noSeparate);
-        asm.call(needOverlapPair(ctx));
+        ctx.call(needOverlapPair(ctx));
         ctx.far("z", noSeparate);
-        asm.call(needSeparatePair(ctx));
+        ctx.call(needSeparatePair(ctx));
         emitCommitPair(ctx, subjectBase);
         emitStageBox(ctx, subjectBase, "a");
         emitContactSet(ctx, bit);

@@ -31,11 +31,14 @@ import {
   AsmError,
   packSegaRom,
   regionFor,
+  SMS_BANK_SIZE,
   SMS_HEADER_OFFSET,
   SMS_ORIGIN,
   SMS_FLAT_ROM_SIZES,
   SMS_HEADER_SIZE,
   SMS_ROM_SIZE,
+  SMS_ROM_SIZES,
+  smsRomSizeFor,
   type Executor,
 } from "@demake/core";
 
@@ -59,7 +62,13 @@ import {
 import { GG_MEMORY, SMS_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
 import { ART_TILES, bindSmsArt } from "./sms-art.js";
 import { SmsCtx } from "./sms/ctx.js";
-import { emitProgram, BANK_TILES, type SmsEmitOptions } from "./sms/emit.js";
+import {
+  emitProgram,
+  BANK_TILES,
+  type HeaderHole,
+  type SmsBankPlan,
+  type SmsEmitOptions,
+} from "./sms/emit.js";
 import type { ArtSettings } from "./settings.js";
 
 /** Bytes the smallest flat Sega cartridge holds. */
@@ -76,8 +85,17 @@ export const ROM_SIZE = SMS_ROM_SIZE;
  */
 export const CODE_SIZE = SMS_HEADER_OFFSET;
 
-/** Bytes the largest flat Sega cartridge holds, header hole included. */
-export const MAX_ROM_SIZE = SMS_FLAT_ROM_SIZES[SMS_FLAT_ROM_SIZES.length - 1] as number;
+/** Bytes the largest *flat* Sega cartridge holds, header hole included. */
+export const MAX_FLAT_SIZE = SMS_FLAT_ROM_SIZES[SMS_FLAT_ROM_SIZES.length - 1] as number;
+
+/**
+ * Bytes the largest Sega cartridge holds at all.
+ *
+ * What {@link RomStats.free} is measured against, which is the largest board and
+ * never the one that shipped (`backend.ts` §Elastic cartridges) — so a game that
+ * crossed from a flat 48 KiB onto a paged 64 does not see its headroom jump.
+ */
+export const MAX_ROM_SIZE = SMS_ROM_SIZES[SMS_ROM_SIZES.length - 1] as number;
 
 /**
  * What this backend's audio binding hands the emitter.
@@ -221,7 +239,7 @@ export const smsBackend: Backend<SmsEmitOptions, SmsAudio> = {
      * A fresh `SmsCtx` each time, because emitting is what pulls a helper into the
      * output — a context that had already been emitted into would emit them twice.
      */
-    const assembleWith = (reserveHeader: boolean) => {
+    const assembleWith = (hole?: HeaderHole, plan?: SmsBankPlan, split?: boolean) => {
       const inner = new SmsCtx(
         program,
         analysis,
@@ -230,23 +248,17 @@ export const smsBackend: Backend<SmsEmitOptions, SmsAudio> = {
         SMS_ORIGIN,
       );
       if (hooks) inner.audio = hooks;
+      if (plan) inner.banks = new Map(plan.bankOf);
       try {
-        emitProgram(inner, { ...art, ...audio.options, reserveHeader });
-        return { inner, code: inner.asm.assemble() };
+        const emitted = emitProgram(inner, {
+          ...art,
+          ...audio.options,
+          ...(hole ? { hole } : {}),
+          ...(plan ? { banks: plan } : {}),
+          ...(split ? { split: true } : {}),
+        });
+        return { inner, ...emitted, code: inner.asm.assemble() };
       } catch (error) {
-        // The one shape the two-size scheme cannot take: the *code* alone runs
-        // past `$7FF0`, so there is nowhere to put the header hole that is not in
-        // the middle of something a branch addresses. Worth its own sentence
-        // rather than an internal error, because the answer is paging slot 2 and
-        // not a smaller game.
-        if (error instanceof AsmError && /cannot pad to/.test(error.message)) {
-          throw new BuildError(
-            "E_GAME_TOO_LARGE",
-            "this game's code reaches past $7FF0, where the cartridge header sits",
-            "the flat cartridge has nowhere to put the header; paging slot 2 is what this " +
-              "needs (doc 13 §Banked cartridges).",
-          );
-        }
         if (error instanceof AsmError) {
           throw new BuildError(
             "E_INTERNAL",
@@ -262,24 +274,82 @@ export const smsBackend: Backend<SmsEmitOptions, SmsAudio> = {
     // so there is no hole to leave and nothing to pad. Only a game that does not
     // fit pays for the second pass — and it pays in assembly, which is
     // milliseconds against the art and audio already demade by now.
-    let { inner, code } = assembleWith(false);
+    //
+    // That first pass is also the measuring tape the second one needs: it emits
+    // the same data blocks in the same order with nothing stepped over, so what it
+    // reports is how long each of them is (`sms/emit.ts` §Placing the header hole).
+    const hole = (blocks: readonly number[]): HeaderHole => ({
+      from: SMS_HEADER_OFFSET,
+      to: SMS_HEADER_OFFSET + SMS_HEADER_SIZE,
+      blocks,
+    });
+    /** A second pass has to reproduce the first's measurements exactly. */
+    const sameBlocks = (a: readonly number[], b: readonly number[]): boolean =>
+      a.length === b.length && a.every((bytes, index) => bytes === b[index]);
+
+    const first = assembleWith();
+    let { inner, blocks, code } = first;
     let size = SMS_ROM_SIZE;
+    let plan: SmsBankPlan | undefined;
     if (code.length > CODE_SIZE) {
-      if (code.length > MAX_ROM_SIZE - SMS_HEADER_SIZE) {
-        throw new BuildError(
-          "E_GAME_TOO_LARGE",
-          `this game compiles to ${code.length} bytes and a flat Sega cartridge holds ` +
-            `${MAX_ROM_SIZE - SMS_HEADER_SIZE}`,
-          "fewer objects in one rule, or a smaller level; past 48 KiB the cartridge has to " +
-            "page slot 2 (doc 13 §Banked cartridges).",
-        );
+      if (code.length <= MAX_FLAT_SIZE - SMS_HEADER_SIZE && first.dataStart <= SMS_HEADER_OFFSET) {
+        // Still flat: 48 KiB is three banks already mapped, so this is the same
+        // second pass it always was and the same bytes.
+        const measured = blocks;
+        ({ inner, blocks, code } = assembleWith(hole(measured)));
+        if (!sameBlocks(blocks, measured)) {
+          throw new BuildError(
+            "E_INTERNAL",
+            "the data section changed size between the two assembly passes",
+          );
+        }
+        size = MAX_FLAT_SIZE;
+      } else {
+        // Paged. The units are measured on a pass shaped exactly like the banked
+        // one — same routines, same bank writes, laid end to end — because a plan
+        // built from the flat build's scenes would be built from instructions
+        // that no longer exist (`sms/emit.ts` §{@link SmsBankPlan}).
+        const probe = assembleWith(undefined, undefined, true);
+        plan = planBanks(probe);
+        const built = assembleWith(hole(probe.blocks), plan);
+        if (!sameBlocks(built.blocks, probe.blocks) || built.fixed !== probe.fixed) {
+          throw new BuildError(
+            "E_INTERNAL",
+            "the program changed size between the measuring pass and the banked one",
+          );
+        }
+        ({ inner, code } = built);
+        const banks = FIXED_BANKS + plan.banks.length;
+        const chosen = smsRomSizeFor(banks);
+        if (chosen === undefined) {
+          throw new BuildError(
+            "E_GAME_TOO_LARGE",
+            `this game needs ${banks} banks and the largest Sega cartridge holds ` +
+              `${String(MAX_ROM_SIZE / SMS_BANK_SIZE)}`,
+            "fewer objects in one rule, or a smaller level; past 512 KiB the size " +
+              "nibble has no code left to name a board with.",
+          );
+        }
+        size = chosen;
       }
-      ({ inner, code } = assembleWith(true));
-      size = MAX_ROM_SIZE;
     }
 
     const image = new Uint8Array(size);
-    image.set(code.subarray(0, Math.min(code.length, size)), 0);
+    if (plan) {
+      // The emitter puts the paged banks first and the fixed half last, so that
+      // the helpers — which are pulled by whatever code calls them — are still
+      // the last thing emitted. Undoing that here is a copy per bank, because a
+      // bank is a fixed slice of the cartridge rather than a run of bytes that
+      // happens to end somewhere.
+      for (const [index] of plan.banks.entries()) {
+        const at = index * SMS_BANK_SIZE;
+        image.set(code.subarray(at, at + SMS_BANK_SIZE), (FIXED_BANKS + index) * SMS_BANK_SIZE);
+      }
+      const fixed = code.subarray(plan.banks.length * SMS_BANK_SIZE);
+      image.set(fixed.subarray(0, Math.min(fixed.length, FIXED_BANKS * SMS_BANK_SIZE)), 0);
+    } else {
+      image.set(code.subarray(0, Math.min(code.length, size)), 0);
+    }
     return {
       bytes: packSegaRom(image, { region: regionFor(program.profile.id) }),
       code: code.length,
@@ -295,6 +365,62 @@ export const smsBackend: Backend<SmsEmitOptions, SmsAudio> = {
     };
   },
 };
+
+/**
+ * The banks that never move: slots 0 and 1, which come up holding banks 0 and 1.
+ *
+ * Thirty-two kilobytes, and what makes this console the easier of the two 8-bit
+ * ones to page — a Game Boy's fixed half is sixteen and does not hold what has to
+ * be always mapped.
+ */
+const FIXED_BANKS = 2;
+
+/** Bytes of the fixed half a program may use: both banks, less the header. */
+const FIXED_SIZE = FIXED_BANKS * SMS_BANK_SIZE - SMS_HEADER_SIZE;
+
+/**
+ * Give every unit a bank, first fit, in the order the emitter walks them.
+ *
+ * Unlike the Super Nintendo's, bank zero takes *nothing*: the fixed half here is
+ * not a bank with room left over, it is the boot, the helpers, the audio driver,
+ * the schedules and every table, and what is left of it is measured in hundreds
+ * of bytes rather than kilobytes. So every unit is paged and the packing is over
+ * whole 16 KiB banks — which also means the plan cannot make the fixed half fit,
+ * and a game whose immovable half overruns 32 KiB is refused by name.
+ */
+function planBanks(measured: { units: ReadonlyMap<string, number>; fixed: number }): SmsBankPlan {
+  if (measured.fixed > FIXED_SIZE) {
+    throw new BuildError(
+      "E_GAME_TOO_LARGE",
+      `this game's fixed half is ${measured.fixed} bytes and slots 0 and 1 hold ${FIXED_SIZE}`,
+      "smaller levels, shorter music, or fewer objects; paging moves a game's " +
+        "scenes, and the boot, the helpers, the audio driver and every table it " +
+        "reads have to stay mapped.",
+    );
+  }
+  const banks: string[][] = [];
+  const room: number[] = [];
+  const bankOf = new Map<string, number>();
+  for (const [name, bytes] of measured.units) {
+    if (bytes > SMS_BANK_SIZE) {
+      throw new BuildError(
+        "E_GAME_TOO_LARGE",
+        `'${name}' compiles to ${bytes} bytes and slot 2's window holds ${SMS_BANK_SIZE}`,
+        "fewer rules or fewer objects in that scene; the window is the unit this " +
+          "console pages, so one step of one tick has to fit one window.",
+      );
+    }
+    let slot = room.findIndex((left) => left >= bytes);
+    if (slot < 0) {
+      slot = room.push(SMS_BANK_SIZE) - 1;
+      banks.push([]);
+    }
+    room[slot] = (room[slot] as number) - bytes;
+    (banks[slot] as string[]).push(name);
+    bankOf.set(name, FIXED_BANKS + slot);
+  }
+  return { banks, bankOf };
+}
 
 /** What to stamp in the cartridge, and what source bytes to demake. */
 export type SmsRomOptions = BuildOptions;

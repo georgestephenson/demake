@@ -43,12 +43,24 @@ die() {
   exit 0
 }
 
-if [ -x "$CAPTURE" ]; then
+# Keyed on the source it compiles, for install-sameboy.sh's reason: the branch is
+# not pinned and `capture.c` is ours, so "the binary exists" is not the same
+# question as "the binary is this one".
+STAMP="$PREFIX/capture.stamp"
+source_stamp() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$CAPTURE_SRC" | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$CAPTURE_SRC" | cut -d' ' -f1
+  else cksum "$CAPTURE_SRC" | cut -d' ' -f1
+  fi
+}
+
+[ -f "$CAPTURE_SRC" ] || die "missing capture source '$CAPTURE_SRC'"
+WANT="$(source_stamp)"
+
+if [ -x "$CAPTURE" ] && [ "$(cat "$STAMP" 2>/dev/null || true)" = "$WANT" ]; then
   log "cached: $CAPTURE"
   exit 0
 fi
-
-[ -f "$CAPTURE_SRC" ] || die "missing capture source '$CAPTURE_SRC'"
 for tool in git cc; do
   command -v "$tool" >/dev/null 2>&1 || die "missing build dependency '$tool'"
 done
@@ -80,5 +92,7 @@ log "compiling capture.c…"
 cc -O2 -DDEMAKE_SAMEDUCK -I"$WORK/SameDuck" "$CAPTURE_SRC" "${objects[@]}" -lm \
   -o "$CAPTURE" >>/tmp/sameduck-build.log 2>&1 ||
   die "compiling capture.c failed (see /tmp/sameduck-build.log)"
+# Last, so an interrupted build leaves no stamp and the next run rebuilds.
+printf '%s\n' "$WANT" >"$STAMP"
 
 log "installed capturer into $PREFIX"

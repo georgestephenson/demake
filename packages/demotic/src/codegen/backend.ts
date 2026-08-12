@@ -253,8 +253,35 @@ export interface Backend<Art, Audio extends BoundAudioShape> {
    */
   unsupported(program: Program): string[];
 
-  /** Where this machine's state goes. */
+  /**
+   * Where this machine's state goes.
+   *
+   * The first plan a build tries, and on every console but one the only plan
+   * there is. A backend whose board can bring RAM offers the larger one through
+   * {@link Backend.memoryUpgrade} rather than by widening this — because what
+   * makes a game that fits keep every address it had is that this answer never
+   * changes (§Elastic cartridges).
+   */
   memory(program: Program): MemoryPlan;
+
+  /**
+   * A larger plan for a game the first one cannot hold, where the board has one.
+   *
+   * The RAM half of the elastic-cartridge rule: a console that shipped boards
+   * with memory on them brings that memory when — and only when — the game needs
+   * it, exactly as it takes a bigger board when the program needs one. The mono
+   * WonderSwan is the console this exists for and the only one that answers it:
+   * its wall is 2 KiB of work RAM rather than any amount of cartridge, and the
+   * hardware's own answer is the save RAM at segment `$1` (`layout.ts`
+   * §WS_SAVE_MEMORY).
+   *
+   * It is a second *plan* rather than a longer first one because on that machine
+   * the heap moves whole or not at all, which {@link MemoryPlan.heapSpill} — the
+   * NES's mechanism for the same hardware story — cannot express. A backend that
+   * does not implement this refuses the game with the message the allocator
+   * wrote, which is what every console did before this existed.
+   */
+  memoryUpgrade?(program: Program, memory: MemoryPlan): MemoryPlan | undefined;
 
   /**
    * Demake the art the program names, through the image engine.
@@ -404,12 +431,24 @@ export async function buildRom<Art, Audio extends BoundAudioShape>(
   }
 
   const analysis = analyze(program);
+  const plan = backend.memory(program);
   let layout: Layout;
   try {
-    layout = planLayout(program, analysis, backend.memory(program));
+    layout = planLayout(program, analysis, plan);
   } catch (error) {
-    if (error instanceof LayoutError) throw new BuildError(error.code, error.message, error.hint);
-    throw error;
+    if (!(error instanceof LayoutError)) throw error;
+    // A board with memory on it is offered only to a game the console's own
+    // cannot hold, which is what keeps every game that fits on exactly the
+    // addresses it had (§Backend.memoryUpgrade). A console with no such board —
+    // every one but the mono WonderSwan — rethrows what the allocator said.
+    const upgrade = backend.memoryUpgrade?.(program, plan);
+    if (upgrade === undefined) throw new BuildError(error.code, error.message, error.hint);
+    try {
+      layout = planLayout(program, analysis, upgrade);
+    } catch (retry) {
+      if (retry instanceof LayoutError) throw new BuildError(retry.code, retry.message, retry.hint);
+      throw retry;
+    }
   }
 
   const assets = options.assets ?? new Map<string, Uint8Array>();
@@ -569,7 +608,26 @@ export interface TickSteps {
   edgeRules(scene: SceneCtx): void;
   /** 8. Move the camera, which is the last thing a tick does. */
   camera(scene: SceneCtx): void;
+  /**
+   * Called before each step, naming it — for a backend that wants the seam.
+   *
+   * Optional, and doing nothing is the normal answer. What it exists for is that
+   * a step boundary is the only place inside a tick where *nothing* is live: the
+   * steps hand work to each other through the entity records and the contact
+   * bitfield, never through a register, because the interpreter they are written
+   * against has no registers. So a backend that needs to cut a scene's tick into
+   * pieces — one whose bank is smaller than a scene (doc 13 §Banked cartridges) —
+   * can only cut it here, and this is the hook that says where "here" is.
+   *
+   * The names are the step's own, so a profile bucketed by symbol names the step
+   * rather than the whole tick.
+   */
+  boundary?(step: TickStep, scene: SceneCtx): void;
 }
+
+/** The steps of a tick, named — the argument {@link TickSteps.boundary} takes. */
+export type TickStep =
+  "controls" | "levelRules" | "integrate" | "collisions" | "tileRules" | "edgeRules" | "camera";
 
 /**
  * Emit one scene's tick in the order the interpreter runs it.
@@ -580,13 +638,117 @@ export interface TickSteps {
  * order" stops being a claim about two files and becomes a property of one.
  */
 export function emitTickSteps(steps: TickSteps, scene: SceneCtx, level: LevelData | undefined) {
+  const at = (step: TickStep): void => {
+    steps.boundary?.(step, scene);
+  };
+  at("controls");
   steps.controls(scene);
+  at("levelRules");
   steps.levelRules(scene);
+  at("integrate");
   steps.integrate(scene);
+  at("collisions");
+  // The two contact-set steps ride with the collisions rather than being
+  // boundaries of their own: they are a handful of instructions each, and the
+  // history they keep is only consistent either side of the pair.
   steps.beginContacts();
   steps.collisions(scene);
   steps.endContacts();
-  if (level) steps.tileRules(scene, level);
+  if (level) {
+    at("tileRules");
+    steps.tileRules(scene, level);
+  }
+  at("edgeRules");
   steps.edgeRules(scene);
+  at("camera");
   steps.camera(scene);
+}
+
+/** What one step of one scene's tick is called, on every console that pages. */
+export function stepLabel(scene: number, step: TickStep): string {
+  return `Step_${scene}_${step}`;
+}
+
+/**
+ * The steps this scene runs, in order — what a banked build has to place.
+ *
+ * Shared rather than per backend because the answer is: *which* of doc 14's steps
+ * a scene has is a fact about the scene (a scene with no level runs no tile
+ * rules), and `emitTickSteps` is the one place that knows it. Four consoles page
+ * below the level of a scene now, and a fourth copy of this would be a fourth
+ * chance to disagree with the sequence it is asking about.
+ */
+export function tickStepNames(scene: SceneCtx, level: LevelData | undefined): string[] {
+  const names: string[] = [];
+  const nothing = (): void => {};
+  emitTickSteps(
+    {
+      controls: nothing,
+      levelRules: nothing,
+      integrate: nothing,
+      beginContacts: nothing,
+      collisions: nothing,
+      endContacts: nothing,
+      tileRules: nothing,
+      edgeRules: nothing,
+      camera: nothing,
+      boundary: (step) => names.push(stepLabel(scene.index, step)),
+    },
+    scene,
+    level,
+  );
+  return names;
+}
+
+/**
+ * Run the whole sequence and emit only the step named, with a label on it.
+ *
+ * The other half of what a banked build needs, and it runs the *whole* sequence
+ * rather than calling one step's emitter directly. That is deliberate: which of
+ * doc 14's steps ride together — the two contact-set steps go with the
+ * collisions, because the history they keep is only consistent either side of the
+ * pair — is {@link emitTickSteps}'s to decide, and a switch that dispatched by
+ * name would be a second copy of that decision waiting to disagree with it.
+ *
+ * Answers whether it emitted anything, because a caller asking for a step this
+ * scene does not run is a bank plan built from something that is not there, and
+ * each backend raises that in its own assembler's language.
+ */
+export function emitOneTickStep(
+  steps: TickSteps,
+  scene: SceneCtx,
+  level: LevelData | undefined,
+  wanted: string,
+  onOpen: (name: string) => void,
+): boolean {
+  let live = false;
+  let emitted = false;
+  /** Run a step's emitter only while the one we were asked for is open. */
+  const gate =
+    <A extends unknown[]>(body: (...args: A) => void) =>
+    (...args: A): void => {
+      if (live) body(...args);
+    };
+  emitTickSteps(
+    {
+      controls: gate(steps.controls),
+      levelRules: gate(steps.levelRules),
+      integrate: gate(steps.integrate),
+      beginContacts: gate(steps.beginContacts),
+      collisions: gate(steps.collisions),
+      endContacts: gate(steps.endContacts),
+      tileRules: gate(steps.tileRules),
+      edgeRules: gate(steps.edgeRules),
+      camera: gate(steps.camera),
+      boundary: (step, sc) => {
+        live = stepLabel(sc.index, step) === wanted;
+        if (!live) return;
+        onOpen(wanted);
+        emitted = true;
+      },
+    },
+    scene,
+    level,
+  );
+  return emitted;
 }

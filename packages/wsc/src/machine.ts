@@ -375,17 +375,18 @@ export class Wsc implements Bus {
   }
 
   /**
-   * Read `length` bytes of the console's RAM — the trace reader's window.
+   * Read `length` bytes of the address space — the trace reader's window.
    *
-   * A plain read of segment zero, because on this console that is where
-   * everything is: a game's state, and the picture the display is drawing out of
-   * the same sixty-four kilobytes.
+   * Through the bus rather than into `ram`, because a game's state is not always
+   * in the console's own memory: a mono WonderSwan cartridge too big for the
+   * sixteen kilobytes this machine has puts its whole heap in the cartridge's
+   * **save RAM** at segment `$1`, which is a `read` away and not a subscript.
+   * Reading `ram` directly answered the interrupt vectors for such a game, and
+   * masked at 64 KiB rather than at this model's own `ramMask` besides.
    */
   readMemory(address: number, length: number): Uint8Array {
     const out = new Uint8Array(length);
-    for (let index = 0; index < length; index += 1) {
-      out[index] = this.ram[(address + index) & 0xffff] as number;
-    }
+    for (let index = 0; index < length; index += 1) out[index] = this.read(address + index);
     return out;
   }
 }

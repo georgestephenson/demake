@@ -139,10 +139,10 @@ export function emitTileAt(ctx: SnesCtx, data: LevelData): void {
   asm.adc(mem(col));
   asm.tax();
   loadTableByte(ctx, data.gridLabel);
-  asm.rts();
+  ctx.ret();
   asm.label(outside);
   asm.lda(imm16(GRID_EMPTY));
-  asm.rts();
+  ctx.ret();
 }
 
 /**

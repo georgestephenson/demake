@@ -28,7 +28,14 @@
  *     rather than the driver's (`@demake/audio` §`pce-game.ts`).
  */
 
-import { AsmError, PCE_BANK_SIZE, PCE_ROM_SIZES, packHuCard, type Executor } from "@demake/core";
+import {
+  AsmError,
+  PCE_BANK_SIZE,
+  PCE_ROM_SIZE,
+  PCE_ROM_SIZES,
+  packHuCard,
+  type Executor,
+} from "@demake/core";
 import { buildPceGameAudio } from "@demake/audio";
 
 import { getProfile } from "../profiles.js";
@@ -50,14 +57,17 @@ import {
 import { PCE_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
 import { slotOf } from "./mos/zp.js";
 import { bindPceArt, type BoundPceArt } from "./pce-art.js";
-import { PceCtx } from "./pce/ctx.js";
+import { PCE_WINDOW_SIZE, PceCtx } from "./pce/ctx.js";
 import {
   BANK_TILES,
   BOOT_ORIGIN,
   CODE_ORIGIN,
+  FIRST_PAGED_PAGE,
+  FIXED_ORIGIN,
   SPRITE_PATTERNS,
   WindowOverflow,
   emitProgram,
+  type PceBankPlan,
   type PceEmitOptions,
 } from "./pce/emit.js";
 import type { ArtSettings } from "./settings.js";
@@ -66,13 +76,31 @@ import type { ArtSettings } from "./settings.js";
 export const WINDOW_SIZE = 0x10000 - CODE_ORIGIN;
 
 /**
- * Bytes of it a game may use.
+ * Bytes of cartridge a game may use.
  *
  * The last ten are the CPU's five vectors, which is what makes a cartridge
  * bootable at all — so they are subtracted from the budget rather than left for a
  * game to overwrite and discover the problem in an emulator.
+ *
+ * Measured against the **largest HuCard** and not against the 48 KiB window,
+ * which is `backend.ts` §Elastic cartridges' rule and used not to bite here: a
+ * game that outgrows the window now pages its tick's steps rather than being
+ * refused (doc 13 §Banked cartridges), so a headroom figure that stopped at the
+ * window would report a game getting bigger as a game with less room and then
+ * jump by most of a megabyte when it crossed. What refuses a game now is the
+ * *fixed half* ({@link FIXED_SIZE}), which is a different number and is named
+ * separately.
  */
-export const CODE_SIZE = WINDOW_SIZE - 10;
+export const CODE_SIZE = PCE_ROM_SIZE - 10;
+
+/**
+ * Bytes a banked build's fixed half holds: `$8000`-`$FFFF`, vectors and all.
+ *
+ * Twenty-four kilobytes of program and the boot bank above it — half again what
+ * a Game Boy or an NES keeps mapped, which is why this console pages its scenes
+ * and none of its data (doc 13 §Banked cartridges).
+ */
+export const FIXED_SIZE = 0x10000 - FIXED_ORIGIN;
 
 /**
  * What this console's audio binding hands the emitter.
@@ -95,7 +123,7 @@ interface PceAudio extends BoundAudioShape {
 export const pceBackend: Backend<PceEmitOptions, PceAudio> = {
   family: "pce",
   consoles: ["pce"],
-  cartridge: "a HuCard's 48 KiB window",
+  cartridge: "the largest HuCard",
 
   extension(): string {
     return "pce";
@@ -223,69 +251,164 @@ export const pceBackend: Backend<PceEmitOptions, PceAudio> = {
     void title; // a HuCard carries no title field
 
     const state = bound.get(art);
-    const ctx = new PceCtx(
-      program,
-      analysis,
-      layout,
-      getProfile(program.profile.id),
-      CODE_ORIGIN,
-      state?.bank,
-      state?.patterns ?? 0,
-      state?.levelPalette ?? 0,
-    );
-    // A rule that fires a sound both asks the driver for it and *records* that it
-    // did, in the byte the trace reads — so a build with the files left out
-    // traces identically to one that plays them (doc 14 §Conformance).
-    if (audio.hooks) {
-      ctx.audio = {
-        driver: audio.hooks.driver,
-        music: audio.hooks.music,
-        request: audio.hooks.request,
-        trace: layout.sound,
-        effects: audio.hooks.effects,
-      };
-    }
-    let code: Uint8Array;
+    /**
+     * A fresh context at an origin.
+     *
+     * Fresh each pass, because emitting is what *pulls* a helper into the output —
+     * a context that had already been emitted into would emit them twice.
+     */
+    const fresh = (origin: number): PceCtx => {
+      const made = new PceCtx(
+        program,
+        analysis,
+        layout,
+        getProfile(program.profile.id),
+        origin,
+        state?.bank,
+        state?.patterns ?? 0,
+        state?.levelPalette ?? 0,
+      );
+      // A rule that fires a sound both asks the driver for it and *records* that
+      // it did, in the byte the trace reads — so a build with the files left out
+      // traces identically to one that plays them (doc 14 §Conformance).
+      if (audio.hooks) {
+        made.audio = {
+          driver: audio.hooks.driver,
+          music: audio.hooks.music,
+          request: audio.hooks.request,
+          trace: layout.sound,
+          effects: audio.hooks.effects,
+        };
+      }
+      return made;
+    };
+    /** Assemble once, flat or split, with or without a window plan. */
+    const assembleWith = (plan?: PceBankPlan, split?: boolean) => {
+      const inner = fresh(split === true || plan !== undefined ? FIXED_ORIGIN : CODE_ORIGIN);
+      if (plan) inner.banks = new Map(plan.bankOf);
+      try {
+        const emitted = emitProgram(inner, {
+          ...art,
+          ...audio.options,
+          ...(plan ? { banks: plan } : {}),
+          ...(split ? { split: true } : {}),
+        });
+        return { inner, ...emitted, code: inner.asm.assemble() };
+      } catch (error) {
+        if (error instanceof AsmError) {
+          throw new BuildError(
+            "E_INTERNAL",
+            `the code generator produced invalid code: ${error.message}`,
+          );
+        }
+        throw error;
+      }
+    };
+
+    // The flat window first, and its bytes are exactly what they always were: no
+    // mapper writes past the boot's own, one section, one 48 KiB image. Only a
+    // game that does not fit pays for the passes below.
+    let built: ReturnType<typeof assembleWith>;
+    let plan: PceBankPlan | undefined;
     try {
-      emitProgram(ctx, { ...art, ...audio.options });
-      code = ctx.asm.assemble();
+      built = assembleWith();
     } catch (error) {
-      if (error instanceof AsmError) {
+      if (!(error instanceof BuildError) && !(error instanceof WindowOverflow)) throw error;
+      if (error instanceof BuildError) throw error;
+      // The units are measured on a pass shaped exactly like the banked one —
+      // same routines, same mapper writes, laid end to end — because a plan built
+      // from the flat build's scenes would be built from instructions that no
+      // longer exist.
+      const probe = assembleWith(undefined, true);
+      plan = planWindows(probe);
+      built = assembleWith(plan);
+      if (built.fixed !== probe.fixed) {
         throw new BuildError(
           "E_INTERNAL",
-          `the code generator produced invalid code: ${error.message}`,
+          "the program changed size between the measuring pass and the banked one",
         );
       }
-      if (error instanceof WindowOverflow) {
-        throw new BuildError(
-          "E_GAME_TOO_LARGE",
-          `this game compiles to ${error.bytes} bytes and ${pceBackend.cartridge} holds ${CODE_SIZE}`,
-          "fewer objects in one rule, a smaller level, or less art; bank switching is doc 15 §Not in v1.",
-        );
-      }
-      throw error;
     }
 
+    const { inner: ctx, code } = built;
     // The image is the window, rearranged into cartridge banks. Reset maps bank 0
-    // at `$E000`, so the *top* 8 KiB of the window is bank 0 and everything below
-    // it follows — which is why the boot stub is emitted last and why the halves
-    // are swapped here rather than assembled in this order.
-    const split = BOOT_ORIGIN - CODE_ORIGIN;
-    const banks = new Uint8Array(WINDOW_SIZE);
-    banks.set(code.subarray(split, WINDOW_SIZE), 0);
-    banks.set(code.subarray(0, split), PCE_BANK_SIZE);
+    // at `$E000`, so the *top* 8 KiB of the fixed half is bank 0 and everything
+    // below it follows — which is why the boot stub is emitted last and why the
+    // halves are swapped here rather than assembled in this order.
+    const paged = (plan?.banks.length ?? 0) * PCE_WINDOW_SIZE;
+    // Where the boot stub starts *within* the fixed half, which is an address
+    // rather than a length: the assembler stops at the last byte it emitted and
+    // the reset code does not run to `$FFFF`, so measuring back from the end
+    // would put the vectors' page wherever this game happened to finish.
+    const origin = plan ? FIXED_ORIGIN : CODE_ORIGIN;
+    // Zero-filled rather than `$FF`, which is what an unprogrammed HuCard reads
+    // as: this is the gap between where the reset code ends and the vectors, and
+    // it has been zeros in every cartridge this backend has ever built.
+    const fixed = new Uint8Array(0x10000 - origin);
+    fixed.set(code.subarray(paged, paged + Math.min(code.length - paged, fixed.length)));
+    const bootAt = BOOT_ORIGIN - origin;
+    const banks = new Uint8Array(paged + fixed.length);
+    banks.set(fixed.subarray(bootAt), 0);
+    banks.set(fixed.subarray(0, bootAt), PCE_BANK_SIZE);
+    // Then the paged windows, after the pages the boot maps (§FIRST_PAGED_PAGE).
+    banks.set(code.subarray(0, paged), FIRST_PAGED_PAGE * PCE_BANK_SIZE);
 
     return {
       bytes: packHuCard(banks, { vectors: vectorsOf(ctx) }),
       // What the *program* came to, which is everything but the padding between
       // its data and its boot stub.
-      code: measure(ctx),
+      code: measure(ctx) + paged,
       capacity: CODE_SIZE,
       symbols: ctx.asm.symbols(),
       helpers: ctx.helperNames(),
     };
   },
 };
+
+/**
+ * Give every unit a window, first fit, in the order the emitter walks them.
+ *
+ * The Sega's shape on the cheapest mapper in the set. What stays below is the
+ * boot, the interrupt handlers, the shared helpers, the audio driver **and its
+ * schedules**, the level tables, the instance defaults, the character bank and
+ * every picture — twenty-four kilobytes of program plus the boot bank, which is
+ * half again what a Game Boy or an NES has and is why this console needed none of
+ * the data-paging machinery either of those did (doc 13 §Banked cartridges).
+ */
+function planWindows(measured: { units: ReadonlyMap<string, number>; fixed: number }): PceBankPlan {
+  if (measured.fixed > FIXED_SIZE) {
+    throw new BuildError(
+      "E_GAME_TOO_LARGE",
+      `this game's fixed half is ${measured.fixed} bytes and $8000-$FFFF holds ${FIXED_SIZE}`,
+      "smaller levels, shorter music, or fewer objects; paging moves a game's " +
+        "scenes, and the boot, the helpers, the audio driver and every table it " +
+        "reads have to stay mapped.",
+    );
+  }
+  const banks: string[][] = [];
+  const room: number[] = [];
+  const bankOf = new Map<string, number>();
+  for (const [name, bytes] of measured.units) {
+    if (bytes > PCE_WINDOW_SIZE) {
+      throw new BuildError(
+        "E_GAME_TOO_LARGE",
+        `'${name}' compiles to ${bytes} bytes and the window holds ${PCE_WINDOW_SIZE}`,
+        "fewer rules or fewer objects in that scene; the window is the unit this " +
+          "console pages, so one step of one tick has to fit one window.",
+      );
+    }
+    let slot = room.findIndex((left) => left >= bytes);
+    if (slot < 0) {
+      slot = room.push(PCE_WINDOW_SIZE) - 1;
+      banks.push([]);
+    }
+    room[slot] = (room[slot] as number) - bytes;
+    (banks[slot] as string[]).push(name);
+    // A window is two of this mapper's pages, and `enter` names the first.
+    bankOf.set(name, FIRST_PAGED_PAGE + slot * 2);
+  }
+  return { banks, bankOf };
+}
 
 /** The five vectors, from the labels the emitter defined. */
 function vectorsOf(ctx: PceCtx): Record<string, number> {
@@ -310,7 +433,7 @@ function vectorsOf(ctx: PceCtx): Record<string, number> {
  */
 function measure(ctx: PceCtx): number {
   const boot = ctx.asm.has("Reset") ? ctx.asm.addressOf("Reset") : BOOT_ORIGIN;
-  return ctx.dataEnd - CODE_ORIGIN + (ctx.asm.pc - boot);
+  return ctx.dataEnd - ctx.asm.origin + (ctx.asm.pc - boot);
 }
 
 /**

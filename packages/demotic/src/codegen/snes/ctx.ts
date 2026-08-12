@@ -57,6 +57,59 @@ export type SnesHelperBody = (ctx: SnesCtx) => void;
 export class SnesCtx extends CtxBase<SnesCtx, Asm65816> {
   readonly asm: Asm65816;
 
+  /**
+   * Whether this program's routines are reached across bank boundaries.
+   *
+   * A LoROM bank is thirty-two kilobytes and `jsr`, `rts` and `jmp` are all
+   * bank-local: they carry sixteen bits and take the seventeenth from whichever
+   * bank the processor is already in. So a program that does not fit one bank
+   * calls with `jsl` and returns with `rtl` — four bytes instead of three, two
+   * cycles either way — and this is the switch (doc 13 §Banked cartridges).
+   *
+   * It is all-or-nothing on purpose. `rts` and `rtl` pull different numbers of
+   * bytes, so which one a routine ends with has to match how *every* caller
+   * reaches it — and "which callers are in this routine's bank" is not a
+   * question an emitter can answer while it is still deciding where things go.
+   * Converting the whole program instead makes the answer the same everywhere,
+   * and it costs nothing at all for the games that fit one bank: `snes.ts`
+   * assembles those exactly as it always did, so their cartridges are
+   * byte-identical.
+   */
+  banked = false;
+
+  /** Call a routine — near inside one bank, long when the program is banked. */
+  call(target: Ref): void {
+    if (this.banked) this.asm.jsl(target);
+    else this.asm.jsr(target);
+  }
+
+  /** Return from a routine, matching how {@link call} reached it. */
+  ret(): void {
+    if (this.banked) this.asm.rtl();
+    else this.asm.rts();
+  }
+
+  /**
+   * Jump to a routine that may not be in this bank.
+   *
+   * For the handful of transfers that are between *routines* rather than inside
+   * one: the scene dispatch, and a scene's tail jump back to the shared tail of
+   * the tick. Everything else `jmp`s, because a branch inside a routine cannot
+   * leave the bank the routine is in.
+   */
+  jump(target: Ref): void {
+    if (this.banked) this.asm.jml(target);
+    else this.asm.jmp(target);
+  }
+
+  /** The same, conditionally: invert the branch and jump over it. */
+  farJump(cond: Cond, target: Ref): void {
+    const over = this.unique("br");
+    this.branch(INVERSE[cond], over);
+    this.jump(target);
+    this.asm.label(over);
+  }
+
   constructor(
     program: Program,
     analysis: Analysis,

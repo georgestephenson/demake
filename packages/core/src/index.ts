@@ -156,8 +156,13 @@ export { sourceHash } from "./codegen/provenance.js";
 export { Asm, AsmError, label } from "./asm/sm83.js";
 export type { AluOp, CC, LabelRef, R8, R16, Ref, ShiftOp } from "./asm/sm83.js";
 export {
+  GB_BANK_SIZE,
+  GB_BANK_WINDOW,
+  GB_CARTRIDGE_TYPE,
   GB_HEADER_OFFSETS,
   GB_ROM_SIZE,
+  GB_ROM_SIZES,
+  MBC5,
   stampGbHeader,
   type GbHeaderOptions,
 } from "./asm/gb-cart.js";
@@ -205,10 +210,17 @@ export {
   type PceCartOptions,
 } from "./asm/pce-cart.js";
 export {
+  NES_BANK_SIZE,
+  NES_BANK_WINDOW,
   NES_CHR_SIZE,
+  NES_FIXED_WINDOW,
   NES_HEADER_SIZE,
+  NES_MAPPER_MMC1,
+  NES_MMC1_PRG_MAX,
+  NES_MMC1_PRG_SIZES,
   NES_PRG_OFFSET,
   NES_PRG_ORIGIN,
+  NES_PRG_RAM,
   NES_PRG_SIZE,
   NES_PRG_SIZES,
   NES_VECTORS,
@@ -307,8 +319,13 @@ export {
   type NeoTileAttribute,
 } from "./asm/neo-lspc.js";
 export {
+  SMS_BANK_SIZE,
   SMS_HEADER_OFFSET,
   SMS_FLAT_ROM_SIZES,
+  SMS_ROM_SIZES,
+  SMS_SLOT2_BANK,
+  SMS_SLOT2_BASE,
+  smsRomSizeFor,
   SMS_HEADER_SIZE,
   SMS_IRQ_VECTOR,
   SMS_NMI_VECTOR,
@@ -398,6 +415,7 @@ export {
   SNES_CODE_SIZE,
   SNES_HEADER_OFFSET,
   SNES_ORIGIN,
+  SNES_PROGRAM_CAPACITY,
   SNES_ROM_SIZE,
   SNES_ROM_SIZES,
   SNES_SPC_BANK,
@@ -408,6 +426,8 @@ export {
   SNES_TILE_BASE,
   SNES_TILE_CAPACITY,
   SNES_TILE_OFFSET,
+  snesBankCount,
+  snesRomSizeFor,
   SNES_VECTORS,
   packSnesRom,
   snesChecksum,
@@ -795,11 +815,16 @@ export {
 export {
   packWsRom,
   wsChecksum,
+  wsSaveCode,
   WS_BANK_SIZE,
   WS_CODE_SEGMENT,
   WS_CODE_SIZE,
   WS_ENTRY_OFFSET,
   WS_FOOTER_OFFSET,
   WS_ROM_SIZE,
+  WS_SAVE_BASE,
+  WS_SAVE_MAX,
+  WS_SAVE_SEGMENT,
+  WS_SAVE_SIZES,
   type WsCartOptions,
 } from "./asm/ws-cart.js";

@@ -679,13 +679,13 @@ function needCopyBox(ctx: SnesCtx, slot: "a" | "b"): Ref {
       inner.asm.lda(absX(offset));
       inner.asm.sta(mem(dst + offset));
     }
-    inner.asm.rts();
+    inner.ret();
   });
 }
 
 function emitStageBox(ctx: SnesCtx, src: number, slot: "a" | "b"): void {
   ctx.asm.ldx(imm16(src));
-  ctx.asm.jsr(needCopyBox(ctx, slot));
+  ctx.call(needCopyBox(ctx, slot));
 }
 
 function emitStagePair(ctx: SnesCtx, a: number, b: number): void {
@@ -722,10 +722,10 @@ function needOverlapPair(ctx: SnesCtx): Ref {
       branchLess32(inner, boxProp(b, pos), temp, apart, false);
     }
     asm.lda(imm16(1));
-    asm.rts();
+    ctx.ret();
     asm.label(apart);
     asm.lda(imm16(0));
-    asm.rts();
+    ctx.ret();
   });
 }
 
@@ -742,11 +742,11 @@ function needSeparatePair(ctx: SnesCtx): Ref {
     const { xPush, yPush } = emitPairPushes(inner, useY);
     add32(inner, boxProp(a, "x"), xPush);
     clamp32(inner, boxProp(a, "x"));
-    asm.rts();
+    ctx.ret();
     asm.label(useY);
     add32(inner, boxProp(a, "y"), yPush);
     clamp32(inner, boxProp(a, "y"));
-    asm.rts();
+    ctx.ret();
   });
 }
 
@@ -821,18 +821,18 @@ function needContactSide(ctx: SnesCtx): Ref {
     asm.lda(mem(xPush, 2));
     inner.far("mi", negative);
     asm.lda(imm16(SIDE_BITS["right"] as number));
-    asm.rts();
+    ctx.ret();
     asm.label(negative);
     asm.lda(imm16(SIDE_BITS["left"] as number));
-    asm.rts();
+    ctx.ret();
     asm.label(useY);
     asm.lda(mem(yPush, 2));
     inner.far("pl", below);
     asm.lda(imm16(SIDE_BITS["above"] as number));
-    asm.rts();
+    ctx.ret();
     asm.label(below);
     asm.lda(imm16(SIDE_BITS["below"] as number));
-    asm.rts();
+    ctx.ret();
   });
 }
 
@@ -847,7 +847,7 @@ function needContactSide(ctx: SnesCtx): Ref {
 function emitSideGate(ctx: SnesCtx, sides: readonly string[], skip: string): void {
   const mask = sideMask(sides);
   if (mask === 0) return;
-  ctx.asm.jsr(needContactSide(ctx));
+  ctx.call(needContactSide(ctx));
   ctx.asm.and(imm16(mask));
   ctx.far("eq", skip);
 }
@@ -893,10 +893,10 @@ function needNearBox(ctx: SnesCtx): Ref {
     axis(propOffset("y"), DP.t1);
 
     asm.lda(imm16(1));
-    asm.rts();
+    ctx.ret();
     asm.label(apart);
     asm.lda(imm16(0));
-    asm.rts();
+    ctx.ret();
   });
 }
 
@@ -905,13 +905,13 @@ function emitCommitPair(ctx: SnesCtx, entity: number): void {
   const { asm, layout } = ctx;
   const source = layout.pairA as number;
   asm.ldx(imm16(entity));
-  asm.jsr(
+  ctx.call(
     ctx.need("CommitPair", (inner) => {
       for (let offset = 0; offset < 2 * PROP_SIZE; offset += 2) {
         inner.asm.lda(mem(source + offset));
         inner.asm.sta(absX(offset));
       }
-      inner.asm.rts();
+      inner.ret();
     }),
   );
 }
@@ -992,11 +992,11 @@ function emitPairLoop(
     asm.lda(imm16(margins.y));
     asm.sta(mem(DP.t1));
     asm.ldx(mem(DP.loop));
-    asm.jsr(needNearBox(ctx));
+    ctx.call(needNearBox(ctx));
     ctx.far("eq", next);
   }
   emitStageBoxPtr(ctx, "b");
-  asm.jsr(needOverlapPair(ctx));
+  ctx.call(needOverlapPair(ctx));
   ctx.far("eq", next);
   emitSideGate(ctx, event.sides, next);
 
@@ -1010,9 +1010,9 @@ function emitPairLoop(
   emitStageBoxPtr(ctx, "b");
   guardVisible(ctx, subjectId, noSeparate);
   if (guarded) emitGuardVisiblePtr(ctx, noSeparate);
-  asm.jsr(needOverlapPair(ctx));
+  ctx.call(needOverlapPair(ctx));
   ctx.far("eq", noSeparate);
-  asm.jsr(needSeparatePair(ctx));
+  ctx.call(needSeparatePair(ctx));
   emitCommitPair(ctx, subjectBase);
   emitStageBox(ctx, subjectBase, "a");
   emitContactBitPtr(ctx, table, "set");
@@ -1050,7 +1050,7 @@ function emitGuardVisiblePtr(ctx: SnesCtx, skip: string): void {
 /** Stage the looped other's box, which `CopyBox` reads from `X`. */
 function emitStageBoxPtr(ctx: SnesCtx, slot: "a" | "b"): void {
   ctx.asm.ldx(mem(DP.loop));
-  ctx.asm.jsr(needCopyBox(ctx, slot));
+  ctx.call(needCopyBox(ctx, slot));
 }
 
 /**
@@ -1266,13 +1266,13 @@ export function emitCollisions(ctx: SnesCtx, scene: SceneCtx): void {
           asm.lda(imm16(margins.y));
           asm.sta(mem(DP.t1));
           asm.ldx(imm16(otherBase));
-          asm.jsr(needNearBox(ctx));
+          ctx.call(needNearBox(ctx));
           ctx.far("eq", skip);
         }
         // Only the other box is staged here: the subject's was staged before the
         // loop and every path below leaves it current.
         emitStageBox(ctx, otherBase, "b");
-        asm.jsr(needOverlapPair(ctx));
+        ctx.call(needOverlapPair(ctx));
         ctx.far("eq", skip);
         emitSideGate(ctx, event.sides, skip);
         const afterFire = ctx.unique("otherFired");
@@ -1287,9 +1287,9 @@ export function emitCollisions(ctx: SnesCtx, scene: SceneCtx): void {
         emitStagePair(ctx, subjectBase, otherBase);
         guardVisible(ctx, subjectId, noSeparate);
         guardVisible(ctx, otherId, noSeparate);
-        asm.jsr(needOverlapPair(ctx));
+        ctx.call(needOverlapPair(ctx));
         ctx.far("eq", noSeparate);
-        asm.jsr(needSeparatePair(ctx));
+        ctx.call(needSeparatePair(ctx));
         emitCommitPair(ctx, subjectBase);
         emitStageBox(ctx, subjectBase, "a");
         emitContactSet(ctx, bit);

@@ -98,6 +98,60 @@ describe("the V30MZ encoder", () => {
   });
 });
 
+describe("crossing a segment", () => {
+  /**
+   * The pair a program bigger than one segment is reached through.
+   *
+   * Read off the encoding tables rather than round-tripped: `call far` pushes
+   * the segment as well as the offset and `retf` pops both, so a routine that
+   * ended with the near `ret` would leave the caller's segment on the stack and
+   * return into whatever offset that word happened to be.
+   */
+  it("encodes the far call and the return that matches it", () => {
+    const asm = new Asm30();
+    asm.callFar(0xe000, 0x1234);
+    asm.retf();
+    expect(Array.from(asm.assemble())).toEqual([
+      0x9a,
+      0x34,
+      0x12,
+      0x00,
+      0xe0, // call 0xe000:0x1234
+      0xcb, // retf
+    ]);
+  });
+
+  /**
+   * A far call that names the routine, which is what a backend actually emits.
+   *
+   * The offset is the label's own and the segment is *where it was defined* —
+   * the only place that knows, and the reason this cannot be spelled with the
+   * segment at the call site. `section` moves no bytes: it says what the offsets
+   * after it mean, so a routine in a section of its own starts at zero again.
+   */
+  it("resolves a far call's segment from where the label was defined", () => {
+    const asm = new Asm30();
+    asm.callFarLabel("Scene", 0xf000);
+    asm.retf();
+    asm.section(0xe000);
+    asm.label("Scene");
+    asm.ret();
+    const out = Array.from(asm.assemble());
+    // Offset zero — the label is the first byte of its own segment — and $E000.
+    expect(out.slice(0, 6)).toEqual([0x9a, 0x00, 0x00, 0x00, 0xe0, 0xcb]);
+  });
+
+  it("gives a label in no section the caller's own segment", () => {
+    // Which is what keeps an unbanked program working: nothing calls `section`,
+    // so every label is in the one segment the cartridge is mapped at.
+    const asm = new Asm30();
+    asm.callFarLabel("Helper", 0xf000);
+    asm.label("Helper");
+    asm.retf();
+    expect(Array.from(asm.assemble())).toEqual([0x9a, 0x05, 0x00, 0x00, 0xf0, 0xcb]);
+  });
+});
+
 describe("the WonderSwan cartridge", () => {
   it("puts the reset far jump where the processor starts fetching", () => {
     const rom = packWsRom(new Uint8Array([0x90, 0xc3]));

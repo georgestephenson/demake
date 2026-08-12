@@ -950,10 +950,10 @@ Stated because a change this wide is exactly where invariants get lost:
 
 ## The JS budget
 
-Doc 07's budget is a sum over the whole site and it is close — the last console
-cost 4.6 KB of it. This document adds an explorer, a project resolver, a zip
-codec, a level editor and a block editor, and the plan for each is stated rather
-than assumed:
+Doc 07's budget is what one visitor downloads — everything always-loaded, plus
+the one console family they play — and it is close: 391 KB of 400. This document
+adds an explorer, a project resolver, a zip codec, a level editor and a block
+editor, and the plan for each is stated rather than assumed:
 
 - **The level editor and the block editor are code-split**, each behind the file
   type that opens it. Someone who came to convert an image downloads neither.

@@ -41,6 +41,7 @@ import {
   SMS_AUDIO_BYTES,
   WSC_AUDIO_BYTES,
 } from "@demake/audio";
+import { WS_SAVE_MAX, WS_SAVE_SEGMENT } from "@demake/core";
 
 import type { Program } from "../program.js";
 
@@ -176,9 +177,62 @@ export interface MemoryPlan {
   /** First and last byte of the general heap. */
   heapStart: number;
   heapEnd: number;
+  /**
+   * The segment the heap is in, where that is not the console's own memory.
+   *
+   * Absent on every plan but one, and absent is what "the same memory as
+   * everything else" means. The mono WonderSwan is the exception: a game the
+   * console's own sixteen kilobytes cannot hold puts its whole heap in the
+   * cartridge's save RAM at segment `$1`, which is an ordinary memory access
+   * behind a segment register rather than a different kind of address
+   * (§{@link WS_SAVE_MEMORY}).
+   *
+   * The addresses stay offsets from zero, so nothing that computes with one
+   * changes; what the backend does with this is point `DS` and `ES` at the
+   * segment once, and say `ss:` at the handful of operands that mean the
+   * console's memory rather than the game's (`wsc/ops.ts` §vram).
+   */
+  heapSegment?: number;
   /** The cheaply-addressed region, if the machine has one. */
   fastStart?: number;
   fastEnd?: number;
+  /**
+   * Whether running out of the cheap region costs bytes rather than the build.
+   *
+   * On the Super Nintendo the direct page is a pure size optimisation — `$nn` is
+   * two bytes where `$nnnn` is three, and the index registers are sixteen bits
+   * wide so `$nnnn,x` reaches all of bank zero — so a game that overruns 238
+   * bytes of it should get a slightly larger program and not a refusal.
+   *
+   * On a 6502 page zero is **both**: `($nn),y` is that CPU's one indirect mode,
+   * so a *pointer* that spilled could not be dereferenced at all — but almost
+   * nothing the allocator hands out is a pointer. The contact bitfields are read
+   * with `$nnnn,x`, a temporary is reached through {@link
+   * "./mos/val.js".clamp32}, which already asks `inFastPage` and takes the
+   * pointer path for anything else, and the rest is plain absolute. So the split
+   * is by *request* rather than by console: {@link planLayout} takes a pointer
+   * through `pin`, which never spills and refuses by name, and everything else
+   * through `fast`, which does.
+   *
+   * It changes no address in a game that fits, because only a request the cheap
+   * region cannot hold moves.
+   */
+  fastSpills?: boolean;
+  /**
+   * Work RAM a *cartridge* adds, which the console itself does not have.
+   *
+   * The NES's, and only its: an NROM board carries none, so a game's whole state
+   * is the console's two kilobytes — but the mapper a game reaches for when its
+   * code outgrows 32 KiB brings eight more at `$6000`, and it would be a strange
+   * cartridge that paged its program and left that unused. So this is the second
+   * half of the same board rather than a separate feature, and {@link
+   * Layout.spilled} is what says the build has to declare it.
+   *
+   * It changes no address in a game that fits the console's own RAM, because only
+   * a request the first region cannot hold moves — the {@link fastSpills} rule
+   * one region along.
+   */
+  heapSpill?: { start: number; end: number };
   /** Where the object shadow lives; the DMA source must be page-aligned. */
   oamShadow: number;
   /** Hardware object entries the shadow covers. */
@@ -231,6 +285,16 @@ export interface MemoryPlan {
    * that came out wrong every few seconds, at no tick anyone could name.
    */
   interruptBytes: number;
+  /**
+   * Whether the running ROM bank has to be shadowed in work RAM.
+   *
+   * The Game Boy's, and only when a build pages: MBC5's bank register is
+   * write-only, so the only way for an interrupt handler to put back what it
+   * interrupted is for the code that set it to have written it down. Nothing else
+   * here needs it — the Sega's paged half is never entered from an interrupt, and
+   * the Super Nintendo has no controller at all.
+   */
+  bankBytes?: boolean;
 
   /**
    * Bytes the emitters that walk a *list* of entities keep their cursor in: a
@@ -296,6 +360,9 @@ export const GB_MEMORY: MemoryPlan = {
   cellAttributes: false,
   interruptBytes: 0,
   loopBytes: 0,
+  // One byte, because MBC5's bank register cannot be read and a banked build's
+  // audio interrupt has to put back what it interrupted (§bankBytes).
+  bankBytes: true,
 };
 
 /** The same, for a Game Boy Color: an attribute byte per queued cell. */
@@ -337,8 +404,18 @@ export const NES_MEMORY: MemoryPlan = {
   machine: "NES",
   heapStart: 0x0300,
   heapEnd: 0x0800,
+  // And the eight kilobytes the mapper a big game reaches for puts at `$6000`.
+  // A game that fits the console's own two never touches it and keeps every
+  // address it had (§heapSpill).
+  heapSpill: { start: 0x6000, end: 0x8000 },
   fastStart: ZP_FREE,
   fastEnd: 0x0100,
+  // Page zero is 237 usable bytes here and a game with four levels wants 274 of
+  // them, most of it the two contact bitfields — which are read with `$nnnn,x`
+  // and never followed, so they are exactly what should move (§fastSpills). What
+  // may not is the tile walk's cursor, and that is `pin`'s job rather than this
+  // flag's.
+  fastSpills: true,
   oamShadow: 0x0200,
   oamEntries: 64,
   viewW: 32,
@@ -392,6 +469,12 @@ export const PCE_MEMORY: MemoryPlan = {
   // access takes them as absolute ones.
   fastStart: 0x2000 + ZP_FREE,
   fastEnd: 0x2100,
+  // The NES's reason, and it is the CPU's rather than either console's: this page
+  // is 256 bytes on both machines whatever the rest of the memory map is, so a
+  // game big enough to overrun it here would be refused for wanting a cheap
+  // address it does not need. Nothing in the example library reaches it, so no
+  // cartridge moved.
+  fastSpills: true,
   oamShadow: 0x2200,
   oamEntries: 64,
   viewW: 32,
@@ -501,7 +584,12 @@ export const GG_MEMORY: MemoryPlan = {
  *
  *   - **The direct page**, `$0000`–`$00FF`, which this CPU addresses in two bytes
  *     rather than three. `codegen/snes/ops.ts` owns the bottom of it and states
- *     where the allocator may begin.
+ *     where the allocator may begin. Two hundred and thirty-eight bytes are left,
+ *     and running out of them is *not* fatal here: this is the one console whose
+ *     cheap region is a pure optimisation, so what a game that fills it gets is a
+ *     slightly larger program (§{@link MemoryPlan.fastSpills}). On a 6502 the
+ *     same overrun has to stay fatal, because page zero is the only place a
+ *     pointer can live.
  *   - **The stack**, below the object shadow. Native mode puts it anywhere in
  *     bank zero, unlike the 6502's fixed page one.
  *   - **The object shadow**, 544 bytes: 128 entries of four, then the two-bit
@@ -518,6 +606,9 @@ export const SNES_MEMORY: MemoryPlan = {
   heapEnd: 0x1f00,
   fastStart: DP_FREE,
   fastEnd: 0x0100,
+  // The direct page here is a size optimisation and nothing else, so a game that
+  // fills it gets a bigger program rather than a build error (§fastSpills).
+  fastSpills: true,
   oamShadow: 0x0400,
   oamEntries: 128,
   viewW: 32,
@@ -836,6 +927,8 @@ export const NDS_MEMORY: MemoryPlan = {
  * *choice* rather than the hardware's, because the stack and the heap share what
  * the fixed structures leave. The palettes cost nothing, which is the compensation:
  * they are ports on this machine rather than five hundred and twelve bytes of RAM.
+ *
+ * A game that wants more than the 2 KiB takes {@link WS_SAVE_MEMORY} instead.
  */
 export const WS_MEMORY: MemoryPlan = {
   machine: "WonderSwan",
@@ -851,6 +944,53 @@ export const WS_MEMORY: MemoryPlan = {
   cellAttributes: true,
   interruptBytes: 0,
   loopBytes: 3,
+};
+
+/**
+ * The same machine with its heap in the cartridge's save RAM.
+ *
+ * The mono WonderSwan is the one console in the set whose wall is *work RAM*
+ * rather than cartridge: sixteen kilobytes, of which the tile bank is the top
+ * half and the display's own structures are most of the rest, leaving 2 KiB for
+ * a game that wants four. No size of cartridge fixes that, and the two cheaper
+ * answers are both too small to matter — running the heap down to the object
+ * shadow buys 192 bytes, and taking the unused tail of the tile bank buys 128,
+ * because a game this big uses 504 of the 512 tiles that bank holds.
+ *
+ * So the answer is the hardware's own: this console maps a cartridge's **save
+ * RAM** at segment `$1`, a program reaches it with an ordinary memory access, and
+ * a demade cartridge declares the smallest of the five sizes its footer can name
+ * that holds the game (`asm/ws-cart.ts` §WS_SAVE_SIZES). That is the NES's
+ * `$6000` story with a different port — and the elastic-board rule reaching the
+ * one direction this console's *program* size cannot move in.
+ *
+ * **The whole heap moves, or none of it does**, which is what makes this a second
+ * plan rather than a {@link MemoryPlan.heapSpill}. A segment override reaches a
+ * memory operand and not the destination of a string instruction, so a `movs`
+ * between two heap addresses — staging a collision box, copying the cell list —
+ * cannot have one end in the console's memory and the other in the cartridge's.
+ * Which segment "the heap" means has to be one answer for the whole program, and
+ * that is the same shape the segment banking takes for the same kind of reason
+ * (`wsc/emit.ts` §emitReset, doc 13 §Banked cartridges).
+ *
+ * Everything the display reads stays exactly where it was, because it has to:
+ * the two screen maps, the object table, the tile bank and the sound hardware's
+ * waveform page are addresses the chip decodes, not addresses a program chooses.
+ * So is the stack, which is `SS` and never moves.
+ */
+export const WS_SAVE_MEMORY: MemoryPlan = {
+  ...WS_MEMORY,
+  // From the segment's first byte, because there is nothing else in the segment.
+  // The console's own memory has interrupt vectors, a waveform page, a stack and
+  // the display's own structures to work around; a save RAM has none of them, so
+  // the heap is the whole of it — and an address here is an offset the emitter
+  // uses unchanged, which is what leaves the value layer alone.
+  heapStart: 0x0000,
+  // The largest the footer can describe. What a build *declares* is the smallest
+  // size that holds what the allocator actually handed out, so this is the
+  // ceiling rather than the cartridge.
+  heapEnd: WS_SAVE_MAX,
+  heapSegment: WS_SAVE_SEGMENT,
 };
 
 export const WSC_MEMORY: MemoryPlan = {
@@ -1040,6 +1180,16 @@ export interface Layout {
   used: number;
   /** Bytes of the cheaply-addressed region in use; zero where there is none. */
   fastUsed: number;
+  /**
+   * Whether anything landed in the *cartridge's* RAM rather than the console's.
+   *
+   * False for every game that fits the console alone, which is every game on
+   * every console but one board (§{@link MemoryPlan.heapSpill}). True is the
+   * backend's cue that this cartridge has to declare a mapper with RAM on it —
+   * the same build then almost certainly needs one for its program too, but the
+   * two are separate facts and this is the one the *allocator* knows.
+   */
+  spilled: boolean;
 
   // --- always present -------------------------------------------------------
   tick: number;
@@ -1072,6 +1222,15 @@ export interface Layout {
    * {@link MemoryPlan.interruptBytes} for why they cannot be scratch.
    */
   interrupt: number | null;
+  /**
+   * Where the running ROM bank is shadowed, or `null` on a build that never
+   * pages.
+   *
+   * See {@link MemoryPlan.bankBytes}: MBC5's register is write-only, so an
+   * interrupt handler that pages its own data in can only put back what it found
+   * if the code that set it wrote it down.
+   */
+  bank: number | null;
   /**
    * The entity-list cursor: a two-byte record pointer, then a one-byte index.
    *
@@ -1243,23 +1402,48 @@ class Bump {
   }
 
   take(bytes: number): number {
-    // Only what is read as a word or a long has to be aligned; a run of single
-    // bytes still packs tightly, which is what keeps every other console's map
-    // exactly what it was.
-    if (bytes > 1 && this.align > 1) {
-      this.at = Math.ceil(this.at / this.align) * this.align;
-    }
-    const address = this.at;
-    this.at += bytes;
-    if (this.at > this.end) {
+    const address = this.tryTake(bytes);
+    if (address === undefined) {
       throw new LayoutError(
         "E_GAME_TOO_LARGE",
-        `this game needs ${this.at - this.start} bytes of ${this.what} and the ` +
+        `this game needs ${this.wanted(bytes)} bytes of ${this.what} and the ` +
           `${this.machine} has ${this.end - this.start}`,
         "fewer objects, or a smaller level; the limit is the machine's, not a policy.",
       );
     }
     return address;
+  }
+
+  /**
+   * The same, answering `undefined` rather than raising when it will not fit.
+   *
+   * For a region something else stands behind — a 65816's direct page, where
+   * running out costs a byte an access (§{@link MemoryPlan.fastSpills}), or a
+   * console's own work RAM where a cartridge can add more (§{@link
+   * MemoryPlan.heapSpill}). What may *not* answer `undefined` is a pointer on a
+   * 6502, and `pin` in {@link planLayout} is where that is said.
+   *
+   * `keep` is how the two live together. A spilling request that emptied the
+   * region would leave a later *pinned* one with nowhere to go — and reordering
+   * so the pins come first is not open to us, because the order of these calls
+   * is the order of the addresses and every game that fits has to keep the map
+   * it had. So a request that may spill declines the last `keep` bytes, which
+   * are the pins still to come.
+   */
+  tryTake(bytes: number, keep = 0): number | undefined {
+    // Only what is read as a word or a long has to be aligned; a run of single
+    // bytes still packs tightly, which is what keeps every other console's map
+    // exactly what it was.
+    const at = bytes > 1 && this.align > 1 ? Math.ceil(this.at / this.align) * this.align : this.at;
+    if (at + bytes + keep > this.end) return undefined;
+    this.at = at + bytes;
+    return at;
+  }
+
+  /** What this region would have held had the request fitted, for the message. */
+  private wanted(bytes: number): number {
+    const at = bytes > 1 && this.align > 1 ? Math.ceil(this.at / this.align) * this.align : this.at;
+    return at + bytes - this.start;
   }
 
   get used(): number {
@@ -1299,13 +1483,87 @@ function numberContacts(program: Program): { ranges: Map<number, ContactRange>; 
  */
 export function planLayout(program: Program, analysis: Analysis, memory: MemoryPlan): Layout {
   const align = memory.align ?? 1;
-  const heap = new Bump(memory.heapStart, memory.heapEnd, memory.machine, "work RAM", align);
+  const onboard = new Bump(memory.heapStart, memory.heapEnd, memory.machine, "work RAM", align);
+  /**
+   * The cartridge's own RAM, where the board has some (§{@link
+   * MemoryPlan.heapSpill}).
+   *
+   * A second region rather than a longer first one, because the two are not
+   * adjacent and the console's has to be filled first: that is what makes a game
+   * which fits the console alone keep every address it had.
+   */
+  const cartridge = memory.heapSpill
+    ? new Bump(
+        memory.heapSpill.start,
+        memory.heapSpill.end,
+        memory.machine,
+        "cartridge work RAM",
+        align,
+      )
+    : undefined;
+  let spilled = false;
+  const heap = {
+    take(bytes: number): number {
+      if (!cartridge) return onboard.take(bytes);
+      const near = onboard.tryTake(bytes);
+      if (near !== undefined) return near;
+      spilled = true;
+      return cartridge.take(bytes);
+    },
+    get used(): number {
+      return onboard.used + (cartridge?.used ?? 0);
+    },
+  };
   const quick =
     memory.fastStart !== undefined && memory.fastEnd !== undefined
       ? new Bump(memory.fastStart, memory.fastEnd, memory.machine, "page zero", align)
       : undefined;
-  /** Take from the cheap region if the machine has one, the heap otherwise. */
-  const fast = (bytes: number): number => (quick ?? heap).take(bytes);
+  /**
+   * Take from the cheap region if the machine has one, the heap otherwise.
+   *
+   * And from the heap when the cheap region is *full*, on a machine that says
+   * running out of it costs bytes rather than the build ({@link
+   * MemoryPlan.fastSpills}). A request that does not fit is the only one that
+   * moves — a later smaller one still gets the cheap region — which keeps the
+   * map deterministic and keeps as much of a game in the cheap region as will
+   * go.
+   */
+  const fast = (bytes: number): number => {
+    if (!quick) return heap.take(bytes);
+    if (!memory.fastSpills) return quick.take(bytes);
+    return quick.tryTake(bytes, pinning) ?? heap.take(bytes);
+  };
+  /**
+   * Bytes of the cheap region the pinned requests still to come will want.
+   *
+   * Counted up front rather than discovered, because a `fast` request that
+   * emptied the page would leave a `pin` after it with nowhere to go — and the
+   * order of these calls is the order of the addresses, so serving the pins first
+   * would move every address in every game that fits. Both pins are known from
+   * the program: whether it walks a level, and whether it has any audio.
+   */
+  let pinning =
+    (analysis.usesLevels ? 2 : 0) +
+    (memory.audioBytes > 0 && program.tracks.length + program.sounds.length > 0
+      ? memory.audioBytes
+      : 0);
+  /**
+   * The same, for something that has to be *dereferenced*.
+   *
+   * A 6502 reaches memory indirectly through `($nn),y` and through nothing else,
+   * so a pointer the allocator placed outside page zero could not be followed at
+   * all — `mos/zp.ts`'s `slotOf` raises rather than assembling an instruction
+   * that reads the wrong two bytes. This is the same refusal one step earlier and
+   * in the language a build report can use: it names page zero and the game,
+   * rather than an address in hexadecimal.
+   *
+   * On a console whose cheap region never spills this is exactly {@link fast},
+   * which is why every existing map is unchanged.
+   */
+  const pin = (bytes: number): number => {
+    pinning -= bytes;
+    return quick ? quick.take(bytes) : heap.take(bytes);
+  };
 
   const entities: number[] = [];
   const entitySizes: number[] = [];
@@ -1383,7 +1641,9 @@ export function planLayout(program: Program, analysis: Analysis, memory: MemoryP
   // This tick's list is built here and copied over the stored one at the end
   // of the pair, so the comparison is never against a half-overwritten list.
   const tileScratch = analysis.usesTiles ? heap.take(tileContactStride) : 0;
-  const tilePtr = analysis.usesLevels ? fast(2) : 0;
+  // The one allocation on this family that is *followed* rather than read: the
+  // tile walk's cursor is `($nn),y` in `mos/tiles.ts`, so it is pinned (§pin).
+  const tilePtr = analysis.usesLevels ? pin(2) : 0;
 
   // One cell list per object any tile rule names as a subject.
   const tileCellSlots = new Map<number, number>();
@@ -1428,14 +1688,23 @@ export function planLayout(program: Program, analysis: Analysis, memory: MemoryP
   // so anything added anywhere else would move every entity record. Which is
   // also why the interrupt bytes go after the driver's rather than beside the
   // scratch they were taken out of — a console that needs none is unchanged.
+  // Pinned rather than merely fast, and the reason is the same one the tile
+  // walk's cursor has: a stream player walks its packed data through a pointer,
+  // and on a 6502 that is `($nn),y` or nothing. A driver's state that spilled to
+  // cartridge RAM would be a driver whose every read went to an address it could
+  // not name — refused here, in the language a build report can use, rather than
+  // three layers down at the instruction that could not be assembled.
   const audio =
     memory.audioBytes > 0 && program.tracks.length + program.sounds.length > 0
-      ? fast(memory.audioBytes)
+      ? pin(memory.audioBytes)
       : null;
   const interrupt = memory.interruptBytes > 0 ? fast(memory.interruptBytes) : null;
   // After the interrupt bytes, for the same reason they come after the driver's:
   // a console that needs none has exactly the map it had before this existed.
   const loop = memory.loopBytes > 0 ? fast(memory.loopBytes) : null;
+  // Last of all, so a console that never pages — which today is every one but
+  // the Game Boy's banked builds — keeps the map it had byte for byte.
+  const bank = memory.bankBytes === true ? heap.take(1) : null;
 
   return {
     memory,
@@ -1443,8 +1712,10 @@ export function planLayout(program: Program, analysis: Analysis, memory: MemoryP
     entitySizes,
     used: heap.used,
     fastUsed: quick?.used ?? 0,
+    spilled,
     interrupt,
     loop,
+    bank,
     tick,
     scene,
     pending,

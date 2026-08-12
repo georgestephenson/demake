@@ -20,12 +20,30 @@ import { PROP_SLOT, PROP_SIZE, type Layout } from "../codegen/layout.js";
 /** Reads `length` bytes of the machine's address space. */
 export type MemoryReader = (address: number, length: number) => Uint8Array;
 
+/**
+ * Where a heap address is on the bus.
+ *
+ * Every read in this file is of the game's own state — the scene, the tick, the
+ * handshake byte, an entity's properties, the effect a rule asked for — so every
+ * one of them is a heap address, and the bias belongs here rather than at the
+ * five call sites separately.
+ *
+ * It is zero on every console but one. The mono WonderSwan puts a heap the
+ * console's own memory cannot hold in the cartridge's save RAM, at a segment the
+ * emitter points `DS` at (`codegen/layout.ts` §heapSegment) — so the allocator's
+ * addresses are offsets from that segment's first byte, and a reader that took
+ * them for physical ones would report the interrupt vectors as a game's state.
+ */
+export function heapAt(layout: Layout, address: number): number {
+  return address + (layout.memory.heapSegment ?? 0) * 16;
+}
+
 /** Properties a trace records, in order. Mirrors `trace.ts`. */
 const TRACED = ["x", "y", "xdirection", "ydirection", "speed", "value"] as const;
 
 /** The scene index the ROM is running. */
 export function romScene(layout: Layout, read: MemoryReader): number {
-  return read(layout.scene, 1)[0] as number;
+  return read(heapAt(layout, layout.scene), 1)[0] as number;
 }
 
 /**
@@ -36,7 +54,7 @@ export function romScene(layout: Layout, read: MemoryReader): number {
  * happens on the 255-to-256 boundary if you watch the counter itself.
  */
 export function romReady(layout: Layout, read: MemoryReader): number {
-  return read(layout.ready, 1)[0] as number;
+  return read(heapAt(layout, layout.ready), 1)[0] as number;
 }
 
 /**
@@ -61,7 +79,7 @@ function readInt(layout: Layout, bytes: Uint8Array): number {
 
 /** Ticks the ROM has completed. */
 export function romTick(layout: Layout, read: MemoryReader): number {
-  return readInt(layout, read(layout.tick, 2));
+  return readInt(layout, read(heapAt(layout, layout.tick), 2));
 }
 
 /**
@@ -90,7 +108,7 @@ export function romProp(
   if (slot * PROP_SIZE >= stored) {
     return program.instances[instanceId]?.numbers[prop] ?? 0;
   }
-  const raw = readInt(layout, read(base + slot * PROP_SIZE, PROP_SIZE));
+  const raw = readInt(layout, read(heapAt(layout, base + slot * PROP_SIZE), PROP_SIZE));
   return raw >= 0x80000000 ? raw - 0x100000000 : raw;
 }
 
@@ -110,7 +128,7 @@ function romAudio(
 ): string {
   const file = program.scenes[sceneIndex]?.music;
   const track = file === undefined ? -1 : program.tracks.indexOf(file);
-  const raw = layout.sound === null ? 0xff : (read(layout.sound, 1)[0] as number);
+  const raw = layout.sound === null ? 0xff : (read(heapAt(layout, layout.sound), 1)[0] as number);
   return ` audio=${track},${raw === 0xff ? -1 : raw}`;
 }
 

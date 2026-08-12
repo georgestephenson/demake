@@ -27,6 +27,7 @@ import {
   emitLevelData,
   emitRuleTileTable,
   GRID_EMPTY,
+  levelCopy,
   propOffset,
   ruleTileTableLabel,
   SIDE_BITS,
@@ -55,6 +56,7 @@ export {
   emitLevelData,
   emitRuleTileTable,
   GRID_EMPTY,
+  levelCopy,
   ruleTileTableLabel,
   tileAtLabel,
   tileSlot,
@@ -149,10 +151,10 @@ export function emitTileAt(ctx: WscCtx, data: LevelData): void {
   asm.movm("bx", abs(scratch));
   asm.aluM("add", "bx", abs(col));
   asm.movm8("al", romAt("bx", data.gridLabel));
-  asm.ret();
+  ctx.ret();
   asm.label(outside);
   asm.movi8("al", GRID_EMPTY);
-  asm.ret();
+  ctx.ret();
 }
 
 /**

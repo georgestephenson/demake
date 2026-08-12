@@ -42,12 +42,19 @@
 
 import { describe, expect, it } from "vitest";
 
-import { WS_CODE_SIZE, WS_ENTRY_OFFSET, WS_ROM_SIZE, wsChecksum } from "@demake/core";
+import {
+  wsChecksum,
+  wsSaveCode,
+  WS_CODE_SIZE,
+  WS_ENTRY_OFFSET,
+  WS_ROM_SIZE,
+  WS_SAVE_SEGMENT,
+} from "@demake/core";
 import { PORT, Wsc } from "@demake/wsc";
 
 import { compile } from "../src/compile.js";
 import { getProfile } from "../src/profiles.js";
-import { buildWscRom, CODE_SIZE } from "../src/codegen/wsc.js";
+import { buildWscRom, CARTRIDGE_SIZE } from "../src/codegen/wsc.js";
 import { bindWscArt } from "../src/codegen/wsc-art.js";
 import { MAP_H, MAP_W, SYSTEM_OBJECT_PALETTE, SYSTEM_PALETTE } from "../src/codegen/wsc/emit.js";
 import { WS_MACHINE, WSC_MACHINE } from "../src/codegen/wsc/machine.js";
@@ -119,18 +126,24 @@ describe("the WonderSwan cartridge", async () => {
     expect(stored).toBe(wsChecksum(built.bytes));
   });
 
-  it("measures headroom against the mapped bank rather than against the file", () => {
-    // Half a megabyte of cartridge and 64 KiB the processor answers, minus the
-    // entry jump — so `free` is about the bank, which is the number a size
-    // regression actually moves.
-    expect(CODE_SIZE).toBe(WS_CODE_SIZE);
-    expect(built.stats.bytes).toBeLessThan(CODE_SIZE);
-    expect(built.stats.free).toBe(CODE_SIZE - built.stats.bytes);
+  it("measures headroom against the whole cartridge, not the mapped bank", () => {
+    // It used to be the bank, and that was right for as long as a game bigger
+    // than one segment was refused. A game bigger than one segment now spreads
+    // across the ones below it (doc 13 §Banked cartridges), so a figure that
+    // stopped at `$FFF0` would report a game getting bigger as a game with less
+    // room and then jump by most of a megabyte when it crossed.
+    expect(CARTRIDGE_SIZE).toBe(WS_ROM_SIZE - 16);
+    expect(built.stats.bytes).toBeLessThan(CARTRIDGE_SIZE);
+    expect(built.stats.free).toBe(CARTRIDGE_SIZE - built.stats.bytes);
     expect(built.stats.cartridge).toBe(WS_ROM_SIZE);
   });
 
-  it("leaves room for a game to grow", () => {
-    expect(built.stats.free).toBeGreaterThan(1024);
+  it("keeps this game inside the one segment it resets into", () => {
+    // Which is the number that still bites: a fixture that outgrew `WS_CODE_SIZE`
+    // would start spreading across segments — three assembly passes and a copy of
+    // its tables per segment — for a game the library says should fit one.
+    expect(built.stats.bytes).toBeLessThan(WS_CODE_SIZE);
+    expect(WS_CODE_SIZE - built.stats.bytes).toBeGreaterThan(1024);
   });
 });
 
@@ -592,5 +605,222 @@ describe("the mono WonderSwan", async () => {
       shades.add(machine.framebuffer[at] as number);
     }
     expect(shades.size).toBeGreaterThan(3);
+  });
+});
+
+/**
+ * A game spread across segments, which is what `quest` is on this console.
+ *
+ * Every case here is one a trace cannot reach. The example tape enters one level
+ * and a level's routines are all in the *first* paged segment, so a scene in the
+ * second is compiled, placed, and never executed by any test that plays the game
+ * — which is exactly where a wrong segment number hides. So this reads the
+ * dispatches out of the finished cartridge and follows each of them.
+ */
+describe("a program bigger than one segment", async () => {
+  const example = exampleProject("quest");
+  const built = await buildWscRom(
+    compile(example.source, {
+      profile: getProfile("wsc"),
+      files: example.files,
+      levels: example.levels,
+    }),
+  );
+  /** Where a segment's bytes are in the file, the way the hardware decodes it. */
+  const fileAt = (segment: number, offset: number): number =>
+    (((segment << 4) + offset) & (built.bytes.length - 1)) >>> 0;
+
+  /**
+   * Every far jump in the fixed segment, as (segment, offset).
+   *
+   * `$EA` is the only opcode this backend emits with an absolute far target, and
+   * the dispatches are the only things that emit it — so scanning for it finds
+   * exactly the transfers a scene is reached through, without the test having to
+   * know where the four dispatch tables are.
+   */
+  const farJumps = (): { segment: number; offset: number }[] => {
+    const base = built.bytes.length - 0x10000;
+    const out: { segment: number; offset: number }[] = [];
+    for (let at = 0; at < 0xfff0 - 5; at += 1) {
+      if (built.bytes[base + at] !== 0xea) continue;
+      const offset =
+        (built.bytes[base + at + 1] as number) | ((built.bytes[base + at + 2] as number) << 8);
+      const segment =
+        (built.bytes[base + at + 3] as number) | ((built.bytes[base + at + 4] as number) << 8);
+      // A paged segment is a whole bank below the fixed one, so it is a multiple
+      // of `$1000` in `$8000`–`$EFFF`. Without that filter this finds every `$EA`
+      // byte that happens to sit inside a table or another instruction's operand.
+      if (segment >= 0x8000 && segment < 0xf000 && (segment & 0x0fff) === 0) {
+        out.push({ segment, offset });
+      }
+    }
+    return out;
+  };
+
+  it("spreads it across more than one segment, or this proves nothing", () => {
+    // The premise. `quest` is 97 KiB against a 64 KiB segment; if it ever fits
+    // one again, these cases stop testing anything and should be re-pointed.
+    const segments = new Set(farJumps().map((jump) => jump.segment));
+    expect(segments.size).toBeGreaterThan(1);
+  });
+
+  it("aims every far jump at code rather than at padding", () => {
+    // The failure this is for: a segment number off by one lands sixteen bytes
+    // into the right bank, and off by `$1000` lands in the wrong one — both of
+    // which read as a scene that ticks perfectly until it is entered. A paged
+    // segment is padded with `$FF`, which decodes as an invalid opcode, so
+    // "the byte here is not padding" is the whole check and it is enough.
+    const jumps = farJumps();
+    expect(jumps.length).toBeGreaterThan(4);
+    for (const { segment, offset } of jumps) {
+      const byte = built.bytes[fileAt(segment, offset)] as number;
+      expect(
+        byte,
+        `far jump to $${segment.toString(16)}:$${offset.toString(16)} lands on padding`,
+      ).not.toBe(0xff);
+    }
+  });
+
+  it("gives every segment its own copy of the tables its code reads", () => {
+    // A segment reads a level grid and a pooled constant with a `cs:` override,
+    // so a copy per segment is not an optimisation — it is the only thing those
+    // reads can reach. The suffix is what tells the copies apart.
+    const names = [...built.symbols.keys()];
+    for (const stem of ["LevelGrid_0", "Defaults_0"]) {
+      const copies = names.filter((name) => name === stem || name.startsWith(`${stem}_s`));
+      expect(copies.length, `${stem} has ${copies.length} copies`).toBeGreaterThan(1);
+    }
+  });
+});
+
+/**
+ * The one console in the set whose wall was work RAM rather than cartridge.
+ *
+ * A mono WonderSwan has sixteen kilobytes, of which the tile bank is the top
+ * half and the display's own structures are most of the rest — 2 KiB of heap for
+ * a game that wants six. No size of cartridge fixes that, so a game too big for
+ * it puts its **whole heap** in the cartridge's save RAM at segment `$1` and
+ * points `DS` and `ES` there (`codegen/layout.ts` §WS_SAVE_MEMORY).
+ *
+ * Trace conformance for that build is `rom.test.ts`'s, and it settles rather a
+ * lot: the game's variables are in a different memory from its picture, so every
+ * property read, every collision box staged and every cell walked is in the
+ * cartridge while the six operands the display decodes are not. What is here is
+ * what a trace cannot see — that the split really happened, that the cartridge
+ * says so in the byte a console reads to decide whether there is a chip at
+ * segment `$1` at all, and that nothing the *display* reads moved with it.
+ *
+ * This is also the build that is banked and has a picture, which is the pair no
+ * other case in this file makes: `quest` is bigger than a segment on both
+ * machines, and a backdrop is read by a helper in the fixed half rather than by
+ * the scene that asked for it.
+ */
+describe("a game the console's own memory cannot hold", async () => {
+  const example = exampleProject("quest");
+  // Art only. The audio demakers are minutes on this fixture and prove nothing
+  // here — `audio-ws.test.ts` runs the whole register battery on this same
+  // build — but a *picture* is exactly what the backdrop case below needs.
+  const art = new Map(
+    [...example.assets].filter(([name]) => name.endsWith(".svg") || name.endsWith(".png")),
+  );
+  const built = await buildWscRom(
+    compile(example.source, {
+      profile: getProfile("ws"),
+      files: example.files,
+      levels: example.levels,
+    }),
+    { assets: art },
+  );
+  const machine = new Wsc(built.bytes, "ws");
+  settle(machine, 16);
+
+  it("puts its heap in the cartridge's save RAM, or nothing below is about that", () => {
+    // The premise. If this game ever fits the console's own memory again these
+    // cases stop testing anything and should be re-pointed.
+    expect(built.layout.memory.heapSegment).toBe(WS_SAVE_SEGMENT);
+    expect(built.layout.used).toBeGreaterThan(
+      WS_MACHINE.memory.heapEnd - WS_MACHINE.memory.heapStart,
+    );
+  });
+
+  it("declares the smallest save RAM the footer can name that holds it", async () => {
+    // The elastic-board rule reaching the RAM: a board brings what the game
+    // needs, not the largest thing the header can say. The footer's save byte is
+    // at offset `$05` of the ten at the top of the cartridge.
+    const footer = built.bytes.length - 10;
+    expect(built.bytes[footer + 5]).toBe(wsSaveCode(built.layout.used));
+    expect(built.bytes[footer + 5]).not.toBe(0x00);
+    // And a game that fits declares none, which is what keeps every cartridge
+    // that fitted before byte-identical.
+    const small = await buildWscRom(
+      compile(exampleProject("pong").source, {
+        profile: getProfile("ws"),
+        files: exampleProject("pong").files,
+        levels: exampleProject("pong").levels,
+      }),
+    );
+    expect(small.layout.memory.heapSegment).toBeUndefined();
+    expect(small.bytes[small.bytes.length - 10 + 5]).toBe(0x00);
+  });
+
+  it("leaves everything the display reads in the console's own memory", () => {
+    // What must *not* have moved with the heap: these are addresses the chip
+    // decodes rather than addresses a program chooses. The registers are the
+    // hardware's own record of where it is looking, so this asks the display
+    // rather than the build.
+    const monoRam = WS_MACHINE.ram;
+    expect(machine.readPort(PORT.MAP_BASE)).toBe(
+      (monoRam.SCR1 >> 11) | ((monoRam.SCR2 >> 11) << 4),
+    );
+    expect(machine.readPort(PORT.SPR_BASE)).toBe(monoRam.OAM >> 9);
+    // And the tile bank arrived where the chip looks, in the console's memory —
+    // a copy that followed the heap would leave the top half of sixteen
+    // kilobytes as it powered up, which is a game nobody can see.
+    const bank = machine.readMemory(monoRam.TILES, 0x2000);
+    expect([...bank].some((byte) => byte !== 0)).toBe(true);
+  });
+
+  it("keeps a backdrop in the fixed half, where the routine that reads it is", () => {
+    // A banked build gives each segment a copy of the tables its own code reads,
+    // and what decides that is *who reads it* — which for a backdrop is not the
+    // scene. `BlitBackdrop` is pulled like any other helper, so it lives in the
+    // fixed segment and its `cs:` means the fixed segment however the scene that
+    // called it got there. A copy in the scene's own segment sits at an offset
+    // the helper cannot reach.
+    const names = [...built.symbols.keys()];
+    const copies = names.filter((name) => /^Backdrop_\d+(_s[0-9a-f])?$/.test(name));
+    expect(copies.length).toBeGreaterThan(0);
+    expect(copies.filter((name) => name.includes("_s"))).toEqual([]);
+  });
+
+  it("unpacks that picture into the plane rather than over the stack", () => {
+    // The case above, end to end, and the failure it is for. Pointed at a paged
+    // copy the blit read the fixed segment at that copy's offset — `$FF` padding
+    // on this cartridge — and `$FF` is a run control byte, so it unpacked runs of
+    // `$FFFF` upward through the screen maps and over the stack until the return
+    // address was gone. The symptom was a wild jump several routines later, and
+    // no trace could see it, because a picture is not state.
+    const monoRam = WS_MACHINE.ram;
+    const stack = machine.readMemory(WS_MACHINE.stackTop - 0x40, 0x40);
+    expect([...stack].every((byte) => byte !== 0xff)).toBe(true);
+    // And the picture really arrived: a title screen shows many distinct map
+    // words where a blank plane shows one, and a blit that stopped early shows
+    // them only in its first rows.
+    const words = new Set<number>();
+    const plane = machine.readMemory(monoRam.SCR1, MAP_W * MAP_H * 2);
+    for (let row = 0; row < 18; row += 1) {
+      for (let column = 0; column < 28; column += 1) {
+        const at = (row * MAP_W + column) * 2;
+        words.add((plane[at] as number) | ((plane[at + 1] as number) << 8));
+      }
+    }
+    expect(words.size).toBeGreaterThan(16);
+    const lastRow = 17 * MAP_W * 2;
+    const bottom = new Set<number>();
+    for (let column = 0; column < 28; column += 1) {
+      const at = lastRow + column * 2;
+      bottom.add((plane[at] as number) | ((plane[at + 1] as number) << 8));
+    }
+    expect(bottom.size).toBeGreaterThan(1);
   });
 });
