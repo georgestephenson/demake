@@ -1704,6 +1704,16 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     against a correct model's 0.9992 and is exactly the bug this level exists to
     catch. Doc 16 §The proof has the table.
 
+    **Two consoles are in that suite and six qualify for it**, and the gap is
+    deliberate: a row belongs there once it has been *run* and passes, not once
+    the console is eligible. That rule was learned rather than chosen. The Mega
+    Drive's row and the PC Engine's were written when the suite was and neither
+    had ever executed — a row self-skips without its libretro core, and only two
+    of the five were provisioned on the machine they were written on — so both
+    were quietly failing until somebody provisioned the rest. Each is now held
+    out with its measurement recorded in that file's own header, and doc 16 says
+    what separates the two sides on each of the four.
+
     **And it has already found three things, which is what a level like this is
     for.** The sixth standalone cartridge is the WonderSwan's, beetle-wswan is
     provisioned by the same script as the other four cores, and the row costs one
@@ -1992,6 +2002,20 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     | YM2610 SSG noise | yes | no — `binding/neogeo.ts` writes the mixer once, tone on and noise off |
     | YM2610 ADPCM-A voices 2-6 | yes | **closed** — a percussion part takes a pool of voices |
     | Stereo placement | yes, on eleven bindings | **closed** — see below |
+
+    **And one line here is not hardware nobody reaches but a number nobody has
+    measured: how loud a Mega Drive's four squares sit against its six FM
+    voices.** `MD_CHIP_GAINS` puts the PSG six decibels down, which is a stated
+    choice about the board rather than a reading off one — the two chip models
+    each normalise to their own full scale, so something has to say. Level B says
+    genesis-plus-gx disagrees, and by a lot: it carries 2.35× our energy in the
+    band the FM voices occupy and 0.33× ours where the squares' harmonics do,
+    which is what keeps that console's row out of the suite. But that core states
+    a `psg_preamp` of 150 by default, which is equally a choice, so the
+    measurement locates the disagreement without settling it. What would settle
+    it is a level measurement off a board, and until there is one, changing our
+    number to match an emulator's preamp is the thing doc 16 §The proof says a
+    cross-check must never be used for.
 
     **The stereo line is closed, and it was wider than it was written down as.**
     It was recorded as the Neo Geo Pocket's — `ChannelFrame.pan` being a pair of

@@ -973,11 +973,19 @@ perfect and Level A still passes:
 A console qualifies when it has **both** a standalone audio cartridge (§A5) and a
 libretro core: the cartridge because this needs a ROM whose only job is the
 schedule, and a third-party core because our own would be comparing a model with
-itself. That is the NES, both Sega 8-bits, the Mega Drive and the PC Engine
-today, and each joins by appearing in one table. Two more qualify and are held
-out with their measurements written down below — the WonderSwan and the Game Boy
-Advance — because a cross-check whose two sides differ by their output stages is
-not evidence about the chip in either direction.
+itself. Six consoles qualify today and **two of them are in the table** — the
+NES and the Master System — because a row belongs there once it has been run and
+passes, not once the console is eligible for it. The other four (the Mega Drive,
+the PC Engine, the WonderSwan and the Game Boy Advance) are held out with their
+measurements written down below, because on each of them the two sides differ by
+something that is neither model's chip.
+
+That distinction is written down because it was learned the hard way: the Mega
+Drive's row and the PC Engine's were added when this suite was, and neither had
+ever _run_ — a row self-skips without its libretro core, and only two of the five
+were provisioned on the machine they were written on. Both were failing when
+somebody finally provisioned the rest, and one of them was failing because every
+Mega Drive cartridge in the project was silent.
 
 **And the biggest thing this level has found was not a chip model at all.**
 `$A11200` is the Z80's reset line _and the YM2612's_ — one wire, both chips — and
@@ -1072,6 +1080,29 @@ other console's, and the mixer's **samples** are diffed byte for byte against
 what `GbaPcm` renders from the same schedule. The second is a stronger claim than
 any register diff — it compares the audio rather than an instruction to make it —
 and it is exact, because the mixing is integer throughout.
+
+**The Mega Drive and the PC Engine are held out too, and each for a different
+reason.** Run properly they score **0.9171** and **0.9776**.
+
+The Mega Drive's is a **balance between its two chips**. The core has 2.35× our
+energy below 250 Hz, where the FM voices live, and 0.33× ours above 8 kHz, where
+the tone generators' harmonics do — and halving the core's own `fm_preamp` takes
+the low band's ratio to 1.23 and the whole figure to 0.9550, which localises it.
+`MD_CHIP_GAINS` is our answer (the PSG six decibels down) and `psg_preamp = 150`
+is genesis-plus-gx's, and **neither is a hardware measurement**: both are a
+choice about a board. Changing ours to satisfy one emulator's preamp default is
+exactly what a cross-check must not be used for, so the row stays out until there
+is a reference to settle it — and the question is recorded in doc 13 §A5.5, since
+it decides how loud four squares sit against six FM voices in every render this
+tool makes.
+
+The PC Engine's is the Game Boy Advance's shape one console over: the two agree
+to 0.9967 below 1 kHz and diverge upward — 0.9261 at 4–8 kHz, 0.8933 at
+8–16 kHz, with the core carrying 1.33× and 1.56× our energy there. A
+thirty-two-sample wavetable at a high note is a stepped signal whose images land
+in that band, and `render()` band-limits them by integrating the chip's own clock
+while mednafen_pce_fast does not. Level A is green on both consoles for a track
+and for an effect.
 
 Where a core exposes scripted
 register access (Mesen 2's Lua interface, for instance), that console gets Level A

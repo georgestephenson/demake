@@ -64,7 +64,7 @@
  * writes are chip *state* and a render that never performs them plays something
  * else.
  *
- * On four of the five families it makes no difference at all: their boot is a
+ * On most families it makes no difference at all: their boot is a
  * handful of latches the schedule's own first tick repeats, so `stripBoot`
  * removes nothing and the two renders are sample-identical. On the two whose
  * boot carries waveforms it is the difference between the track and silence —
@@ -76,7 +76,8 @@
  * ### The WonderSwan is absent, and what is left of that is one voice's level
  *
  * `rom/wsc.ts` builds a standalone cartridge and beetle-wswan is provisioned by
- * the same script as the four cores above, so the row costs one line — and it
+ * the same script as the two cores this suite runs, so the row costs one line —
+ * and it
  * scores **0.8973**, which is under the gate. It is not the output filtering
  * this file already warns about: restricting the comparison to below 1.7 kHz
  * moves it by 0.002.
@@ -119,7 +120,7 @@
  * scores **0.9820** where the gate is 0.99. That is well clear of the nearest
  * plausible wrong answer — the same tune arranged for a Game Boy scores 0.9169
  * against the same capture — but it does not pass, and lowering the gate for one
- * console would make the number mean nothing on the other four.
+ * console would make the number mean nothing on the rows that do pass.
  *
  * What it is, is a **tilt**, and it is the one thing this method assumes away.
  * Band by band the two agree to 0.9885–0.9988; the whole-band figure is *lower*
@@ -145,6 +146,39 @@
  * `GbaPcm` (`packages/audio/test/rom.test.ts`, and `demotic/test/audio-gba.test.ts`
  * for a game). Doc 16 §The proof and doc 13 §A2.5 record it.
  *
+ * **The Mega Drive and the PC Engine are held out too, and finding out why is
+ * what this file is worth.** Both rows were written when this suite was, and
+ * neither had ever *run*: a row self-skips without its core, and only two of the
+ * five were provisioned on the machine they were written on. Run properly they
+ * score **0.9171** and **0.9776**.
+ *
+ * The Mega Drive's is the interesting one, because chasing it turned up a real
+ * bug first — `$A11200` is the FM chip's reset as well as the Z80's, and every
+ * cartridge demake had ever built left it held, so that row was measuring
+ * **0.1046** against a chip that was not listening. With the reset released it
+ * is 0.9171, and what is left is a **balance** rather than a fault in either
+ * model: the core has 2.35× our energy below 250 Hz, where the FM voices live,
+ * and 0.33× ours above 8 kHz, where the tone generators' harmonics do. Halving
+ * the core's own `fm_preamp` takes the low band's ratio to 1.23 and the whole
+ * figure to 0.9550, which localises it — the two do not agree about how loud six
+ * FM voices sit against four squares. `MD_CHIP_GAINS` is our answer (the PSG six
+ * decibels down) and `psg_preamp = 150` is the core's, and *neither is a
+ * hardware measurement*: both are a choice about a board. Changing ours to
+ * satisfy one emulator's preamp default is what doc 16 §The proof says a
+ * cross-check must not be used for, so the row stays out until there is a
+ * hardware reference to settle it. Doc 13 §A5.5 records the question.
+ *
+ * The PC Engine's is the Game Boy Advance's shape again, one console over: the
+ * two agree to 0.9967 below 1 kHz and diverge upward — 0.9261 at 4–8 kHz and
+ * 0.8933 at 8–16 kHz, with the core carrying 1.33× and 1.56× our energy there.
+ * That is the core's output stage rather than its chip: a thirty-two-sample
+ * wavetable at a high note is a stepped signal whose images land in exactly that
+ * band, and `render()` band-limits them by integrating the chip's own clock
+ * while mednafen_pce_fast does not.
+ *
+ * Level A is green on both consoles for a track *and* an effect, so what those
+ * cartridges perform is exactly the schedule they were built from.
+ *
  * Needs `pnpm toolchains && pnpm emulator`; self-skips without them.
  */
 
@@ -168,12 +202,16 @@ const RETRORUN = join(TC, "libretro", "retrorun");
  * §A5) and a libretro core — the cartridge because Level B needs a ROM whose
  * only job is the schedule, and a third-party core because our own would be
  * comparing a model with itself.
+ *
+ * Qualifying is not the same as being here: four more consoles qualify and are
+ * held out with their measurements in the header above, because on each of them
+ * the two sides differ by something that is neither model's chip. A row belongs
+ * in this list once it has been *run* and passes — which is the lesson two of
+ * them taught, having sat here for a release without a core to run against.
  */
 const TARGETS = [
   { console: "nes", core: "fceumm_libretro.so", frames: 900 },
   { console: "sms", core: "genesis_plus_gx_libretro.so", frames: 900 },
-  { console: "md", core: "genesis_plus_gx_libretro.so", frames: 900 },
-  { console: "pce", core: "mednafen_pce_fast_libretro.so", frames: 900 },
 ] as const;
 
 /** Frames of the average spectrum; 2048 at 48 kHz is ~23 Hz a bin. */

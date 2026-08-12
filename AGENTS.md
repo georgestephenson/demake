@@ -3715,6 +3715,17 @@ that keep them from being undone. All of them come from doc 16.
   which keeps Level A green — scores 0.9801 against a correct 0.9992. Do not
   raise it without re-measuring that row, and do not swap the metric for a
   waveform one without reading doc 16 §The proof first.
+- **A console is in `TARGETS` once its row has _run_ and passed, never because
+  it qualifies.** A row self-skips when its libretro core is absent, so adding
+  one on a machine with two of the five cores provisioned adds a test that says
+  nothing — which is what happened to the Mega Drive's and the PC Engine's, and
+  both were failing by the time anybody ran them. Six consoles qualify and two
+  are in the suite; the other four are held out with their measurements written
+  down in that file's own header, because on each of them the two sides differ
+  by something that is neither model's chip (a level, a balance, or a
+  reconstruction filter). Run `pnpm emulator` and the row before you add it, and
+  if it does not pass, write down what you measured rather than lowering the
+  gate — the gate is the only thing that makes the passing rows mean anything.
 - **Audio DSP is where determinism breaks first.** FFT twiddles, windows, mel
   banks, dB conversions and resampler kernels all come from
   `packages/core/src/math/kernels.ts`. An FFT seeded with `Math.cos` returns
