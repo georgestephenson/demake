@@ -32,13 +32,33 @@ die() {
   exit 0
 }
 
-# Already built?
-if [ -x "$CAPTURE" ] && [ -f "$PREFIX/dmg_boot.bin" ] && [ -f "$PREFIX/cgb_boot.bin" ]; then
+# What the cached binary was built from, so a change to the harness rebuilds it.
+#
+# The upstream version is in the path and pins SameBoy; `capture.c` is *ours* and
+# is not pinned by anything, so a cache that asked only whether the binary exists
+# keeps one compiled from a source that has since changed. It does not fail
+# safely: the E2E self-skips when the capturer is *absent*, so a stale one runs
+# and dies on its own usage message. That is what a cache keyed on the wrong
+# thing costs, and it is the argument `packages/demotic/test/_art-store.ts`
+# already makes one layer up — a store keyed on a digest of the sources that fill
+# it, because a cache that is wrong and consistent passes everything.
+STAMP="$PREFIX/capture.stamp"
+source_stamp() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$CAPTURE_SRC" | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$CAPTURE_SRC" | cut -d' ' -f1
+  else cksum "$CAPTURE_SRC" | cut -d' ' -f1
+  fi
+}
+
+[ -f "$CAPTURE_SRC" ] || die "missing capture source '$CAPTURE_SRC'"
+WANT="$(source_stamp)"
+
+# Already built, from this source?
+if [ -x "$CAPTURE" ] && [ -f "$PREFIX/dmg_boot.bin" ] && [ -f "$PREFIX/cgb_boot.bin" ] &&
+  [ "$(cat "$STAMP" 2>/dev/null || true)" = "$WANT" ]; then
   log "cached: $CAPTURE"
   exit 0
 fi
-
-[ -f "$CAPTURE_SRC" ] || die "missing capture source '$CAPTURE_SRC'"
 
 # SameBoy assembles its boot ROMs with RGBDS; make sure it is available first.
 if ! command -v rgbasm >/dev/null 2>&1; then
@@ -74,5 +94,7 @@ if ! cc -O2 -I"$WORK/SameBoy" "$CAPTURE_SRC" "$LIB" -lm -o "$CAPTURE" 2>>/tmp/sa
 fi
 cp "$BOOTS/dmg_boot.bin" "$PREFIX/dmg_boot.bin"
 cp "$BOOTS/cgb_boot.bin" "$PREFIX/cgb_boot.bin"
+# Last, so an interrupted build leaves no stamp and the next run rebuilds.
+printf '%s\n' "$WANT" >"$STAMP"
 
 log "installed capturer + boot ROMs into $PREFIX"
