@@ -25,14 +25,21 @@ const TOOLS = {
   "sms/gg/sg1000 (WLA-DX z80)": ["wla-z80", "wlalink"],
   "snes (WLA-DX 65816)": ["wla-65816", "wlalink"],
   "pce (WLA-DX huc6280)": ["wla-huc6280", "wlalink"],
-  "wsc (NASM)": ["nasm"],
-  "md (GNU m68k binutils)": ["m68k-linux-gnu-as", "m68k-linux-gnu-ld", "m68k-linux-gnu-objcopy"],
+  "ws/wsc (NASM)": ["nasm"],
+  "md/neogeo (GNU m68k binutils)": [
+    "m68k-linux-gnu-as",
+    "m68k-linux-gnu-ld",
+    "m68k-linux-gnu-objcopy",
+  ],
   "gba/nds (GNU ARM binutils)": ["arm-none-eabi-as", "arm-none-eabi-ld", "arm-none-eabi-objcopy"],
 };
 
 /** Emulator artifacts each console family captures frames with. */
 const FILES = {
   "gb/gbc (SameBoy capturer)": join(TC, "sameboy-1.0.1", "capture"),
+  // The same capture source built against SameBoy's own Mega Duck fork. It is a
+  // separate artifact rather than a flag because it is a separate *emulator*.
+  "megaduck (SameDuck capturer)": join(TC, "sameduck", "capture"),
   "libretro runner": join(TC, "libretro", "retrorun"),
   "nes (fceumm)": join(TC, "libretro", "cores", "fceumm_libretro.so"),
   "sms/gg/md/sg1000 (genesis-plus-gx)": join(
@@ -45,10 +52,12 @@ const FILES = {
   "gba (mGBA)": join(TC, "libretro", "cores", "mgba_libretro.so"),
   "nds (DeSmuME)": join(TC, "libretro", "cores", "desmume_libretro.so"),
   "pce (beetle-pce-fast)": join(TC, "libretro", "cores", "mednafen_pce_fast_libretro.so"),
-  "wsc (beetle-wswan)": join(TC, "libretro", "cores", "mednafen_wswan_libretro.so"),
-  // The Virtual Boy has no entry in TOOLS: it is the one family whose display
-  // program demake emits with its own encoder, so the emulator is the whole of
-  // what its loop needs.
+  "ws/wsc (beetle-wswan)": join(TC, "libretro", "cores", "mednafen_wswan_libretro.so"),
+  "ngpc (beetle-ngp)": join(TC, "libretro", "cores", "mednafen_ngp_libretro.so"),
+  "neogeo (geolith)": join(TC, "libretro", "cores", "geolith_libretro.so"),
+  // The Virtual Boy and the Neo Geo Pocket Color have no entry in TOOLS: they
+  // are the two families whose display program demake emits with its own
+  // encoder, so the emulator is the whole of what their loops need.
   "vb (beetle-vb)": join(TC, "libretro", "cores", "mednafen_vb_libretro.so"),
 };
 

@@ -23,12 +23,15 @@ import { buildGbRom } from "./gb.js";
 import { buildGbaRom } from "./gba.js";
 import { buildMdRom } from "./md.js";
 import { buildNdsRom } from "./nds.js";
+import { buildNeogeoRom } from "./neogeo.js";
 import { buildNesRom } from "./nes.js";
+import { buildNgpcRom } from "./ngpc.js";
 import { buildPceRom } from "./pce.js";
 import { buildSg1000Rom } from "./sg1000.js";
 import { buildSmsRom } from "./sms.js";
 import { buildSnesRom } from "./snes.js";
 import { buildVbRom } from "./vb.js";
+import { buildWsRom } from "./ws.js";
 import { buildWscRom } from "./wsc.js";
 
 /** How one family turns `gen` output into a cartridge. */
@@ -52,9 +55,11 @@ export const ROM_BUILDERS: Readonly<Record<string, RomBuilder>> = {
   gb: {
     format: "asm",
     toolchain: "RGBDS",
-    // A colour spec builds the colour cartridge: same harness, same assembler,
-    // and the extension is what says which machine it came out for.
-    suffix: (spec) => (spec.color.model === "rgb" ? ".gbc" : ".gb"),
+    // A colour spec builds the colour cartridge and a Mega Duck one builds that
+    // console's: same harness, same assembler, and the extension is what says
+    // which of the family's three machines it came out for.
+    suffix: (spec) =>
+      spec.id === "megaduck" ? ".duck" : spec.color.model === "rgb" ? ".gbc" : ".gb",
     build: (env, spec, result) => buildGbRom(env, spec, result.artifacts[0]!.bytes),
   },
   nes: { format: "bin", toolchain: "cc65", suffix: () => ".nes", build: buildNesRom },
@@ -65,16 +70,40 @@ export const ROM_BUILDERS: Readonly<Record<string, RomBuilder>> = {
     build: buildSmsRom,
   },
   md: { format: "bin", toolchain: "GNU m68k binutils", suffix: () => ".md", build: buildMdRom },
+  // The second 68000 console, so the second family through the same assembler —
+  // and the only one whose cartridge is a *set* of ROMs rather than one image,
+  // which is what the `.neo` container carries.
+  neogeo: {
+    format: "bin",
+    toolchain: "GNU m68k binutils",
+    suffix: () => ".neo",
+    build: buildNeogeoRom,
+  },
   sg1000: { format: "bin", toolchain: "WLA-DX", suffix: () => ".sg", build: buildSg1000Rom },
   snes: { format: "bin", toolchain: "WLA-DX", suffix: () => ".sfc", build: buildSnesRom },
   gba: { format: "bin", toolchain: "GNU ARM binutils", suffix: () => ".gba", build: buildGbaRom },
   nds: { format: "bin", toolchain: "GNU ARM binutils", suffix: () => ".nds", build: buildNdsRom },
   pce: { format: "bin", toolchain: "WLA-DX", suffix: () => ".pce", build: buildPceRom },
   wsc: { format: "bin", toolchain: "NASM", suffix: () => ".wsc", build: buildWscRom },
-  // The one family with no external assembler behind it: no distribution ships
-  // a V810 one, so the display program is emitted with `core`'s own encoder —
-  // the same one `demake build` compiles a game with. What keeps that honest is
-  // that the cartridge is still booted in a third-party emulator by the E2E.
+  // The mono machine is a family of its own here only because its *palette* is:
+  // one processor, one display controller and one cartridge wrapper, so this is
+  // the Color's builder around a harness that writes ports instead of RAM.
+  ws: { format: "bin", toolchain: "NASM", suffix: () => ".ws", build: buildWsRom },
+  // The second family with no external assembler behind it, for the Virtual
+  // Boy's reason: no distribution ships a TLCS-900/H one, so the display program
+  // is emitted with core's own encoder — the same one `demake build` uses — and
+  // beetle-ngp is what keeps that honest.
+  ngpc: {
+    format: "bin",
+    toolchain: "none (demake's own TLCS-900/H assembler)",
+    suffix: () => ".ngc",
+    build: buildNgpcRom,
+  },
+  // The other family with no external assembler behind it: no distribution
+  // ships a V810 one, so the display program is emitted with `core`'s own
+  // encoder — the same one `demake build` compiles a game with. What keeps that
+  // honest is that the cartridge is still booted in a third-party emulator by
+  // the E2E.
   vb: {
     format: "bin",
     toolchain: "none (demake's own V810 assembler)",

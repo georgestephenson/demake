@@ -42,7 +42,12 @@
  * - Neo Geo Development Wiki — Watchdog: https://wiki.neogeodev.org/index.php?title=Watchdog
  */
 
-import { NEO_CONTAINER_HEADER, unpackNeoCharacters, unpackNeoFix } from "@demake/core";
+import {
+  NEO_CONTAINER_HEADER,
+  swapNeoProgram,
+  unpackNeoCharacters,
+  unpackNeoFix,
+} from "@demake/core";
 import { M68k, type Bus } from "@demake/md";
 
 import { FRAME_HEIGHT, Lspc, type Frame, type LspcOptions } from "./lspc.js";
@@ -143,7 +148,9 @@ export function loadNeo(image: Uint8Array): Cartridge {
   const cSize = view.getUint32(0x18, true);
 
   let at = NEO_CONTAINER_HEADER;
-  const program = image.subarray(at, at + pSize);
+  // The container stores the P ROM byte-swapped, as a MAME set does — see
+  // `swapNeoProgram`. Everything above this line is plain big-endian 68000.
+  const program = swapNeoProgram(image.subarray(at, at + pSize));
   at += pSize;
   const s = image.subarray(at, at + sSize);
   at += sSize;

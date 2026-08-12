@@ -59,29 +59,50 @@ export const SPRITE_COUNT = 381;
 /** Sprites the hardware will draw on one scanline — four times an 8-bit console's. */
 export const SPRITES_PER_LINE = 96;
 
-/** Words of VRAM: 64 KiB lower plus 4 KiB upper, addressed as words throughout. */
-export const VRAM_WORDS = 0x8800;
+/**
+ * VRAM's structures and the words they hold, which are `@demake/core`'s.
+ *
+ * Three things need them — this renderer, the game backend and the display-ROM
+ * builder — so they live beside the cartridge wrapper in `asm/neo-lspc.ts` and
+ * are re-exported here under the names this file has always used, because a
+ * reader of the chip should still find the whole chip in one place.
+ */
+import {
+  NEO_FIX_COLUMNS as FIX_COLUMNS,
+  NEO_FIX_MAP as FIX_MAP,
+  NEO_FIX_ROWS as FIX_ROWS,
+  NEO_PALETTE_ENTRIES as PALETTE_ENTRIES,
+  NEO_SCB1 as SCB1,
+  NEO_SCB1_STRIDE as SCB1_STRIDE,
+  NEO_SCB3 as SCB3,
+  NEO_SCB4 as SCB4,
+  NEO_VRAM_WORDS as VRAM_WORDS,
+  decodeAttribute,
+  decodeScb3,
+  decodeScb4,
+} from "@demake/core";
 
-/** Where each structure starts, in words. */
-export const SCB1 = 0x0000;
-/** The fix layer's 40×32 map, column-major. */
-export const FIX_MAP = 0x7000;
-/** Shrinking, one word a sprite. Modelled as read/write storage only. */
-export const SCB2 = 0x8000;
-/** Y position, sticky bit and height, one word a sprite. */
-export const SCB3 = 0x8200;
-/** X position, one word a sprite. */
-export const SCB4 = 0x8400;
-
-/** Words of SCB1 per sprite: thirty-two rows of a tile number and its attribute. */
-export const SCB1_STRIDE = 64;
-
-/** Palette entries in one bank: 256 palettes of 16. */
-export const PALETTE_ENTRIES = 256 * 16;
-
-/** Fix map dimensions. The map is 40×32; NTSC shows 40×28. */
-export const FIX_COLUMNS = 40;
-export const FIX_ROWS = 32;
+export {
+  NEO_VRAM_WORDS as VRAM_WORDS,
+  NEO_SCB1 as SCB1,
+  NEO_SCB1_STRIDE as SCB1_STRIDE,
+  NEO_SCB2 as SCB2,
+  NEO_SCB2_FULL as SCB2_FULL,
+  NEO_SCB3 as SCB3,
+  NEO_SCB4 as SCB4,
+  NEO_FIX_MAP as FIX_MAP,
+  NEO_FIX_COLUMNS as FIX_COLUMNS,
+  NEO_FIX_ROWS as FIX_ROWS,
+  NEO_PALETTE_ENTRIES as PALETTE_ENTRIES,
+  decodeScb3,
+  encodeScb3,
+  decodeScb4,
+  encodeScb4,
+  decodeAttribute,
+  encodeAttribute,
+  type NeoStripPosition as StripPosition,
+  type NeoTileAttribute as TileAttribute,
+} from "@demake/core";
 
 /**
  * Whether a *lower* sprite index is drawn in front of a higher one.
@@ -97,15 +118,10 @@ export const FIX_ROWS = 32;
 export const SPRITE_ORDER_FRONT_TO_BACK = false;
 
 /**
- * The first sprite a program may use.
- *
- * **Sprite 0 belongs to the hardware.** It is what the LSPC pads a line's
- * display list with, so it is expected to be left fully transparent and is not a
- * programmer's to place — and it is reported to be drawn over everything else
- * regardless of the ordering below, which is a second reason not to put a
- * playfield column in it. The backend starts its plane at sprite 1.
+ * The first sprite a program may use, which is `@demake/core`'s — the display-ROM
+ * builder places a playfield too, and one hardware fact has one home.
  */
-export const FIRST_USABLE_SPRITE = 1;
+export { NEO_FIRST_SPRITE as FIRST_USABLE_SPRITE } from "@demake/core";
 
 /** One frame, as straight RGBA. */
 export interface Frame {
@@ -155,70 +171,6 @@ export function expandColor(word: number): [number, number, number] {
 /** Five bits to eight, by replication — the lattice the console spec declares. */
 function expand5(value: number): number {
   return (value << 3) | (value >> 2);
-}
-
-/** How a strip's SCB3 word decomposes. */
-export interface StripPosition {
-  /** Screen Y of the strip's top row. The hardware stores `496 - y`. */
-  y: number;
-  /** Chained to the strip before it: same Y and height, drawn 16px to its right. */
-  sticky: boolean;
-  /** Tiles tall, 0–63; only the first 32 have SCB1 entries. */
-  height: number;
-}
-
-/** Read SCB3's three fields. */
-export function decodeScb3(word: number): StripPosition {
-  const stored = (word >> 7) & 0x1ff;
-  return {
-    y: (496 - stored) & 0x1ff,
-    sticky: ((word >> 6) & 1) === 1,
-    height: word & 0x3f,
-  };
-}
-
-/** Build an SCB3 word from a screen position. The inverse of {@link decodeScb3}. */
-export function encodeScb3(position: StripPosition): number {
-  const stored = (496 - position.y) & 0x1ff;
-  return (stored << 7) | (position.sticky ? 0x40 : 0) | (position.height & 0x3f);
-}
-
-/** Read SCB4's single field: the strip's screen X. */
-export function decodeScb4(word: number): number {
-  return (word >> 7) & 0x1ff;
-}
-
-/** Build an SCB4 word. The inverse of {@link decodeScb4}. */
-export function encodeScb4(x: number): number {
-  return (x & 0x1ff) << 7;
-}
-
-/** What a sprite's odd SCB1 word carries beside the tile number's high bits. */
-export interface TileAttribute {
-  palette: number;
-  tileHigh: number;
-  vflip: boolean;
-  hflip: boolean;
-}
-
-/** Decode SCB1's attribute word. */
-export function decodeAttribute(word: number): TileAttribute {
-  return {
-    palette: (word >> 8) & 0xff,
-    tileHigh: (word >> 4) & 0xf,
-    vflip: ((word >> 1) & 1) === 1,
-    hflip: (word & 1) === 1,
-  };
-}
-
-/** Build SCB1's attribute word. The inverse of {@link decodeAttribute}. */
-export function encodeAttribute(attribute: TileAttribute): number {
-  return (
-    ((attribute.palette & 0xff) << 8) |
-    ((attribute.tileHigh & 0xf) << 4) |
-    (attribute.vflip ? 2 : 0) |
-    (attribute.hflip ? 1 : 0)
-  );
 }
 
 /** Everything the renderer is handed that is not VRAM. */

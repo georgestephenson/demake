@@ -40,6 +40,14 @@ CORES=(
   "mednafen_pce_fast|https://github.com/libretro/beetle-pce-fast-libretro.git|master|make|mednafen_pce_fast_libretro.so"
   "mednafen_wswan|https://github.com/libretro/beetle-wswan-libretro.git|master|make|mednafen_wswan_libretro.so"
   "mednafen_vb|https://github.com/libretro/beetle-vb-libretro.git|master|make|mednafen_vb_libretro.so"
+  "mednafen_ngp|https://github.com/libretro/beetle-ngp-libretro.git|master|make|mednafen_ngp_libretro.so"
+  # The Neo Geo core. It insists on a *system ROM archive* before it will load a
+  # cartridge at all, which is the one thing on this list that is not simply a
+  # build — and it is not a reason to need somebody's dump: the archive's members
+  # are read by *name* with no checksum anywhere, so the E2E hands it a system ROM
+  # demake wrote (`packages/cli/test/_neogeo-bios.ts`), which is the position doc
+  # 13 §Axis 3 already takes about this console.
+  "geolith|https://github.com/libretro/geolith-libretro.git|master|make -C libretro|geolith_libretro.so"
 )
 # Which cores to (re)build this run (default: all). Pass names as args to subset.
 WANT=("$@")

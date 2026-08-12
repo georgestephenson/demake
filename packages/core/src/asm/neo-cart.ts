@@ -69,6 +69,33 @@ export const NEO_CODE_ORIGIN = 0x200;
 export const NEO_CONTAINER_HEADER = 4096;
 
 /**
+ * Swap every byte pair of a region, which is how the P ROM is *stored*.
+ *
+ * A Neo Geo P ROM is a sixteen-bit device wired to a big-endian processor and
+ * dumped a chip at a time, so a set's `p1` is byte-swapped against 68000 order —
+ * MAME loads it with `ROM_LOAD16_WORD_SWAP` and every emulator swaps it back at
+ * load. The `.neo` container carries the regions as the set holds them, so this
+ * is applied on the way in by {@link packNeoRom} and undone on the way out by
+ * `@demake/neogeo`'s `loadNeo`.
+ *
+ * It is a *storage* convention and nothing above the container sees it: the code
+ * an assembler emits, the header this file stamps and the bytes the emulator
+ * executes are all plain big-endian. It was missing until the display-ROM E2E
+ * booted a demade cartridge in a third-party emulator, which is the only kind of
+ * check that can find it — our own core wrote and read the same convention, so
+ * every test in the project passed while no real Neo Geo would run the file.
+ */
+export function swapNeoProgram(bytes: Uint8Array): Uint8Array {
+  const out = new Uint8Array(bytes.length);
+  for (let index = 0; index + 1 < bytes.length; index += 2) {
+    out[index] = bytes[index + 1]!;
+    out[index + 1] = bytes[index]!;
+  }
+  if (bytes.length % 2 === 1) out[bytes.length - 1] = bytes[bytes.length - 1]!;
+  return out;
+}
+
+/**
  * The four 8×8 blocks of a sprite tile, in the order the C ROM stores them.
  *
  * Right half before left, which is the single most surprising thing about this
@@ -104,8 +131,13 @@ export function packNeoCharacters(pixels: Uint8Array): { c1: Uint8Array; c2: Uin
         let plane3 = 0;
         for (let column = 0; column < 8; column += 1) {
           const value = pixels[source + (originY + row) * 16 + originX + column] ?? 0;
-          // The leftmost pixel of the row is the most significant bit.
-          const bit = 1 << (7 - column);
+          // **The leftmost pixel of the row is the least significant bit.**
+          // The reference is explicit that "the pixel data is stored right to
+          // left", and it is the single easiest thing about this format to get
+          // backwards in a way nothing catches: an encoder and a decoder of ours
+          // that agreed would draw every tile mirrored and pass every byte
+          // comparison there is. The display-ROM E2E is what settled it.
+          const bit = 1 << column;
           if (value & 1) plane0 |= bit;
           if (value & 2) plane1 |= bit;
           if (value & 4) plane2 |= bit;
@@ -144,7 +176,7 @@ export function unpackNeoCharacters(c1: Uint8Array, c2: Uint8Array): Uint8Array 
         const plane2 = c2[at] ?? 0;
         const plane3 = c2[at + 1] ?? 0;
         for (let column = 0; column < 8; column += 1) {
-          const bit = 7 - column;
+          const bit = column;
           const value =
             (((plane0 >> bit) & 1) << 0) |
             (((plane1 >> bit) & 1) << 1) |
@@ -325,6 +357,7 @@ export function packNeoRom(regions: NeoRegions, options: { name?: string; ngh?: 
   const m = regions.m ?? empty;
   const v1 = regions.v1 ?? empty;
   const v2 = regions.v2 ?? empty;
+  const p = swapNeoProgram(regions.p);
   const out = new Uint8Array(
     header.length +
       regions.p.length +
@@ -336,7 +369,7 @@ export function packNeoRom(regions: NeoRegions, options: { name?: string; ngh?: 
   );
   let at = 0;
   // The container's own order, which is not the order the header lists them in.
-  for (const part of [header, regions.p, regions.s, m, v1, v2, c]) {
+  for (const part of [header, p, regions.s, m, v1, v2, c]) {
     out.set(part, at);
     at += part.length;
   }

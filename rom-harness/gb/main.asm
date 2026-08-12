@@ -2,37 +2,56 @@
 ;
 ; A minimal, deterministic display program: it uploads the tiles, map, and
 ; palettes emitted by `demake gen` and shows the image forever. One harness
-; serves both consoles — the DMG path sets BGP; the GBC path (selected by
-; conditional assembly when the generated data defines `demake_pal`) uploads
-; BGR555 palettes and the CGB attribute map. The CLI writes the generated data
-; next to this file as `demake.asm`, with symbol prefix `demake`.
-
-DEF rLCDC EQU $FF40
-DEF rBGP  EQU $FF47
-DEF rLY   EQU $FF44
-DEF rVBK  EQU $FF4F ; CGB VRAM bank select
-DEF rBCPS EQU $FF68 ; CGB BG palette index (bit 7 = auto-increment)
-DEF rBCPD EQU $FF69 ; CGB BG palette data
+; serves all three consoles in this family — the DMG path sets BGP; the GBC path
+; (selected by conditional assembly when the generated data defines `demake_pal`)
+; uploads BGR555 palettes and the CGB attribute map; and the **Mega Duck** is a
+; machine description rather than a harness of its own, which is the same bargain
+; `codegen/gb/machine.ts` strikes for games one layer along.
+;
+; Everything a Mega Duck moves is in `machine.asm`, which the CLI generates from
+; `core/src/asm/megaduck.ts` — the LCD registers ($FF10–$FF1B rather than
+; $FF40–$FF4B), LCDC's shuffled bits, and whether this cartridge has a header at
+; all. Not one instruction below differs, and that is the property worth keeping:
+; a register table restated here is a table that disagrees with the emulator and
+; the audio driver in one entry, which is exactly what `megaduck.test.ts` exists
+; to catch one layer down.
+;
+; The CLI writes both generated files next to this one: `machine.asm` (the
+; console) and `demake.asm` (the picture, with symbol prefix `demake`).
 
 DEF VRAM_TILES EQU $8000
 DEF VRAM_MAP   EQU $9800
 
-; The generated data first, so its symbols and the `demake_pal` conditional-
-; assembly switch are defined before the code below references them.
+; The machine first, then the generated data, so the register equates and the
+; `demake_pal` conditional-assembly switch are both defined before the code
+; below references them.
+INCLUDE "machine.asm"
 INCLUDE "demake.asm"
 
+IF DEF(DUCK)
+; No boot ROM and no cartridge header: a Mega Duck begins executing at $0000.
+SECTION "Main", ROM0[$0000]
+ELSE
 SECTION "Header", ROM0[$100]
     nop
     jp Entry
     ds $150 - @, 0 ; rgbfix fills the logo, title, and checksums
 
 SECTION "Main", ROM0[$150]
+ENDC
 Entry:
-    ; Wait for VBlank, then turn the LCD off so VRAM is writable.
+IF !DEF(DUCK)
+    ; Wait for VBlank, then turn the LCD off so VRAM is writable. A Game Boy is
+    ; handed over by its boot ROM with the LCD *on*, so VRAM is only writable in
+    ; the blanking interval and the wait is what makes turning it off safe.
 .waitvblank:
     ld a, [rLY]
     cp 144
     jr c, .waitvblank
+ENDC
+    ; A Mega Duck has no boot ROM at all, so nothing has turned the LCD on and
+    ; LY never leaves zero — the wait above would spin for ever, which presents
+    ; as a cartridge that is perfect and shows a blank screen.
     xor a
     ld [rLCDC], a
 
@@ -97,8 +116,8 @@ ENDC
     ld hl, demake_map
     call CopyMap
 
-    ; LCD on, BG on, tiles @ $8000, map @ $9800.
-    ld a, %10010001
+    ; LCD on, BG on, tiles @ $8000, map @ $9800 — in this machine's bit order.
+    ld a, LCDC_SHOW
     ld [rLCDC], a
 .lock:
     jr .lock

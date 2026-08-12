@@ -55,14 +55,14 @@ where the data formats genuinely coincide.
 | `gba` | GBA | mode0 4bpp tiles (low-nibble-first) + screen entries + 16 BGR555 pals (mode3/4 bitmaps later) | GNU ARM binutils (`arm-none-eabi-as/ld/objcopy`); header in the harness |
 | `nds` | NDS | engine-A text BG: the `gba` formats unchanged (ext. palettes / framebuffer later) | GNU ARM binutils; `.nds` cartridge packed by demake itself, no ndstool |
 | `pce` | PC Engine | 4bpp word-planar characters (bitplanes 0/1 then 2/3), BAT entries, 9-bit VCE palettes | WLA-DX (`wla-huc6280` + `wlalink`), 64 KiB HuCard harness |
-| `neogeo` | Neo Geo | fix-layer + sprite-strip C-ROM format, palette RAM | ngdevkit |
+| `neogeo` | Neo Geo | 16×16 sprite tiles in the C-ROM pair (`.c1.bin`/`.c2.bin`), SCB1 word pairs, palette RAM words | GNU m68k binutils; `.neo` container packed by demake itself. The **tile is not the spec's tile**: a pixel costs what an 8×8 4bpp layout says and the hardware's unit is 16×16, so a 2×2 block of language cells is composed before anything is deduped |
 | `a26` | Atari 2600 | kernel-specific playfield/sprite tables **plus the kernel itself** (the display code *is* the format) | dasm |
 | `a78` | Atari 7800 | display lists + graphics data + palette regs | dasm/cc7800 harness |
 | `a8` | Atari 5200/8-bit | ANTIC display list + screen data + GTIA regs | MADS/cc65 |
 | `lynx` | Lynx | 4bpp framebuffer + palette (+ optional per-line reload table) | cc65 lynx target |
 | `wsc` | WonderSwan Color | 4bpp packed tiles (left pixel high nibble), screen-map words (tile/palette/bank/flip), 16 RGB444 palettes | NASM (16-bit x86 for the V30MZ); 4 Mbit cartridge packed by demake itself |
 | `ws` | WonderSwan (mono) | planar 2bpp tiles, the Color's screen-map word, the shade pool (`.pool.bin`) and 4-entry palettes (`.pal.bin`) as the two register runs they are | NASM (16-bit x86 for the V30MZ); 4 Mbit cartridge packed by demake itself. The pool is *derived* from the picture, because a compliant image stores the level an entry shows and not the slot it came from |
-| `ngpc` | NGP/NGPC | 2bpp tiles, scroll map, palettes | Wonderful toolchain / ngpc sdk |
+| `ngpc` | NGP/NGPC | 2bpp characters (a row is a little-endian halfword, leftmost pixel highest), scroll-map words, **BGR**444 palettes | none — no distribution ships a TLCS-900/H assembler, so the display program is emitted with `@demake/core`'s own `Asm900` and the cartridge header packed by demake itself |
 | `intv` | Intellivision | GRAM cards + BACKTAB words | jzIntv as1600 |
 | `mono-misc` | Virtual Boy, Pokémon Mini, Supervision, Game.com | per-platform tile/fb formats | per-platform assemblers, validated in Tier 3 rollout |
 

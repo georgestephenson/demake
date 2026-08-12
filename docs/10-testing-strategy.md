@@ -175,7 +175,8 @@ says so.
 
 | Console | Build (in container) | Headless emulator + capture method |
 |---|---|---|
-| GB / GBC | RGBDS | **SameBoy** tester binary (built for automation: run-N-frames, dump BMP); cross-check with mGBA |
+| GB / GBC | RGBDS | **SameBoy** via `emu-harness/gb/capture.c` against `libsameboy` (colour correction off; the mono ramp passed in from the console spec) |
+| Mega Duck | RGBDS, with a generated machine include and no `rgbfix` | **SameDuck**, SameBoy's own fork of the console, on a branch of the same repository — the *same* capture source compiled a second time |
 | GBA | GNU ARM binutils (`arm-none-eabi-as/ld/objcopy`) — bare-metal harness, no devkitARM | **mGBA** via the libretro harness (color correction off; compared in RGB555) |
 | NDS | GNU ARM binutils + demake's own `.nds` cartridge packer (no ndstool) | **DeSmuME** via the libretro harness — *decided* (doc 13 standing decision): it direct-boots a cartridge with no BIOS/firmware images, so the whole loop builds from source; compared in RGB555 |
 | NES | ca65 (NROM) | **Mesen 2** headless test-runner mode with Lua (runs on Linux, .NET) |
@@ -183,13 +184,13 @@ says so.
 | Mega Drive | vasm m68k | **BlastEm** (headless mode) or Genesis Plus GX via libretro harness |
 | SMS / GG / SG-1000 / Coleco | WLA-DX / z88dk | **Emulicious** (headless automation) or Mednafen; Gearsystem as fallback |
 | PC Engine | WLA-DX (`wla-huc6280`) | **beetle-pce-fast** (Mednafen's pce_fast) via the libretro harness (compared in RGB565) |
-| Neo Geo | ngdevkit | ngdevkit's GnGeo fork or **FBNeo** via libretro harness |
+| Neo Geo | GNU m68k binutils + demake's own `.neo` container | **geolith** via the libretro harness (compared in RGB555, `geolith_palette=raw`). It refuses to load a cartridge without a system ROM archive, so the suite writes it one — the same three-line hand-off `@demake/neogeo` implements, in a zip whose members it reads by name with no checksum |
 | Atari 2600 | dasm | **Stella** (debugger CLI can script + `screenshot`) |
 | Atari 7800 | dasm | **a7800** (MAME-derived, scriptable) or MAME with `-seconds_to_run`/`-snapname` |
 | Atari 5200/8-bit | MADS | **Atari800** (`-headless` build, screenshot on exit) |
 | Lynx | cc65 | **Mednafen** lynx core |
 | WS / WSC | NASM (the V30MZ is 8086-compatible) | **beetle-wswan** (Mednafen's wswan) via the libretro harness (compared in RGB565, landscape forced by core option) |
-| NGPC | Wonderful toolchain | **Mednafen** cores |
+| NGPC | none — demake's own TLCS-900/H assembler | **beetle-ngp** (Mednafen's ngp) via the libretro harness (compared in RGB565) |
 | Intellivision | as1600 | **jzIntv** (frame dump support) |
 | Tier-3 mono/etc. | per platform | **MAME** as the universal fallback: `-video none -sound none -statename/-snapshot` scripting covers nearly every remaining system |
 

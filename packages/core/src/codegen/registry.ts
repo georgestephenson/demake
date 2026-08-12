@@ -11,6 +11,7 @@ import { gbBackend } from "./gb.js";
 import { gbaBackend } from "./gba.js";
 import { mdBackend } from "./md.js";
 import { ndsBackend } from "./nds.js";
+import { neogeoBackend } from "./neogeo.js";
 import { nesBackend } from "./nes.js";
 import { ngpcBackend } from "./ngpc.js";
 import { pceBackend } from "./pce.js";
@@ -28,6 +29,7 @@ const BACKENDS = new Map<string, CodegenBackend>([
   [mdBackend.family, mdBackend],
   [ndsBackend.family, ndsBackend],
   [nesBackend.family, nesBackend],
+  [neogeoBackend.family, neogeoBackend],
   [ngpcBackend.family, ngpcBackend],
   [pceBackend.family, pceBackend],
   [sg1000Backend.family, sg1000Backend],
