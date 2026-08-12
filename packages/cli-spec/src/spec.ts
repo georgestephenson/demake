@@ -630,7 +630,7 @@ export const CLI_SPEC: CliSpec = {
       summary: "Convert any track into hardware-compliant chip music",
       positional: {
         name: "input",
-        help: "MIDI file (path, or - for stdin).",
+        help: "MIDI file or ProTracker module (path, or - for stdin).",
         optional: true,
       },
       flags: ARRANGE_FLAGS,
@@ -646,6 +646,10 @@ export const CLI_SPEC: CliSpec = {
         {
           cmd: "demake arrange song.mid -c sms --json",
           note: "channel plan, timing, drops, scoreboard",
+        },
+        {
+          cmd: "demake arrange tune.mod -c md -o tune.vgm",
+          note: "a tracker module; the format is read off the bytes",
         },
       ],
     },

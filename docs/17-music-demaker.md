@@ -15,10 +15,11 @@ everything in doc 16.
 the arrangement tournament, timbre and timing fitting, the judge and the artifact
 all exist and run on six consoles, and `demake gen song.json --format rom` turns
 the schedule into a cartridge that plays it — proven register-for-register
-against the schedule in `pnpm test` (doc 16 §The proof). Tracker modules and the
-audio-input transcription front end (§Stage 0) are not built, nor is the
-reference synthesizer the timbral metrics need — so the judge is symbolic today
-and says so.
+against the schedule in `pnpm test` (doc 16 §The proof). **ProTracker modules are
+read too** (§Stage 0), so `demake arrange` takes a `.mod` as well as a `.mid`.
+The audio-input transcription front end is not built, nor is the reference
+synthesizer the timbral metrics need — so the judge is symbolic today and says
+so.
 
 ## The objective: it still has to be the tune
 
@@ -119,6 +120,30 @@ vibrato, volume slide) map more or less one-to-one onto what a chip driver does.
 The interesting work is the reverse of the usual direction: a module's samples
 carry a timbre we can *measure* to fit a chip patch, and its channel count often
 exceeds the target's, so the arranger still has real work.
+
+**ProTracker `.mod` is built** (`score/mod.ts`), and the half that is not a
+transpile is the timeline. A module has no tempo map: it has a **speed** in ticks
+per row and a **tempo** in beats a minute, either of which any row can change
+with `Fxx`, and the song is an **order list** rather than a pattern table — so a
+pattern named twice is heard twice, at two different ticks, and the walk is over
+the order. A note ends when the next note on its channel starts and at no other
+time, because that is what a tracker does rather than a simplification anybody
+chose. Which parser reads a file is a **sniff** rather than an extension, on
+`decodeImage`'s terms: both formats state themselves in their first bytes.
+
+Notes, volumes, both timing effects and vibrato are read. Everything else is
+**counted and reported** rather than dropped — a module leaning on portamento for
+its melody is one this ingest reads as a series of flat notes, which is a demake
+that is *wrong about the tune* rather than merely coarser than it, so those
+arrive as warnings rather than as notes.
+
+Two things it deliberately does not infer. There is **no General MIDI
+programme**, so the role prior Stage 1 takes from one is simply absent and roles
+come from the material alone. And there is **no drum channel**: a MIDI file
+states percussion outright and a module says nothing, so a kit arrives as an
+ordinary pitched part. A sample named "kick" is a hint rather than a statement,
+and acting on one would put a bassline on the drums the first time somebody named
+a sample badly.
 
 ### Audio (`.wav`, `.flac`, `.mp3`, `.ogg`, `.opus`, `.m4a`)
 

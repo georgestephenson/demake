@@ -16,7 +16,9 @@ import {
   encodeAudioManifest,
   encodeFlac,
   encodeWav,
+  isMod,
   parseMidi,
+  parseMod,
   render,
   scriptSeconds,
   sfxManifest,
@@ -24,6 +26,7 @@ import {
   type AudioManifest,
   type ChipScript,
   type PartRole,
+  type Score,
   type SfxOptions,
 } from "@demake/audio";
 import type { ParsedValue } from "@demake/cli-spec";
@@ -193,7 +196,15 @@ export async function runArrange(
   const title = str(values, "title");
   if (title) options.title = title;
 
-  const result = arrangeScore(parseMidi(bytes), options);
+  // Which parser reads the bytes is the *bytes'* answer rather than the
+  // extension's, on `decodeImage`'s terms: a file named `.mid` that is a module
+  // is still a module, and a sniff cannot be wrong about a format that states
+  // itself in a tag. A module's unread effects are warnings rather than notes,
+  // because a piece leaning on portamento is one this demake is wrong about
+  // (doc 17 §Tracker modules).
+  const source = readScore(bytes);
+  for (const line of source.warnings) env.errOut(`demake: warning: ${line}\n`);
+  const result = arrangeScore(source.score, options);
   const emit = emitProduct(
     env,
     result.artifact,
@@ -386,4 +397,30 @@ function writeManifest(
         : "manifest.json";
   env.writeFileAtomic(path, encodeAudioManifest(payload), values.force === true);
   return path;
+}
+
+/**
+ * The parser the bytes ask for, and what it could not read.
+ *
+ * A **sniff rather than an extension**, on `decodeImage`'s terms: both formats
+ * state themselves in their first bytes — `MThd` and a four-character tag at
+ * offset 1080 — so a file named wrongly is still read correctly, and a file that
+ * is neither is refused by the parser its bytes look most like rather than by a
+ * third error nobody can act on.
+ *
+ * A module's unread effects come back as **warnings** rather than as notes,
+ * which is a judgement about what they mean: a merged voice is a demake that is
+ * coarser than its source, and a melody carried by portamento that this ingest
+ * reads as flat notes is a demake that is *wrong about the tune*.
+ */
+function readScore(bytes: Uint8Array): { score: Score; warnings: string[] } {
+  if (!isMod(bytes)) return { score: parseMidi(bytes), warnings: [] };
+  const { score, unread } = parseMod(bytes);
+  return {
+    score,
+    warnings: unread.map(
+      ({ effect, cells }) =>
+        `${effect} is not read by the module ingest yet (${cells} ${cells === 1 ? "cell" : "cells"}); those notes are demade flat`,
+    ),
+  };
 }

@@ -29,6 +29,7 @@ export { analyze, barLength, type AnalyzeOptions } from "./analysis.js";
 
 // --- ingest ------------------------------------------------------------------
 export { parseMidi, isMidi, MidiParseError } from "./score/midi.js";
+export { parseMod, isMod, ModParseError, type ModParseResult } from "./score/mod.js";
 export {
   allNotes,
   dominantBpm,
