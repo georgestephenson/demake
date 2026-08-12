@@ -26,6 +26,21 @@ import { describe, expect, it } from "vitest";
 
 import { Md } from "../src/machine.js";
 
+/**
+ * A machine whose sound hardware has been released from reset.
+ *
+ * `$A11200` is the Z80's reset line *and* the YM2612's, and a console powers up
+ * with it held — so a program that never writes it has an FM chip that discards
+ * everything (`machine.ts` §writeYm). Every case below is about the chip rather
+ * than about the board, so they start where a cartridge's own boot leaves them.
+ */
+function withSound(): Md {
+  const machine = new Md(blankRom());
+  machine.write16(0xa11100, 0x0100);
+  machine.write16(0xa11200, 0x0100);
+  return machine;
+}
+
 /** A cartridge that does nothing, so the machine has something valid to boot. */
 function blankRom(): Uint8Array {
   const rom = new Uint8Array(0x20000);
@@ -39,7 +54,7 @@ function blankRom(): Uint8Array {
 
 describe("the FM chip runs when anything can observe it", () => {
   it("raises timer A's overflow flag with no sample sink attached", () => {
-    const machine = new Md(blankRom());
+    const machine = withSound();
     expect(machine.ymSink).toBeUndefined();
 
     // A short period, so the overflow arrives quickly: the counter runs at the
@@ -66,7 +81,7 @@ describe("the FM chip runs when anything can observe it", () => {
     // from clear to set, which is what keeps the poll's own latency from
     // accumulating into the tempo — so the second overflow has to arrive a full
     // period after the first rather than a period after the acknowledge.
-    const machine = new Md(blankRom());
+    const machine = withSound();
     machine.write8(0xa04000, 0x24);
     machine.write8(0xa04001, 0xfc);
     machine.write8(0xa04000, 0x25);
@@ -92,5 +107,58 @@ describe("the FM chip runs when anything can observe it", () => {
     // both come off the master clock over seven — so a sample is 144 of them.
     // Within one instruction, because the poll only looks between them.
     expect(Math.abs(second - 16 * 144)).toBeLessThan(60);
+  });
+});
+
+describe("the sound hardware's reset line", () => {
+  it("holds the FM chip until $A11200 releases it", () => {
+    // One wire to two chips: `$A11200` resets the Z80 *and* the YM2612, and the
+    // console powers up with it asserted. This core models no Z80 at all, so
+    // before it modelled the line a cartridge that never wrote the register had
+    // six four-operator voices answering here and none on the board — a register
+    // diff that passed against a chip that was not listening (doc 16 §The proof,
+    // and AGENTS.md §Gotchas on a description that is wrong and consistent).
+    const machine = new Md(blankRom());
+    const seen: number[] = [];
+    machine.ymTap = (port) => seen.push(port);
+
+    // Held: a whole timer programming, discarded.
+    machine.write8(0xa04000, 0x24);
+    machine.write8(0xa04001, 0xfc);
+    machine.write8(0xa04000, 0x27);
+    machine.write8(0xa04001, 0x05);
+    expect(seen).toEqual([]);
+    // And nothing reaches the chip, which the flag that timer would set says.
+    for (let step = 0; step < 20_000; step += 1) machine.stepInstruction();
+    expect(machine.read8(0xa04000) & 0x01).toBe(0);
+
+    // Released, and the same writes arrive.
+    machine.write16(0xa11200, 0x0100);
+    machine.write8(0xa04000, 0x24);
+    machine.write8(0xa04001, 0xfc);
+    expect(seen).toEqual([0, 1]);
+  });
+
+  it("takes the line from either width, in the half the bus puts it", () => {
+    // A word write carries it on bit 8 and a byte write to the same address puts
+    // its data on the bus's high half, so the byte's bit 0 is the same line. A
+    // core that read bit 0 of a word would leave the chip held for a boot that
+    // is correct on hardware.
+    const word = new Md(blankRom());
+    word.write16(0xa11200, 0x0100);
+    const byte = new Md(blankRom());
+    byte.write8(0xa11200, 0x01);
+    for (const machine of [word, byte]) {
+      const seen: number[] = [];
+      machine.ymTap = (port) => seen.push(port);
+      machine.write8(0xa04000, 0x22);
+      expect(seen).toEqual([0]);
+    }
+    // And asserting it again holds the chip once more.
+    word.write16(0xa11200, 0x0000);
+    const after: number[] = [];
+    word.ymTap = (port) => after.push(port);
+    word.write8(0xa04000, 0x22);
+    expect(after).toEqual([]);
   });
 });

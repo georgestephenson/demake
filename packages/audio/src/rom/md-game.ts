@@ -61,6 +61,7 @@ import {
   PSG_CHIP,
   YM_CHIP,
   checkMdPairDiscipline,
+  emitZ80Handover,
   type MdShadowChannel,
 } from "./md-chips.js";
 import { clampByte, MAX_PENDING, pack, rateHz, restrict, shapeOf, stripBoot } from "./shared.js";
@@ -468,6 +469,12 @@ function emitInit(
   copies: readonly MdShadowChannel[],
 ): void {
   asm.label("AudioInit");
+  // Before a single register write, because the second of these two stores is
+  // the *FM chip's* reset and the writes below are discarded while it is held
+  // (`md-chips.ts` §emitZ80Handover). It is here rather than in the game's own
+  // boot for the reason every helper in this project is pulled: a game with no
+  // audio emits neither store, because it emits no `AudioInit`.
+  emitZ80Handover(asm);
   for (const write of boot) emitChipWrite(asm, write);
   // Each borrowable voice's copy starts at what the boot writes left in its
   // registers, so a replay before the music has stated anything restores the

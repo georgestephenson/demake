@@ -205,6 +205,10 @@ export class Md implements Bus {
       this.writeIo(at, value & 0xff);
       return;
     }
+    if (at === 0xa11200 || at === 0xa11201) {
+      this.writeZ80Reset((value & 1) !== 0);
+      return;
+    }
     if (at >= 0xc00000 && at <= 0xc0001f) {
       // A byte write to a word port duplicates the byte into both halves, which
       // is what the PSG port at `$C00011` relies on.
@@ -213,16 +217,42 @@ export class Md implements Bus {
   }
 
   /**
-   * One byte to the FM chip.
+   * One byte to the FM chip, if the chip is out of reset.
    *
    * Four addresses, and the 68000 reaches them directly because nothing here
-   * emits a Z80 to contend for the bus. On hardware a program has to hold the
-   * Z80's bus request first, which is what the boot code does; a core that
-   * enforced it would be modelling an arbiter no demade cartridge can lose to.
+   * emits a Z80 to contend for the bus: the bus *arbiter* is not modelled,
+   * because a demade cartridge is the only thing on this board and cannot lose
+   * to itself.
+   *
+   * The **reset line is**, and it is a different thing entirely. `$A11200` is
+   * wired to the YM2612's own `!IC` as well as to the Z80's, so while it is held
+   * the FM chip discards everything sent to it — and a console powers up with it
+   * held. Modelling it is what makes a cartridge that forgot to release it fail
+   * here rather than only on hardware: before this, the six FM voices answered a
+   * core with no Z80 in it, the register diff was perfect, and doc 16's Level B
+   * measured 0.00046 RMS against genesis-plus-gx where a released chip gives
+   * 0.28203. That is AGENTS.md §Gotchas' own warning — a machine description
+   * that is wrong and consistent passes everything — reached through the one
+   * peripheral this core deliberately does not have.
    */
   private writeYm(port: number, value: number): void {
+    if (this.ymHeld) return;
     this.ym.write(port, value);
     this.ymTap?.(port, value);
+  }
+
+  /**
+   * Whether the sound hardware's reset line is asserted, which it is at power-up.
+   *
+   * `$A11200` bit 8 releases it. A byte write there puts its data on the bus's
+   * high half, so the byte's bit 0 is that same line — which is why the two
+   * widths read different bits of what they were given.
+   */
+  private ymHeld = true;
+
+  /** Take `$A11200`'s data, in whichever half of the word it arrived. */
+  private writeZ80Reset(released: boolean): void {
+    this.ymHeld = !released;
   }
 
   write16(address: number, value: number): void {
@@ -239,6 +269,10 @@ export class Md implements Bus {
     }
     if (at >= 0xa10000 && at <= 0xa1001f) {
       this.writeIo(at | 1, value & 0xff);
+      return;
+    }
+    if (at === 0xa11200) {
+      this.writeZ80Reset((value & 0x0100) !== 0);
       return;
     }
     if (at >= 0xc00000 && at <= 0xc0001f) this.writeVdp(at, value & 0xffff);
