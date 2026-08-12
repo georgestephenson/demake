@@ -113,6 +113,38 @@
  *
  * Source: WSdev wiki — Sound (https://ws.nesdev.org/wiki/Sound).
  *
+ * **The Game Boy Advance qualifies and is not in the table either, and what is
+ * left of that is the *method*.** It builds a standalone cartridge now and mGBA
+ * is provisioned, so both conditions above are met; against `overworld.mid` it
+ * scores **0.9820** where the gate is 0.99. That is well clear of the nearest
+ * plausible wrong answer — the same tune arranged for a Game Boy scores 0.9169
+ * against the same capture — but it does not pass, and lowering the gate for one
+ * console would make the number mean nothing on the other four.
+ *
+ * What it is, is a **tilt**, and it is the one thing this method assumes away.
+ * Band by band the two agree to 0.9885–0.9988; the whole-band figure is *lower*
+ * than any band in it, which is what a difference in balance rather than in
+ * content looks like. The core's level relative to ours falls monotonically —
+ * 1.545× below 1 kHz, 1.423× at 4–8 kHz, 1.244× at 8–16 kHz, 0.876× at
+ * 16–24 kHz and 0.394× above that. Restricting the comparison to the mixer's own
+ * Nyquist moves it to 0.9898.
+ *
+ * Every other console here clocks its chip in **megahertz**, so a render at
+ * 48 kHz is a decimation and both sides band-limit alike. This console's mixer
+ * runs at 32768 Hz, *below* the 65536 Hz the core captures at — the same fact
+ * `mix.ts` handles as "a box narrower than a clock" — so what separates the two
+ * signals is a reconstruction filter that belongs to neither model: ours is the
+ * box integrator's zero-order hold, which keeps the images above 16 kHz, and the
+ * core's is whatever mGBA resamples with, which plainly attenuates them. Neither
+ * is the schedule, and a cross-check whose two sides differ by their output
+ * stages is not evidence about the chip in either direction.
+ *
+ * The proof this console does have is the sharpest in the project rather than
+ * the weakest: its Level A runs in **two halves** — the four Game Boy channels
+ * diffed tick for tick, and the mixer's *samples* diffed byte for byte against
+ * `GbaPcm` (`packages/audio/test/rom.test.ts`, and `demotic/test/audio-gba.test.ts`
+ * for a game). Doc 16 §The proof and doc 13 §A2.5 record it.
+ *
  * Needs `pnpm toolchains && pnpm emulator`; self-skips without them.
  */
 

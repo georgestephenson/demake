@@ -21,14 +21,14 @@
 import { describe, expect, it } from "vitest";
 
 import { getConsole } from "@demake/core";
-import { GBA_PCM_KON, GBA_PCM_VOICES } from "@demake/chip";
+import { GBA_PCM_KON, GBA_PCM_RATE_HZ, GBA_PCM_VOICES } from "@demake/chip";
 import { PSG_MIX_GAIN } from "@demake/gba";
 
 import { arrangeScore } from "../src/arrange/index.js";
 import type { ChipScript } from "../src/chipscript.js";
 import { packScript } from "../src/rom/data.js";
 import { bindingFor } from "../src/binding/registry.js";
-import { GBA_APU_CHANNELS, GBA_PSG_GAIN } from "../src/binding/gba.js";
+import { GBA_APU_CHANNELS, GBA_BLOCK_SAMPLES, GBA_PSG_GAIN } from "../src/binding/gba.js";
 import { sampleBank, sampleNumber, WAVEFORMS, WAVE_SAMPLES } from "../src/binding/gba-bank.js";
 import { artifactFormat } from "../src/encode/spc.js";
 import { inspectScript } from "../src/inspect.js";
@@ -76,18 +76,23 @@ describe("the Game Boy Advance binding", () => {
     expect(writes.some((write) => write.reg === GBA_PCM_KON)).toBe(false);
   });
 
-  it("finds a driver rate to within a part in two thousand", () => {
-    // Sixteen bits of reload against a four-way prescaler. The bound is what the
-    // *coarsest* useful prescaler gives: below about 256 Hz the finest one runs
-    // out of reload, so a rate in the driver's range is fitted by counting a
-    // 262 kHz clock and the residue is one count of it. Two hundredths of a per
-    // cent, against a Game Boy's tenths — and a tempo that does not accumulate
-    // (doc 17 §Tempo is a budget) cares about the drift rather than the offset.
-    for (const desired of [60, 120, 150, 240]) {
+  it("has one driver rate and does not negotiate about it", () => {
+    // The only `fitRate` in the set that does not search, and the mixer is why:
+    // a driver tick *is* a block of samples the processor computes, and a block
+    // is what the sample transfer's own interrupt counts out. 32768 ÷ 256 is 128
+    // exactly.
+    //
+    // This machine does have spare timers and the spec says so — what is
+    // asserted here is not what the hardware can clock but what a driver on it
+    // can keep. Riding a timer would put the schedule's ticks out of phase with
+    // the blocks the mixer delivers: every write performed correctly, and every
+    // sample of six of the ten voices computed for the wrong moment. Before this
+    // it fitted the example library's own fixtures at 56 Hz, which is a schedule
+    // no cartridge on this console could play at all.
+    for (const desired of [40, 60, 120, 128, 150, 240, 600]) {
       const fit = binding.fitRate(desired);
-      const hz = fit.rate.num / fit.rate.den;
+      expect(fit.rate.num / fit.rate.den).toBe(GBA_PCM_RATE_HZ / GBA_BLOCK_SAMPLES);
       expect(fit.source).toBe("timer");
-      expect(Math.abs(hz - desired) / desired).toBeLessThan(5e-4);
     }
   });
 });

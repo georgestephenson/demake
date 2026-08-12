@@ -24,7 +24,7 @@ columns are [doc 03](03-console-matrix.md); the plan for the empty cells is
 | Console | id | family | art | data | ROM | emulator | game | music/sfx | audio ROM | in-game audio |
 |---|---|---|---|---|---|---|---|---|---|---|
 | Game Boy | `dmg` | `gb` | yes | `bin` `asm` `c` | RGBDS | SameBoy | `gb` | yes | yes | 120 Hz |
-| Game Boy Advance | `gba` | `gba` | yes | `bin` `asm` `c` | GNU ARM binutils | mGBA | `gba` | yes | — | 128 Hz |
+| Game Boy Advance | `gba` | `gba` | yes | `bin` `asm` `c` | GNU ARM binutils | mGBA | `gba` | yes | yes | 128 Hz |
 | Game Boy Color | `gbc` | `gb` | yes | `bin` `asm` `c` | RGBDS | SameBoy | `gb` | yes | yes | 120 Hz |
 | Sega Mega Drive / Sega Genesis | `md` | `md` | yes | `bin` `asm` `c` | GNU m68k binutils | genesis-plus-gx | `md` | yes | yes | 59.92 Hz |
 | Nintendo DS | `nds` | `nds` | yes | `bin` `asm` `c` | GNU ARM binutils | DeSmuME | `gba` | yes | — | 120 Hz |
@@ -60,4 +60,4 @@ columns are [doc 03](03-console-matrix.md); the plan for the empty cells is
 - **21** consoles have a spec, so all 21 do art.
 - **17** build a display ROM; **17** of those are proven pixel-perfect in an emulator.
 - **16** compile a Demotic game.
-- **18** demake music and sound effects; **15** play it from inside a game, and **9** build a cartridge whose only job is one schedule.
+- **18** demake music and sound effects; **15** play it from inside a game, and **10** build a cartridge whose only job is one schedule.

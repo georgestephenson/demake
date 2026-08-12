@@ -19,6 +19,7 @@
  */
 
 import { Gameboy } from "@demake/dmg";
+import { Gba } from "@demake/gba";
 import { Md } from "@demake/md";
 import { Nes } from "@demake/nes";
 import { Pce } from "@demake/pce";
@@ -59,6 +60,15 @@ export class AudioRomRunner {
    * table at boot performs those writes before the first tick, so its tick 0 is
    * shorter than the demaker's. Comparing against the input there would be
    * asking the driver for writes it correctly made somewhere else.
+   *
+   * And on one console it is not the whole schedule either. A Game Boy Advance's
+   * second sound device is a **software mixer**, so six of its ten voices are
+   * written to a register file in work RAM and cross no bus at all — nothing can
+   * observe them, because there is nothing to observe. What those writes owe is
+   * the *samples*, which is a sharper claim than a register diff and a different
+   * test (`gba-rom.test.ts`). Filtering them out here is not weakening the proof;
+   * it is putting the two halves where each can be checked, exactly as
+   * `_audio-battery.ts`'s `observed` does one layer up.
    */
   readonly performed: ChipScript;
   private readonly tickAddress: number;
@@ -103,7 +113,16 @@ export class AudioRomRunner {
 
   private constructor(built: Awaited<ReturnType<typeof buildAudioRom>>, consoleId: string) {
     this.rom = built.bytes;
-    this.performed = built.performed;
+    this.performed =
+      built.family === "gba"
+        ? {
+            ...built.performed,
+            ticks: built.performed.ticks.map((tick) => ({
+              ...tick,
+              writes: tick.writes.filter((write) => (write.chip ?? 0) === 0),
+            })),
+          }
+        : built.performed;
     const tick = built.symbols.get("Tick");
     if (tick === undefined) throw new Error("the driver defined no Tick symbol");
     this.tickAddress = tick;
@@ -142,6 +161,14 @@ export class AudioRomRunner {
       // to is what decides, exactly as `@demake/wsc`'s own tests do.
       const machine = new Wsc(built.bytes, consoleId === "ws" ? "ws" : "wsc");
       machine.soundTap = push;
+      this.machine = machine;
+    } else if (built.family === "gba") {
+      // The Game Boy half of this console's sound, which is the half that
+      // crosses a bus: the same `GbApu` a Game Boy has, behind a permuted
+      // register map. The mixer's six voices are filtered out of `performed`
+      // above rather than tapped, because there is nothing to tap.
+      const machine = new Gba(built.bytes);
+      machine.apuTap = push;
       this.machine = machine;
     } else if (built.family === "sms") {
       // Which *Sega* it comes up as is the cartridge's own region nibble, never

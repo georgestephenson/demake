@@ -18,6 +18,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  GBA_CHECK_END,
+  GBA_CHECK_OFFSET,
+  GBA_CHECK_START,
   GB_HEADER_OFFSETS,
   GB_ROM_SIZE,
   NES_CHR_SIZE,
@@ -39,11 +42,15 @@ import {
   WS_FOOTER_OFFSET,
   WS_ROM_SIZE,
 } from "@demake/core";
+import { GbaPcm } from "@demake/chip";
+import { Gba } from "@demake/gba";
 import { FRAME_CYCLES, Sms } from "@demake/sms";
 import { CPU_HZ as WS_CPU_HZ } from "@demake/wsc";
 
 import { arrangeScore } from "../src/arrange/index.js";
 import { bindingFor } from "../src/binding/registry.js";
+import { GBA_BLOCK_SAMPLES } from "../src/binding/gba.js";
+import { sampleBank as gbaSampleBank } from "../src/binding/gba-bank.js";
 import { WS_BANK_BYTES, WS_WAVE_BASE, wsWaveBank } from "../src/binding/wsc-bank.js";
 import { wsWaveforms } from "../src/binding/wsc.js";
 import type { ChipScript } from "../src/chipscript.js";
@@ -131,7 +138,7 @@ describe("gb audio cartridge", () => {
 
   it("names the consoles it can build for", async () => {
     expect(audioRomConsoles()).toEqual(
-      expect.arrayContaining(["dmg", "gbc", "nes", "pce", "sms", "gg", "md", "wsc", "ws"]),
+      expect.arrayContaining(["dmg", "gbc", "nes", "pce", "sms", "gg", "md", "gba", "wsc", "ws"]),
     );
   });
 });
@@ -512,6 +519,117 @@ describe("wsc audio cartridge", () => {
     // that ran past `$FFF0` would have its own code overwritten by the entry.
     const bank = WS_ROM_SIZE - 64 * 1024;
     expect(bytes[bank + WS_CODE_SIZE]).toBe(0xea);
+  });
+});
+
+describe("gba audio cartridge", () => {
+  it("is a bootable cartridge whose first word branches over the header", async () => {
+    const { bytes, family, suffix } = await buildAudioRom(trackFor("gba"));
+    expect(family).toBe("gba");
+    expect(suffix).toBe(".gba");
+    // A cartridge is at least one 32 KiB block and this one fits in it.
+    expect(bytes.length % 0x8000).toBe(0);
+    // `b` in ARM: condition `al`, and bits 27–25 are `101`.
+    expect(bytes[3]).toBe(0xea);
+    // The fixed byte the BIOS checks even on a direct boot, and the complement
+    // of the header it checks with it.
+    expect(bytes[0xb2]).toBe(0x96);
+    let sum = 0;
+    for (let at = GBA_CHECK_START; at <= GBA_CHECK_END; at += 1)
+      sum = (sum - (bytes[at] as number)) & 0xff;
+    expect(bytes[GBA_CHECK_OFFSET]).toBe((sum - 0x19) & 0xff);
+    // The Nintendo logo area stays zero: we ship no copyrighted data, and a
+    // direct boot never looks at it.
+    expect(bytes.subarray(0x04, 0xa0).every((byte) => byte === 0)).toBe(true);
+  });
+
+  it("takes the transfer's clock, which is the only rate this console has", async () => {
+    // The one `fitRate` in the set that does not search, and the reason is the
+    // mixer: a driver tick *is* a block of samples the processor computes, and
+    // a block is what the sample transfer's interrupt counts out. So a schedule
+    // fitted for this console is at 128 Hz whatever tempo asked for, and a
+    // cartridge that rode a timer instead would perform every write correctly
+    // and compute every mixer sample for the wrong moment.
+    const binding = bindingFor("gba");
+    for (const asked of [40, 56, 120, 128, 240, 600]) {
+      const fit = binding.fitRate(asked);
+      expect(fit.rate.num / fit.rate.den).toBe(128);
+    }
+    const script = trackFor("gba");
+    expect(script.driver.rate.num / script.driver.rate.den).toBe(128);
+    const built = await buildAudioRom(script);
+    expect(built.stats.ratePpmError).toBe(0);
+  });
+
+  it("delivers exactly the samples the mixer model renders", async () => {
+    // The half no register diff can see, and the sharper of this console's two
+    // proofs. Six of its ten voices are `@demake/chip`'s `GbaPcm` — a register
+    // file in work RAM that crosses no bus — so what the driver owes there is
+    // the *samples*, byte for byte, against what the model renders from the same
+    // schedule (doc 16 §The proof, for a mixer console). It is the game
+    // driver's proof (`demotic/test/audio-gba.test.ts`) for the cartridge that
+    // has no game in it.
+    const script = trackFor("gba");
+    const runner = await AudioRomRunner.create(script);
+    const machine = new Gba(runner.rom);
+    // Both sides, because they are two transfers rather than one signal split —
+    // the only way a driver can get them out of step is by re-pointing one at a
+    // block boundary the other has not reached, which a one-sided test misses.
+    const heard: [number[], number[]] = [[], []];
+    machine.fifoTap = (channel, byte) => {
+      (heard[channel] as number[]).push(byte);
+    };
+    for (let frame = 0; frame < 120; frame += 1) machine.runFrame();
+
+    // The boot writes are performed once by the ROM rather than at the head of
+    // the stream, so they go into the model first — `runner.performed` is the
+    // schedule with them taken off, and with the mixer's own writes filtered out
+    // of the register half, which is why the chip-1 stream is read off the
+    // *input* schedule here.
+    const model = new GbaPcm({ bank: gbaSampleBank() });
+    for (const write of bindingFor("gba").init()) {
+      if ((write.chip ?? 0) === 1) model.write(write.reg, write.value);
+    }
+    const want: [number[], number[]] = [[], []];
+    const blocks = 60;
+    for (let index = 0; index < blocks; index += 1) {
+      for (const write of script.ticks[index]?.writes ?? []) {
+        if ((write.chip ?? 0) === 1) model.write(write.reg, write.value);
+      }
+      // The converter takes a signed byte and the queue reports what crossed it,
+      // which is the same byte read unsigned.
+      for (let sample = 0; sample < GBA_BLOCK_SAMPLES; sample += 1) {
+        const { left, right } = model.mix();
+        want[0].push(left & 0xff);
+        want[1].push(right & 0xff);
+      }
+    }
+    // Not silence, or this compares nothing with nothing: the arranger gives
+    // each part the channel that serves it best, and a track whose parts all
+    // landed on the Game Boy half would pass here on a driver that never mixed.
+    expect(want[0].some((value) => value !== 0x80 && value !== 0)).toBe(true);
+
+    // Where the driver's own first block landed. A whole number of blocks in by
+    // construction — a transfer is re-pointed on a block boundary and nowhere
+    // else — so this is a search over blocks rather than samples, and that it
+    // *is* one is part of what this asserts. The same offset has to serve both
+    // sides, which is the other half of it.
+    const left = heard[0] as number[];
+    let offset = -1;
+    for (
+      let block = 0;
+      (block + 1) * GBA_BLOCK_SAMPLES <= left.length - want[0].length;
+      block += 1
+    ) {
+      const at = block * GBA_BLOCK_SAMPLES;
+      if (left.slice(at, at + GBA_BLOCK_SAMPLES * 4).every((value, i) => value === want[0][i])) {
+        offset = at;
+        break;
+      }
+    }
+    expect(offset).toBeGreaterThanOrEqual(0);
+    expect(left.slice(offset, offset + want[0].length)).toEqual(want[0]);
+    expect((heard[1] as number[]).slice(offset, offset + want[1].length)).toEqual(want[1]);
   });
 });
 

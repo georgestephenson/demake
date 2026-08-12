@@ -55,7 +55,6 @@ import {
 } from "@demake/core";
 
 import { bindingFor } from "../binding/registry.js";
-import { bankBytes, sampleBank } from "../binding/gba-bank.js";
 import { gbaChannelTag, GBA_APU_CHANNELS } from "../binding/gba.js";
 import type { ChipScript, Rational } from "../chipscript.js";
 
@@ -64,6 +63,7 @@ import { AudioRomError } from "./gb.js";
 import { gbChannelOf, type GameEffect } from "./gb-game.js";
 import { emitStream, emitStreamData, type ArmStreamState } from "./arm-player.js";
 import {
+  emitBank,
   emitIrq,
   emitMix,
   emitMixCopy,
@@ -961,47 +961,4 @@ function emitPan(asm: AsmArm, state: Layout): void {
 function emitSoundWriteReg(asm: AsmArm, offset: number, rd: number): void {
   asm.ldrConst(12, 0x04000060 + offset);
   asm.strb(rd, armAt(12, 0));
-}
-
-/**
- * The waveform bank: the table the mixer resolves a source through, and the
- * bytes it plays.
- *
- * One definition with two readers, exactly as the Super Nintendo's is
- * (`binding/sdsp-bank.ts`): `binding/gba-bank.ts` decides what is in it and how
- * long each waveform is, the binding puts an index in a voice's `SRCN`, and this
- * lays the same bytes in the cartridge. A second copy of either number is a game
- * whose bass plays the snare.
- *
- * Each entry is the pointer, `length << 16` and `(length − loop) << 16` — the
- * two forms the mix loop actually compares against, computed here so the inner
- * loop is a comparison and a subtraction rather than two shifts.
- */
-function emitBank(asm: AsmArm): void {
-  const bank = sampleBank();
-  const { bytes, offsets } = bankBytes();
-  for (const sample of bank) {
-    if (sample.loop !== null) continue;
-    {
-      // Every built-in waveform loops (`gba-bank.ts` §the bank), so the mix loop
-      // has no one-shot path at all. A bank that grew one would need it, and this
-      // is where that would be found rather than in a wrong note.
-      throw new AudioRomError(
-        "E_INTERNAL",
-        "the mixer's waveform bank has a one-shot sample and the driver's mix loop only loops",
-        "this is a bug in the ROM builder, not in the track.",
-      );
-    }
-  }
-  asm.align();
-  asm.label("AudioBank");
-  for (const [index, sample] of bank.entries()) {
-    asm.dw(label("AudioBankBytes", offsets[index] as number) as Ref);
-    asm.dw(sample.data.length << 16);
-    asm.dw((sample.data.length - (sample.loop ?? 0)) << 16);
-    asm.dw(0); // padding to a shifted entry, so the lookup is one instruction
-  }
-  asm.label("AudioBankBytes");
-  asm.bytes(bytes);
-  asm.align();
 }

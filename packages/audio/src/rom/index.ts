@@ -7,23 +7,31 @@
  * cartridge that played a different arrangement from the preview would make the
  * schedule oracle report a divergence three layers from its cause.
  *
- * Five families build a *cartridge of their own* today: the Game Boy, the NES,
- * the PC Engine, the Sega 8-bits and the Mega Drive. The rest have drivers but
+ * Seven families build a *cartridge of their own* today: the Game Boy, the NES,
+ * the PC Engine, the Sega 8-bits, the Mega Drive, the Game Boy Advance and both
+ * WonderSwans. The rest have drivers but
  * only inside a game, because that is what a game needed and a cartridge whose
  * only job is one track is a different caller. What any of them costs is no
  * longer an estimate: the stream player belongs to the *processor* and already
- * exists for six of them, so what a console adds is a boot sequence, a clock and
+ * exists for all of them, so what a console adds is a boot sequence, a clock and
  * a cartridge wrapper — which is the whole of the difference between `gb.ts`,
- * `nes.ts`, `pce.ts`, `sms.ts` and `md.ts`, two of which share a player and one
- * of which covers two machines.
+ * `nes.ts`, `pce.ts`, `sms.ts`, `md.ts`, `gba.ts` and `wsc.ts`, three of which
+ * share a player with another console and two of which cover two machines each.
  *
- * **A standalone cartridge is not a game with the game taken out**, and the last
- * of them is where that stops being a turn of phrase. On the Mega Drive a game
+ * **A standalone cartridge is not a game with the game taken out**, and two of
+ * them are where that stops being a turn of phrase. On the Mega Drive a game
  * can only have the frame, because the FM chip's timer interrupt goes to the Z80
  * and a game polling it would be reading the status byte once per pass of a loop
  * that is also running a game. A cartridge whose loop does nothing else polls it
  * every few microseconds, so it keeps the timer's rate exactly — which is why
  * `resolveMdClock` and `resolveMdAudioClock` refuse *opposite* sources.
+ *
+ * The Game Boy Advance is where the distinction stops mattering again, and for a
+ * reason worth keeping: neither caller polls. Half that machine's voices are a
+ * software mixer, so a driver tick *is* a block of samples and the sample
+ * transfer's own interrupt counts the blocks out — 128 Hz on both callers, with
+ * nothing to fit and nothing to drift. `resolveGbaClock` is therefore *called* by
+ * the standalone rather than mirrored by it.
  */
 
 import { getConsole } from "@demake/core";
@@ -93,6 +101,7 @@ const DRIVERS: Readonly<Record<string, AudioRomFamily>> = {
   sms: "sms",
   gg: "sms",
   md: "md",
+  gba: "gba",
   wsc: "wsc",
   // The mono machine's sound hardware *is* the colour machine's, so this is one
   // more console for the same driver and the same cartridge — the Game Gear's
@@ -103,14 +112,18 @@ const DRIVERS: Readonly<Record<string, AudioRomFamily>> = {
 /**
  * The driver families a standalone cartridge can be built with.
  *
- * Six, over five stream players: the NES and the PC Engine share
+ * Seven, over six stream players: the NES and the PC Engine share
  * `mos-player.ts` because a HuC6280 *is* a 6502, the two Sega 8-bits share
  * `sms-driver.ts` because a Game Gear *is* a Master System, and the two
  * WonderSwans share `wsc-driver.ts` because they are one machine with different
  * memory — so what a family is here is a boot sequence, a clock and a cartridge
  * wrapper rather than a driver.
+ *
+ * The seventh is the first whose console's second sound device is not a chip:
+ * six of a Game Boy Advance's ten voices are a software mixer, so that
+ * cartridge's idle loop is the only one in the set that is not idle.
  */
-export type AudioRomFamily = "gb" | "nes" | "pce" | "sms" | "md" | "wsc";
+export type AudioRomFamily = "gb" | "nes" | "pce" | "sms" | "md" | "gba" | "wsc";
 
 /**
  * The clock a *game's* driver rides on each chip that has one.
@@ -312,6 +325,7 @@ const SUFFIXES: Readonly<Record<string, string>> = {
   sms: ".sms",
   gg: ".gg",
   md: ".md",
+  gba: ".gba",
   wsc: ".wsc",
   ws: ".ws",
 };
@@ -376,6 +390,8 @@ async function buildFor(
       return (await import("./sms.js")).buildSmsAudioRom(script, options);
     case "md":
       return (await import("./md.js")).buildMdAudioRom(script, options);
+    case "gba":
+      return (await import("./gba.js")).buildGbaAudioRom(script, options);
     case "wsc":
       return (await import("./wsc.js")).buildWscAudioRom(script, options);
   }
