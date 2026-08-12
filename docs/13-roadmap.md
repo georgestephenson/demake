@@ -1744,14 +1744,23 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     the generator right the noise voice's spectrum lands beside the core's: 54 Hz
     against 43, 118 against 54.
 
-    What is still open is a **level**, and it is consistent enough to be one
-    number: our pitched voices come out 1.063× the core's and our noise voice
-    1.734×, on every mode. The first is a core normalising to its own level and
-    the second is that ratio times 1.63 — a disagreement about how loud this
-    chip's shift register is against its wavetables. Settling it wants a hardware
-    reference rather than a threshold, and Level A is green on that console for a
-    track _and_ an effect, so the cartridge performs its schedule exactly and the
-    question is what the chip does with it.
+    What is left is a **level**, and it is a pure gain rather than a shape: our
+    pitched voices come out 1.063× the core's and our noise voice 1.734×, with
+    the second number flat across the band — 1.729 below 4 kHz and 1.735 below
+    22 — so it is neither the filtering caveat nor aliasing in a broadband
+    source, both of which would show as a tilt. Relative to the pitched voices
+    the core's noise is 0.61× ours.
+
+    On that one the documentation is on our side. The WSdev wiki says the shift
+    register's bit is "used as if it were a wavetable sample: 0 = 0, 1 = 15",
+    which is a wavetable channel's own amplitude before its volume nibble, and
+    that is what `WsSound` does — at a duty of 0.500 on the long modes, measured
+    over a whole period. So it reads as Mednafen attenuating that voice rather
+    than as a gap in the model, and the row stays out for a different reason from
+    the one it went out for: a cross-check whose two sides differ by a known
+    constant is not evidence about the chip in either direction. Level A is green
+    on that console for a track _and_ an effect, so the cartridge performs its
+    schedule exactly.
 
     **And one console could not be rendered at all — fixed, and it was the one
     renderer rather than that console.** `demake render -c gba` wrote a WAV in

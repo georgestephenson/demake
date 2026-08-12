@@ -94,15 +94,24 @@
  * the core's — 54 Hz against 43, 118 against 54 — where it had been 1497 against
  * 140.
  *
- * What remains is a **level**, and it is consistent enough to be one number: our
- * pitched voices come out 1.063× the core's and our noise voice 1.734×, on every
- * mode. The first is this file's opening caveat about cores normalising to their
- * own level; the second is that ratio times 1.63, which is a disagreement about
- * how loud this chip's shift register is against its wavetables. Settling it
- * wants a hardware reference rather than a threshold, and Level A is green on
- * that console for a track *and* an effect — so the cartridge performs its
- * schedule exactly and the question is what the chip does with it. Doc 13 §A2.5
- * records it.
+ * What remains is a **level**, and it is a pure gain rather than a shape. Our
+ * pitched voices come out 1.063× the core's and our noise voice 1.734×, and the
+ * second number is flat across the band — 1.729 below 4 kHz, 1.735 below 22 —
+ * so it is not the filtering caveat and not aliasing in a broadband source,
+ * which are the two things that would show as a tilt. Relative to the pitched
+ * voices the core's noise is 0.61× ours.
+ *
+ * On that one the documentation is on our side: the WSdev wiki says the shift
+ * register's bit is "used as if it were a wavetable sample: 0 = 0, 1 = 15",
+ * which is the same amplitude a wavetable channel has before its volume nibble,
+ * and is exactly what `WsSound` does — at a duty of 0.500 on the long modes,
+ * measured over a whole period. So this reads as Mednafen attenuating that voice
+ * rather than as a gap in the model, and the row stays out because a
+ * *cross-check* whose two sides disagree by a known constant is not evidence
+ * about the chip in either direction. Level A is green on that console for a
+ * track *and* an effect. Doc 13 §A2.5 records it.
+ *
+ * Source: WSdev wiki — Sound (https://ws.nesdev.org/wiki/Sound).
  *
  * Needs `pnpm toolchains && pnpm emulator`; self-skips without them.
  */

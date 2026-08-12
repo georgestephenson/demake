@@ -1010,13 +1010,17 @@ white noise on every mode where the hardware has eight colours.
 with the generator right the noise voice's spectrum lands beside the core's: 54
 Hz against 43, 118 against 54.
 
-What is still open is a level. Our pitched voices come out 1.063× the core's and
-our noise voice 1.734×, on every mode — the first is a core normalising to its
-own, and the second is that ratio times 1.63, a disagreement about how loud this
-chip's shift register is against its wavetables. Settling it wants a hardware
-reference rather than a threshold. Level A is green there for a track and for an
-effect, so the cartridge performs its schedule exactly and the question is what
-the chip does with it. Where a core exposes scripted
+What is left is a level, and it is a pure gain rather than a shape: our pitched
+voices come out 1.063× the core's and our noise voice 1.734×, the second flat
+across the band (1.729 below 4 kHz, 1.735 below 22), so it is neither the
+filtering caveat above nor aliasing in a broadband source. Relative to the
+pitched voices the core's noise is 0.61× ours — and there the documentation is on
+our side: the wiki says the register's bit is "used as if it were a wavetable
+sample: 0 = 0, 1 = 15", which is what `WsSound` does, at a measured duty of 0.500
+on the long modes. So it reads as Mednafen attenuating that voice, and the row
+stays out because a cross-check whose two sides differ by a known constant is not
+evidence about the chip in either direction. Level A is green there for a track
+and for an effect. Where a core exposes scripted
 register access (Mesen 2's Lua interface, for instance), that console gets Level A
 too and Level B becomes a cross-check rather than the primary oracle.
 
