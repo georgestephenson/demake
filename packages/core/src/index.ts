@@ -791,11 +791,16 @@ export {
 export {
   packWsRom,
   wsChecksum,
+  wsSaveCode,
   WS_BANK_SIZE,
   WS_CODE_SEGMENT,
   WS_CODE_SIZE,
   WS_ENTRY_OFFSET,
   WS_FOOTER_OFFSET,
   WS_ROM_SIZE,
+  WS_SAVE_BASE,
+  WS_SAVE_MAX,
+  WS_SAVE_SEGMENT,
+  WS_SAVE_SIZES,
   type WsCartOptions,
 } from "./asm/ws-cart.js";

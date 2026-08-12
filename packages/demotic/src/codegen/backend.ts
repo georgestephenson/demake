@@ -253,8 +253,35 @@ export interface Backend<Art, Audio extends BoundAudioShape> {
    */
   unsupported(program: Program): string[];
 
-  /** Where this machine's state goes. */
+  /**
+   * Where this machine's state goes.
+   *
+   * The first plan a build tries, and on every console but one the only plan
+   * there is. A backend whose board can bring RAM offers the larger one through
+   * {@link Backend.memoryUpgrade} rather than by widening this — because what
+   * makes a game that fits keep every address it had is that this answer never
+   * changes (§Elastic cartridges).
+   */
   memory(program: Program): MemoryPlan;
+
+  /**
+   * A larger plan for a game the first one cannot hold, where the board has one.
+   *
+   * The RAM half of the elastic-cartridge rule: a console that shipped boards
+   * with memory on them brings that memory when — and only when — the game needs
+   * it, exactly as it takes a bigger board when the program needs one. The mono
+   * WonderSwan is the console this exists for and the only one that answers it:
+   * its wall is 2 KiB of work RAM rather than any amount of cartridge, and the
+   * hardware's own answer is the save RAM at segment `$1` (`layout.ts`
+   * §WS_SAVE_MEMORY).
+   *
+   * It is a second *plan* rather than a longer first one because on that machine
+   * the heap moves whole or not at all, which {@link MemoryPlan.heapSpill} — the
+   * NES's mechanism for the same hardware story — cannot express. A backend that
+   * does not implement this refuses the game with the message the allocator
+   * wrote, which is what every console did before this existed.
+   */
+  memoryUpgrade?(program: Program, memory: MemoryPlan): MemoryPlan | undefined;
 
   /**
    * Demake the art the program names, through the image engine.
@@ -404,12 +431,24 @@ export async function buildRom<Art, Audio extends BoundAudioShape>(
   }
 
   const analysis = analyze(program);
+  const plan = backend.memory(program);
   let layout: Layout;
   try {
-    layout = planLayout(program, analysis, backend.memory(program));
+    layout = planLayout(program, analysis, plan);
   } catch (error) {
-    if (error instanceof LayoutError) throw new BuildError(error.code, error.message, error.hint);
-    throw error;
+    if (!(error instanceof LayoutError)) throw error;
+    // A board with memory on it is offered only to a game the console's own
+    // cannot hold, which is what keeps every game that fits on exactly the
+    // addresses it had (§Backend.memoryUpgrade). A console with no such board —
+    // every one but the mono WonderSwan — rethrows what the allocator said.
+    const upgrade = backend.memoryUpgrade?.(program, plan);
+    if (upgrade === undefined) throw new BuildError(error.code, error.message, error.hint);
+    try {
+      layout = planLayout(program, analysis, upgrade);
+    } catch (retry) {
+      if (retry instanceof LayoutError) throw new BuildError(retry.code, retry.message, retry.hint);
+      throw retry;
+    }
   }
 
   const assets = options.assets ?? new Map<string, Uint8Array>();

@@ -1726,8 +1726,8 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   a segment and the unit is a scene again. Every one is traced tick for tick
   against the interpreter by `rom.test.ts`.
 
-  **Fifteen of the sixteen consoles that build games now build this one**, and
-  the one that does not is out of *RAM* rather than out of cartridge:
+  **Every one of the sixteen consoles that build games now builds this one**, and
+  the last of them was out of *RAM* rather than out of cartridge:
 
   | Console | Walls it hit | Result |
   | --- | --- | --- |
@@ -1738,7 +1738,7 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   | ~~PC Engine~~ | ~~the 48 KiB window~~ | 256 KiB, of 1 MiB |
   | ~~Game Boy Advance / Nintendo DS~~ | ~~the literal pool~~ | 224 / 256 KiB |
   | ~~WonderSwan Color~~ | ~~the 64 KiB segment~~ | 512 KiB, spread over three |
-  | WonderSwan | **work RAM**, and no cartridge can fix it | 3957 B of heap, 2048 B |
+  | ~~WonderSwan~~ | ~~work RAM, which no cartridge size can fix~~ | its heap in the board's save RAM |
 
   The ARM handhelds are in that list and were never a *cartridge* problem: a Game
   Boy Advance has thirty-two megabytes and a Nintendo DS four, so neither pages
@@ -2187,9 +2187,9 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     are all in the first paged segment, and a scene in the second is compiled,
     placed and never executed by any test that plays the game. The mutation that
     put a dispatch in the wrong segment passed the trace and failed that.
-  - **WonderSwan (mono)** — **the one console `quest` does not build on, and the
-    wall is work RAM.** 3957 bytes of heap against 2048, on a machine with sixteen
-    kilobytes of which the tile bank is the top half:
+  - **WonderSwan (mono)** — **done, and the only console here whose wall was work
+    RAM.** Two kilobytes of heap for a game that wants six, on a machine with
+    sixteen of which the tile bank is the top half:
 
     | region | bytes | |
     | --- | --- | --- |
@@ -2199,19 +2199,61 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     | tile bank | 8192 | `$2000`–`$3FFF` |
 
     No cartridge size fixes that, and the two things that might were measured
-    rather than assumed. Letting the heap run to the object shadow buys 192 bytes
-    of the 1717 needed. Letting it take the **unused tail of the tile bank** buys
-    128, because quest uses 504 of this machine's 512 tiles — and it would also
-    need the art bound before the layout is planned, which is `backend.ts`'s
-    shared order.
+    rather than assumed. Letting the heap run to the object shadow buys 192
+    bytes. Letting it take the **unused tail of the tile bank** buys 128, because
+    quest uses 504 of this machine's 512 tiles — and it would also need the art
+    bound before the layout is planned, which is `backend.ts`'s shared order.
 
-    So the hardware's own answer is the only one: **cartridge SRAM at segment
-    `$1`**, which is the NES's `$6000` story with a different port. What makes it
-    a bigger change here than there is that a 6502 reaches SRAM with the same
-    instruction it reaches anything, and a V30MZ reaches it through a segment
-    register — so it means `DS` on the game's state and an `es:` override on
-    everything the display reads, which is a memory model rather than a memory
-    plan. It is the last thing on this list and it is a maintainer's call.
+    So the answer is the hardware's own: **the cartridge's save RAM at segment
+    `$1`**, which is the NES's `$6000` story with a different port. It is the
+    elastic-board rule reaching the *RAM* rather than the program — a board brings
+    what the game needs, and the footer declares the smallest of the five sizes it
+    can name that holds it (`asm/ws-cart.ts` §WS_SAVE_SIZES). Nothing is saved
+    between sessions and nothing has to be: what a battery buys a real game is a
+    save file, and what it buys this one is somewhere to compute.
+
+    **`DS` and `ES` are the heap; `SS` is the console.** That is what makes it a
+    memory *plan* after all rather than a memory model. An unprefixed operand
+    still means the heap, so the 16.16 value layer, the expression compiler, the
+    rule bodies and the tile walk did not change by one prefix; what moves is the
+    six operands that are the display's rather than the allocator's — two screen
+    maps, the object shadow, the object table and the tile bank — and each takes
+    an `ss:` override, because `SS` is the segment register a demade cartridge
+    already points at the console's memory for its stack and never moves. A game
+    that fits emits no override and no segment load and is byte-identical.
+
+    **The heap goes whole or not at all**, which is why it is a second
+    `MemoryPlan` and not the NES's `heapSpill`. An override reaches a memory
+    operand and even a `movs`'s *source*; its destination is `ES`, and no prefix
+    changes that — so a copy between two heap addresses cannot have one end in
+    each memory, and which one "the heap" means has to be a single answer for the
+    whole program. That is the segment banking's own shape reached by a different
+    route, and `Backend.memoryUpgrade` is the one place a console is offered the
+    second plan.
+
+    Three things went wrong building it and each produced a cartridge that boots.
+    A `rep movs` **into the heap and one into the console's memory look identical
+    in an emitter** — `emitRomCopy` copies the tile bank *and* every entity's
+    declared values — so bracketing both put every object in the game at the
+    right offset of the wrong segment: a game whose every entity is zero. The
+    **trace reader** takes the allocator's addresses, which are now offsets from a
+    segment, so a reader that took them for physical ones reported the interrupt
+    vectors as a game's state. And the **audio driver's waveform copy** is the one
+    address in it that is not the game's to choose, so it needs `ES` back on the
+    console for the length of the copy — without which every channel plays
+    sixty-four bytes nothing wrote, on a cartridge that traces perfectly and
+    performs every register write in the schedule.
+
+    Finding the third is what found a bug the *segment banking* had shipped: on a
+    banked cartridge every scene's backdrop was unpacked from the wrong segment.
+    `BlitBackdrop` is a pulled helper, so it is in the fixed segment and its `cs:`
+    means the fixed segment however the scene that called it got there — and the
+    backdrop was being copied per segment like a level grid. The helper read the
+    fixed segment at the paged copy's offset, which is `$FF` padding, and `$FF` is
+    a run control byte: it unpacked runs of `$FFFF` upward through the screen maps
+    and over the stack until the return address was gone. The rule was right and
+    only its application was wrong — a table goes in the segment of the code that
+    reads it, and a backdrop's reader is not the scene.
 
   **The sizing half of that mechanism is built** (doc 14 §Elastic cartridges).
   Every console's cartridge wrapper declares the boards it came on and every
@@ -2224,7 +2266,8 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
   tick's steps and grow to 512 KiB, 8 MiB, 256 KiB and 1 MiB, and a WonderSwan
   Color opens a segment per scene inside the one board its header can describe.
   The rest were never a cartridge problem: the Neo Geo, the Neo Geo Pocket Color,
-  the Virtual Boy and both ARM handhelds hold `quest` on a flat image. Nothing in
+  the Virtual Boy and both ARM handhelds hold `quest` on a flat image, and the
+  mono WonderSwan's board brings **RAM** rather than more of itself. Nothing in
   the set is refused for its size any more short of the largest board its
   hardware shipped on. What the sizing buys on its own is the honest artifact — a
   game gets the board a game that size shipped on rather than a constant somebody

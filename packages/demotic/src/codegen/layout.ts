@@ -41,6 +41,7 @@ import {
   SMS_AUDIO_BYTES,
   WSC_AUDIO_BYTES,
 } from "@demake/audio";
+import { WS_SAVE_MAX, WS_SAVE_SEGMENT } from "@demake/core";
 
 import type { Program } from "../program.js";
 
@@ -176,6 +177,22 @@ export interface MemoryPlan {
   /** First and last byte of the general heap. */
   heapStart: number;
   heapEnd: number;
+  /**
+   * The segment the heap is in, where that is not the console's own memory.
+   *
+   * Absent on every plan but one, and absent is what "the same memory as
+   * everything else" means. The mono WonderSwan is the exception: a game the
+   * console's own sixteen kilobytes cannot hold puts its whole heap in the
+   * cartridge's save RAM at segment `$1`, which is an ordinary memory access
+   * behind a segment register rather than a different kind of address
+   * (§{@link WS_SAVE_MEMORY}).
+   *
+   * The addresses stay offsets from zero, so nothing that computes with one
+   * changes; what the backend does with this is point `DS` and `ES` at the
+   * segment once, and say `ss:` at the handful of operands that mean the
+   * console's memory rather than the game's (`wsc/ops.ts` §vram).
+   */
+  heapSegment?: number;
   /** The cheaply-addressed region, if the machine has one. */
   fastStart?: number;
   fastEnd?: number;
@@ -910,6 +927,8 @@ export const NDS_MEMORY: MemoryPlan = {
  * *choice* rather than the hardware's, because the stack and the heap share what
  * the fixed structures leave. The palettes cost nothing, which is the compensation:
  * they are ports on this machine rather than five hundred and twelve bytes of RAM.
+ *
+ * A game that wants more than the 2 KiB takes {@link WS_SAVE_MEMORY} instead.
  */
 export const WS_MEMORY: MemoryPlan = {
   machine: "WonderSwan",
@@ -925,6 +944,53 @@ export const WS_MEMORY: MemoryPlan = {
   cellAttributes: true,
   interruptBytes: 0,
   loopBytes: 3,
+};
+
+/**
+ * The same machine with its heap in the cartridge's save RAM.
+ *
+ * The mono WonderSwan is the one console in the set whose wall is *work RAM*
+ * rather than cartridge: sixteen kilobytes, of which the tile bank is the top
+ * half and the display's own structures are most of the rest, leaving 2 KiB for
+ * a game that wants four. No size of cartridge fixes that, and the two cheaper
+ * answers are both too small to matter — running the heap down to the object
+ * shadow buys 192 bytes, and taking the unused tail of the tile bank buys 128,
+ * because a game this big uses 504 of the 512 tiles that bank holds.
+ *
+ * So the answer is the hardware's own: this console maps a cartridge's **save
+ * RAM** at segment `$1`, a program reaches it with an ordinary memory access, and
+ * a demade cartridge declares the smallest of the five sizes its footer can name
+ * that holds the game (`asm/ws-cart.ts` §WS_SAVE_SIZES). That is the NES's
+ * `$6000` story with a different port — and the elastic-board rule reaching the
+ * one direction this console's *program* size cannot move in.
+ *
+ * **The whole heap moves, or none of it does**, which is what makes this a second
+ * plan rather than a {@link MemoryPlan.heapSpill}. A segment override reaches a
+ * memory operand and not the destination of a string instruction, so a `movs`
+ * between two heap addresses — staging a collision box, copying the cell list —
+ * cannot have one end in the console's memory and the other in the cartridge's.
+ * Which segment "the heap" means has to be one answer for the whole program, and
+ * that is the same shape the segment banking takes for the same kind of reason
+ * (`wsc/emit.ts` §emitReset, doc 13 §Banked cartridges).
+ *
+ * Everything the display reads stays exactly where it was, because it has to:
+ * the two screen maps, the object table, the tile bank and the sound hardware's
+ * waveform page are addresses the chip decodes, not addresses a program chooses.
+ * So is the stack, which is `SS` and never moves.
+ */
+export const WS_SAVE_MEMORY: MemoryPlan = {
+  ...WS_MEMORY,
+  // From the segment's first byte, because there is nothing else in the segment.
+  // The console's own memory has interrupt vectors, a waveform page, a stack and
+  // the display's own structures to work around; a save RAM has none of them, so
+  // the heap is the whole of it — and an address here is an offset the emitter
+  // uses unchanged, which is what leaves the value layer alone.
+  heapStart: 0x0000,
+  // The largest the footer can describe. What a build *declares* is the smallest
+  // size that holds what the allocator actually handed out, so this is the
+  // ceiling rather than the cartridge.
+  heapEnd: WS_SAVE_MAX,
+  heapSegment: WS_SAVE_SEGMENT,
 };
 
 export const WSC_MEMORY: MemoryPlan = {

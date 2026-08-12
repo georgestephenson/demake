@@ -42,7 +42,14 @@
 
 import { describe, expect, it } from "vitest";
 
-import { WS_CODE_SIZE, WS_ENTRY_OFFSET, WS_ROM_SIZE, wsChecksum } from "@demake/core";
+import {
+  wsChecksum,
+  wsSaveCode,
+  WS_CODE_SIZE,
+  WS_ENTRY_OFFSET,
+  WS_ROM_SIZE,
+  WS_SAVE_SEGMENT,
+} from "@demake/core";
 import { PORT, Wsc } from "@demake/wsc";
 
 import { compile } from "../src/compile.js";
@@ -683,5 +690,137 @@ describe("a program bigger than one segment", async () => {
       const copies = names.filter((name) => name === stem || name.startsWith(`${stem}_s`));
       expect(copies.length, `${stem} has ${copies.length} copies`).toBeGreaterThan(1);
     }
+  });
+});
+
+/**
+ * The one console in the set whose wall was work RAM rather than cartridge.
+ *
+ * A mono WonderSwan has sixteen kilobytes, of which the tile bank is the top
+ * half and the display's own structures are most of the rest — 2 KiB of heap for
+ * a game that wants six. No size of cartridge fixes that, so a game too big for
+ * it puts its **whole heap** in the cartridge's save RAM at segment `$1` and
+ * points `DS` and `ES` there (`codegen/layout.ts` §WS_SAVE_MEMORY).
+ *
+ * Trace conformance for that build is `rom.test.ts`'s, and it settles rather a
+ * lot: the game's variables are in a different memory from its picture, so every
+ * property read, every collision box staged and every cell walked is in the
+ * cartridge while the six operands the display decodes are not. What is here is
+ * what a trace cannot see — that the split really happened, that the cartridge
+ * says so in the byte a console reads to decide whether there is a chip at
+ * segment `$1` at all, and that nothing the *display* reads moved with it.
+ *
+ * This is also the build that is banked and has a picture, which is the pair no
+ * other case in this file makes: `quest` is bigger than a segment on both
+ * machines, and a backdrop is read by a helper in the fixed half rather than by
+ * the scene that asked for it.
+ */
+describe("a game the console's own memory cannot hold", async () => {
+  const example = exampleProject("quest");
+  // Art only. The audio demakers are minutes on this fixture and prove nothing
+  // here — `audio-ws.test.ts` runs the whole register battery on this same
+  // build — but a *picture* is exactly what the backdrop case below needs.
+  const art = new Map(
+    [...example.assets].filter(([name]) => name.endsWith(".svg") || name.endsWith(".png")),
+  );
+  const built = await buildWscRom(
+    compile(example.source, {
+      profile: getProfile("ws"),
+      files: example.files,
+      levels: example.levels,
+    }),
+    { assets: art },
+  );
+  const machine = new Wsc(built.bytes, "ws");
+  settle(machine, 16);
+
+  it("puts its heap in the cartridge's save RAM, or nothing below is about that", () => {
+    // The premise. If this game ever fits the console's own memory again these
+    // cases stop testing anything and should be re-pointed.
+    expect(built.layout.memory.heapSegment).toBe(WS_SAVE_SEGMENT);
+    expect(built.layout.used).toBeGreaterThan(
+      WS_MACHINE.memory.heapEnd - WS_MACHINE.memory.heapStart,
+    );
+  });
+
+  it("declares the smallest save RAM the footer can name that holds it", async () => {
+    // The elastic-board rule reaching the RAM: a board brings what the game
+    // needs, not the largest thing the header can say. The footer's save byte is
+    // at offset `$05` of the ten at the top of the cartridge.
+    const footer = built.bytes.length - 10;
+    expect(built.bytes[footer + 5]).toBe(wsSaveCode(built.layout.used));
+    expect(built.bytes[footer + 5]).not.toBe(0x00);
+    // And a game that fits declares none, which is what keeps every cartridge
+    // that fitted before byte-identical.
+    const small = await buildWscRom(
+      compile(exampleProject("pong").source, {
+        profile: getProfile("ws"),
+        files: exampleProject("pong").files,
+        levels: exampleProject("pong").levels,
+      }),
+    );
+    expect(small.layout.memory.heapSegment).toBeUndefined();
+    expect(small.bytes[small.bytes.length - 10 + 5]).toBe(0x00);
+  });
+
+  it("leaves everything the display reads in the console's own memory", () => {
+    // What must *not* have moved with the heap: these are addresses the chip
+    // decodes rather than addresses a program chooses. The registers are the
+    // hardware's own record of where it is looking, so this asks the display
+    // rather than the build.
+    const monoRam = WS_MACHINE.ram;
+    expect(machine.readPort(PORT.MAP_BASE)).toBe(
+      (monoRam.SCR1 >> 11) | ((monoRam.SCR2 >> 11) << 4),
+    );
+    expect(machine.readPort(PORT.SPR_BASE)).toBe(monoRam.OAM >> 9);
+    // And the tile bank arrived where the chip looks, in the console's memory —
+    // a copy that followed the heap would leave the top half of sixteen
+    // kilobytes as it powered up, which is a game nobody can see.
+    const bank = machine.readMemory(monoRam.TILES, 0x2000);
+    expect([...bank].some((byte) => byte !== 0)).toBe(true);
+  });
+
+  it("keeps a backdrop in the fixed half, where the routine that reads it is", () => {
+    // A banked build gives each segment a copy of the tables its own code reads,
+    // and what decides that is *who reads it* — which for a backdrop is not the
+    // scene. `BlitBackdrop` is pulled like any other helper, so it lives in the
+    // fixed segment and its `cs:` means the fixed segment however the scene that
+    // called it got there. A copy in the scene's own segment sits at an offset
+    // the helper cannot reach.
+    const names = [...built.symbols.keys()];
+    const copies = names.filter((name) => /^Backdrop_\d+(_s[0-9a-f])?$/.test(name));
+    expect(copies.length).toBeGreaterThan(0);
+    expect(copies.filter((name) => name.includes("_s"))).toEqual([]);
+  });
+
+  it("unpacks that picture into the plane rather than over the stack", () => {
+    // The case above, end to end, and the failure it is for. Pointed at a paged
+    // copy the blit read the fixed segment at that copy's offset — `$FF` padding
+    // on this cartridge — and `$FF` is a run control byte, so it unpacked runs of
+    // `$FFFF` upward through the screen maps and over the stack until the return
+    // address was gone. The symptom was a wild jump several routines later, and
+    // no trace could see it, because a picture is not state.
+    const monoRam = WS_MACHINE.ram;
+    const stack = machine.readMemory(WS_MACHINE.stackTop - 0x40, 0x40);
+    expect([...stack].every((byte) => byte !== 0xff)).toBe(true);
+    // And the picture really arrived: a title screen shows many distinct map
+    // words where a blank plane shows one, and a blit that stopped early shows
+    // them only in its first rows.
+    const words = new Set<number>();
+    const plane = machine.readMemory(monoRam.SCR1, MAP_W * MAP_H * 2);
+    for (let row = 0; row < 18; row += 1) {
+      for (let column = 0; column < 28; column += 1) {
+        const at = (row * MAP_W + column) * 2;
+        words.add((plane[at] as number) | ((plane[at + 1] as number) << 8));
+      }
+    }
+    expect(words.size).toBeGreaterThan(16);
+    const lastRow = 17 * MAP_W * 2;
+    const bottom = new Set<number>();
+    for (let column = 0; column < 28; column += 1) {
+      const at = lastRow + column * 2;
+      bottom.add((plane[at] as number) | ((plane[at + 1] as number) << 8));
+    }
+    expect(bottom.size).toBeGreaterThan(1);
   });
 });

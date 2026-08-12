@@ -925,7 +925,7 @@ art-free build in `packages/audio/test/neogeo-driver.test.ts`.
 **And a game bigger than one cartridge takes a bigger one, on every family that
 had a bigger one to take** (doc 13 §Banked cartridges). `quest` — three levels, a
 boss, a secret room, four tracks and eight effects — is the example that needed
-it, and it now builds and plays on **fifteen of the sixteen consoles that build
+it, and it now builds and plays on **every one of the sixteen consoles that build
 games**: a Mega Drive at 140 KiB, a Super Nintendo at 128 with a bank per scene,
 both Sega 8-bits and all three Game Boys at 128 with a tick's individual _steps_
 paged, an NES at 256 KiB on an MMC1, a PC Engine at 256 on a HuCard, a
@@ -939,14 +939,30 @@ somewhere convenient: a step boundary is the only point inside a tick at which
 nothing is live, because the steps hand work to each other through the entity
 records and the contact bitfield and never through a register.
 
-**One console is left and it is out of RAM rather than out of cartridge**: the
-mono WonderSwan wants 3957 bytes of heap and has 2048, on a machine with sixteen
-kilobytes of which the tile bank is the top half. No cartridge size fixes that,
-and both cheaper answers were measured rather than assumed — running the heap to
-the object shadow buys 192 bytes of the 1717 needed, and taking the unused tail
-of the tile bank buys 128, because `quest` uses 504 of that machine's 512 tiles.
-The hardware's own answer is cartridge SRAM at segment `$1`, which is a memory
-_model_ change rather than a memory plan (doc 13 §Banked cartridges).
+**The last one was out of RAM rather than out of cartridge, and it takes the
+board's**: the mono WonderSwan wants six kilobytes of heap and has two, on a
+machine with sixteen of which the tile bank is the top half. No cartridge size
+fixes that, and both cheaper answers were measured rather than assumed — running
+the heap to the object shadow buys 192 bytes and taking the unused tail of the
+tile bank buys 128, because `quest` uses 504 of that machine's 512 tiles. So the
+cartridge brings **save RAM**, which this console maps at segment `$1`, and a
+game the console's own memory cannot hold puts its whole heap there
+(`codegen/layout.ts` §WS_SAVE_MEMORY). That is the NES's `$6000` story with a
+different port, and it is the elastic-board rule reaching the RAM: the footer
+declares the smallest of the five sizes it can name that holds the game.
+
+**`DS` and `ES` are the heap and `SS` is the console**, which is what makes it
+cost nothing above the memory plan. An unprefixed operand still means the heap,
+so the value layer, the expression compiler, the rule bodies and the tile walk
+are unchanged prefix for prefix on a game whose variables are in a cartridge;
+what moves is the six operands that are the _display's_ rather than the
+allocator's — two screen maps, the object shadow, the object table and the tile
+bank — and those take an `ss:` override, because that is the segment register a
+demade cartridge already points at the console's memory and never moves. The heap
+goes **whole or not at all**, which is why it is a second `MemoryPlan` rather
+than the NES's `heapSpill`: an override reaches a memory operand and even a
+`movs`'s source, but its destination is `ES` and no prefix changes that, so a
+copy between two heap addresses cannot have one end in each memory.
 
 What each console then paid is its own, and the three 16 KiB-window machines
 differ most. A Sega 8-bit pays nothing: slots 0 and 1 are 32 KiB of fixed space and

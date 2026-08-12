@@ -48,7 +48,7 @@ import { buildVbRom } from "../src/codegen/vb.js";
 import { buildWscRom } from "../src/codegen/wsc.js";
 import type { BuildOptions, BuiltRom } from "../src/codegen/backend.js";
 import type { Program } from "../src/program.js";
-import { romReady, romTraceLine } from "../src/rom/trace.js";
+import { heapAt, romReady, romTraceLine } from "../src/rom/trace.js";
 import type { InputState, InputTape } from "../src/sim.js";
 import { traceHeader } from "../src/trace.js";
 
@@ -406,7 +406,11 @@ export class RomRunner {
    */
   private settle(): void {
     for (let guard = 0; guard < 2_000_000; guard += 1) {
-      if (this.machine.readMemory(this.layout.booted, 1)[0] !== 0) return;
+      // Through `heapAt`, because `booted` is a heap address and the heap is not
+      // always in the memory a bare address means — a mono WonderSwan game too
+      // big for the console's own puts it in the cartridge's save RAM, where a
+      // read of segment zero answers the interrupt vectors for ever.
+      if (this.machine.readMemory(heapAt(this.layout, this.layout.booted), 1)[0] !== 0) return;
       this.machine.stepInstruction();
     }
     throw new Error("rom: the runtime never finished initialising");

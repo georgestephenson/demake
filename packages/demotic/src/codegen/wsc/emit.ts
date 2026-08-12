@@ -463,13 +463,24 @@ function emitSegmentData(
 
   for (const scene of scenes) {
     const art = options.backdrops?.get(scene.def.name);
-    if (art) {
+    // A backdrop is the one table on this console that a *paged* segment does
+    // not carry, and the reason is who reads it: `BlitBackdrop` is a pulled
+    // helper and helpers live in the fixed half, so its `cs:` means the fixed
+    // segment however the scene that called it got there. A copy in the scene's
+    // own segment is one the helper cannot reach — it read the fixed segment at
+    // the paged copy's offset, which is padding on a cartridge, and unpacked
+    // `$FF` runs over the stack until the return address was gone.
+    //
+    // So the rule this file already runs under is unchanged and only its
+    // application moves: a table goes in the segment of the code that reads it,
+    // and this one's reader is not the scene (§emitSegmentData).
+    if (art && suffix === "") {
       // Already packed: `wsc-art.ts` encodes the map as it interns the tiles,
       // exactly as the PC Engine's does, because the pool is what decides a
       // cell's number. Packing it a second time here encodes the *stream* as a
       // run of literal cells, which is a title screen that boots as its own
       // compression format.
-      asm.label(backdropLabel(scene, suffix));
+      asm.label(backdropLabel(scene));
       asm.bytes(art.map);
     }
     const palette = options.scenePalettes?.get(scene.def.name);
@@ -518,23 +529,56 @@ function emitReset(ctx: WscCtx, options: WscEmitOptions): void {
   asm.cld();
   // The processor arrives here through the far jump at the top of the bank with
   // nothing set up at all: the segments and the stack are the program's own
-  // first job. Everything a game touches is segment zero, so all three point
-  // there and no instruction in the runtime carries a prefix except the ones
-  // that read the cartridge's own tables.
-  asm.movi("ax", 0);
-  asm.movsr("ds", "ax");
-  asm.movsr("es", "ax");
-  asm.movsr("ss", "ax");
+  // first job.
+  //
+  // `DS` and `ES` are **the heap**, which on almost every build is segment zero
+  // along with everything else — so all three registers point there and no
+  // instruction in the runtime carries a prefix except the ones that read the
+  // cartridge's own tables. On a game the console's own memory cannot hold they
+  // are the cartridge's save RAM instead, and `SS` is what still means the
+  // console: the stack, and the six operands the display decodes (§emitReset's
+  // `ctx.vram`).
+  if (ctx.saved) {
+    asm.movi("ax", ctx.heapSegment);
+    asm.movsr("ds", "ax");
+    asm.movsr("es", "ax");
+    asm.movi("ax", 0);
+    asm.movsr("ss", "ax");
+  } else {
+    asm.movi("ax", 0);
+    asm.movsr("ds", "ax");
+    asm.movsr("es", "ax");
+    asm.movsr("ss", "ax");
+  }
   asm.movi("sp", machine.stackTop);
 
   // Clear everything from the heap to the top of the object table, so a game's
   // state starts from zero rather than from whatever powered up — the screen
   // maps and the object shadow included, since both are read by the display and
   // neither is behind a port.
-  asm.movi("di", layout.memory.heapStart);
-  asm.movi("cx", (RAM.TILES - layout.memory.heapStart) / 2);
-  asm.movi("ax", 0);
-  asm.rep().stosw();
+  //
+  // Two runs where the heap is elsewhere, because they are then two memories:
+  // the display's structures in the console's, and the bytes the allocator
+  // handed out in the cartridge's. Only those bytes — a save RAM is up to
+  // sixty-four kilobytes and clearing all of it would be most of a second on
+  // hardware, for a region nothing has ever read.
+  if (ctx.saved) {
+    ctx.toInternal(() => {
+      asm.movi("di", RAM.SHADOW);
+      asm.movi("cx", (RAM.TILES - RAM.SHADOW) / 2);
+      asm.movi("ax", 0);
+      asm.rep().stosw();
+    });
+    asm.movi("di", layout.memory.heapStart);
+    asm.movi("cx", (layout.used + 1) >> 1);
+    asm.movi("ax", 0);
+    asm.rep().stosw();
+  } else {
+    asm.movi("di", layout.memory.heapStart);
+    asm.movi("cx", (RAM.TILES - layout.memory.heapStart) / 2);
+    asm.movi("ax", 0);
+    asm.rep().stosw();
+  }
 
   // Colour mode, sixteen colours a tile, packed 4bpp: chosen first, so that the
   // tiles copied in below are decoded in the layout they were emitted in. The
@@ -553,7 +597,7 @@ function emitReset(ctx: WscCtx, options: WscEmitOptions): void {
   emitPort(ctx, PORT.SCR2_X, 0);
   emitPort(ctx, PORT.SCR2_Y, 0);
 
-  emitRomCopy(ctx, label("TileBank"), RAM.TILES, options.bank?.length ?? 0);
+  emitRomCopy(ctx, label("TileBank"), RAM.TILES, options.bank?.length ?? 0, "console");
   emitPaletteBlock(ctx, label("Palette"));
 
   // Every entity starts from its declared values, not just the entry scene's: a
@@ -564,6 +608,7 @@ function emitReset(ctx: WscCtx, options: WscEmitOptions): void {
       label(`Defaults_${instance.id}`),
       layout.entities[instance.id] as number,
       layout.entitySizes[instance.id] as number,
+      "heap",
     );
   }
 
@@ -625,17 +670,34 @@ function emitPort(ctx: WscCtx, port: number, value: number): void {
  * instead would work on this processor and not on an 8086, whose interrupt
  * handling loses one of two prefixes; this way the question does not arise.
  */
-function emitRomCopy(ctx: WscCtx, source: Ref, dest: number, count: number): void {
+function emitRomCopy(
+  ctx: WscCtx,
+  source: Ref,
+  dest: number,
+  count: number,
+  into: "console" | "heap",
+): void {
   const { asm } = ctx;
   if (count === 0) return;
-  asm.movrs("ax", "cs");
-  asm.movsr("ds", "ax");
-  asm.movi("si", source);
-  asm.movi("di", dest);
-  asm.movi("cx", (count + 1) >> 1);
-  asm.rep().movsw();
-  asm.movi("ax", 0);
-  asm.movsr("ds", "ax");
+  const copy = (): void => {
+    asm.movrs("ax", "cs");
+    asm.movsr("ds", "ax");
+    asm.movi("si", source);
+    asm.movi("di", dest);
+    asm.movi("cx", (count + 1) >> 1);
+    asm.rep().movsw();
+    asm.movi("ax", ctx.heapSegment);
+    asm.movsr("ds", "ax");
+  };
+  // `movs` writes `ES:DI`, so the caller has to say which memory it means — and
+  // this routine has both kinds of caller. The tile bank and palette RAM are
+  // addresses the display decodes and are always the console's own; an entity's
+  // declared values go into the *heap*, which on a game too big for that memory
+  // is the cartridge's save RAM. Bracketing both put every object in the game at
+  // the right offset of the wrong segment, which boots, runs, and plays a game
+  // whose every entity is zero.
+  if (into === "heap") copy();
+  else ctx.toInternal(copy);
 }
 
 /**
@@ -652,7 +714,7 @@ function emitRomCopy(ctx: WscCtx, source: Ref, dest: number, count: number): voi
 function emitPaletteBlock(ctx: WscCtx, source: Ref): void {
   const { asm, machine } = ctx;
   if ("ram" in machine.palette) {
-    emitRomCopy(ctx, source, machine.palette.ram, machine.palette.bytes);
+    emitRomCopy(ctx, source, machine.palette.ram, machine.palette.bytes, "console");
     return;
   }
   // `outsb` would be one instruction, but it reads `DS:SI` — so the data segment
@@ -920,6 +982,7 @@ function emitSceneReset(ctx: WscCtx, scene: SceneCtx): void {
       label(`Defaults_${id}${ctx.dataSuffix}`),
       layout.entities[id] as number,
       layout.entitySizes[id] as number,
+      "heap",
     );
   }
   ctx.ret();
@@ -1357,7 +1420,10 @@ function emitFullRedraw(
     // A backdrop is packed as whole map rows, so painting it is one walk with a
     // destination that only ever moves forward.
     asm.movi("di", RAM.SCR1);
-    asm.movi("si", label(backdropLabel(scene, ctx.dataSuffix)));
+    // The fixed half's copy, whatever segment this scene is in: the helper about
+    // to read it is in the fixed half and reads through its own `CS`
+    // (§emitSegmentData).
+    asm.movi("si", label(backdropLabel(scene)));
     ctx.call(needBlitBackdrop(ctx));
   } else {
     // A scene with a level paints from its grid, and one with neither is blank.
@@ -1402,10 +1468,12 @@ function emitFullRedraw(
 /** Fill a whole screen map with the blank tile, so nothing stale shows through. */
 function emitBlankPlane(ctx: WscCtx, base: number): void {
   const { asm } = ctx;
-  asm.movi("di", base);
-  asm.movi("cx", MAP_W * MAP_H);
-  asm.movi("ax", 0);
-  asm.rep().stosw();
+  ctx.toInternal(() => {
+    asm.movi("di", base);
+    asm.movi("cx", MAP_W * MAP_H);
+    asm.movi("ax", 0);
+    asm.rep().stosw();
+  });
 }
 
 /** `si` = a packed map, `di` = where it goes; unpack it into RAM. */
@@ -1432,7 +1500,7 @@ function needBlitBackdrop(ctx: WscCtx): Ref {
     asm.label(literal);
     asm.movm("ax", romAt("si"));
     asm.aluI("add", "si", 2);
-    asm.movmr(at("di"), "ax");
+    asm.movmr(inner.vram("di"), "ax");
     asm.aluI("add", "di", 2);
     asm.loop(literal);
     asm.jmp(next);
@@ -1444,7 +1512,7 @@ function needBlitBackdrop(ctx: WscCtx): Ref {
     asm.movm("ax", romAt("si"));
     asm.aluI("add", "si", 2);
     asm.label(runLoop);
-    asm.movmr(at("di"), "ax");
+    asm.movmr(inner.vram("di"), "ax");
     asm.aluI("add", "di", 2);
     asm.loop(runLoop);
     asm.jmp(next);
@@ -1842,8 +1910,8 @@ function needPushSprite(ctx: WscCtx): Ref {
     asm.movm8("bl", abs(layout.oamCount));
     asm.movi8("bh", 0);
     asm.shift("shl", "bx", 2);
-    asm.movmr(at("bx", RAM.SHADOW), "ax");
-    asm.movmr(at("bx", RAM.SHADOW + 2), "cx");
+    asm.movmr(inner.vram("bx", RAM.SHADOW), "ax");
+    asm.movmr(inner.vram("bx", RAM.SHADOW + 2), "cx");
     asm.incM8(abs(layout.oamCount));
     asm.label(skip);
     ctx.ret();
@@ -1877,7 +1945,7 @@ export function emitRenderHelpers(ctx: WscCtx): void {
     asm.label(name);
     asm.mov("dx", "ax");
     ctx.call("CellOffset");
-    asm.movmr(at("bx", base), "dx");
+    asm.movmr(ctx.vram("bx", base), "dx");
     ctx.ret();
   };
   poke("PokeCellAt", RAM.SCR1);
@@ -1952,7 +2020,7 @@ export function emitRenderHelpers(ctx: WscCtx): void {
   asm.label(flush);
   asm.movm("bx", at("si"));
   asm.movm("ax", at("si", 2));
-  asm.movmr(at("bx"), "ax");
+  asm.movmr(ctx.vram("bx"), "ax");
   asm.aluI("add", "si", layout.queueStride);
   asm.loop(flush);
   asm.movmi8(abs(layout.queueCount), 0);
@@ -1969,9 +2037,14 @@ export function emitRenderHelpers(ctx: WscCtx): void {
   asm.alu("or", "cx", "cx");
   ctx.far("z", noObjects);
   asm.shift("shl", "cx", 1); // two words an entry
-  asm.movi("si", RAM.SHADOW);
-  asm.movi("di", RAM.OAM);
-  asm.rep().movsw();
+  // Both ends are the console's own memory — the shadow the frame built and the
+  // table the chip reads — so this is the one copy that moves `DS` as well as
+  // `ES` on a build whose heap is in the cartridge.
+  ctx.toInternal(() => {
+    asm.movi("si", RAM.SHADOW);
+    asm.movi("di", RAM.OAM);
+    asm.rep().movsw();
+  }, true);
   asm.label(noObjects);
 
   emitScrollWrite(ctx);

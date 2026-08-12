@@ -24,11 +24,14 @@
  *   - **The checksum covers every byte but its own two.** It can only be computed
  *     once the whole cartridge exists — padding included — which is why this is a
  *     function over a finished image rather than a field somebody fills in.
- *   - **There is one board.** The size byte's vocabulary starts at 4 Mbit, so
- *     unlike the NES or the Mega Drive this console has nothing smaller to
- *     choose (`backend.ts` §Elastic cartridges); a WonderSwan cartridge is
- *     512 KiB the way a Game Boy ROM-only cartridge is 32 KiB, and for the same
- *     kind of reason — the header cannot describe anything else.
+ *   - **There is one board, and the elasticity is in the *RAM*.** The size
+ *     byte's vocabulary starts at 4 Mbit, so unlike the NES or the Mega Drive
+ *     this console has nothing smaller to choose (`backend.ts` §Elastic
+ *     cartridges); a WonderSwan cartridge is 512 KiB the way a Game Boy ROM-only
+ *     cartridge is 32 KiB, and for the same kind of reason — the header cannot
+ *     describe anything else. What it *can* describe is five sizes of save RAM,
+ *     and a game that outgrows the console's own memory takes the smallest of
+ *     them that holds its heap ({@link WS_SAVE_SIZES}).
  *
  * Sources: WSdev wiki — Cartridge header (ws.nesdev.org), and the footer layout
  * the `rom-harness/wsc` display program already boots from in beetle-wswan.
@@ -58,6 +61,45 @@ export const WS_CODE_SIZE = WS_ENTRY_OFFSET;
 /** Where the footer's fields begin. */
 export const WS_FOOTER_OFFSET = 0xfff6;
 
+/** The segment the console answers with the cartridge's save RAM. */
+export const WS_SAVE_SEGMENT = 0x1000;
+
+/** The linear address that segment's first byte is, which is what a plan names. */
+export const WS_SAVE_BASE = WS_SAVE_SEGMENT << 4;
+
+/**
+ * The save memories this cartridge's footer can describe, smallest first.
+ *
+ * The byte at offset `$05` names a *kind* as well as a size — the codes above
+ * `$05` are serial EEPROMs, which answer a port rather than the address space
+ * and so are no use to a program that wants somewhere to put its variables. What
+ * is here is the five SRAMs, which the console maps at segment `$1` and a
+ * program reaches with an ordinary memory access.
+ *
+ * A demade cartridge declares one only when the game's heap will not fit the
+ * console's own memory, and then the smallest that holds it — the elastic-board
+ * rule (`backend.ts` §Elastic cartridges) reaching the one direction this
+ * console's header leaves open. Nothing is saved between sessions and nothing
+ * has to be: what a battery buys a real game is a save file, and what it buys
+ * this one is somewhere to compute.
+ */
+export const WS_SAVE_SIZES: readonly { code: number; bytes: number }[] = [
+  { code: 0x01, bytes: 1 * 1024 },
+  { code: 0x02, bytes: 4 * 1024 },
+  { code: 0x03, bytes: 16 * 1024 },
+  { code: 0x04, bytes: 32 * 1024 },
+  { code: 0x05, bytes: 64 * 1024 },
+];
+
+/** The largest save RAM this console's footer can ask for. */
+export const WS_SAVE_MAX = 64 * 1024;
+
+/** The footer code for a save RAM at least `bytes` long, or `undefined` past the largest. */
+export function wsSaveCode(bytes: number): number | undefined {
+  if (bytes <= 0) return 0x00;
+  return WS_SAVE_SIZES.find((size) => size.bytes >= bytes)?.code;
+}
+
 /** What to stamp in the footer. */
 export interface WsCartOptions {
   /** Developer id; zero is the unregistered one, which is what a demake is. */
@@ -78,6 +120,14 @@ export interface WsCartOptions {
    * image has to end where the address space does (doc 13 §Banked cartridges).
    */
   segments?: number;
+  /**
+   * Bytes of save RAM the cartridge carries, rounded up to a size it can say.
+   *
+   * Zero — the default, and every cartridge that fits the console's own memory —
+   * declares none. A larger figure is rounded up to the smallest of {@link
+   * WS_SAVE_SIZES} that holds it, because what the footer names is a chip.
+   */
+  saveBytes?: number;
 }
 
 /**
@@ -120,7 +170,13 @@ export function packWsRom(code: Uint8Array, options: WsCartOptions = {}): Uint8A
   rom[footer + 2] = options.cartridgeId ?? 0x00;
   rom[footer + 3] = 0x00; // reserved
   rom[footer + 4] = 0x02; // ROM size: 4 Mbit
-  rom[footer + 5] = 0x00; // no save memory
+  const save = wsSaveCode(options.saveBytes ?? 0);
+  if (save === undefined) {
+    throw new Error(
+      `WonderSwan save RAM is ${options.saveBytes} bytes; the largest the footer can say is ${WS_SAVE_MAX}`,
+    );
+  }
+  rom[footer + 5] = save;
   rom[footer + 6] = options.orientation ?? 0x05;
   rom[footer + 7] = 0x00; // no real-time clock
 

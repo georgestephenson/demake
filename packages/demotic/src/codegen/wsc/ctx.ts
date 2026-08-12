@@ -28,7 +28,7 @@ import { CtxBase } from "../ctx.js";
 import type { Layout } from "../layout.js";
 
 import { WSC_MACHINE, type WsMachine } from "./machine.js";
-import { invert, type CC } from "./ops.js";
+import { invert, vram, type Base, type CC, type Mem } from "./ops.js";
 
 /**
  * The label a reference names, for the two transfers that need it by name.
@@ -171,5 +171,62 @@ export class WscCtx extends CtxBase<WscCtx, Asm30> {
     const shared = super.constant(value);
     if (this.dataSuffix === "") return shared;
     return { label: (shared as { label: string }).label + this.dataSuffix, addend: 0 };
+  }
+
+  /**
+   * Whether this program's heap is in the cartridge's save RAM rather than in
+   * the console's own memory.
+   *
+   * Read off the plan rather than set, because it *is* the plan: `planLayout` was
+   * handed `WS_SAVE_MEMORY` or it was not (`layout.ts` §heapSegment). `DS` and
+   * `ES` are pointed at that segment for the length of a program that answers
+   * true, so the heap is still what an unprefixed operand means and only the
+   * display's own addresses have to say otherwise.
+   */
+  get saved(): boolean {
+    return this.layout.memory.heapSegment !== undefined;
+  }
+
+  /** The segment the heap is in, which is zero when it is the console's memory. */
+  get heapSegment(): number {
+    return this.layout.memory.heapSegment ?? 0;
+  }
+
+  /** An operand in the console's own memory: `ops.ts`'s {@link vram}, bound. */
+  vram(base: Base | undefined, disp: Ref = 0): Mem {
+    return vram(this.saved, base, disp);
+  }
+
+  /**
+   * Run `body` with `ES` pointing at the console's own memory, and put it back.
+   *
+   * For a string instruction writing where the display reads — the tile bank, a
+   * screen map, the object table, palette RAM. A segment override reaches a
+   * memory operand and even the *source* of a `movs`; the destination is `ES` and
+   * there is no prefix that changes it, so the register itself has to move. That
+   * is the whole reason the heap moves in one piece rather than spilling the way
+   * the NES's does: a copy between two heap addresses cannot have one end in each
+   * memory, so which one "the heap" is has to be a single answer.
+   *
+   * `source` moves `DS` with it, for a copy whose *source* is the console's
+   * memory too — which is one site, the frame's objects going from the shadow
+   * the tick built to the table the chip reads.
+   *
+   * Nothing at all on a build whose heap is the console's own memory, where `ES`
+   * is already zero and always was — which is what keeps those cartridges
+   * byte-identical.
+   */
+  toInternal(body: () => void, source = false): void {
+    if (!this.saved) {
+      body();
+      return;
+    }
+    this.asm.movi("ax", 0);
+    this.asm.movsr("es", "ax");
+    if (source) this.asm.movsr("ds", "ax");
+    body();
+    this.asm.movi("ax", this.heapSegment);
+    this.asm.movsr("es", "ax");
+    if (source) this.asm.movsr("ds", "ax");
   }
 }

@@ -39,6 +39,7 @@ import {
   romTrace,
   TARGETS,
   wscTarget,
+  wsTarget,
   type RomTarget,
 } from "./_rom-harness.js";
 import { gameSource, projectBytes, projectFiles, projectText } from "./_projects.js";
@@ -340,7 +341,24 @@ describe("ROM conformance across the example library", async () => {
    * reachable instruction stream is *executed*, so getting it wrong is not a
    * wrong number but a game that runs its own constants.
    */
-  for (const target of [gbaTarget, ndsTarget, pceTarget, wscTarget]) {
+  /**
+   * And on the mono WonderSwan, whose wall was **work RAM** and not cartridge.
+   *
+   * The last console in the set to build this game, and the only one whose
+   * blocker no size of cartridge could move: sixteen kilobytes, of which the tile
+   * bank is the top half and the display's own structures are most of the rest,
+   * leaving 2 KiB of heap for a game that wants four. So this cartridge brings
+   * **save RAM** — the hardware's own answer, at segment `$1` — and puts the
+   * whole heap in it (`codegen/layout.ts` §WS_SAVE_MEMORY).
+   *
+   * A trace is what proves it and it proves rather a lot, because on this build
+   * the game's variables are in a different memory from the picture: every
+   * property read, every collision box staged, every cell walked and the audio
+   * driver's whole state are in the cartridge, and the six operands the display
+   * decodes are not. A cartridge that had one of those the wrong way round would
+   * boot, and the first thing it computed with would be somebody else's byte.
+   */
+  for (const target of [gbaTarget, ndsTarget, pceTarget, wscTarget, wsTarget]) {
     it(`matches the interpreter for the quest fixture on ${target.console}`, async () => {
       const program = build(gameSource("quest"), questLevels(), target.console);
       const frames = tape(QUEST_TAPE);

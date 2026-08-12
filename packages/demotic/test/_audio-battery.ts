@@ -59,6 +59,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  bindingFor,
   buildGameAudio,
   mdChannelTag,
   buildGbaGameAudio,
@@ -77,6 +78,10 @@ import {
   nesChannelOf,
   pceChannelTag,
   wscChannelTag,
+  wsWaveBank,
+  wsWaveforms,
+  WS_BANK_BYTES,
+  WS_WAVE_BASE,
   type NeogeoGameAudio,
   psgChannelTag,
   psgShadowSlot,
@@ -100,7 +105,7 @@ import {
   StreamSink,
   type SampleSink,
 } from "@demake/chip";
-import { megaduckRegister } from "@demake/core";
+import { megaduckRegister, wsSaveCode, WS_SAVE_SEGMENT } from "@demake/core";
 import { Gameboy } from "@demake/dmg";
 import { Gba, ROM_BASE } from "@demake/gba";
 import { Md } from "@demake/md";
@@ -1577,6 +1582,90 @@ export function bankedAudio(target: Target): void {
         expect(firstDivergence(expected.slice(0, ticks), groups.slice(start, start + ticks))).toBe(
           null,
         );
+      },
+      BUILDS_TIMEOUT,
+    );
+  });
+}
+
+/**
+ * A game whose heap is in the cartridge still plays what the demakers produced.
+ *
+ * The mono WonderSwan's case, and the counterpart of {@link bankedAudio} for a
+ * console whose wall was work RAM rather than cartridge. `quest` does not fit
+ * that machine's two kilobytes, so its whole heap — the audio driver's state
+ * included — is in the cartridge's **save RAM** at segment `$1`, and `DS` and
+ * `ES` point there for the length of the program (`codegen/layout.ts`
+ * §WS_SAVE_MEMORY).
+ *
+ * What this case owns is the **one address in the driver that is not the game's
+ * to choose**. Everything the driver does with its own state is right without
+ * knowing where that state is, because an unprefixed operand still means the
+ * heap; the exception is the waveform copy, whose destination is a page of the
+ * *console's* memory that the sound hardware reads. `rep movsb` writes `ES:DI`
+ * and no prefix reaches that, so the driver has to put `ES` back on the console
+ * for the length of the copy (`audio` §WscGameAudioInput.heapSegment).
+ *
+ * Without it every channel plays the sixty-four bytes at `$0300` of a memory
+ * nothing wrote — which is a cartridge that boots, traces perfectly, performs
+ * every register write in the schedule in the right order at the right tick, and
+ * is *silent*. No trace and no register diff can see that, so what this asserts
+ * is the waveform page itself, beside the register stream that carries it.
+ */
+export function savedHeapAudio(target: Target): void {
+  describe(`a cartridge whose heap is in its save RAM, on ${target.name} hardware`, async () => {
+    it(
+      "puts the waveforms in the console's memory and performs the schedule",
+      async () => {
+        const { built, bound } = await build(target, gameSource("quest"), "quest");
+        // The upgrade really happened: a build that still fitted the console's
+        // own memory would prove nothing below.
+        expect(built.layout.memory.heapSegment).toBe(WS_SAVE_SEGMENT);
+        // And the cartridge says so, in the one byte a real WonderSwan reads to
+        // decide whether there is a chip at segment $1 at all.
+        expect(built.bytes[built.bytes.length - 10 + 5]).toBe(
+          wsSaveCode(built.layout.used) as number,
+        );
+
+        const address = target.tickAddress(built, bound);
+        const script = bound.driver?.performed.tracks[0];
+        expect(script).toBeDefined();
+        // `a` at tick 60 and held: the title screen has no track, so the level's
+        // is the first thing the chip is told anything about. At or after that
+        // tick rather than strictly after it, because this driver runs at the
+        // frame rate — one driver tick per game tick — so the request the press
+        // causes is performed on the same tick number, where a Game Boy's 120 Hz
+        // driver has already taken one by then.
+        const PRESS = 60;
+        const groups = capture(
+          target,
+          built.bytes,
+          address,
+          900,
+          PRESS,
+          endOf(target, built, bound),
+        );
+        const expected = (script as ChipScript).ticks.map((tick) =>
+          observed(target, tick.writes as Write[]),
+        );
+        const first = expected[0] as Write[];
+        const start = groups.findIndex(
+          (writes, at) => at >= PRESS && show(writes) === show(first) && writes.length > 0,
+        );
+        expect(start).toBeGreaterThanOrEqual(PRESS);
+        const ticks = Math.min(300, groups.length - start, expected.length);
+        expect(ticks).toBeGreaterThan(100);
+        expect(firstDivergence(expected.slice(0, ticks), groups.slice(start, start + ticks))).toBe(
+          null,
+        );
+
+        // The waveforms themselves, in the console's own memory rather than in
+        // the cartridge's. Compared against the bank the binding produced, which
+        // is what the schedule above was written against.
+        const machine = new Wsc(built.bytes, "ws");
+        for (let frame = 0; frame < 8; frame += 1) machine.runFrame();
+        const page = machine.readMemory(WS_WAVE_BASE, WS_BANK_BYTES);
+        expect([...page]).toEqual([...wsWaveBank(wsWaveforms(bindingFor("ws").spec))]);
       },
       BUILDS_TIMEOUT,
     );

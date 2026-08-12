@@ -20,11 +20,13 @@
  *     once — which is why the budget here is the 512 tiles the screen entry's
  *     nine bits can name rather than something smaller chosen to keep two
  *     numbers apart.
- *   - **There is no audio driver yet.** A game that names music and effects
- *     still records what its rules asked for, because the request is a field of
- *     the trace (doc 14 §Conformance) — so a build here traces identically to
- *     one on a console that plays them, and the only difference is that nobody
- *     is listening.
+ *   - **The mono machine's board can bring RAM, and only that one's.** This is
+ *     the one console in the set whose wall is work RAM rather than cartridge —
+ *     sixteen kilobytes with the tile bank in the top half leaves 2 KiB of heap —
+ *     so a game the console's own memory cannot hold takes its heap to the
+ *     cartridge's save RAM at segment `$1` (`memoryUpgrade` below). The colour
+ *     machine has sixty-four kilobytes and is offered nothing, because an upgrade
+ *     nobody needs is a second memory map nobody is checking.
  */
 
 import { buildWscGameAudio } from "@demake/audio";
@@ -54,7 +56,7 @@ import {
   type BuildOptions,
   type BuiltRom,
 } from "./backend.js";
-import { type Layout, type MemoryPlan } from "./layout.js";
+import { WS_MEMORY, WS_SAVE_MEMORY, type Layout, type MemoryPlan } from "./layout.js";
 import type { ArtSettings } from "./settings.js";
 import { ART_TILES, bindWscArt } from "./wsc-art.js";
 import { WscCtx } from "./wsc/ctx.js";
@@ -103,6 +105,19 @@ export const wscBackend: Backend<WscEmitOptions, WscAudio> = {
     return (machineFor(program.profile.id) ?? WSC_MACHINE).memory;
   },
 
+  /**
+   * The mono machine's board brings RAM when the console's own will not do.
+   *
+   * The colour machine has sixty-four kilobytes and no game in the library comes
+   * near filling it, so it is offered nothing: an upgrade nobody needs is a
+   * second memory map nobody is checking. What the mono machine gets is its heap
+   * in the cartridge's save RAM at segment `$1` (`layout.ts` §WS_SAVE_MEMORY),
+   * and only after the 2 KiB it has has been refused.
+   */
+  memoryUpgrade(program: Program, memory: MemoryPlan): MemoryPlan | undefined {
+    return memory === WS_MEMORY && program.profile.id === "ws" ? WS_SAVE_MEMORY : undefined;
+  },
+
   async bindArt(
     program: Program,
     assets: AssetBytes,
@@ -148,7 +163,20 @@ export const wscBackend: Backend<WscEmitOptions, WscAudio> = {
         : await bindAudio(
             program,
             assets,
-            { build: (tracks, effects) => buildWscGameAudio({ tracks, effects, state }) },
+            {
+              build: (tracks, effects) =>
+                buildWscGameAudio({
+                  tracks,
+                  effects,
+                  state,
+                  // Where this game's heap is, which the driver needs for exactly
+                  // one address: the waveform page is the console's memory and
+                  // its state is not (`audio` §WscGameAudioInput.heapSegment).
+                  ...(layout.memory.heapSegment !== undefined
+                    ? { heapSegment: layout.memory.heapSegment }
+                    : {}),
+                }),
+            },
             executor,
           );
     const names = program.tracks.length > 0 || program.sounds.length > 0;
@@ -196,6 +224,16 @@ export const wscBackend: Backend<WscEmitOptions, WscAudio> = {
   assemble({ program, analysis, layout, art, audio, title }): Assembled {
     void title; // a WonderSwan footer carries no title field
     const machine = machineFor(program.profile.id);
+    /**
+     * Save RAM the cartridge declares: none unless the game's heap is in it.
+     *
+     * The bytes the allocator actually handed out rather than the region it was
+     * offered, because what the footer names is a chip and the wrapper rounds up
+     * to the smallest one that holds them (`asm/ws-cart.ts` §WS_SAVE_SIZES). The
+     * elastic-cartridge rule reaching the RAM: a board brings what the game
+     * needs, not the largest thing the header can say.
+     */
+    const saveBytes = layout.memory.heapSegment === undefined ? 0 : layout.used;
     if (machine === undefined) {
       throw new BuildError("E_INTERNAL", `no WonderSwan machine for ${program.profile.id}`);
     }
@@ -288,6 +326,7 @@ export const wscBackend: Backend<WscEmitOptions, WscAudio> = {
         bytes: packWsRom(image, {
           minimumSystem: machine.minimumSystem,
           orientation: 0x05,
+          saveBytes,
           segments: plan ? plan.segments.length + 1 : 1,
         }),
         code: code.length,
@@ -297,7 +336,11 @@ export const wscBackend: Backend<WscEmitOptions, WscAudio> = {
       };
     }
     return {
-      bytes: packWsRom(code, { minimumSystem: machine.minimumSystem, orientation: 0x05 }),
+      bytes: packWsRom(code, {
+        minimumSystem: machine.minimumSystem,
+        orientation: 0x05,
+        saveBytes,
+      }),
       code: code.length,
       capacity: CARTRIDGE_SIZE,
       symbols: ctx.asm.symbols(),
