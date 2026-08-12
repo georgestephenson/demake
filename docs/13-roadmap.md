@@ -1704,10 +1704,36 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     against a correct model's 0.9992 and is exactly the bug this level exists to
     catch. Doc 16 §The proof has the table.
 
-    **And it has already found two things, which is what a level like this is
+    **And it has already found three things, which is what a level like this is
     for.** The sixth standalone cartridge is the WonderSwan's, beetle-wswan is
     provisioned by the same script as the other four cores, and the row costs one
     line — so it was written, measured, and the measurement went somewhere.
+
+    **The third is the biggest and it is not the WonderSwan's: every Mega Drive
+    cartridge this tool had ever built was silent on the board.** `$A11200` is
+    the Z80's reset line _and the YM2612's_ — one wire, both chips — so a 68000
+    program that leaves it asserted gets six four-operator voices that discard
+    everything sent to them. A demade game never wrote the register at all, and
+    the standalone audio cartridge wrote it with the reset _held_, deliberately,
+    to stop a sound processor nobody had programmed from running.
+
+    The register stream was perfect throughout, and that is the point.
+    `@demake/md` models no Z80 — a demade cartridge emits no program for one — so
+    `$A11200` was a store to nothing and the FM voices went on answering. Level A
+    diffed the writes the chip received against the schedule and matched them
+    tick for tick, on a chip that was not listening. Against genesis-plus-gx a
+    standalone track measured **0.00046** RMS where a released chip gives
+    **0.28203**, and a demade game's music **0.00749** where it gives **0.17821**.
+
+    The fix is two stores in one place — `md-chips.ts`'s `emitZ80Handover`, take
+    the bus and keep it, then release the reset, safe in that order because a Z80
+    whose bus the 68000 holds never fetches an instruction — called from the
+    audio driver's own `AudioInit`, so a game with no audio still emits neither.
+    And the *core* now models the line, which is what makes a cartridge that
+    forgets it fail in `pnpm test` rather than only on the hardware. That was
+    AGENTS.md §Gotchas' own warning arriving through the peripheral this core
+    deliberately leaves out: a description that is wrong and consistent passes
+    everything.
 
     The first finding was the suite's own. A cartridge performs its chip's
     initialisation in the boot and the rest of its schedule from its clock, so
@@ -1793,6 +1819,39 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     proof kept passing because it compares the driver against the model's own
     integer mix rather than against a float render. That is also why Level B
     would have found this the hard way.
+
+    **And that console now has a cartridge to point Level B at, which found the
+    method's own boundary.** With `rom/gba.ts` built and mGBA provisioned it
+    qualifies on both counts, and the row was written and measured: **0.9820**
+    against a gate of 0.99, with the nearest plausible wrong answer — the same
+    tune arranged for a Game Boy, same core, same capture — at 0.9169. So the
+    number is far from meaningless and it does not pass, and the gate stays where
+    it is, because lowering it for one console makes it mean nothing on the other
+    four.
+
+    What it is, is a **tilt**. Band by band the two agree to 0.9885–0.9988, so
+    the whole-band figure is _lower than any band in it_, which is the signature
+    of a difference in balance rather than in content: the core's level relative
+    to ours falls monotonically from 1.545× below 1 kHz to 0.876× at 16–24 kHz
+    and 0.394× above that, and band-limiting to the mixer's own Nyquist moves the
+    figure to 0.9898.
+
+    The cause is the one thing this level assumes. Every other console clocks its
+    chip in **megahertz**, so a render at the comparison rate is a decimation and
+    both sides band-limit alike. This mixer runs at 32768 Hz — _below_ the
+    65536 Hz mGBA captures at, which is the same fact the `NaN` above came from —
+    so what separates the two signals is a **reconstruction filter belonging to
+    neither model**: ours is box integration's zero-order hold, which keeps the
+    images above 16 kHz, and the core's is whatever mGBA resamples with, which
+    attenuates them. Neither is the schedule, so the row stays out on the
+    WonderSwan's terms.
+
+    This console loses least by that, because its Level A is the sharpest in the
+    project rather than the weakest: it runs in **two halves**, the four Game Boy
+    channels diffed tick for tick and the mixer's *samples* diffed byte for byte
+    against what `GbaPcm` renders — a comparison against the audio rather than
+    against an instruction to make it, and exact because the mixing is integer
+    throughout.
   - **A3 — `sfx`** *(built for WAV; the Game Boy boots)*: eight gesture families, the class gate,
     deterministic coordinate descent with every candidate rendered through the
     chip model, and the placement contract each effect declares. A single effect
@@ -1813,10 +1872,11 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     the Nintendo DS's SPU each have a chip model, a
     binding and a generated driver — 6502, Z80, SPC700, 68000 and ARM twice — and
     `demake build` puts music and
-    effects in the cartridge with doc 16's Level A proof over all of them. Six of
+    effects in the cartridge with doc 16's Level A proof over all of them. Seven of
     them now also build a *standalone* audio cartridge — `demake gen … --format
     rom` reaches the Game Boy, the NES, the PC Engine, both Sega 8-bits, the
-    Mega Drive and both WonderSwans — and the rest do not, because a cartridge whose only job is one
+    Mega Drive, the Game Boy Advance and both WonderSwans — and the rest do not,
+    because a cartridge whose only job is one
     track is what a later caller needed and not what a game did. **The sixth is
     where the measurement stopped being a claim**: `wsc-driver.ts` moved not one
     instruction, so what that console added is a boot sequence, a clock and a
@@ -1836,6 +1896,33 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     the near miss: `demake arrange -c snes` writes an `.spc`, which is the same
     driver and the same schedules in the format that console's own players read,
     but it is a RAM image rather than a cartridge.
+
+    **The seventh is where that distinction stops mattering again, and it is the
+    first standalone on a console whose second sound device is not a chip.**
+    `demake gen … --format rom -c gba` builds a `.gba`, `arm-player.ts` and
+    `gba-driver.ts` moved not one instruction, and the whole of `rom/gba.ts` is a
+    boot sequence, a clock and a cartridge wrapper. Neither caller polls here:
+    six of this machine's ten voices are a software mixer, so a driver tick *is*
+    a block of samples the processor computes and the sample transfer's own
+    interrupt counts the blocks out — 128 Hz on a game and on a cartridge alike,
+    with nothing to fit and nothing to drift. It is also the only standalone
+    whose idle loop is not idle, because that mixing is what it does with the
+    frame, and the only one whose Level A proof is in **two halves**: the four
+    Game Boy channels are diffed tick for tick and the mixer's samples byte for
+    byte against what `GbaPcm` renders.
+
+    Building it turned up a rate this binding could not keep. `gbaBinding.fitRate`
+    was searching the machine's spare timers and fitting the example library's own
+    fixtures at **56 Hz** — a schedule no cartridge on this console can play, and
+    one whose mixer samples would be computed for the wrong moments if it tried.
+    It returns the transfer clock now. The spec still declares
+    `sources: ["timer", "vblank"]`, because that is what the hardware has; what
+    moved is the *binding's* answer about what a driver can keep, which is the
+    distinction `psgBinding` reached from the other side — there the hardware
+    could not deliver the rate it offered, and here it can and the mixer cannot
+    use it. `demake build -c gba` is byte-identical either way, because a game
+    already asked for 128 Hz through `gameDriverRate` and the timer search
+    happened to answer it exactly.
 
     **The Neo Geo Pocket is the near miss with a named blocker, and finding it
     cost a working cartridge.** Everything the seventh standalone needs is

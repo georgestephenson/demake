@@ -51,7 +51,8 @@ sidecar, WAV and cartridge are byte-identical to the CLI's (doc 07 §The audio
 sections), and the ROM pane plays whichever chip the running cartridge has. What
 is not built: the remaining chips (the handhelds), a *standalone* audio cartridge
 for the consoles that still have none (the Game Boy, the **NES**, the **PC
-Engine**, both **Sega 8-bits** and the **Mega Drive** build one; every other
+Engine**, both **Sega 8-bits**, the **Mega Drive**, the **Game Boy Advance** and
+both **WonderSwans** build one; every other
 console with a driver plays it only from inside a game, and
 [`console-support.md`](console-support.md)'s **audio ROM** column is where that
 is stated rather than here), driver backends for the remaining consoles,
@@ -973,7 +974,25 @@ A console qualifies when it has **both** a standalone audio cartridge (§A5) and
 libretro core: the cartridge because this needs a ROM whose only job is the
 schedule, and a third-party core because our own would be comparing a model with
 itself. That is the NES, both Sega 8-bits, the Mega Drive and the PC Engine
-today, and each joins by appearing in one table.
+today, and each joins by appearing in one table. Two more qualify and are held
+out with their measurements written down below — the WonderSwan and the Game Boy
+Advance — because a cross-check whose two sides differ by their output stages is
+not evidence about the chip in either direction.
+
+**And the biggest thing this level has found was not a chip model at all.**
+`$A11200` is the Z80's reset line _and the YM2612's_ — one wire, both chips — and
+a console powers up with it held, so a 68000 program that never releases it has
+six four-operator voices that discard everything sent to them. Every Mega Drive
+cartridge demake produced did exactly that: a game never wrote the register, and
+the standalone audio cartridge wrote it with the reset held on purpose, to stop a
+sound processor nobody had programmed from running. The register stream was
+perfect throughout, because `@demake/md` models no Z80 and the store went
+nowhere — a Level A diff matching, tick for tick, against a chip that was not
+listening. Against genesis-plus-gx a standalone track measured **0.00046** RMS
+where a released chip gives **0.28203**, and a demade game's music **0.00749**
+against **0.17821**. The fix is two stores in one shared emitter; the guard
+against it happening again is that the core now models the _line_, so a cartridge
+that forgets it fails in `pnpm test`.
 
 **What is rendered is the schedule *with* its boot, which is not the same as
 what Level A diffs against.** A cartridge performs its chip's initialisation in
@@ -1020,7 +1039,41 @@ sample: 0 = 0, 1 = 15", which is what `WsSound` does, at a measured duty of 0.50
 on the long modes. So it reads as Mednafen attenuating that voice, and the row
 stays out because a cross-check whose two sides differ by a known constant is not
 evidence about the chip in either direction. Level A is green there for a track
-and for an effect. Where a core exposes scripted
+and for an effect.
+
+**The Game Boy Advance qualifies and is not in the table either, and what is left
+of that is the _method_.** It builds a standalone cartridge now and mGBA is
+provisioned, so both conditions are met; against `overworld.mid` it scores
+**0.9820**. That is well clear of the nearest plausible wrong answer — the same
+tune arranged for a Game Boy scores 0.9169 against the same capture — and it does
+not reach the gate, which stays where it is because lowering it for one console
+would make the number mean nothing on the other four.
+
+What it is, is a **tilt**, and it is the one thing this method assumes away. Band
+by band the two agree to 0.9885–0.9988, so the whole-band figure is _lower than
+any band in it_ — which is what a difference in balance rather than in content
+looks like. The core's level relative to ours falls monotonically: 1.545× below
+1 kHz, 1.423× at 4–8 kHz, 1.244× at 8–16 kHz, 0.876× at 16–24 kHz and 0.394×
+above that. Restricting the comparison to the mixer's own Nyquist moves it to
+0.9898.
+
+Every other console here clocks its chip in **megahertz**, so a render at 48 kHz
+is a decimation and both sides band-limit alike. This console's mixer runs at
+32768 Hz, _below_ the 65536 Hz the core captures at — the same fact §The render
+handles as a box narrower than a clock — so what separates the two signals is a
+reconstruction filter belonging to neither model: ours is the box integrator's
+zero-order hold, which keeps the images above 16 kHz, and the core's is whatever
+mGBA resamples with, which plainly attenuates them. Neither is the schedule.
+
+The proof this console does have is the sharpest here rather than the weakest.
+Its Level A runs in **two halves**, because its two sound devices are not the
+same kind of thing: the four Game Boy channels are diffed tick for tick like any
+other console's, and the mixer's **samples** are diffed byte for byte against
+what `GbaPcm` renders from the same schedule. The second is a stronger claim than
+any register diff — it compares the audio rather than an instruction to make it —
+and it is exact, because the mixing is integer throughout.
+
+Where a core exposes scripted
 register access (Mesen 2's Lua interface, for instance), that console gets Level A
 too and Level B becomes a cross-check rather than the primary oracle.
 

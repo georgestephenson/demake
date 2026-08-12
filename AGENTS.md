@@ -1066,23 +1066,29 @@ four pinned byte-identical to the CLI's by
 
 Still to come for audio: `bin`/`asm`/`c` emit, a _standalone_ audio cartridge for
 the consoles that still have none — the Game Boy, the **NES**, the **PC Engine**,
-both **Sega 8-bits**, the **Mega Drive** and both **WonderSwans** build one today,
-and the Neo Geo Pocket Color and both ARM handhelds have drivers only inside a
+both **Sega 8-bits**, the **Mega Drive**, the **Game Boy Advance** and both
+**WonderSwans** build one today,
+and the Neo Geo Pocket Color and the Nintendo DS have drivers only inside a
 game, while the Super Nintendo's writes an `.spc` rather than a cartridge. What
 each of
 them costs is no longer an estimate but a measurement: the stream player belongs
 to the _processor_ and is already written, so a console adds a boot sequence, a
 clock and a cartridge wrapper and nothing else — which is why the third of them
 reused the second's player unchanged, the fourth reused a _game's_, the fifth
-changed not one instruction of one, and the sixth changed not one instruction of
-a _game's_ either. What the two before it did was find, twice, the
+changed not one instruction of one, the sixth changed not one instruction of
+a _game's_ either, and the seventh changed not one instruction of **two** shared
+files. What the fourth and fifth did was find, twice, the
 bill for a clock nobody had ever had to keep. The Sega binding would fit a rate
 to the VDP's line interrupt, and that interrupt fires only inside the active
 display, so the first cartridge to ride one would have played at half the rate it
 declared (§The Z80 half). And the Mega Drive's core only advanced its FM chip
 when something was listening to the speakers — which is invisible for a
 write-only chip and fatal for one whose _timer_ a driver polls, so the first
-cartridge to ride that would have spun for ever (§The 68000 half). Also: driver backends for the remaining
+cartridge to ride that would have spun for ever (§The 68000 half). The seventh
+found a third: `gbaBinding.fitRate` was searching that machine's spare timers,
+and on a console where a driver tick _is_ a block of mixer samples there is only
+one rate — 32768 ÷ 256 — so the example library's own fixtures were being fitted
+at 56 Hz, which is a schedule no cartridge there can play. Also: driver backends for the remaining
 consoles (each needs a CPU encoder or a checked-in driver source, plus a core to
 prove it in), Level B sample comparison, the remaining chips (the rest of the
 handhelds), and — the one that is an _iron-rule_ gap rather than a missing
@@ -1377,7 +1383,16 @@ packages/md/         @demake/md — a self-hosted Mega Drive core, and the only 
                      speakers rather than of the chip. The Z80 is absent — a
                      second processor `demake build` emits no program for — so
                      its RAM answers as RAM, which is what the hardware does to a
-                     68000-only program
+                     68000-only program. Its *reset line* is not absent, and that
+                     is the one thing this core models about a chip it does not
+                     have: `$A11200` is wired to the YM2612's own reset as well,
+                     and the console powers up with it held, so the FM chip
+                     discards every write until a cartridge releases it. Before
+                     that was modelled the six FM voices answered a core with no
+                     Z80 in it and every demade Mega Drive cartridge was silent
+                     on the board with a perfect register diff — §Gotchas' wrong
+                     and consistent description, reached through the peripheral
+                     this core deliberately leaves out
 packages/gba/        @demake/gba — a self-hosted Game Boy Advance core: an
                      ARM7TDMI in ARM state, a mode-0 2D engine with four
                      background layers and 128 objects, DMA, timers, and both
@@ -1693,7 +1708,16 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
                      and neither machine's, and gba-driver.ts/gba-game.ts and
                      nds-driver.ts/nds-game.ts are what each adds to it — a mixer
                      on one, and a whole second binary on the other, because a DS's
-                     sound channels answer the ARM7 alone. One caller each so far.
+                     sound channels answer the ARM7 alone. The Game Boy Advance
+                     has two callers — a game (gba-game.ts) and the seventh
+                     standalone cartridge (gba.ts), which is the only one in the
+                     set whose idle loop is not idle, because half its voices are
+                     a mixer the processor computes. The pair is also where the
+                     Mega Drive's caller distinction *stops* mattering: neither
+                     polls, because the sample transfer's own interrupt counts
+                     the blocks out, so both get 128 Hz exactly and the standalone
+                     calls resolveGbaClock rather than mirroring it. The DS has
+                     one caller so far.
                      TLCS-900/H: ngp-driver.ts and ngp-game.ts, and the only
                      driver that has to *ask* for its chip — a T6W28's own bus is
                      the Z80 sound processor's, so two bytes of the main CPU's
@@ -3278,6 +3302,20 @@ most of the value layer stops being a problem and three new ones appear.
   the program — tens of kilobytes away in a real game. Inside the driver the same
   call is a `bsr`, because there the distance is a few hundred bytes and visible
   in one file.
+- **`$A11200` is the FM chip's reset, not only the Z80's**, and a console powers
+  up with it held. So a cartridge that wants the YM2612 has to take the sound
+  processor's bus and then _release_ the reset, in that order — the bus first is
+  what makes releasing it safe, because a Z80 whose bus the 68000 holds never
+  fetches an instruction. `md-chips.ts`'s `emitZ80Handover` is the one place both
+  callers do it, and it is called from the audio driver's own `AudioInit` rather
+  than from a game's boot, so a game with no audio emits neither store. Every
+  cartridge this tool built left it held until doc 16's Level B measured one:
+  0.00046 RMS against genesis-plus-gx where a released chip gives 0.28203, with a
+  register diff that was perfect throughout. That is §Gotchas' wrong-and-
+  consistent description — `@demake/md` models no Z80, so the store went nowhere
+  and the FM voices answered anyway — and the answer was to model the _line_ in
+  the core, which is now what makes a cartridge that forgets it fail in
+  `pnpm test`.
 - **A standalone audio cartridge here has a clock a game cannot have, and that is
   a fact about the caller rather than about the hardware.** The YM2612's timer A
   is a real programmable clock, but on this board its interrupt line goes to the
