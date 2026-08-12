@@ -1441,7 +1441,10 @@ packages/demotic/    @demake/demotic — Demotic, the `.dmt` game language (docs
                      decide the *segment* a 16.16 read means, because a table is
                      in the cartridge and a variable is not; ops.ts is
                      snes/ops.ts's file for the third CPU whose `abs` means
-                     something else again
+                     something else again, and is also where `vram` lives —
+                     the six operands that mean the *console's* memory rather
+                     than the heap, which are the whole cost of the mono
+                     machine's heap moving to the cartridge's save RAM
     ngpc.ts, ngpc-art.ts, ngpc/           the TLCS-900/H backend and its image
                      path, and the one whose renderer writes almost nothing at
                      all: there is no video memory, so the tile bank is one
