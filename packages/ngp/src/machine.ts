@@ -46,6 +46,9 @@ import {
   NGP_RAM_SIZE,
   NGP_ROM_BASE,
   NGP_VECTOR_VBLANK,
+  NGP_RAS_H,
+  NGP_RAS_V,
+  NGP_STATUS,
   NGP_VIDEO,
   NGP_Z80_RAM,
   NGP_BUTTON_BITS,
@@ -60,7 +63,7 @@ import {
 import { T6w28, T6W28_LEFT, T6W28_RIGHT, type SampleSink } from "@demake/chip";
 
 import { Tlcs900, type Bus } from "./cpu.js";
-import { Display, VIDEO_SIZE, type NgpModel } from "./display.js";
+import { Display, VBLANK_LINE, VIDEO_SIZE, type NgpModel } from "./display.js";
 
 /** Bytes of RAM the sound processor and the main CPU share. */
 const SOUND_RAM_SIZE = 0x1000;
@@ -220,6 +223,20 @@ export class Ngp implements Bus {
       return offset < this.rom.length ? (this.rom[offset] as number) : 0xff;
     }
     if (at >= NGP_VIDEO && at < NGP_VIDEO + VIDEO_SIZE) {
+      // Three of this region's addresses are the *controller* answering rather
+      // than memory being read back, and until they did, a cartridge polling the
+      // beam read whatever it had last written there — which is a runtime that
+      // waits for a frame that never comes.
+      if (at === NGP_RAS_H) return this.display.beamX;
+      if (at === NGP_RAS_V) return this.display.line;
+      if (at === NGP_STATUS) {
+        // Bit 6 is the blanking flag, which is how a cartridge that takes no
+        // interrupt waits for a frame (`core/src/asm/ngp.ts` §NGP_STATUS). Bit 7
+        // is the per-line character overflow, which this renderer does not
+        // report — a scene it would fire on is drawn correctly here, so
+        // answering zero is the honest half of a flag rather than a wrong one.
+        return this.display.line >= VBLANK_LINE ? 0x40 : 0x00;
+      }
       return this.video[at - NGP_VIDEO] as number;
     }
     if (at >= NGP_Z80_RAM && at < NGP_Z80_RAM + SOUND_RAM_SIZE) {
