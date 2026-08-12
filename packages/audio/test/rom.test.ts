@@ -38,13 +38,15 @@ import {
   SMS_IRQ_VECTOR,
   SMS_NMI_VECTOR,
   SMS_ROM_SIZE,
+  VB_ROM_SIZES,
   WS_CODE_SIZE,
   WS_FOOTER_OFFSET,
   WS_ROM_SIZE,
 } from "@demake/core";
-import { GbaPcm } from "@demake/chip";
+import { GbaPcm, VSU_WAVE_SAMPLES, VSU_WAVE_TABLES } from "@demake/chip";
 import { Gba } from "@demake/gba";
 import { FRAME_CYCLES, Sms } from "@demake/sms";
+import { MASTER_HZ as VB_MASTER_HZ } from "@demake/vb";
 import { CPU_HZ as WS_CPU_HZ } from "@demake/wsc";
 
 import { arrangeScore } from "../src/arrange/index.js";
@@ -138,7 +140,19 @@ describe("gb audio cartridge", () => {
 
   it("names the consoles it can build for", async () => {
     expect(audioRomConsoles()).toEqual(
-      expect.arrayContaining(["dmg", "gbc", "nes", "pce", "sms", "gg", "md", "gba", "wsc", "ws"]),
+      expect.arrayContaining([
+        "dmg",
+        "gbc",
+        "nes",
+        "pce",
+        "sms",
+        "gg",
+        "md",
+        "gba",
+        "vb",
+        "wsc",
+        "ws",
+      ]),
     );
   });
 });
@@ -630,6 +644,59 @@ describe("gba audio cartridge", () => {
     expect(offset).toBeGreaterThanOrEqual(0);
     expect(left.slice(offset, offset + want[0].length)).toEqual(want[0]);
     expect((heard[1] as number[]).slice(offset, offset + want[1].length)).toEqual(want[1]);
+  });
+});
+
+describe("vb audio cartridge", () => {
+  it("is a bootable cartridge whose reset stub is the last sixteen bytes", async () => {
+    const { bytes, family, suffix } = await buildAudioRom(trackFor("vb"));
+    expect(family).toBe("vb");
+    expect(suffix).toBe(".vb");
+    // A power of two, because a 27-bit address bus mirrors the cartridge and the
+    // reset fetch lands in whatever the top of it turns out to be.
+    expect(bytes.length & (bytes.length - 1)).toBe(0);
+    expect(VB_ROM_SIZES).toContain(bytes.length);
+    // The reset stub jumps *absolutely*, because it runs from a mirror the image
+    // was not assembled at — the whole of this console's boot ceremony.
+    expect(bytes.subarray(bytes.length - 16).some((byte) => byte !== 0)).toBe(true);
+  });
+
+  it("puts the waveform tables in before the clock starts", async () => {
+    // The half no tick diff can see. Five tables is a hundred and sixty writes,
+    // which is more than a packed run's count byte holds — so on this console
+    // stripping the boot is what makes tick 0 packable at all, and a cartridge
+    // that skipped the tables would write every register of the schedule
+    // exactly and play five channels of whatever powered up.
+    const runner = await AudioRomRunner.create(trackFor("vb"));
+    const boot = runner.captureBoot();
+    const tables = boot.filter((write) => write.reg < 0x280);
+    expect(tables.length).toBe(VSU_WAVE_TABLES * VSU_WAVE_SAMPLES);
+    // And the stop register, which is what powers the chip up.
+    expect(boot.some((write) => write.reg === 0x580 && write.value === 0x01)).toBe(true);
+  });
+
+  it("takes the picture's own clock, at the slowest rate in the matrix", async () => {
+    // This cartridge takes no interrupt anywhere — the idle loop polls the
+    // drawing processor's own flag, which is what a demade game on this console
+    // does, because a loop that waits either way gains nothing from a vector.
+    const script = trackFor("vb");
+    expect(script.driver.rate.num / script.driver.rate.den).toBeCloseTo(50.2, 1);
+    const runner = await AudioRomRunner.create(script);
+    const at = runner.symbols.get("Tick") as number;
+    const machine = runner.machine as unknown as { step(): number; cpu: { pc: number } };
+    const spans: number[] = [];
+    let cycles = 0;
+    while (spans.length < 6) {
+      cycles += machine.step();
+      if (machine.cpu.pc === at) {
+        spans.push(cycles);
+        cycles = 0;
+      }
+    }
+    // Everything after the boot span is a frame, to within one pass of a loop
+    // that does nothing but poll.
+    const period = VB_MASTER_HZ / (script.driver.rate.num / script.driver.rate.den);
+    for (const span of spans.slice(2)) expect(Math.abs(span - period)).toBeLessThan(period / 20);
   });
 });
 

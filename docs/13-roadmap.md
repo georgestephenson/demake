@@ -746,16 +746,18 @@ the backend today, and either is a reason to revisit rather than to work around.
    so this console emits no merge routine at all, the sixth in the matrix to do
    so.
 
-   What remains is the **in-game driver**, and half of what blocked it is gone:
-   `@demake/vb` has its sound processor now — `@demake/chip`'s VSU behind the
+   What remains is the **in-game driver**, and most of what blocked it is gone.
+   `@demake/vb` has its sound processor — `@demake/chip`'s VSU behind the
    console's own register page, advanced by the same crystal the CPU counts at a
-   quarter of it, with a tap for doc 16's Level A — so a driver written for this
-   console has somewhere to be proven. What is left is the player itself, and it
-   would be the *processor's* first, on `arm-player.ts`'s and `mos-player.ts`'s
-   precedent. Its clock is settled by the backend rather than open: this
-   cartridge takes no interrupt anywhere and its main loop already waits a frame
-   per pass on `XPEND`, so the driver ticks with the loop at 50.2 Hz — the
-   slowest rate in the matrix, and the one `vbBinding.fitRate` already returns.
+   quarter of it, with a tap for doc 16's Level A — so a driver here has
+   somewhere to be proven. And the player is written: `rom/v810-player.ts`, this
+   processor's first, produced for the standalone cartridge §A5 records and
+   proven by it tick for tick. Its clock is settled by the backend rather than
+   open, because this cartridge takes no interrupt anywhere and its main loop
+   already waits a frame per pass on `XPEND` — so a driver ticks with the loop
+   at 50.2 Hz, the slowest rate in the matrix and the one `vbBinding.fitRate`
+   already returns. What a *game* adds to that is a request protocol, a second
+   stream and a call from its own loop.
 
 68000 (Mega Drive, then Neo Geo), 65816 (SNES, plus the SPC700 for its audio) and
 ARM (GBA, NDS) slot in wherever Tier 1 breadth is wanted ahead of Tier 2 depth;
@@ -1890,7 +1892,8 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     effects in the cartridge with doc 16's Level A proof over all of them. Seven of
     them now also build a *standalone* audio cartridge — `demake gen … --format
     rom` reaches the Game Boy, the NES, the PC Engine, both Sega 8-bits, the
-    Mega Drive, the Game Boy Advance and both WonderSwans — and the rest do not,
+    Mega Drive, the Game Boy Advance, the Virtual Boy and both WonderSwans — and
+    the rest do not,
     because a cartridge whose only job is one
     track is what a later caller needed and not what a game did. **The sixth is
     where the measurement stopped being a claim**: `wsc-driver.ts` moved not one

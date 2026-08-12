@@ -24,6 +24,7 @@ import { Md } from "@demake/md";
 import { Nes } from "@demake/nes";
 import { Pce } from "@demake/pce";
 import { Sms } from "@demake/sms";
+import { Vb } from "@demake/vb";
 import { Wsc } from "@demake/wsc";
 
 import type { ChipScript, TickWrites } from "../src/chipscript.js";
@@ -43,10 +44,17 @@ interface Capture {
   chip: number;
 }
 
-/** What a core has to offer for a schedule to be read back out of it. */
-interface TappedMachine {
-  stepInstruction(): unknown;
-}
+/**
+ * What a core has to offer for a schedule to be read back out of it.
+ *
+ * Nothing, structurally: the two things this harness needs of a machine — how to
+ * run one instruction and where the program counter is — are taken as closures
+ * below, because the cores do not agree about either name. Six call the first
+ * `stepInstruction` and `@demake/vb` calls it `step`; five call the second `pc`
+ * and `@demake/wsc` calls it `ip`. Naming them here would be this file asking
+ * eight consoles to agree about a word.
+ */
+type TappedMachine = object;
 
 /** A ROM that can be stepped one driver tick at a time. */
 export class AudioRomRunner {
@@ -71,6 +79,8 @@ export class AudioRomRunner {
    * `_audio-battery.ts`'s `observed` does one layer up.
    */
   readonly performed: ChipScript;
+  /** The build's own symbol table, which is how a tick is attributed at all. */
+  readonly symbols: ReadonlyMap<string, number>;
   private readonly tickAddress: number;
   /**
    * Where the driver is, which is not always a field called `pc`.
@@ -82,6 +92,8 @@ export class AudioRomRunner {
    * `_audio-battery.ts` §`pc` says the same thing one layer up.
    */
   private readonly pc: () => number;
+  /** Run one instruction, under whichever name this core gives it. */
+  private readonly stepOnce: () => void;
   /**
    * Where a tick *ends*, when the driver says so.
    *
@@ -123,6 +135,7 @@ export class AudioRomRunner {
             })),
           }
         : built.performed;
+    this.symbols = built.symbols;
     const tick = built.symbols.get("Tick");
     if (tick === undefined) throw new Error("the driver defined no Tick symbol");
     this.tickAddress = tick;
@@ -170,6 +183,13 @@ export class AudioRomRunner {
       const machine = new Gba(built.bytes);
       machine.apuTap = push;
       this.machine = machine;
+    } else if (built.family === "vb") {
+      // The eighth family and the first on this processor. Nothing on this chip
+      // reads back, so `@demake/vb` answers zero on that page and the tap is
+      // the only window there is — which is the whole reason it exists.
+      const machine = new Vb(built.bytes);
+      machine.vsuTap = push;
+      this.machine = machine;
     } else if (built.family === "sms") {
       // Which *Sega* it comes up as is the cartridge's own region nibble, never
       // an argument — the same rule `@demake/dmg` follows for its header, so a
@@ -188,6 +208,14 @@ export class AudioRomRunner {
       machine instanceof Wsc
         ? () => machine.cpu.ip
         : () => (machine as { cpu: { pc: number } }).cpu.pc;
+    this.stepOnce =
+      machine instanceof Vb
+        ? () => {
+            machine.step();
+          }
+        : () => {
+            (machine as { stepInstruction(): unknown }).stepInstruction();
+          };
   }
 
   /**
@@ -203,7 +231,7 @@ export class AudioRomRunner {
     this.current = writes;
     let guard = 0;
     while (this.pc() !== this.tickAddress) {
-      this.machine.stepInstruction();
+      this.stepOnce();
       guard += 1;
       if (guard > 10_000_000) throw new Error("audio rom: the driver never reached its first tick");
     }
@@ -223,7 +251,7 @@ export class AudioRomRunner {
     const groups: Capture[][] = [];
     let guard = 0;
     while (groups.length <= count) {
-      this.machine.stepInstruction();
+      this.stepOnce();
       if (this.pc() === this.tickAddress) {
         this.current = [];
         groups.push(this.current);

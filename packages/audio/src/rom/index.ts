@@ -102,6 +102,7 @@ const DRIVERS: Readonly<Record<string, AudioRomFamily>> = {
   gg: "sms",
   md: "md",
   gba: "gba",
+  vb: "vb",
   wsc: "wsc",
   // The mono machine's sound hardware *is* the colour machine's, so this is one
   // more console for the same driver and the same cartridge — the Game Gear's
@@ -123,7 +124,7 @@ const DRIVERS: Readonly<Record<string, AudioRomFamily>> = {
  * six of a Game Boy Advance's ten voices are a software mixer, so that
  * cartridge's idle loop is the only one in the set that is not idle.
  */
-export type AudioRomFamily = "gb" | "nes" | "pce" | "sms" | "md" | "gba" | "wsc";
+export type AudioRomFamily = "gb" | "nes" | "pce" | "sms" | "md" | "gba" | "vb" | "wsc";
 
 /**
  * The clock a *game's* driver rides on each chip that has one.
@@ -326,6 +327,7 @@ const SUFFIXES: Readonly<Record<string, string>> = {
   gg: ".gg",
   md: ".md",
   gba: ".gba",
+  vb: ".vb",
   wsc: ".wsc",
   ws: ".ws",
 };
@@ -392,6 +394,8 @@ async function buildFor(
       return (await import("./md.js")).buildMdAudioRom(script, options);
     case "gba":
       return (await import("./gba.js")).buildGbaAudioRom(script, options);
+    case "vb":
+      return (await import("./vb.js")).buildVbAudioRom(script, options);
     case "wsc":
       return (await import("./wsc.js")).buildWscAudioRom(script, options);
   }

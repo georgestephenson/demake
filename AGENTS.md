@@ -1066,8 +1066,8 @@ four pinned byte-identical to the CLI's by
 
 Still to come for audio: `bin`/`asm`/`c` emit, a _standalone_ audio cartridge for
 the consoles that still have none — the Game Boy, the **NES**, the **PC Engine**,
-both **Sega 8-bits**, the **Mega Drive**, the **Game Boy Advance** and both
-**WonderSwans** build one today,
+both **Sega 8-bits**, the **Mega Drive**, the **Game Boy Advance**, the **Virtual
+Boy** and both **WonderSwans** build one today,
 and the Neo Geo Pocket Color and the Nintendo DS have drivers only inside a
 game, while the Super Nintendo's writes an `.spc` rather than a cartridge. What
 each of

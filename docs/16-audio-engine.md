@@ -51,8 +51,8 @@ sidecar, WAV and cartridge are byte-identical to the CLI's (doc 07 §The audio
 sections), and the ROM pane plays whichever chip the running cartridge has. What
 is not built: the remaining chips (the handhelds), a *standalone* audio cartridge
 for the consoles that still have none (the Game Boy, the **NES**, the **PC
-Engine**, both **Sega 8-bits**, the **Mega Drive**, the **Game Boy Advance** and
-both **WonderSwans** build one; every other
+Engine**, both **Sega 8-bits**, the **Mega Drive**, the **Game Boy Advance**, the
+**Virtual Boy** and both **WonderSwans** build one; every other
 console with a driver plays it only from inside a game, and
 [`console-support.md`](console-support.md)'s **audio ROM** column is where that
 is stated rather than here), driver backends for the remaining consoles,
