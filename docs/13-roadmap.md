@@ -1835,7 +1835,29 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     for one and not for the other. The Super Nintendo is
     the near miss: `demake arrange -c snes` writes an `.spc`, which is the same
     driver and the same schedules in the format that console's own players read,
-    but it is a RAM image rather than a cartridge. The SN76489 is also the
+    but it is a RAM image rather than a cartridge.
+
+    **The Neo Geo Pocket is the near miss with a named blocker, and finding it
+    cost a working cartridge.** Everything the seventh standalone needs is
+    already here — `ngp-driver.ts`, `packNgpRom`, a core to prove it in — and one
+    was written: two hundred and sixteen bytes of TLCS-900/H, the chip handed
+    over with `$55`/`$AA`, a vertical-blank handler installed as four bytes at
+    `$6FCC`, and an arranged track playing on both machines tick for tick against
+    the schedule. What it could not do is a *sound effect*, and the reason is a
+    line `binding/t6w28.ts` wrote long before there was a caller for it: this
+    chip's `fitRate` offers an on-chip timer as well as the frame, "which is how
+    a **standalone** driver holds a tempo the picture cannot express". A track
+    fits the frame at 59.95 Hz and an effect asks for the timer.
+    
+    So the cartridge that should exist rides a clock `@demake/ngp` does not
+    model — that core's timers are absent rather than half-implemented — and a
+    cartridge this project cannot boot in a core it owns is one whose Level A
+    proof does not exist. Building it anyway and refusing the timer by name would
+    ship the wrong cartridge and then have to change it, so it is held back
+    rather than half-landed. What it costs is the TLCS-900/H's timer block in
+    that core and its interrupt through the boot ROM's own dispatch, after which
+    the driver's clock is a reload and the file already written is most of the
+    rest. The SN76489 is also the
     one that stretched the shared packing layer: its channel is in the data byte
     and latched, so `channelOf` became a factory over a per-schedule latch and a
     schedule that opens a tick with a bare data byte is refused rather than
