@@ -19,7 +19,12 @@ import { centsToHz, foldIntoRange } from "../pitch.js";
 import type { DrumClass, Note, Part } from "../score/types.js";
 import type { Score } from "../score/types.js";
 import type { TimingPlan } from "../timing.js";
-import { VIBRATO_DELAY_SECONDS, VIBRATO_HZ, VIBRATO_MAX_CENTS } from "../vibrato.js";
+import {
+  TREMOLO_MAX_DB,
+  VIBRATO_DELAY_SECONDS,
+  VIBRATO_HZ,
+  VIBRATO_MAX_CENTS,
+} from "../vibrato.js";
 import type { ArrangementPlan, ChannelAssignment } from "./plan.js";
 
 /** A compiled schedule, and what compiling it cost. */
@@ -384,8 +389,10 @@ function buildLane(
     // because that is the only vibrato it can be given.
     const depth = chosen.note.vibrato ?? 0;
     // The delay applies to both routes, so a chip that bends itself starts when
-    // one that is bent by the driver would.
-    const engaged = vibratoElapsed(chosen, tick, timing) !== null;
+    // one that is bent by the driver would. It is asked *without* a depth in it,
+    // because the same gate serves the tremolo below and a note that asked only
+    // for that one has no vibrato to be engaged about.
+    const engaged = modulationElapsed(chosen, tick, timing) !== null;
     const cents = chosen.note.pitch + shift + (lfo ? 0 : vibratoCents(chosen, tick, timing));
     const hz = centsToHz(cents);
     const folded = channel.pitch ? foldIntoRange(channel.pitch, hz) : { hz, octaves: 0 };
@@ -397,7 +404,12 @@ function buildLane(
     }
     frame.duty = options.duty;
     frame.retrigger = tick === chosen.start;
-    frame.level = levelFor(chosen, tick, options);
+    // The amplitude half of the same LFO, on the same terms: a chip that has one
+    // is handed the depth and does the swell itself, and everything else is
+    // handed a level that is already swelling.
+    const swell = chosen.note.tremolo ?? 0;
+    frame.level = levelFor(chosen, tick, options) * (lfo ? 1 : tremoloGain(chosen, tick, timing));
+    if (lfo && engaged && swell > 0) frame.tremoloDb = swell * TREMOLO_MAX_DB;
   }
   return frames;
 }
@@ -427,6 +439,16 @@ function buildLane(
  * console waited — the same note played two ways, which is precisely what
  * having two routes must not mean.
  */
+function modulationElapsed(
+  entry: { start: number },
+  tick: number,
+  timing: TimingPlan,
+): number | null {
+  const seconds = (tick - entry.start) * timing.secondsPerTick - VIBRATO_DELAY_SECONDS;
+  return seconds > 0 ? seconds : null;
+}
+
+/** The same, gated on the note actually asking for vibrato. */
 function vibratoElapsed(
   entry: { note: Note; start: number },
   tick: number,
@@ -434,8 +456,33 @@ function vibratoElapsed(
 ): number | null {
   const depth = entry.note.vibrato;
   if (depth === undefined || depth <= 0) return null;
-  const seconds = (tick - entry.start) * timing.secondsPerTick - VIBRATO_DELAY_SECONDS;
-  return seconds > 0 ? seconds : null;
+  return modulationElapsed(entry, tick, timing);
+}
+
+/**
+ * How much of its written level a note keeps on this tick, 0–1.
+ *
+ * An attenuation rather than a swing about the level, because that is what the
+ * chip with the hardware for it does — a YM2612's LFO only ever *adds*
+ * attenuation. So a note peaks at what it was given and dips by up to
+ * {@link TREMOLO_MAX_DB}, and the two routes to a tremolo are the same shape
+ * rather than one being the louder of the two.
+ *
+ * The delay and the rate are `vibratoElapsed`'s, because on the console that
+ * performs both there is one oscillator behind them (`vibrato.ts` §the rate).
+ */
+function tremoloGain(
+  entry: { note: Note; start: number },
+  tick: number,
+  timing: TimingPlan,
+): number {
+  const depth = entry.note.tremolo;
+  if (depth === undefined || depth <= 0) return 1;
+  const seconds = modulationElapsed(entry, tick, timing);
+  if (seconds === null) return 1;
+  // Sine at the LFO's rate, mapped to [0, 1] so the peak is the written level.
+  const sweep = (1 - math.sin(2 * Math.PI * VIBRATO_HZ * seconds)) / 2;
+  return math.pow(10, (-depth * TREMOLO_MAX_DB * sweep) / 20);
 }
 
 /** How far off its written pitch a note sits on this tick, in cents. */

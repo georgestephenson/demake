@@ -1896,7 +1896,7 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     | Hardware | Modelled | Spent by a demaker |
     | --- | --- | --- |
     | YM2612 LFO (vibrato) | yes | **closed** — `binding/md.ts` programs `$22` and the sensitivity nibble when a part asks |
-    | YM2612 LFO (tremolo) | yes | no — nothing above the chip layer asks for amplitude modulation |
+    | YM2612 LFO (tremolo) | yes | **closed** — `binding/md.ts` programs the AMS nibble and the carriers' enable when a part asks |
     | YM2612 SSG-EG envelope modes | yes | no — those registers are never written |
     | YM2612 channel 3's four-pitch mode | yes | no — `$27`'s mode bits are always zero |
     | HuC6280 LFO | yes | no — the LFO registers appear only in `binding/pce.ts`'s channel *tag*, never in a write |
@@ -2069,6 +2069,41 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     chip model's own refusal is what caught it. So that console pays the full
     per-tick price (+154%), and `packages/audio/test/vibrato.test.ts` holds both
     halves: no LFO programmed there, *and* the pitch still moving.
+
+    **And the LFO's other output is closed too.** A YM2612 has one oscillator
+    and two things come off it, so the amplitude half was the cheapest line on
+    this table once the pitch half existed — and it is read on exactly the same
+    terms. General MIDI puts tremolo depth on **controller 92**, so
+    `score/midi.ts` keeps that one as well and `Note.tremolo` carries it, per
+    note and taking the highest the controller reached while the note sounded.
+
+    Three things about it are the hardware's rather than a restatement of
+    vibrato's. It is an **attenuation rather than a swing**: this chip's LFO only
+    ever *adds* attenuation, so a note peaks at the level it was given and dips
+    below it — and the software route is written to match, or the console without
+    the hardware would be the louder of the two. The rate and the delay are
+    **the same constants**, named in `vibrato.ts` rather than duplicated, because
+    one oscillator drives both and a track whose tremolo ran at a different speed
+    from its vibrato could not be played here at all. And the depth is **two bits
+    against the pitch sweep's three** — 1.4, 5.9 and 11.8 dB — so a tremolo is
+    coarser than a vibrato on this chip, which is the hardware being coarser
+    rather than the demaker being vague.
+
+    The per-operator enable is the part with a trap in it. AM is switched on per
+    *operator* and only the **carriers** should have it, since AM on a modulator
+    moves the timbre rather than the level — and it cannot simply be left set,
+    because the chip parks its amplitude sweep at the *quiet* end while the LFO
+    is off, so an operator carrying the bit through a passage with no tremolo
+    would be permanently attenuated. So `$60`'s datum is one function with two
+    callers: the patch install states it, and `amWrites` restates just the
+    carriers' bytes when only the modulation changed — eight bus writes against a
+    patch's fifty.
+
+    Measured on the example library's `rally.mid` with the controller on its
+    lead: the Mega Drive pays **3.3%** more writes and a Game Boy, which has to
+    write the swell, pays a volume write a tick. Nothing in the example library
+    touches controller 92, so this closed a line and re-baselined nothing —
+    `packages/audio/test/tremolo.test.ts` is what holds it.
 
     **What remains of the line is the HuC6280's LFO**, and it is a refusal
     rather than a gap. That chip has no oscillator: channel two *is* the

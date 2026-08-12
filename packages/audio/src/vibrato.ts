@@ -1,5 +1,5 @@
 /**
- * What the demaker decides about vibrato (doc 17 §Vibrato).
+ * What the demaker decides about vibrato and tremolo (doc 17 §Vibrato).
  *
  * The *depth* is the source's — General MIDI puts it on the modulation wheel
  * and `score/midi.ts` reads it. Everything here is what the source does not
@@ -48,3 +48,29 @@ export const VIBRATO_MAX_CENTS = 50;
  * the wheel was pushed.
  */
 export const VIBRATO_DELAY_SECONDS = 0.15;
+
+/**
+ * Peak attenuation at the top of the tremolo controller, in decibels.
+ *
+ * Six, which is a halving at the bottom of the swing — audibly a tremolo and
+ * short of the pulsing an organ's fastest setting gives. It is an *attenuation*
+ * rather than a swing about the written level because that is what the hardware
+ * does: a YM2612's LFO only ever adds attenuation, so a note peaks at the level
+ * it was given and dips below it, and a software tremolo that oscillated either
+ * side of the level would be louder than the same note on the one console that
+ * performs it in hardware.
+ */
+export const TREMOLO_MAX_DB = 6;
+
+/**
+ * The rate and the delay are the *same* as vibrato's, and that is the hardware.
+ *
+ * A YM2612 has one LFO, and both its outputs — the pitch sweep and the
+ * amplitude sweep — come off it. So a track whose tremolo ran at a different
+ * speed from its vibrato could not be played on the console that has the
+ * hardware for either, and `binding/md.ts` would have to choose which of the
+ * two to honour. Naming them here rather than declaring a second pair is what
+ * makes that impossible to get wrong.
+ */
+export const TREMOLO_HZ = VIBRATO_HZ;
+export const TREMOLO_DELAY_SECONDS = VIBRATO_DELAY_SECONDS;

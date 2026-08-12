@@ -187,6 +187,8 @@ interface PendingNote {
   velocity: number;
   /** The highest the modulation wheel reached while this note has been sounding. */
   vibrato: number;
+  /** Likewise for controller 92, which is the amplitude half of the same idea. */
+  tremolo: number;
 }
 
 /**
@@ -201,6 +203,18 @@ interface PendingNote {
  */
 const CC_MODULATION = 1;
 
+/**
+ * Controller 92: tremolo depth, which is the amplitude half of the wheel.
+ *
+ * The second controller this parser keeps, and it is kept for the first one's
+ * reason: it is the source's own statement of something the demaker can spend,
+ * since every chip here with a volume can be made to swell. It is rarer than
+ * the wheel — a sequencer writes it deliberately rather than by leaning on a
+ * lever — which is why nothing in the example library carries it and why adding
+ * it changed no existing output by a byte.
+ */
+const CC_TREMOLO = 92;
+
 function buildScore(tracks: RawEvent[][], division: number): Score {
   const scale = PPQ / division;
   const tempo: { tick: number; microsecondsPerQuarter: number }[] = [];
@@ -211,6 +225,8 @@ function buildScore(tracks: RawEvent[][], division: number): Score {
   const pending = new Map<string, Map<number, PendingNote>>();
   /** The modulation wheel's standing value per part, which a note-on inherits. */
   const modulation = new Map<string, number>();
+  /** Controller 92's, likewise. */
+  const tremoloDepth = new Map<string, number>();
   let durationTicks = 0;
 
   const keyOf = (track: number, channel: number): string => `t${track}c${channel}`;
@@ -245,9 +261,10 @@ function buildScore(tracks: RawEvent[][], division: number): Score {
         continue;
       }
       if (kind === 0xb0) {
-        if (event.data1 !== CC_MODULATION) continue;
+        const wheel = event.data1 === CC_MODULATION;
+        if (!wheel && event.data1 !== CC_TREMOLO) continue;
         const depth = event.data2 / 127;
-        modulation.set(key, depth);
+        (wheel ? modulation : tremoloDepth).set(key, depth);
         // A controller applies to what is *already* sounding as well as to what
         // starts after it, because that is what a swell into a held note is —
         // and it is the common way the wheel is written. Notes take the highest
@@ -256,7 +273,11 @@ function buildScore(tracks: RawEvent[][], division: number): Score {
         const open = pending.get(key);
         if (open) {
           for (const note of open.values()) {
-            if (depth > note.vibrato) note.vibrato = depth;
+            if (wheel) {
+              if (depth > note.vibrato) note.vibrato = depth;
+            } else if (depth > note.tremolo) {
+              note.tremolo = depth;
+            }
           }
         }
         continue;
@@ -277,7 +298,12 @@ function buildScore(tracks: RawEvent[][], division: number): Score {
         // sequencers mean by it and what a naive parser turns into a stuck note.
         const existing = open.get(noteNumber);
         if (existing) closeNote(noteLists, key, noteNumber, existing, tick, channel);
-        open.set(noteNumber, { tick, velocity, vibrato: modulation.get(key) ?? 0 });
+        open.set(noteNumber, {
+          tick,
+          velocity,
+          vibrato: modulation.get(key) ?? 0,
+          tremolo: tremoloDepth.get(key) ?? 0,
+        });
         continue;
       }
       const start = open.get(noteNumber);
@@ -358,6 +384,7 @@ function closeNote(
     // a source with no modulation in it is byte-for-byte the score it was
     // before this was read at all.
     ...(start.vibrato > 0 ? { vibrato: start.vibrato } : {}),
+    ...(start.tremolo > 0 ? { tremolo: start.tremolo } : {}),
     salience: 0,
   });
 }

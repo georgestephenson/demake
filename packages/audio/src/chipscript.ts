@@ -69,6 +69,15 @@ export interface ChannelFrame {
   /** Peak deviation the vibrato asks for, in cents, where `vibrato` is set. */
   vibratoCents?: number;
   /**
+   * Peak attenuation the tremolo asks for, in decibels, on the same terms.
+   *
+   * Present only where the binding performs amplitude modulation in hardware,
+   * which is the same set of channels `vibrato` is stated for and for the same
+   * reason: they are two outputs of one LFO. Everywhere else the modulation is
+   * already *in* `level`.
+   */
+  tremoloDb?: number;
+  /**
    * A note starts on this tick.
    *
    * The arranger knows where notes begin and the binding does not, so it is

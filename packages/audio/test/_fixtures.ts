@@ -32,6 +32,11 @@ export function modulation(channel: number, tick: number, value: number): Event[
   return [{ tick, bytes: [0xb0 | channel, 0x01, value] }];
 }
 
+/** Controller 92: tremolo depth, the amplitude half of the same idea. */
+export function tremolo(channel: number, tick: number, value: number): Event[] {
+  return [{ tick, bytes: [0xb0 | channel, 0x5c, value] }];
+}
+
 /**
  * A held melodic line with the modulation wheel up, and one without.
  *
@@ -42,10 +47,26 @@ export function modulation(channel: number, tick: number, value: number): Event[
  * carries none.
  */
 export function vibratoFixture(bpm = 120, depth = 127): Uint8Array {
+  return heldPair(bpm, modulation(0, 0, depth));
+}
+
+/**
+ * The same pair with controller 92 up on one of them.
+ *
+ * `vibratoFixture`'s shape exactly, so a test can compare the two routes to a
+ * modulation without the notes being a variable — and so that "the tremolo'd
+ * one swells and the dry one does not" is an assertion about the controller.
+ */
+export function tremoloFixture(bpm = 120, depth = 127): Uint8Array {
+  return heldPair(bpm, tremolo(0, 0, depth));
+}
+
+/** Two channels of identical held notes, with `control` applied to the first. */
+function heldPair(bpm: number, control: Event[]): Uint8Array {
   const events: Event[] = [];
-  // The wheel is set once, before anything sounds — the common way a part that
-  // is played with vibrato throughout is written.
-  events.push(...modulation(0, 0, depth));
+  // The controller is set once, before anything sounds — the common way a part
+  // played with vibrato or tremolo throughout is written.
+  events.push(...control);
   for (let i = 0; i < 4; i += 1) {
     events.push(...note(0, 64 + i, i * PPQ * 2, PPQ * 2 - 10, 100));
     events.push(...note(1, 64 + i, i * PPQ * 2, PPQ * 2 - 10, 100));

@@ -479,6 +479,31 @@ An OPNB is an OPN2 with the LFO removed, so `@demake/chip` refuses `$22` on that
 part by design. Claiming it there is a silent failure: the binding stops writing
 pitches, the chip ignores the registers, and the note comes out straight.
 
+### Tremolo
+
+**The amplitude half of the same oscillator, and read the same way.** General
+MIDI puts tremolo depth on controller 92, so `score/midi.ts` keeps that one
+beside the wheel and `Note.tremolo` carries it — per note, taking the highest
+the controller reached while the note sounded, absent rather than zero when
+nothing touched it.
+
+Three things about it are the hardware's rather than vibrato's restated. It is
+an **attenuation rather than a swing**, because a YM2612's LFO only ever *adds*
+attenuation: a note peaks at the level it was given and dips by up to
+`TREMOLO_MAX_DB` below it, and the software route is written to match or the
+console without the hardware would be the louder of the two. The rate and the
+delay are **the same constants** — one oscillator drives both, so a track whose
+tremolo ran at a different speed from its vibrato could not be played on the
+console that has the hardware for either. And the depth is **two bits against
+the pitch sweep's three**, so a tremolo here is the coarser of the two controls.
+
+The per-operator enable is where the care is. AM is switched on per *operator*
+and only the **carriers** get it, since AM on a modulator moves the timbre
+rather than the level — and it has to be switched off again rather than left
+set, because the chip parks its amplitude sweep at the quiet end while the LFO
+is off. So an operator left carrying the bit through a dry passage is simply
+attenuated, which is a quiet note nothing reports.
+
 The **HuC6280's** LFO is a refusal rather than a gap. That chip has no
 oscillator — channel two *is* the modulator — so vibrato costs a whole voice to
 modulate one other, which on a six-voice console is spending the machine

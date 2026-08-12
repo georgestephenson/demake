@@ -39,6 +39,8 @@ import {
   carriersOf,
   fnumAt,
   type FmBindingOptions,
+  amsFor,
+  amWrites,
   fmsFor,
   lfoRateIndex,
   lfoRegister,
@@ -94,6 +96,14 @@ export function mdBinding(
   const patches = options.patches ?? [];
   /** Which patch each FM channel currently holds, so it is installed once. */
   const installed: (FmPatch | undefined)[] = new Array(FM_CHANNELS).fill(undefined) as undefined[];
+  /**
+   * Whether each channel's carriers currently have their AM enable set.
+   *
+   * Beside `installed` rather than inside it, because a tremolo belongs to a
+   * *note* and the same patch plays notes with and without one — so this is the
+   * one part of a channel's register state a patch does not decide.
+   */
+  const modulated: boolean[] = new Array(FM_CHANNELS).fill(false) as boolean[];
 
   return {
     console,
@@ -123,6 +133,9 @@ export function mdBinding(
       }
       out.push(...psg.init().map(asPsg));
       installed.fill(undefined);
+      // The boot's `$60` writes have not happened yet — a patch has not been
+      // installed — so no carrier has its AM bit set and the shadow says so.
+      modulated.fill(false);
       return out;
     },
 
@@ -138,7 +151,15 @@ export function mdBinding(
         out.push(...ym(0x22, wants ? lfoRegister(lfoRateIndex(VIBRATO_HZ)) : 0x00));
       }
       for (let channel = 0; channel < FM_CHANNELS; channel += 1) {
-        encodeFm(out, channel, next[channel]!, prev?.[channel], patches[channel], installed);
+        encodeFm(
+          out,
+          channel,
+          next[channel]!,
+          prev?.[channel],
+          patches[channel],
+          installed,
+          modulated,
+        );
       }
       out.push(
         ...psg
@@ -233,11 +254,18 @@ function encodeFm(
   before: ChannelFrame | undefined,
   patch: FmPatch | undefined,
   installed: (FmPatch | undefined)[],
+  modulated: boolean[],
 ): void {
   const wanted = patch ?? DEFAULT_PATCH;
+  // A tremolo is per *note*, so whether the carriers have their AM bit set is
+  // part of what a channel's registers currently say — and it is tracked beside
+  // the patch rather than folded into it, because the same patch plays notes
+  // with and without one.
+  const wantAm = (frame.on ? (frame.tremoloDb ?? 0) : 0) > 0;
   if (installed[channel] !== wanted) {
-    out.push(...patchWrites(wanted, channel).map((write) => ({ ...write, chip: 0 })));
+    out.push(...patchWrites(wanted, channel, wantAm).map((write) => ({ ...write, chip: 0 })));
     installed[channel] = wanted;
+    modulated[channel] = wantAm;
     // A fresh patch means the previous tick says nothing about the chip's state,
     // so everything below is stated rather than diffed.
     before = undefined;
@@ -246,6 +274,11 @@ function encodeFm(
   if (!frame.on) {
     if (before === undefined || before.on) out.push(...ymKey(channel, 0));
     return;
+  }
+
+  if (modulated[channel] !== wantAm) {
+    out.push(...amWrites(wanted, channel, wantAm).map((write) => ({ ...write, chip: 0 })));
+    modulated[channel] = wantAm;
   }
 
   const pitch = fnumFor(frame.hz);
@@ -267,17 +300,24 @@ function encodeFm(
   // position is quantised rather than spent — this is the one part of this
   // console's stereo the PSG half does not share (its own is `psg.ts`'s).
   //
-  // The same byte carries the LFO sensitivity, so the two are one write: the
-  // panning in bits 7-6 and the vibrato depth in bits 2-0. Writing either
+  // The same byte carries *both* LFO sensitivities, so the three are one write:
+  // the panning in bits 7-6, the tremolo depth in bits 5-4 and the vibrato
+  // depth in bits 2-0. Writing either
   // without the other is what would silently cancel a placement or a vibrato,
   // which is why neither is emitted on its own.
   const sides = panSides(frame.pan);
   const panBits =
-    (sides.left ? 0x80 : 0) | (sides.right ? 0x40 : 0) | fmsFor(frame.vibratoCents ?? 0);
+    (sides.left ? 0x80 : 0) |
+    (sides.right ? 0x40 : 0) |
+    (amsFor(frame.tremoloDb ?? 0) << 4) |
+    fmsFor(frame.vibratoCents ?? 0);
   const wasSides = panSides(before?.pan);
   const beforePan =
     before?.on === true
-      ? (wasSides.left ? 0x80 : 0) | (wasSides.right ? 0x40 : 0) | fmsFor(before.vibratoCents ?? 0)
+      ? (wasSides.left ? 0x80 : 0) |
+        (wasSides.right ? 0x40 : 0) |
+        (amsFor(before.tremoloDb ?? 0) << 4) |
+        fmsFor(before.vibratoCents ?? 0)
       : -1;
   if (panBits !== beforePan) out.push(...ymChannel(channel, 0xb4, panBits));
 

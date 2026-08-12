@@ -59,6 +59,16 @@ export interface Note {
    * with is the highest the wheel reached while it sounded.
    */
   vibrato?: number;
+  /**
+   * How much tremolo the source asked for on this note, 0–1.
+   *
+   * Controller 92, which is where General MIDI puts tremolo depth — the
+   * amplitude half of what the modulation wheel does to pitch. Read on exactly
+   * the terms {@link Note.vibrato} is read on, per note and taking the highest
+   * the controller reached while the note sounded, and absent rather than zero
+   * when nothing touched it.
+   */
+  tremolo?: number;
 }
 
 /** A tempo-map point: microseconds per quarter note from `tick` onward. */
