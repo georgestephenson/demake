@@ -1252,11 +1252,15 @@ packages/vb/         @demake/vb — a self-hosted Virtual Boy core, and the only
                      rather than a wrong picture, and `vbFramebufferBit` has one
                      definition for that reason. Its CPU is written against the
                      published instruction set and driven in its tests by core's
-                     own encoder. The sound processor, the affine and h-bias
-                     world modes, the hardware timer and the LED brightness
-                     curve are absent rather than half-implemented, and the
-                     first of those is the only thing between this console and
-                     any audio at all
+                     own encoder. Its sound is @demake/chip's VSU, advanced by
+                     the same crystal the processor counts at a quarter of it,
+                     with `vsuTap` as the window doc 16's Level A reads through
+                     — and its register page answers **zero** when read rather
+                     than the byte last written, because nothing on this chip
+                     reads back and a shadow kept to read would be a second
+                     model of it. The affine and h-bias world modes, the
+                     hardware timer and the LED brightness curve are absent
+                     rather than half-implemented
 packages/ngp/        @demake/ngp — a self-hosted Neo Geo Pocket core, mono *and*
                      Color, decided by a constructor argument the way @demake/wsc
                      is. Its display has no memory of its own, on that core's

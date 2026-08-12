@@ -728,7 +728,8 @@ the backend today, and either is a reason to revisit rather than to work around.
 
    Two things it still does not have. The **in-game audio driver** is one, and
    it is blocked on nothing but itself now: a V810 stream player would be the
-   processor's first, and the cartridge it goes in exists. The other is the
+   processor's first, the cartridge it goes in exists, and `@demake/vb` has the
+   chip to prove it against. The other is the
    depth ladder itself — `VB_DEPTH`'s three numbers are still a *proposal*,
    because "how far in front" is a value no `.dmt` says and no Demakefile may
    (doc 14 §Scope), and the maintainer's call rather than an agent's.
@@ -745,12 +746,16 @@ the backend today, and either is a reason to revisit rather than to work around.
    so this console emits no merge routine at all, the sixth in the matrix to do
    so.
 
-   What remains is the **in-game driver**, and it is blocked on the backend rather
-   than on anything of its own: a V810 stream player would be the *processor's*
-   first, on `arm-player.ts`'s and `mos-player.ts`'s precedent, and it has nothing
-   to be embedded in until `demake build -c vb` exists. `@demake/vb`'s VSU page
-   accepts writes and generates nothing until then, which is why the in-game
-   audio column reads `—` while the music/sfx one reads `yes`.
+   What remains is the **in-game driver**, and half of what blocked it is gone:
+   `@demake/vb` has its sound processor now — `@demake/chip`'s VSU behind the
+   console's own register page, advanced by the same crystal the CPU counts at a
+   quarter of it, with a tap for doc 16's Level A — so a driver written for this
+   console has somewhere to be proven. What is left is the player itself, and it
+   would be the *processor's* first, on `arm-player.ts`'s and `mos-player.ts`'s
+   precedent. Its clock is settled by the backend rather than open: this
+   cartridge takes no interrupt anywhere and its main loop already waits a frame
+   per pass on `XPEND`, so the driver ticks with the loop at 50.2 Hz — the
+   slowest rate in the matrix, and the one `vbBinding.fitRate` already returns.
 
 68000 (Mega Drive, then Neo Geo), 65816 (SNES, plus the SPC700 for its audio) and
 ARM (GBA, NDS) slot in wherever Tier 1 breadth is wanted ahead of Tier 2 depth;

@@ -20,13 +20,27 @@
  *     makes them visible. That is why {@link Vb.runFrame} draws once and then
  *     raises, rather than modelling a beam.
  *
- * What is **absent rather than half-implemented**: the sound processor (the VSU
- * is a register page that accepts writes and generates nothing — `demake build`
- * emits no audio driver for this console yet, doc 13 §Console rollout), the
- * hardware timer, the link port, and cartridge RAM beyond a plain array. Each is
- * a gap rather than a decision, and the first of them is the only thing between
- * this console and an in-game audio driver.
+ * The **sound is `@demake/chip`'s VSU**, not a second copy and not a register
+ * page that swallows writes: six channels, five of them wavetables, advanced by
+ * the same master clock the processor counts (twenty megahertz over four).
+ * `vsuTap` is the window doc 16's Level A proof reads through, and it *observes*
+ * rather than intercepts — a ROM that had to be instrumented to be testable
+ * would not be the ROM that ships.
+ *
+ * Two things about that wiring are this console's. **Nothing on the chip reads
+ * back**, so the register page answers zero rather than the byte last written:
+ * keeping a shadow to read would be a second model of the chip, and the one
+ * thing worse than an absent peripheral is a peripheral that agrees with itself.
+ * And **the chip is advanced only when something is listening**, which is safe
+ * here for the reason it is not on a Mega Drive: there is no status byte and no
+ * timer, so a cartridge cannot tell whether it ran.
+ *
+ * What is **absent rather than half-implemented**: the hardware timer, the link
+ * port, and cartridge RAM beyond a plain array. Each is a gap rather than a
+ * decision.
  */
+
+import { Vsu, VSU_CLOCK_HZ, type SampleSink } from "@demake/chip";
 
 import {
   VB_INTCLR,
@@ -65,6 +79,15 @@ export const FRAME_HZ = 50.2;
 /** Processor cycles in one frame. */
 export const CYCLES_PER_FRAME = Math.round(MASTER_HZ / FRAME_HZ);
 
+/**
+ * Master cycles per sound-processor clock.
+ *
+ * Four, and it divides exactly: `VSU_CLOCK_HZ` is five megahertz against this
+ * machine's twenty, so nothing about the audio rounds. Derived rather than
+ * written down, so a change to either number is caught here.
+ */
+const VSU_DIVIDER = MASTER_HZ / VSU_CLOCK_HZ;
+
 /** The exception code the video processor's interrupt carries. */
 const INT_VIP_CODE = 0xfe40;
 
@@ -100,8 +123,33 @@ export class Vb implements Bus {
   /** Cartridge RAM, which a demade board does not use. */
   readonly sram = new Uint8Array(SRAM_SIZE);
 
-  /** The sound processor's register page, which accepts writes and does nothing. */
-  readonly vsu = new Uint8Array(0x600);
+  /**
+   * The sound processor — `@demake/chip`'s model, not a second one.
+   *
+   * The same object the schedule was fitted against, which is what makes doc
+   * 16's Level A a comparison between a schedule and a cartridge rather than
+   * between two copies of one piece of code.
+   */
+  readonly vsu = new Vsu();
+
+  /**
+   * Every write the chip receives, observed rather than intercepted.
+   *
+   * `reg` is the **byte offset from the chip's base**, which is what a schedule's
+   * register number is on this console: the waveform tables, the modulation table
+   * and the six channel blocks are one address space rather than a port and an
+   * index (`@demake/chip`'s `Vsu.write`).
+   */
+  vsuTap: ((reg: number, value: number) => void) | undefined = undefined;
+
+  /**
+   * Where the chip's samples go, if anywhere.
+   *
+   * Absent by default, and the chip is not advanced without it — a demade
+   * cartridge cannot observe this hardware by any other route, so a machine
+   * nobody is listening to should cost nothing for audio.
+   */
+  audioSink: SampleSink | undefined = undefined;
 
   /** The video processor: memory, registers and both eyes. */
   readonly vip = new Vip();
@@ -116,6 +164,9 @@ export class Vb implements Bus {
 
   /** Cycles owed to the next frame boundary. */
   private cycles = 0;
+
+  /** Master cycles the sound processor has not been charged for yet. */
+  private vsuCycles = 0;
 
   /** Which keys are down, as the pad word a cartridge will read. */
   private held = VB_KEY_SGN;
@@ -167,7 +218,8 @@ export class Vb implements Bus {
       case 0:
         return this.vip.read(at);
       case 1:
-        return this.vsu[at & 0x5ff] as number;
+        // Nothing on this chip reads back, so there is nothing to answer with.
+        return 0;
       case 2:
         return this.hardware(at);
       case 5:
@@ -195,7 +247,8 @@ export class Vb implements Bus {
         return;
       }
       case 1:
-        this.vsu[at & 0x5ff] = byte;
+        this.vsu.write(at & 0x7ff, byte);
+        this.vsuTap?.(at & 0x7ff, byte);
         return;
       case 2:
         this.setHardware(at, byte);
@@ -254,6 +307,18 @@ export class Vb implements Bus {
    */
   step(): number {
     const cycles = this.cpu.step();
+    // The sound processor runs off the same crystal the processor counts, at a
+    // quarter of it — twenty megahertz over four is the five the chip model
+    // states — so a whole number of chip clocks comes out of every instruction
+    // and the remainder is carried rather than dropped.
+    if (this.audioSink) {
+      this.vsuCycles += cycles;
+      const clocks = (this.vsuCycles / VSU_DIVIDER) | 0;
+      if (clocks > 0) {
+        this.vsuCycles -= clocks * VSU_DIVIDER;
+        this.vsu.run(clocks, this.audioSink);
+      }
+    }
     this.cycles += cycles;
     if (this.cycles >= CYCLES_PER_FRAME) {
       this.cycles -= CYCLES_PER_FRAME;
