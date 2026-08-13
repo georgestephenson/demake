@@ -7,16 +7,17 @@
  * cartridge that played a different arrangement from the preview would make the
  * schedule oracle report a divergence three layers from its cause.
  *
- * Seven families build a *cartridge of their own* today: the Game Boy, the NES,
- * the PC Engine, the Sega 8-bits, the Mega Drive, the Game Boy Advance and both
- * WonderSwans. The rest have drivers but
+ * Nine families build a *cartridge of their own* today: the Game Boy, the NES,
+ * the PC Engine, the Sega 8-bits, the Mega Drive, both ARM handhelds, the
+ * Virtual Boy and both WonderSwans. The rest have drivers but
  * only inside a game, because that is what a game needed and a cartridge whose
  * only job is one track is a different caller. What any of them costs is no
  * longer an estimate: the stream player belongs to the *processor* and already
  * exists for all of them, so what a console adds is a boot sequence, a clock and
  * a cartridge wrapper — which is the whole of the difference between `gb.ts`,
- * `nes.ts`, `pce.ts`, `sms.ts`, `md.ts`, `gba.ts` and `wsc.ts`, three of which
- * share a player with another console and two of which cover two machines each.
+ * `nes.ts`, `pce.ts`, `sms.ts`, `md.ts`, `gba.ts`, `nds.ts`, `vb.ts` and
+ * `wsc.ts`, four of which share a player with another console and two of which
+ * cover two machines each.
  *
  * **A standalone cartridge is not a game with the game taken out**, and two of
  * them are where that stops being a turn of phrase. On the Mega Drive a game
@@ -102,6 +103,7 @@ const DRIVERS: Readonly<Record<string, AudioRomFamily>> = {
   gg: "sms",
   md: "md",
   gba: "gba",
+  nds: "nds",
   vb: "vb",
   wsc: "wsc",
   // The mono machine's sound hardware *is* the colour machine's, so this is one
@@ -120,11 +122,14 @@ const DRIVERS: Readonly<Record<string, AudioRomFamily>> = {
  * memory — so what a family is here is a boot sequence, a clock and a cartridge
  * wrapper rather than a driver.
  *
- * The seventh is the first whose console's second sound device is not a chip:
- * six of a Game Boy Advance's ten voices are a software mixer, so that
- * cartridge's idle loop is the only one in the set that is not idle.
+ * Two of the nine are worth naming. The Game Boy Advance is the first whose
+ * console's second sound device is not a chip — six of its ten voices are a
+ * software mixer, so that cartridge's idle loop is the only one in the set that
+ * is not idle. And the Nintendo DS is the only one whose **main processor does
+ * nothing at all**: its sound channels answer the ARM7 alone, the loader enters
+ * both binaries, and the ARM9's whole program is a branch to itself.
  */
-export type AudioRomFamily = "gb" | "nes" | "pce" | "sms" | "md" | "gba" | "vb" | "wsc";
+export type AudioRomFamily = "gb" | "nes" | "pce" | "sms" | "md" | "gba" | "nds" | "vb" | "wsc";
 
 /**
  * The clock a *game's* driver rides on each chip that has one.
@@ -327,6 +332,7 @@ const SUFFIXES: Readonly<Record<string, string>> = {
   gg: ".gg",
   md: ".md",
   gba: ".gba",
+  nds: ".nds",
   vb: ".vb",
   wsc: ".wsc",
   ws: ".ws",
@@ -394,6 +400,8 @@ async function buildFor(
       return (await import("./md.js")).buildMdAudioRom(script, options);
     case "gba":
       return (await import("./gba.js")).buildGbaAudioRom(script, options);
+    case "nds":
+      return (await import("./nds.js")).buildNdsAudioRom(script, options);
     case "vb":
       return (await import("./vb.js")).buildVbAudioRom(script, options);
     case "wsc":

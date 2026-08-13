@@ -1892,7 +1892,7 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     effects in the cartridge with doc 16's Level A proof over all of them. Seven of
     them now also build a *standalone* audio cartridge — `demake gen … --format
     rom` reaches the Game Boy, the NES, the PC Engine, both Sega 8-bits, the
-    Mega Drive, the Game Boy Advance, the Virtual Boy and both WonderSwans — and
+    Mega Drive, both ARM handhelds, the Virtual Boy and both WonderSwans — and
     the rest do not,
     because a cartridge whose only job is one
     track is what a later caller needed and not what a game did. **The sixth is
@@ -1915,20 +1915,27 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     driver and the same schedules in the format that console's own players read,
     but it is a RAM image rather than a cartridge.
 
-    **The Nintendo DS is the next one and it is nearly free, which is worth
-    writing down before somebody re-derives it.** Everything the ninth standalone
-    needs exists: `nds-driver.ts` exports the console's whole share — the port
-    map, the write routine, the bank copy, the timer pair and the main loop — so
-    `rom/nds.ts` is a boot, one stream and a wrapper, and `packNdsRom` already
-    takes two binaries. It is also the only cartridge in the set whose **main
+    **The ninth is the Nintendo DS, and it cost what that estimate said it
+    would.** `nds-driver.ts` already exported the console's whole share — the
+    port map, the write routine, the bank copy, the timer pair and the main loop
+    — so `rom/nds.ts` is a boot, one stream and a wrapper, and `packNdsRom`
+    already took two binaries. It is the only cartridge in the set whose **main
     processor does nothing at all**: the sound channels answer the ARM7 alone and
     the loader enters both programs, so the ARM9's whole contribution is a branch
-    to itself and there is no upload, no handshake and no request. Two details
-    are known and cost nothing: the shared main loop calls `AudioTick` where a
-    single-stream driver's entry is `Tick`, so both names go on one address; and
-    a tick is attributed by the **ARM7's** program counter, which is the first
-    time doc 16's proof has had to look at a processor the cartridge is not
-    nominally for.
+    to itself and there is no upload, no handshake and no request. Its clock is
+    the same one a game gets, which no other two-caller console here can say —
+    the tally is a hardware register rather than something polled, so there is
+    nothing for a caller to drift against.
+
+    Two details cost the time rather than the typing, and both are now written
+    into the code that needed them. The shared main loop calls `AudioTick` where
+    a single-stream driver's own entry is `Tick`, so both names go on one
+    address. And a tick here is attributed by the **ARM7's** program counter,
+    which made this the first standalone whose proof could not sample one at all:
+    a host step is several of that processor's instructions, so sampling saw one
+    arrival as none. `_rom-harness.ts` grew the `watch` hook
+    `packages/demotic/test/_audio-battery.ts` already had for exactly this, one
+    layer up.
 
     **The seventh is where that distinction stops mattering again, and it is the
     first standalone on a console whose second sound device is not a chip.**

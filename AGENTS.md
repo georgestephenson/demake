@@ -1066,9 +1066,9 @@ four pinned byte-identical to the CLI's by
 
 Still to come for audio: `bin`/`asm`/`c` emit, a _standalone_ audio cartridge for
 the consoles that still have none — the Game Boy, the **NES**, the **PC Engine**,
-both **Sega 8-bits**, the **Mega Drive**, the **Game Boy Advance**, the **Virtual
+both **Sega 8-bits**, the **Mega Drive**, both **ARM handhelds**, the **Virtual
 Boy** and both **WonderSwans** build one today,
-and the Neo Geo Pocket Color and the Nintendo DS have drivers only inside a
+and the Neo Geo Pocket Color has a driver only inside a
 game, while the Super Nintendo's writes an `.spc` rather than a cartridge. What
 each of
 them costs is no longer an estimate but a measurement: the stream player belongs
@@ -1721,7 +1721,11 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
                      polls, because the sample transfer's own interrupt counts
                      the blocks out, so both get 128 Hz exactly and the standalone
                      calls resolveGbaClock rather than mirroring it. The DS has
-                     one caller so far.
+                     two callers as well — a game (nds-game.ts) and the ninth
+                     standalone cartridge (nds.ts), which is the only one in the
+                     set whose *main processor does nothing at all*: the sound
+                     channels answer the ARM7 alone and the loader enters both
+                     binaries, so the ARM9's whole program is a branch to itself.
                      TLCS-900/H: ngp-driver.ts and ngp-game.ts, and the only
                      driver that has to *ask* for its chip — a T6W28's own bus is
                      the Z80 sound processor's, so two bytes of the main CPU's

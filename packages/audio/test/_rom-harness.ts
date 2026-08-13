@@ -23,6 +23,7 @@ import { Gba } from "@demake/gba";
 import { Md } from "@demake/md";
 import { Nes } from "@demake/nes";
 import { Pce } from "@demake/pce";
+import { Nds } from "@demake/nds";
 import { Sms } from "@demake/sms";
 import { Vb } from "@demake/vb";
 import { Wsc } from "@demake/wsc";
@@ -94,6 +95,18 @@ export class AudioRomRunner {
   private readonly pc: () => number;
   /** Run one instruction, under whichever name this core gives it. */
   private readonly stepOnce: () => void;
+  /**
+   * Where a core can say when the driver *entered* its tick, rather than being
+   * asked afterwards.
+   *
+   * Absent on every console but one, because on the rest one host step is one
+   * instruction of the processor the driver runs on and the program counter
+   * afterwards is the same answer. A Nintendo DS's driver runs on the **other**
+   * processor, so a host step is several of its instructions and sampling sees
+   * one arrival as none or as two — the same reason `_audio-battery.ts` grew a
+   * `watch` hook one layer up.
+   */
+  private readonly watch: ((onEnter: () => void) => void) | undefined;
   /**
    * Where a tick *ends*, when the driver says so.
    *
@@ -183,6 +196,14 @@ export class AudioRomRunner {
       const machine = new Gba(built.bytes);
       machine.apuTap = push;
       this.machine = machine;
+    } else if (built.family === "nds") {
+      // The ninth family, and the only cartridge here whose driver runs on a
+      // processor the console's own program cannot reach. The loader puts both
+      // binaries in main RAM and enters both, so booting one is the whole of the
+      // hand-off — there is nothing to upload and nothing to wait for.
+      const machine = new Nds(built.bytes);
+      machine.arm7.spuTap = push;
+      this.machine = machine;
     } else if (built.family === "vb") {
       // The eighth family and the first on this processor. Nothing on this chip
       // reads back, so `@demake/vb` answers zero on that page and the tap is
@@ -204,6 +225,14 @@ export class AudioRomRunner {
     }
 
     const machine = this.machine;
+    this.watch =
+      machine instanceof Nds
+        ? (onEnter) => {
+            machine.arm7.pcTap = (pc) => {
+              if (pc === this.tickAddress) onEnter();
+            };
+          }
+        : undefined;
     this.pc =
       machine instanceof Wsc
         ? () => machine.cpu.ip
@@ -229,8 +258,12 @@ export class AudioRomRunner {
   captureBoot(): Capture[] {
     const writes: Capture[] = [];
     this.current = writes;
+    let reached = false;
+    this.watch?.(() => {
+      reached = true;
+    });
     let guard = 0;
-    while (this.pc() !== this.tickAddress) {
+    while (!(this.watch ? reached : this.pc() === this.tickAddress)) {
       this.stepOnce();
       guard += 1;
       if (guard > 10_000_000) throw new Error("audio rom: the driver never reached its first tick");
@@ -249,14 +282,20 @@ export class AudioRomRunner {
    */
   capture(count: number): TickWrites[] {
     const groups: Capture[][] = [];
+    const open = (): void => {
+      this.current = [];
+      groups.push(this.current);
+    };
+    // Where the core can say when the driver entered its tick, it says so — and
+    // the group opens *inside* that report rather than after the host step, so a
+    // write the same step made afterwards belongs to the tick that made it.
+    this.watch?.(open);
     let guard = 0;
     while (groups.length <= count) {
       this.stepOnce();
-      if (this.pc() === this.tickAddress) {
-        this.current = [];
-        groups.push(this.current);
-      } else if (this.pc() === this.endAddress) {
-        this.current = undefined;
+      if (this.watch === undefined) {
+        if (this.pc() === this.tickAddress) open();
+        else if (this.pc() === this.endAddress) this.current = undefined;
       }
       guard += 1;
       if (guard > 200_000_000) throw new Error("audio rom: the driver stopped ticking");

@@ -25,6 +25,8 @@ import {
   GB_ROM_SIZE,
   NES_CHR_SIZE,
   NES_HEADER_SIZE,
+  NDS_ARM7_RAM,
+  NDS_ARM9_RAM,
   NES_PRG_SIZES,
   mdChecksum,
   MD_CHECKSUM_START,
@@ -149,6 +151,7 @@ describe("gb audio cartridge", () => {
         "gg",
         "md",
         "gba",
+        "nds",
         "vb",
         "wsc",
         "ws",
@@ -644,6 +647,44 @@ describe("gba audio cartridge", () => {
     expect(offset).toBeGreaterThanOrEqual(0);
     expect(left.slice(offset, offset + want[0].length)).toEqual(want[0]);
     expect((heard[1] as number[]).slice(offset, offset + want[1].length)).toEqual(want[1]);
+  });
+});
+
+describe("nds audio cartridge", () => {
+  it("is a cartridge of two binaries, one of which does nothing", async () => {
+    const { bytes, family, suffix } = await buildAudioRom(trackFor("nds"));
+    expect(family).toBe("nds");
+    expect(suffix).toBe(".nds");
+    // Two programs and two entry addresses, because the loader copies both into
+    // the memory they share and enters each — which is the whole of this
+    // console's hand-off, and why nothing here uploads anything.
+    const read = (at: number): number =>
+      (bytes[at] as number) |
+      ((bytes[at + 1] as number) << 8) |
+      ((bytes[at + 2] as number) << 16) |
+      ((bytes[at + 3] as number) << 24);
+    expect(read(0x28)).toBe(NDS_ARM9_RAM);
+    expect(read(0x38)).toBe(NDS_ARM7_RAM);
+    // The main processor's whole program: a branch to itself. It cannot be
+    // omitted, because the header names it and the loader enters it — and it has
+    // nothing to do, because the sound channels answer the other processor.
+    const arm9 = read(0x20);
+    expect(read(0x2c)).toBe(4);
+    expect(bytes[arm9 + 3]).toBe(0xea);
+  });
+
+  it("plays from the processor a game could not reach it through", async () => {
+    // The claim this console makes twice over. A tick here is attributed by the
+    // **ARM7's** program counter, because one host step is several of that
+    // processor's instructions — so the harness watches its instruction stream
+    // rather than sampling a counter, exactly as `_audio-battery.ts` does for a
+    // game (`_rom-harness.ts` §watch).
+    const script = trackFor("nds");
+    const runner = await AudioRomRunner.create(script);
+    const machine = runner.machine as unknown as { arm7: { cpu: { pc: number } } };
+    const before = machine.arm7.cpu.pc;
+    runner.capture(4);
+    expect(machine.arm7.cpu.pc).not.toBe(before);
   });
 });
 
