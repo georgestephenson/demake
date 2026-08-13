@@ -759,6 +759,16 @@ the backend today, and either is a reason to revisit rather than to work around.
    already returns. What a *game* adds to that is a request protocol, a second
    stream and a call from its own loop.
 
+   Two of those are already costed. The player needs its **preemption arms**
+   first — a steal mask, a record path and a skip path, on `arm-player.ts`'s
+   shape — because the standalone owns the chip outright and emits none of them.
+   And this driver will be the sixth in the matrix with **no merge arm at all**,
+   which is the chip rather than a simplification: nothing on a VSU is shared
+   between channels, so the run format's merge bit never appears in a schedule
+   for this console and `shadowPlan` is handed no merge set. That makes it the
+   simplest of the eleven in one direction and, at 50.2 Hz, the coarsest in
+   another.
+
 68000 (Mega Drive, then Neo Geo), 65816 (SNES, plus the SPC700 for its audio) and
 ARM (GBA, NDS) slot in wherever Tier 1 breadth is wanted ahead of Tier 2 depth;
 they are ordinary tilemap machines and carry no surprises beyond their encoders.
