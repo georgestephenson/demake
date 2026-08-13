@@ -1915,6 +1915,21 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     driver and the same schedules in the format that console's own players read,
     but it is a RAM image rather than a cartridge.
 
+    **The Nintendo DS is the next one and it is nearly free, which is worth
+    writing down before somebody re-derives it.** Everything the ninth standalone
+    needs exists: `nds-driver.ts` exports the console's whole share — the port
+    map, the write routine, the bank copy, the timer pair and the main loop — so
+    `rom/nds.ts` is a boot, one stream and a wrapper, and `packNdsRom` already
+    takes two binaries. It is also the only cartridge in the set whose **main
+    processor does nothing at all**: the sound channels answer the ARM7 alone and
+    the loader enters both programs, so the ARM9's whole contribution is a branch
+    to itself and there is no upload, no handshake and no request. Two details
+    are known and cost nothing: the shared main loop calls `AudioTick` where a
+    single-stream driver's entry is `Tick`, so both names go on one address; and
+    a tick is attributed by the **ARM7's** program counter, which is the first
+    time doc 16's proof has had to look at a processor the cartridge is not
+    nominally for.
+
     **The seventh is where that distinction stops mattering again, and it is the
     first standalone on a console whose second sound device is not a chip.**
     `demake gen … --format rom -c gba` builds a `.gba`, `arm-player.ts` and
