@@ -43,6 +43,7 @@
  * decides what the game does.
  */
 
+import { VB_STOP, type VbGameAudio } from "@demake/audio";
 import {
   label,
   VB_BGMAP,
@@ -137,6 +138,7 @@ import {
   T1,
   T2,
   ZERO,
+  LP,
   ramDisp,
 } from "./regs.js";
 import {
@@ -275,6 +277,12 @@ export interface VbEmitOptions {
   scenePalettes?: ReadonlyMap<string, Uint8Array>;
   /** Which sub-palette a level's tile art was fitted into. */
   levelPalette?: number;
+  /** The audio driver this game embeds, where it has one. */
+  audio?: VbGameAudio;
+  /** Driver index of each of the program's sounds, or `-1` when unsupplied. */
+  effectIndices?: readonly number[];
+  /** Which track each scene asks for, by scene index; `-1` for none. */
+  sceneTracks?: readonly number[];
 }
 
 /**
@@ -334,10 +342,10 @@ export function emitProgram(ctx: VbCtx, options: VbEmitOptions = {}): void {
   }
 
   emitReset(ctx, options);
-  emitMainLoop(ctx);
+  emitMainLoop(ctx, options.audio !== undefined);
   emitInput(ctx);
   emitTickDispatch(ctx, scenes);
-  emitSceneChange(ctx, scenes);
+  emitSceneChange(ctx, scenes, options);
 
   for (const scene of scenes) {
     emitSceneTick(ctx, scene, levelFor.get(scene.index));
@@ -353,6 +361,7 @@ export function emitProgram(ctx: VbCtx, options: VbEmitOptions = {}): void {
   // odd length would start on an odd address, and this processor jumps to the
   // even one below it.
   for (const level of levels) emitTileAt(ctx, level);
+  if (options.audio) options.audio.emitCode(asm);
   ctx.finish();
 
   // --- data ------------------------------------------------------------------
@@ -406,6 +415,23 @@ export function emitProgram(ctx: VbCtx, options: VbEmitOptions = {}): void {
       asm.label(scenePaletteLabel(scene));
       asm.bytes(palette);
     }
+  }
+
+  // And the data only the audio reads: the scene change reads the track table
+  // and the driver walks the schedules.
+  if (options.audio) {
+    if (program.tracks.length > 0) {
+      asm.align(4);
+      asm.label("SceneTracks");
+      // One byte per scene: the request value that starts its track, or the one
+      // that stops the music. A table rather than a dispatch because a scene
+      // change already costs a redraw, and this is the cheapest thing in it.
+      for (const scene of scenes) {
+        const track = options.sceneTracks?.[scene.index] ?? -1;
+        asm.db(track < 0 ? VB_STOP : track + 1);
+      }
+    }
+    options.audio.emitData(asm);
   }
 
   asm.align(4);
@@ -521,6 +547,13 @@ function emitReset(ctx: VbCtx, options: VbEmitOptions): void {
   }
   asm.jal("BuildFrame");
   asm.jal("UploadFrame");
+
+  if (options.audio) {
+    asm.jal("AudioInit");
+    // And the entry scene's track is asked for here rather than at the first
+    // scene *change*, which never happens for the scene a game starts on.
+    if (program.tracks.length > 0) asm.jal("SceneMusic");
+  }
 
   // Drawing, and then the screen, come on last: nothing above this was visible.
   const on = poker(ctx);
@@ -710,7 +743,7 @@ function emitClearState(ctx: VbCtx): void {
  * on a machine that could have had the interrupt and gains nothing from it,
  * because a loop that waits either way is a loop that waits.
  */
-function emitMainLoop(ctx: VbCtx): void {
+function emitMainLoop(ctx: VbCtx, audio: boolean): void {
   const { asm } = ctx;
   const wait = ctx.unique("waitFrame");
   asm.label("Main");
@@ -725,6 +758,12 @@ function emitMainLoop(ctx: VbCtx): void {
   asm.movImm32(0xffff, E1);
   asm.sth(E1, VB_INTCLR - VB_INTPND, E0);
   asm.jal("UploadFrame");
+  // One driver tick a pass, which on this console *is* one a frame: the wait
+  // above is what makes it so, and it is why this is the only frame-clocked
+  // console here with no counter and no handler to count in (`rom/vb-game.ts`).
+  // After the upload rather than before it, because the blanking gap belongs to
+  // the picture and a tick is a few hundred cycles of somebody else's.
+  if (audio) asm.jal("AudioTick");
   ctx.jump("Main");
 }
 
@@ -815,8 +854,9 @@ function emitTickDispatch(ctx: VbCtx, scenes: readonly SceneCtx[]): void {
   ctx.leave();
 }
 
-function emitSceneChange(ctx: VbCtx, scenes: readonly SceneCtx[]): void {
+function emitSceneChange(ctx: VbCtx, scenes: readonly SceneCtx[], options: VbEmitOptions): void {
   const { asm, layout } = ctx;
+  const tracks = options.audio !== undefined && ctx.program.tracks.length > 0;
   asm.label("SceneChange");
   ctx.enter();
   const go = ctx.unique("changeGo");
@@ -828,12 +868,26 @@ function emitSceneChange(ctx: VbCtx, scenes: readonly SceneCtx[]): void {
   asm.label(go);
   asm.stb(E0, ramDisp(layout.scene), RAM);
   storeByte(ctx, layout.pending, 0xff);
+  if (tracks) asm.jal("SceneMusic");
   asm.jal("ResetScene");
   emitSeedRng(ctx);
   emitClearState(ctx);
   asm.jal("UpdateCamera");
   storeByte(ctx, layout.redraw, 1);
   ctx.leave();
+
+  // Music follows the scene, so it starts where the scene does. Asking for it
+  // rather than starting it here is what keeps the request one byte: the driver
+  // is serviced from the loop, and a scene change is not where that happens.
+  if (tracks) {
+    asm.label("SceneMusic");
+    asm.inb(ramDisp(layout.scene), RAM, E0);
+    asm.movImm32(label("SceneTracks"), E1);
+    asm.add(E0, E1);
+    asm.inb(0, E1, E0);
+    asm.stb(E0, ramDisp(ctx.audio?.music as number), RAM);
+    asm.jmp(LP);
+  }
 
   asm.label("ResetScene");
   emitSceneDispatch(

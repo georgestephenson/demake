@@ -32,8 +32,11 @@
     "@demake/md": "workspace:*",
     "@demake/neogeo": "workspace:*",
     "@demake/nes": "workspace:*",
+    "@demake/ngp": "workspace:*",
     "@demake/pce": "workspace:*",
     "@demake/sms": "workspace:*",
-    "@demake/snes": "workspace:*"
+    "@demake/snes": "workspace:*",
+    "@demake/vb": "workspace:*",
+    "@demake/wsc": "workspace:*"
   }
 }

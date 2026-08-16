@@ -6,7 +6,9 @@
  * - **The envelope register only takes effect on a trigger.** So a volume change
  *   mid-note is `NRx2` followed by a re-trigger of `NRx4`. That is safe here
  *   because a DMG trigger does *not* reset the duty step — it reloads the
- *   frequency timer — so re-triggering every tick does not click.
+ *   frequency timer — so re-triggering every tick does not click. **The wave
+ *   channel is the exception**: a trigger there resets the wave position, so its
+ *   pitch writes carry the bit only when a note starts (`encodeWave`).
  * - **A silent channel with its DAC on still drives a level.** Note-off is
  *   therefore `NRx2 = 0`, powering the DAC down, rather than volume 0. Getting
  *   this wrong leaves four DC offsets sitting in the mix.
@@ -20,6 +22,7 @@ import type { AudioSpec } from "@demake/core";
 
 import type { ChannelFrame } from "../chipscript.js";
 import { snapPitch, snapVolume } from "../pitch.js";
+import { panSides } from "./pan.js";
 import type { BoundWrite, ChipBinding, DriverRateFit } from "./types.js";
 
 const GB_CLOCK = 4194304;
@@ -74,17 +77,17 @@ export function gbBinding(console: string, spec: AudioSpec): ChipBinding {
         const frame = next[i]!;
         const before = prev?.[i];
         const bit = 1 << i;
+        const sides = panSides(frame.pan);
         if (frame.on) {
-          const left = frame.pan?.left ?? true;
-          const right = frame.pan?.right ?? true;
-          if (left) panning |= bit << 4;
-          if (right) panning |= bit;
+          if (sides.left) panning |= bit << 4;
+          if (sides.right) panning |= bit;
         }
+        const wasSides = before === undefined ? undefined : panSides(before.pan);
         if (
           before === undefined ||
           before.on !== frame.on ||
-          before.pan?.left !== frame.pan?.left ||
-          before.pan?.right !== frame.pan?.right
+          wasSides!.left !== sides.left ||
+          wasSides!.right !== sides.right
         ) {
           panningChanged = true;
         }
@@ -198,7 +201,14 @@ function encodeWave(
   const pitchChanged = retrigger || snapPitch(channel.pitch!, before!.hz).divider !== pitch.divider;
   if (pitchChanged) {
     writes.push({ reg: 0x1d, value: register & 0xff });
-    writes.push({ reg: 0x1e, value: 0x80 | ((register >> 8) & 0x07) });
+    // The trigger belongs to the note, not to the pitch. NR34's bit 7 restarts
+    // the wave position (`WaveChannel.trigger`), so carrying it on a bend
+    // resets the waveform mid-note — the hazard `encodeNoise` below already
+    // guards against on the shift register, one channel along. A vibrato is
+    // several bends a second, and a chord the arranger reduces is one per
+    // change of note, so this fires in the example library today: `keep.mid`
+    // restarts the waveform 47 times and `vault.mid` 11.
+    writes.push({ reg: 0x1e, value: (retrigger ? 0x80 : 0) | ((register >> 8) & 0x07) });
   }
 }
 

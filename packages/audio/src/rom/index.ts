@@ -7,23 +7,32 @@
  * cartridge that played a different arrangement from the preview would make the
  * schedule oracle report a divergence three layers from its cause.
  *
- * Five families build a *cartridge of their own* today: the Game Boy, the NES,
- * the PC Engine, the Sega 8-bits and the Mega Drive. The rest have drivers but
- * only inside a game, because that is what a game needed and a cartridge whose
- * only job is one track is a different caller. What any of them costs is no
- * longer an estimate: the stream player belongs to the *processor* and already
- * exists for six of them, so what a console adds is a boot sequence, a clock and
- * a cartridge wrapper — which is the whole of the difference between `gb.ts`,
- * `nes.ts`, `pce.ts`, `sms.ts` and `md.ts`, two of which share a player and one
- * of which covers two machines.
+ Ten families build a *cartridge of their own* today: the Game Boy, the NES,
+ * the PC Engine, the Sega 8-bits, the Mega Drive, both ARM handhelds, the
+ * Virtual Boy, both Neo Geo Pockets and both WonderSwans. The rest have drivers
+ * but only inside a game, because that is what a game needed and a cartridge
+ * whose only job is one track is a different caller. What any of them costs is
+ * no longer an estimate: the stream player belongs to the *processor* and
+ * already exists for all of them, so what a console adds is a boot sequence, a
+ * clock and a cartridge wrapper — which is the whole of the difference between
+ * `gb.ts`, `nes.ts`, `pce.ts`, `sms.ts`, `md.ts`, `gba.ts`, `nds.ts`, `ngpc.ts`,
+ * `vb.ts` and `wsc.ts`, four of which share a player with another console and
+ * three of which cover two machines each.
  *
- * **A standalone cartridge is not a game with the game taken out**, and the last
- * of them is where that stops being a turn of phrase. On the Mega Drive a game
+ * **A standalone cartridge is not a game with the game taken out**, and two of
+ * them are where that stops being a turn of phrase. On the Mega Drive a game
  * can only have the frame, because the FM chip's timer interrupt goes to the Z80
  * and a game polling it would be reading the status byte once per pass of a loop
  * that is also running a game. A cartridge whose loop does nothing else polls it
  * every few microseconds, so it keeps the timer's rate exactly — which is why
  * `resolveMdClock` and `resolveMdAudioClock` refuse *opposite* sources.
+ *
+ * The Game Boy Advance is where the distinction stops mattering again, and for a
+ * reason worth keeping: neither caller polls. Half that machine's voices are a
+ * software mixer, so a driver tick *is* a block of samples and the sample
+ * transfer's own interrupt counts the blocks out — 128 Hz on both callers, with
+ * nothing to fit and nothing to drift. `resolveGbaClock` is therefore *called* by
+ * the standalone rather than mirrored by it.
  */
 
 import { getConsole } from "@demake/core";
@@ -59,6 +68,15 @@ export {
   type WscGameAudioStats,
 } from "./wsc-game.js";
 export {
+  buildVbGameAudio,
+  resolveVbClock,
+  STOP as VB_STOP,
+  VB_AUDIO_BYTES,
+  type VbGameAudio,
+  type VbGameAudioInput,
+  type VbGameAudioStats,
+} from "./vb-game.js";
+export {
   buildSpcGameAudio,
   resolveSpcClock,
   SPC_CODE_BASE,
@@ -93,17 +111,42 @@ const DRIVERS: Readonly<Record<string, AudioRomFamily>> = {
   sms: "sms",
   gg: "sms",
   md: "md",
+  gba: "gba",
+  nds: "nds",
+  vb: "vb",
+  ngpc: "ngpc",
+  // The mono machine's sound hardware *is* the Colour machine's, so this is one
+  // more console for the same driver and the same cartridge — and it is the one
+  // place in the project where `arrange -c ngp` reaches a *cartridge*, since
+  // `demake build` has no game backend for it (`rom/ngpc.ts` §Two machines).
+  ngp: "ngpc",
+  wsc: "wsc",
+  // The mono machine's sound hardware *is* the colour machine's, so this is one
+  // more console for the same driver and the same cartridge — the Game Gear's
+  // bargain with a different byte in the footer (`rom/wsc.ts` §Two machines).
+  ws: "wsc",
 };
 
 /**
  * The driver families a standalone cartridge can be built with.
  *
- * Five, over four stream players: the NES and the PC Engine share
- * `mos-player.ts` because a HuC6280 *is* a 6502, and the two Sega 8-bits share
- * `sms-driver.ts` because a Game Gear *is* a Master System — so what a family is
- * here is a boot sequence, a clock and a cartridge wrapper rather than a driver.
+ * Ten, over eight stream players: the NES and the PC Engine share
+ * `mos-player.ts` because a HuC6280 *is* a 6502, the two Sega 8-bits share
+ * `sms-driver.ts` because a Game Gear *is* a Master System, the two WonderSwans
+ * share `wsc-driver.ts` because they are one machine with different memory, and
+ * the two Neo Geo Pockets share `ngp-driver.ts` because they have the same
+ * sound hardware — so what a family is here is a boot sequence, a clock and a
+ * cartridge wrapper rather than a driver.
+ *
+ * Two of the ten are worth naming. The Game Boy Advance is the first whose
+ * console's second sound device is not a chip — six of its ten voices are a
+ * software mixer, so that cartridge's idle loop is the only one in the set that
+ * is not idle. And the Nintendo DS is the only one whose **main processor does
+ * nothing at all**: its sound channels answer the ARM7 alone, the loader enters
+ * both binaries, and the ARM9's whole program is a branch to itself.
  */
-export type AudioRomFamily = "gb" | "nes" | "pce" | "sms" | "md";
+export type AudioRomFamily =
+  "gb" | "nes" | "pce" | "sms" | "md" | "gba" | "nds" | "ngpc" | "vb" | "wsc";
 
 /**
  * The clock a *game's* driver rides on each chip that has one.
@@ -129,10 +172,11 @@ const GAME_CLOCKS: Readonly<Record<string, "timer" | "frame">> = {
   // unevenly, which is worse than a coarser clock.
   sn76489: "frame",
   // The T6W28's console has 8-bit timers the processor can have, and
-  // `t6w28Binding.fitRate` will offer them to a *standalone* track. A game
-  // cannot have one for the reason every frame-clocked console here gives: its
-  // two streams share one clock with the picture, and the vertical blank is what
-  // a demade cartridge already takes.
+  // `t6w28Binding.fitRate` offers them to a *standalone* track — which
+  // `rom/ngpc.ts` now takes, so this entry is genuinely about a game rather than
+  // about the hardware. A game cannot have one for the reason every
+  // frame-clocked console here gives: its two streams share one clock with the
+  // picture, and the vertical blank is what a demade cartridge already takes.
   t6w28: "frame",
   // The YM2612 *has* a programmable timer, and `mdBinding.fitRate` offers it to a
   // standalone track — which `rom/md.ts` now takes, so this entry is genuinely
@@ -154,6 +198,13 @@ const GAME_CLOCKS: Readonly<Record<string, "timer" | "frame">> = {
   // driver reads how many of them have passed rather than being told, because
   // the vertical-blank timer's counter is readable (`wsc-game.ts`).
   "ws-sound": "frame",
+  // The Virtual Boy has a hardware timer with an interrupt, and a demade
+  // cartridge takes neither: this processor's interrupt vectors are its own last
+  // page and the main loop is already waiting on the video processor's frame
+  // interrupt, which is the one thing a demade cartridge does take. So the
+  // picture is the clock and `AudioTick` is a call rather than a handler
+  // (`vb-game.ts` §resolveVbClock).
+  vsu: "frame",
 };
 
 /**
@@ -235,6 +286,10 @@ const CONSOLE_RATES: Readonly<Record<string, number>> = { gba: 32768 / 256 };
  *     *ask* for its chip: the T6W28's own bus belongs to a Z80 sound processor,
  *     so the driver writes two bytes of the main CPU's I/O page before anything
  *     it sends is listened to
+ *   - `vb` — V810 (`rom/vb-game.ts`), the eighth CPU and the last game console
+ *     in the matrix to get one. Its tick is a *call* rather than a handler: this
+ *     cartridge's only interrupt is the video processor's, the main loop already
+ *     waits on it, and a driver rate that is the frame rate needs nothing else
  *
  * Keeping it by console is what let the Game Boy Advance be absent from it for
  * as long as its ARM driver was: its four Game Boy channels are the same
@@ -267,6 +322,7 @@ const GAME_DRIVERS: readonly string[] = [
   // hardware and the same driver would run on it, but `demake build` has no
   // backend for that console, and this list is about what a *cartridge* can do.
   "ngpc",
+  "vb",
 ];
 
 /** Whether a `demake build` cartridge for this console can play its audio. */
@@ -305,6 +361,13 @@ const SUFFIXES: Readonly<Record<string, string>> = {
   sms: ".sms",
   gg: ".gg",
   md: ".md",
+  gba: ".gba",
+  nds: ".nds",
+  vb: ".vb",
+  ngpc: ".ngc",
+  ngp: ".ngp",
+  wsc: ".wsc",
+  ws: ".ws",
 };
 
 /**
@@ -367,5 +430,15 @@ async function buildFor(
       return (await import("./sms.js")).buildSmsAudioRom(script, options);
     case "md":
       return (await import("./md.js")).buildMdAudioRom(script, options);
+    case "gba":
+      return (await import("./gba.js")).buildGbaAudioRom(script, options);
+    case "nds":
+      return (await import("./nds.js")).buildNdsAudioRom(script, options);
+    case "ngpc":
+      return (await import("./ngpc.js")).buildNgpcAudioRom(script, options);
+    case "vb":
+      return (await import("./vb.js")).buildVbAudioRom(script, options);
+    case "wsc":
+      return (await import("./wsc.js")).buildWscAudioRom(script, options);
   }
 }

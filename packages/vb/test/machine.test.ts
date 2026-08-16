@@ -28,8 +28,17 @@ import {
   VB_SCR,
   VB_SCR_HW_READ,
   VB_SDLR,
+  VB_VSU,
   VB_WRAM,
 } from "@demake/core";
+
+import {
+  VSU_CHANNEL_BASE,
+  VSU_MOD_BASE,
+  VSU_REG,
+  VSU_WAVE_BASE,
+  VSU_WAVE_SAMPLES,
+} from "@demake/chip";
 
 import { CYCLES_PER_FRAME, FRAME_HZ, Vb } from "../src/machine.js";
 
@@ -155,5 +164,84 @@ describe("the Virtual Boy", () => {
     // has to be written against `fps` (AGENTS.md §Working on Demotic).
     expect(FRAME_HZ).toBeLessThan(60);
     expect(CYCLES_PER_FRAME).toBe(Math.round(20_000_000 / FRAME_HZ));
+  });
+});
+
+describe("the sound processor", () => {
+  /** Program the first channel to play a table, and park. */
+  function noteRom(): Uint8Array {
+    const asm = new Asm810(VB_ROM);
+    asm.movImm32(VB_VSU, BASE);
+    // One waveform table: a square, six bits a sample, one sample every four
+    // bytes. Anything constant would be silence whatever the chip did.
+    for (let index = 0; index < VSU_WAVE_SAMPLES; index += 1) {
+      asm.movImm32(index < VSU_WAVE_SAMPLES / 2 ? 0x3f : 0x00, VALUE);
+      asm.stb(VALUE, VSU_WAVE_BASE + index * 4, BASE);
+    }
+    const channel = VSU_CHANNEL_BASE;
+    const write = (offset: number, value: number): void => {
+      asm.movImm32(value, VALUE);
+      asm.stb(VALUE, channel + offset, BASE);
+    };
+    write(VSU_REG.RAM, 0); // table zero
+    write(VSU_REG.FQL, 0x00); // a divider of $600: about 400 Hz
+    write(VSU_REG.FQH, 0x06);
+    write(VSU_REG.LRV, 0xff); // both ears, full
+    write(VSU_REG.EV0, 0xf0); // full envelope, no decay
+    write(VSU_REG.EV1, 0x00);
+    write(VSU_REG.INT, 0x80); // and go
+    asm.label("Stop");
+    asm.br("Stop");
+    return packVbRom(asm.assemble(), { title: "NOTE" });
+  }
+
+  it("is the chip model, and a cartridge's writes reach it", () => {
+    // The whole of what makes doc 16's Level A possible on this console: the
+    // tap observes rather than intercepts, and what it reports is the byte
+    // offset from the chip's base, which is what a schedule's register number
+    // is here.
+    const machine = new Vb(noteRom());
+    const seen: [number, number][] = [];
+    machine.vsuTap = (reg, value) => seen.push([reg, value]);
+    for (let index = 0; index < 400; index += 1) machine.step();
+    expect(seen).toContainEqual([VSU_CHANNEL_BASE + VSU_REG.INT, 0x80]);
+    expect(seen).toContainEqual([VSU_CHANNEL_BASE + VSU_REG.FQH, 0x06]);
+    expect(seen.filter(([reg]) => reg < VSU_MOD_BASE)).toHaveLength(VSU_WAVE_SAMPLES);
+  });
+
+  it("makes a sound, rather than storing the bytes somewhere", () => {
+    // The failure this replaces: a register page that accepted every write and
+    // generated nothing, which no register diff could tell from a chip.
+    const machine = new Vb(noteRom());
+    // A sink of the test's own rather than the renderer's, because what is
+    // being checked is that the chip *runs* — every clock accounted for, and
+    // the levels it reports changing over a note.
+    const left: number[] = [];
+    const right: number[] = [];
+    let clocks = 0;
+    machine.audioSink = {
+      clocksUntilSampleBoundary: () => 64,
+      add(l, r, count) {
+        left.push(l);
+        right.push(r);
+        clocks += count;
+      },
+    };
+    for (let index = 0; index < 200_000; index += 1) machine.step();
+    // The chip was handed a quarter of the master cycles the processor spent,
+    // to within the remainder one step can carry.
+    expect(clocks).toBeGreaterThan(1000);
+    expect(left.some((value) => value !== left[0])).toBe(true);
+    // Both ears, because `LRV` said both — and a chip that dropped one side
+    // would still pass the line above.
+    expect(right.some((value) => value !== right[0])).toBe(true);
+  });
+
+  it("answers nothing when read, because nothing on it reads back", () => {
+    const machine = new Vb(noteRom());
+    for (let index = 0; index < 400; index += 1) machine.step();
+    // A shadow kept to read back would be a second model of the chip, and the
+    // one thing worse than an absent peripheral is one that agrees with itself.
+    expect(machine.read(VB_VSU + VSU_CHANNEL_BASE + VSU_REG.INT)).toBe(0);
   });
 });

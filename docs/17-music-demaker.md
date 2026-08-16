@@ -15,10 +15,11 @@ everything in doc 16.
 the arrangement tournament, timbre and timing fitting, the judge and the artifact
 all exist and run on six consoles, and `demake gen song.json --format rom` turns
 the schedule into a cartridge that plays it — proven register-for-register
-against the schedule in `pnpm test` (doc 16 §The proof). Tracker modules and the
-audio-input transcription front end (§Stage 0) are not built, nor is the
-reference synthesizer the timbral metrics need — so the judge is symbolic today
-and says so.
+against the schedule in `pnpm test` (doc 16 §The proof). **ProTracker modules are
+read too** (§Stage 0), so `demake arrange` takes a `.mod` as well as a `.mid`.
+The audio-input transcription front end is not built, nor is the reference
+synthesizer the timbral metrics need — so the judge is symbolic today and says
+so.
 
 ## The objective: it still has to be the tune
 
@@ -119,6 +120,30 @@ vibrato, volume slide) map more or less one-to-one onto what a chip driver does.
 The interesting work is the reverse of the usual direction: a module's samples
 carry a timbre we can *measure* to fit a chip patch, and its channel count often
 exceeds the target's, so the arranger still has real work.
+
+**ProTracker `.mod` is built** (`score/mod.ts`), and the half that is not a
+transpile is the timeline. A module has no tempo map: it has a **speed** in ticks
+per row and a **tempo** in beats a minute, either of which any row can change
+with `Fxx`, and the song is an **order list** rather than a pattern table — so a
+pattern named twice is heard twice, at two different ticks, and the walk is over
+the order. A note ends when the next note on its channel starts and at no other
+time, because that is what a tracker does rather than a simplification anybody
+chose. Which parser reads a file is a **sniff** rather than an extension, on
+`decodeImage`'s terms: both formats state themselves in their first bytes.
+
+Notes, volumes, both timing effects and vibrato are read. Everything else is
+**counted and reported** rather than dropped — a module leaning on portamento for
+its melody is one this ingest reads as a series of flat notes, which is a demake
+that is *wrong about the tune* rather than merely coarser than it, so those
+arrive as warnings rather than as notes.
+
+Two things it deliberately does not infer. There is **no General MIDI
+programme**, so the role prior Stage 1 takes from one is simply absent and roles
+come from the material alone. And there is **no drum channel**: a MIDI file
+states percussion outright and a module says nothing, so a kit arrives as an
+ordinary pitched part. A sample named "kick" is a hint rather than a statement,
+and acting on one would put a bassline on the drums the first time somebody named
+a sample badly.
 
 ### Audio (`.wav`, `.flac`, `.mp3`, `.ogg`, `.opus`, `.m4a`)
 
@@ -273,15 +298,96 @@ the arranger reaches for:
    it occupied. Silent loss is the one unacceptable outcome; `--strict` turns any
    drop into an error.
 
+**A choked drum hit is one of those drops**, and was the last thing here that
+was not counted. Two hits landing on one tick with one drum voice means one of
+them never sounds — which for most music is most bars, since a kick under a hat
+is an ordinary backbeat. It is a **loss** rather than a reduction: a merged
+voice still plays its material somewhere, and this does not, so it warns under
+its own code (`choked-note`) and `--strict` refuses it. It carries `kind:
+"note"` because the part still plays and only some of its hits went, which is
+why `--strict` counts parts and notes apart rather than reporting thirty-two
+notes as thirty-two parts.
+
+It is decided in Stage 7 rather than here, and that is not an accident of where
+the code sits: whether two hits collide depends on the **driver's tick grid**, so
+it cannot be known until the piece has been laid on one. `compileScript` returns
+its own drops and the tournament merges them into the winning candidate's plan —
+the only plan they are true of, since a different channel assignment collides
+differently.
+
 ### When there are more channels than parts
 
 The instruction is to use them, and the ways are: detune-doubling a lead across
-two channels for thickness (a period technique with a real timbral effect), true
-stereo placement where the hardware pans (GB, GG, NGPC, PCE, VB, SNES),
+two channels for thickness (a period technique with a real timbral effect),
 harmonizing a lead in thirds, adding the octave below a bass, and giving
 percussion its own channel instead of stealing one. Each is a candidate, judged
 like anything else — unused channels are not a failure, and a track that sounds
 better sparse should stay sparse.
+
+Stereo placement was on that list and is no longer a candidate axis at all — it
+is unconditional, because it costs nothing and every arrangement wants it. It
+has a section of its own below.
+
+### Stereo placement
+
+**Built.** Every arrangement is placed across the image; before this stage
+existed every demade track was mono, on every console, and a rendered stereo WAV
+had two bit-identical channels (doc 13 §A5.5).
+
+Three decisions carry it.
+
+**A position, not a pair of switches.** `ChannelFrame.pan` is `-1` … `+1`, and
+`binding/pan.ts` holds the two laws a chip can take it under, because the
+hardware genuinely splits two ways. Seven chips pan by **level** — two
+attenuators, one a side, so a voice sits anywhere across the image: the T6W28,
+the S-DSP, the DS SPU, the VSU, the HuC6280, the WonderSwan and the Game Boy
+Advance's mixer. Four pan by **switch** — one bit a side and nothing between:
+`NR51`, the Game Gear's stereo latch, and the YM2612's and YM2610's two output
+bits. A switch-panned chip drops the far side only past halfway, so a part
+placed gently is heard centred there and placed where the hardware can do
+better.
+
+**Centre is both sides at full**, under both laws. That makes it a *balance* law
+rather than a constant-power one, and the reason is the hardware rather than
+taste: these are attenuators feeding a chip whose full level *is* the ceiling,
+so the only thing a power law could do at centre is start every voice quieter
+than the machine can play it. It is also what made the change reviewable — a
+part left centred encodes byte-for-byte what it did when nothing panned.
+
+**Per channel, constant for the piece.** A pan register is therefore written
+once, at the first tick, and never again — which matters because a track is
+already a few kilobytes of schedule on a machine with 32 KiB and no mapper. It
+would also be wrong to move it: a channel that time-shares two parts is carrying
+a *reduction*, and re-placing it at the seam draws attention to exactly what
+time-sharing exists to hide.
+
+What holds the piece up holds the centre: bass (off-centre it gives up half its
+power on a four-bit attenuator, and mono-compatible low end is near-universal
+practice), percussion (which on a four-channel console is the noise channel, the
+one voice a listener localises instantly), and the tune. Harmony, pad, arpeggio
+and effects parts spread outward, widening with how far from the tune they are,
+and alternating in sign so the image stays balanced.
+
+**Only one lead keeps the centre**, and that is the part with a lesson in it.
+The classifier routinely returns four or five `lead` parts for one piece,
+because a melody, its harmony line, a counter-line and an echo all carry a lead
+patch (§Stage 1 — a part's programme is a role prior, not a decoration). Reading
+that literally and centring every one of them is what a *mono* arrangement does,
+and on a four-channel console it leaves this stage with nothing to place: the
+arrangement there is bass, two leads and the kit. So the most salient lead keeps
+the centre and the rest are placed as the accompaniment they musically are. That
+is a placement decision rather than a reclassification — the part is still a
+lead everywhere else, still competes for the channel a lead wants, and is still
+reported as one.
+
+A console whose spec says `panning: "none"` is never placed and never *reports*
+a placement, so `--json` and the page's piano roll say what the chip does rather
+than what the arranger would have liked. `ChannelSpan.pan` carries it, because a
+placement is otherwise invisible in everything but the audio itself.
+
+Sound effects are not placed. An effect borrows a channel the music is using, so
+placing one would move what the music put there and leave it moved (doc 18
+§Stage 4).
 
 ### Percussion
 
@@ -293,6 +399,140 @@ pitched-thud technique for a kick on a tone channel where no noise channel is
 free, DPCM or sampled kits where the hardware has them and the budget allows, and
 the honest option of no drums at all when every channel is worth more to the
 pitch material. The choice is a candidate axis; the judge decides.
+
+**A kit takes every dedicated drum voice the console has.** A General MIDI drum
+track is *one part*, and one part took one channel — so a Neo Geo, whose YM2610
+has six ADPCM-A voices playing real recordings, played its whole kit on one of
+them and dropped every hit that collided with a ringing one. The example
+library's overworld theme wrote 96 drum notes and the cartridge played 64.
+Nothing before that console had more than one percussion voice, so the question
+had never come up.
+
+The allocation is **by drum class**, which is what a drum machine does: a kick
+that is still ringing is never cut off by the hat on the next eighth, because
+they are not on the same voice. Round-robin over arrivals would be worse than it
+sounds — it puts consecutive kicks on different voices, and for *recordings*
+that is flanging rather than depth. The one deliberate collision is the pair: an
+open hat and a closed hat **share**, because a closed hat choking a ringing open
+one is exactly what the pedal on a real kit does, and getting it out of the
+voice allocation is worth more than giving each its own.
+
+A pool is built only from **dedicated** drum hardware — a noise generator or a
+fixed-rate sample voice, the ones `affinity` scores at zero. An FM voice will
+host a kit and is offered at 6, but it is a fallback: handing the kit every
+spare one would take six four-operator voices and six fitted patches for
+material a single noise generator serves, which is spending the machine
+downwards on exactly the consoles this exists to spend it upwards on. A kit that
+landed on a compromise host keeps the one channel it was given. The same line
+runs *inside* a `kind`: a YM2610's ADPCM-B is a `sample` voice like its six
+ADPCM-A voices, and is the only one on the chip with a pitch, so pooling it into
+the kit would deny the arrangement its one pitched sample voice.
+
+Three consoles have more than one such voice — a Neo Geo's six, a Nintendo DS's
+two noise generators, and a Game Boy Advance's APU noise channel beside the
+mixer's recording of one. Everywhere else the pool is a pool of one and nothing
+about the schedule changes.
+
+### Vibrato
+
+**Built, and it is read rather than invented.** Nothing here produced vibrato at
+all until this landed — not through a chip LFO, and not through pitch writes on
+the consoles that have no LFO to use — which made it the largest of doc 13
+§A5.5's lines and the only one that was the *arranger's* before it was any
+binding's.
+
+**MIDI states vibrato, so the depth comes from the source.** General MIDI puts
+it on the modulation wheel — controller 1 — and `score/midi.ts` keeps that one
+controller and discards the rest of the control-change bus, because the rest is
+either the mixing desk's job (volume, expression, pan) or something the arranger
+decides for itself against the hardware. Reading those would be taking an
+instruction the demake cannot honour. The depth is per **note**, because that is
+the resolution the source has: a wheel can swell across a phrase, so a note
+carries the highest the wheel reached while it sounded rather than its value at
+the onset — a note that begins dry and is leaned into is the common way it is
+written, and sampling only the attack reads it as dry.
+
+Waiting for the transcription front end (§A4) would have been the wrong call.
+An MP3 is where vibrato has to be *inferred*; a MIDI is where it is already
+written down, and the arranger's job is to spend what the source says.
+
+**Rate and shape are the demaker's**, because the source does not state them:
+controller 76 exists for the rate and almost nothing writes it. A little over
+five cycles a second is where instrumental vibrato sits, a quarter-tone at the
+top of the wheel is about as wide as a chip channel goes before it stops reading
+as one note, and it **starts late** — a player places a note in tune and leans
+into it. The delay earns its place twice here: it is what a listener expects,
+and it costs no pitch writes at all, so a schedule pays for vibrato only on notes
+long enough to have any and a sixteenth-note line carries none however hard the
+wheel was pushed.
+
+**What it costs is real and is the reason this is opt-in by construction.** A
+held note being modulated is a pitch write per driver tick, and on a track of
+long notes with the wheel at full that is two to five times the register writes
+of the same track dry — 80 writes against 452 on a Game Boy for the pathological
+case. That is the shape doc 13 predicted for a console that has to *write* the
+modulation rather than switch an LFO on. Two things keep it safe rather than
+merely measured: a source that does not touch the wheel produces byte-for-byte
+the schedule it always did, which is nine of the eleven MIDIs in the example
+library; and a game whose cartridge will not hold the result already loses its
+music with a warning rather than failing to build (AGENTS.md §Iron rules).
+
+**The other two are what the library proves it with.** `pong/rally.mid` and
+`platformer/meadow.mid` put the wheel on their synth lead, at depth 64 of 127 —
+`pong` because it is the project the game-audio battery builds on every console
+with a driver, so a vibrato's writes are diffed against the schedule tick for
+tick on every machine with a driver and on both routes to a chip, and the platformer because
+its NES build is the one small-board cartridge in the size sweep. On `rally.mid`
+that is 5.2% more writes on a Mega Drive against 42% on a Master System, which
+is the difference between the two routes stated on one tune. The rest of the
+library stays dry, because not every tune is played with vibrato and this is not
+free.
+
+**One console does not pay it, because its chip bends its own notes.** A
+YM2612's LFO setting 1 is 5.56 Hz, within a tenth of a hertz of the rate stated
+above — so a Mega Drive's six FM voices are handed a *depth* rather than a
+moving pitch, and the cost falls from two-to-five times a dry track to four per
+cent of one. `ChipBinding.lfoChannels` is the seam: `compile.ts` bends the pitch
+itself for every channel not named there, and states `ChannelFrame.vibrato` for
+the ones that are. It belongs to the binding rather than to `AudioSpec` because
+what it answers is "will this encoder do it in hardware", which is a question
+about the register map. The delay applies to **both** routes, or the same note
+would start vibrating at different moments on different consoles.
+
+**The Neo Geo does pay it, and that is the hardware rather than an omission.**
+An OPNB is an OPN2 with the LFO removed, so `@demake/chip` refuses `$22` on that
+part by design. Claiming it there is a silent failure: the binding stops writing
+pitches, the chip ignores the registers, and the note comes out straight.
+
+### Tremolo
+
+**The amplitude half of the same oscillator, and read the same way.** General
+MIDI puts tremolo depth on controller 92, so `score/midi.ts` keeps that one
+beside the wheel and `Note.tremolo` carries it — per note, taking the highest
+the controller reached while the note sounded, absent rather than zero when
+nothing touched it.
+
+Three things about it are the hardware's rather than vibrato's restated. It is
+an **attenuation rather than a swing**, because a YM2612's LFO only ever *adds*
+attenuation: a note peaks at the level it was given and dips by up to
+`TREMOLO_MAX_DB` below it, and the software route is written to match or the
+console without the hardware would be the louder of the two. The rate and the
+delay are **the same constants** — one oscillator drives both, so a track whose
+tremolo ran at a different speed from its vibrato could not be played on the
+console that has the hardware for either. And the depth is **two bits against
+the pitch sweep's three**, so a tremolo here is the coarser of the two controls.
+
+The per-operator enable is where the care is. AM is switched on per *operator*
+and only the **carriers** get it, since AM on a modulator moves the timbre
+rather than the level — and it has to be switched off again rather than left
+set, because the chip parks its amplitude sweep at the quiet end while the LFO
+is off. So an operator left carrying the bit through a dry passage is simply
+attenuated, which is a quiet note nothing reports.
+
+The **HuC6280's** LFO is a refusal rather than a gap. That chip has no
+oscillator — channel two *is* the modulator — so vibrato costs a whole voice to
+modulate one other, which on a six-voice console is spending the machine
+downwards. Paying in schedule bytes is the better trade.
 
 ## Stage 3 — Timbre fitting
 

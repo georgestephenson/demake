@@ -27,6 +27,34 @@ static uint8_t *g_rgb = NULL; /* RGB888, width*height*3 */
 static unsigned g_w = 0, g_h = 0;
 static enum retro_pixel_format g_fmt = RETRO_PIXEL_FORMAT_0RGB1555;
 
+/* --- captured audio --------------------------------------------------------
+ *
+ * Doc 16's Level B: the *samples* a third-party core produces, against what
+ * `render()` produces from the same schedule. Level A already diffs the
+ * register writes exactly, so what this adds is the half a register diff cannot
+ * see — whether our model of the chip turns those writes into the same sound.
+ *
+ * Captured rather than streamed: a core hands over whatever it likes per frame,
+ * and the comparison wants one contiguous buffer at the core's own rate. Both
+ * callbacks feed it, because a core may use either and some use both.
+ */
+static int16_t *g_audio = NULL;
+static size_t g_audio_frames = 0;   /* stereo frames held */
+static size_t g_audio_capacity = 0; /* stereo frames allocated */
+
+static void audio_push(const int16_t *frames, size_t count) {
+  if (g_audio_frames + count > g_audio_capacity) {
+    size_t want = g_audio_capacity ? g_audio_capacity * 2 : 1 << 16;
+    while (want < g_audio_frames + count) want *= 2;
+    int16_t *grown = realloc(g_audio, want * 2 * sizeof(int16_t));
+    if (!grown) return; /* out of memory: drop rather than die mid-run */
+    g_audio = grown;
+    g_audio_capacity = want;
+  }
+  memcpy(g_audio + g_audio_frames * 2, frames, count * 2 * sizeof(int16_t));
+  g_audio_frames += count;
+}
+
 /* --- core options supplied on the command line ----------------------------- */
 #define MAX_OPTS 64
 static const char *opt_key[MAX_OPTS];
@@ -123,11 +151,11 @@ static void video_cb(const void *data, unsigned w, unsigned h, size_t pitch) {
   store_frame(data, w, h, pitch);
 }
 static void audio_sample_cb(int16_t l, int16_t r) {
-  (void)l;
-  (void)r;
+  const int16_t frame[2] = {l, r};
+  audio_push(frame, 1);
 }
 static size_t audio_batch_cb(const int16_t *d, size_t frames) {
-  (void)d;
+  audio_push(d, frames);
   return frames;
 }
 static void input_poll_cb(void) {}
@@ -183,6 +211,7 @@ int main(int argc, char **argv) {
   SYM(retro_unload_game);
   SYM(retro_run);
   SYM(retro_get_system_info);
+  SYM(retro_get_system_av_info);
 
   p_retro_set_environment(environ_cb);
   p_retro_set_video_refresh(video_cb);
@@ -223,6 +252,42 @@ int main(int argc, char **argv) {
   }
 
   for (int i = 0; i < frames; i++) p_retro_run();
+
+  /* Audio is opt-in through the same key=value channel core options use, so a
+   * capture that only wants pixels is unchanged and every existing caller keeps
+   * working. Written as a WAV at the *core's own* rate rather than resampled
+   * here: whatever this frontend did to the samples would be a third
+   * implementation of resampling sitting between the two being compared. */
+  const char *audio_out = find_opt("audio_out");
+  if (audio_out) {
+    struct retro_system_av_info av;
+    memset(&av, 0, sizeof(av));
+    p_retro_get_system_av_info(&av);
+    unsigned rate = (unsigned)(av.timing.sample_rate + 0.5);
+    FILE *a = fopen(audio_out, "wb");
+    if (!a) {
+      fprintf(stderr, "retrorun: cannot write audio %s\n", audio_out);
+      return 1;
+    }
+    uint32_t data_bytes = (uint32_t)(g_audio_frames * 2 * sizeof(int16_t));
+    uint32_t riff = 36 + data_bytes;
+    uint32_t fmt_len = 16, byte_rate = rate * 2 * 2;
+    uint16_t pcm = 1, chans = 2, align = 4, bits = 16;
+    fwrite("RIFF", 1, 4, a);
+    fwrite(&riff, 4, 1, a);
+    fwrite("WAVEfmt ", 1, 8, a);
+    fwrite(&fmt_len, 4, 1, a);
+    fwrite(&pcm, 2, 1, a);
+    fwrite(&chans, 2, 1, a);
+    fwrite(&rate, 4, 1, a);
+    fwrite(&byte_rate, 4, 1, a);
+    fwrite(&align, 2, 1, a);
+    fwrite(&bits, 2, 1, a);
+    fwrite("data", 1, 4, a);
+    fwrite(&data_bytes, 4, 1, a);
+    if (g_audio_frames) fwrite(g_audio, 1, data_bytes, a);
+    fclose(a);
+  }
 
   if (!g_rgb || g_w == 0 || g_h == 0) {
     fprintf(stderr, "retrorun: no frame captured\n");

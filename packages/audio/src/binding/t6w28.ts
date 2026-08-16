@@ -31,23 +31,20 @@
  * with a latch byte, and `checkLatchDiscipline` refuses a schedule where it does
  * not.
  *
- * **One thing this binding cannot yet spend, and the spec is honest about it.**
- * `ChannelFrame.pan` is a pair of *booleans*, so what reaches the chip is a
- * side that is full on or fully cut — the Game Gear's answer through a per-
- * channel attenuator. The hardware places a voice anywhere across the image, the
- * spec says `lr-level` because that is what the hardware does (AGENTS.md §Iron
- * rules: a chip a demaker cannot yet reach is a gap to close, never a reason to
- * narrow the spec), and closing it is a continuous pan in the arranger rather
- * than anything here. Doc 13 records it.
+ * **And the placement is spent rather than switched.** `ChannelFrame.pan` is a
+ * signed position, so a voice sits anywhere across the image: the level is
+ * scaled per side by `panGains` and then inverted into each attenuator, which
+ * is what the spec's `lr-level` has always claimed the hardware does. It was a
+ * pair of booleans once — full on or fully cut, the Game Gear's answer through
+ * a per-channel attenuator — and that was the last thing about this chip a
+ * demaker could not reach.
  */
 
-import type { AudioSpec } from "@demake/core";
+import { NGP_T1CLK, NGP_T1CLK_DIVISORS, type AudioSpec } from "@demake/core";
 
 import { snapPitch, snapVolume } from "../pitch.js";
+import { attenuate, panGains } from "./pan.js";
 import type { BoundWrite, ChipBinding, DriverRateFit } from "./types.js";
-
-/** Which sides a part is placed on, as the arranger states it. */
-type Pan = { left: boolean; right: boolean };
 
 /** The two write ports, as this binding's register numbers. */
 export const T6W28_RIGHT = 0;
@@ -59,12 +56,39 @@ const T6W28_CLOCK = 3_072_000;
 /**
  * The processor's own 8-bit timers, which are what a standalone driver rides.
  *
- * A TMP95C061 prescales its timer clock from the system clock, and a driver
- * above the frame rate is a timer's rather than the picture's. The frame is
- * still the candidate every other rate has to beat, because a *game*'s two
- * streams share one interrupt with the picture (doc 16 §Two streams, one clock).
+ * A TMP95C061 feeds its four 8-bit interval timers from a shared 9-bit
+ * prescaler, and a driver above the frame rate is a timer's rather than the
+ * picture's. The frame is still the candidate every other rate has to beat,
+ * because a *game*'s two streams share one interrupt with the picture (doc 16
+ * §Two streams, one clock).
+ *
+ * These are an **upper** timer's — 1 or 3 — rather than the union over all
+ * four, and that is the hardware rather than a simplification. `NGP_T1CLK` is
+ * where the machine says so: a lower timer takes the external pin or φT1, φT4
+ * and φT16, and an upper one takes its partner's comparator output or φT1, φT16
+ * and φT256. No single timer offers all four internal clocks, and a driver
+ * rides one — so offering the union would promise a rate whichever timer the
+ * driver picked could not keep. The upper timer is the pick because φT256 is
+ * the only clock that reaches the bottom of the useful band, and it costs
+ * nothing: φT4 is a lower timer's, and the one rate it contributes inside the
+ * window below (750 Hz, at a full reload) is one φT256 also hits exactly.
+ *
+ * The numbers are divisions of {@link T6W28_CLOCK} — the crystal *halved*,
+ * which is the system clock and is also what this chip runs at — so each is
+ * half the datasheet's division of `fc`. Cross-checked against the same
+ * document's serial baud table, which tabulates `fc / (TREG2 × 8 × 16)` at
+ * *this console's* 6.144 MHz and lists 48 Kbps for a reload of 1: that is
+ * φT1 = fc/8 and nothing else.
+ *
+ * Derived from `core`'s own description rather than restated, because a second
+ * copy of a clock division is a driver that programs one prescaler and a
+ * schedule that was fitted to another.
  */
-const TIMER_PRESCALERS: readonly number[] = [2, 8, 32, 128];
+const TIMER_PRESCALERS: readonly number[] = [
+  NGP_T1CLK_DIVISORS[NGP_T1CLK.t1] as number,
+  NGP_T1CLK_DIVISORS[NGP_T1CLK.t16] as number,
+  NGP_T1CLK_DIVISORS[NGP_T1CLK.t256] as number,
+];
 
 export function t6w28Binding(console: string, spec: AudioSpec): ChipBinding {
   return {
@@ -91,15 +115,20 @@ export function t6w28Binding(console: string, spec: AudioSpec): ChipBinding {
         const isNoise = channel.kind === "noise";
         const steps = channel.volume.steps;
 
-        // A pan of "both" is full on both sides, which is what every part that
-        // does not ask to be placed gets — and it is what makes a mono
-        // arrangement here sound like a Master System's.
-        const sides = (frameAt: { on: boolean; level: number; pan?: Pan }) => {
+        // Centre is full on both sides, which is what a part that does not ask
+        // to be placed gets — and it is what makes a mono arrangement here
+        // sound like a Master System's. Anything else is spent across the two
+        // attenuators, which is the whole reason this chip's spec says
+        // `lr-level`: the level is scaled per side and then inverted into an
+        // attenuation, so a voice sits where the arranger put it rather than
+        // being switched out of one speaker.
+        const sides = (frameAt: { on: boolean; level: number; pan?: number }) => {
           if (!frameAt.on) return [steps - 1, steps - 1] as const;
-          const cut = steps - 1 - snapVolume(channel.volume, frameAt.level);
+          const level = snapVolume(channel.volume, frameAt.level);
+          const gains = panGains(frameAt.pan);
           return [
-            (frameAt.pan?.left ?? true) ? cut : steps - 1,
-            (frameAt.pan?.right ?? true) ? cut : steps - 1,
+            steps - 1 - attenuate(level, gains.left),
+            steps - 1 - attenuate(level, gains.right),
           ] as const;
         };
         const [leftAtt, rightAtt] = sides(frame);
@@ -171,8 +200,12 @@ export function t6w28Binding(console: string, spec: AudioSpec): ChipBinding {
       const frameHz = spec.driver.frameRate.num / spec.driver.frameRate.den;
       let best: DriverRateFit = { rate: spec.driver.frameRate, source: "vblank" };
       let bestError = Math.abs(frameHz - desiredHz);
-      // An 8-bit timer over one of four prescalers, which is how a *standalone*
-      // driver holds a tempo the picture cannot express.
+      // An 8-bit timer over one of its three prescalers, which is how a
+      // *standalone* driver holds a tempo the picture cannot express. The
+      // period in input clocks *is* the reload rather than one more than it —
+      // the up-counter is cleared to zero on the match — so a full 256 is
+      // written as zero, which is what `& 0xff` below says. The datasheet's own
+      // worked example is the check: 62500 counts of φT16 is `TREG = F424H`.
       for (const prescaler of TIMER_PRESCALERS) {
         for (let reload = 1; reload <= 256; reload += 1) {
           const den = prescaler * reload;

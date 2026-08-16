@@ -423,27 +423,83 @@ function buildPatch(
  * Address then datum, on the half of the bus the channel lives on — which is the
  * form a driver stores and therefore the form a schedule carries.
  */
-export function patchWrites(patch: FmPatch, channel: number): { reg: number; value: number }[] {
+export function patchWrites(
+  patch: FmPatch,
+  channel: number,
+  amplitudeModulated = false,
+): { reg: number; value: number }[] {
   const half = channel < 3 ? 0 : 1;
   const within = channel % 3;
   const out: { reg: number; value: number }[] = [];
   const write = (address: number, value: number): void => {
     out.push({ reg: half * 2, value: address }, { reg: half * 2 + 1, value });
   };
-  // Register slot order is S1, S3, S2, S4; the patch is in signal order.
-  const REGISTER_SLOT = [0, 2, 1, 3];
   for (let position = 0; position < 4; position += 1) {
     const operator = patch.operators[REGISTER_SLOT[position] as number] as FmOperator;
     const at = position * 4 + within;
     write(0x30 + at, ((operator.detune & 7) << 4) | (operator.multiple & 0x0f));
     write(0x40 + at, operator.totalLevel & 0x7f);
     write(0x50 + at, ((operator.keyScale & 3) << 6) | (operator.attack & 0x1f));
-    write(0x60 + at, operator.decay & 0x1f);
+    write(0x60 + at, decayByte(patch, position, amplitudeModulated));
     write(0x70 + at, operator.sustainRate & 0x1f);
     write(0x80 + at, ((operator.sustainLevel & 0x0f) << 4) | (operator.release & 0x0f));
     write(0x90 + at, 0x00);
   }
   write(0xb0 + within, ((patch.feedback & 7) << 3) | (patch.algorithm & 7));
+  return out;
+}
+
+/** Register slot order is S1, S3, S2, S4; a patch is in signal order. */
+const REGISTER_SLOT: readonly number[] = [0, 2, 1, 3];
+
+/**
+ * `$60`'s datum for one register position: the decay rate, and the AM enable.
+ *
+ * Bit 7 is that operator's amplitude-modulation enable and it goes on the
+ * **carriers** only: AM on a modulator moves the timbre rather than the level,
+ * which is a different effect from the one a source asking for tremolo wants.
+ *
+ * One function with two callers, because the two have to agree exactly.
+ * {@link patchWrites} states it when a patch is installed and {@link amWrites}
+ * restates it when only the modulation changed — and a disagreement between
+ * them would be an operator whose decay rate was quietly rewritten by a
+ * tremolo.
+ */
+function decayByte(patch: FmPatch, position: number, amplitudeModulated: boolean): number {
+  const slot = REGISTER_SLOT[position] as number;
+  const operator = patch.operators[slot] as FmOperator;
+  const modulated = amplitudeModulated && carriersOf(patch.algorithm).includes(slot);
+  return (modulated ? 0x80 : 0x00) | (operator.decay & 0x1f);
+}
+
+/**
+ * The writes that switch this channel's amplitude modulation on or off.
+ *
+ * The carriers' `$60` bytes and nothing else, so a note that starts wanting a
+ * tremolo on a patch that is already installed costs eight bus writes rather
+ * than the fifty a whole patch does.
+ *
+ * It has to be *written* rather than left set, because the chip parks its LFO
+ * at the quiet end while it is switched off — so an operator left with the bit
+ * on through a passage with no tremolo in it would be permanently attenuated
+ * (`@demake/chip` §`LFO_AM_PARKED`).
+ */
+export function amWrites(
+  patch: FmPatch,
+  channel: number,
+  on: boolean,
+): { reg: number; value: number }[] {
+  const half = channel < 3 ? 0 : 1;
+  const within = channel % 3;
+  const out: { reg: number; value: number }[] = [];
+  const carriers = new Set(carriersOf(patch.algorithm));
+  for (let position = 0; position < 4; position += 1) {
+    if (!carriers.has(REGISTER_SLOT[position] as number)) continue;
+    out.push(
+      { reg: half * 2, value: 0x60 + position * 4 + within },
+      { reg: half * 2 + 1, value: decayByte(patch, position, on) },
+    );
+  }
   return out;
 }
 
@@ -513,6 +569,123 @@ export function totalLevelFor(level: number): number {
   const db = (20 * math.log(clamped)) / LN10;
   const steps = Math.round(-db / 0.75);
   return steps < 0 ? 0 : steps > 0x7f ? 0x7f : steps;
+}
+
+/**
+ * The LFO rate settings, in Hz, by the three-bit value in `$22`.
+ *
+ * Shared by both OPN parts, because the LFO is one of the things a YM2610's FM
+ * section takes from the YM2612 unchanged. The top two are past vibrato and
+ * into a buzz — a sound effect's, not an arrangement's.
+ */
+const LFO_RATE_HZ: readonly number[] = [3.98, 5.56, 6.02, 6.37, 6.88, 9.63, 48.1, 72.2];
+
+/**
+ * Peak pitch deviation, in cents, by the three-bit FMS (PMS) value in `$B4`.
+ *
+ * The published table for this core. What makes it usable as *the* vibrato
+ * control rather than an approximation of one is that the chip applies it to
+ * the F-number rather than to the phase increment, so one setting is the same
+ * interval in every octave (`@demake/chip`'s `LFO_PM_OUTPUT` is where that is
+ * modelled).
+ */
+const FMS_CENTS: readonly number[] = [0, 3.4, 6.7, 10, 14, 20, 40, 80];
+
+/**
+ * Peak amplitude attenuation, in decibels, by the two-bit AMS value in `$B4`.
+ *
+ * The published table for this core, and it is *four* settings against the
+ * pitch sweep's eight — which is the whole reason a tremolo here is coarser
+ * than a vibrato and not a decision the demaker made.
+ */
+const AMS_DB: readonly number[] = [0, 1.4, 5.9, 11.8];
+
+/** `$22`'s value for a given rate: bit 3 enables, bits 0-2 select. */
+export function lfoRegister(rateIndex: number): number {
+  return 0x08 | (rateIndex & 0x07);
+}
+
+/**
+ * Whether any of these frames is asking for hardware vibrato.
+ *
+ * `$22` belongs to the whole chip, so the question is about the tick rather
+ * than about a channel — and it is asked of the previous tick too, so the
+ * register is written exactly on the edges rather than restated.
+ */
+export function lfoWanted(
+  frames: readonly { vibratoCents?: number; tremoloDb?: number }[] | undefined,
+): boolean {
+  return (
+    frames !== undefined &&
+    frames.some((frame) => (frame.vibratoCents ?? 0) > 0 || (frame.tremoloDb ?? 0) > 0)
+  );
+}
+
+/**
+ * The rate setting closest to the vibrato rate the arranger produces.
+ *
+ * The LFO is **global** — one rate for every channel on the chip — which would
+ * be a real constraint if the demaker varied its vibrato speed per part, and is
+ * none at all because it does not: `compile.ts` states one rate for the whole
+ * piece (doc 17 §Vibrato). Setting 1 is 5.56 Hz against the 5.5 Hz it asks for,
+ * which is inside a tenth of a hertz and far below what anybody hears as a
+ * different vibrato.
+ */
+export function lfoRateIndex(hz: number): number {
+  let best = 0;
+  let bestError = Infinity;
+  for (let index = 0; index < LFO_RATE_HZ.length; index += 1) {
+    const error = Math.abs((LFO_RATE_HZ[index] as number) - hz);
+    if (error < bestError) {
+      bestError = error;
+      best = index;
+    }
+  }
+  return best;
+}
+
+/**
+ * A depth in cents as this chip's three-bit sensitivity.
+ *
+ * Nearest rather than floor: the table is coarse and widely spaced at the top —
+ * 20, 40, then 80 cents — so flooring a request for 50 lands on 20 and throws
+ * away more than half of what was asked for. Zero maps to zero exactly, which
+ * is what keeps a channel with no vibrato writing the same `$B4` it always did.
+ */
+/**
+ * A depth in decibels as this chip's two-bit amplitude sensitivity.
+ *
+ * Nearest rather than floor, on `fmsFor`'s reasoning with a coarser table: the
+ * three usable settings are 1.4, 5.9 and 11.8 dB, so flooring a request for
+ * six lands on 1.4 and throws away three quarters of it. Zero maps to zero, so
+ * a channel with no tremolo writes the `$B4` it always did.
+ */
+export function amsFor(db: number): number {
+  if (!(db > 0)) return 0;
+  let best = 0;
+  let bestError = Infinity;
+  for (let index = 0; index < AMS_DB.length; index += 1) {
+    const error = Math.abs((AMS_DB[index] as number) - db);
+    if (error < bestError) {
+      bestError = error;
+      best = index;
+    }
+  }
+  return best;
+}
+
+export function fmsFor(cents: number): number {
+  if (!(cents > 0)) return 0;
+  let best = 0;
+  let bestError = Infinity;
+  for (let index = 0; index < FMS_CENTS.length; index += 1) {
+    const error = Math.abs((FMS_CENTS[index] as number) - cents);
+    if (error < bestError) {
+      bestError = error;
+      best = index;
+    }
+  }
+  return best;
 }
 
 export { YM2612_CLOCK_HZ };

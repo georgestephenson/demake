@@ -185,7 +185,35 @@ function readTrack(body: Uint8Array): RawEvent[] {
 interface PendingNote {
   tick: number;
   velocity: number;
+  /** The highest the modulation wheel reached while this note has been sounding. */
+  vibrato: number;
+  /** Likewise for controller 92, which is the amplitude half of the same idea. */
+  tremolo: number;
 }
+
+/**
+ * Controller 1: the modulation wheel, which is where General MIDI puts vibrato.
+ *
+ * The one controller this parser keeps, and it is kept because it is the
+ * source's own statement of something the demaker can spend — every chip here
+ * with a pitched channel can bend one. Everything else on the control-change
+ * bus (volume, expression, pan, the pedals) is either the mixing desk's job or
+ * something the arranger decides for itself against the hardware, so reading it
+ * would be taking an instruction the demake cannot honour.
+ */
+const CC_MODULATION = 1;
+
+/**
+ * Controller 92: tremolo depth, which is the amplitude half of the wheel.
+ *
+ * The second controller this parser keeps, and it is kept for the first one's
+ * reason: it is the source's own statement of something the demaker can spend,
+ * since every chip here with a volume can be made to swell. It is rarer than
+ * the wheel — a sequencer writes it deliberately rather than by leaning on a
+ * lever — which is why nothing in the example library carries it and why adding
+ * it changed no existing output by a byte.
+ */
+const CC_TREMOLO = 92;
 
 function buildScore(tracks: RawEvent[][], division: number): Score {
   const scale = PPQ / division;
@@ -195,6 +223,10 @@ function buildScore(tracks: RawEvent[][], division: number): Score {
   const programs = new Map<string, number>();
   const noteLists = new Map<string, Note[]>();
   const pending = new Map<string, Map<number, PendingNote>>();
+  /** The modulation wheel's standing value per part, which a note-on inherits. */
+  const modulation = new Map<string, number>();
+  /** Controller 92's, likewise. */
+  const tremoloDepth = new Map<string, number>();
   let durationTicks = 0;
 
   const keyOf = (track: number, channel: number): string => `t${track}c${channel}`;
@@ -228,6 +260,28 @@ function buildScore(tracks: RawEvent[][], division: number): Score {
         programs.set(key, event.data1);
         continue;
       }
+      if (kind === 0xb0) {
+        const wheel = event.data1 === CC_MODULATION;
+        if (!wheel && event.data1 !== CC_TREMOLO) continue;
+        const depth = event.data2 / 127;
+        (wheel ? modulation : tremoloDepth).set(key, depth);
+        // A controller applies to what is *already* sounding as well as to what
+        // starts after it, because that is what a swell into a held note is —
+        // and it is the common way the wheel is written. Notes take the highest
+        // it reached rather than its value at their onset, so a note that begins
+        // dry and is leaned into still carries the depth.
+        const open = pending.get(key);
+        if (open) {
+          for (const note of open.values()) {
+            if (wheel) {
+              if (depth > note.vibrato) note.vibrato = depth;
+            } else if (depth > note.tremolo) {
+              note.tremolo = depth;
+            }
+          }
+        }
+        continue;
+      }
       if (kind !== 0x80 && kind !== 0x90) continue;
 
       const noteNumber = event.data1;
@@ -244,7 +298,12 @@ function buildScore(tracks: RawEvent[][], division: number): Score {
         // sequencers mean by it and what a naive parser turns into a stuck note.
         const existing = open.get(noteNumber);
         if (existing) closeNote(noteLists, key, noteNumber, existing, tick, channel);
-        open.set(noteNumber, { tick, velocity });
+        open.set(noteNumber, {
+          tick,
+          velocity,
+          vibrato: modulation.get(key) ?? 0,
+          tremolo: tremoloDepth.get(key) ?? 0,
+        });
         continue;
       }
       const start = open.get(noteNumber);
@@ -321,6 +380,11 @@ function closeNote(
     pitch: noteNumber * 100,
     velocity: start.velocity,
     ...(channel === 9 ? { drum: drumClassOf(noteNumber) } : {}),
+    // Absent rather than zero when the wheel was never touched, so a score from
+    // a source with no modulation in it is byte-for-byte the score it was
+    // before this was read at all.
+    ...(start.vibrato > 0 ? { vibrato: start.vibrato } : {}),
+    ...(start.tremolo > 0 ? { tremolo: start.tremolo } : {}),
     salience: 0,
   });
 }

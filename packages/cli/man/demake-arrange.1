@@ -14,7 +14,7 @@ Target console id or alias (e.g. gb, nes, sms). [required]
 Also write a playable audio file of the exact result.
 .TP
 \fB\-\-preview-format\fR \fIvalue\fR
-Preview encoding. WAV is sample\-exact; lossy formats land with their encoders. (default: wav)
+Preview encoding. WAV and FLAC are sample\-exact; lossy formats land with their encoders. (default: wav)
 .TP
 \fB\-\-output-stage\fR \fIvalue\fR
 Raw chip output, or the console's analog stage simulated. (default: raw)
@@ -79,5 +79,9 @@ pin the tempo, correct a role
 demake arrange song.mid \-c sms \-\-json
 .br
 channel plan, timing, drops, scoreboard
+.PP
+demake arrange tune.mod \-c md \-o tune.vgm
+.br
+a tracker module; the format is read off the bytes
 .SH SEE ALSO
 \fBdemake\fR(1)

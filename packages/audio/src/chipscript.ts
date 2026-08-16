@@ -42,8 +42,41 @@ export interface ChannelFrame {
   noisePeriod?: number;
   /** Whether a noise channel should use its tonal (short-LFSR) mode. */
   noiseTonal?: boolean;
-  /** Stereo placement, where the channel supports it. */
-  pan?: { left: boolean; right: boolean };
+  /**
+   * Stereo placement: `-1` hard left, `0` centre, `+1` hard right.
+   *
+   * A *position* rather than a pair of switches, because six of the eleven
+   * chips with a binding pan by level — the T6W28's two attenuators, the
+   * S-DSP's signed per-side volumes, the DS SPU's seven-bit pan, the VSU's two
+   * nibbles, the HuC6280's balance byte and the WonderSwan's volume byte — and
+   * a boolean pair can only ask any of them for full or cut. The chips that
+   * really do pan by switch (`NR51`, the Game Gear's stereo latch, an FM
+   * voice's two output bits) quantise it through `panSides`; the rest spend it
+   * through `panGains`. Absent is centre, and centre is both sides at full
+   * under either law — so a part the arranger does not move encodes exactly the
+   * bytes it did when this was a pair of booleans.
+   */
+  pan?: number;
+  /**
+   * Vibrato depth, 0–1, for a channel whose chip performs it in hardware.
+   *
+   * Present only where the binding said it would (`ChipBinding.lfoChannels`).
+   * Everywhere else the modulation is already *in* `hz`, because a chip with no
+   * LFO can only be given a moving pitch — so a binding that ignores this field
+   * is correct on every console but the two FM ones, and those two say so.
+   */
+  vibrato?: number;
+  /** Peak deviation the vibrato asks for, in cents, where `vibrato` is set. */
+  vibratoCents?: number;
+  /**
+   * Peak attenuation the tremolo asks for, in decibels, on the same terms.
+   *
+   * Present only where the binding performs amplitude modulation in hardware,
+   * which is the same set of channels `vibrato` is stated for and for the same
+   * reason: they are two outputs of one LFO. Everywhere else the modulation is
+   * already *in* `level`.
+   */
+  tremoloDb?: number;
   /**
    * A note starts on this tick.
    *
@@ -71,6 +104,16 @@ export interface ChannelSpan {
   endTick: number;
   /** Why this pairing: `direct`, `arpeggiated`, `folded`, `merged`. */
   treatment: "direct" | "arpeggiated" | "folded" | "merged";
+  /**
+   * Where across the stereo image the channel was placed: `-1` … `+1`.
+   *
+   * Reported rather than left implicit because a placement is otherwise
+   * invisible in everything but the audio itself — `--json` and the page's
+   * piano roll both read this, and a console that quantises it through
+   * `panSides` still says what the arranger asked for rather than what its
+   * hardware could take.
+   */
+  pan: number;
 }
 
 /** Something the arrangement could not keep, counted rather than lost. */

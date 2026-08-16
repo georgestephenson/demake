@@ -5,12 +5,14 @@
  * deterministic, the bytes this produces are a regression test in their own
  * right, compared the way the image path compares a PNG.
  *
- * Quantization rounds half to even and applies **no dither**. Dither is a random
- * process, and an output that has to be byte-identical across engines cannot
- * contain one.
+ * Quantization is `pcm.ts`'s, shared with the FLAC encoder — a WAV and a FLAC of
+ * one render are sample-identical, which doc 16 states as a guarantee and one
+ * definition makes true by construction.
  */
 
 import type { Pcm } from "@demake/chip";
+
+import { peakFor, quantize } from "./pcm.js";
 
 export interface WavOptions {
   /** 16 or 24 bits per sample. */
@@ -42,7 +44,7 @@ export function encodeWav(pcm: Pcm, options: WavOptions = {}): Uint8Array {
   view.setUint32(40, dataBytes, true);
 
   let offset = 44;
-  const peak = bitDepth === 16 ? 32767 : 8388607;
+  const peak = peakFor(bitDepth);
   for (let frame = 0; frame < frames; frame += 1) {
     for (let channel = 0; channel < channels; channel += 1) {
       const value = quantize(pcm.channels[channel]![frame]!, peak);
@@ -58,23 +60,6 @@ export function encodeWav(pcm: Pcm, options: WavOptions = {}): Uint8Array {
     }
   }
   return buffer;
-}
-
-/**
- * Clamp and round to an integer sample, half to even.
- *
- * Half-to-even rather than half-away-from-zero because it has no bias, and bias
- * in a quantizer is a DC offset that accumulates over a whole track.
- */
-function quantize(sample: number, peak: number): number {
-  const scaled = sample * peak;
-  if (scaled >= peak) return peak;
-  if (scaled <= -peak - 1) return -peak - 1;
-  const floor = Math.floor(scaled);
-  const fraction = scaled - floor;
-  if (fraction > 0.5) return floor + 1;
-  if (fraction < 0.5) return floor;
-  return floor % 2 === 0 ? floor : floor + 1;
 }
 
 function writeAscii(bytes: Uint8Array, offset: number, text: string): void {

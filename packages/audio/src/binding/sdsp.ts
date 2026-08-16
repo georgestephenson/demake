@@ -31,6 +31,7 @@ import type { ChannelFrame } from "../chipscript.js";
 import { snapPitch, snapVolume } from "../pitch.js";
 
 import { ARAM_DIR_PAGE, MASTER_VOLUME, sampleNumber, type Waveform } from "./sdsp-bank.js";
+import { attenuate, panGains } from "./pan.js";
 import type { BoundWrite, ChipBinding, DriverRateFit } from "./types.js";
 
 /** Global register addresses the binding writes. */
@@ -145,23 +146,36 @@ export function sdspBinding(console: string, spec: AudioSpec): ChipBinding {
 
         const retrigger = !before?.on || frame.retrigger === true;
         const level = snapVolume(channel.volume, frame.level);
-        const left = frame.pan?.left ?? true;
-        const right = frame.pan?.right ?? true;
+        // `VOL(L)`/`VOL(R)` are a signed byte each, so this chip places a voice
+        // at any of a hundred and twenty-seven positions a side. A note's
+        // loudness is `GAIN`'s (§the binding's two registers), which is what
+        // leaves these two carrying placement alone on a pitched voice.
+        const gains = panGains(frame.pan);
+        const wasGains = panGains(before?.pan);
+        const volLeft = attenuate(0x7f, gains.left);
+        const volRight = attenuate(0x7f, gains.right);
 
         if (channel.kind === "noise") {
           // Percussion is the one voice whose level lives in the volume
-          // registers, because its `GAIN` is carrying the chip's own decay.
+          // registers, because its `GAIN` is carrying the chip's own decay — so
+          // here the placement scales the level rather than sitting beside it.
           if (!retrigger && before?.on) continue;
-          encodeNoise(writes, base, frame, left ? level : 0, right ? level : 0);
+          encodeNoise(
+            writes,
+            base,
+            frame,
+            attenuate(level, gains.left),
+            attenuate(level, gains.right),
+          );
           keyOn |= 1 << index;
           continue;
         }
 
-        if (retrigger || before?.pan?.left !== frame.pan?.left) {
-          writes.push({ reg: base + 0x00, value: left ? 0x7f : 0x00 });
+        if (retrigger || attenuate(0x7f, wasGains.left) !== volLeft) {
+          writes.push({ reg: base + 0x00, value: volLeft });
         }
-        if (retrigger || before?.pan?.right !== frame.pan?.right) {
-          writes.push({ reg: base + 0x01, value: right ? 0x7f : 0x00 });
+        if (retrigger || attenuate(0x7f, wasGains.right) !== volRight) {
+          writes.push({ reg: base + 0x01, value: volRight });
         }
 
         const pitch = snapPitch(channel.pitch!, frame.hz).divider;

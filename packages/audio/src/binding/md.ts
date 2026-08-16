@@ -39,6 +39,12 @@ import {
   carriersOf,
   fnumAt,
   type FmBindingOptions,
+  amsFor,
+  amWrites,
+  fmsFor,
+  lfoRateIndex,
+  lfoRegister,
+  lfoWanted,
   patchWrites,
   pitchWrites,
   totalLevelFor,
@@ -48,6 +54,8 @@ import {
 // the other's, and a caller that had one from `md.ts` should still find it.
 export { totalLevelFor };
 
+import { panSides } from "./pan.js";
+import { VIBRATO_HZ } from "../vibrato.js";
 import { psgBinding } from "./psg.js";
 import type { BoundWrite, ChipBinding, DriverRateFit } from "./types.js";
 
@@ -63,8 +71,44 @@ const YM_SAMPLE_DIVIDER = 144;
  *
  * The chip models each normalise to their own full scale, which is right for a
  * Master System and wrong for a board where four tone generators sit beside six
- * FM voices. Six decibels down is the balance the hardware has, and putting it
+ * FM voices. So something has to state the *board's* weighting, and putting it
  * here rather than in `Sn76489` is what keeps that model one model.
+ *
+ * **The schematic settles one term of two, and on its own it is misleading.**
+ * On a Model 1 the two chips meet at a passive summing node in front of the
+ * headphone amplifier, and they reach it through very different resistors: the
+ * VDP's PSG pin drives a 2.2 kΩ load and a 220 pF cap, is coupled by 1 µF, and
+ * is summed through **51 kΩ** — one for each channel, since that output is
+ * mono — while each of the YM2612's MOL/MOR drives its own 2.2 kΩ load, is
+ * coupled by 10 µF, and is summed through **2.2 kΩ**. That is 23.2 to 1, or
+ * 27.3 dB. What it does *not* settle is the two parts' full-scale output
+ * levels, which is the other term and which neither chip model here measures —
+ * and it runs the other way by roughly as much, because the PSG pin swings a
+ * logic-level square where the FM chip's are low-level analogue outputs. A
+ * constant moved to 27 dB on the network alone would put the PSG four per cent
+ * of the way up the mix, which is not what a Mega Drive sounds like.
+ *
+ * **End to end, the gap is 3.3 dB and this constant is the louder side.** The
+ * one reference that measures *both* terms against a real board is
+ * genesis-plus-gx, whose `PSG_MAX_VOLUME` of 2800 carries a comment saying it
+ * was adjusted to match a VA4 Model 1's PSG/FM balance with the 1.5× the
+ * default `psg_preamp` applies — so four channels reach 16800 against six FM
+ * channels' 49146, a ratio of 0.342 where this applies 0.5. Both models here
+ * normalise the same way (`Sn76489` by `4 × 8191`, `Ym2612` by `6 × 8192`), so
+ * the two numbers are directly comparable and the difference is 3.3 dB rather
+ * than the twenty-one the network alone would suggest.
+ *
+ * It is left where it is deliberately. Moving it re-bases every Mega Drive
+ * render — an output-byte change with goldens and a changeset behind it — and
+ * the way to close it is a measurement of the two parts' output levels, not a
+ * match to somebody's emulator (AGENTS.md §Working on audio, doc 13 §A5.5).
+ * What has changed is that the size of the question is now known: 3.3 dB, in a
+ * known direction, against a stated reference.
+ *
+ * Sources: Sega Genesis (Model 1) sound and video schematic — R31/C39/C40 and
+ * R34/R37 on the PSG side, R53/R54 and the 2.2 kΩ pair on the FM side;
+ * genesis-plus-gx `core/sound/psg.c` (`PSG_MAX_VOLUME`) and `ym2612.c` (the
+ * ±8191 per-channel clamp).
  */
 export const MD_CHIP_GAINS: readonly number[] = [1, 0.5];
 
@@ -88,12 +132,23 @@ export function mdBinding(
   const patches = options.patches ?? [];
   /** Which patch each FM channel currently holds, so it is installed once. */
   const installed: (FmPatch | undefined)[] = new Array(FM_CHANNELS).fill(undefined) as undefined[];
+  /**
+   * Whether each channel's carriers currently have their AM enable set.
+   *
+   * Beside `installed` rather than inside it, because a tremolo belongs to a
+   * *note* and the same patch plays notes with and without one — so this is the
+   * one part of a channel's register state a patch does not decide.
+   */
+  const modulated: boolean[] = new Array(FM_CHANNELS).fill(false) as boolean[];
 
   return {
     console,
     chips: spec.chips,
     spec,
     chipGains: MD_CHIP_GAINS,
+    // The six FM voices bend themselves; the PSG half has no LFO and is left to
+    // `compile.ts`'s per-tick pitch writes (doc 17 §Vibrato).
+    lfoChannels: new Set(Array.from({ length: FM_CHANNELS }, (_, index) => index)),
 
     init(): BoundWrite[] {
       const out: BoundWrite[] = [];
@@ -114,13 +169,33 @@ export function mdBinding(
       }
       out.push(...psg.init().map(asPsg));
       installed.fill(undefined);
+      // The boot's `$60` writes have not happened yet — a patch has not been
+      // installed — so no carrier has its AM bit set and the shadow says so.
+      modulated.fill(false);
       return out;
     },
 
     encode(next, prev): BoundWrite[] {
       const out: BoundWrite[] = [];
+      // `$22` is the whole chip's, so it is switched on the first tick anything
+      // asks for vibrato and never touched again. Lazily rather than at boot,
+      // because `init()` writing it unconditionally would change the register
+      // stream of every track that has no vibrato in it — which is all of them
+      // in the example library — for no audible difference at all.
+      const wants = lfoWanted(next);
+      if (wants !== lfoWanted(prev)) {
+        out.push(...ym(0x22, wants ? lfoRegister(lfoRateIndex(VIBRATO_HZ)) : 0x00));
+      }
       for (let channel = 0; channel < FM_CHANNELS; channel += 1) {
-        encodeFm(out, channel, next[channel]!, prev?.[channel], patches[channel], installed);
+        encodeFm(
+          out,
+          channel,
+          next[channel]!,
+          prev?.[channel],
+          patches[channel],
+          installed,
+          modulated,
+        );
       }
       out.push(
         ...psg
@@ -215,11 +290,18 @@ function encodeFm(
   before: ChannelFrame | undefined,
   patch: FmPatch | undefined,
   installed: (FmPatch | undefined)[],
+  modulated: boolean[],
 ): void {
   const wanted = patch ?? DEFAULT_PATCH;
+  // A tremolo is per *note*, so whether the carriers have their AM bit set is
+  // part of what a channel's registers currently say — and it is tracked beside
+  // the patch rather than folded into it, because the same patch plays notes
+  // with and without one.
+  const wantAm = (frame.on ? (frame.tremoloDb ?? 0) : 0) > 0;
   if (installed[channel] !== wanted) {
-    out.push(...patchWrites(wanted, channel).map((write) => ({ ...write, chip: 0 })));
+    out.push(...patchWrites(wanted, channel, wantAm).map((write) => ({ ...write, chip: 0 })));
     installed[channel] = wanted;
+    modulated[channel] = wantAm;
     // A fresh patch means the previous tick says nothing about the chip's state,
     // so everything below is stated rather than diffed.
     before = undefined;
@@ -228,6 +310,11 @@ function encodeFm(
   if (!frame.on) {
     if (before === undefined || before.on) out.push(...ymKey(channel, 0));
     return;
+  }
+
+  if (modulated[channel] !== wantAm) {
+    out.push(...amWrites(wanted, channel, wantAm).map((write) => ({ ...write, chip: 0 })));
+    modulated[channel] = wantAm;
   }
 
   const pitch = fnumFor(frame.hz);
@@ -245,11 +332,28 @@ function encodeFm(
     }
   }
 
-  const pan = frame.pan;
-  const panBits = ((pan?.left ?? true) ? 0x80 : 0) | ((pan?.right ?? true) ? 0x40 : 0);
+  // An FM voice has one output bit a side and nothing between them, so a
+  // position is quantised rather than spent — this is the one part of this
+  // console's stereo the PSG half does not share (its own is `psg.ts`'s).
+  //
+  // The same byte carries *both* LFO sensitivities, so the three are one write:
+  // the panning in bits 7-6, the tremolo depth in bits 5-4 and the vibrato
+  // depth in bits 2-0. Writing either
+  // without the other is what would silently cancel a placement or a vibrato,
+  // which is why neither is emitted on its own.
+  const sides = panSides(frame.pan);
+  const panBits =
+    (sides.left ? 0x80 : 0) |
+    (sides.right ? 0x40 : 0) |
+    (amsFor(frame.tremoloDb ?? 0) << 4) |
+    fmsFor(frame.vibratoCents ?? 0);
+  const wasSides = panSides(before?.pan);
   const beforePan =
     before?.on === true
-      ? ((before.pan?.left ?? true) ? 0x80 : 0) | ((before.pan?.right ?? true) ? 0x40 : 0)
+      ? (wasSides.left ? 0x80 : 0) |
+        (wasSides.right ? 0x40 : 0) |
+        (amsFor(before.tremoloDb ?? 0) << 4) |
+        fmsFor(before.vibratoCents ?? 0)
       : -1;
   if (panBits !== beforePan) out.push(...ymChannel(channel, 0xb4, panBits));
 

@@ -8,17 +8,37 @@
  * (doc 16 §Two representations).
  */
 
-import type { AudioSpec } from "@demake/core";
+import { math, type AudioSpec } from "@demake/core";
 
 import type { ChannelFrame, ChannelSpan, ChipScript, TickWrites } from "../chipscript.js";
 import { countWrites, peakWritesPerTick } from "../chipscript.js";
+import type { Dropped } from "../chipscript.js";
 import type { ChipBinding } from "../binding/types.js";
 import { silentFrames } from "../binding/types.js";
 import { centsToHz, foldIntoRange } from "../pitch.js";
 import type { DrumClass, Note, Part } from "../score/types.js";
 import type { Score } from "../score/types.js";
 import type { TimingPlan } from "../timing.js";
+import {
+  TREMOLO_MAX_DB,
+  VIBRATO_DELAY_SECONDS,
+  VIBRATO_HZ,
+  VIBRATO_MAX_CENTS,
+} from "../vibrato.js";
 import type { ArrangementPlan, ChannelAssignment } from "./plan.js";
+
+/** A compiled schedule, and what compiling it cost. */
+export interface CompiledScript {
+  script: ChipScript;
+  /**
+   * Notes the schedule could not carry.
+   *
+   * Separate from the plan's drops because these are decided *here*: whether
+   * two hits collide depends on the driver's tick grid, which the plan does not
+   * know about.
+   */
+  dropped: Dropped[];
+}
 
 export interface CompileOptions {
   /** Ticks between arpeggio steps; 1 is the classic chip shimmer. */
@@ -60,6 +80,47 @@ const DRUM_MAP: Record<
   perc: { period: 40, envelope: 2, tonal: false, pitch: 8100, ticks: 4 },
 };
 
+/**
+ * Which voice of a percussion pool each drum class prefers (doc 17 §Percussion).
+ *
+ * By **class** rather than by round-robin over hits, which is what a drum
+ * machine does and what a kit wants: a kick that is still ringing is never cut
+ * off by the hat that lands on the next eighth, because they are not on the
+ * same voice. Round-robin would allocate by arrival and put consecutive kicks
+ * on different voices, which sounds like two kick drums slightly out of tune
+ * with each other — these are *recordings*, so two voices playing one at
+ * overlapping offsets is flanging rather than depth.
+ *
+ * The order is how badly a class wants a voice of its own, and the one
+ * deliberate collision is the pair: **an open hat and a closed hat share**,
+ * because a closed hat choking a ringing open one is exactly what the pedal on
+ * a real kit does. Getting that for free out of the voice allocation is worth
+ * more than giving each its own and having them ring through each other.
+ */
+const DRUM_VOICE: Record<DrumClass, number> = {
+  kick: 0,
+  snare: 1,
+  "hat-closed": 2,
+  "hat-open": 2,
+  tom: 3,
+  cymbal: 4,
+  perc: 5,
+};
+
+/**
+ * The voice a class lands on in a pool of `size`.
+ *
+ * Clamped rather than wrapped, so the classes that most want their own voice
+ * keep one and the rest crowd onto the last: a pool of three is kick, snare and
+ * everything-else, where wrapping would put the toms back on the kick's voice
+ * and choke it. **A pool of one sends every class to voice zero**, which is the
+ * property that makes every console but two byte-identical.
+ */
+function drumVoiceFor(drum: DrumClass, size: number): number {
+  const wanted = DRUM_VOICE[drum];
+  return wanted > size - 1 ? size - 1 : wanted;
+}
+
 /** Build the schedule. */
 export function compileScript(
   score: Score,
@@ -68,15 +129,17 @@ export function compileScript(
   plan: ArrangementPlan,
   timing: TimingPlan,
   options: CompileOptions,
-): ChipScript {
+): CompiledScript {
   const totalTicks = timing.totalTicks;
   const ticks: TickWrites[] = [];
   const spans: ChannelSpan[] = [];
+  /** Hits lost to a voice that was already struck, by the part that wrote them. */
+  const choked = new Map<string, number>();
 
   // Pre-resolve each channel's note stream onto driver ticks. Doing it per
   // channel rather than per tick keeps the inner loop free of searching.
   const lanes = plan.assignments.map((assignment) =>
-    buildLane(assignment, timing, totalTicks, options),
+    buildLane(assignment, timing, totalTicks, options, binding.lfoChannels, choked),
   );
 
   for (const assignment of plan.assignments) {
@@ -87,6 +150,7 @@ export function compileScript(
         startTick: 0,
         endTick: totalTicks,
         treatment: assignment.treatment,
+        pan: assignment.pan,
       });
     }
   }
@@ -129,7 +193,48 @@ export function compileScript(
   };
   script.budgets.writes = countWrites(script);
   script.budgets.peakWritesPerTick = peakWritesPerTick(script);
-  return script;
+  return { script, dropped: chokedDrops(score, choked) };
+}
+
+/** Record one hit lost to a voice that was already ringing. */
+function choke(choked: Map<string, number>, partId: string): void {
+  choked.set(partId, (choked.get(partId) ?? 0) + 1);
+}
+
+/**
+ * Choked hits as drops, so nothing is lost silently (doc 16 §Never lose a part).
+ *
+ * A kit is one part and a console has one noise generator, so two drums landing
+ * on one tick is the *normal* case rather than an exceptional one: a kick under
+ * a hat is most bars of most music. Until this was counted the loss was
+ * invisible — the example library's overworld theme wrote 96 drum notes and a
+ * Game Boy played 64, and nothing anywhere said so.
+ *
+ * `kind` is `note` rather than `part`, because what went is some of a part's
+ * notes and not the part: it still plays, and the arrangement still has drums.
+ * That distinction is what `--strict` and the diagnostics read.
+ */
+function chokedDrops(score: Score, choked: Map<string, number>): Dropped[] {
+  const out: Dropped[] = [];
+  for (const [partId, count] of [...choked].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    const part = score.parts.find((candidate) => candidate.id === partId);
+    out.push({
+      kind: "note",
+      partId,
+      count,
+      salience: part === undefined ? 0 : meanSalience(part),
+      reason: "the voice was already ringing when this hit landed",
+    });
+  }
+  return out;
+}
+
+/** Mean salience of a part's notes, for the drop report's cost column. */
+function meanSalience(part: Part): number {
+  if (part.notes.length === 0) return 0;
+  let sum = 0;
+  for (const note of part.notes) sum += note.salience;
+  return sum / part.notes.length;
 }
 
 /** Resolve one channel's whole timeline into per-tick frames. */
@@ -138,10 +243,21 @@ function buildLane(
   timing: TimingPlan,
   totalTicks: number,
   options: CompileOptions,
+  lfoChannels: ReadonlySet<number> | undefined,
+  choked: Map<string, number>,
 ): ChannelFrame[] {
   const channel = assignment.channel;
   const frames: ChannelFrame[] = new Array<ChannelFrame>(totalTicks);
-  for (let i = 0; i < totalTicks; i += 1) frames[i] = { on: false, hz: 0, level: 0 };
+  // The placement is stamped at construction rather than on each of the three
+  // paths below, and onto the silent frames as well as the sounding ones. Both
+  // halves of that are deliberate: it is the one property of this lane that
+  // does not depend on what is playing, so a path that forgot it would be a
+  // channel that drifts back to centre for one kind of material — and stating
+  // it while silent is what puts the pan register in the first tick's writes,
+  // beside the rest of what the channel is about to need.
+  for (let i = 0; i < totalTicks; i += 1) {
+    frames[i] = { on: false, hz: 0, level: 0, pan: assignment.pan };
+  }
 
   // Every note the channel is responsible for, on the driver's grid.
   interface Placed {
@@ -161,17 +277,33 @@ function buildLane(
   }
   placed.sort((a, b) => a.start - b.start || b.note.salience - a.note.salience);
 
+  // Where the console gave the kit more than one voice, this channel plays only
+  // the classes that landed on it. A pool of one keeps every class, so the
+  // filter is the identity on every console but the two with spare percussion
+  // hardware — which is what leaves their schedules untouched.
+  const pool = assignment.drumVoice;
+  const mine =
+    pool === undefined || pool.size < 2
+      ? placed
+      : placed.filter((entry) => drumVoiceFor(entry.note.drum ?? "perc", pool.size) === pool.index);
+
   // A percussion part on a channel that has no noise generator. The gesture is
   // the noise path's — struck, and left to decay — and only the voicing differs,
   // because there is a pitch to choose instead of a colour.
   if (assignment.parts.some((part) => part.role === "percussion")) {
     if (channel.kind !== "noise") {
-      for (const entry of placed) {
-        // One voice, so two hits on one tick are one hit. `placed` is in salience
-        // order within a tick, so the first is the one to keep: a snare and a hat
-        // land together on every backbeat, and the hat is not the one you would
-        // hear a drummer play there.
-        if (frames[entry.start]!.retrigger) continue;
+      for (const entry of mine) {
+        // Two hits on one tick are one hit *on this voice*. `placed` is in
+        // salience order within a tick, so the first is the one to keep: a snare
+        // and a hat land together on every backbeat, and the hat is not the one
+        // you would hear a drummer play there. Where the console has voices to
+        // spare they are not on the same one and both are heard, which is the
+        // whole point of the pool — this line stops being reached rather than
+        // stops being true.
+        if (frames[entry.start]!.retrigger) {
+          choke(choked, entry.part.id);
+          continue;
+        }
         const drum = DRUM_MAP[entry.note.drum ?? "perc"];
         const hz = centsToHz(drum.pitch + assignment.octaveShift * 1200);
         const folded = channel.pitch ? foldIntoRange(channel.pitch, hz) : { hz, octaves: 0 };
@@ -194,9 +326,14 @@ function buildLane(
   }
 
   if (channel.kind === "noise") {
-    for (const entry of placed) {
+    for (const entry of mine) {
       const drum = DRUM_MAP[entry.note.drum ?? "perc"];
       const frame = frames[entry.start]!;
+      // A second hit on one tick overwrites the first here, where the pitched
+      // path above keeps the first and skips the rest. Either way one of them
+      // is gone, and both are counted — the inconsistency about *which* is
+      // older than this and is not what a drop report is for.
+      if (frame.retrigger === true) choke(choked, entry.part.id);
       frame.on = true;
       frame.retrigger = true;
       frame.level = entry.note.velocity / 127;
@@ -219,6 +356,7 @@ function buildLane(
   }
 
   const shift = assignment.octaveShift * 1200;
+  const lfo = lfoChannels?.has(assignment.channelIndex) === true;
   // A sweep rather than a filter per tick: the piece is walked once and the
   // active set is maintained, so cost is notes + ticks rather than their
   // product. A three-minute track has tens of thousands of ticks.
@@ -246,15 +384,120 @@ function buildLane(
     }
 
     const frame = frames[tick]!;
-    const hz = centsToHz(chosen.note.pitch + shift);
+    // A chip with an LFO is handed the written pitch and the depth, and does the
+    // moving itself; everything else is handed a pitch that is already moving,
+    // because that is the only vibrato it can be given.
+    const depth = chosen.note.vibrato ?? 0;
+    // The delay applies to both routes, so a chip that bends itself starts when
+    // one that is bent by the driver would. It is asked *without* a depth in it,
+    // because the same gate serves the tremolo below and a note that asked only
+    // for that one has no vibrato to be engaged about.
+    const engaged = modulationElapsed(chosen, tick, timing) !== null;
+    const cents = chosen.note.pitch + shift + (lfo ? 0 : vibratoCents(chosen, tick, timing));
+    const hz = centsToHz(cents);
     const folded = channel.pitch ? foldIntoRange(channel.pitch, hz) : { hz, octaves: 0 };
     frame.on = true;
     frame.hz = folded.hz;
+    if (lfo && engaged && depth > 0) {
+      frame.vibrato = depth;
+      frame.vibratoCents = depth * VIBRATO_MAX_CENTS;
+    }
     frame.duty = options.duty;
     frame.retrigger = tick === chosen.start;
-    frame.level = levelFor(chosen, tick, options);
+    // The amplitude half of the same LFO, on the same terms: a chip that has one
+    // is handed the depth and does the swell itself, and everything else is
+    // handed a level that is already swelling.
+    const swell = chosen.note.tremolo ?? 0;
+    frame.level = levelFor(chosen, tick, options) * (lfo ? 1 : tremoloGain(chosen, tick, timing));
+    if (lfo && engaged && swell > 0) frame.tremoloDb = swell * TREMOLO_MAX_DB;
   }
   return frames;
+}
+
+/**
+ * Vibrato (doc 17 §Vibrato).
+ *
+ * **Depth is the source's; rate and shape are the demaker's.** General MIDI
+ * puts vibrato depth on the modulation wheel and says nothing about how fast it
+ * should be — controller 76 exists for the rate and almost nothing writes it —
+ * so the depth is read off the score and the rest is decided once, here.
+ *
+ * A little over five cycles a second is where instrumental vibrato sits, and a
+ * quarter-tone at the top of the wheel is about as wide as a chip channel goes
+ * before it stops reading as one note. It **starts late**, because a player's
+ * does: a note is placed in tune and leaned into. That is worth more here than
+ * it looks — the delay costs no pitch writes at all, so a schedule pays for
+ * vibrato only on notes long enough to have any, and a sixteenth-note line
+ * carries none however hard the wheel was pushed.
+ */
+/**
+ * Seconds since the modulation should have started, or `null` before it does.
+ *
+ * One definition with two readers, because the delay is the *demaker's*
+ * decision and must be the same on both routes to a chip. A console that bends
+ * its own pitch would otherwise start vibrating on the attack while every other
+ * console waited — the same note played two ways, which is precisely what
+ * having two routes must not mean.
+ */
+function modulationElapsed(
+  entry: { start: number },
+  tick: number,
+  timing: TimingPlan,
+): number | null {
+  const seconds = (tick - entry.start) * timing.secondsPerTick - VIBRATO_DELAY_SECONDS;
+  return seconds > 0 ? seconds : null;
+}
+
+/** The same, gated on the note actually asking for vibrato. */
+function vibratoElapsed(
+  entry: { note: Note; start: number },
+  tick: number,
+  timing: TimingPlan,
+): number | null {
+  const depth = entry.note.vibrato;
+  if (depth === undefined || depth <= 0) return null;
+  return modulationElapsed(entry, tick, timing);
+}
+
+/**
+ * How much of its written level a note keeps on this tick, 0–1.
+ *
+ * An attenuation rather than a swing about the level, because that is what the
+ * chip with the hardware for it does — a YM2612's LFO only ever *adds*
+ * attenuation. So a note peaks at what it was given and dips by up to
+ * {@link TREMOLO_MAX_DB}, and the two routes to a tremolo are the same shape
+ * rather than one being the louder of the two.
+ *
+ * The delay and the rate are `vibratoElapsed`'s, because on the console that
+ * performs both there is one oscillator behind them (`vibrato.ts` §the rate).
+ */
+function tremoloGain(
+  entry: { note: Note; start: number },
+  tick: number,
+  timing: TimingPlan,
+): number {
+  const depth = entry.note.tremolo;
+  if (depth === undefined || depth <= 0) return 1;
+  const seconds = modulationElapsed(entry, tick, timing);
+  if (seconds === null) return 1;
+  // Sine at the LFO's rate, mapped to [0, 1] so the peak is the written level.
+  const sweep = (1 - math.sin(2 * Math.PI * VIBRATO_HZ * seconds)) / 2;
+  return math.pow(10, (-depth * TREMOLO_MAX_DB * sweep) / 20);
+}
+
+/** How far off its written pitch a note sits on this tick, in cents. */
+function vibratoCents(
+  entry: { note: Note; start: number },
+  tick: number,
+  timing: TimingPlan,
+): number {
+  const depth = entry.note.vibrato;
+  const seconds = vibratoElapsed(entry, tick, timing);
+  if (depth === undefined || seconds === null) return 0;
+  // `math.sin` rather than `Math.sin`: this package runs under the determinism
+  // rule, and an oscillator seeded from the host's transcendentals is a track
+  // that renders differently in two browsers (doc 16 §Determinism engineering).
+  return depth * VIBRATO_MAX_CENTS * math.sin(2 * Math.PI * VIBRATO_HZ * seconds);
 }
 
 /**

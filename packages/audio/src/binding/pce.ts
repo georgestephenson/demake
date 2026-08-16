@@ -45,6 +45,7 @@ import type { ChannelFrame } from "../chipscript.js";
 import { snapPitch, snapVolume } from "../pitch.js";
 
 import { pceWaveform, pceWaveformFor, PCE_WAVE_SAMPLES } from "./pce-bank.js";
+import { attenuate, panGains } from "./pan.js";
 import type { BoundWrite, ChipBinding, DriverRateFit } from "./types.js";
 
 /** The CPU's clock, which is the master clock divided by three. */
@@ -79,12 +80,16 @@ function dividerFor(channel: AudioSpec["channels"][number], hz: number): number 
   return snapPitch(channel.pitch!, hz).divider & 0xfff;
 }
 
-/** The balance byte a frame's panning asks for: four bits a side, 15 is full. */
+/**
+ * The balance byte a frame's panning asks for: four bits a side, 15 is full.
+ *
+ * The chip puts three attenuators in series and this is the one that is purely
+ * placement, so a position is spent here at the full fifteen steps a side
+ * rather than reduced to left, right or both.
+ */
 function balanceFor(frame: ChannelFrame): number {
-  const left = frame.pan?.left ?? true;
-  const right = frame.pan?.right ?? true;
-  if (left === right) return 0xff;
-  return left ? 0xf0 : 0x0f;
+  const gains = panGains(frame.pan);
+  return (attenuate(0x0f, gains.left) << 4) | attenuate(0x0f, gains.right);
 }
 
 export function pceBinding(console: string, spec: AudioSpec): ChipBinding {

@@ -43,7 +43,7 @@ interface Props {
   /** `demake render`'s options, as the Listen controls have them. */
   render: { sampleRate?: number; outputStage?: "board"; loops?: number };
   /** The CLI line each download corresponds to. */
-  commands: { wav: string; rom: string };
+  commands: { wav: string; flac: string; rom: string };
   /** Told once, the first time the audio device names its own rate. */
   onDeviceRate: (rate: number) => void;
   children?: ComponentChildren;
@@ -123,7 +123,7 @@ export function AudioListenPane({
   }, []);
 
   const save = useCallback(
-    async (what: "wav" | "manifest" | "rom") => {
+    async (what: "wav" | "flac" | "manifest" | "rom") => {
       if (token === null) return;
       setBusy(what);
       setError(null);
@@ -211,6 +211,15 @@ export function AudioListenPane({
           onClick={() => void save("wav")}
         >
           {busy === "wav" ? "…" : "WAV"}
+        </button>
+        <button
+          type="button"
+          data-testid="export-flac"
+          disabled={!ready || busy !== null}
+          title={commands.flac}
+          onClick={() => void save("flac")}
+        >
+          {busy === "flac" ? "…" : "FLAC"}
         </button>
         <button
           type="button"

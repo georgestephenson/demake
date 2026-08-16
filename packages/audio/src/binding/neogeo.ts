@@ -19,6 +19,22 @@
  * mapping that had to be corrected afterwards would be a sign the two chips were
  * merely similar.
  *
+ * ### …but it has no LFO, so vibrato is written rather than switched on
+ *
+ * The one place the OPNB is *less* than the OPN2 in a way a binding can feel.
+ * A Mega Drive programs `$22` and a sensitivity nibble and the chip bends the
+ * note itself; this part has neither, so `lfoChannels` is absent here and
+ * `compile.ts` moves the pitch every tick instead (doc 17 §Vibrato). That costs
+ * real schedule bytes — on the Mega Drive hardware vibrato is a few per cent
+ * over a dry track and here it is the same two-to-five times every other
+ * console pays.
+ *
+ * It is worth stating rather than leaving to be rediscovered, because the
+ * failure mode of getting it wrong is silent: write `$22` and the FMS bits on
+ * this chip and `ym2610.ts` *refuses* them by design — so the schedule looks
+ * like it is asking for vibrato, the per-tick pitch writes are gone because the
+ * binding claimed to handle it, and the note simply comes out straight.
+ *
  * ### This console has no shared register, and the reason is per section
  *
  * Six of the fifteen consoles emit no merge routine and each has its own reason.
@@ -73,6 +89,7 @@ import {
   NEOGEO_WAVE_SAMPLES,
   type NeogeoWaveform,
 } from "./neogeo-bank.js";
+import { panSides } from "./pan.js";
 import type { BoundWrite, ChipBinding, DriverRateFit } from "./types.js";
 
 /** The chip's clock, and the divider that makes its internal sample rate. */
@@ -307,12 +324,14 @@ function encodeFm(
     }
   }
 
-  const pan = frame.pan;
-  const panBits = ((pan?.left ?? true) ? 0x80 : 0) | ((pan?.right ?? true) ? 0x40 : 0);
+  // Two output bits and nothing between, exactly as on the Mega Drive's OPN2 —
+  // every one of this chip's four sections pans by switch, which is why none of
+  // them calls `panGains`.
+  const sides = panSides(frame.pan);
+  const panBits = (sides.left ? 0x80 : 0) | (sides.right ? 0x40 : 0);
+  const wasSides = panSides(before?.pan);
   const beforePan =
-    before?.on === true
-      ? ((before.pan?.left ?? true) ? 0x80 : 0) | ((before.pan?.right ?? true) ? 0x40 : 0)
-      : -1;
+    before?.on === true ? (wasSides.left ? 0x80 : 0) | (wasSides.right ? 0x40 : 0) : -1;
   if (panBits !== beforePan) out.push(...ymChannel(channel, 0xb4, panBits));
 
   if (changed) {
@@ -414,8 +433,8 @@ function encodeAdpcmA(
 
   const bank = adpcmABank();
   const region = bank.regions[drumFor(frame.hz)];
-  const pan = frame.pan;
-  const bits = ((pan?.left ?? true) ? 0x80 : 0) | ((pan?.right ?? true) ? 0x40 : 0);
+  const sides = panSides(frame.pan);
+  const bits = (sides.left ? 0x80 : 0) | (sides.right ? 0x40 : 0);
   out.push(...portB(0x08 + voice, bits | adpcmALevel(frame.level)));
   out.push(...portB(0x10 + voice, region.startBlock & 0xff));
   out.push(...portB(0x18 + voice, (region.startBlock >> 8) & 0xff));
@@ -474,12 +493,11 @@ function encodeAdpcmB(
     out.push(...portA(0x1a, (delta >> 8) & 0xff));
   }
 
-  const pan = frame.pan;
-  const bits = ((pan?.left ?? true) ? 0x80 : 0) | ((pan?.right ?? true) ? 0x40 : 0);
+  const sides = panSides(frame.pan);
+  const bits = (sides.left ? 0x80 : 0) | (sides.right ? 0x40 : 0);
+  const wasSides = panSides(before?.pan);
   const beforeBits =
-    before?.on === true
-      ? ((before.pan?.left ?? true) ? 0x80 : 0) | ((before.pan?.right ?? true) ? 0x40 : 0)
-      : -1;
+    before?.on === true ? (wasSides.left ? 0x80 : 0) | (wasSides.right ? 0x40 : 0) : -1;
   if (bits !== beforeBits) out.push(...portA(0x11, bits));
 
   const volume = Math.round(Math.max(0, Math.min(1, frame.level)) * 255);

@@ -37,6 +37,21 @@ const TREATMENT: Readonly<Record<string, string>> = {
   merged: "merged with another part",
 };
 
+/**
+ * Where the arranger placed this channel, for the span's tooltip.
+ *
+ * In words rather than as the number, because the number is a position on a
+ * scale nobody outside the engine has seen — and empty at centre, since "no
+ * placement" is what most channels correctly have and a tooltip that said
+ * "centred" on every span of a mono console would be noise.
+ */
+function placement(pan: number): string {
+  if (pan === 0) return "";
+  const side = pan < 0 ? "left" : "right";
+  const distance = Math.abs(pan) >= 0.75 ? "hard" : Math.abs(pan) >= 0.4 ? "" : "slightly ";
+  return `, placed ${distance}${distance === "hard" ? " " : ""}${side}`;
+}
+
 export function ChannelPlan({ channels, spans, ticks, loopTick, bars, partNames }: Props) {
   const span = Math.max(ticks, 1);
   const grid =
@@ -66,7 +81,7 @@ export function ChannelPlan({ channels, spans, ticks, loopTick, bars, partNames 
                   data-treatment={entry.treatment}
                   title={`${partNames[entry.partId] ?? entry.partId} — ${
                     TREATMENT[entry.treatment] ?? entry.treatment
-                  }`}
+                  }${placement(entry.pan)}`}
                   style={{
                     left: `${(entry.startTick / span) * 100}%`,
                     width: `${(Math.max(entry.endTick - entry.startTick, 1) / span) * 100}%`,

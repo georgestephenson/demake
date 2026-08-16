@@ -35,6 +35,32 @@ import {
 
 const RATE = { num: 60, den: 1 };
 
+/**
+ * How many steps this chip's shift register takes before it repeats.
+ *
+ * Read off the register itself rather than off the audio, because a sequence
+ * length is a property of the generator and a spectrum is a property of a
+ * render: 28 steps and 42 steps both sound like a buzz, and only one of them is
+ * what mode 7 does.
+ */
+function periodOf(chip: WsSound): number {
+  const seen = new Map<number, number>();
+  const sink = { clocksUntilSampleBoundary: () => 1 << 30, add: () => undefined };
+  for (let step = 0; step < 200_000; step += 1) {
+    const state = chip.noiseRegister;
+    const before = seen.get(state);
+    if (before !== undefined) return step - before;
+    seen.set(state, step);
+    // One divider's worth of clocks is one step of the register, because it is
+    // clocked by the channel it lives on rather than by a rate of its own — and
+    // a divider here is `2048 - frequency` clocks, not thirty-two of them. Step
+    // twice as fast and a 254-step mode reads as 127, which is the shape of
+    // wrong answer this test is otherwise good at catching.
+    chip.run(2048 - 2047, sink);
+  }
+  return -1;
+}
+
 /** Where the waveforms go: sixty-four-byte aligned, and the register's range. */
 const WAVE_BASE = 0x0800;
 
@@ -256,6 +282,32 @@ describe("the WonderSwan's sound hardware", () => {
     const pcm = renderSchedule(chip, hold([], 20), RATE);
     expect(rms(pcm.channels[0] as Float32Array)).toBeLessThan(0.001);
     expect(WS_SOUND_CHANNELS).toBe(4);
+  });
+
+  it("produces the eight sequence lengths the hardware's noise modes have", () => {
+    // The one oracle for this generator that cannot be satisfied by agreeing
+    // with ourselves. A fifteen-bit register with a tap has exactly one
+    // observable that is not a matter of taste — how many steps before it
+    // repeats — and the WonderSwan's eight modes produce eight documented
+    // lengths. Getting the feedback wrong reproduces mode 0 by coincidence,
+    // because a maximal-length sequence is 32767 whatever the tap, and misses
+    // all seven others: this chip's noise was `bit 14 XOR bit (14 - tap)` and
+    // scored 35, 4599, 32767, 32767, 93, 93 and 32767 against the table below —
+    // which sounds like white noise on every mode rather than the eight colours
+    // the hardware has. Level B found it against Mednafen's own output; this is
+    // what pins it (doc 16 §The proof).
+    //
+    // Source: WSdev wiki — Sound (https://ws.nesdev.org/wiki/Sound).
+    const LENGTHS = [32767, 1953, 254, 217, 73, 63, 42, 28];
+    for (const [mode, want] of LENGTHS.entries()) {
+      const chip = new WsSound({ ram: ramWith(WS_NOISE_CHANNEL, SQUARE) });
+      // Reset the register, select the mode, and let it run: the divider is the
+      // channel's own, so a fast one keeps the run short.
+      for (const write of play(WS_NOISE_CHANNEL, 2047)) chip.write(write.reg, write.value);
+      chip.write(REG.NOISE, 0xc0 | mode);
+      chip.write(REG.CONTROL, 0x80 | (1 << WS_NOISE_CHANNEL));
+      expect(periodOf(chip), `mode ${mode}`).toBe(want);
+    }
   });
 
   it("keeps the voice's two registers where a caller can read them", () => {

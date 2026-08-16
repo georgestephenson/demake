@@ -32,6 +32,7 @@ import {
   dominantBpm,
   limitLength,
   encodeAudioManifest,
+  encodeFlac,
   encodeWav,
   MidiParseError,
   PackError,
@@ -349,6 +350,14 @@ async function buildArtifact(
       return {
         name: `${request.stem}.wav`,
         bytes: bytesPayload(encodeWav(render(entry.script, request.render))),
+      };
+    case "flac":
+      // The same samples through the same one quantizer — this chooses a
+      // container, not a fidelity — and the same encoder the CLI uses, so the
+      // browser's file is byte-identical to `--preview-format flac`.
+      return {
+        name: `${request.stem}.flac`,
+        bytes: bytesPayload(encodeFlac(render(entry.script, request.render))),
       };
     case "rom": {
       const built = await buildAudioRom(entry.script, { title: request.title });

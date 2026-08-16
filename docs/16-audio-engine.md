@@ -50,12 +50,13 @@ The web app's audio sections are live over the same engine, the browser's `.vgm`
 sidecar, WAV and cartridge are byte-identical to the CLI's (doc 07 §The audio
 sections), and the ROM pane plays whichever chip the running cartridge has. What
 is not built: the remaining chips (the handhelds), a *standalone* audio cartridge
-for the consoles that still have none (the Game Boy, the **NES**, the **PC
-Engine**, both **Sega 8-bits** and the **Mega Drive** build one; every other
-console with a driver plays it only from inside a game, and
+for the one console that still has none (the Game Boy, the **NES**, the **PC
+Engine**, both **Sega 8-bits**, the **Mega Drive**, both **ARM handhelds**, the
+**Virtual Boy**, both **Neo Geo Pockets** and both **WonderSwans** build one;
+only the Super Nintendo plays it from inside a game alone, and
 [`console-support.md`](console-support.md)'s **audio ROM** column is where that
 is stated rather than here), driver backends for the remaining consoles,
-`bin`/`asm`/`c` emit, Level B sample comparison, and the lossy encoders.
+`bin`/`asm`/`c` emit, and the lossy encoders.
 
 **And a sixth driver, on a console whose second device is not a chip.** `demake
 build -c gba` emits an ARM player, and it is the first one that has to *compute*
@@ -75,6 +76,23 @@ panning byte *and* the mixer's fifth voice's right level — so `PackOptions` gr
 `mergeChip` beside `mergeRegs`; and `sfx/index.ts` had been dropping `chip` from
 every write it made since it was written, which the Mega Drive survived only
 because it places its effects on chip zero.
+
+**And the eleventh, on the console that asks least.** `demake build -c vb` puts a
+game's music and effects in a Virtual Boy cartridge as V810 machine code, which
+is the last game console in the matrix to get a driver — every one of the sixteen
+that builds a game now plays its audio. Three of its answers are its own. The
+**tick is a call rather than a handler**: this cartridge takes no interrupt
+anywhere and its main loop already waits a frame per pass on the drawing
+processor, so a tick per pass *is* a tick per frame and there is nothing to count
+— which makes `resolveVbClock` the only clock resolver in the set with exactly
+one answer to give, at 50.2 Hz, the coarsest driver rate here. There is **no
+merge arm at all**, the sixth console with none and the fourth whose reason is
+that its hardware shares *less*: panning is two nibbles of a channel's own
+register and enabling is its own bit 7, so no schedule for this console ever sets
+the run format's merge bit. And **register liveness is the caller's question at
+every call**, because a V810 routine saves its return address and nothing else —
+which is a class of bug the eight consoles with a push list are simply spared
+(doc 13 §Console rollout item 9).
 
 **And the Super Nintendo, which is a fourth driver and a different shape of
 problem.** Its sound hardware is a second computer: an SPC700 with its own 64 KiB,
@@ -332,6 +350,33 @@ three ways:
 - **Cross-validation against reference cores.** Same ROM, same frames, our model
   versus the emulator's own audio output at native rate (§The proof).
 
+#### Resampling: one rule, both directions
+
+`renderSchedule` box-integrates a chip's native output onto evenly spaced
+samples, with boundaries at `floor(i × clockHz / sampleRate)` computed fresh from
+`i` rather than accumulated — so the mapping between clocks and samples is exact
+for the whole render however awkward the ratio.
+
+Almost every chip here clocks in **megahertz**, so a box is thousands of clocks
+wide and integration is plainly a downsample. One is not: `GbaPcm` is a *mixer*
+rather than an oscillator, and runs at 32768 Hz — below the 48 kHz a render
+defaults to. Its boxes are narrower than a clock, and the same rule covers it
+without a second mechanism: a box that falls **entirely inside one clock** has
+that clock's value as its mean, because the mean of a constant is the constant.
+Holding the value there is not a special case bolted on for one console; it is
+what box integration already meant.
+
+Two things about it are load-bearing and were each a real bug. Dividing by the
+box's width without asking whether the width is **zero** is `0 / 0`, which is how
+`demake render -c gba` came to write an all-`NaN` WAV for as long as that console
+existed. And **the accumulator must survive a zero-width box** — no clock elapsed
+in it, so whatever it holds belongs to a box still to come, and clearing it
+renders every second sample as silence. The second failure is much quieter than
+the first and no check for `NaN` finds it, which is why
+`packages/chip/test/mix.test.ts` asserts the property that distinguishes them: a
+constant rendered through a slow clock and a fast one produces the *same*
+samples, since the mean of a constant does not depend on how the boxes fall.
+
 ### Claim 3 — every surface plays that model's output and nothing else
 
 One renderer, all three faces, mirroring the image path's "one engine, four
@@ -422,6 +467,32 @@ The guarantee is a property of *lossless* audio. Stating it precisely:
 | **M4A / AAC**, **Opus**, **MP3** | `--preview-format m4a\|opus\|mp3` | **no** — lossy by construction | convenience for sharing and for size; encoder pinned so the *bytes* stay deterministic, but the *audio* is an approximation of the exact render |
 | `.vgm` / `.spc` | the primary artifact | exact (it *is* the schedule) | plays in chip-music players; feeds `gen` |
 
+**FLAC is built, and it is ours** (`encode/flac.ts`), for the reason every other
+codec in this project is: a byte-identical artifact across the CLI, the browser
+and the desktop cannot depend on a library that ships a different version in
+each. Every arithmetic operation in it is integer, so the file is the same file
+on every engine.
+
+"Sample-identical to the WAV" is true *by construction* rather than by two
+encoders agreeing: both go through one quantizer in `encode/pcm.ts`. What the
+stream then carries is an **MD5 of the unencoded audio**, which the format makes
+optional and this encoder writes anyway — because it turns the reference decoder
+into an end-to-end oracle rather than merely a parser. `flac -t` decodes the
+whole stream and checks its own digest against that one, so it can pass only if
+what came out is bit-for-bit what went in.
+
+Subframes are constant, fixed (orders 0–4) and verbatim, with Rice-coded
+residuals over a searched partition order, and every choice is made by
+**measuring the encoded size** rather than estimating it. What is absent is the
+**LPC** subframe, and its absence is a decision: LPC coefficients come from
+autocorrelation and Levinson-Durbin in floating point, and a predictor derived
+from `Math` would be a different file on a different engine — which is the
+property this format is here to provide. It costs less than it sounds, because
+fixed predictors suit chip audio: a square wave is piecewise constant, so its
+first difference is zero almost everywhere. Measured on a demade Game Boy track,
+this encoder lands at **61.7%** of the WAV against the reference encoder's
+**59.8%** at `-8`.
+
 So the answer to "give me a standard file I can play in a browser or on my
 desktop that is guaranteed to sound like the ROM" is **FLAC** — and this is worth
 saying loudly in the README, because the instinct is to reach for M4A and M4A
@@ -486,6 +557,17 @@ interface ChannelSpec {
 }
 ```
 
+`panning` earns its keep the same way, and it is the field that decides which of
+two laws a placement reaches the chip under. `lr-enable` is one bit a side and
+nothing between (`NR51`, the Game Gear's stereo latch, an FM voice's two output
+bits); `lr-level` is two attenuators, so a voice sits anywhere across the image
+(the T6W28, the S-DSP, the DS SPU, the VSU, the HuC6280, the WonderSwan, the
+Game Boy Advance's mixer). `binding/pan.ts` holds both, and the arranger states
+a *position* rather than a pair of sides precisely so that the distinction stays
+the hardware's rather than being flattened to the poorest chip's answer (doc 17
+§Stereo placement). A channel declaring `none` is never placed and never reports
+a placement.
+
 The pitch lattice is the part that earns its keep. From `formula`, `clockHz`,
 `bits` and `divisor` the engine derives the complete set of frequencies a channel
 can emit, and therefore the *cents error* of any requested note — the audio
@@ -514,7 +596,7 @@ locked by the tests, not by this table.
 
 | Console | Chip(s) | Channels | The constraint that shapes arrangement |
 |---|---|---|---|
-| **Game Boy / Color** | GB APU (DMG/CGB) | 2 pulse (4 duties, 4-bit envelope, sweep on ch1), 1 wave (32 × 4-bit RAM), 1 noise (15/7-bit LFSR) | Four voices, one of which only does noise. The wave channel is the swing vote: bass, or a distinctive lead, not both. Hardware envelopes are decay-only, so swells cost driver writes. Stereo panning per channel (NR51) is free and under-used |
+| **Game Boy / Color** | GB APU (DMG/CGB) | 2 pulse (4 duties, 4-bit envelope, sweep on ch1), 1 wave (32 × 4-bit RAM), 1 noise (15/7-bit LFSR) | Four voices, one of which only does noise. The wave channel is the swing vote: bass, or a distinctive lead, not both. Hardware envelopes are decay-only, so swells cost driver writes. Stereo panning per channel (NR51) is free, and now spent: the arranger places the counter-line against the tune (doc 17 §Stereo placement) |
 | **NES** | 2A03 | 2 pulse (4 duties, envelope, sweep), 1 triangle (**no volume control**), 1 noise (16 periods, tonal short mode), 1 DPCM | The triangle is on/off — it is a bass voice and cannot be dynamic. DPCM buys real drums for real ROM bytes, and stalls the CPU while it plays. Non-linear mixing means channel balance is not additive |
 | **SMS / GG / SG-1000** | SN76489 (T6W28-like stereo on GG) | 3 square (fixed 50% duty), 1 noise (3 rates or ch3's pitch) | **No envelopes at all** — every volume shape is driver writes, so expression has a direct data cost. No duty variation, so timbre comes from arpeggio and vibrato. Hard pitch floor ~109 Hz; periodic noise is the bass trick. GG adds per-channel stereo |
 | **Mega Drive** | YM2612 + SN76489 | 6 FM (4-operator, 8 algorithms), ch6 switchable to 8-bit PCM; plus the 4 PSG channels | The only Tier-1 target where *timbre is fitted*, not chosen: a 4-op FM patch is a search problem against the source's spectrum (doc 17 §Stage 3). PCM on ch6 costs CPU per sample. **Built, both chips**, and the first console here to need per-write chip routing |
@@ -667,6 +749,20 @@ few microseconds, and keeps the timer's rate with the drift bounded by one poll.
 So `resolveMdClock` and `resolveMdAudioClock` refuse **opposite** sources, and
 `GAME_CLOCKS` marks this chip `frame` while `mdBinding.fitRate` goes on offering
 the timer. Neither is wrong; they are answers to different questions.
+
+**The Neo Geo Pocket is the same distinction reached by simpler hardware**, and
+it is the plainest statement of it in the set. That console's processor has four
+8-bit interval timers with interrupts of their own, and a *game* programmes none
+of them: its music and effects share one clock with the picture, so it takes the
+vertical blank the cartridge is already answering. A cartridge whose only job is
+a schedule has no picture to share with, so `rom/ngpc.ts` programmes one — and
+*which* one is the hardware's decision rather than a preference, because the two
+timers of a pair do not offer the same clocks. A lower timer takes φT1, φT4 or
+φT16 and an upper one φT1, φT16 or φT256, so only an upper timer reaches the
+bottom of a driver's useful band and only an upper timer can be the answer. The
+same pair of resolvers, one console along: `resolveNgpClock` refuses everything
+but the frame and `resolveNgpAudioClock` accepts the timer — and the frame too,
+because a track that happens to fit 59.95 Hz exactly is not a schedule to refuse.
 
 **And *which* interrupt is the console's answer, not the game's.** The NES has no
 general-purpose timer a driver can have without burning the DMC channel, so its
@@ -869,20 +965,183 @@ silence with silence. That is why the example library is written around ten part
 wide rather than four (AGENTS.md §Writing music), and why the proof still *names*
 the track it is pointed at rather than trusting any track to reach the mixer.
 
-**Level B — sample comparison against third-party cores (CI).** The existing
-libretro harness already receives an audio callback and currently discards it;
-writing those samples out is a small extension to `emu-harness/libretro/`. The
-core's audio is compared against our chip model's render.
+**Level B — sample comparison against third-party cores — built.**
+`emu-harness/libretro/retrorun.c` now captures its audio callback and writes a
+WAV at the core's own rate (opt-in through the same `key=value` channel core
+options use, so a capture that only wants pixels is unchanged), and
+`packages/cli/test/audio-level-b.e2e.test.ts` boots a standalone audio cartridge
+in a third-party core and compares what comes out with `render()`'s output from
+the same schedule.
 
 Honesty about what this level can claim, in the spirit of doc 10's existing notes
-about RGB565 and RGB555 comparisons: **it is not bit-exact, and it should not
+about RGB565 and RGB555 comparisons: **it is not bit-exact, and it does not
 pretend to be.** Cores resample and filter on their own terms, and several model
-the analog stage we deliberately leave out of `raw`. The comparison is therefore
-a pinned spectral-and-envelope distance with a per-core threshold, plus **exact
-equality of transient onset ticks**, which is the part that would actually catch a
-driver-timing bug. Where a core exposes scripted register access (Mesen 2's Lua
-interface, for instance), that console gets Level A too and Level B becomes a
-cross-check rather than the primary oracle.
+the analog stage we deliberately leave out of `raw`.
+
+**The comparison is the long-term average magnitude spectrum**, as a cosine
+similarity. A waveform diff was tried first and is not available: measured
+against fceumm the level differs by 19%, and cross-correlation locks onto the
+music's own periodicity rather than the true alignment — the best lag wanders
+between 899 and 4456 samples across one capture, which is a flaky test rather
+than a strict one. A spectrum is blind to phase, to alignment and to a constant
+gain, and is exactly what a wrong chip model moves: pitch, timbre and the
+balance between voices all live in it.
+
+**The threshold is 0.99, and it was chosen after measuring what wrong answers
+score.** The row that decides it is not a constructed comparison but a *mutation
+of the chip model itself* — `nes-apu.ts` with its duty selection inverted, which
+is precisely the bug this level exists to catch, since the register stream stays
+perfect and Level A still passes:
+
+| compared with the core | similarity |
+| --- | --- |
+| our render of the same schedule | **0.9992** |
+| the APU with its duty bit inverted | 0.9801 |
+| the same tune arranged for a Game Boy | 0.9492 |
+| our render, 6% sharp | 0.8826 |
+| white noise | 0.4236 |
+
+A console qualifies when it has **both** a standalone audio cartridge (§A5) and a
+libretro core: the cartridge because this needs a ROM whose only job is the
+schedule, and a third-party core because our own would be comparing a model with
+itself. Six consoles qualify today and **two of them are in the table** — the
+NES and the Master System — because a row belongs there once it has been run and
+passes, not once the console is eligible for it. The other four (the Mega Drive,
+the PC Engine, the WonderSwan and the Game Boy Advance) are held out with their
+measurements written down below, because on each of them the two sides differ by
+something that is neither model's chip.
+
+That distinction is written down because it was learned the hard way: the Mega
+Drive's row and the PC Engine's were added when this suite was, and neither had
+ever _run_ — a row self-skips without its libretro core, and only two of the five
+were provisioned on the machine they were written on. Both were failing when
+somebody finally provisioned the rest, and one of them was failing because every
+Mega Drive cartridge in the project was silent.
+
+**And the biggest thing this level has found was not a chip model at all.**
+`$A11200` is the Z80's reset line _and the YM2612's_ — one wire, both chips — and
+a console powers up with it held, so a 68000 program that never releases it has
+six four-operator voices that discard everything sent to them. Every Mega Drive
+cartridge demake produced did exactly that: a game never wrote the register, and
+the standalone audio cartridge wrote it with the reset held on purpose, to stop a
+sound processor nobody had programmed from running. The register stream was
+perfect throughout, because `@demake/md` models no Z80 and the store went
+nowhere — a Level A diff matching, tick for tick, against a chip that was not
+listening. Against genesis-plus-gx a standalone track measured **0.00046** RMS
+where a released chip gives **0.28203**, and a demade game's music **0.00749**
+against **0.17821**. The fix is two stores in one shared emitter; the guard
+against it happening again is that the core now models the _line_, so a cartridge
+that forgets it fails in `pnpm test`.
+
+**What is rendered is the schedule *with* its boot, which is not the same as
+what Level A diffs against.** A cartridge performs its chip's initialisation in
+the boot and the rest of the schedule from its clock, so `BuiltAudioRom.performed`
+is the schedule *minus* those writes — the right comparand for a register diff
+that begins at the first tick, and the wrong one for a render, because they are
+chip **state**. On four of the five families it makes no difference at all:
+their boot is a handful of latches the schedule's own tick 0 repeats, so nothing
+is stripped and the two renders are sample-identical. On the two whose boot
+carries *waveforms* it is the difference between the track and silence — a PC
+Engine render loses 37% of its level and a WonderSwan's loses all four pitched
+channels, since that chip reads its tables from an address the stripped schedule
+never states.
+
+**The WonderSwan qualifies and is not in the table, and what is left of that is
+one voice's level.** Rendered properly it scores **0.8973**, which is under the
+gate, and it is not the filtering caveat above: restricting the comparison to
+below 1.7 kHz moves it by 0.002. It is the **noise channel**, and dropping the
+drum part from the arrangement is what says so — the same tune, same core, same
+everything else, scores **0.9978**.
+
+Half of that is now closed, and this is the first thing Level B has *fixed*
+rather than reported. Pointed at one held note at a time the two models agreed to
+the hertz on every pitched voice and not at all on the noise voice, ours peaking
+at 1497 Hz where the core peaked at 140 — which was `WsSound`'s shift register
+feeding back the wrong pair of bits. The hardware's feedback is the **inverted**
+exclusive-or of bit 7 with the tap bit, and what settles that is not a spectrum:
+a fifteen-bit register with a tap has one observable that is not a matter of
+taste, which is how many steps it takes to repeat, and the eight modes produce
+eight documented lengths. Ours reproduced *one* — mode 0, by coincidence, since a
+maximal-length sequence is 32767 whatever the tap — and missed seven, which is
+white noise on every mode where the hardware has eight colours.
+`packages/chip/test/ws-sound.test.ts` pins all eight against the table now, and
+with the generator right the noise voice's spectrum lands beside the core's: 54
+Hz against 43, 118 against 54.
+
+What is left is a level, and it is a pure gain rather than a shape: our pitched
+voices come out 1.063× the core's and our noise voice 1.734×, the second flat
+across the band (1.729 below 4 kHz, 1.735 below 22), so it is neither the
+filtering caveat above nor aliasing in a broadband source. Relative to the
+pitched voices the core's noise is 0.61× ours — and there the documentation is on
+our side: the wiki says the register's bit is "used as if it were a wavetable
+sample: 0 = 0, 1 = 15", which is what `WsSound` does, at a measured duty of 0.500
+on the long modes. So it reads as Mednafen attenuating that voice, and the row
+stays out because a cross-check whose two sides differ by a known constant is not
+evidence about the chip in either direction. Level A is green there for a track
+and for an effect.
+
+**The Game Boy Advance qualifies and is not in the table either, and what is left
+of that is the _method_.** It builds a standalone cartridge now and mGBA is
+provisioned, so both conditions are met; against `overworld.mid` it scores
+**0.9820**. That is well clear of the nearest plausible wrong answer — the same
+tune arranged for a Game Boy scores 0.9169 against the same capture — and it does
+not reach the gate, which stays where it is because lowering it for one console
+would make the number mean nothing on the other four.
+
+What it is, is a **tilt**, and it is the one thing this method assumes away. Band
+by band the two agree to 0.9885–0.9988, so the whole-band figure is _lower than
+any band in it_ — which is what a difference in balance rather than in content
+looks like. The core's level relative to ours falls monotonically: 1.545× below
+1 kHz, 1.423× at 4–8 kHz, 1.244× at 8–16 kHz, 0.876× at 16–24 kHz and 0.394×
+above that. Restricting the comparison to the mixer's own Nyquist moves it to
+0.9898.
+
+Every other console here clocks its chip in **megahertz**, so a render at 48 kHz
+is a decimation and both sides band-limit alike. This console's mixer runs at
+32768 Hz, _below_ the 65536 Hz the core captures at — the same fact §The render
+handles as a box narrower than a clock — so what separates the two signals is a
+reconstruction filter belonging to neither model: ours is the box integrator's
+zero-order hold, which keeps the images above 16 kHz, and the core's is whatever
+mGBA resamples with, which plainly attenuates them. Neither is the schedule.
+
+The proof this console does have is the sharpest here rather than the weakest.
+Its Level A runs in **two halves**, because its two sound devices are not the
+same kind of thing: the four Game Boy channels are diffed tick for tick like any
+other console's, and the mixer's **samples** are diffed byte for byte against
+what `GbaPcm` renders from the same schedule. The second is a stronger claim than
+any register diff — it compares the audio rather than an instruction to make it —
+and it is exact, because the mixing is integer throughout.
+
+**The Mega Drive and the PC Engine are held out too, and each for a different
+reason.** Run properly they score **0.9171** and **0.9776**.
+
+The Mega Drive's is a **balance between its two chips**. The core has 2.35× our
+energy below 250 Hz, where the FM voices live, and 0.33× ours above 8 kHz, where
+the tone generators' harmonics do — and halving the core's own `fm_preamp` takes
+the low band's ratio to 1.23 and the whole figure to 0.9550, which localises it.
+`MD_CHIP_GAINS` is our answer (the PSG six decibels down) and `psg_preamp = 150`
+is genesis-plus-gx's, and **neither is a hardware measurement**: both are a
+choice about a board. Changing ours to satisfy one emulator's preamp default is
+exactly what a cross-check must not be used for, so the row stays out until there
+is a reference to settle it — and the question is recorded in doc 13 §A5.5, since
+it decides how loud four squares sit against six FM voices in every render this
+tool makes. What that section can now say is _how far apart_ the two choices are:
+3.3 dB, because the core's `PSG_MAX_VOLUME` comment states its own calibration
+and both models normalise the same way. The Model 1 schematic's summing network
+is 27 dB and is **not** the answer — it is one of two terms, and the other, the
+parts' full-scale output levels, runs the other way by roughly as much.
+
+The PC Engine's is the Game Boy Advance's shape one console over: the two agree
+to 0.9967 below 1 kHz and diverge upward — 0.9261 at 4–8 kHz, 0.8933 at
+8–16 kHz, with the core carrying 1.33× and 1.56× our energy there. A
+thirty-two-sample wavetable at a high note is a stepped signal whose images land
+in that band, and `render()` band-limits them by integrating the chip's own clock
+while mednafen_pce_fast does not. Level A is green on both consoles for a track
+and for an effect.
+
+Where a core exposes scripted
+register access (Mesen 2's Lua interface, for instance), that console gets Level A
+too and Level B becomes a cross-check rather than the primary oracle.
 
 **Level C — chip-model validation.** §Claim 2's three-way validation, run as its
 own suite.

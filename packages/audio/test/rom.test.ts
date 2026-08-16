@@ -18,10 +18,28 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  GBA_CHECK_END,
+  GBA_CHECK_OFFSET,
+  GBA_CHECK_START,
   GB_HEADER_OFFSETS,
   GB_ROM_SIZE,
   NES_CHR_SIZE,
   NES_HEADER_SIZE,
+  NDS_ARM7_RAM,
+  NDS_ARM9_RAM,
+  NGP_ENABLE_VALUE,
+  NGP_ENTRY_OFFSET,
+  NGP_DISABLE_VALUE,
+  NGP_HEADER_SIZE,
+  NGP_INTET01,
+  NGP_INTET_SHIFT,
+  NGP_INT_PRIORITY_MAX,
+  NGP_ROM_BASE,
+  NGP_ROM_SIZES,
+  NGP_SOUND_ENABLE,
+  NGP_SYSTEM_COLOR,
+  NGP_SYSTEM_MONO,
+  NGP_Z80_ENABLE,
   NES_PRG_SIZES,
   mdChecksum,
   MD_CHECKSUM_START,
@@ -35,11 +53,24 @@ import {
   SMS_IRQ_VECTOR,
   SMS_NMI_VECTOR,
   SMS_ROM_SIZE,
+  VB_ROM_SIZES,
+  WS_CODE_SIZE,
+  WS_FOOTER_OFFSET,
+  WS_ROM_SIZE,
 } from "@demake/core";
+import { GbaPcm, VSU_WAVE_SAMPLES, VSU_WAVE_TABLES } from "@demake/chip";
+import { Gba } from "@demake/gba";
 import { FRAME_CYCLES, Sms } from "@demake/sms";
+import { SYSTEM_HZ as NGP_SYSTEM_HZ } from "@demake/ngp";
+import { MASTER_HZ as VB_MASTER_HZ } from "@demake/vb";
+import { CPU_HZ as WS_CPU_HZ } from "@demake/wsc";
 
 import { arrangeScore } from "../src/arrange/index.js";
 import { bindingFor } from "../src/binding/registry.js";
+import { GBA_BLOCK_SAMPLES } from "../src/binding/gba.js";
+import { sampleBank as gbaSampleBank } from "../src/binding/gba-bank.js";
+import { WS_BANK_BYTES, WS_WAVE_BASE, wsWaveBank } from "../src/binding/wsc-bank.js";
+import { wsWaveforms } from "../src/binding/wsc.js";
 import type { ChipScript } from "../src/chipscript.js";
 import { parseMidi } from "../src/score/midi.js";
 import { demakeSfx } from "../src/sfx/index.js";
@@ -125,7 +156,22 @@ describe("gb audio cartridge", () => {
 
   it("names the consoles it can build for", async () => {
     expect(audioRomConsoles()).toEqual(
-      expect.arrayContaining(["dmg", "gbc", "nes", "pce", "sms", "gg", "md"]),
+      expect.arrayContaining([
+        "dmg",
+        "gbc",
+        "nes",
+        "pce",
+        "sms",
+        "gg",
+        "md",
+        "gba",
+        "nds",
+        "vb",
+        "ngpc",
+        "ngp",
+        "wsc",
+        "ws",
+      ]),
     );
   });
 });
@@ -439,6 +485,374 @@ describe("md audio cartridge", () => {
     const script = trackFor("md");
     const framed = { ...script, driver: { ...script.driver, source: "vblank" as const } };
     await expect(buildAudioRom(framed)).rejects.toThrow(/has no 'vblank' clock/);
+  });
+});
+
+describe("wsc audio cartridge", () => {
+  it("copies its waveforms into RAM before it plays a note", async () => {
+    // The half no tick diff can see. This chip reads its tables out of the
+    // console's own memory rather than a register file, so a cartridge that
+    // skipped the copy would write every register of the schedule exactly and
+    // play four channels of whatever powered up at `$0300` (`binding/wsc-bank.ts`).
+    const script = trackFor("wsc");
+    const runner = await AudioRomRunner.create(script);
+    runner.captureBoot();
+    const ram = (runner.machine as unknown as { ram: Uint8Array }).ram;
+    const shapes = wsWaveforms(bindingFor("wsc").spec);
+    expect([...ram.subarray(WS_WAVE_BASE, WS_WAVE_BASE + WS_BANK_BYTES)]).toEqual([
+      ...wsWaveBank(shapes),
+    ]);
+  });
+
+  it("says which of the two machines will run it", async () => {
+    // These consoles differ in nothing a cartridge could otherwise record — same
+    // CPU, same chip, same ports — so the footer's minimum-system byte is the
+    // whole distinction, and a mono build stamped `1` is a cartridge the machine
+    // it was arranged for refuses. `@demake/dmg`'s CGB flag inverted.
+    const system = async (id: string): Promise<number> =>
+      (await buildAudioRom(trackFor(id))).bytes[
+        WS_ROM_SIZE - 64 * 1024 + WS_FOOTER_OFFSET + 1
+      ] as number;
+    expect(await system("ws")).toBe(0);
+    expect(await system("wsc")).toBe(1);
+  });
+
+  it("takes the frame, and keeps it", async () => {
+    // The clock this cartridge rests on, and the one a register diff cannot
+    // check: the idle loop reads the vertical-blank timer's *counter* rather
+    // than taking an interrupt, so a tally that read the wrong port, subtracted
+    // the wrong way round or never saw the timer move would still perform every
+    // write in order — at whatever rate the loop happened to run at.
+    const script = trackFor("wsc");
+    const runner = await AudioRomRunner.create(script);
+    const machine = runner.machine as unknown as { stepInstruction(): number; cpu: { ip: number } };
+    const at = (runner as unknown as { tickAddress: number }).tickAddress;
+    const spans: number[] = [];
+    let cycles = 0;
+    while (spans.length < 8) {
+      cycles += machine.stepInstruction();
+      if (machine.cpu.ip === at) {
+        spans.push(cycles);
+        cycles = 0;
+      }
+    }
+    const period = WS_CPU_HZ / (script.driver.rate.num / script.driver.rate.den);
+    // Everything after the boot span is a frame, to within one pass of a loop
+    // that does nothing but poll — which is what makes this cartridge's drift
+    // smaller than a game's on the same hardware without being a finer rate.
+    for (const span of spans.slice(2)) expect(Math.abs(span - period)).toBeLessThan(period / 20);
+  });
+
+  it("leaves the program inside the bank the reset jump points at", async () => {
+    const { bytes, family, suffix } = await buildAudioRom(trackFor("wsc"));
+    expect(family).toBe("wsc");
+    expect(suffix).toBe(".wsc");
+    expect(bytes.length).toBe(WS_ROM_SIZE);
+    // `packWsRom` puts `jmp $F000:$0000` at `$FFF0` of the last bank, so a build
+    // that ran past `$FFF0` would have its own code overwritten by the entry.
+    const bank = WS_ROM_SIZE - 64 * 1024;
+    expect(bytes[bank + WS_CODE_SIZE]).toBe(0xea);
+  });
+});
+
+describe("gba audio cartridge", () => {
+  it("is a bootable cartridge whose first word branches over the header", async () => {
+    const { bytes, family, suffix } = await buildAudioRom(trackFor("gba"));
+    expect(family).toBe("gba");
+    expect(suffix).toBe(".gba");
+    // A cartridge is at least one 32 KiB block and this one fits in it.
+    expect(bytes.length % 0x8000).toBe(0);
+    // `b` in ARM: condition `al`, and bits 27–25 are `101`.
+    expect(bytes[3]).toBe(0xea);
+    // The fixed byte the BIOS checks even on a direct boot, and the complement
+    // of the header it checks with it.
+    expect(bytes[0xb2]).toBe(0x96);
+    let sum = 0;
+    for (let at = GBA_CHECK_START; at <= GBA_CHECK_END; at += 1)
+      sum = (sum - (bytes[at] as number)) & 0xff;
+    expect(bytes[GBA_CHECK_OFFSET]).toBe((sum - 0x19) & 0xff);
+    // The Nintendo logo area stays zero: we ship no copyrighted data, and a
+    // direct boot never looks at it.
+    expect(bytes.subarray(0x04, 0xa0).every((byte) => byte === 0)).toBe(true);
+  });
+
+  it("takes the transfer's clock, which is the only rate this console has", async () => {
+    // The one `fitRate` in the set that does not search, and the reason is the
+    // mixer: a driver tick *is* a block of samples the processor computes, and
+    // a block is what the sample transfer's interrupt counts out. So a schedule
+    // fitted for this console is at 128 Hz whatever tempo asked for, and a
+    // cartridge that rode a timer instead would perform every write correctly
+    // and compute every mixer sample for the wrong moment.
+    const binding = bindingFor("gba");
+    for (const asked of [40, 56, 120, 128, 240, 600]) {
+      const fit = binding.fitRate(asked);
+      expect(fit.rate.num / fit.rate.den).toBe(128);
+    }
+    const script = trackFor("gba");
+    expect(script.driver.rate.num / script.driver.rate.den).toBe(128);
+    const built = await buildAudioRom(script);
+    expect(built.stats.ratePpmError).toBe(0);
+  });
+
+  it("delivers exactly the samples the mixer model renders", async () => {
+    // The half no register diff can see, and the sharper of this console's two
+    // proofs. Six of its ten voices are `@demake/chip`'s `GbaPcm` — a register
+    // file in work RAM that crosses no bus — so what the driver owes there is
+    // the *samples*, byte for byte, against what the model renders from the same
+    // schedule (doc 16 §The proof, for a mixer console). It is the game
+    // driver's proof (`demotic/test/audio-gba.test.ts`) for the cartridge that
+    // has no game in it.
+    const script = trackFor("gba");
+    const runner = await AudioRomRunner.create(script);
+    const machine = new Gba(runner.rom);
+    // Both sides, because they are two transfers rather than one signal split —
+    // the only way a driver can get them out of step is by re-pointing one at a
+    // block boundary the other has not reached, which a one-sided test misses.
+    const heard: [number[], number[]] = [[], []];
+    machine.fifoTap = (channel, byte) => {
+      (heard[channel] as number[]).push(byte);
+    };
+    for (let frame = 0; frame < 120; frame += 1) machine.runFrame();
+
+    // The boot writes are performed once by the ROM rather than at the head of
+    // the stream, so they go into the model first — `runner.performed` is the
+    // schedule with them taken off, and with the mixer's own writes filtered out
+    // of the register half, which is why the chip-1 stream is read off the
+    // *input* schedule here.
+    const model = new GbaPcm({ bank: gbaSampleBank() });
+    for (const write of bindingFor("gba").init()) {
+      if ((write.chip ?? 0) === 1) model.write(write.reg, write.value);
+    }
+    const want: [number[], number[]] = [[], []];
+    const blocks = 60;
+    for (let index = 0; index < blocks; index += 1) {
+      for (const write of script.ticks[index]?.writes ?? []) {
+        if ((write.chip ?? 0) === 1) model.write(write.reg, write.value);
+      }
+      // The converter takes a signed byte and the queue reports what crossed it,
+      // which is the same byte read unsigned.
+      for (let sample = 0; sample < GBA_BLOCK_SAMPLES; sample += 1) {
+        const { left, right } = model.mix();
+        want[0].push(left & 0xff);
+        want[1].push(right & 0xff);
+      }
+    }
+    // Not silence, or this compares nothing with nothing: the arranger gives
+    // each part the channel that serves it best, and a track whose parts all
+    // landed on the Game Boy half would pass here on a driver that never mixed.
+    expect(want[0].some((value) => value !== 0x80 && value !== 0)).toBe(true);
+
+    // Where the driver's own first block landed. A whole number of blocks in by
+    // construction — a transfer is re-pointed on a block boundary and nowhere
+    // else — so this is a search over blocks rather than samples, and that it
+    // *is* one is part of what this asserts. The same offset has to serve both
+    // sides, which is the other half of it.
+    const left = heard[0] as number[];
+    let offset = -1;
+    for (
+      let block = 0;
+      (block + 1) * GBA_BLOCK_SAMPLES <= left.length - want[0].length;
+      block += 1
+    ) {
+      const at = block * GBA_BLOCK_SAMPLES;
+      if (left.slice(at, at + GBA_BLOCK_SAMPLES * 4).every((value, i) => value === want[0][i])) {
+        offset = at;
+        break;
+      }
+    }
+    expect(offset).toBeGreaterThanOrEqual(0);
+    expect(left.slice(offset, offset + want[0].length)).toEqual(want[0]);
+    expect((heard[1] as number[]).slice(offset, offset + want[1].length)).toEqual(want[1]);
+  });
+});
+
+describe("nds audio cartridge", () => {
+  it("is a cartridge of two binaries, one of which does nothing", async () => {
+    const { bytes, family, suffix } = await buildAudioRom(trackFor("nds"));
+    expect(family).toBe("nds");
+    expect(suffix).toBe(".nds");
+    // Two programs and two entry addresses, because the loader copies both into
+    // the memory they share and enters each — which is the whole of this
+    // console's hand-off, and why nothing here uploads anything.
+    const read = (at: number): number =>
+      (bytes[at] as number) |
+      ((bytes[at + 1] as number) << 8) |
+      ((bytes[at + 2] as number) << 16) |
+      ((bytes[at + 3] as number) << 24);
+    expect(read(0x28)).toBe(NDS_ARM9_RAM);
+    expect(read(0x38)).toBe(NDS_ARM7_RAM);
+    // The main processor's whole program: a branch to itself. It cannot be
+    // omitted, because the header names it and the loader enters it — and it has
+    // nothing to do, because the sound channels answer the other processor.
+    const arm9 = read(0x20);
+    expect(read(0x2c)).toBe(4);
+    expect(bytes[arm9 + 3]).toBe(0xea);
+  });
+
+  it("plays from the processor a game could not reach it through", async () => {
+    // The claim this console makes twice over. A tick here is attributed by the
+    // **ARM7's** program counter, because one host step is several of that
+    // processor's instructions — so the harness watches its instruction stream
+    // rather than sampling a counter, exactly as `_audio-battery.ts` does for a
+    // game (`_rom-harness.ts` §watch).
+    const script = trackFor("nds");
+    const runner = await AudioRomRunner.create(script);
+    const machine = runner.machine as unknown as { arm7: { cpu: { pc: number } } };
+    const before = machine.arm7.cpu.pc;
+    runner.capture(4);
+    expect(machine.arm7.cpu.pc).not.toBe(before);
+  });
+});
+
+describe("vb audio cartridge", () => {
+  it("is a bootable cartridge whose reset stub is the last sixteen bytes", async () => {
+    const { bytes, family, suffix } = await buildAudioRom(trackFor("vb"));
+    expect(family).toBe("vb");
+    expect(suffix).toBe(".vb");
+    // A power of two, because a 27-bit address bus mirrors the cartridge and the
+    // reset fetch lands in whatever the top of it turns out to be.
+    expect(bytes.length & (bytes.length - 1)).toBe(0);
+    expect(VB_ROM_SIZES).toContain(bytes.length);
+    // The reset stub jumps *absolutely*, because it runs from a mirror the image
+    // was not assembled at — the whole of this console's boot ceremony.
+    expect(bytes.subarray(bytes.length - 16).some((byte) => byte !== 0)).toBe(true);
+  });
+
+  it("puts the waveform tables in before the clock starts", async () => {
+    // The half no tick diff can see. Five tables is a hundred and sixty writes,
+    // which is more than a packed run's count byte holds — so on this console
+    // stripping the boot is what makes tick 0 packable at all, and a cartridge
+    // that skipped the tables would write every register of the schedule
+    // exactly and play five channels of whatever powered up.
+    const runner = await AudioRomRunner.create(trackFor("vb"));
+    const boot = runner.captureBoot();
+    const tables = boot.filter((write) => write.reg < 0x280);
+    expect(tables.length).toBe(VSU_WAVE_TABLES * VSU_WAVE_SAMPLES);
+    // And the stop register, which is what powers the chip up.
+    expect(boot.some((write) => write.reg === 0x580 && write.value === 0x01)).toBe(true);
+  });
+
+  it("takes the picture's own clock, at the slowest rate in the matrix", async () => {
+    // This cartridge takes no interrupt anywhere — the idle loop polls the
+    // drawing processor's own flag, which is what a demade game on this console
+    // does, because a loop that waits either way gains nothing from a vector.
+    const script = trackFor("vb");
+    expect(script.driver.rate.num / script.driver.rate.den).toBeCloseTo(50.2, 1);
+    const runner = await AudioRomRunner.create(script);
+    const at = runner.symbols.get("Tick") as number;
+    const machine = runner.machine as unknown as { step(): number; cpu: { pc: number } };
+    const spans: number[] = [];
+    let cycles = 0;
+    while (spans.length < 6) {
+      cycles += machine.step();
+      if (machine.cpu.pc === at) {
+        spans.push(cycles);
+        cycles = 0;
+      }
+    }
+    // Everything after the boot span is a frame, to within one pass of a loop
+    // that does nothing but poll.
+    const period = VB_MASTER_HZ / (script.driver.rate.num / script.driver.rate.den);
+    for (const span of spans.slice(2)) expect(Math.abs(span - period)).toBeLessThan(period / 20);
+  });
+});
+
+describe("ngp audio cartridge", () => {
+  it("is a flash board whose entry the boot ROM reads out of the header", async () => {
+    const { bytes, family, suffix } = await buildAudioRom(trackFor("ngpc"), { title: "BAND" });
+    expect(family).toBe("ngpc");
+    expect(suffix).toBe(".ngc");
+    expect(NGP_ROM_SIZES).toContain(bytes.length);
+    // There is no reset vector on this machine: the boot ROM reads a 24-bit
+    // entry field out of the header and jumps to it, so a cartridge that left it
+    // zero would be entered at the bottom of the internal register page.
+    const entry =
+      (bytes[NGP_ENTRY_OFFSET] as number) |
+      ((bytes[NGP_ENTRY_OFFSET + 1] as number) << 8) |
+      ((bytes[NGP_ENTRY_OFFSET + 2] as number) << 16);
+    expect(entry).toBe(NGP_ROM_BASE + NGP_HEADER_SIZE);
+    expect(String.fromCharCode(...bytes.subarray(0x24, 0x28))).toBe("BAND");
+    // The recognition code is SNK's copyright claim and a demade cartridge is
+    // not theirs, so the field stays blank — `gb-cart.ts`'s bargain with the
+    // Nintendo boot logo.
+    expect(bytes.subarray(0, NGP_ENTRY_OFFSET).every((byte) => byte === 0)).toBe(true);
+  });
+
+  it("says which of the two machines will run it", async () => {
+    // One byte, and the only difference between the two builds: the sound
+    // hardware is the same T6W28, so `ws.ts`'s bargain one console along.
+    const colour = await buildAudioRom(trackFor("ngpc"));
+    const mono = await buildAudioRom(trackFor("ngp"));
+    expect(colour.bytes[0x23]).toBe(NGP_SYSTEM_COLOR);
+    expect(mono.bytes[0x23]).toBe(NGP_SYSTEM_MONO);
+    expect(mono.suffix).toBe(".ngp");
+  });
+
+  it("asks for the chip before it writes a note to it", async () => {
+    // The half no tick diff can see, and the one thing about this console's
+    // audio that is a *permission* rather than a value: until both bytes are
+    // written the T6W28's bus belongs to the Z80 sound processor and every port
+    // write is ignored, so a cartridge that skipped them would perform the whole
+    // schedule exactly and play silence. `@demake/ngp` refuses the writes for
+    // the same reason, which is why the capture below is empty without them.
+    const runner = await AudioRomRunner.create(trackFor("ngpc"));
+    const boot = runner.captureBoot();
+    expect(boot.length).toBe(bindingFor("ngpc").init().length);
+    const machine = runner.machine as unknown as { read(address: number): number };
+    expect(machine.read(NGP_SOUND_ENABLE)).toBe(NGP_ENABLE_VALUE);
+    expect(machine.read(NGP_Z80_ENABLE)).toBe(NGP_DISABLE_VALUE);
+  });
+
+  it("rides the processor's own timer, which is why this cartridge exists", async () => {
+    // A game on this console gets the frame and only the frame, because its two
+    // streams share one interrupt with the picture. This one programmes timer 1
+    // — the *upper* timer, because φT256 is the only prescaler output that
+    // reaches the bottom of a driver's useful band — and the rate it keeps is
+    // the timer's rather than anything the display decides. The fixture's is
+    // below the frame rate, so a cartridge that had quietly fallen back to the
+    // vertical blank would tick measurably faster.
+    const script = trackFor("ngpc");
+    expect(script.driver.source).toBe("timer");
+    const hz = script.driver.rate.num / script.driver.rate.den;
+    const runner = await AudioRomRunner.create(script);
+    const at = runner.symbols.get("Tick") as number;
+    const machine = runner.machine as unknown as { step(): number; cpu: { pc: number } };
+    const spans: number[] = [];
+    let states = 0;
+    while (spans.length < 6) {
+      states += machine.step();
+      if (machine.cpu.pc === at) {
+        spans.push(states);
+        states = 0;
+      }
+    }
+    // States rather than master cycles, because this timer counts the system
+    // clock — which is the crystal halved and is what one processor state is.
+    const period = NGP_SYSTEM_HZ / hz;
+    for (const span of spans.slice(2)) expect(Math.abs(span - period)).toBeLessThan(period / 20);
+  });
+
+  it("arms the interrupt with a priority that accepts it", async () => {
+    // The trap in this field, and the one thing here a driver is most likely to
+    // get wrong in a way nothing else reports: the priority *is* the enable, and
+    // both 0 and 7 refuse. A cartridge that wrote seven meaning "most urgent"
+    // would programme a perfect timer and never hear from it.
+    const runner = await AudioRomRunner.create(trackFor("ngpc"));
+    runner.captureBoot();
+    const machine = runner.machine as unknown as { read(address: number): number };
+    const level = (machine.read(NGP_INTET01) >> NGP_INTET_SHIFT.odd) & 0x07;
+    expect(level).toBeGreaterThanOrEqual(1);
+    expect(level).toBeLessThanOrEqual(NGP_INT_PRIORITY_MAX);
+  });
+
+  it("refuses a clock that is neither the timer nor the picture", async () => {
+    // A real source another console's binding produces, rather than a made-up
+    // string: what is being checked is that this resolver names what it cannot
+    // do instead of building a cartridge that programmes nothing.
+    const script = trackFor("ngpc");
+    await expect(
+      buildAudioRom({ ...script, driver: { ...script.driver, source: "line-irq" } }),
+    ).rejects.toThrow(/no 'line-irq' clock/);
   });
 });
 

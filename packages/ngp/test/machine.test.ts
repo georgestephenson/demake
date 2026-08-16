@@ -19,16 +19,20 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  NGP_DISABLE_VALUE,
+  NGP_ENABLE_VALUE,
+  NGP_RAS_H,
+  NGP_RAS_V,
   NGP_SOUND_ENABLE,
-  NGP_SOUND_ENABLE_HIGH,
-  NGP_SOUND_ENABLE_HIGH_VALUE,
-  NGP_SOUND_ENABLE_VALUE,
   NGP_SOUND_LEFT,
   NGP_SOUND_RIGHT,
+  NGP_Z80_ENABLE,
 } from "@demake/core";
 import { T6W28_LEFT, T6W28_RIGHT } from "@demake/chip";
 
-import { CYCLES_PER_LINE, LINES_PER_FRAME } from "../src/display.js";
+import { NGP_STATUS } from "@demake/core";
+
+import { CYCLES_PER_LINE, LINES_PER_FRAME, SCREEN_HEIGHT, SCREEN_WIDTH } from "../src/display.js";
 import { Ngp } from "../src/machine.js";
 
 /** The console's crystal, which the display counts. */
@@ -60,6 +64,68 @@ describe("the machine's clocks", () => {
   });
 });
 
+describe("the beam a cartridge can read", () => {
+  /** A machine parked on `halt`, so stepping it only advances the clock. */
+  function halted(): Ngp {
+    const machine = new Ngp();
+    machine.ram[0] = 0x05; // halt
+    machine.cpu.reset(0x004000, 0x006c00);
+    return machine;
+  }
+
+  it("answers the scanline counter rather than the memory behind it", () => {
+    // These three addresses are the *controller* answering, not memory being
+    // read back — and until they were, a cartridge polling the beam read
+    // whatever it had last written there, which is a runtime waiting for a frame
+    // that never comes. `@demake/wsc`'s readable timer one console along.
+    const machine = halted();
+    machine.write(NGP_RAS_V, 0xaa);
+    expect(machine.read(NGP_RAS_V)).toBe(0);
+
+    // A whole frame, sampled every instruction. A `halt` is four states and a
+    // line is 515 master cycles, so a line is about sixty-four of them — which
+    // is why this is counted in frames rather than in a round number of steps.
+    const seen = new Set<number>();
+    while (machine.frames < 1) {
+      machine.step();
+      seen.add(machine.read(NGP_RAS_V));
+    }
+    while (machine.frames < 2) {
+      machine.step();
+      seen.add(machine.read(NGP_RAS_V));
+    }
+    // Every line the controller has, and none it does not.
+    expect(seen.size).toBeGreaterThan(SCREEN_HEIGHT);
+    expect(Math.max(...seen)).toBe(LINES_PER_FRAME - 1);
+  });
+
+  it("says when the display is blanking, which is how a cartridge waits", () => {
+    const machine = halted();
+    let sawVisible = false;
+    let sawBlank = false;
+    while (machine.frames < 2) {
+      machine.step();
+      const blanking = (machine.read(NGP_STATUS) & 0x40) !== 0;
+      // The flag and the counter are one answer: a status bit that disagreed
+      // with the line it is about would be a flag nobody could act on.
+      expect(blanking).toBe(machine.read(NGP_RAS_V) >= SCREEN_HEIGHT);
+      if (blanking) sawBlank = true;
+      else sawVisible = true;
+    }
+    expect(sawVisible && sawBlank).toBe(true);
+  });
+
+  it("puts the horizontal beam inside the screen", () => {
+    const machine = halted();
+    while (machine.frames < 1) {
+      machine.step();
+      const x = machine.read(NGP_RAS_H);
+      expect(x).toBeGreaterThanOrEqual(0);
+      expect(x).toBeLessThan(SCREEN_WIDTH);
+    }
+  });
+});
+
 describe("the way to the sound chip", () => {
   /** Every write the chip received, as (port, value). */
   function taps(machine: Ngp): [number, number][] {
@@ -69,8 +135,8 @@ describe("the way to the sound chip", () => {
   }
 
   function unlock(machine: Ngp): void {
-    machine.write(NGP_SOUND_ENABLE, NGP_SOUND_ENABLE_VALUE);
-    machine.write(NGP_SOUND_ENABLE_HIGH, NGP_SOUND_ENABLE_HIGH_VALUE);
+    machine.write(NGP_SOUND_ENABLE, NGP_ENABLE_VALUE);
+    machine.write(NGP_Z80_ENABLE, NGP_DISABLE_VALUE);
   }
 
   it("ignores the chip until the main CPU has been handed it", () => {
@@ -81,6 +147,21 @@ describe("the way to the sound chip", () => {
     unlock(machine);
     machine.write(NGP_SOUND_LEFT, 0x9f);
     expect(seen).toEqual([[T6W28_LEFT, 0x9f]]);
+  });
+
+  it("hands the ports back the moment the Z80 is enabled", () => {
+    // The gate is two answers rather than one: `$B8` switches the chip on and
+    // `$B9` decides *which processor* the write ports belong to. A model that
+    // only asked the first would let a cartridge that woke the sound processor
+    // go on driving the chip from the main CPU, which is two writers on one bus.
+    const machine = new Ngp();
+    const seen = taps(machine);
+    unlock(machine);
+    machine.write(NGP_SOUND_LEFT, 0x9f);
+    expect(seen.length).toBe(1);
+    machine.write(NGP_Z80_ENABLE, NGP_ENABLE_VALUE);
+    machine.write(NGP_SOUND_LEFT, 0x9f);
+    expect(seen.length).toBe(1);
   });
 
   it("reports the port a write went to, because that is what a register is here", () => {

@@ -59,13 +59,20 @@ import {
   type Ref,
 } from "@demake/core";
 
-import { WAVEFORMS } from "../binding/gba-bank.js";
+import { bankBytes, sampleBank, WAVEFORMS } from "../binding/gba-bank.js";
+import { GBA_BLOCK_SAMPLES } from "../binding/gba.js";
 
 import { REG } from "./arm-player.js";
 import { AudioRomError } from "./gb.js";
 
-/** Samples the mixer produces per driver tick, per side. */
-export const GBA_BLOCK_SAMPLES = 256;
+/**
+ * Samples the mixer produces per driver tick, per side.
+ *
+ * Defined in `binding/gba.ts` and re-exported here, because it is also what
+ * decides this console's driver rate — 32768 ÷ 256 — and `fitRate` sits below
+ * this file. One definition, two readers.
+ */
+export { GBA_BLOCK_SAMPLES };
 
 /**
  * Blocks the sample ring holds.
@@ -716,4 +723,52 @@ export function emitSoundWrite(asm: AsmArm, offset: number, value: number): void
   asm.ldrConst(REG.addr, SOUND_BASE + offset);
   asm.mov(REG.a0, armImm(value));
   asm.strb(REG.a0, armAt(REG.addr, 0));
+}
+
+/**
+ * The waveform bank: the table the mixer resolves a source through, and the
+ * bytes it plays.
+ *
+ * One definition with two readers, exactly as the Super Nintendo's is
+ * (`binding/sdsp-bank.ts`): `binding/gba-bank.ts` decides what is in it and how
+ * long each waveform is, the binding puts an index in a voice's `SRCN`, and this
+ * lays the same bytes in the cartridge. A second copy of either number is a game
+ * whose bass plays the snare.
+ *
+ * It is in *this* file rather than in either caller's because the bank is the
+ * console's: a game embeds one and a standalone cartridge carries the same one,
+ * and two copies of a routine that lays down a sample directory is the class of
+ * duplication this whole layer exists to avoid.
+ *
+ * Each entry is the pointer, `length << 16` and `(length − loop) << 16` — the
+ * two forms the mix loop actually compares against, computed here so the inner
+ * loop is a comparison and a subtraction rather than two shifts.
+ */
+export function emitBank(asm: AsmArm): void {
+  const bank = sampleBank();
+  const { bytes, offsets } = bankBytes();
+  for (const sample of bank) {
+    if (sample.loop !== null) continue;
+    {
+      // Every built-in waveform loops (`gba-bank.ts` §the bank), so the mix loop
+      // has no one-shot path at all. A bank that grew one would need it, and this
+      // is where that would be found rather than in a wrong note.
+      throw new AudioRomError(
+        "E_INTERNAL",
+        "the mixer's waveform bank has a one-shot sample and the driver's mix loop only loops",
+        "this is a bug in the ROM builder, not in the track.",
+      );
+    }
+  }
+  asm.align();
+  asm.label("AudioBank");
+  for (const [index, sample] of bank.entries()) {
+    asm.dw(label("AudioBankBytes", offsets[index] as number) as Ref);
+    asm.dw(sample.data.length << 16);
+    asm.dw((sample.data.length - (sample.loop ?? 0)) << 16);
+    asm.dw(0); // padding to a shifted entry, so the lookup is one instruction
+  }
+  asm.label("AudioBankBytes");
+  asm.bytes(bytes);
+  asm.align();
 }

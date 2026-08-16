@@ -35,8 +35,14 @@
  * once it has written the pair that hands it over. `demake build` emits no Z80
  * program, so it takes that route and this machine models it — the four
  * kilobytes the two processors share are ordinary RAM here, and the Z80 that
- * would read them is absent rather than half-implemented, as are the on-chip
- * timers and DMA.
+ * would read them is absent rather than half-implemented, as is the DMA.
+ *
+ * **The 8-bit timers are here, and only a standalone audio cartridge wants
+ * them.** A demade game's two streams share the picture's interrupt, so a game
+ * programmes no timer at all; a cartridge whose only job is a schedule has no
+ * picture to share with and may need a rate the frame cannot express. Their
+ * interrupts dispatch exactly as the frame's does — through a pointer the
+ * cartridge writes into the boot ROM's own table.
  */
 
 import {
@@ -45,22 +51,29 @@ import {
   NGP_RAM_RESERVED,
   NGP_RAM_SIZE,
   NGP_ROM_BASE,
+  NGP_VECTOR_TIMER0,
+  NGP_VECTOR_TIMER1,
+  NGP_VECTOR_TIMER2,
+  NGP_VECTOR_TIMER3,
   NGP_VECTOR_VBLANK,
+  NGP_RAS_H,
+  NGP_RAS_V,
+  NGP_STATUS,
   NGP_VIDEO,
   NGP_Z80_RAM,
   NGP_BUTTON_BITS,
   NGP_BUTTONS,
+  NGP_ENABLE_VALUE,
   NGP_SOUND_ENABLE,
-  NGP_SOUND_ENABLE_HIGH,
-  NGP_SOUND_ENABLE_HIGH_VALUE,
-  NGP_SOUND_ENABLE_VALUE,
   NGP_SOUND_LEFT,
   NGP_SOUND_RIGHT,
+  NGP_Z80_ENABLE,
 } from "@demake/core";
 import { T6w28, T6W28_LEFT, T6W28_RIGHT, type SampleSink } from "@demake/chip";
 
 import { Tlcs900, type Bus } from "./cpu.js";
-import { Display, VIDEO_SIZE, type NgpModel } from "./display.js";
+import { Display, VBLANK_LINE, VIDEO_SIZE, type NgpModel } from "./display.js";
+import { Timers } from "./timer.js";
 
 /** Bytes of RAM the sound processor and the main CPU share. */
 const SOUND_RAM_SIZE = 0x1000;
@@ -72,8 +85,31 @@ const SOUND_RAM_SIZE = 0x1000;
  * timings are in *states* of that clock, while the display controller counts the
  * crystal itself — so this is the ratio between the two, and the reason
  * {@link Ngp.step} multiplies for one of them and not the other.
+ *
+ * Source: Toshiba TMP95C061 datasheet §7 (1) — "one cycle clock divided by 2
+ * oscillation frequency is called 1 state".
  */
 const MASTER_PER_STATE = 2;
+
+/** The console's crystal, which the display controller counts. */
+export const CRYSTAL_HZ = 6_144_000;
+
+/**
+ * The processor's system clock, which is what one state is.
+ *
+ * The crystal halved, and it is also what the sound chip runs at and what the
+ * timer prescalers divide — so a driver's reload, a schedule's rate and a count
+ * of processor states are all stated against the same number.
+ */
+export const SYSTEM_HZ = CRYSTAL_HZ / MASTER_PER_STATE;
+
+/** Where each 8-bit timer's handler pointer lives, in the boot ROM's table. */
+const TIMER_VECTORS: readonly number[] = [
+  NGP_VECTOR_TIMER0,
+  NGP_VECTOR_TIMER1,
+  NGP_VECTOR_TIMER2,
+  NGP_VECTOR_TIMER3,
+];
 
 /**
  * Where a cartridge's stack starts.
@@ -118,17 +154,32 @@ export class Ngp implements Bus {
   readonly sound = new T6w28();
 
   /**
-   * Whether the main CPU has taken the sound chip from the Z80.
+   * The processor's four 8-bit interval timers, at `$20`-`$29`.
    *
-   * Both bytes of the unlock, and until they are there a write to either port
-   * does nothing — which is the hardware's own arrangement rather than a guard
-   * this model invented, and the reason a cartridge's boot writes two bytes it
-   * would otherwise have no reason to.
+   * A demade *game* programmes none of them — its two streams share the
+   * picture's interrupt — so this is here for the cartridge whose only job is a
+   * schedule, which needs a clock the frame cannot express (doc 13 §A5).
+   */
+  readonly timers = new Timers();
+
+  /**
+   * Whether the main CPU can reach the sound chip.
+   *
+   * Two conditions and they are two different things, which is the half of this
+   * a lock-shaped reading gets wrong: the chip has to be *powered* (`$55` to
+   * `NGP_SOUND_ENABLE`) and the Z80 has to be *stopped* (`$AA` to
+   * `NGP_Z80_ENABLE`), because on the board that processor owns the chip's bus
+   * and the main CPU's ports only reach it while nobody else is driving them.
+   * A cartridge with no sound program writes both; one that wrote only the
+   * first would be sending a chip somebody else is holding.
+   *
+   * The Z80 starts *stopped*, so a cartridge that never mentions it is already
+   * the owner — but `demake`'s own driver writes the byte anyway, because
+   * "nothing has started it yet" is not the same claim as "it is off".
    */
   private get soundEnabled(): boolean {
     return (
-      this.io[NGP_SOUND_ENABLE] === NGP_SOUND_ENABLE_VALUE &&
-      this.io[NGP_SOUND_ENABLE_HIGH] === NGP_SOUND_ENABLE_HIGH_VALUE
+      this.io[NGP_SOUND_ENABLE] === NGP_ENABLE_VALUE && this.io[NGP_Z80_ENABLE] !== NGP_ENABLE_VALUE
     );
   }
 
@@ -201,6 +252,7 @@ export class Ngp implements Bus {
     this.ram.fill(0);
     this.video.fill(0);
     this.io.fill(0);
+    this.timers.reset();
     this.frames = 0;
     // The keys survive a reload, because a harness sets them before it boots.
     this.write(NGP_BUTTONS, this.held);
@@ -220,6 +272,20 @@ export class Ngp implements Bus {
       return offset < this.rom.length ? (this.rom[offset] as number) : 0xff;
     }
     if (at >= NGP_VIDEO && at < NGP_VIDEO + VIDEO_SIZE) {
+      // Three of this region's addresses are the *controller* answering rather
+      // than memory being read back, and until they did, a cartridge polling the
+      // beam read whatever it had last written there — which is a runtime that
+      // waits for a frame that never comes.
+      if (at === NGP_RAS_H) return this.display.beamX;
+      if (at === NGP_RAS_V) return this.display.line;
+      if (at === NGP_STATUS) {
+        // Bit 6 is the blanking flag, which is how a cartridge that takes no
+        // interrupt waits for a frame (`core/src/asm/ngp.ts` §NGP_STATUS). Bit 7
+        // is the per-line character overflow, which this renderer does not
+        // report — a scene it would fire on is drawn correctly here, so
+        // answering zero is the honest half of a flag rather than a wrong one.
+        return this.display.line >= VBLANK_LINE ? 0x40 : 0x00;
+      }
       return this.video[at - NGP_VIDEO] as number;
     }
     if (at >= NGP_Z80_RAM && at < NGP_Z80_RAM + SOUND_RAM_SIZE) {
@@ -250,6 +316,13 @@ export class Ngp implements Bus {
     }
     if (at >= 0x100) return;
     this.io[at] = byte;
+    // The timer block is write-only on the hardware, so it takes the byte and
+    // keeps nothing readable; `this.io` above is the register page behaving as
+    // RAM for everything nobody models.
+    if (Timers.owns(at)) {
+      this.timers.write(at, byte);
+      return;
+    }
     if (at !== NGP_SOUND_RIGHT && at !== NGP_SOUND_LEFT) return;
     if (!this.soundEnabled) return;
     const port = at === NGP_SOUND_LEFT ? T6W28_LEFT : T6W28_RIGHT;
@@ -278,9 +351,21 @@ export class Ngp implements Bus {
   step(): number {
     const states = this.cpu.step();
     if (this.audioSink) this.sound.run(states, this.audioSink);
+    // The timers count the *system* clock, which is what a state is — so they
+    // take what the processor spent and the display takes twice it.
+    const fired = this.timers.step(states);
     if (this.display.step(states * MASTER_PER_STATE)) {
       this.frames += 1;
       const handler = this.vector(NGP_VECTOR_VBLANK);
+      if (handler !== 0) this.cpu.interrupt(handler);
+      return states;
+    }
+    // A timer interrupt dispatches exactly as the picture's does: through a
+    // pointer the cartridge wrote into the boot ROM's own table. The frame wins
+    // a tie because it is the rarer of the two, and a driver counting ticks
+    // would rather owe one than lose a frame.
+    if (fired !== undefined) {
+      const handler = this.vector(TIMER_VECTORS[fired.timer] as number);
       if (handler !== 0) this.cpu.interrupt(handler);
     }
     return states;

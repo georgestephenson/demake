@@ -93,8 +93,14 @@ describe("console support matrix", () => {
   it("every E2E suite is claimed by a console", () => {
     const dir = fileURLToPath(new URL("./", import.meta.url));
     const suites = readdirSync(dir).filter(
-      // `rom.e2e.test.ts` builds cartridges rather than comparing framebuffers.
-      (name) => name.endsWith(".e2e.test.ts") && name !== "rom.e2e.test.ts",
+      // Two suites end in `.e2e.test.ts` without being a console's *pixel*
+      // suite, which is what `EMULATOR_PROVEN` is a list of: `rom.e2e.test.ts`
+      // builds cartridges, and `audio-level-b.e2e.test.ts` compares a core's
+      // audio output with our chip models over several consoles at once.
+      (name) =>
+        name.endsWith(".e2e.test.ts") &&
+        name !== "rom.e2e.test.ts" &&
+        name !== "audio-level-b.e2e.test.ts",
     );
     const claimed = new Set(Object.keys(EMULATOR_PROVEN).map(suiteStem));
     for (const suite of suites) {

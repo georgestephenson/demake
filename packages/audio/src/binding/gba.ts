@@ -36,20 +36,30 @@ import { GBA_PCM_KON, GBA_PCM_VOICES } from "@demake/chip";
 import { snapPitch } from "../pitch.js";
 
 import { gbBinding } from "./gb.js";
+import { panGains } from "./pan.js";
 import { sampleNumber, WAVE_SAMPLES, type Waveform } from "./gba-bank.js";
 import type { BoundWrite, ChipBinding, DriverRateFit } from "./types.js";
 
 /** Channels the Game Boy half owns, which are the first of the spec's. */
 export const GBA_APU_CHANNELS = 4;
 
-/** The system clock a driver's timer counts. */
-const GBA_CLOCK = 16777216;
-
-/** What each of the four prescaler settings divides that clock by. */
-const PRESCALERS = [1, 64, 256, 1024] as const;
-
 /** The mixer's output rate, which its pitch lattice is measured against. */
 const PCM_RATE = 32768;
+
+/**
+ * Samples the mixer produces per driver tick, per side.
+ *
+ * A *driver* number that has to be here rather than in `rom/gba-driver.ts`,
+ * because it is also what decides this console's tick rate and `fitRate` is
+ * below the driver. `gba-driver.ts` re-exports it under its own name, so both
+ * halves read one definition — the SM83 driver's register numbers are in the
+ * binding for the same reason.
+ *
+ * Sixteen bytes is one FIFO refill and this is sixteen of them, which is what
+ * makes a block boundary something the hardware counts rather than something a
+ * timer approximates.
+ */
+export const GBA_BLOCK_SAMPLES = 256;
 
 /**
  * How loud the four Game Boy channels sit against the mixer.
@@ -99,9 +109,9 @@ function stepFor(hz: number, samples: number): number {
 }
 
 /** Eight bits of level, scaled from the frame's 0…1 and clamped. */
-function levelByte(level: number, on: boolean): number {
-  if (!on) return 0;
-  const value = Math.round(level * 255);
+function levelByte(level: number, gain: number): number {
+  if (gain <= 0) return 0;
+  const value = Math.round(level * gain * 255);
   return value < 0 ? 0 : value > 255 ? 255 : value;
 }
 
@@ -182,10 +192,15 @@ export function gbaBinding(console: string, spec: AudioSpec): ChipBinding {
           writes.push({ reg: base + REG_STEP0 + 2, value: (step >> 16) & 0xff, chip: 1 });
         }
 
-        const left = levelByte(frame.level, frame.pan?.left ?? true);
-        const right = levelByte(frame.level, frame.pan?.right ?? true);
-        const beforeLeft = before?.on ? levelByte(before.level, before.pan?.left ?? true) : -1;
-        const beforeRight = before?.on ? levelByte(before.level, before.pan?.right ?? true) : -1;
+        // A mixer voice carries a whole byte of level a side, so this half of
+        // the console places a part where the arranger asked rather than
+        // quantising it — the Game Boy half above is the one with `NR51`.
+        const gains = panGains(frame.pan);
+        const wasGains = panGains(before?.pan);
+        const left = levelByte(frame.level, gains.left);
+        const right = levelByte(frame.level, gains.right);
+        const beforeLeft = before?.on ? levelByte(before.level, wasGains.left) : -1;
+        const beforeRight = before?.on ? levelByte(before.level, wasGains.right) : -1;
         if (retrigger || beforeLeft !== left) {
           writes.push({ reg: base + REG_VOLL, value: left, chip: 1 });
         }
@@ -203,33 +218,35 @@ export function gbaBinding(console: string, spec: AudioSpec): ChipBinding {
     },
 
     fitRate(desiredHz): DriverRateFit {
-      // Two of the four timers clock the converters, so a driver has one of its
-      // own — sixteen bits of reload against a four-way prescaler, which is the
-      // finest clock in the set by a wide margin.
-      let best: DriverRateFit | undefined;
-      let bestError = Infinity;
-      for (const [index, prescale] of PRESCALERS.entries()) {
-        for (let steps = 1; steps <= 0x10000; steps += 1) {
-          const den = prescale * steps;
-          const hz = GBA_CLOCK / den;
-          if (hz < 16 || hz > 4096) continue;
-          const error = Math.abs(hz - desiredHz);
-          if (error < bestError - 1e-12) {
-            bestError = error;
-            // The register holds the *reload*, which is what the counter starts
-            // from and therefore the complement of the count.
-            best = {
-              rate: { num: GBA_CLOCK, den },
-              source: "timer",
-              divisor: ((0x10000 - steps) & 0xffff) | (index << 16),
-            };
-          }
-          // Below the desired rate the error only grows, so stop this prescaler.
-          if (hz < desiredHz) break;
-        }
-      }
-      if (best) return best;
-      return { rate: spec.driver.frameRate, source: "vblank" };
+      // **This console's driver rate is not negotiable, and it is the only one
+      // in the set that is not.**
+      //
+      // Every other `fitRate` here searches, because on every other console the
+      // clock and the chip are separate things: a Game Boy's timer can be asked
+      // for any rate a track wants, and the APU does not care which. Six of this
+      // machine's ten voices are a *software mixer*, so a driver tick and a
+      // block of samples the processor computes are one and the same object —
+      // and a block is what the sample transfer's own interrupt counts out.
+      // 32768 ÷ 256 is 128 exactly, so that is the rate, with no remainder and
+      // nothing to search.
+      //
+      // This machine really does have spare timers and the spec says so
+      // (`consoles/audio-specs.ts` §gbaAudio, `sources: ["timer", "vblank"]`) —
+      // what is stated here is not what the *hardware* can clock but what a
+      // driver on it can keep, which is the same distinction `psgBinding`
+      // reached from the other side. There the hardware could not deliver the
+      // rate it offered; here it could, and the mixer is what cannot use it.
+      // Riding a timer would put the schedule's ticks out of phase with the
+      // blocks the mixer delivers — every tick performed correctly and every
+      // sample of the six sample voices computed for the wrong moment.
+      //
+      // It is also why `gameDriverRate` names this console rather than deriving
+      // it from a chip: a game already asks for 128 Hz, and until this the timer
+      // search happened to answer it exactly. A standalone cartridge asks for
+      // whatever the tempo wanted, which was 56 Hz for the example library's own
+      // fixtures — a schedule no cartridge on this console could ever play.
+      void desiredHz;
+      return { rate: { num: PCM_RATE, den: GBA_BLOCK_SAMPLES }, source: "timer" };
     },
   };
 }

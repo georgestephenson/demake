@@ -13,6 +13,7 @@
 import type { AudioSpec } from "@demake/core";
 
 import { snapPitch, snapVolume } from "../pitch.js";
+import { panSides } from "./pan.js";
 import type { BoundWrite, ChipBinding, DriverRateFit } from "./types.js";
 
 export function psgBinding(console: string, spec: AudioSpec): ChipBinding {
@@ -46,15 +47,17 @@ export function psgBinding(console: string, spec: AudioSpec): ChipBinding {
         const isNoise = channel.kind === "noise";
 
         if (stereo) {
-          const left = !frame.on ? false : (frame.pan?.left ?? true);
-          const right = !frame.on ? false : (frame.pan?.right ?? true);
+          const sides = panSides(frame.pan);
+          const left = frame.on && sides.left;
+          const right = frame.on && sides.right;
           if (left) stereoByte |= 0x10 << i;
           if (right) stereoByte |= 1 << i;
+          const wasSides = before === undefined ? undefined : panSides(before.pan);
           if (
             before === undefined ||
             before.on !== frame.on ||
-            before.pan?.left !== frame.pan?.left ||
-            before.pan?.right !== frame.pan?.right
+            wasSides!.left !== sides.left ||
+            wasSides!.right !== sides.right
           ) {
             stereoChanged = true;
           }

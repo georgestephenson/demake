@@ -384,6 +384,7 @@ export function SoundDemaker({ project, path }: EditorProps) {
           render={toRenderOptions(options)}
           commands={{
             wav: wavCommand(options, source?.name ?? "effect.wav"),
+            flac: wavCommand(options, source?.name ?? "effect.wav", "flac"),
             rom: romCommand(options.console, source?.name ?? "effect.wav", ".gb"),
           }}
           onDeviceRate={(rate) => {

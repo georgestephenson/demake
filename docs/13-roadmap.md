@@ -546,12 +546,13 @@ the backend today, and either is a reason to revisit rather than to work around.
    is per frame either way. The audio is what made it visible, because a chip
    handed the wrong number of clocks renders at the wrong speed.
 
-   One thing the binding cannot yet spend: `ChannelFrame.pan` is a pair of
-   booleans, so a part reaches the chip hard left, hard right or both. The spec
-   says `lr-level` because that is what the hardware does (AGENTS.md §Iron
-   rules), and closing it is a continuous pan in the arranger — which would also
-   be the first thing in this project to make a *stereo image* an arranging
-   decision rather than a channel property.
+   The one thing this binding could not spend is now spent. `ChannelFrame.pan`
+   was a pair of booleans, so a part reached the chip hard left, hard right or
+   both; it is a signed position, the level is scaled per side and inverted into
+   each of the two attenuators, and the spec's `lr-level` is finally what the
+   demaker produces rather than only what the hardware does. Closing it turned
+   out to be six other consoles as well as this one, and an arranger stage under
+   all of them — §A5.5.
 7. **Supervision** and **Lynx** — each gated on something structural (RAM, a
    framebuffer renderer). Worth doing once a framebuffer renderer exists for one
    of them.
@@ -725,31 +726,50 @@ the backend today, and either is a reason to revisit rather than to work around.
    and a wider shadow, and it is worth doing when a game wants it rather than
    before: the widest fixture in the library stages fifteen.
 
-   Two things it still does not have. The **in-game audio driver** is one, and
-   it is blocked on nothing but itself now: a V810 stream player would be the
-   processor's first, and the cartridge it goes in exists. The other is the
-   depth ladder itself — `VB_DEPTH`'s three numbers are still a *proposal*,
+   One thing it still does not have, and it is not the audio any more (below):
+   the depth ladder itself — `VB_DEPTH`'s three numbers are still a *proposal*,
    because "how far in front" is a value no `.dmt` says and no Demakefile may
    (doc 14 §Scope), and the maintainer's call rather than an agent's.
 
-   **The sound is half done, and it is the half that does not need the backend.**
-   `@demake/chip` models the VSU, `binding/vb.ts` drives it and
-   `binding/vb-bank.ts` supplies its five waveform tables, so
-   `demake arrange -c vb`, `sfx` and `render` all work — this console demakes
-   music on the Neo Geo Pocket's precedent, where a demaker is per-domain and
-   does not wait for a cartridge. Three things about the chip are worth knowing:
-   the waveform tables are a **shared pool of five** rather than one per channel,
-   **every channel has a hardware envelope** (so a drum's decay is programmed
-   rather than written every tick), and **nothing is shared between channels** —
-   so this console emits no merge routine at all, the sixth in the matrix to do
-   so.
+   **The sound is done, both halves.** `@demake/chip` models the VSU,
+   `binding/vb.ts` drives it and `binding/vb-bank.ts` supplies its five waveform
+   tables, so `demake arrange -c vb`, `sfx` and `render` all work; `rom/vb.ts`
+   builds a cartridge whose only job is one schedule; and `rom/vb-game.ts` is
+   the **eleventh generated driver**, which puts music and effects inside a
+   game. `packages/demotic/test/audio-vb.test.ts` runs the shared battery on it,
+   so this console is diffed tick for tick like every other, and with it **every
+   console that builds a game plays its audio** — sixteen of sixteen.
 
-   What remains is the **in-game driver**, and it is blocked on the backend rather
-   than on anything of its own: a V810 stream player would be the *processor's*
-   first, on `arm-player.ts`'s and `mos-player.ts`'s precedent, and it has nothing
-   to be embedded in until `demake build -c vb` exists. `@demake/vb`'s VSU page
-   accepts writes and generates nothing until then, which is why the in-game
-   audio column reads `—` while the music/sfx one reads `yes`.
+   Three things about that driver are this console's rather than a predecessor's
+   restated.
+
+   - **The tick is a call, not a handler.** Every other frame-clocked driver in
+     the set is entered by an interrupt and counts what it is owed, because its
+     main loop can overrun a frame. This cartridge takes no interrupt anywhere:
+     the loop builds a frame, waits on `XPEND` and starts again, so a tick per
+     pass *is* a tick per frame and there is nothing to count. `AudioTick` sits
+     at the bottom of that loop and `resolveVbClock` refuses any rate but the
+     frame's — which is 50.2 Hz, the slowest in the matrix and the coarsest
+     driver clock this project has.
+   - **There is no merge arm at all**, the sixth in the matrix and the fourth
+     whose reason is that the hardware shares *less*: panning is two nibbles of
+     the channel's own register, enabling is its own bit 7, and the one global
+     register is a panic button. So the run format's merge bit never appears in
+     a schedule for this console and `shadowPlan` is handed no merge set.
+   - **Register liveness is the caller's question at every call.** This
+     processor has no push list and no callee-saved convention, so a routine
+     saves its return address and nothing else — and `AudioSfxRelease` reads the
+     steal mask into the same register its two callers are holding the request
+     byte and the effect's table entry in. `keep`/`unkeep` are that pair, and
+     without them the effect is started from a pointer into whatever the release
+     left behind: a game whose sound never fires and whose music is otherwise
+     perfect, which is exactly what the borrowed-channel case reported.
+
+   The waveform tables are the boot's rather than tick zero's, which is the PC
+   Engine's reason on different hardware: five tables is a hundred and sixty
+   writes through the register port and a packed run's count is seven bits. They
+   are also written *directly* rather than through the packed-write routine — a
+   port byte is six bits of channel and register, and wave RAM is neither.
 
 68000 (Mega Drive, then Neo Geo), 65816 (SNES, plus the SPC700 for its audio) and
 ARM (GBA, NDS) slot in wherever Tier 1 breadth is wanted ahead of Tier 2 depth;
@@ -1611,8 +1631,19 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     are done, and `render` is the single path every surface makes sound through.
     Eighteen analytic vectors pass, and `@demake/dmg` now *is* a consumer: its
     APU is `@demake/chip`'s `GbApu`, so the emulator and the preview cannot
-    disagree about a chip they share. Outstanding: the hardware test ROMs and
-    their provisioner, and FLAC.
+    disagree about a chip they share. **FLAC is built and it is ours**
+    (`encode/flac.ts`): constant, fixed and verbatim subframes with Rice-coded
+    residuals over a searched partition order, stereo decorrelation, and every
+    choice made by measuring the encoded size rather than estimating it. LPC is
+    deliberately absent — its coefficients come from floating-point
+    autocorrelation, and a predictor derived from `Math` would be a different
+    file on a different engine, which is the property the format is here to
+    provide. It costs little on this material: 61.7% of the WAV against the
+    reference encoder's 59.8% at `-8`. The stream carries an MD5 of its own
+    audio, which the format leaves optional, precisely so `flac -t` verifies the
+    decode end to end rather than merely parsing — and a self-skipping suite
+    beside the encoder holds it to libFLAC, on `arm-gnu.test.ts`'s terms.
+    Outstanding: the hardware test ROMs and their provisioner.
   - **A2 — `arrange`** *(built for MIDI; the Game Boy boots)*: ingest, analysis,
     the arrangement tournament, absolute-placement timing, the judge and the
     `.vgm` artifact run on all eight consoles with a chip model — and on the one
@@ -1676,8 +1707,180 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     machine.
 
     What each remaining console costs is now the same three things over one
-    shared walk. Level B (sample comparison against a third-party core, via the
-    libretro harness's audio callback) is the other thing that remains.
+    shared walk.
+
+    **Level B is built.** The libretro harness captures its audio callback, and
+    a standalone audio cartridge booted in a *third-party* core is compared with
+    `render()`'s output from the same schedule — which is the half Level A
+    cannot see, since a duty table off by one produces a perfect register stream
+    and the wrong sound. The comparison is the long-term average magnitude
+    spectrum as a cosine similarity, because a waveform diff is not available
+    here and would be flaky rather than strict: against fceumm the level differs
+    by 19% and cross-correlation locks onto the music's own periodicity, its best
+    lag wandering between 899 and 4456 samples across one capture. The threshold
+    is 0.99 and it was set by measuring what wrong answers score — the deciding
+    row is `nes-apu.ts` with its duty selection inverted, which scores 0.9801
+    against a correct model's 0.9992 and is exactly the bug this level exists to
+    catch. Doc 16 §The proof has the table.
+
+    **Two consoles are in that suite and six qualify for it**, and the gap is
+    deliberate: a row belongs there once it has been *run* and passes, not once
+    the console is eligible. That rule was learned rather than chosen. The Mega
+    Drive's row and the PC Engine's were written when the suite was and neither
+    had ever executed — a row self-skips without its libretro core, and only two
+    of the five were provisioned on the machine they were written on — so both
+    were quietly failing until somebody provisioned the rest. Each is now held
+    out with its measurement recorded in that file's own header, and doc 16 says
+    what separates the two sides on each of the four.
+
+    **And it has already found three things, which is what a level like this is
+    for.** The sixth standalone cartridge is the WonderSwan's, beetle-wswan is
+    provisioned by the same script as the other four cores, and the row costs one
+    line — so it was written, measured, and the measurement went somewhere.
+
+    **The third is the biggest and it is not the WonderSwan's: every Mega Drive
+    cartridge this tool had ever built was silent on the board.** `$A11200` is
+    the Z80's reset line _and the YM2612's_ — one wire, both chips — so a 68000
+    program that leaves it asserted gets six four-operator voices that discard
+    everything sent to them. A demade game never wrote the register at all, and
+    the standalone audio cartridge wrote it with the reset _held_, deliberately,
+    to stop a sound processor nobody had programmed from running.
+
+    The register stream was perfect throughout, and that is the point.
+    `@demake/md` models no Z80 — a demade cartridge emits no program for one — so
+    `$A11200` was a store to nothing and the FM voices went on answering. Level A
+    diffed the writes the chip received against the schedule and matched them
+    tick for tick, on a chip that was not listening. Against genesis-plus-gx a
+    standalone track measured **0.00046** RMS where a released chip gives
+    **0.28203**, and a demade game's music **0.00749** where it gives **0.17821**.
+
+    The fix is two stores in one place — `md-chips.ts`'s `emitZ80Handover`, take
+    the bus and keep it, then release the reset, safe in that order because a Z80
+    whose bus the 68000 holds never fetches an instruction — called from the
+    audio driver's own `AudioInit`, so a game with no audio still emits neither.
+    And the *core* now models the line, which is what makes a cartridge that
+    forgets it fail in `pnpm test` rather than only on the hardware. That was
+    AGENTS.md §Gotchas' own warning arriving through the peripheral this core
+    deliberately leaves out: a description that is wrong and consistent passes
+    everything.
+
+    The first finding was the suite's own. A cartridge performs its chip's
+    initialisation in the boot and the rest of its schedule from its clock, so
+    `BuiltAudioRom.performed` is the schedule _minus_ those writes — exactly the
+    right comparand for Level A, where a capture begins at the first tick, and
+    exactly the wrong one for a render, because they are chip **state**. On four
+    of the five families it made no difference at all: their boot is a handful of
+    latches the schedule's own tick 0 repeats, so nothing is stripped and the two
+    renders are sample-identical. On the two whose boot carries _waveforms_ it is
+    the difference between a track and silence — a PC Engine render lost 37% of
+    its level (0.0905 RMS against 0.1431) and a WonderSwan's lost all four
+    pitched channels, since that chip reads its tables from an address the
+    stripped schedule never states. The WonderSwan row scored 0.6469 that way and
+    **0.9038** rendered properly, and the PC Engine row had been shipping against
+    a render with no wave RAM in it.
+
+    The second is the chip, and half of it is now closed. What was left after the
+    render was fixed is the **noise channel** — dropping the drum part takes the
+    same tune, in the same core, to **0.9978** — and pointed at one held note at
+    a time the two models agree to the hertz on every pitched voice (441 Hz
+    against 441, 215 against 215, with the 6% level difference this level's
+    opening caveat already allows) while the noise voice peaked at 1497 Hz where
+    the core peaked at 140.
+
+    That was `WsSound`'s shift register feeding back the wrong pair of bits. The
+    hardware's feedback is the **inverted** exclusive-or of bit 7 with the tap
+    bit, and the check that says so is not a spectrum: a fifteen-bit register
+    with a tap has exactly one observable that is not a matter of taste, which is
+    how many steps it takes before it repeats, and the eight modes produce eight
+    documented lengths. Ours reproduced one of them — mode 0, by coincidence,
+    because a maximal-length sequence is 32767 whatever the tap — and missed
+    seven, which is white noise on every mode where the hardware has eight
+    colours. `packages/chip/test/ws-sound.test.ts` pins all eight now, and with
+    the generator right the noise voice's spectrum lands beside the core's: 54 Hz
+    against 43, 118 against 54.
+
+    What is left is a **level**, and it is a pure gain rather than a shape: our
+    pitched voices come out 1.063× the core's and our noise voice 1.734×, with
+    the second number flat across the band — 1.729 below 4 kHz and 1.735 below
+    22 — so it is neither the filtering caveat nor aliasing in a broadband
+    source, both of which would show as a tilt. Relative to the pitched voices
+    the core's noise is 0.61× ours.
+
+    On that one the documentation is on our side. The WSdev wiki says the shift
+    register's bit is "used as if it were a wavetable sample: 0 = 0, 1 = 15",
+    which is a wavetable channel's own amplitude before its volume nibble, and
+    that is what `WsSound` does — at a duty of 0.500 on the long modes, measured
+    over a whole period. So it reads as Mednafen attenuating that voice rather
+    than as a gap in the model, and the row stays out for a different reason from
+    the one it went out for: a cross-check whose two sides differ by a known
+    constant is not evidence about the chip in either direction. Level A is green
+    on that console for a track _and_ an effect, so the cartridge performs its
+    schedule exactly.
+
+    **And one console could not be rendered at all — fixed, and it was the one
+    renderer rather than that console.** `demake render -c gba` wrote a WAV in
+    which every sample after the first was `NaN`, and had since the console was
+    added. `GbaPcm.clockHz` is 32768 — the only model in the set whose clock is
+    **below** the 48 kHz a render defaults to, because it is a mixer rather than
+    an oscillator — and `BoxSink` computes its boundaries as
+    `floor(i × clockHz / sampleRate)`. Consecutive boundaries therefore collide,
+    the box has zero width, and the mean of no clocks is `0 / 0`. Every other
+    chip here clocks in megahertz, so box integration had only ever had to
+    *downsample* and the case was never written.
+
+    The answer needed no new mechanism, which is the argument for it: when the
+    output rate is above the chip's, a sample's box falls **entirely inside one
+    clock**, and the mean of a constant is that constant. Holding the value is
+    not a fallback for a degenerate case — it is what box integration *means*
+    when the box is narrower than a clock, so upsampling and downsampling are
+    one rule rather than two.
+
+    The trap is the accumulator. Clearing it on a zero-width box throws away
+    clocks that belong to the box after it, which renders every second sample as
+    silence — a far quieter failure than the `NaN` it replaces, and one no
+    check for `NaN` would notice. `packages/chip/test/mix.test.ts` pins both,
+    and its sharp assertion needs no tolerance argument: a constant rendered
+    through a slow clock and a fast one must produce the *same samples*, because
+    the mean of a constant does not depend on how the boxes fall.
+
+    Nothing upstream caused it and nothing downstream hid it — the register
+    schedule was always correct, and `audio-gba.test.ts`'s byte-for-byte mixer
+    proof kept passing because it compares the driver against the model's own
+    integer mix rather than against a float render. That is also why Level B
+    would have found this the hard way.
+
+    **And that console now has a cartridge to point Level B at, which found the
+    method's own boundary.** With `rom/gba.ts` built and mGBA provisioned it
+    qualifies on both counts, and the row was written and measured: **0.9820**
+    against a gate of 0.99, with the nearest plausible wrong answer — the same
+    tune arranged for a Game Boy, same core, same capture — at 0.9169. So the
+    number is far from meaningless and it does not pass, and the gate stays where
+    it is, because lowering it for one console makes it mean nothing on the other
+    four.
+
+    What it is, is a **tilt**. Band by band the two agree to 0.9885–0.9988, so
+    the whole-band figure is _lower than any band in it_, which is the signature
+    of a difference in balance rather than in content: the core's level relative
+    to ours falls monotonically from 1.545× below 1 kHz to 0.876× at 16–24 kHz
+    and 0.394× above that, and band-limiting to the mixer's own Nyquist moves the
+    figure to 0.9898.
+
+    The cause is the one thing this level assumes. Every other console clocks its
+    chip in **megahertz**, so a render at the comparison rate is a decimation and
+    both sides band-limit alike. This mixer runs at 32768 Hz — _below_ the
+    65536 Hz mGBA captures at, which is the same fact the `NaN` above came from —
+    so what separates the two signals is a **reconstruction filter belonging to
+    neither model**: ours is box integration's zero-order hold, which keeps the
+    images above 16 kHz, and the core's is whatever mGBA resamples with, which
+    attenuates them. Neither is the schedule, so the row stays out on the
+    WonderSwan's terms.
+
+    This console loses least by that, because its Level A is the sharpest in the
+    project rather than the weakest: it runs in **two halves**, the four Game Boy
+    channels diffed tick for tick and the mixer's *samples* diffed byte for byte
+    against what `GbaPcm` renders — a comparison against the audio rather than
+    against an instruction to make it, and exact because the mixing is integer
+    throughout.
   - **A3 — `sfx`** *(built for WAV; the Game Boy boots)*: eight gesture families, the class gate,
     deterministic coordinate descent with every candidate rendered through the
     chip model, and the placement contract each effect declares. A single effect
@@ -1692,17 +1895,29 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     lead, harmony) with confidences, plus the decoders. *Done means*: an MP3
     becomes a playable cartridge, and the parts it found are reported honestly
     enough that a wrong one can be corrected in one flag.
-  - **A5 — breadth** *(`nes`, `sms`, `gg`, `snes`, `md`, `gba` and `nds` done,
+  - **A5 — breadth** *(`nes`, `sms`, `gg`, `snes`, `md`, `gba`, `nds`, `pce`, `ngpc`, `ws`/`wsc`, `vb` and `neogeo` done,
     inside a game)*:
     the 2A03, the SN76489, the S-DSP, the YM2612, the Game Boy Advance's mixer and
     the Nintendo DS's SPU each have a chip model, a
     binding and a generated driver — 6502, Z80, SPC700, 68000 and ARM twice — and
     `demake build` puts music and
-    effects in the cartridge with doc 16's Level A proof over all of them. Five of
-    them now also build a *standalone* audio cartridge — `demake gen … --format
-    rom` reaches the Game Boy, the NES, the PC Engine, both Sega 8-bits and the
-    Mega Drive — and the rest do not, because a cartridge whose only job is one
-    track is what a later caller needed and not what a game did. That last one is
+    effects in the cartridge with doc 16's Level A proof over all of them. All but
+    one of them now also build a *standalone* audio cartridge — `demake gen …
+    --format rom` reaches the Game Boy, the NES, the PC Engine, both Sega
+    8-bits, the Mega Drive, both ARM handhelds, the Virtual Boy, both Neo Geo
+    Pockets and both WonderSwans — and only the Super Nintendo does not,
+    because a cartridge whose only job is one
+    track is what a later caller needed and not what a game did. **The sixth is
+    where the measurement stopped being a claim**: `wsc-driver.ts` moved not one
+    instruction, so what that console added is a boot sequence, a clock and a
+    cartridge wrapper. Its clock is the Mega Drive's *caller* argument reached by
+    different hardware — this cartridge takes no interrupt at all, so its idle
+    loop reads the vertical-blank timer's counter and pays what it finds owed,
+    and where a game does that from a loop that is also running a game its drift
+    is bounded by a frame and this one's by a poll. Here that buys accuracy
+    rather than a rate, because the counter still only moves once a frame. And
+    both WonderSwans get it for one byte in a footer, because their sound
+    hardware is the same hardware. The Mega Drive is
     where the difference between the two callers stops being a matter of
     packaging: on that board the FM chip's timer interrupt goes to the Z80, so a
     driver polls the status byte, and a game's loop is also running a game while a
@@ -1710,7 +1925,185 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     for one and not for the other. The Super Nintendo is
     the near miss: `demake arrange -c snes` writes an `.spc`, which is the same
     driver and the same schedules in the format that console's own players read,
-    but it is a RAM image rather than a cartridge. The SN76489 is also the
+    but it is a RAM image rather than a cartridge.
+
+    **The tenth is both Neo Geo Pockets, and its clock is the plainest statement
+    of the caller distinction in the set.** `ngp-driver.ts` moved not one
+    instruction — the seventh time that has been the whole answer — so
+    `rom/ngpc.ts` is a boot sequence, a clock and a wrapper. What is new is that
+    *which* clock is available depends on who is asking and *which timer* on the
+    hardware: this processor has four 8-bit interval timers, a game programmes
+    none of them because its two streams ride the picture, and a standalone
+    cartridge programmes an **upper** one because the two timers of a pair do
+    not offer the same prescaler outputs and only an upper one reaches the
+    bottom of a driver's useful band. And both machines get it for one byte in a
+    header, on the WonderSwan's terms, because their sound hardware is the same
+    hardware — which makes the mono Neo Geo Pocket the one console in the matrix
+    that builds an audio cartridge and no game.
+
+    **The ninth is the Nintendo DS, and it cost what that estimate said it
+    would.** `nds-driver.ts` already exported the console's whole share — the
+    port map, the write routine, the bank copy, the timer pair and the main loop
+    — so `rom/nds.ts` is a boot, one stream and a wrapper, and `packNdsRom`
+    already took two binaries. It is the only cartridge in the set whose **main
+    processor does nothing at all**: the sound channels answer the ARM7 alone and
+    the loader enters both programs, so the ARM9's whole contribution is a branch
+    to itself and there is no upload, no handshake and no request. Its clock is
+    the same one a game gets, which no other two-caller console here can say —
+    the tally is a hardware register rather than something polled, so there is
+    nothing for a caller to drift against.
+
+    Two details cost the time rather than the typing, and both are now written
+    into the code that needed them. The shared main loop calls `AudioTick` where
+    a single-stream driver's own entry is `Tick`, so both names go on one
+    address. And a tick here is attributed by the **ARM7's** program counter,
+    which made this the first standalone whose proof could not sample one at all:
+    a host step is several of that processor's instructions, so sampling saw one
+    arrival as none. `_rom-harness.ts` grew the `watch` hook
+    `packages/demotic/test/_audio-battery.ts` already had for exactly this, one
+    layer up.
+
+    **The seventh is where that distinction stops mattering again, and it is the
+    first standalone on a console whose second sound device is not a chip.**
+    `demake gen … --format rom -c gba` builds a `.gba`, `arm-player.ts` and
+    `gba-driver.ts` moved not one instruction, and the whole of `rom/gba.ts` is a
+    boot sequence, a clock and a cartridge wrapper. Neither caller polls here:
+    six of this machine's ten voices are a software mixer, so a driver tick *is*
+    a block of samples the processor computes and the sample transfer's own
+    interrupt counts the blocks out — 128 Hz on a game and on a cartridge alike,
+    with nothing to fit and nothing to drift. It is also the only standalone
+    whose idle loop is not idle, because that mixing is what it does with the
+    frame, and the only one whose Level A proof is in **two halves**: the four
+    Game Boy channels are diffed tick for tick and the mixer's samples byte for
+    byte against what `GbaPcm` renders.
+
+    Building it turned up a rate this binding could not keep. `gbaBinding.fitRate`
+    was searching the machine's spare timers and fitting the example library's own
+    fixtures at **56 Hz** — a schedule no cartridge on this console can play, and
+    one whose mixer samples would be computed for the wrong moments if it tried.
+    It returns the transfer clock now. The spec still declares
+    `sources: ["timer", "vblank"]`, because that is what the hardware has; what
+    moved is the *binding's* answer about what a driver can keep, which is the
+    distinction `psgBinding` reached from the other side — there the hardware
+    could not deliver the rate it offered, and here it can and the mixer cannot
+    use it. `demake build -c gba` is byte-identical either way, because a game
+    already asked for 128 Hz through `gameDriverRate` and the timer search
+    happened to answer it exactly.
+
+    **Both Neo Geo Pockets build one now** (`rom/ngpc.ts`), which makes ten
+    families over eight stream players and leaves this axis with nothing but the
+    Super Nintendo on it. `ngp-driver.ts` was not touched — a game already drove
+    it — so what the tenth standalone owns is a boot sequence, a clock and a
+    cartridge wrapper, which is the seventh time that has been the whole answer.
+
+    Getting there cost two things, and both were worth more than the cartridge.
+    The first was the **clock**, which is why this console was held back rather
+    than half-landed: a line `binding/t6w28.ts` wrote long before there was a
+    caller for it offers an on-chip timer as well as the frame, "which is how a
+    **standalone** driver holds a tempo the picture cannot express" — so a track
+    fits the frame at 59.95 Hz and an effect asks for the timer, and a cartridge
+    riding a clock `@demake/ngp` did not model is one whose Level A proof does
+    not exist. Building it anyway and refusing the timer by name would have
+    shipped the wrong cartridge and then had to change it. So the block was
+    described first (below), and the driver then took it: timer 1 — the *upper*
+    timer, because φT256 is the only prescaler output that reaches the bottom of
+    a driver's useful band and no single timer offers all four — with the reload
+    read off the schedule and the prescaler factored out of it, so the register a
+    cartridge programmes cannot disagree with the rate it declares. The frame is
+    accepted too, because refusing a source the binding legitimately produced
+    would be a build error about nothing.
+
+    The second was **four wrong addresses**, and they are the more interesting
+    half. See below.
+
+    **And going after the source found the binding was wrong.** Toshiba's own
+    TMP95C061 datasheet is on bitsavers, and it is not the scan it looks like —
+    its pages are LZW-compressed content streams with a full text layer, and
+    only the *figures* are images. Read, §3.8 settles the timer's arithmetic
+    outright: the four prescaler outputs are **φT1 = 8/fc, φT4 = 32/fc,
+    φT16 = 128/fc and φT256 = 2048/fc**; a lower timer (0 or 2) may select φT1,
+    φT4 or φT16 and an upper one (1 or 3) φT1, φT16 or φT256, so *no single
+    timer offers all four*; the up-counter is cleared to zero on the compare
+    match, so the period in input clocks is the reload itself; and TREG0–TREG3
+    are at `$22`, `$23`, `$26` and `$27`, write-only. The same document's serial
+    baud table tabulates `fc / (TREG2 × 8 × 16)` at *this console's* 6.144 MHz
+    and gives 48 Kbps for a reload of 1, which is φT1 = fc/8 and can be nothing
+    else.
+
+    Against that, `binding/t6w28.ts`'s `[2, 8, 32, 128]` was wrong twice over —
+    every entry half of what the hardware divides by, and the widest one 128
+    where the hardware's is 1024. It is `[4, 64, 1024]` now, which is timer 1's
+    three clocks expressed against the chip's own 3.072 MHz, and the choice of
+    *that* timer is the hardware's too: φT256 is the only clock that reaches the
+    bottom of the useful band, and the single rate φT4 would have added inside
+    it is one φT256 hits exactly. What this did *not* change is the rate a
+    schedule declares — a rate fixes `prescaler × reload`, so the two always
+    agreed about the fraction — and what it did change is the **reload a
+    cartridge would program**, which is the number that was wrong: 240 Hz was a
+    reload of 100 on a 24 kHz clock that does not exist, and is a reload of 200
+    on the 48 kHz one that does.
+
+    **And the three figures came out too, so this is no longer blocked at all.**
+    What the text could not give — `TRUN`, `T01MOD` and the interrupt-enable
+    register — are raster images inside that same PDF, and they are ordinary
+    8-bit greyscale under the LZW: decoded to a PGM and run through Tesseract,
+    all three read cleanly, and each one *checks against something already
+    known* rather than having to be taken on trust. `TRUN` is at `$20` with
+    `T0RUN` to `T3RUN` in bits 0 to 3 and `PRRUN` in bit 7 — which the prose
+    confirms, since its worked example says `SET 3, (TRUN)` sets timer 3.
+    `T01MOD` is at `$24`, and its two clock-select fields reproduce the
+    up-counter section's prose exactly: the lower timer takes the external pin
+    or φT1/φT4/φT16 and the upper one its partner's comparator output or
+    φT1/φT16/φT256. And the interrupt-enable table gives `INTET01` at `$73` and
+    `INTET23` at `$74`, a nibble per timer, with the **priority** as the enable —
+    1 to 6 accept and *both* 0 and 7 refuse, which is the trap in that field.
+    All of it is in `core/src/asm/ngp.ts` now, beside the vectors
+    `ngpcspec.txt` had already settled.
+
+    **Implementing it then found four addresses this project had wrong, and the
+    way it presented is the lesson.** The timer block was modelled —
+    `packages/ngp/src/timer.ts`, with the prescaler gate, the per-timer clock
+    selections, the compare that clears the counter and the priority-as-enable,
+    each pinned against the datasheet — and the standalone cartridge was written
+    on top of it. It booted, took the sound chip, programmed the timer and played
+    **nothing**, because `TRUN` is at I/O `$20` and this project believed the
+    T6W28's right-hand write port was at `$20` as well. Two cited sources, one
+    byte: the datasheet said the first and MAME's own Neo Geo Pocket driver
+    appeared to say the second.
+
+    That read as a *collision* and was recorded as one — as a fact about the
+    hardware that nothing reachable could settle, with the cartridge held back
+    because one built on a page with two answers is worse than none. It was not.
+    MAME's I/O handler is **installed** at `$80`-`$BF`:
+
+    ```
+    map(0x000080, 0x0000bf).rw(FUNC(ngp_state::io_r), FUNC(ngp_state::io_w));
+    ```
+
+    so its `case 0x20:` is an offset into that window and the port is `$A0`.
+    beetle-ngp decodes the same addresses absolutely — `0xa0`/`0xa1` for the
+    chip, `0xb8`/`0xb9` for the pair that unlocks it, and `$20`-`$29` routed to
+    `timer_write8` ahead of everything else — and agrees. Four of demake's
+    constants were sixteen bytes low: both write ports, both unlock bytes, and
+    (separately) the two DAC ports.
+
+    **Nothing could see it**, which is the point and the reason it survived a
+    year. `@demake/ngp` read the same four addresses `@demake/audio`'s driver
+    wrote, so a demade cartridge wrote where a demade emulator read and the whole
+    in-game audio battery passed on a pair of ports no Neo Geo Pocket has —
+    §Gotchas' wrong-and-consistent failure, in a machine description, exactly
+    where AGENTS.md warns it lands. What surfaced it was describing a *second*
+    device on the same page: the timers really are at `$20`, so wiring them in
+    made the two descriptions contradict each other for the first time.
+
+    Two things follow for anyone reading a register map out of an emulator. A
+    memory map's `case` labels are offsets from wherever the handler was
+    installed, so a citation has to carry the install line and not only the
+    switch. And a collision between two sources is a reason to re-read both,
+    not a fact to record — the first version of this section wrote it down as
+    unresolvable and was wrong.
+
+    The SN76489 is also the
     one that stretched the shared packing layer: its channel is in the data byte
     and latched, so `channelOf` became a factory over a per-schedule latch and a
     schedule that opens a tick with a bare data byte is refused rather than
@@ -1748,39 +2141,298 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
 
     | Hardware | Modelled | Spent by a demaker |
     | --- | --- | --- |
-    | YM2612 LFO (vibrato and tremolo) | yes | no — `binding/md.ts` writes `$22 = 0` and every channel's sensitivity nibble as zero |
+    | YM2612 LFO (vibrato) | yes | **closed** — `binding/md.ts` programs `$22` and the sensitivity nibble when a part asks |
+    | YM2612 LFO (tremolo) | yes | **closed** — `binding/md.ts` programs the AMS nibble and the carriers' enable when a part asks |
     | YM2612 SSG-EG envelope modes | yes | no — those registers are never written |
     | YM2612 channel 3's four-pitch mode | yes | no — `$27`'s mode bits are always zero |
     | HuC6280 LFO | yes | no — the LFO registers appear only in `binding/pce.ts`'s channel *tag*, never in a write |
     | WonderSwan channel 2's PCM voice | yes | no — nothing above the chip layer drives it |
     | PC Engine direct D/A | yes | no — likewise |
     | YM2610 SSG noise | yes | no — `binding/neogeo.ts` writes the mixer once, tone on and noise off |
-    | YM2610 ADPCM-A voices 2-6 | yes | no — the *arranger* gives a percussion part one channel |
+    | YM2610 ADPCM-A voices 2-6 | yes | **closed** — a percussion part takes a pool of voices |
+    | Stereo placement | yes, on eleven bindings | **closed** — see below |
 
-    Two of those are the Neo Geo's and neither is the binding being lazy. The
-    **SSG noise** is refused deliberately: this console has six sample voices
-    playing recordings of drums, so putting a hi-hat on a shift register would be
-    spending the machine downwards, and not writing `$07` per note is also what
-    leaves the console with no shared register to merge. The **five idle sample
-    voices** are the interesting one, and they are an *arranger* gap rather than a
-    binding one: `plan.ts` assigns one part to one channel, and a General MIDI
-    drum track is one part — so a kit lands on one voice and the other five sit
-    there. Nothing before this console had more than one percussion voice, so the
-    question had never come up. What it needs is for a percussion part to be able
-    to take a *pool* of channels, with simultaneous hits spread across them, which
-    reaches `plan.ts` and `compile.ts` together.
+    **And one line here is not hardware nobody reaches but a number nobody has
+    measured: how loud a Mega Drive's four squares sit against its six FM
+    voices.** `MD_CHIP_GAINS` puts the PSG six decibels down, which is a stated
+    choice about the board rather than a reading off one — the two chip models
+    each normalise to their own full scale, so something has to say. Level B says
+    genesis-plus-gx disagrees, and by a lot: it carries 2.35× our energy in the
+    band the FM voices occupy and 0.33× ours where the squares' harmonics do,
+    which is what keeps that console's row out of the suite. But that core states
+    a `psg_preamp` of 150 by default, which is equally a choice, so the
+    measurement locates the disagreement without settling it. What would settle
+    it is a level measurement off a board, and until there is one, changing our
+    number to match an emulator's preamp is the thing doc 16 §The proof says a
+    cross-check must never be used for.
 
-    **The first line is the one to do first, and it is bigger than the FM chip.**
-    Nothing anywhere in `@demake/audio` produces vibrato *at all* — not through a
-    chip LFO, and not through per-tick pitch writes on the consoles that have no
-    LFO to use. A period arranger uses it constantly, so this is an arranger
-    question (doc 17) before it is a binding one: where the depth comes from (a
-    source's own modulation controller? its articulation, the way
-    `binding/fm-patch.ts` already reads one?), whether it is a per-part decision
-    or a per-note one, and what it costs a four-channel console in schedule bytes
-    when it has to be written rather than switched on. The last two lines are
-    doc 18's rather than doc 17's — a sample player wants a *sound* demaker
-    pointed at it, not an arranger.
+    **A schematic would settle it as well as a meter would, and that is the lead
+    to follow.** The two chips do not meet in software on this board: the PSG's
+    single output is summed into the YM2612's two through a resistor network on
+    the way to the mixing amplifier, so the ratio the hardware imposes is a pair
+    of component values rather than anything either chip decides — which is why
+    neither model can be asked and why `MD_CHIP_GAINS` has to say something. The
+    direction is at least not in doubt: this PSG is *far* louder at its own pins
+    than the FM chip is, and the board knocks it down hard, which is the same
+    direction genesis-plus-gx sits in relative to us. So our six decibels is
+    likely to be too little rather than too much.
+
+    **And the schematic turned up, so the board's half of it is settled.** The
+    Model 1 sound-and-video sheet is a legible line drawing rather than a
+    photographic scan, and the summing network reads straight off it. The VDP's
+    `PSG` pin drives a 2.2 kΩ load and a 220 pF cap, is coupled by 1 µF, and is
+    summed through **51 kΩ** — twice, one per channel, because that output is
+    mono. Each of the YM2612's `MOL`/`MOR` drives its own 2.2 kΩ load, is
+    coupled by 10 µF, and is summed through **2.2 kΩ**. The cartridge and
+    expansion inputs join the same node through 47 kΩ. So the board weights the
+    PSG against the FM at 51 ÷ 2.2 — 23.2 to 1, or **27.3 dB** — where
+    `MD_CHIP_GAINS` applies 6.
+
+    That does not close the item by itself, and the reason is precise: the
+    schematic settles the *board's* term exactly and says nothing about the two
+    parts' full-scale output levels, which is the other term and which neither
+    chip model measures. Moving the constant to 27 dB on half a derivation would
+    re-base every Mega Drive render on an inference — and it would be a *wrong*
+    inference, because the missing term runs the other way by roughly as much:
+    the PSG pin swings a logic-level square where `MOL`/`MOR` are low-level
+    analogue outputs, which is why the board has to knock the first one down by
+    twenty-seven decibels to reach a balance a listener recognises. A constant
+    at 27 dB would put the squares at four per cent of the mix.
+
+    **So the question was sized rather than closed, and it is 3.3 dB.** The one
+    reference that measures *both* terms against a real board is
+    genesis-plus-gx, and it says so in a comment rather than being inferred
+    from: `PSG_MAX_VOLUME` is 2800 "roughly adjusted to match VA4 MD1 PSG/FM
+    balance with 1.5x amplification of PSG output", which is the 1.5 its default
+    `psg_preamp` applies. Four squares therefore reach 16800 there against six
+    FM channels' 49146 — a ratio of **0.342** where `MD_CHIP_GAINS` applies
+    **0.5** — and the two numbers are directly comparable because both of our
+    models normalise the same way, `Sn76489` by `4 × 8191` and `Ym2612` by
+    `6 × 8192`. Six decibels is too little by **3.3**, not by twenty-one.
+
+    What is left is unchanged in kind and much smaller in size: a level
+    measurement of the two parts, or a board. Matching the emulator is still not
+    the way to close it — that is exactly what doc 16 §The proof says a
+    cross-check must never be used for, and 0.342 is a calibration somebody made
+    by ear as much as by meter. The constant stays at 0.5 and the comment on it
+    now states the gap, the direction and the reference, so the next person to
+    look at it starts from a number rather than from a suspicion.
+
+    Getting there took two false starts worth recording. Sega's Genesis II
+    manual is the wrong board — this console's audio circuit changed between
+    revisions — and its schematic sheets are JBIG2 scans whose OCR renders
+    component values as `A73 5K`. And the Model 1 *service* manual on Sega Retro
+    (No. 010, April 1994) is an IC-specification supplement: thirty-two pages of
+    pin layouts at 600 dpi and not one schematic in it.
+
+    **The stereo line is closed, and it was wider than it was written down as.**
+    It was recorded as the Neo Geo Pocket's — `ChannelFrame.pan` being a pair of
+    booleans where the T6W28 pans by level — and the boolean was the smaller
+    half of the problem. *Nothing in `@demake/audio` ever set `pan` at all*, by
+    any route: eleven bindings read it, every one of them defaulted an absent
+    value to both sides at full, and so every demade track on every console was
+    mono. A rendered stereo WAV had two bit-identical channels, which no
+    assertion in the suite was in a position to notice, because a register diff
+    compares a schedule against itself and hears nothing.
+
+    So closing it was two things rather than one. `pan` became a **signed
+    position** and `binding/pan.ts` holds the two laws a chip can take it under
+    — seven chips pan by *level* and now spend it (the T6W28, the S-DSP, the DS
+    SPU, the VSU, the HuC6280, the WonderSwan and the Game Boy Advance mixer),
+    four pan by *switch* and quantise it (`NR51`, the Game Gear's stereo latch,
+    the YM2612's and the YM2610's output bits). And `plan.ts` gained the stage
+    that produces one: per channel, constant for the piece — so a pan register
+    is written once at the first tick and costs a schedule nothing — with bass,
+    the tune and the kit holding the centre and the accompaniment spread
+    outward.
+
+    The part of that with a lesson in it is the **lead**. The classifier
+    routinely returns four or five `lead` parts for one piece, because a melody,
+    its harmony, a counter-line and an echo all carry a lead patch (AGENTS.md
+    §Writing music already records it). Reading that literally and centring
+    every one of them is what a mono arrangement does, and on a four-channel
+    console it left the placement stage with nothing to place: the arrangement
+    there is bass, two leads and the kit, and every one of those centres. So the
+    most salient lead keeps the centre and the rest are placed as what they
+    musically are. That is a *placement* decision and not a reclassification —
+    the part is still a lead everywhere else, and still competes for the channel
+    a lead wants.
+
+    Centre is both sides at full under both laws, which is what made the change
+    reviewable: a part the arranger leaves alone encodes byte-for-byte what it
+    always did, so only a part that is actually placed moves.
+
+    The Neo Geo's **SSG noise** is refused deliberately: this console has six
+    sample voices playing recordings of drums, so putting a hi-hat on a shift
+    register would be spending the machine downwards, and not writing `$07` per
+    note is also what leaves the console with no shared register to merge.
+
+    **The five idle sample voices are closed**, and they were an *arranger* gap
+    rather than a binding one. `plan.ts` assigned one part to one channel and a
+    General MIDI drum track is one part, so a kit landed on one voice and the
+    other five sat there — and worse than idle, the hits that collided on that
+    one voice were *dropped*: the example library's overworld theme wrote 96 drum
+    notes and the cartridge played 64. A percussion part now takes a **pool**,
+    and all 96 play.
+
+    Three decisions shape it and each is a line that could have gone the other
+    way. The allocation is **by drum class**, not round-robin over arrivals: a
+    kick still ringing is never cut off by the hat on the next eighth, and
+    round-robin would put consecutive kicks on different voices, which for
+    *recordings* is flanging rather than depth. The two hats deliberately
+    **share** a voice, because a closed hat choking a ringing open one is what
+    the pedal on a real kit does — getting that out of the allocation is worth
+    more than giving each its own. And a pool is built only from **dedicated**
+    drum hardware, which is the line the existing suite caught: an FM voice will
+    host a kit and `affinity` offers it at 6, but handing the kit every spare one
+    would take six four-operator voices and six fitted patches for material a
+    single noise generator serves — spending the machine downwards on the
+    consoles this exists to spend it upwards on. A kit on a compromise host keeps
+    its one channel. `interchangeable` draws the same line inside one `kind`: a
+    YM2610's ADPCM-B is a `sample` voice like its ADPCM-A voices and is the only
+    one on the chip with a pitch, so pooling it into the kit denied the
+    arrangement its one pitched sample voice.
+
+    Two other consoles have spare percussion hardware and gain the same way: a
+    Nintendo DS has two noise generators, and a Game Boy Advance has its APU's
+    and the mixer's recording of one. Every other console has exactly one, where
+    the pool is a pool of one and the schedule is unchanged.
+
+    **And what it exposed is now reported.** A hit dropped for colliding with a
+    ringing one was *not counted anywhere*, which the "never lose a part
+    silently" rule forbids — 32 notes vanished from that theme and nothing said
+    so. The question it raised was a policy one rather than a technical one,
+    because `Dropped` feeds `--strict`: is a choked hi-hat a build failure, or an
+    `info` the way a merged voice is? **It is a failure.** A merge still plays
+    the material on some voice; a choked hit does not sound at all, so it is a
+    loss and `--strict` refuses it.
+
+    Three consequences follow and each is deliberate. The drop carries
+    `kind: "note"` rather than `"part"`, because the part still plays and only
+    some of its hits went — so `--strict` counts parts and notes apart rather
+    than calling thirty-two notes thirty-two parts. It has a diagnostic code of
+    its own, `choked-note`, at `warning` rather than borrowing `merged-voice`'s
+    `info`. And the collision is decided in `compile.ts` rather than in the plan,
+    because whether two hits collide depends on the *driver's tick grid* — so
+    `compileScript` returns its drops and the tournament merges them into the
+    winning candidate's, which is the only plan they are true of.
+
+    Nothing about a schedule changes: this is a report about what was already
+    happening. A game build sets no `--strict`, so cartridges are unaffected —
+    and the pool above is what makes the number fall rather than the reporting,
+    which the Neo Geo demonstrates by dropping to zero.
+
+    **The arranger's half of the first line is closed.** `@demake/audio` produces
+    vibrato now, and it produces it the way the rest of this project reads a
+    source: **MIDI states vibrato**, on controller 1, so the depth is read off
+    the score rather than inferred from a programme or invented from an
+    articulation. It is per *note*, because a wheel can swell across a phrase
+    and a note takes the highest it reached while sounding. `score/midi.ts` keeps
+    that one controller and discards the rest of the control-change bus, since
+    volume, expression and pan are either the mixing desk's job or the arranger's
+    own decision against the hardware.
+
+    Waiting for §A4's transcription front end would have been the wrong way
+    round. An MP3 is where vibrato has to be *inferred*; a MIDI is where it is
+    already written down.
+
+    The rate, the width and the delay are the demaker's, because the source does
+    not state them — controller 76 exists for the rate and almost nothing writes
+    it. The delay is the one that pays twice: a player places a note in tune and
+    leans into it, and a delayed oscillator costs no pitch writes at all, so a
+    schedule pays for vibrato only on notes long enough to have any.
+
+    **The cost is what this section predicted.** A modulated held note is a pitch
+    write per driver tick, so a track of long notes with the wheel at full is two
+    to five times the register writes of the same track dry — 80 against 452 on a
+    Game Boy. What makes that safe rather than merely measured is that it is
+    opt-in by construction: a source that never touches the wheel produces
+    byte-for-byte the schedule it always did, which was *every* MIDI in the
+    example library, so this closed a line and re-baselined nothing.
+
+    **Which is also what was wrong with it.** A feature the library never
+    reaches is one proved by the tests written for it and by nothing that ships,
+    and the rule the fixtures are held to is that they carry what a modern game
+    would have — a modern game's MIDI moves the wheel. Two of them do now:
+    `pong/rally.mid` and `platformer/meadow.mid`, on their synth lead at depth
+    64 of 127. `pong` because it is the project `_audio-battery.ts` builds for
+    its register battery on every console with a driver, so a vibrato's writes
+    are diffed against the schedule tick for tick on every machine and on both
+    routes to a chip; the platformer because its NES build is the one
+    small-board cartridge in the size sweep. The other nine stay dry, because
+    not every tune is played with vibrato and the cost above is real.
+
+    **And the Mega Drive spends its LFO**, which is what that cost was an
+    argument for. A YM2612's LFO setting 1 is 5.56 Hz, within a tenth of a hertz
+    of the rate the arranger states — so `binding/md.ts` declares its six FM
+    voices in `ChipBinding.lfoChannels`, `compile.ts` leaves their pitch alone
+    and states a depth instead, and the binding programs `$22` and the
+    sensitivity nibble in `$B4`. The measured cost falls from **+122% to +4%**
+    over a dry track. `$22` is written lazily rather than at boot, so a track
+    with no modulation still writes exactly the registers it always did.
+
+    Two things about the seam are worth keeping. The **delay applies to both
+    routes**, so a chip that bends itself starts when one bent by the driver
+    would — otherwise the same note is two different notes depending on the
+    console. And `lfoChannels` belongs to the **binding** rather than to
+    `AudioSpec`, because what it answers is "will this encoder do it in
+    hardware", which is a decision about the register map.
+
+    **The Neo Geo deliberately does not**, and it is the sharpest thing this
+    section has to say about the two OPN parts. An OPNB is an OPN2 with the LFO
+    *removed*: `ym2610.ts` refuses `$22` by design, because routing it through
+    would offer a binding hardware the console does not own. Claiming it anyway
+    is a silent failure of the worst kind — the binding stops the per-tick pitch
+    writes, the chip ignores the registers, and the note comes out straight with
+    nothing anywhere reporting a problem. It was written that way first and the
+    chip model's own refusal is what caught it. So that console pays the full
+    per-tick price (+154%), and `packages/audio/test/vibrato.test.ts` holds both
+    halves: no LFO programmed there, *and* the pitch still moving.
+
+    **And the LFO's other output is closed too.** A YM2612 has one oscillator
+    and two things come off it, so the amplitude half was the cheapest line on
+    this table once the pitch half existed — and it is read on exactly the same
+    terms. General MIDI puts tremolo depth on **controller 92**, so
+    `score/midi.ts` keeps that one as well and `Note.tremolo` carries it, per
+    note and taking the highest the controller reached while the note sounded.
+
+    Three things about it are the hardware's rather than a restatement of
+    vibrato's. It is an **attenuation rather than a swing**: this chip's LFO only
+    ever *adds* attenuation, so a note peaks at the level it was given and dips
+    below it — and the software route is written to match, or the console without
+    the hardware would be the louder of the two. The rate and the delay are
+    **the same constants**, named in `vibrato.ts` rather than duplicated, because
+    one oscillator drives both and a track whose tremolo ran at a different speed
+    from its vibrato could not be played here at all. And the depth is **two bits
+    against the pitch sweep's three** — 1.4, 5.9 and 11.8 dB — so a tremolo is
+    coarser than a vibrato on this chip, which is the hardware being coarser
+    rather than the demaker being vague.
+
+    The per-operator enable is the part with a trap in it. AM is switched on per
+    *operator* and only the **carriers** should have it, since AM on a modulator
+    moves the timbre rather than the level — and it cannot simply be left set,
+    because the chip parks its amplitude sweep at the *quiet* end while the LFO
+    is off, so an operator carrying the bit through a passage with no tremolo
+    would be permanently attenuated. So `$60`'s datum is one function with two
+    callers: the patch install states it, and `amWrites` restates just the
+    carriers' bytes when only the modulation changed — eight bus writes against a
+    patch's fifty.
+
+    Measured on the example library's `rally.mid` with the controller on its
+    lead: the Mega Drive pays **3.3%** more writes and a Game Boy, which has to
+    write the swell, pays a volume write a tick. Nothing in the example library
+    touches controller 92, so this closed a line and re-baselined nothing —
+    `packages/audio/test/tremolo.test.ts` is what holds it.
+
+    **What remains of the line is the HuC6280's LFO**, and it is a refusal
+    rather than a gap. That chip has no oscillator: channel two *is* the
+    modulator, so switching vibrato on costs a whole voice to modulate one
+    other. On a six-voice console that is spending the machine downwards — the
+    same reasoning this section already applies to the YM2610's SSG noise — and
+    the per-tick route costs a schedule rather than a voice.
+
+    The last two lines are doc 18's rather than doc 17's — a sample player wants
+    a *sound* demaker pointed at it, not an arranger.
   - **A6 — the surfaces** *(Demotic done)*: the Demotic integration is settled
     and built — `music` and `sound` are in the language, every example game has
     a theme and effects, and the cartridge the page hands you is byte-identical

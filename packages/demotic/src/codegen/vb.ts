@@ -18,15 +18,15 @@
  *     colours in four palettes per layer is the narrowest budget in the whole
  *     matrix. So `checkTiles` almost never fires here, and what actually decides
  *     how a picture looks is the fit's four shades.
- *   - **There is no audio driver yet** (doc 13 §Console rollout item 9). A game
- *     that names music and effects still records what its rules asked for,
- *     because the request is a field of the trace (doc 14 §Conformance) — so a
- *     build here traces identically to one on a console that plays them, and the
- *     only difference is that nobody is listening. `@demake/audio` already
- *     demakes this console's music and effects; what is missing is a V810 stream
- *     player to put in the cartridge.
+ *   - **The audio driver has no interrupt of its own.** The video processor's
+ *     frame interrupt is the only one this cartridge takes, and the main loop is
+ *     already waiting on it — so `AudioTick` is a call from that loop rather than
+ *     a handler, and this console's driver rate *is* its frame rate
+ *     (`audio` §resolveVbClock). That is why `VbGameAudio` needs no counter and
+ *     no cap: a frame the game overran is a frame that has not happened yet.
  */
 
+import { buildVbGameAudio } from "@demake/audio";
 import { AsmError, packVbRom, vbRomSize, VB_ROM, type Executor } from "@demake/core";
 
 import { getProfile } from "../profiles.js";
@@ -35,6 +35,7 @@ import { BUILTIN_TILES } from "../rom/graphics.js";
 
 import { type Analysis } from "./analyze.js";
 import type { AssetBytes } from "./art.js";
+import { bindAudio, effectIndices, trackForScene } from "./audio.js";
 import {
   buildRom,
   BuildError,
@@ -53,6 +54,8 @@ import { BANK_TILES, emitProgram, type VbEmitOptions } from "./vb/emit.js";
 
 /** What this backend's audio binding hands the emitter. */
 interface VbAudio extends BoundAudioShape {
+  /** What the emitter needs: the driver itself and its two tables. */
+  options: VbEmitOptions;
   /** The bytes a rule writes to ask for a sound; absent when none can. */
   hooks?: { driver: boolean; music: number; request: number; effects: readonly number[] };
 }
@@ -102,37 +105,65 @@ export const vbBackend: Backend<VbEmitOptions, VbAudio> = {
     );
   },
 
-  async bindAudio(program: Program): Promise<BoundAssets<VbAudio>> {
-    // Nothing to bind: this console has no in-game driver, so a cartridge plays
-    // nothing and says so. The request hooks are still handed over, because a
-    // rule that asks for a sound has to record having asked — that byte is what
-    // a trace reads, and it is what makes this build comparable with a Game
-    // Boy's tick for tick.
+  async bindAudio(
+    program: Program,
+    assets: AssetBytes,
+    layout: Layout,
+    executor?: Executor,
+  ): Promise<BoundAssets<VbAudio>> {
+    // The driver's state is RAM the allocator set aside for it, which it only
+    // does for a program that names audio — so a game with none reaches here
+    // with nowhere to put a driver and does not need one.
+    const state = layout.audio;
+    const bound =
+      state === null
+        ? { driver: undefined, missing: [] as readonly string[], notes: [] as readonly string[] }
+        : await bindAudio(
+            program,
+            assets,
+            { build: (tracks, effects) => buildVbGameAudio({ tracks, effects, state }) },
+            executor,
+          );
     const names = program.tracks.length > 0 || program.sounds.length > 0;
+    const driver = bound.driver;
+    const options: VbEmitOptions = driver
+      ? {
+          audio: driver,
+          effectIndices: effectIndices(program, bound),
+          sceneTracks: trackForScene(program, bound),
+        }
+      : {};
     const emit: VbAudio = {
-      present: false,
-      tracks: 0,
-      effects: 0,
-      code: 0,
-      data: 0,
-      helpers: [],
-      rateHz: 0,
-      writesRestricted: 0,
+      present: driver !== undefined,
+      options,
+      tracks: driver?.stats.tracks ?? 0,
+      effects: driver?.stats.effects ?? 0,
+      // Queries, not copies: the driver is emitted during `assemble`, which has
+      // not run yet, so its sizes are still zero here (`backend.ts`
+      // §BoundAudioShape).
+      get code(): number {
+        return driver?.stats.code ?? 0;
+      },
+      get data(): number {
+        return driver?.stats.data ?? 0;
+      },
+      get helpers(): readonly string[] {
+        return driver?.stats.helpers ?? [];
+      },
+      rateHz: driver ? driver.stats.rate.num / driver.stats.rate.den : 0,
+      writesRestricted: driver?.stats.writesRestricted ?? 0,
       ...(names
         ? {
             hooks: {
-              driver: false,
-              music: 0,
-              request: 0,
-              effects: program.sounds.map(() => -1),
+              driver: driver !== undefined,
+              music: driver?.request.music ?? 0,
+              request: driver?.request.sfx ?? 0,
+              effects: options.effectIndices ?? program.sounds.map(() => -1),
             },
           }
         : {}),
     };
-    const notes = names
-      ? ["this console has no in-game audio driver yet; the cartridge plays nothing"]
-      : [];
-    return { emit, tiles: 0, missing: [], notes };
+    return { emit, tiles: 0, missing: bound.missing, notes: bound.notes };
   },
 
   assemble({ program, analysis, layout, art, audio, title }): Assembled {
@@ -147,7 +178,7 @@ export const vbBackend: Backend<VbEmitOptions, VbAudio> = {
       };
     }
     try {
-      emitProgram(ctx, art);
+      emitProgram(ctx, { ...art, ...audio.options });
     } catch (error) {
       if (error instanceof AsmError) {
         throw new BuildError(

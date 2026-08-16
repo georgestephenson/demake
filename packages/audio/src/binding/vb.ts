@@ -40,6 +40,7 @@ import type { ChannelFrame } from "../chipscript.js";
 import { snapPitch, snapVolume } from "../pitch.js";
 
 import { vbBankWrites, vbTableFor } from "./vb-bank.js";
+import { attenuate, panGains } from "./pan.js";
 import type { BoundWrite, ChipBinding, DriverRateFit } from "./types.js";
 
 /** Noise tap modes the register offers. */
@@ -80,11 +81,17 @@ function registerFor(channel: AudioSpec["channels"][number], hz: number): number
   return value < 0 ? 0 : value > 0x7ff ? 0x7ff : value;
 }
 
-/** `LRV`: which sides this frame is heard on, at full — the pan and nothing else. */
+/**
+ * `LRV`: where across the image this frame sits — the pan and nothing else.
+ *
+ * Four bits a side, so this console places a voice at one of fifteen positions
+ * either way rather than choosing between three. It costs nothing to spend:
+ * the register is written anyway, and the level lives in `EV0` (§the binding's
+ * two multiplies), so a placement here never disturbs a volume step.
+ */
 function panByte(frame: ChannelFrame): number {
-  const left = frame.pan?.left ?? true;
-  const right = frame.pan?.right ?? true;
-  return ((left ? 0x0f : 0) << 4) | (right ? 0x0f : 0);
+  const gains = panGains(frame.pan);
+  return (attenuate(0x0f, gains.left) << 4) | attenuate(0x0f, gains.right);
 }
 
 /**
@@ -262,5 +269,34 @@ export function vbChannelTag(): (reg: number, value: number, chip?: number) => n
   return (reg: number): number => {
     if (reg < 0x400 || reg >= 0x400 + VSU_CHANNELS * 0x40) return 0;
     return 1 << ((reg - 0x400) >> 6);
+  };
+}
+
+/**
+ * The tag the *packed data* carries: the channels an effect may take, and
+ * nothing else.
+ *
+ * Six channels against a four-bit field, which does fit — but the numbering is
+ * still the Nintendo DS's and the Mega Drive's rather than the identity, and for
+ * the same reason: what preemption asks is whether an *effect* may be using a
+ * voice, so only the channels effects were placed on are numbered and everything
+ * else tags zero. That is what lets a track's other four voices play *through* a
+ * sound effect instead of ducking for it — and what keeps the boot's hundred and
+ * sixty waveform writes, which belong to no channel at all, in a stream nothing
+ * ever skips.
+ */
+export function vbPackTag(
+  stealable: readonly number[],
+): () => (reg: number, value: number, chip: number) => number {
+  return () => {
+    const full = vbChannelTag();
+    return (reg: number, value: number, chip: number): number => {
+      const mask = full(reg, value, chip);
+      if (mask === 0) return 0;
+      for (let index = 0; index < stealable.length; index += 1) {
+        if (mask === 1 << (stealable[index] as number)) return 1 << index;
+      }
+      return 0;
+    };
   };
 }

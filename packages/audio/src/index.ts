@@ -29,6 +29,7 @@ export { analyze, barLength, type AnalyzeOptions } from "./analysis.js";
 
 // --- ingest ------------------------------------------------------------------
 export { parseMidi, isMidi, MidiParseError } from "./score/midi.js";
+export { parseMod, isMod, ModParseError, type ModParseResult } from "./score/mod.js";
 export {
   allNotes,
   dominantBpm,
@@ -236,6 +237,15 @@ export {
   type NdsGameAudioStats,
 } from "./rom/nds-game.js";
 export {
+  buildVbGameAudio,
+  resolveVbClock,
+  VB_AUDIO_BYTES,
+  STOP as VB_STOP,
+  type VbGameAudio,
+  type VbGameAudioInput,
+  type VbGameAudioStats,
+} from "./rom/vb-game.js";
+export {
   neogeoChannelOf,
   neogeoChannelTag,
   neogeoOwnerTag,
@@ -251,6 +261,7 @@ export {
 } from "./rom/neogeo-game.js";
 export { NDS_SPU_BASE, NDS_STATE_BASE } from "./rom/nds-driver.js";
 export { ndsChannelTag, ndsPackTag } from "./binding/nds.js";
+export { vbChannelTag, vbPackTag } from "./binding/vb.js";
 export { NDS_BANK_BASE, ndsBank, ndsSampleRam } from "./binding/nds-bank.js";
 export {
   GBA_AUDIO_IRQ,
@@ -268,7 +279,12 @@ export { mdChannelTag, mdPort, MD_FM_CHANNELS, MD_PSG_PORT } from "./rom/md-chip
 
 // --- hearing it --------------------------------------------------------------
 export { render, type RenderAudioOptions } from "./render.js";
+// The deterministic transforms, exported for Level B: comparing our audio with a
+// third-party core's is a *spectral* comparison (doc 16 §The proof), and it must
+// run on the same FFT everything else here does rather than a second one.
+export { fft, hann, spectrum, resample, ANALYSIS_RATE } from "./dsp.js";
 export { encodeWav, type WavOptions } from "./encode/wav.js";
+export { encodeFlac, type FlacOptions } from "./encode/flac.js";
 export { encodeVgm, type VgmOptions } from "./encode/vgm.js";
 export { encodeSpc, artifactFormat, type SpcOptions } from "./encode/spc.js";
 

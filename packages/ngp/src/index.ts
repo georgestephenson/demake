@@ -31,11 +31,18 @@
  * plus dispatching the vertical blank through the pointer a cartridge writes
  * into RAM.
  *
+ Its **sound** is `@demake/chip`'s `T6w28`, and the one thing about it no
+ * register diff can check is that this machine refuses every port write until
+ * the cartridge has *asked* for the chip: on the board the T6W28's own bus is a
+ * Z80 sound processor's, and two bytes of the console's I/O page hand it to the
+ * main CPU. Its **8-bit timers** are here too, for the one caller that wants
+ * them — a standalone audio cartridge, whose clock the picture cannot express.
+ *
  * What is absent is absent rather than half-implemented, and each is a gap
  * rather than a decision: **input**, because the controller status byte's bit
  * layout is not in a hardware reference this project could reach and a machine
  * description that is wrong and consistent passes everything; the **sound
- * processor** and its chip; and the on-chip **timers** and DMA.
+ * processor** itself; and the on-chip DMA.
  *
  * Platform-pure on the same terms as `@demake/core`: no `fs`, no DOM, no wall
  * clock. Rendering produces a plain RGBA buffer; where that goes is the caller's
@@ -73,4 +80,5 @@ export {
   VIDEO_SIZE,
   type NgpModel,
 } from "./display.js";
-export { BUTTONS, DEFAULT_STACK, Ngp, type Button } from "./machine.js";
+export { BUTTONS, CRYSTAL_HZ, DEFAULT_STACK, Ngp, SYSTEM_HZ, type Button } from "./machine.js";
+export { Timers, NGP_T23MOD, type TimerFire } from "./timer.js";

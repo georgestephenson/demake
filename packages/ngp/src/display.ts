@@ -277,6 +277,19 @@ export class Display {
   }
 
   /**
+   * Where the beam is across the line, in pixels.
+   *
+   * `cycles` is how far into the current line the controller has got, and a line
+   * is {@link CYCLES_PER_LINE} of the crystal against a screen this many pixels
+   * wide — so this is that fraction, which is what `RAS_H` reports. It is a
+   * derived reading rather than state: nothing here advances a pixel counter,
+   * because nothing but a cartridge polling it can tell the difference.
+   */
+  get beamX(): number {
+    return Math.min(SCREEN_WIDTH - 1, Math.floor((this.cycles * SCREEN_WIDTH) / CYCLES_PER_LINE));
+  }
+
+  /**
    * Resolve every object's absolute position, following the chain bits.
    *
    * A chained object's stored position is an offset from the object before it,

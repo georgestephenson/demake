@@ -235,7 +235,12 @@ export function arrangeScore(input: Score, options: ArrangeOptions): ArrangeResu
     // its own per candidate, carrying that candidate's fitted patches.
     const fitted = fitPatches(spec, plan, patchCache);
     const bound = fitted === undefined ? binding : bindingFor(options.console, fitted);
-    const script = compileScript(analysed, spec, bound, plan, timing, candidate.compile);
+    const compiled = compileScript(analysed, spec, bound, plan, timing, candidate.compile);
+    const script = compiled.script;
+    // Hits the tick grid could not carry belong to *this* candidate's plan: a
+    // different channel assignment collides differently, so they cannot be
+    // decided before the tournament picks a winner.
+    const dropped = [...plan.dropped, ...compiled.dropped];
 
     const inspection = inspectScript(script);
     if (!inspection.compliant) {
@@ -262,7 +267,7 @@ export function arrangeScore(input: Score, options: ArrangeOptions): ArrangeResu
     // Ties break by candidate order, which is fixed — so the winner is stable.
     if (verdict.aggregate > bestAggregate) {
       bestAggregate = verdict.aggregate;
-      best = { candidate, script, plan };
+      best = { candidate, script, plan: { ...plan, dropped } };
     }
   }
 
@@ -278,9 +283,20 @@ export function arrangeScore(input: Score, options: ArrangeOptions): ArrangeResu
 
   if (options.strict && plan.dropped.length > 0) {
     const first = plan.dropped[0]!;
+    // Parts and notes are counted apart, because they are different losses and
+    // a report that called them both "parts" would overstate one and hide the
+    // other: a dropped part is a line the arrangement does not contain, while
+    // choked notes are hits a kit lost to a voice that was already ringing.
+    const parts = plan.dropped.filter((entry) => entry.kind === "part").length;
+    const notes = plan.dropped
+      .filter((entry) => entry.kind === "note")
+      .reduce((sum, entry) => sum + entry.count, 0);
+    const what = [parts > 0 ? `${parts} part(s)` : "", notes > 0 ? `${notes} note(s)` : ""]
+      .filter(Boolean)
+      .join(" and ");
     throw new ArrangeError(
       "E_DROPPED",
-      `--strict: ${plan.dropped.length} part(s) could not be kept, starting with ${first.partId} (${first.reason})`,
+      `--strict: ${what} could not be kept, starting with ${first.partId} (${first.reason})`,
     );
   }
 
@@ -309,9 +325,19 @@ function collectDiagnostics(
   bpm: number,
 ): void {
   for (const dropped of plan.dropped) {
+    // A choked hit is a *loss*, not a reduction: the note does not sound at
+    // all. So it warns rather than informing, and carries a code of its own
+    // rather than borrowing `merged-voice` — a merge still plays the material
+    // on some voice, and this does not.
+    const code =
+      dropped.kind === "part"
+        ? "dropped-part"
+        : dropped.kind === "note"
+          ? "choked-note"
+          : "merged-voice";
     diagnostics.push({
-      code: dropped.kind === "part" ? "dropped-part" : "merged-voice",
-      severity: dropped.kind === "part" ? "warning" : "info",
+      code,
+      severity: code === "merged-voice" ? "info" : "warning",
       message: `${dropped.partId}: ${dropped.reason} (${dropped.count} notes, mean salience ${dropped.salience.toFixed(2)})`,
     });
   }

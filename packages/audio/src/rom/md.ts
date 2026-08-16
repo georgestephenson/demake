@@ -67,7 +67,14 @@ import { bindingFor } from "../binding/registry.js";
 
 import type { DriverData } from "./data.js";
 import { AudioRomError, type AudioRomOptions, type BuiltAudioRom } from "./gb.js";
-import { checkMdLatchDiscipline, mdChannelTag, mdPort, MD_PSG_PORT, YM_CHIP } from "./md-chips.js";
+import {
+  checkMdLatchDiscipline,
+  emitZ80Handover,
+  mdChannelTag,
+  mdPort,
+  MD_PSG_PORT,
+  YM_CHIP,
+} from "./md-chips.js";
 import {
   emitStream,
   emitStreamData,
@@ -90,7 +97,6 @@ const STACK_TOP = 0xfffffe;
 const TMSS = { VERSION: 0xa10001, REGISTER: 0xa14000, KEY: 0x53454741 } as const;
 
 /** The sound processor's bus request and reset lines. */
-const Z80 = { BUS: 0xa11100, RESET: 0xa11200 } as const;
 
 /** The VDP's control port, which is where its registers are written. */
 const VDP_CONTROL = 0xc00004;
@@ -271,12 +277,11 @@ function emitDriver(
   asm.move("l", eaImm(TMSS.KEY), eaAbs(TMSS.REGISTER));
   asm.label("NoTmss");
 
-  // The sound processor is held in reset and its bus is taken, and kept: the FM
-  // chip is decoded inside the Z80's address space, and this cartridge ships no
-  // Z80 program — so a processor left running whatever powered up would be a
-  // second writer on the bus the driver is about to use.
-  asm.move("w", eaImm(0x0100), eaAbs(Z80.BUS));
-  asm.move("w", eaImm(0x0000), eaAbs(Z80.RESET));
+  // The sound processor's bus is taken and kept, and its reset released, which
+  // is one decision with two callers (`md-chips.ts` §emitZ80Handover): the
+  // second of those two stores is the *FM chip's* reset, and holding it was a
+  // cartridge that wrote a perfect register stream and made no sound.
+  emitZ80Handover(asm);
 
   // The picture hardware still belongs to this cartridge even though it draws
   // nothing, and the two registers that matter are the ones that could raise an

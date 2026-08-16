@@ -30,7 +30,7 @@
     "play": "node packages/demotic/demo/play.mjs",
     "test:dmt": "node packages/demotic/demo/test.mjs",
     "gen:demotic-docs": "node packages/demotic/demo/gen-docs.mjs",
-    "toolchains": "bash tools/toolchains/install-rgbds.sh && bash tools/toolchains/install-cc65.sh && bash tools/toolchains/install-wladx.sh && bash tools/toolchains/install-m68k.sh && bash tools/toolchains/install-arm.sh && bash tools/toolchains/install-nasm.sh",
+    "toolchains": "bash tools/toolchains/install-rgbds.sh && bash tools/toolchains/install-cc65.sh && bash tools/toolchains/install-wladx.sh && bash tools/toolchains/install-m68k.sh && bash tools/toolchains/install-arm.sh && bash tools/toolchains/install-nasm.sh && bash tools/toolchains/install-flac.sh",
     "emulator": "bash tools/toolchains/install-sameboy.sh && bash tools/toolchains/install-sameduck.sh && bash tools/toolchains/install-libretro.sh"
   },
   "devDependencies": {

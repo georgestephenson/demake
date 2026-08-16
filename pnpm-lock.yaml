@@ -66,6 +66,9 @@ importers:
       '@demake/nes':
         specifier: workspace:*
         version: link:../nes
+      '@demake/ngp':
+        specifier: workspace:*
+        version: link:../ngp
       '@demake/pce':
         specifier: workspace:*
         version: link:../pce
@@ -75,6 +78,12 @@ importers:
       '@demake/snes':
         specifier: workspace:*
         version: link:../snes
+      '@demake/vb':
+        specifier: workspace:*
+        version: link:../vb
+      '@demake/wsc':
+        specifier: workspace:*
+        version: link:../wsc
 
   packages/chip: {}
 
@@ -255,6 +264,9 @@ importers:
 
   packages/vb:
     dependencies:
+      '@demake/chip':
+        specifier: workspace:*
+        version: link:../chip
       '@demake/core':
         specifier: workspace:*
         version: link:../core

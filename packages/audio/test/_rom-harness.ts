@@ -19,10 +19,15 @@
  */
 
 import { Gameboy } from "@demake/dmg";
+import { Gba } from "@demake/gba";
 import { Md } from "@demake/md";
 import { Nes } from "@demake/nes";
+import { Ngp } from "@demake/ngp";
 import { Pce } from "@demake/pce";
+import { Nds } from "@demake/nds";
 import { Sms } from "@demake/sms";
+import { Vb } from "@demake/vb";
+import { Wsc } from "@demake/wsc";
 
 import type { ChipScript, TickWrites } from "../src/chipscript.js";
 import { PSG_CHIP, YM_CHIP } from "../src/rom/md-chips.js";
@@ -41,11 +46,17 @@ interface Capture {
   chip: number;
 }
 
-/** What a core has to offer for a schedule to be read back out of it. */
-interface TappedMachine {
-  stepInstruction(): unknown;
-  readonly cpu: { pc: number };
-}
+/**
+ * What a core has to offer for a schedule to be read back out of it.
+ *
+ * Nothing, structurally: the two things this harness needs of a machine — how to
+ * run one instruction and where the program counter is — are taken as closures
+ * below, because the cores do not agree about either name. Six call the first
+ * `stepInstruction` and `@demake/vb` calls it `step`; five call the second `pc`
+ * and `@demake/wsc` calls it `ip`. Naming them here would be this file asking
+ * eight consoles to agree about a word.
+ */
+type TappedMachine = object;
 
 /** A ROM that can be stepped one driver tick at a time. */
 export class AudioRomRunner {
@@ -59,9 +70,44 @@ export class AudioRomRunner {
    * table at boot performs those writes before the first tick, so its tick 0 is
    * shorter than the demaker's. Comparing against the input there would be
    * asking the driver for writes it correctly made somewhere else.
+   *
+   * And on one console it is not the whole schedule either. A Game Boy Advance's
+   * second sound device is a **software mixer**, so six of its ten voices are
+   * written to a register file in work RAM and cross no bus at all — nothing can
+   * observe them, because there is nothing to observe. What those writes owe is
+   * the *samples*, which is a sharper claim than a register diff and a different
+   * test (`gba-rom.test.ts`). Filtering them out here is not weakening the proof;
+   * it is putting the two halves where each can be checked, exactly as
+   * `_audio-battery.ts`'s `observed` does one layer up.
    */
   readonly performed: ChipScript;
+  /** The build's own symbol table, which is how a tick is attributed at all. */
+  readonly symbols: ReadonlyMap<string, number>;
   private readonly tickAddress: number;
+  /**
+   * Where the driver is, which is not always a field called `pc`.
+   *
+   * Five of the six families name it that; the WonderSwan's V30MZ is an 8086 and
+   * names it `ip`, because on that architecture an address is a segment and an
+   * offset and this is the offset. The driver is in the same segment as
+   * everything else a cartridge runs, so the offset is the whole address —
+   * `_audio-battery.ts` §`pc` says the same thing one layer up.
+   */
+  private readonly pc: () => number;
+  /** Run one instruction, under whichever name this core gives it. */
+  private readonly stepOnce: () => void;
+  /**
+   * Where a core can say when the driver *entered* its tick, rather than being
+   * asked afterwards.
+   *
+   * Absent on every console but one, because on the rest one host step is one
+   * instruction of the processor the driver runs on and the program counter
+   * afterwards is the same answer. A Nintendo DS's driver runs on the **other**
+   * processor, so a host step is several of its instructions and sampling sees
+   * one arrival as none or as two — the same reason `_audio-battery.ts` grew a
+   * `watch` hook one layer up.
+   */
+  private readonly watch: ((onEnter: () => void) => void) | undefined;
   /**
    * Where a tick *ends*, when the driver says so.
    *
@@ -88,12 +134,22 @@ export class AudioRomRunner {
    * runner comes from.
    */
   static async create(script: ChipScript, options: AudioRomOptions = {}): Promise<AudioRomRunner> {
-    return new AudioRomRunner(await buildAudioRom(script, options));
+    return new AudioRomRunner(await buildAudioRom(script, options), script.console);
   }
 
-  private constructor(built: Awaited<ReturnType<typeof buildAudioRom>>) {
+  private constructor(built: Awaited<ReturnType<typeof buildAudioRom>>, consoleId: string) {
     this.rom = built.bytes;
-    this.performed = built.performed;
+    this.performed =
+      built.family === "gba"
+        ? {
+            ...built.performed,
+            ticks: built.performed.ticks.map((tick) => ({
+              ...tick,
+              writes: tick.writes.filter((write) => (write.chip ?? 0) === 0),
+            })),
+          }
+        : built.performed;
+    this.symbols = built.symbols;
     const tick = built.symbols.get("Tick");
     if (tick === undefined) throw new Error("the driver defined no Tick symbol");
     this.tickAddress = tick;
@@ -125,6 +181,53 @@ export class AudioRomRunner {
       machine.ymTap = (port, value) => push(port, value, YM_CHIP);
       machine.psgTap = (reg, value) => push(reg, value, PSG_CHIP);
       this.machine = machine;
+    } else if (built.family === "wsc") {
+      // Which *WonderSwan* it comes up as is a constructor argument rather than
+      // anything in the cartridge, because these two machines do not differ in
+      // a byte a footer could record — so the console the schedule was fitted
+      // to is what decides, exactly as `@demake/wsc`'s own tests do.
+      const machine = new Wsc(built.bytes, consoleId === "ws" ? "ws" : "wsc");
+      machine.soundTap = push;
+      this.machine = machine;
+    } else if (built.family === "gba") {
+      // The Game Boy half of this console's sound, which is the half that
+      // crosses a bus: the same `GbApu` a Game Boy has, behind a permuted
+      // register map. The mixer's six voices are filtered out of `performed`
+      // above rather than tapped, because there is nothing to tap.
+      const machine = new Gba(built.bytes);
+      machine.apuTap = push;
+      this.machine = machine;
+    } else if (built.family === "nds") {
+      // The ninth family, and the only cartridge here whose driver runs on a
+      // processor the console's own program cannot reach. The loader puts both
+      // binaries in main RAM and enters both, so booting one is the whole of the
+      // hand-off — there is nothing to upload and nothing to wait for.
+      const machine = new Nds(built.bytes);
+      machine.arm7.spuTap = push;
+      this.machine = machine;
+    } else if (built.family === "vb") {
+      // The eighth family and the first on this processor. Nothing on this chip
+      // reads back, so `@demake/vb` answers zero on that page and the tap is
+      // the only window there is — which is the whole reason it exists.
+      const machine = new Vb(built.bytes);
+      machine.vsuTap = push;
+      this.machine = machine;
+    } else if (built.family === "ngpc") {
+      // The tenth family, and the only one whose chip has to be *asked for*: the
+      // T6W28's own bus is the Z80 sound processor's, so this core refuses every
+      // port write — and therefore taps nothing at all — until the cartridge has
+      // written the two bytes that hand it over. A capture that came back empty
+      // here would be a permission failure rather than a wrong note, which no
+      // other console in the set can produce.
+      //
+      // Which Neo Geo Pocket it comes up as is a constructor argument rather
+      // than the header's system byte: these two machines differ in nothing a
+      // cartridge could record about their *sound*, so the console the schedule
+      // was fitted to is what decides — `@demake/wsc`'s arrangement, one console
+      // along.
+      const machine = new Ngp(built.bytes, consoleId === "ngp" ? "ngp" : "ngpc");
+      machine.soundTap = push;
+      this.machine = machine;
     } else if (built.family === "sms") {
       // Which *Sega* it comes up as is the cartridge's own region nibble, never
       // an argument — the same rule `@demake/dmg` follows for its header, so a
@@ -137,6 +240,28 @@ export class AudioRomRunner {
       machine.apuTap = push;
       this.machine = machine;
     }
+
+    const machine = this.machine;
+    this.watch =
+      machine instanceof Nds
+        ? (onEnter) => {
+            machine.arm7.pcTap = (pc) => {
+              if (pc === this.tickAddress) onEnter();
+            };
+          }
+        : undefined;
+    this.pc =
+      machine instanceof Wsc
+        ? () => machine.cpu.ip
+        : () => (machine as { cpu: { pc: number } }).cpu.pc;
+    this.stepOnce =
+      machine instanceof Vb
+        ? () => {
+            machine.step();
+          }
+        : () => {
+            (machine as { stepInstruction(): unknown }).stepInstruction();
+          };
   }
 
   /**
@@ -150,9 +275,13 @@ export class AudioRomRunner {
   captureBoot(): Capture[] {
     const writes: Capture[] = [];
     this.current = writes;
+    let reached = false;
+    this.watch?.(() => {
+      reached = true;
+    });
     let guard = 0;
-    while (this.machine.cpu.pc !== this.tickAddress) {
-      this.machine.stepInstruction();
+    while (!(this.watch ? reached : this.pc() === this.tickAddress)) {
+      this.stepOnce();
       guard += 1;
       if (guard > 10_000_000) throw new Error("audio rom: the driver never reached its first tick");
     }
@@ -170,14 +299,20 @@ export class AudioRomRunner {
    */
   capture(count: number): TickWrites[] {
     const groups: Capture[][] = [];
+    const open = (): void => {
+      this.current = [];
+      groups.push(this.current);
+    };
+    // Where the core can say when the driver entered its tick, it says so — and
+    // the group opens *inside* that report rather than after the host step, so a
+    // write the same step made afterwards belongs to the tick that made it.
+    this.watch?.(open);
     let guard = 0;
     while (groups.length <= count) {
-      this.machine.stepInstruction();
-      if (this.machine.cpu.pc === this.tickAddress) {
-        this.current = [];
-        groups.push(this.current);
-      } else if (this.machine.cpu.pc === this.endAddress) {
-        this.current = undefined;
+      this.stepOnce();
+      if (this.watch === undefined) {
+        if (this.pc() === this.tickAddress) open();
+        else if (this.pc() === this.endAddress) this.current = undefined;
       }
       guard += 1;
       if (guard > 200_000_000) throw new Error("audio rom: the driver stopped ticking");

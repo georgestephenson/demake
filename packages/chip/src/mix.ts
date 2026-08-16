@@ -94,11 +94,29 @@ class BoxSink implements SampleSink {
     this.pos += clocks;
     while (this.pos >= this.next && this.written < this.left.length) {
       const width = this.next - this.start;
-      this.left[this.written] = this.accLeft / width;
-      this.right[this.written] = this.accRight / width;
+      if (width > 0) {
+        this.left[this.written] = this.accLeft / width;
+        this.right[this.written] = this.accRight / width;
+        this.accLeft = 0;
+        this.accRight = 0;
+      } else {
+        // The chip is slower than the output rate, so this sample's box falls
+        // entirely inside one clock — and the mean of a constant is that
+        // constant. This is not a fallback for a degenerate case: it is what
+        // box integration *means* when the box is narrower than a clock, and
+        // the only model here it happens for is `GbaPcm`, whose 32768 Hz is
+        // below the 48 kHz a render defaults to because it is a mixer rather
+        // than an oscillator. Every other chip clocks in megahertz.
+        //
+        // The accumulator is deliberately **not** cleared. No clock elapsed in
+        // this box, so whatever is in it belongs to a box still to come —
+        // clearing it here is what turns the sample after a zero-width one into
+        // silence, which is a far quieter failure than the `0 / 0` this
+        // replaces and would have looked like a chip that stutters.
+        this.left[this.written] = left;
+        this.right[this.written] = right;
+      }
       this.written += 1;
-      this.accLeft = 0;
-      this.accRight = 0;
       this.start = this.next;
       this.index += 1;
       this.next = this.boundary(this.index + 1);

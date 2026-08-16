@@ -31,6 +31,8 @@
  * - SMS Power! — SN76489: https://www.smspower.org/Development/SN76489
  */
 
+import { eaAbs, eaImm, type Asm68k } from "@demake/core";
+
 import type { ChipScript } from "../chipscript.js";
 
 import type { ChannelTag } from "./data.js";
@@ -393,3 +395,43 @@ export function mdSilenceWrites(): { reg: number; value: number; chip: number }[
   }
   return out;
 }
+
+/**
+ * The two writes that hand this board's sound hardware to the 68000.
+ *
+ * **`$A11200` is the FM chip's reset as well as the Z80's**, which is the one
+ * fact about this console's audio that nothing on our side of the seam can see:
+ * `@demake/md` models no Z80 at all — a demade cartridge emits no program for it
+ * — so writing zero there is a register store like any other in that core, and
+ * the FM voices go on answering. On the board, and in a core that models the
+ * line, the whole YM2612 is held in reset and every one of its writes is
+ * discarded. A cartridge that did it was **perfect in a register diff and silent
+ * on the hardware**, which is the failure mode AGENTS.md §Gotchas names as a
+ * description that is wrong and consistent, and doc 16's Level B is what found
+ * it: against genesis-plus-gx a standalone track went from 0.00046 RMS to
+ * 0.28203 when the reset was released.
+ *
+ * So the pair is: **take the bus and keep it**, because the FM chip is decoded
+ * inside the Z80's address space and a demade cartridge ships no Z80 program, so
+ * a sound processor left running would be a second writer on the bus this driver
+ * is about to use; and **release the reset**, because that line is the chip's.
+ * Holding the bus is what makes releasing the reset safe — the Z80 cannot fetch
+ * an instruction while the 68000 has its bus, so it never runs whatever powered
+ * up in its RAM.
+ *
+ * One definition with two callers, because a game and a standalone cartridge
+ * need exactly the same two stores: `md.ts` performs them in its boot and
+ * `md-game.ts` at the head of `AudioInit`, so a game with no audio still emits
+ * neither (AGENTS.md §Iron rules — unused features leave no trace).
+ *
+ * Sources:
+ * - Sega — Genesis Software Manual, §bus arbitration (`$A11100`, `$A11200`).
+ * - Sega — YM2612 application manual: the chip's `!IC` line is the Z80's reset.
+ */
+export function emitZ80Handover(asm: Asm68k): void {
+  asm.move("w", eaImm(0x0100), eaAbs(MD_Z80.BUS));
+  asm.move("w", eaImm(0x0100), eaAbs(MD_Z80.RESET));
+}
+
+/** The two 68000-side registers that arbitrate for the sound processor's bus. */
+export const MD_Z80 = { BUS: 0xa11100, RESET: 0xa11200 } as const;

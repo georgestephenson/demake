@@ -739,7 +739,13 @@ function buildScript(
         partId: gesture.id,
         startTick: 0,
         endTick: ticks.length,
+        // Centred, and not because nothing has decided yet: an effect borrows a
+        // channel the music is using, so a placement here would move whatever
+        // the music had put there and leave it moved (doc 18 §Stage 4 — a
+        // borrowed channel comes back holding the music's own registers). It is
+        // also what `decode.ts` already says about panning a single effect.
         treatment: "direct",
+        pan: 0,
       },
     ],
     timing: {
