@@ -32,27 +32,24 @@
  *     which is the trap in that field and the one thing here a driver is most
  *     likely to get wrong in a way nothing else would report.
  *
- * **Nothing routes the register page here yet, and that is deliberate.** `Ngp`
- * does not call {@link Timers.write}, because the two descriptions this project
- * holds about that page *collide*: Toshiba's datasheet puts `TRUN` at I/O `$20`,
- * and `NGP_SOUND_RIGHT` — cited from MAME's own NGP driver — is the same byte.
- * They cannot both be plain bytes of one 128-byte page, and which is wrong is
- * not something either source settles. Wiring this in on the datasheet's reading
- * swallows every write to the sound chip's right-hand port, which is how the
- * conflict was found: a cartridge that booted, unlocked the chip, programmed a
- * timer and then went silent (doc 13 §A5).
+ * **These registers are the processor's and the sound chip's are the
+ * console's**, which is the one thing about this page that has to be got right
+ * before any of the above matters. The TLCS-900/H decodes its own
+ * special-function registers at `$00`-`$7F` — `TRUN` is `$20` — and the Neo Geo
+ * Pocket decodes `$80`-`$BF` for the hardware around it, where the T6W28's two
+ * write ports are `$A0` and `$A1`. The two ranges do not overlap, so
+ * {@link Timers.owns} routes the block without taking a byte from the chip, and
+ * `packages/ngp/test/timer.test.ts` asserts the disjointness rather than leaving
+ * it to be re-derived. This project had four of the console's ports recorded
+ * sixteen bytes low for a while, which read as a collision with the timers and
+ * cost the standalone cartridge a release (doc 13 §A5); the two sources that
+ * settled it are MAME's `ngp.cpp`, whose I/O handler is installed at
+ * `$80`-`$BF` and indexes from there, and beetle-ngp's `mem.c`, which decodes
+ * the same ports absolutely.
  *
- * So this file is a *tested description of the block* and not yet a peripheral.
- * It costs nothing to keep and the moment the address question is answered the
- * standalone cartridge is a boot sequence, a clock and a wrapper — everything
- * else it needs is already written. What it must not become in the meantime is a
- * timer a cartridge can programme, because a cartridge built on a page this
- * project has two answers for is the wrong-and-consistent failure with the
- * consistency removed.
- *
- * When it is wired in, the interrupt dispatches the way every other one on this
- * machine does: through a pointer the cartridge writes into the boot ROM's
- * table, which is `Ngp`'s job rather than this file's.
+ * The interrupt dispatches the way every other one on this machine does:
+ * through a pointer the cartridge writes into the boot ROM's table, which is
+ * `Ngp`'s job rather than this file's.
  *
  * Modes this does not implement — the 16-bit cascade, PPG and PWM — are absent
  * rather than approximated, and `Timers.write` records a request for one so the

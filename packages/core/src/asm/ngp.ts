@@ -83,20 +83,16 @@ export const NGP_VECTOR_TIMER3 = 0x006fe0;
 // them, on the rule every register page in this directory runs under: a machine
 // description has one home and more than one reader.
 //
-// **`NGP_TRUN` and {@link NGP_SOUND_RIGHT} are the same address, and both are
-// cited.** Toshiba's datasheet puts the timer run-control byte at I/O `$20`;
-// MAME's own Neo Geo Pocket driver puts the T6W28's right-hand write port
-// there. They cannot both be plain bytes of one 128-byte page, and nothing this
-// project could reach says which reading is wrong for the part SNK actually
-// used — so `@demake/ngp` routes the page to the *sound* chip, which is what
-// every demade cartridge depends on, and models the timers without wiring them
-// in (`packages/ngp/src/timer.ts`). Do not program one from a cartridge until
-// that is settled: it is the wrong-and-consistent hazard with the consistency
-// removed, and it presents as a cartridge that boots, unlocks the chip and then
-// plays nothing at all.
+// **This block is the reason the sound ports were found to be wrong.** Wiring
+// the timers in on the datasheet's addresses swallowed every write to what this
+// file then called `NGP_SOUND_RIGHT`, because that constant was `$20` — MAME's
+// map *offset* read as an address. The datasheet and a second emulator agree:
+// `$20`-`$29` is the timer block and nothing else is, and beetle-ngp's
+// `mem.c` routes exactly that range to `timer_write8` before it looks at
+// anything else.
 //
-// Source: Toshiba TMP95C061 datasheet §3.8 (8-bit timers), Figures 3.8 (4) and
-// 3.8 (7) and the up-counter section.
+// Sources: Toshiba TMP95C061 datasheet §3.8 (8-bit timers), Figures 3.8 (4) and
+// 3.8 (7) and the up-counter section; beetle-ngp `mednafen/ngp/mem.c`.
 
 /** Timer operation control: which timers and the prescaler are counting. */
 export const NGP_TRUN = 0x000020;
@@ -306,8 +302,8 @@ export const NGP_CHARACTER_BYTES = 16;
  * A Neo Geo Pocket has a **Z80 sound processor** beside its main one, and on the
  * board the chip's own bus belongs to that Z80. A demade cartridge has no use
  * for a second program, so it takes the other route the hardware provides: the
- * main CPU's own I/O page carries the same two write addresses, gated by
- * {@link NGP_SOUND_ENABLE} below.
+ * console's own I/O page carries two write addresses, live while the Z80 is
+ * switched off ({@link NGP_Z80_ENABLE} below).
  *
  * They carry *different registers*, which is the thing about this chip most
  * likely to be got backwards: the left port carries the three tone periods and
@@ -315,27 +311,54 @@ export const NGP_CHARACTER_BYTES = 16;
  * its own side's four attenuators. A driver with the two swapped produces
  * silence rather than a wrong note.
  *
- * Source: MAME — `src/mame/snk/ngp.cpp`, `case 0x20: // t6w28 "right"` /
- * `case 0x21: // t6w28 "left"`.
+ * **These were `$20`/`$21` for a year and that was wrong**, in the way §Gotchas
+ * warns about: MAME's Neo Geo Pocket handler is installed on `$000080`–`$0000BF`
+ * and its `case 0x20:` is an *offset into that map*, not an address. Read as one,
+ * it lands inside the processor's own SFR page — on the timer block, which is
+ * how the mistake was eventually caught. `$00`–`$7F` is the CPU's and `$80`–`$BF`
+ * is the console's, and the two never overlap.
+ *
+ * Sources, and they are two independent emulators rather than one: MAME —
+ * `src/mame/snk/ngp.cpp`, `map(0x000080, 0x0000bf)` with `case 0x20: // t6w28
+ * "right"`; and beetle-ngp — `mednafen/ngp/mem.c`, which decodes the same
+ * addresses absolutely (`if (address == 0xA1) Write_SoundChipLeft`).
  */
-export const NGP_SOUND_RIGHT = 0x000020;
-export const NGP_SOUND_LEFT = 0x000021;
+export const NGP_SOUND_RIGHT = 0x0000a0;
+export const NGP_SOUND_LEFT = 0x0000a1;
 
 /**
- * The two bytes that hand the sound chip to the main CPU.
+ * Switch the sound chip on, and switch the Z80 off.
  *
- * `$55` at `$38` and `$AA` at `$39`; until both are written the chip ignores
- * anything the main CPU sends it, because the Z80 is meant to own it. Two bytes
- * at boot is the whole of what a cartridge with no sound program has to do.
+ * Two bytes, and they are **two different jobs** rather than halves of one
+ * unlock. `$55` to {@link NGP_SOUND_ENABLE} powers the chip up (`$AA` powers it
+ * down); `$AA` to {@link NGP_Z80_ENABLE} suspends the sound processor (`$55`
+ * starts it). The main CPU's ports only reach the chip while that processor is
+ * *not* running, which is the hardware arbitrating one bus rather than a lock —
+ * so a cartridge with no Z80 program writes both, and one that wrote only the
+ * first would be sending a chip somebody else owns.
  */
-export const NGP_SOUND_ENABLE = 0x000038;
-export const NGP_SOUND_ENABLE_HIGH = 0x000039;
-export const NGP_SOUND_ENABLE_VALUE = 0x55;
-export const NGP_SOUND_ENABLE_HIGH_VALUE = 0xaa;
+export const NGP_SOUND_ENABLE = 0x0000b8;
+export const NGP_Z80_ENABLE = 0x0000b9;
 
-/** The eight-bit D/A converters, one a side. Nothing here drives them. */
-export const NGP_DAC_RIGHT = 0x000022;
-export const NGP_DAC_LEFT = 0x000023;
+/** `$55` starts the thing the register names, `$AA` stops it. */
+export const NGP_ENABLE_VALUE = 0x55;
+export const NGP_DISABLE_VALUE = 0xaa;
+
+/**
+ * The eight-bit D/A converters, one a side. Nothing here drives them.
+ *
+ * The other way to make a sound on this console — doc 18's work rather than doc
+ * 16's, the PC Engine's direct D/A one machine along — and the reason the sound
+ * addresses are a four-byte range rather than a pair. They were `$22`/`$23`,
+ * which is `TREG0`/`TREG1`: the same offset-read-as-address mistake as the two
+ * ports above, found in the same sweep.
+ *
+ * The two emulators *disagree about which side is which* — MAME has `0x22` as
+ * right and beetle-ngp has `0xA2` as left — and nothing here drives them, so
+ * this follows MAME and says so rather than picking silently.
+ */
+export const NGP_DAC_RIGHT = 0x0000a2;
+export const NGP_DAC_LEFT = 0x0000a3;
 
 // --- input --------------------------------------------------------------------
 

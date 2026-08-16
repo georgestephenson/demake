@@ -14,7 +14,7 @@
  * write loop:
  *
  *   - **A chip is an address, and the address is a byte.** This console's sound
- *     ports are `$20` and `$21` in the processor's own I/O page, which is the
+ *     ports are `$A0` and `$A1` in its own I/O page, which is the
  *     first 256 bytes of the address space — so the packed data stores the *low
  *     byte of the port's address*, `XDE` holds it with its upper three bytes
  *     zero, and a write is one store through it. That is the Game Boy's
@@ -57,6 +57,7 @@
 import {
   Asm900,
   label,
+  NGP_SOUND_RIGHT,
   t9Abs as abs,
   t9At as at,
   t9Postinc as postinc,
@@ -137,12 +138,19 @@ export interface NgpStreamOptions {
 /**
  * The port byte the packed data carries, given the schedule's register.
  *
- * The chip's two ports are `$20` (right) and `$21` (left) in the processor's own
+ * The chip's two ports are `$A0` (right) and `$A1` (left) in the console's own
  * I/O page, and `binding/t6w28.ts` numbers them 0 and 1 — so this is the whole
  * of the translation, done once at pack time rather than once a write.
+ *
+ * **Taken from `@demake/core` rather than spelled out**, and it was spelled out
+ * once: `$20`/`$21`, sixteen bytes below the truth, which is where the
+ * *processor's* own timer registers live. Nothing could see it, because the core
+ * had the same two addresses wrong in the same direction — a demade cartridge
+ * wrote where a demade emulator read, and the whole in-game battery passed on a
+ * pair of ports no Neo Geo Pocket has (§Gotchas, wrong and consistent).
  */
 export function ngpPortByte(reg: number): number {
-  return 0x20 | (reg & 1);
+  return NGP_SOUND_RIGHT | (reg & 1);
 }
 
 /**
@@ -358,8 +366,8 @@ function perChannel(
  * Put the byte in `A` into whichever of a channel's copies it is.
  *
  * Constant addresses and a handful of bit tests, because between them the port
- * and the byte say what it is: `E`'s low bit separates the two ports (`$20` and
- * `$21`), bit 7 of the byte separates a latch from the data that continues it,
+ * and the byte say what it is: `E`'s low bit separates the two ports (`$A0` and
+ * `$A1`), bit 7 of the byte separates a latch from the data that continues it,
  * and bit 4 separates an attenuation latch from a period one. Only the copies a
  * channel really writes get a branch — a tone channel never touches the noise
  * slots, and the noise channel never touches the period ones.

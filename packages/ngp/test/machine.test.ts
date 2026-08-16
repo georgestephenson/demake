@@ -19,14 +19,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  NGP_DISABLE_VALUE,
+  NGP_ENABLE_VALUE,
   NGP_RAS_H,
   NGP_RAS_V,
   NGP_SOUND_ENABLE,
-  NGP_SOUND_ENABLE_HIGH,
-  NGP_SOUND_ENABLE_HIGH_VALUE,
-  NGP_SOUND_ENABLE_VALUE,
   NGP_SOUND_LEFT,
   NGP_SOUND_RIGHT,
+  NGP_Z80_ENABLE,
 } from "@demake/core";
 import { T6W28_LEFT, T6W28_RIGHT } from "@demake/chip";
 
@@ -135,8 +135,8 @@ describe("the way to the sound chip", () => {
   }
 
   function unlock(machine: Ngp): void {
-    machine.write(NGP_SOUND_ENABLE, NGP_SOUND_ENABLE_VALUE);
-    machine.write(NGP_SOUND_ENABLE_HIGH, NGP_SOUND_ENABLE_HIGH_VALUE);
+    machine.write(NGP_SOUND_ENABLE, NGP_ENABLE_VALUE);
+    machine.write(NGP_Z80_ENABLE, NGP_DISABLE_VALUE);
   }
 
   it("ignores the chip until the main CPU has been handed it", () => {
@@ -147,6 +147,21 @@ describe("the way to the sound chip", () => {
     unlock(machine);
     machine.write(NGP_SOUND_LEFT, 0x9f);
     expect(seen).toEqual([[T6W28_LEFT, 0x9f]]);
+  });
+
+  it("hands the ports back the moment the Z80 is enabled", () => {
+    // The gate is two answers rather than one: `$B8` switches the chip on and
+    // `$B9` decides *which processor* the write ports belong to. A model that
+    // only asked the first would let a cartridge that woke the sound processor
+    // go on driving the chip from the main CPU, which is two writers on one bus.
+    const machine = new Ngp();
+    const seen = taps(machine);
+    unlock(machine);
+    machine.write(NGP_SOUND_LEFT, 0x9f);
+    expect(seen.length).toBe(1);
+    machine.write(NGP_Z80_ENABLE, NGP_ENABLE_VALUE);
+    machine.write(NGP_SOUND_LEFT, 0x9f);
+    expect(seen.length).toBe(1);
   });
 
   it("reports the port a write went to, because that is what a register is here", () => {

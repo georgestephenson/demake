@@ -19,6 +19,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  NGP_DAC_LEFT,
+  NGP_DAC_RIGHT,
+  NGP_DISABLE_VALUE,
+  NGP_ENABLE_VALUE,
   NGP_INTET01,
   NGP_T01MOD,
   NGP_T01M,
@@ -29,9 +33,12 @@ import {
   NGP_T1CLK_SHIFT,
   NGP_TREG0,
   NGP_TREG1,
+  NGP_SOUND_ENABLE,
+  NGP_SOUND_LEFT,
   NGP_SOUND_RIGHT,
   NGP_TRUN,
   NGP_TRUN_BITS,
+  NGP_Z80_ENABLE,
 } from "@demake/core";
 
 import { Ngp } from "../src/machine.js";
@@ -205,28 +212,37 @@ describe("the 8-bit interval timers", () => {
   });
 });
 
-describe("the block is described and deliberately not wired in", () => {
-  it("collides with the sound chip's own port, which is why", () => {
-    // Two cited sources, one byte. Toshiba's datasheet puts TRUN at I/O $20 and
-    // MAME's Neo Geo Pocket driver puts the T6W28's right-hand write port
-    // there. This is the assertion that keeps the conflict from being forgotten
-    // and quietly re-resolved in favour of whichever description somebody read
-    // most recently — if it ever stops holding, one of the two has been fixed
-    // and the standalone cartridge is unblocked (doc 13 §A5).
-    expect(Timers.owns(NGP_SOUND_RIGHT)).toBe(true);
+describe("the block and the sound chip are disjoint", () => {
+  it("leaves every sound port to the chip", () => {
+    // These four bytes are the console's own I/O page and the timers are the
+    // *processor's* — two address ranges that were once thought to be one, and
+    // are not: the CPU's special-function registers are $00-$7F and the console
+    // decodes $80-$BF. This is the assertion that keeps the two apart, because
+    // a block that claimed one of these swallows the write and the cartridge
+    // plays silence with a perfect register page (doc 13 §A5).
+    for (const port of [NGP_SOUND_RIGHT, NGP_SOUND_LEFT, NGP_DAC_RIGHT, NGP_DAC_LEFT]) {
+      expect(Timers.owns(port), `port ${port.toString(16)}`).toBe(false);
+    }
   });
 
-  it("does not take the register page away from the chip", () => {
-    // The failure this guards is not subtle once seen and is invisible before:
-    // a machine that routed $20 to the timers swallows every write to the
-    // right-hand port, so a cartridge boots, unlocks the chip, programmes a
-    // clock and plays silence with a perfect register page.
+  it("lets a write through to the chip with the timers wired in", () => {
+    // End to end rather than by address, because the claim is about the
+    // machine's routing and not about the block's own opinion of an address.
     const machine = new Ngp();
     const seen: number[] = [];
     machine.soundTap = (reg) => seen.push(reg);
-    machine.write(0x38, 0x55);
-    machine.write(0x39, 0xaa);
+    machine.write(NGP_SOUND_ENABLE, NGP_ENABLE_VALUE);
+    machine.write(NGP_Z80_ENABLE, NGP_DISABLE_VALUE);
     machine.write(NGP_SOUND_RIGHT, 0x9f);
     expect(seen.length).toBe(1);
+  });
+
+  it("takes the timer registers rather than leaving them to memory", () => {
+    // The converse, and the reason the standalone cartridge works at all: a
+    // machine that treated $20 as a plain byte of the register page would
+    // program nothing and never fire.
+    for (const reg of [NGP_TRUN, NGP_T01MOD, NGP_TREG0, NGP_TREG1, NGP_INTET01]) {
+      expect(Timers.owns(reg), `register ${reg.toString(16)}`).toBe(true);
+    }
   });
 });

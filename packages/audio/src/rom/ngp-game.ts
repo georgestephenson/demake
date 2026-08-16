@@ -39,7 +39,17 @@
  * them) and `src/devices/sound/t6w28.cpp` (the register split).
  */
 
-import { Asm900, label, t9Abs as abs, t9At as at, type Ref } from "@demake/core";
+import {
+  Asm900,
+  label,
+  NGP_DISABLE_VALUE,
+  NGP_ENABLE_VALUE,
+  NGP_SOUND_ENABLE,
+  NGP_Z80_ENABLE,
+  t9Abs as abs,
+  t9At as at,
+  type Ref,
+} from "@demake/core";
 
 import { bindingFor } from "../binding/registry.js";
 import type { ChipScript, Rational } from "../chipscript.js";
@@ -67,15 +77,18 @@ export const STOP = 0xff;
 /**
  * The two bytes that hand the chip to the main CPU, and what to write there.
  *
- * `@demake/core`'s hardware map would be the place for these, and they are
- * there — but a driver that imported them would be one more reader of a
- * description that only two things need, so they are spelled here against that
- * file's names and `packages/ngp/test/machine.test.ts` is what holds the two
- * together: it refuses a write to either port until both have been sent.
+ * Power the chip up, then stop the Z80 that owns its bus — two jobs rather than
+ * halves of one unlock, which is why the values differ.
+ *
+ * **Imported rather than spelled out**, and it was spelled out once: `$38`/`$39`
+ * against `@demake/core`'s own `$B8`/`$B9`, on the grounds that a driver
+ * importing them "would be one more reader". That is the machine-description
+ * rule exactly backwards — one home, many readers — and it is how a wrong
+ * address survived in two files at once, agreeing with itself.
  */
 const UNLOCK: readonly [number, number][] = [
-  [0x38, 0x55],
-  [0x39, 0xaa],
+  [NGP_SOUND_ENABLE, NGP_ENABLE_VALUE],
+  [NGP_Z80_ENABLE, NGP_DISABLE_VALUE],
 ];
 
 /**
