@@ -2025,14 +2025,27 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     reload of 100 on a 24 kHz clock that does not exist, and is a reload of 200
     on the 48 kHz one that does.
 
-    So what is left is smaller and can be named exactly: `TRUN` and `T01MOD`,
-    their addresses and their bit layouts, and the interrupt-enable register
-    behind `INTT1`. All three are *figures* in that datasheet rather than text,
-    which is the one thing the extraction cannot reach — and emulator authors
-    report the datasheets that circulate disagree about the internal register
-    addresses, so this is not a gap to fill from memory. The vectors are already
-    settled: `ngpcspec.txt` lists `$6FD4`, `$6FD8`, `$6FDC` and `$6FE0` for
-    8-bit timers 0 to 3. What unblocks the rest is an OCR of three figures.
+    **And the three figures came out too, so this is no longer blocked at all.**
+    What the text could not give — `TRUN`, `T01MOD` and the interrupt-enable
+    register — are raster images inside that same PDF, and they are ordinary
+    8-bit greyscale under the LZW: decoded to a PGM and run through Tesseract,
+    all three read cleanly, and each one *checks against something already
+    known* rather than having to be taken on trust. `TRUN` is at `$20` with
+    `T0RUN` to `T3RUN` in bits 0 to 3 and `PRRUN` in bit 7 — which the prose
+    confirms, since its worked example says `SET 3, (TRUN)` sets timer 3.
+    `T01MOD` is at `$24`, and its two clock-select fields reproduce the
+    up-counter section's prose exactly: the lower timer takes the external pin
+    or φT1/φT4/φT16 and the upper one its partner's comparator output or
+    φT1/φT16/φT256. And the interrupt-enable table gives `INTET01` at `$73` and
+    `INTET23` at `$74`, a nibble per timer, with the **priority** as the enable —
+    1 to 6 accept and *both* 0 and 7 refuse, which is the trap in that field.
+    All of it is in `core/src/asm/ngp.ts` now, beside the vectors
+    `ngpcspec.txt` had already settled.
+
+    So the standalone cartridge is ordinary work again: model the timer block in
+    `@demake/ngp` — a prescaler, a reload, a compare that clears the counter and
+    dispatches through the boot ROM's pointer — and the driver file §A5 records
+    as already written becomes buildable, with doc 16's Level A over it.
 
     The SN76489 is also the
     one that stretched the shared packing layer: its channel is in the data byte

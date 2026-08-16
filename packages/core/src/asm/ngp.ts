@@ -74,6 +74,108 @@ export const NGP_VECTOR_TIMER1 = 0x006fd8;
 export const NGP_VECTOR_TIMER2 = 0x006fdc;
 export const NGP_VECTOR_TIMER3 = 0x006fe0;
 
+// --- the processor's own 8-bit timers -----------------------------------------
+//
+// Four independent 8-bit interval timers fed from a shared 9-bit prescaler.
+// Nothing in this repository programs one yet — a demade *game* rides the
+// picture, and the standalone audio cartridge this block exists for is doc 13
+// §A5's open item — but the numbers belong here rather than in whichever file
+// first wants them, on the rule every register page in this directory runs
+// under: a machine description has one home and more than one reader.
+//
+// Source: Toshiba TMP95C061 datasheet §3.8 (8-bit timers), Figures 3.8 (4) and
+// 3.8 (7) and the up-counter section.
+
+/** Timer operation control: which timers and the prescaler are counting. */
+export const NGP_TRUN = 0x000020;
+
+/**
+ * Bits of {@link NGP_TRUN}. Set runs the counter, clear stops *and clears* it.
+ *
+ * Bit 6 is not a timer — the four 8-bit timers are bits 0 to 3 and the two
+ * 16-bit ones are bits 4 and 5, so the gap is between them and the prescaler.
+ */
+export const NGP_TRUN_BITS = {
+  timer0: 0,
+  timer1: 1,
+  timer2: 2,
+  timer3: 3,
+  timer4: 4,
+  timer5: 5,
+  prescaler: 7,
+} as const;
+
+/** The 8-bit timers' compare registers. Write-only, and a match clears the counter. */
+export const NGP_TREG0 = 0x000022;
+export const NGP_TREG1 = 0x000023;
+export const NGP_TREG2 = 0x000026;
+export const NGP_TREG3 = 0x000027;
+
+/** Timer 0/1 mode: each timer's input clock, the PWM cycle and the pair's mode. */
+export const NGP_T01MOD = 0x000024;
+
+/**
+ * What a timer counts, as the two-bit field in {@link NGP_T01MOD}.
+ *
+ * **The two timers of a pair do not offer the same clocks**, which is the one
+ * thing about this block that reaches as far as the music demaker: the *lower*
+ * timer takes the external pin or φT1/φT4/φT16, and the *upper* one takes the
+ * comparator output of its partner or φT1/φT16/φT256. So no single timer can be
+ * given all four internal clocks, and `@demake/audio`'s `binding/t6w28.ts`
+ * offers the upper timer's three because φT256 is the only one that reaches the
+ * bottom of a driver's useful band.
+ *
+ * φT1 is `fc/8`, φT4 `fc/32`, φT16 `fc/128` and φT256 `fc/2048`, where `fc` is
+ * this console's 6.144 MHz crystal — so against the *system* clock, which is
+ * the crystal halved and is also what the sound chip runs at, they divide by 4,
+ * 16, 64 and 1024.
+ */
+export const NGP_T0CLK = { external: 0, t1: 1, t4: 2, t16: 3 } as const;
+export const NGP_T1CLK = { cascade: 0, t1: 1, t16: 2, t256: 3 } as const;
+
+/**
+ * What each selection divides the **system** clock by, indexed by the field.
+ *
+ * The system clock rather than the crystal, because that is the number every
+ * caller actually wants: it is the crystal halved, it is what one processor
+ * state is, and it is what the sound chip runs at — so a driver's reload and a
+ * schedule's rate are stated against the same thing. Entry 0 of each is `0`,
+ * because selection 0 is not a division at all: it is the external pin on the
+ * lower timer and the partner's comparator output on the upper one.
+ */
+export const NGP_T0CLK_DIVISORS: readonly number[] = [0, 4, 16, 64];
+export const NGP_T1CLK_DIVISORS: readonly number[] = [0, 4, 64, 1024];
+
+/** Bit positions of those two fields within {@link NGP_T01MOD}. */
+export const NGP_T0CLK_SHIFT = 0;
+export const NGP_T1CLK_SHIFT = 2;
+
+/** The pair's operating mode, in bits 7-6 of {@link NGP_T01MOD}. */
+export const NGP_T01M = { two8Bit: 0, cascade16Bit: 1, ppg: 2, pwm: 3 } as const;
+export const NGP_T01M_SHIFT = 6;
+
+/**
+ * Interrupt enable and priority for timers 1 and 0, a nibble each.
+ *
+ * The low nibble is timer 0 and the high one timer 1; timers 3 and 2 are the
+ * next byte up, in the same order. Within a nibble the low three bits are a
+ * **priority** and the top bit is the request flag — reading it says whether a
+ * request is pending and writing zero to it clears one.
+ *
+ * The priority is what enables the interrupt: 1 to 6 accept it, and **both 0
+ * and 7 refuse it**, which is the trap in this field. So a driver arms its
+ * timer by writing a level rather than a bit, and a level of seven is off
+ * rather than most urgent.
+ */
+export const NGP_INTET01 = 0x000073;
+export const NGP_INTET23 = 0x000074;
+
+/** Where each timer's nibble sits in its enable byte. */
+export const NGP_INTET_SHIFT = { even: 0, odd: 4 } as const;
+
+/** The highest priority that still *accepts* the interrupt (7 refuses it). */
+export const NGP_INT_PRIORITY_MAX = 6;
+
 // --- the display controller ---------------------------------------------------
 
 /** Window origin and size: the rectangle outside which the background colour shows. */

@@ -3774,19 +3774,29 @@ that keep them from being undone. All of them come from doc 16.
   cartridge that programs one yet. Before recording a hardware fact as
   unobtainable, try pulling the text out of the PDF rather than asking a fetcher
   to read it.
-- **What is left of those two items is blocked on a _source_, not on work, and
-  both have been looked for.** The Neo Geo Pocket's standalone cartridge now
-  needs exactly three things: `TRUN` and `T01MOD`, their addresses and bit
-  layouts, and the interrupt-enable register behind `INTT1` — all _figures_ in
-  that datasheet rather than text, which is the one thing the extraction cannot
-  reach. And the Mega Drive's FM-against-PSG balance needs a level off a board
-  or a **Model 1** schematic's own resistor values; the Model 2 service manual
-  extracts, but its schematic sheets are JBIG2 scans whose OCR renders component
-  values as `A73 5K`, and the summing node is a drawing rather than text. In
-  both cases building the thing anyway produces an artifact that is right in our
-  own core and wrong on the hardware, with a perfect register diff either way,
-  which is §Gotchas' wrong-and-consistent description exactly. Doc 13 §A5 and
-  §A5.5 record what each needs; do not close either by matching an emulator.
+- **And a register figure that really is an image is still readable, if it
+  checks against something.** The three that text could not give — `TRUN`,
+  `T01MOD` and the timer interrupt-enable byte — are 8-bit greyscale images
+  under the same LZW, and decoding them to a PGM and running Tesseract over them
+  read all three cleanly. What makes that _usable_ rather than a guess is that
+  each one lands on something already known: `TRUN`'s bit 3 is `T3RUN`, which
+  the prose's own `SET 3, (TRUN)` example says; `T01MOD`'s two clock fields
+  reproduce the up-counter section's prose exactly; and the enable table's eight
+  registers run `$73`, `$74`, `$75` … in order. An OCR of a register figure that
+  agrees with nothing is worth nothing — find the cross-check before trusting
+  the read, because this is the one place a plausible misread becomes a machine
+  description that is wrong and consistent.
+- **One of those two items is still blocked on a _source_, and it has been
+  looked for.** The Mega Drive's FM-against-PSG balance needs a level off a
+  board or a **Model 1** schematic's own resistor values — the two chips are
+  summed by a resistor network on the way to the mixing amplifier, so neither
+  model can be asked and `MD_CHIP_GAINS` has to state something. Sega's Model 2
+  service manual extracts, but its schematic sheets are JBIG2 scans whose OCR
+  renders component values as `A73 5K`, the summing node is a drawing rather
+  than text, and it is the wrong board anyway. Building on that would be an
+  artifact right in our own core and wrong on the hardware, with a perfect
+  register diff either way — §Gotchas' wrong-and-consistent description exactly.
+  Doc 13 §A5.5 records it; do not close it by matching an emulator.
 - **Audio DSP is where determinism breaks first.** FFT twiddles, windows, mel
   banks, dB conversions and resampler kernels all come from
   `packages/core/src/math/kernels.ts`. An FFT seeded with `Math.cos` returns
