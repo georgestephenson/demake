@@ -35,8 +35,15 @@
  * once it has written the pair that hands it over. `demake build` emits no Z80
  * program, so it takes that route and this machine models it — the four
  * kilobytes the two processors share are ordinary RAM here, and the Z80 that
- * would read them is absent rather than half-implemented, as are the on-chip
- * timers and DMA.
+ * would read them is absent rather than half-implemented, as is the DMA.
+ *
+ * **The 8-bit timers are modelled and are deliberately not wired in**, which is
+ * doc 13 §A5's open item and not an oversight. `timer.ts` implements the block
+ * and is proven against the datasheet on its own, but this machine does not
+ * route the register page to it, because the addresses collide: the datasheet
+ * puts `TRUN` at I/O `$20` and this console's *sound* chip answers the same
+ * byte. One of those two descriptions is wrong and settling it needs a source
+ * neither has — so nothing here claims a timer a cartridge could program.
  */
 
 import {

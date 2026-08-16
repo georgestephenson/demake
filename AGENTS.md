@@ -3774,6 +3774,21 @@ that keep them from being undone. All of them come from doc 16.
   cartridge that programs one yet. Before recording a hardware fact as
   unobtainable, try pulling the text out of the PDF rather than asking a fetcher
   to read it.
+- **Two cited sources can describe the same byte, and one of them is wrong.**
+  Toshiba's datasheet puts the Neo Geo Pocket processor's `TRUN` at I/O `$20`;
+  MAME's own driver for that console puts the T6W28's right-hand write port
+  there, which is where `NGP_SOUND_RIGHT` comes from. Both are in the same
+  128-byte page and both are cited, so the standalone audio cartridge that
+  §A5 has wanted for months is blocked on a _fact_ rather than on work: the
+  timer block is modelled and tested (`packages/ngp/src/timer.ts`) and the
+  cartridge was written, and it boots, takes the chip, programs the timer and
+  plays nothing — because routing that page to the timers swallows the sound.
+  `@demake/ngp` therefore keeps `$20` for the chip, which every demade cartridge
+  already depends on, and the timer stays a description rather than a
+  peripheral. Before adding a register to a machine description, check whether
+  the address is already spoken for; two citations agreeing about a number and
+  disagreeing about what is at it is the wrong-and-consistent failure with the
+  consistency removed.
 - **And a register figure that really is an image is still readable, if it
   checks against something.** The three that text could not give — `TRUN`,
   `T01MOD` and the timer interrupt-enable byte — are 8-bit greyscale images

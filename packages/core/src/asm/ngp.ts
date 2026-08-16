@@ -77,11 +77,23 @@ export const NGP_VECTOR_TIMER3 = 0x006fe0;
 // --- the processor's own 8-bit timers -----------------------------------------
 //
 // Four independent 8-bit interval timers fed from a shared 9-bit prescaler.
-// Nothing in this repository programs one yet — a demade *game* rides the
-// picture, and the standalone audio cartridge this block exists for is doc 13
-// §A5's open item — but the numbers belong here rather than in whichever file
-// first wants them, on the rule every register page in this directory runs
-// under: a machine description has one home and more than one reader.
+// Nothing in this repository programs one — a demade *game* rides the picture,
+// and the standalone audio cartridge this block exists for is doc 13 §A5's open
+// item — but the numbers belong here rather than in whichever file first wants
+// them, on the rule every register page in this directory runs under: a machine
+// description has one home and more than one reader.
+//
+// **`NGP_TRUN` and {@link NGP_SOUND_RIGHT} are the same address, and both are
+// cited.** Toshiba's datasheet puts the timer run-control byte at I/O `$20`;
+// MAME's own Neo Geo Pocket driver puts the T6W28's right-hand write port
+// there. They cannot both be plain bytes of one 128-byte page, and nothing this
+// project could reach says which reading is wrong for the part SNK actually
+// used — so `@demake/ngp` routes the page to the *sound* chip, which is what
+// every demade cartridge depends on, and models the timers without wiring them
+// in (`packages/ngp/src/timer.ts`). Do not program one from a cartridge until
+// that is settled: it is the wrong-and-consistent hazard with the consistency
+// removed, and it presents as a cartridge that boots, unlocks the chip and then
+// plays nothing at all.
 //
 // Source: Toshiba TMP95C061 datasheet §3.8 (8-bit timers), Figures 3.8 (4) and
 // 3.8 (7) and the up-counter section.

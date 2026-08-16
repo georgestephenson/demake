@@ -2042,10 +2042,30 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     All of it is in `core/src/asm/ngp.ts` now, beside the vectors
     `ngpcspec.txt` had already settled.
 
-    So the standalone cartridge is ordinary work again: model the timer block in
-    `@demake/ngp` — a prescaler, a reload, a compare that clears the counter and
-    dispatches through the boot ROM's pointer — and the driver file §A5 records
-    as already written becomes buildable, with doc 16's Level A over it.
+    **Implementing it then found the real blocker, which is neither a source nor
+    a piece of work: two cited descriptions of the same byte.** The timer block
+    is modelled — `packages/ngp/src/timer.ts`, with the prescaler gate, the
+    per-timer clock selections, the compare that clears the counter and the
+    priority-as-enable, each pinned against the datasheet — and the standalone
+    cartridge was written on top of it. It boots, takes the sound chip, programs
+    the timer and plays **nothing**, because `TRUN` is at I/O `$20` and this
+    console's sound chip answers `$20` as well: the datasheet says the first and
+    MAME's own Neo Geo Pocket driver says the second, and routing the page to
+    the timers swallows every write to the right-hand port.
+
+    They cannot both be plain bytes of one 128-byte page. Either SNK's part is
+    not a stock TMP95C061 in its internal register map, or the sound ports are
+    decoded somewhere this project has mis-recorded — and nothing reachable here
+    settles which. So `@demake/ngp` keeps routing `$20` to the chip, which is
+    what every demade cartridge already depends on and what the whole in-game
+    audio battery proves; `timer.ts` stays a *tested description of the block*
+    rather than a peripheral; and the standalone cartridge is not registered,
+    because one built on a page with two answers is worse than none.
+
+    What unblocks it now is one fact: which device really answers `$20` on this
+    console. A second emulator's NGP driver, a homebrew that programs a timer,
+    or SNK's own documentation would each settle it. Everything else the
+    cartridge needs is written.
 
     The SN76489 is also the
     one that stretched the shared packing layer: its channel is in the data byte
