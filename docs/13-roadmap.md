@@ -1998,23 +1998,41 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     the driver's clock is a reload and the file already written is most of the
     rest.
 
-    **And what that costs is a source, which is where a second attempt stopped.**
-    The four timer *vectors* are confirmed by the reference this console's
-    machine description already cites — `ngpcspec.txt` lists `$6FD4`, `$6FD8`,
-    `$6FDC` and `$6FE0` for 8-bit timers 0 to 3 — and it says nothing at all
-    about the register block: no `TRUN`, no `T01MOD`, no prescaler list. Toshiba's
-    own TMP95C061 datasheet is on bitsavers and is a **scan**, 192 pages of
-    images with no text layer, and the page-by-page mirrors of it are images too.
-    Emulator authors report the datasheets that do circulate *disagree with each
-    other* about the internal register addresses. So the four prescalers
-    `binding/t6w28.ts` already offers — `[2, 8, 32, 128]` — are the one number in
-    this project's audio path with no citation under it, and a timer model built
-    on them would be the §Gotchas failure in its purest form: a driver that
-    programs a reload our core also believes in plays at the right tempo in our
-    core and at the wrong one on the board, with a perfect register diff either
-    way. What unblocks it is a datasheet with text in it, or an OCR of the scan
-    good enough to read a register table off. Neither is a day's work and neither
-    is guesswork.
+    **And going after the source found the binding was wrong.** Toshiba's own
+    TMP95C061 datasheet is on bitsavers, and it is not the scan it looks like —
+    its pages are LZW-compressed content streams with a full text layer, and
+    only the *figures* are images. Read, §3.8 settles the timer's arithmetic
+    outright: the four prescaler outputs are **φT1 = 8/fc, φT4 = 32/fc,
+    φT16 = 128/fc and φT256 = 2048/fc**; a lower timer (0 or 2) may select φT1,
+    φT4 or φT16 and an upper one (1 or 3) φT1, φT16 or φT256, so *no single
+    timer offers all four*; the up-counter is cleared to zero on the compare
+    match, so the period in input clocks is the reload itself; and TREG0–TREG3
+    are at `$22`, `$23`, `$26` and `$27`, write-only. The same document's serial
+    baud table tabulates `fc / (TREG2 × 8 × 16)` at *this console's* 6.144 MHz
+    and gives 48 Kbps for a reload of 1, which is φT1 = fc/8 and can be nothing
+    else.
+
+    Against that, `binding/t6w28.ts`'s `[2, 8, 32, 128]` was wrong twice over —
+    every entry half of what the hardware divides by, and the widest one 128
+    where the hardware's is 1024. It is `[4, 64, 1024]` now, which is timer 1's
+    three clocks expressed against the chip's own 3.072 MHz, and the choice of
+    *that* timer is the hardware's too: φT256 is the only clock that reaches the
+    bottom of the useful band, and the single rate φT4 would have added inside
+    it is one φT256 hits exactly. What this did *not* change is the rate a
+    schedule declares — a rate fixes `prescaler × reload`, so the two always
+    agreed about the fraction — and what it did change is the **reload a
+    cartridge would program**, which is the number that was wrong: 240 Hz was a
+    reload of 100 on a 24 kHz clock that does not exist, and is a reload of 200
+    on the 48 kHz one that does.
+
+    So what is left is smaller and can be named exactly: `TRUN` and `T01MOD`,
+    their addresses and their bit layouts, and the interrupt-enable register
+    behind `INTT1`. All three are *figures* in that datasheet rather than text,
+    which is the one thing the extraction cannot reach — and emulator authors
+    report the datasheets that circulate disagree about the internal register
+    addresses, so this is not a gap to fill from memory. The vectors are already
+    settled: `ngpcspec.txt` lists `$6FD4`, `$6FD8`, `$6FDC` and `$6FE0` for
+    8-bit timers 0 to 3. What unblocks the rest is an OCR of three figures.
 
     The SN76489 is also the
     one that stretched the shared packing layer: its channel is in the data byte
@@ -2088,10 +2106,21 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     direction is at least not in doubt: this PSG is *far* louder at its own pins
     than the FM chip is, and the board knocks it down hard, which is the same
     direction genesis-plus-gx sits in relative to us. So our six decibels is
-    likely to be too little rather than too much. A number is not worth writing
-    down until the Model 1 schematic's own values are read off it rather than
-    off a summary of it, and the same question wants asking twice, because the
-    later boards changed this circuit.
+    likely to be too little rather than too much.
+
+    Going after it got as far as a **service manual and no further**, and the
+    reason is worth writing down so the next attempt starts later. Sega's own
+    Genesis II / Mega Drive II manual is on Sega Retro with schematics and a
+    parts list, and it survives extraction — but its pages are JBIG2 scans under
+    an OCR layer, and on the schematic sheets that layer renders component
+    values as things like `A73 5K` and `R21 2.1!K`. Reading a ratio off that
+    would be the same wrong-and-consistent hazard with more steps in front of
+    it. Two things would have to be true and neither is yet: the sheet has to be
+    legible enough to *trace* the summing node, which is a drawing rather than
+    text and no OCR recovers it, and it has to be a **Model 1** board — that is
+    what `md.ts`'s spec describes, and this console's audio circuit changed
+    between revisions, which is the same reason the question wants asking twice
+    even once a number exists.
 
     **The stereo line is closed, and it was wider than it was written down as.**
     It was recorded as the Neo Geo Pocket's — `ChannelFrame.pan` being a pair of

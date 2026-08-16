@@ -56,12 +56,34 @@ const T6W28_CLOCK = 3_072_000;
 /**
  * The processor's own 8-bit timers, which are what a standalone driver rides.
  *
- * A TMP95C061 prescales its timer clock from the system clock, and a driver
- * above the frame rate is a timer's rather than the picture's. The frame is
- * still the candidate every other rate has to beat, because a *game*'s two
- * streams share one interrupt with the picture (doc 16 §Two streams, one clock).
+ * A TMP95C061 feeds its four 8-bit interval timers from a shared 9-bit
+ * prescaler, and a driver above the frame rate is a timer's rather than the
+ * picture's. The frame is still the candidate every other rate has to beat,
+ * because a *game*'s two streams share one interrupt with the picture (doc 16
+ * §Two streams, one clock).
+ *
+ * These are **timer 1's**, not the union over all four, and that is the
+ * hardware rather than a simplification: the datasheet's §3.8 up-counter
+ * section gives the lower timers (0 and 2) the internal clocks φT1, φT4 and
+ * φT16, and the upper timers (1 and 3) φT1, φT16 and φT256. No single timer
+ * offers all four, and a driver rides one — so offering the union would be
+ * promising a rate whichever timer the driver picked could not keep. Timer 1
+ * is the pick because φT256 is the only clock that reaches the bottom of the
+ * useful band, and it costs nothing: φT4 is a *lower* timer's, and the one
+ * rate it contributes inside the window below (750 Hz, at a full reload) is
+ * one φT256 also hits exactly.
+ *
+ * The numbers are divisions of {@link T6W28_CLOCK}, which is the crystal
+ * halved, so each is half the datasheet's division of `fc`: φT1 is `8/fc`, φT16
+ * is `128/fc` and φT256 is `2048/fc`. Cross-checked against the same
+ * document's serial baud table, which tabulates `fc / (TREG2 × 8 × 16)` at
+ * *this console's* 6.144 MHz and lists 48 Kbps for a reload of 1 — which is
+ * φT1 = fc/8 and nothing else.
+ *
+ * Source: Toshiba TMP95C061 datasheet §3.8 (8-bit timers) — Table 3.8 (4), the
+ * up-counter section, and Table 3.11 (2).
  */
-const TIMER_PRESCALERS: readonly number[] = [2, 8, 32, 128];
+const TIMER_PRESCALERS: readonly number[] = [4, 64, 1024];
 
 export function t6w28Binding(console: string, spec: AudioSpec): ChipBinding {
   return {
@@ -173,8 +195,12 @@ export function t6w28Binding(console: string, spec: AudioSpec): ChipBinding {
       const frameHz = spec.driver.frameRate.num / spec.driver.frameRate.den;
       let best: DriverRateFit = { rate: spec.driver.frameRate, source: "vblank" };
       let bestError = Math.abs(frameHz - desiredHz);
-      // An 8-bit timer over one of four prescalers, which is how a *standalone*
-      // driver holds a tempo the picture cannot express.
+      // An 8-bit timer over one of its three prescalers, which is how a
+      // *standalone* driver holds a tempo the picture cannot express. The
+      // period in input clocks *is* the reload rather than one more than it —
+      // the up-counter is cleared to zero on the match — so a full 256 is
+      // written as zero, which is what `& 0xff` below says. The datasheet's own
+      // worked example is the check: 62500 counts of φT16 is `TREG = F424H`.
       for (const prescaler of TIMER_PRESCALERS) {
         for (let reload = 1; reload <= 256; reload += 1) {
           const den = prescaler * reload;

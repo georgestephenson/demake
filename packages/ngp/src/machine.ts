@@ -75,6 +75,9 @@ const SOUND_RAM_SIZE = 0x1000;
  * timings are in *states* of that clock, while the display controller counts the
  * crystal itself — so this is the ratio between the two, and the reason
  * {@link Ngp.step} multiplies for one of them and not the other.
+ *
+ * Source: Toshiba TMP95C061 datasheet §7 (1) — "one cycle clock divided by 2
+ * oscillation frequency is called 1 state".
  */
 const MASTER_PER_STATE = 2;
 

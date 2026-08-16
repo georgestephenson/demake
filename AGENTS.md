@@ -3761,22 +3761,32 @@ that keep them from being undone. All of them come from doc 16.
   reconstruction filter). Run `pnpm emulator` and the row before you add it, and
   if it does not pass, write down what you measured rather than lowering the
   gate — the gate is the only thing that makes the passing rows mean anything.
-- **Two of the audio roadmap's open items are blocked on a _source_, not on
-  work, and both have been looked for.** The Neo Geo Pocket's standalone
-  cartridge needs the TLCS-900/H's timer block in `@demake/ngp`, and the
-  register block behind it has no citable description this project could reach:
-  the reference the console's machine description already cites gives the four
-  timer vectors and nothing else, Toshiba's own datasheet is a 192-page **scan**
-  with no text layer, and emulator authors report the datasheets that circulate
-  disagree about the internal register addresses. `binding/t6w28.ts`'s four
-  prescalers are the one number in the audio path with nothing under them. And
-  the Mega Drive's FM-against-PSG balance needs a level off a board or the Model
-  1 schematic's own resistor values — the two chips are summed by a network, so
-  neither model can be asked and `MD_CHIP_GAINS` has to state something. In both
-  cases building the thing anyway produces an artifact that is right in our own
-  core and wrong on the hardware, with a perfect register diff either way, which
-  is §Gotchas' wrong-and-consistent description exactly. Doc 13 §A5 and §A5.5
-  record what each needs; do not close either by matching an emulator.
+- **A datasheet that looks like a scan may not be one, and one of them was
+  hiding a bug.** Toshiba's TMP95C061 document — the Neo Geo Pocket's processor
+  — reads as binary in a fetcher and _is_ mostly images, but its pages are
+  LZW-compressed content streams with a **full text layer** under the figures.
+  Extracted, §3.8 settles this CPU's timer arithmetic outright, and what it
+  settled first was that `binding/t6w28.ts`'s prescalers were wrong: `[2, 8, 32,
+128]` where the hardware divides by `[4, 64, 1024]` against the chip's own
+  clock. Nothing could see it, because the rate a schedule declares fixes
+  `prescaler × reload` and the two always agreed about that fraction — what was
+  wrong was the **reload a cartridge would program**, and this console has no
+  cartridge that programs one yet. Before recording a hardware fact as
+  unobtainable, try pulling the text out of the PDF rather than asking a fetcher
+  to read it.
+- **What is left of those two items is blocked on a _source_, not on work, and
+  both have been looked for.** The Neo Geo Pocket's standalone cartridge now
+  needs exactly three things: `TRUN` and `T01MOD`, their addresses and bit
+  layouts, and the interrupt-enable register behind `INTT1` — all _figures_ in
+  that datasheet rather than text, which is the one thing the extraction cannot
+  reach. And the Mega Drive's FM-against-PSG balance needs a level off a board
+  or a **Model 1** schematic's own resistor values; the Model 2 service manual
+  extracts, but its schematic sheets are JBIG2 scans whose OCR renders component
+  values as `A73 5K`, and the summing node is a drawing rather than text. In
+  both cases building the thing anyway produces an artifact that is right in our
+  own core and wrong on the hardware, with a perfect register diff either way,
+  which is §Gotchas' wrong-and-consistent description exactly. Doc 13 §A5 and
+  §A5.5 record what each needs; do not close either by matching an emulator.
 - **Audio DSP is where determinism breaks first.** FFT twiddles, windows, mel
   banks, dB conversions and resampler kernels all come from
   `packages/core/src/math/kernels.ts`. An FFT seeded with `Math.cos` returns
