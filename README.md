@@ -15,7 +15,7 @@ asserted:
 |---|---|---|---|
 | **art** | any image | hardware-compliant art, palettes, tile maps, asm/C/binary, bootable ROMs | 21 consoles; 17 proven pixel-perfect in an emulator |
 | **game** | a [Demotic](docs/14-demotic.md) `.dmt` script + art | one game, every console | language, preview and playable ROMs on 16 consoles |
-| **music** | a MIDI track | chip music, audio that sounds exactly like the hardware will, and a ROM | 18 consoles; 16 play it from inside a game, 12 from a cartridge of its own |
+| **music** | a MIDI track | chip music, audio that sounds exactly like the hardware will, and a ROM | 18 consoles; 16 play it from inside a game, 14 from a cartridge of its own |
 | **sound** | a WAV effect | a chip sound effect, placed and prioritised, and a ROM | 18 consoles; the same driver, the same cartridge, the same proof |
 
 <!-- /generated:demaker-table -->

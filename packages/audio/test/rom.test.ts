@@ -27,6 +27,19 @@ import {
   NES_HEADER_SIZE,
   NDS_ARM7_RAM,
   NDS_ARM9_RAM,
+  NGP_ENABLE_VALUE,
+  NGP_ENTRY_OFFSET,
+  NGP_DISABLE_VALUE,
+  NGP_HEADER_SIZE,
+  NGP_INTET01,
+  NGP_INTET_SHIFT,
+  NGP_INT_PRIORITY_MAX,
+  NGP_ROM_BASE,
+  NGP_ROM_SIZES,
+  NGP_SOUND_ENABLE,
+  NGP_SYSTEM_COLOR,
+  NGP_SYSTEM_MONO,
+  NGP_Z80_ENABLE,
   NES_PRG_SIZES,
   mdChecksum,
   MD_CHECKSUM_START,
@@ -48,6 +61,7 @@ import {
 import { GbaPcm, VSU_WAVE_SAMPLES, VSU_WAVE_TABLES } from "@demake/chip";
 import { Gba } from "@demake/gba";
 import { FRAME_CYCLES, Sms } from "@demake/sms";
+import { SYSTEM_HZ as NGP_SYSTEM_HZ } from "@demake/ngp";
 import { MASTER_HZ as VB_MASTER_HZ } from "@demake/vb";
 import { CPU_HZ as WS_CPU_HZ } from "@demake/wsc";
 
@@ -153,6 +167,8 @@ describe("gb audio cartridge", () => {
         "gba",
         "nds",
         "vb",
+        "ngpc",
+        "ngp",
         "wsc",
         "ws",
       ]),
@@ -738,6 +754,105 @@ describe("vb audio cartridge", () => {
     // that does nothing but poll.
     const period = VB_MASTER_HZ / (script.driver.rate.num / script.driver.rate.den);
     for (const span of spans.slice(2)) expect(Math.abs(span - period)).toBeLessThan(period / 20);
+  });
+});
+
+describe("ngp audio cartridge", () => {
+  it("is a flash board whose entry the boot ROM reads out of the header", async () => {
+    const { bytes, family, suffix } = await buildAudioRom(trackFor("ngpc"), { title: "BAND" });
+    expect(family).toBe("ngpc");
+    expect(suffix).toBe(".ngc");
+    expect(NGP_ROM_SIZES).toContain(bytes.length);
+    // There is no reset vector on this machine: the boot ROM reads a 24-bit
+    // entry field out of the header and jumps to it, so a cartridge that left it
+    // zero would be entered at the bottom of the internal register page.
+    const entry =
+      (bytes[NGP_ENTRY_OFFSET] as number) |
+      ((bytes[NGP_ENTRY_OFFSET + 1] as number) << 8) |
+      ((bytes[NGP_ENTRY_OFFSET + 2] as number) << 16);
+    expect(entry).toBe(NGP_ROM_BASE + NGP_HEADER_SIZE);
+    expect(String.fromCharCode(...bytes.subarray(0x24, 0x28))).toBe("BAND");
+    // The recognition code is SNK's copyright claim and a demade cartridge is
+    // not theirs, so the field stays blank — `gb-cart.ts`'s bargain with the
+    // Nintendo boot logo.
+    expect(bytes.subarray(0, NGP_ENTRY_OFFSET).every((byte) => byte === 0)).toBe(true);
+  });
+
+  it("says which of the two machines will run it", async () => {
+    // One byte, and the only difference between the two builds: the sound
+    // hardware is the same T6W28, so `ws.ts`'s bargain one console along.
+    const colour = await buildAudioRom(trackFor("ngpc"));
+    const mono = await buildAudioRom(trackFor("ngp"));
+    expect(colour.bytes[0x23]).toBe(NGP_SYSTEM_COLOR);
+    expect(mono.bytes[0x23]).toBe(NGP_SYSTEM_MONO);
+    expect(mono.suffix).toBe(".ngp");
+  });
+
+  it("asks for the chip before it writes a note to it", async () => {
+    // The half no tick diff can see, and the one thing about this console's
+    // audio that is a *permission* rather than a value: until both bytes are
+    // written the T6W28's bus belongs to the Z80 sound processor and every port
+    // write is ignored, so a cartridge that skipped them would perform the whole
+    // schedule exactly and play silence. `@demake/ngp` refuses the writes for
+    // the same reason, which is why the capture below is empty without them.
+    const runner = await AudioRomRunner.create(trackFor("ngpc"));
+    const boot = runner.captureBoot();
+    expect(boot.length).toBe(bindingFor("ngpc").init().length);
+    const machine = runner.machine as unknown as { read(address: number): number };
+    expect(machine.read(NGP_SOUND_ENABLE)).toBe(NGP_ENABLE_VALUE);
+    expect(machine.read(NGP_Z80_ENABLE)).toBe(NGP_DISABLE_VALUE);
+  });
+
+  it("rides the processor's own timer, which is why this cartridge exists", async () => {
+    // A game on this console gets the frame and only the frame, because its two
+    // streams share one interrupt with the picture. This one programmes timer 1
+    // — the *upper* timer, because φT256 is the only prescaler output that
+    // reaches the bottom of a driver's useful band — and the rate it keeps is
+    // the timer's rather than anything the display decides. The fixture's is
+    // below the frame rate, so a cartridge that had quietly fallen back to the
+    // vertical blank would tick measurably faster.
+    const script = trackFor("ngpc");
+    expect(script.driver.source).toBe("timer");
+    const hz = script.driver.rate.num / script.driver.rate.den;
+    const runner = await AudioRomRunner.create(script);
+    const at = runner.symbols.get("Tick") as number;
+    const machine = runner.machine as unknown as { step(): number; cpu: { pc: number } };
+    const spans: number[] = [];
+    let states = 0;
+    while (spans.length < 6) {
+      states += machine.step();
+      if (machine.cpu.pc === at) {
+        spans.push(states);
+        states = 0;
+      }
+    }
+    // States rather than master cycles, because this timer counts the system
+    // clock — which is the crystal halved and is what one processor state is.
+    const period = NGP_SYSTEM_HZ / hz;
+    for (const span of spans.slice(2)) expect(Math.abs(span - period)).toBeLessThan(period / 20);
+  });
+
+  it("arms the interrupt with a priority that accepts it", async () => {
+    // The trap in this field, and the one thing here a driver is most likely to
+    // get wrong in a way nothing else reports: the priority *is* the enable, and
+    // both 0 and 7 refuse. A cartridge that wrote seven meaning "most urgent"
+    // would programme a perfect timer and never hear from it.
+    const runner = await AudioRomRunner.create(trackFor("ngpc"));
+    runner.captureBoot();
+    const machine = runner.machine as unknown as { read(address: number): number };
+    const level = (machine.read(NGP_INTET01) >> NGP_INTET_SHIFT.odd) & 0x07;
+    expect(level).toBeGreaterThanOrEqual(1);
+    expect(level).toBeLessThanOrEqual(NGP_INT_PRIORITY_MAX);
+  });
+
+  it("refuses a clock that is neither the timer nor the picture", async () => {
+    // A real source another console's binding produces, rather than a made-up
+    // string: what is being checked is that this resolver names what it cannot
+    // do instead of building a cartridge that programmes nothing.
+    const script = trackFor("ngpc");
+    await expect(
+      buildAudioRom({ ...script, driver: { ...script.driver, source: "line-irq" } }),
+    ).rejects.toThrow(/no 'line-irq' clock/);
   });
 });
 

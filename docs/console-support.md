@@ -38,8 +38,8 @@ columns are [doc 03](03-console-matrix.md); the plan for the empty cells is
 |---|---|---|---|---|---|---|---|---|---|---|
 | Sega Game Gear | `gg` | `sms` | yes | `bin` `asm` `c` | WLA-DX | genesis-plus-gx | `sms` | yes | yes | 59.92 Hz |
 | Neo Geo | `neogeo` | `neogeo` | yes | `bin` `asm` `c` | GNU m68k binutils | geolith | `neogeo` | yes | — | 120 Hz |
-| Neo Geo Pocket | `ngp` | `ngp` | yes | — | — | — | — | yes | — | — |
-| Neo Geo Pocket Color | `ngpc` | `ngpc` | yes | `bin` `asm` `c` | none (demake's own TLCS-900/H assembler) | beetle-ngp | `ngpc` | yes | — | 59.95 Hz |
+| Neo Geo Pocket | `ngp` | `ngp` | yes | — | — | — | — | yes | yes | — |
+| Neo Geo Pocket Color | `ngpc` | `ngpc` | yes | `bin` `asm` `c` | none (demake's own TLCS-900/H assembler) | beetle-ngp | `ngpc` | yes | yes | 59.95 Hz |
 | PC Engine / TurboGrafx-16 | `pce` | `pce` | yes | `bin` `asm` `c` | WLA-DX | beetle-pce-fast | `pce` | yes | yes | 120 Hz |
 | WonderSwan | `ws` | `ws` | yes | `bin` `asm` `c` | NASM | beetle-wswan | `wsc` | yes | yes | 75.47 Hz |
 | WonderSwan Color | `wsc` | `wsc` | yes | `bin` `asm` `c` | NASM | beetle-wswan | `wsc` | yes | yes | 75.47 Hz |
@@ -60,4 +60,4 @@ columns are [doc 03](03-console-matrix.md); the plan for the empty cells is
 - **21** consoles have a spec, so all 21 do art.
 - **17** build a display ROM; **17** of those are proven pixel-perfect in an emulator.
 - **16** compile a Demotic game.
-- **18** demake music and sound effects; **16** play it from inside a game, and **12** build a cartridge whose only job is one schedule.
+- **18** demake music and sound effects; **16** play it from inside a game, and **14** build a cartridge whose only job is one schedule.

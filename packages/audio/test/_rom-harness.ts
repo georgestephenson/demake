@@ -22,6 +22,7 @@ import { Gameboy } from "@demake/dmg";
 import { Gba } from "@demake/gba";
 import { Md } from "@demake/md";
 import { Nes } from "@demake/nes";
+import { Ngp } from "@demake/ngp";
 import { Pce } from "@demake/pce";
 import { Nds } from "@demake/nds";
 import { Sms } from "@demake/sms";
@@ -210,6 +211,22 @@ export class AudioRomRunner {
       // the only window there is — which is the whole reason it exists.
       const machine = new Vb(built.bytes);
       machine.vsuTap = push;
+      this.machine = machine;
+    } else if (built.family === "ngpc") {
+      // The tenth family, and the only one whose chip has to be *asked for*: the
+      // T6W28's own bus is the Z80 sound processor's, so this core refuses every
+      // port write — and therefore taps nothing at all — until the cartridge has
+      // written the two bytes that hand it over. A capture that came back empty
+      // here would be a permission failure rather than a wrong note, which no
+      // other console in the set can produce.
+      //
+      // Which Neo Geo Pocket it comes up as is a constructor argument rather
+      // than the header's system byte: these two machines differ in nothing a
+      // cartridge could record about their *sound*, so the console the schedule
+      // was fitted to is what decides — `@demake/wsc`'s arrangement, one console
+      // along.
+      const machine = new Ngp(built.bytes, consoleId === "ngp" ? "ngp" : "ngpc");
+      machine.soundTap = push;
       this.machine = machine;
     } else if (built.family === "sms") {
       // Which *Sega* it comes up as is the cartridge's own region nibble, never
