@@ -16,8 +16,8 @@ real emulator, compared pixel for pixel):
 | --------------------- | ------ | ----------------------------------------------------------------------------- |
 | art (images)          | 03–06  | working, seventeen consoles proven on hardware                                |
 | game (Demotic `.dmt`) | 14, 15 | language, interpreter, tests, preview — and playable ROMs on sixteen consoles |
-| music (`arrange`)     | 16, 17 | MIDI → chip music, seventeen consoles — and a Game Boy ROM that plays it      |
-| sound (`sfx`)         | 16, 18 | WAV → chip effects, seventeen consoles — same ROM, same proof                 |
+| music (`arrange`)     | 16, 17 | MIDI → chip music, eighteen consoles — and every game console plays it        |
+| sound (`sfx`)         | 16, 18 | WAV → chip effects, eighteen consoles — same driver, same proof               |
 
 The four are not four tools that share a repo any more: a `.dmt` says
 `music theme.mid` and `sound bounce.wav on ball hits paddle`, and `demake build`
@@ -772,9 +772,23 @@ whose lightest colour was rare — a caption placed correctly, demade correctly 
 invisible, which no register comparison can see. `vb-art.ts` counts the shades the
 demade picture actually places and ramps the font the other way.
 
-What it does not have is an **in-game audio driver**; doc 13 §Console rollout
-item 9 costs it. A V810 stream player would be the processor's first, and unlike
-before it is blocked on nothing but itself — the cartridge it goes in exists.
+**And it plays them.** `demake build -c vb` puts a **generated V810 driver** in
+the cartridge (`packages/audio/src/rom/vb-game.ts`, `v810-player.ts`) — the
+eighth processor to get one, and the last game console in the matrix to have
+none, so all sixteen now play their audio. Three things about it are this
+machine's. The **tick is a call rather than a handler**: this cartridge takes no
+interrupt anywhere and its main loop already waits a frame per pass on the
+drawing processor, so a tick per pass _is_ a tick per frame and there is nothing
+to count — which makes `resolveVbClock` the only clock resolver in the set with
+exactly one answer to give, at 50.2 Hz, the coarsest driver rate here. There is
+**no merge arm at all**, for the reason the chip section below gives, so no
+schedule for this console ever sets the run format's merge bit. And **register
+liveness is the caller's question at every `jal`**, because a V810 routine saves
+its return address and nothing else: `AudioSfxRelease` reads the steal mask into
+the same register both of its callers are holding something in, and `keep`/
+`unkeep` are that pair — without them a game's sound never fires and its music is
+otherwise perfect, which is what the shared battery's borrowed-channel case
+reported.
 
 **And it demakes music and effects.** `@demake/chip` models the VSU — six voices,
 five of them wavetables of thirty-two six-bit samples — and `demake arrange -c vb`,
@@ -796,10 +810,6 @@ note's **level goes in the envelope register** and the **pan in the level
 register**, so a volume step and a pan change are one write each and neither
 disturbs the other. Every other wavetable console in the set packs both into one
 byte and rewrites it for either.
-
-What it does not have is an **in-game driver**; doc 13 §Console rollout item 9
-costs it. A V810 stream player would be the _processor's_ first, and the
-cartridge it goes in now exists.
 
 **And it demakes music and sound, on both Neo Geo Pockets.** `@demake/chip`
 models the T6W28: a Master System's four voices with the thing that chip is
@@ -994,8 +1004,8 @@ mapper-less board before is byte-identical, on all seven.
 Still to come: the remaining Tier 2/3 consoles (each =
 a codegen backend, a ROM harness + toolchain, and a libretro core + DAC
 calibration), the remaining framebuffer/scanline layout paths (Lynx, GBA/NDS
-bitmap modes, 2600/7800), the Virtual Boy's in-game audio driver, and the rest of
-the Demotic runtime story (the speed work doc 14 §Runtime model names).
+bitmap modes, 2600/7800), and the rest of the Demotic runtime story (the speed
+work doc 14 §Runtime model names).
 
 **The audio spine is built, and two consoles boot** (docs
 [16](docs/16-audio-engine.md), [17](docs/17-music-demaker.md),
@@ -1043,7 +1053,9 @@ artifact _is_ the schedule.
 effect per event, one clock serving both, and the same proof one level up —
 `packages/demotic/test/_audio-battery.ts` boots a cartridge that is playing a game
 and diffs every register write against the schedules the demakers produced.
-It does that on **every** console the game backend builds for, over eleven
+It does that on **every** console the game backend builds for — all sixteen of
+them, so a demade game plays its music and effects wherever it plays at all —
+over twelve
 drivers that share only the packed format and — where the CPU is the same — the
 stream player, and below that only what the chip decides: an SM83 player on a
 programmable timer, a 6502 player on the picture's interrupt, the _same_ 6502
@@ -1052,9 +1064,10 @@ player storing a byte to an address, an SPC700 player that is not on the console
 processor at all, an ARM player clocked by its own sample transfer that has to
 _compute_ six of its ten voices before it can play them, a TLCS-900/H player
 that has to _ask_ for its chip before anything it sends is listened to, a V30MZ
-player that takes no interrupt at all and reads a timer's counter instead, and the
-_same_ Z80 player one board over as a whole program of its own, on a bus the game
-cannot see.
+player that takes no interrupt at all and reads a timer's counter instead, a V810
+player whose tick is a _call_ from the game's own loop rather than a handler, and
+the _same_ Z80 player one board over as a whole program of its own, on a bus the
+game cannot see.
 
 **And both demakers are on the web** (doc 07 §The audio sections): a music
 section and a sound section over their own worker, carrying the whole
@@ -1276,10 +1289,12 @@ packages/ngp/        @demake/ngp — a self-hosted Neo Geo Pocket core, mono *an
                      CPU is written against the published instruction set and
                      driven in its tests by core's own encoder — and on it **the
                      operand comes before the opcode**, which is why the decoder
-                     is two stages. Sound, the Z80 sound processor and the
-                     on-chip timers and DMA are absent rather than
-                     half-implemented, and the first of those is the only thing
-                     between this console and an in-game audio driver
+                     is two stages. Its sound is @demake/chip's T6w28, reached
+                     through two I/O bytes and refusing every port write until
+                     the main CPU has *asked* for the chip — which is the one
+                     thing about this console's audio no register diff could
+                     check. The Z80 sound processor itself and the on-chip timers
+                     and DMA are absent rather than half-implemented
 packages/pce/        @demake/pce — a self-hosted PC Engine core. Its PSG is
                      @demake/chip's Huc6280Psg, not a second one, and `psgTap`
                      is the window doc 16's Level A proof reads through. The CPU
@@ -1755,7 +1770,19 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
                      rate, since the counter only moves once a frame. One file
                      for *two* machines, on sms.ts's terms: the two WonderSwans
                      have the same sound hardware, so all it asks the console is
-                     the footer's minimum-system byte. shared.ts is what none of
+                     the footer's minimum-system byte.
+                     V810: v810-player.ts, with two callers, the eighth
+                     standalone cartridge (vb.ts) and a game (vb-game.ts) — the
+                     only driver whose tick is a *call* rather than a handler or
+                     a poll, because this cartridge takes no interrupt anywhere
+                     and its main loop already waits a frame per pass on the
+                     drawing processor. So `resolveVbClock` is the one clock
+                     resolver in the set with exactly one answer to give, and
+                     `keep`/`unkeep` in vb-game.ts are what a processor with no
+                     push list costs: a routine saves its return address and
+                     nothing else, so which registers survive a call is the
+                     *caller's* question at every one of them.
+                     shared.ts is what none of
                      them owns — the boot strip, the channel restriction, the
                      player's shape — and psg.ts is what the *chip* owns, shared
                      by the two CPUs that drive an SN76489; md-chips.ts is the
@@ -2385,7 +2412,7 @@ them do the work. Generators live in the session scratchpad; the `.mid` and
   files rather than any others because each is where a suite already looks —
   `pong` is the project `_audio-battery.ts` builds for its register battery on
   every console with a driver, so a vibrato's writes are diffed tick for tick on
-  eleven machines and on both routes to a chip; and the platformer is the one
+  every machine with a driver and on both routes to a chip; and the platformer is the one
   fixture whose NES build fits an NROM-128, so it is where the size sweep pays
   for vibrato on a small board. Leave the rest dry: not every tune is played
   with vibrato, and a modulated held note is a pitch write per tick wherever the
@@ -4050,13 +4077,18 @@ Ask the four questions separately — the answer to "is this a variant" is per s
 not per console.
 
 **And a console can gain a chip model, both demakers and a game backend without
-gaining an in-game driver.** The Neo Geo Pocket Color and the Virtual Boy are the
-cases, and the four columns are what make it sayable: `arrange -c ngpc` demakes its music, `build -c
-ngpc` produces a cartridge that traces identically to one that plays it, and the
-in-game-audio column says `—` because `GAME_DRIVERS` does not list it. That last
-list is the fourth registry the support matrix reads and it is keyed by _console_
-rather than by chip, precisely so that describing hardware cannot claim a driver
-(§Iron rules — what each console supports is derived, never written down).
+gaining an in-game driver.** No console is in that state today — the Virtual Boy
+was the last and is not any more — but the shape is worth keeping, because it is
+what the four columns exist to say: a build that traces identically to one that
+plays its music is a legitimate intermediate state, and the in-game-audio column
+says `—` for it because `GAME_DRIVERS` does not list the console. That list is
+the fourth registry the support matrix reads and it is keyed by _console_ rather
+than by chip, precisely so that describing hardware cannot claim a driver
+(§Iron rules — what each console supports is derived, never written down). One
+console is still in the neighbouring state, which is the same rule from the other
+side: the mono Neo Geo Pocket demakes music (`arrange -c ngp`) and the driver
+that would play it is already written, because that machine's sound hardware is
+the Color's — what it has no backend for is the _game_.
 
 ## Testing truths
 
@@ -4135,6 +4167,17 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   numbering and the release stored to it as an address, so the borrowed channel
   came back holding the effect's period on a cartridge whose every other write
   was exact. Only the borrowed-channel case could see it.
+- `packages/demotic/test/audio-vb.test.ts` is the eleventh and the last — with it
+  every console that builds a game is diffed tick for tick — and the only one
+  whose driver is entered by a **call**. There is no interrupt in this cartridge
+  at all, so a pass here is the claim that a tick per pass of the game's own loop
+  keeps a schedule's tempo, at 50.2 Hz, which is the coarsest driver clock in the
+  project. It is also where the cost of a processor with **no push list** was
+  caught, and only the borrowed-channel case could catch it: `AudioSfxRelease`
+  reads the steal mask into the register its callers are holding the request byte
+  and the effect's table entry in, so an effect was started from a pointer into
+  whatever the release left behind — which fires nothing, writes nothing, and
+  leaves every other assertion in the battery passing.
 - **`unsupported` names language gaps, not hardware ones**, and every console's
   list is empty. It stayed empty on the Super Nintendo through the period when
   that machine had no sound, because a `.dmt` that says `music theme.mid`
@@ -5022,13 +5065,15 @@ rather than by chip, precisely so that describing hardware cannot claim a driver
   `import()` like every other core, and they were charged to _every_ visitor for
   as long as the two lists disagreed. A budget that overstates itself fails the
   next honest change, which is what it did. Current figures:
-  391 KB for a visitor against a 400 KB budget, 668 KB for the whole site — and
+  398 KB for a visitor against a 400 KB budget, 696 KB for the whole site — and
   a new example game costs about fourteen of those kilobytes, because the page
   bundles every fixture SVG twice (raw text for the ROM build, a URL for the
-  preview). The worst family is the Game Boy at 86 KB on top of the 304 every
+  preview). The worst family is the Game Boy at 88 KB on top of the 311 every
   visitor fetches, which is where paging landed: a banked backend is three
   assembly passes and a bank planner, and it is charged to the console that has
-  one rather than to everybody. Measure with a **clean** `dist`: the checker reads every `.js` it
+  one rather than to everybody. **The margin is under two kilobytes**, so the next
+  thing that lands in the always-loaded half is what fails this gate — measure
+  before and after rather than at the end. Measure with a **clean** `dist`: the checker reads every `.js` it
   finds, so comparing two runs without deleting it in between compares two
   builds' chunks added together, which is how a passing gate can look like a
   failing one.

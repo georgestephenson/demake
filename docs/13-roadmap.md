@@ -726,48 +726,50 @@ the backend today, and either is a reason to revisit rather than to work around.
    and a wider shadow, and it is worth doing when a game wants it rather than
    before: the widest fixture in the library stages fifteen.
 
-   Two things it still does not have. The **in-game audio driver** is one, and
-   it is blocked on nothing but itself now: a V810 stream player would be the
-   processor's first, the cartridge it goes in exists, and `@demake/vb` has the
-   chip to prove it against. The other is the
-   depth ladder itself — `VB_DEPTH`'s three numbers are still a *proposal*,
+   One thing it still does not have, and it is not the audio any more (below):
+   the depth ladder itself — `VB_DEPTH`'s three numbers are still a *proposal*,
    because "how far in front" is a value no `.dmt` says and no Demakefile may
    (doc 14 §Scope), and the maintainer's call rather than an agent's.
 
-   **The sound is half done, and it is the half that does not need the backend.**
-   `@demake/chip` models the VSU, `binding/vb.ts` drives it and
-   `binding/vb-bank.ts` supplies its five waveform tables, so
-   `demake arrange -c vb`, `sfx` and `render` all work — this console demakes
-   music on the Neo Geo Pocket's precedent, where a demaker is per-domain and
-   does not wait for a cartridge. Three things about the chip are worth knowing:
-   the waveform tables are a **shared pool of five** rather than one per channel,
-   **every channel has a hardware envelope** (so a drum's decay is programmed
-   rather than written every tick), and **nothing is shared between channels** —
-   so this console emits no merge routine at all, the sixth in the matrix to do
-   so.
+   **The sound is done, both halves.** `@demake/chip` models the VSU,
+   `binding/vb.ts` drives it and `binding/vb-bank.ts` supplies its five waveform
+   tables, so `demake arrange -c vb`, `sfx` and `render` all work; `rom/vb.ts`
+   builds a cartridge whose only job is one schedule; and `rom/vb-game.ts` is
+   the **eleventh generated driver**, which puts music and effects inside a
+   game. `packages/demotic/test/audio-vb.test.ts` runs the shared battery on it,
+   so this console is diffed tick for tick like every other, and with it **every
+   console that builds a game plays its audio** — sixteen of sixteen.
 
-   What remains is the **in-game driver**, and most of what blocked it is gone.
-   `@demake/vb` has its sound processor — `@demake/chip`'s VSU behind the
-   console's own register page, advanced by the same crystal the CPU counts at a
-   quarter of it, with a tap for doc 16's Level A — so a driver here has
-   somewhere to be proven. And the player is written: `rom/v810-player.ts`, this
-   processor's first, produced for the standalone cartridge §A5 records and
-   proven by it tick for tick. Its clock is settled by the backend rather than
-   open, because this cartridge takes no interrupt anywhere and its main loop
-   already waits a frame per pass on `XPEND` — so a driver ticks with the loop
-   at 50.2 Hz, the slowest rate in the matrix and the one `vbBinding.fitRate`
-   already returns. What a *game* adds to that is a request protocol, a second
-   stream and a call from its own loop.
+   Three things about that driver are this console's rather than a predecessor's
+   restated.
 
-   Two of those are already costed. The player needs its **preemption arms**
-   first — a steal mask, a record path and a skip path, on `arm-player.ts`'s
-   shape — because the standalone owns the chip outright and emits none of them.
-   And this driver will be the sixth in the matrix with **no merge arm at all**,
-   which is the chip rather than a simplification: nothing on a VSU is shared
-   between channels, so the run format's merge bit never appears in a schedule
-   for this console and `shadowPlan` is handed no merge set. That makes it the
-   simplest of the eleven in one direction and, at 50.2 Hz, the coarsest in
-   another.
+   - **The tick is a call, not a handler.** Every other frame-clocked driver in
+     the set is entered by an interrupt and counts what it is owed, because its
+     main loop can overrun a frame. This cartridge takes no interrupt anywhere:
+     the loop builds a frame, waits on `XPEND` and starts again, so a tick per
+     pass *is* a tick per frame and there is nothing to count. `AudioTick` sits
+     at the bottom of that loop and `resolveVbClock` refuses any rate but the
+     frame's — which is 50.2 Hz, the slowest in the matrix and the coarsest
+     driver clock this project has.
+   - **There is no merge arm at all**, the sixth in the matrix and the fourth
+     whose reason is that the hardware shares *less*: panning is two nibbles of
+     the channel's own register, enabling is its own bit 7, and the one global
+     register is a panic button. So the run format's merge bit never appears in
+     a schedule for this console and `shadowPlan` is handed no merge set.
+   - **Register liveness is the caller's question at every call.** This
+     processor has no push list and no callee-saved convention, so a routine
+     saves its return address and nothing else — and `AudioSfxRelease` reads the
+     steal mask into the same register its two callers are holding the request
+     byte and the effect's table entry in. `keep`/`unkeep` are that pair, and
+     without them the effect is started from a pointer into whatever the release
+     left behind: a game whose sound never fires and whose music is otherwise
+     perfect, which is exactly what the borrowed-channel case reported.
+
+   The waveform tables are the boot's rather than tick zero's, which is the PC
+   Engine's reason on different hardware: five tables is a hundred and sixty
+   writes through the register port and a packed run's count is seven bits. They
+   are also written *directly* rather than through the packed-write routine — a
+   port byte is six bits of channel and register, and wave RAM is neither.
 
 68000 (Mega Drive, then Neo Geo), 65816 (SNES, plus the SPC700 for its audio) and
 ARM (GBA, NDS) slot in wherever Tier 1 breadth is wanted ahead of Tier 2 depth;
@@ -2189,7 +2191,7 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     `pong/rally.mid` and `platformer/meadow.mid`, on their synth lead at depth
     64 of 127. `pong` because it is the project `_audio-battery.ts` builds for
     its register battery on every console with a driver, so a vibrato's writes
-    are diffed against the schedule tick for tick on eleven machines and on both
+    are diffed against the schedule tick for tick on every machine and on both
     routes to a chip; the platformer because its NES build is the one
     small-board cartridge in the size sweep. The other nine stay dry, because
     not every tune is played with vibrato and the cost above is real.

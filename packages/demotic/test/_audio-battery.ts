@@ -71,6 +71,7 @@ import {
   buildPceGameAudio,
   buildSmsGameAudio,
   buildSpcGameAudio,
+  buildVbGameAudio,
   buildWscGameAudio,
   gbChannelOf,
   ndsChannelTag,
@@ -87,6 +88,7 @@ import {
   psgShadowSlot,
   t6w28ChannelTag,
   t6w28ShadowSlot,
+  vbChannelTag,
   PSG_STEREO_REG,
   sdspChannelTag,
   type ChannelTag,
@@ -101,6 +103,7 @@ import {
   SDSP_CLOCK_HZ,
   SN76489_CLOCK_HZ,
   T6W28_CLOCK_HZ,
+  VSU_CLOCK_HZ,
   WS_SOUND_CLOCK_HZ,
   StreamSink,
   type SampleSink,
@@ -117,6 +120,7 @@ import { Ngp } from "@demake/ngp";
 import { Pce } from "@demake/pce";
 import { Sms } from "@demake/sms";
 import { Snes } from "@demake/snes";
+import { Vb } from "@demake/vb";
 import { Wsc } from "@demake/wsc";
 
 import { compile } from "../src/compile.js";
@@ -132,6 +136,7 @@ import { buildNgpcRom } from "../src/codegen/ngpc.js";
 import { buildPceRom } from "../src/codegen/pce.js";
 import { buildSmsRom } from "../src/codegen/sms.js";
 import { buildSnesRom } from "../src/codegen/snes.js";
+import { buildVbRom } from "../src/codegen/vb.js";
 import { buildWscRom } from "../src/codegen/wsc.js";
 import { EXAMPLES, exampleProject, gameSource } from "./_projects.js";
 
@@ -513,6 +518,41 @@ const ALL: readonly Target[] = [
     },
   },
   {
+    id: "vb",
+    name: "Virtual Boy",
+    clockHz: VSU_CLOCK_HZ,
+    // The sixth console in the set with no shared register, and the fourth whose
+    // reason is that its hardware shares *less*: panning is two nibbles of the
+    // channel's own byte, enabling is its own bit 7, and the one global register
+    // is a panic button no stream writes. So there is no merge routine at all.
+    mergeReg: null,
+    mergeHelper: "shared-register-merge",
+    // No timer this driver can have — the cartridge takes exactly one interrupt
+    // and it is the video processor's — so a tick is a frame, and a frame here is
+    // 50.2 Hz, the slowest in the matrix. The window counts below are the Game
+    // Boy's 120 Hz ticks, so this is what makes each run cover the same seconds.
+    ratio: 20000000 / 398406 / 120,
+    // Every register is its own address in one eleven-bit space, so the tag
+    // carries no latch — it is a factory only because the contract is.
+    tag: vbChannelTag,
+    frameHz: 20000000 / 398406,
+    tickAddress: cartridgeTick,
+    async build(source, project) {
+      const { files, levels, assets } = exampleProject(project);
+      const program = compile(source, { profile: getProfile("vb"), files, levels });
+      const built = await buildVbRom(program, { assets });
+      const state = built.layout.audio as number;
+      const bound = await bindAudio(program, assets, {
+        build: (tracks, effects) =>
+          buildVbGameAudio({ tracks, effects: effects as GameEffect[], state }),
+      });
+      return { built, bound };
+    },
+    boot(rom) {
+      return wrap(new Vb(rom));
+    },
+  },
+  {
     id: "sms",
     name: "Master System",
     clockHz: SN76489_CLOCK_HZ,
@@ -840,10 +880,19 @@ const ALL: readonly Target[] = [
 
 /** Every core answers the same five questions; this is the adapter, once. */
 function wrap(
-  machine: Gameboy | Nes | Sms | Snes | Md | Gba | Nds | Pce | Wsc | Ngp | Neogeo,
+  machine: Gameboy | Nes | Sms | Snes | Md | Gba | Nds | Pce | Wsc | Ngp | Neogeo | Vb,
 ): Machine {
   return {
     step: () => {
+      // The one core that names it `step` — and it returns cycles rather than
+      // where it landed, because on this console a frame happens *inside* one:
+      // a demade cartridge waits for the beam by polling, so a machine that only
+      // drew between calls to `runFrame` would spin for ever under a harness
+      // stepping it one instruction at a time.
+      if (machine instanceof Vb) {
+        machine.step();
+        return machine.cpu.pc;
+      }
       machine.stepInstruction();
       // On the Super Nintendo the program counter that matters is the *sound*
       // processor's: the driver runs there, so that is where a tick begins.
@@ -876,7 +925,8 @@ function wrap(
         machine.psgTap = (reg, value) => listener(reg, value, 1);
         return;
       }
-      if (machine instanceof Wsc || machine instanceof Ngp) machine.soundTap = listener;
+      if (machine instanceof Vb) machine.vsuTap = listener;
+      else if (machine instanceof Wsc || machine instanceof Ngp) machine.soundTap = listener;
       else if (machine instanceof Sms || machine instanceof Pce) machine.psgTap = listener;
       else if (machine instanceof Snes) machine.dspTap = listener;
       else if (machine instanceof Nds) machine.spuTap = listener;
@@ -1907,6 +1957,13 @@ export function audioSweep(target: Target): void {
       // already near the edge and it is the nearest this console has.
       ngpc: ["shooter"],
       ws: ["caves", "runner"],
+      // And the Virtual Boy keeps one, for the Neo Geo Pocket Color's reason: a
+      // cartridge here is half a megabyte against a game's eleven kilobytes, so
+      // the assertion has no overflow to catch and what it still buys is that
+      // the driver's reported sizes are real. A picture on this console is also
+      // the whole tournament against 384×224 — the widest screen in the matrix —
+      // so one fixture is what the sweep can afford.
+      vb: ["shooter"],
     };
 
     for (const file of cases) {

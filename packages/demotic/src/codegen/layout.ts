@@ -39,6 +39,7 @@ import {
   NES_AUDIO_BYTES,
   PCE_AUDIO_BYTES,
   SMS_AUDIO_BYTES,
+  VB_AUDIO_BYTES,
   WSC_AUDIO_BYTES,
 } from "@demake/audio";
 import { WS_SAVE_MAX, WS_SAVE_SEGMENT } from "@demake/core";
@@ -1123,11 +1124,10 @@ export const VB_MEMORY: MemoryPlan = {
   // forty-nine, painted in the same frame.
   queueMax: 80,
   plotMax: 48,
-  // No driver embeds in a cartridge for this console yet (doc 13 §Console
-  // rollout item 9), so a game reserves nothing for one — and the trace of a
-  // build with its music left out is the trace of a build with it in, which is
-  // what makes the two comparable.
-  audioBytes: 0,
+  // The V810 driver's state. Nothing here is pinned, because this processor
+  // reaches every address the same way — a displacement off a register — so a
+  // driver's bytes are as cheap as any other game's.
+  audioBytes: VB_AUDIO_BYTES,
   // A BGMap entry is a word — eleven bits of character, two of flip and two of
   // palette — so a queued cell is a tile *and* an attribute.
   cellAttributes: true,

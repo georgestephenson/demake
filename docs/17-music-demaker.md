@@ -481,7 +481,7 @@ music with a warning rather than failing to build (AGENTS.md §Iron rules).
 `platformer/meadow.mid` put the wheel on their synth lead, at depth 64 of 127 —
 `pong` because it is the project the game-audio battery builds on every console
 with a driver, so a vibrato's writes are diffed against the schedule tick for
-tick on eleven machines and on both routes to a chip, and the platformer because
+tick on every machine with a driver and on both routes to a chip, and the platformer because
 its NES build is the one small-board cartridge in the size sweep. On `rally.mid`
 that is 5.2% more writes on a Mega Drive against 42% on a Master System, which
 is the difference between the two routes stated on one tune. The rest of the

@@ -98,6 +98,27 @@ export interface V810StreamOptions {
   data: DriverData;
   /** Routine called when a stoppable stream's order list runs out. */
   onEnd?: string;
+  /**
+   * Byte naming the channels another stream has taken.
+   *
+   * Supplying it makes this stream *preemptible*: a run whose channels appear
+   * there is skipped rather than written. Only music needs it.
+   */
+  steal?: number;
+  /**
+   * Where this stream keeps a copy of the channels another stream can borrow.
+   *
+   * A run naming one of `channels` is recorded as well as written, and a run
+   * that is *skipped* is recorded instead of written, so the copy is the music's
+   * own state whether or not the chip currently holds it (`shared.ts`
+   * §`shadowPlan`). There is no `merge` beside it, because nothing on this chip
+   * is shared between channels — panning is two nibbles of a channel's own
+   * register and enabling is its own bit 7.
+   */
+  shadow?: {
+    /** One per borrowable channel: its bit, and the address it indexes. */
+    channels: readonly { bit: number; base: number }[];
+  };
 }
 
 /** Push the return address, which this processor's call does not. */
@@ -232,18 +253,50 @@ export function emitStream(asm: Asm810, options: V810StreamOptions): string[] {
 /**
  * The run walk: writes grouped by who they belong to.
  *
- * One stream owns this chip today, so a run's channel bits are read and nothing
- * is skipped — there is no steal mask, no shadow and no merge, because nothing
- * on a VSU is shared between channels (`@demake/chip`'s `vsu.ts`). What is here
- * is the shape the format requires: the flags byte, the chaining bit, and the
- * count that follows it.
+ * **There is no merge arm**, and that is the chip rather than a simplification:
+ * nothing on a VSU is shared between channels — panning is two nibbles of a
+ * channel's own register, enabling is its own bit 7, and the one global register
+ * is a panic button — so this console is the sixth in the matrix to emit no
+ * merge routine at all, and the run format's merge bit never appears in a
+ * schedule for it.
+ *
+ * What is here is the flags byte, the two preemption tests, the write loop, the
+ * chaining bit and the count that follows it. The tests are *pulled*: a
+ * cartridge that owns the chip outright emits neither, which is every standalone
+ * and every game with no sound effects.
  */
 function emitRuns(asm: Asm810, options: V810StreamOptions): void {
-  const { prefix: p } = options;
+  const { prefix: p, data } = options;
+  const preemptible = options.steal !== undefined && data.runs;
 
   asm.label(`${p}TickRun`);
   fetch(asm, REG.flags);
+  if (preemptible) {
+    asm.movImm32(RUN.channels, REG.a0);
+    asm.and(REG.flags, REG.a0);
+    // A run that names no channel is never preempted — which is most of a track
+    // on a console whose effects only ever borrow one or two of its six voices.
+    asm.cmpImm5(0, REG.a0);
+    far(asm, "e", `${p}TickOwn`);
+    asm.ldb((options.steal as number) - options.state.data, REG.state, REG.a1);
+    asm.movReg(REG.a0, REG.a2);
+    asm.and(REG.a1, REG.a2);
+    asm.cmpImm5(0, REG.a2);
+    far(asm, "ne", `${p}TickSkip`);
+    if (options.shadow) {
+      // Ours right now, but borrowable: the chip and the copy both take it, so
+      // the copy is still true the next time an effect hands the channel back.
+      asm.movImm32(
+        options.shadow.channels.reduce((bits, one) => bits | one.bit, 0),
+        REG.a2,
+      );
+      asm.and(REG.a0, REG.a2);
+      asm.cmpImm5(0, REG.a2);
+      far(asm, "ne", `${p}TickRecord`);
+    }
+  }
 
+  asm.label(`${p}TickOwn`);
   asm.label(`${p}TickWrite`);
   fetch(asm, REG.a0);
   fetch(asm, REG.a1);
@@ -251,6 +304,54 @@ function emitRuns(asm: Asm810, options: V810StreamOptions): void {
   asm.addImm5(-1, REG.count);
   asm.cmpImm5(0, REG.count);
   far(asm, "ne", `${p}TickWrite`);
+  if (preemptible) asm.jr(`${p}TickNext`);
+
+  if (preemptible && options.shadow) {
+    // Written *and* recorded, one body per borrowable channel because each has a
+    // window of its own. The copy is taken first, because `AudioWrite` is free
+    // to spend every scratch register this file lends it.
+    asm.label(`${p}TickRecord`);
+    perChannel(asm, options, `${p}TickRecordOn`, (name, address) => {
+      asm.label(name);
+      fetch(asm, REG.a0);
+      fetch(asm, REG.a1);
+      asm.movImm32(address, REG.addr);
+      asm.add(REG.a0, REG.addr);
+      asm.stb(REG.a1, 0, REG.addr);
+      asm.jal("AudioWrite");
+      asm.addImm5(-1, REG.count);
+      asm.cmpImm5(0, REG.count);
+      far(asm, "ne", name);
+      asm.jr(`${p}TickNext`);
+    });
+  }
+
+  if (preemptible) {
+    // A skipped run is recorded and not written: the chip belongs to the effect
+    // until it lets go, but the music's own idea of the channel has to keep
+    // moving or the replay would restore a note that ended while it played.
+    asm.label(`${p}TickSkip`);
+    if (options.shadow) {
+      perChannel(asm, options, `${p}TickSkipOn`, (name, address) => {
+        asm.label(name);
+        fetch(asm, REG.a0);
+        fetch(asm, REG.a1);
+        asm.movImm32(address, REG.addr);
+        asm.add(REG.a0, REG.addr);
+        asm.stb(REG.a1, 0, REG.addr);
+        asm.addImm5(-1, REG.count);
+        asm.cmpImm5(0, REG.count);
+        far(asm, "ne", name);
+        asm.jr(`${p}TickNext`);
+      });
+    } else {
+      // Two bytes per write is the only thing the data says about its length.
+      asm.addImm5(2, REG.data);
+      asm.addImm5(-1, REG.count);
+      asm.cmpImm5(0, REG.count);
+      far(asm, "ne", `${p}TickSkip`);
+    }
+  }
 
   asm.label(`${p}TickNext`);
   asm.movImm32(RUN.more, REG.a0);
@@ -259,6 +360,37 @@ function emitRuns(asm: Asm810, options: V810StreamOptions): void {
   far(asm, "e", `${p}TickSave`);
   fetch(asm, REG.count);
   asm.jr(`${p}TickRun`);
+}
+
+/**
+ * Emit one body per borrowable channel, routed on the run's channel bits in
+ * `a0`.
+ *
+ * The **first** channel falls through rather than being tested, because a run
+ * only reaches here when it named one of them — so with a single borrowable
+ * channel, which is what a game with one pitched effect has, there is no test at
+ * all. It has to be the first and not the last, because the bodies are emitted
+ * in index order directly below: testing every one but the *last* would send a
+ * run that named it into the *first* channel's body, which is a borrowed channel
+ * handed back holding another channel's registers (AGENTS.md §Working on audio).
+ */
+function perChannel(
+  asm: Asm810,
+  options: V810StreamOptions,
+  prefix: string,
+  body: (name: string, address: number) => void,
+): void {
+  const channels = (options.shadow as { channels: readonly { bit: number; base: number }[] })
+    .channels;
+  for (let index = 1; index < channels.length; index += 1) {
+    asm.movImm32((channels[index] as { bit: number }).bit, REG.a2);
+    asm.and(REG.a0, REG.a2);
+    asm.cmpImm5(0, REG.a2);
+    far(asm, "ne", `${prefix}${index}`);
+  }
+  for (let index = 0; index < channels.length; index += 1) {
+    body(`${prefix}${index}`, (channels[index] as { base: number }).base);
+  }
 }
 
 /**

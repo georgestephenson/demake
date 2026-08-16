@@ -77,6 +77,23 @@ panning byte *and* the mixer's fifth voice's right level — so `PackOptions` gr
 every write it made since it was written, which the Mega Drive survived only
 because it places its effects on chip zero.
 
+**And the eleventh, on the console that asks least.** `demake build -c vb` puts a
+game's music and effects in a Virtual Boy cartridge as V810 machine code, which
+is the last game console in the matrix to get a driver — every one of the sixteen
+that builds a game now plays its audio. Three of its answers are its own. The
+**tick is a call rather than a handler**: this cartridge takes no interrupt
+anywhere and its main loop already waits a frame per pass on the drawing
+processor, so a tick per pass *is* a tick per frame and there is nothing to count
+— which makes `resolveVbClock` the only clock resolver in the set with exactly
+one answer to give, at 50.2 Hz, the coarsest driver rate here. There is **no
+merge arm at all**, the sixth console with none and the fourth whose reason is
+that its hardware shares *less*: panning is two nibbles of a channel's own
+register and enabling is its own bit 7, so no schedule for this console ever sets
+the run format's merge bit. And **register liveness is the caller's question at
+every call**, because a V810 routine saves its return address and nothing else —
+which is a class of bug the eight consoles with a push list are simply spared
+(doc 13 §Console rollout item 9).
+
 **And the Super Nintendo, which is a fourth driver and a different shape of
 problem.** Its sound hardware is a second computer: an SPC700 with its own 64 KiB,
 its own timers and no access to the cartridge, so `demake build -c snes` emits two

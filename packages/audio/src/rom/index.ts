@@ -68,6 +68,15 @@ export {
   type WscGameAudioStats,
 } from "./wsc-game.js";
 export {
+  buildVbGameAudio,
+  resolveVbClock,
+  STOP as VB_STOP,
+  VB_AUDIO_BYTES,
+  type VbGameAudio,
+  type VbGameAudioInput,
+  type VbGameAudioStats,
+} from "./vb-game.js";
+export {
   buildSpcGameAudio,
   resolveSpcClock,
   SPC_CODE_BASE,
@@ -115,7 +124,7 @@ const DRIVERS: Readonly<Record<string, AudioRomFamily>> = {
 /**
  * The driver families a standalone cartridge can be built with.
  *
- * Seven, over six stream players: the NES and the PC Engine share
+ * Nine, over eight stream players: the NES and the PC Engine share
  * `mos-player.ts` because a HuC6280 *is* a 6502, the two Sega 8-bits share
  * `sms-driver.ts` because a Game Gear *is* a Master System, and the two
  * WonderSwans share `wsc-driver.ts` because they are one machine with different
@@ -180,6 +189,13 @@ const GAME_CLOCKS: Readonly<Record<string, "timer" | "frame">> = {
   // driver reads how many of them have passed rather than being told, because
   // the vertical-blank timer's counter is readable (`wsc-game.ts`).
   "ws-sound": "frame",
+  // The Virtual Boy has a hardware timer with an interrupt, and a demade
+  // cartridge takes neither: this processor's interrupt vectors are its own last
+  // page and the main loop is already waiting on the video processor's frame
+  // interrupt, which is the one thing a demade cartridge does take. So the
+  // picture is the clock and `AudioTick` is a call rather than a handler
+  // (`vb-game.ts` §resolveVbClock).
+  vsu: "frame",
 };
 
 /**
@@ -261,6 +277,10 @@ const CONSOLE_RATES: Readonly<Record<string, number>> = { gba: 32768 / 256 };
  *     *ask* for its chip: the T6W28's own bus belongs to a Z80 sound processor,
  *     so the driver writes two bytes of the main CPU's I/O page before anything
  *     it sends is listened to
+ *   - `vb` — V810 (`rom/vb-game.ts`), the eighth CPU and the last game console
+ *     in the matrix to get one. Its tick is a *call* rather than a handler: this
+ *     cartridge's only interrupt is the video processor's, the main loop already
+ *     waits on it, and a driver rate that is the frame rate needs nothing else
  *
  * Keeping it by console is what let the Game Boy Advance be absent from it for
  * as long as its ARM driver was: its four Game Boy channels are the same
@@ -293,6 +313,7 @@ const GAME_DRIVERS: readonly string[] = [
   // hardware and the same driver would run on it, but `demake build` has no
   // backend for that console, and this list is about what a *cartridge* can do.
   "ngpc",
+  "vb",
 ];
 
 /** Whether a `demake build` cartridge for this console can play its audio. */

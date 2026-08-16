@@ -271,3 +271,32 @@ export function vbChannelTag(): (reg: number, value: number, chip?: number) => n
     return 1 << ((reg - 0x400) >> 6);
   };
 }
+
+/**
+ * The tag the *packed data* carries: the channels an effect may take, and
+ * nothing else.
+ *
+ * Six channels against a four-bit field, which does fit — but the numbering is
+ * still the Nintendo DS's and the Mega Drive's rather than the identity, and for
+ * the same reason: what preemption asks is whether an *effect* may be using a
+ * voice, so only the channels effects were placed on are numbered and everything
+ * else tags zero. That is what lets a track's other four voices play *through* a
+ * sound effect instead of ducking for it — and what keeps the boot's hundred and
+ * sixty waveform writes, which belong to no channel at all, in a stream nothing
+ * ever skips.
+ */
+export function vbPackTag(
+  stealable: readonly number[],
+): () => (reg: number, value: number, chip: number) => number {
+  return () => {
+    const full = vbChannelTag();
+    return (reg: number, value: number, chip: number): number => {
+      const mask = full(reg, value, chip);
+      if (mask === 0) return 0;
+      for (let index = 0; index < stealable.length; index += 1) {
+        if (mask === 1 << (stealable[index] as number)) return 1 << index;
+      }
+      return 0;
+    };
+  };
+}

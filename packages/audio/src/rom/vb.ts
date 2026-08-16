@@ -59,10 +59,19 @@ import { AudioRomError, type AudioRomOptions, type BuiltAudioRom } from "./artif
 import { pack, stripBoot } from "./shared.js";
 import { emitStream, emitStreamData, REG, type V810StreamState } from "./v810-player.js";
 
-/** The chip's channel block, as `@demake/chip`'s `Vsu` numbers it. */
-const CHANNEL_BASE = 0x400;
-const CHANNEL_STRIDE = 0x40;
+/**
+ * The chip's channel block, as `@demake/chip`'s `Vsu` numbers it.
+ *
+ * Exported because the game driver reaches the same registers through the same
+ * port map: one definition, two callers, on the rule every bank and every port
+ * table in this directory already runs under.
+ */
+export const CHANNEL_BASE = 0x400;
+export const CHANNEL_STRIDE = 0x40;
 const STOP_REG = 0x580;
+
+/** Port bytes one channel's block occupies: eight registers, four bytes apart. */
+export const VSU_PORTS = 8;
 
 /** The port byte the stop register takes, above the forty-eight channel ones. */
 const STOP_PORT = 48;
@@ -234,7 +243,7 @@ function emitDriver(
  * times four. The stop register is the one value above the channels and is the
  * only comparison in here.
  */
-function emitWrite(asm: Asm810): void {
+export function emitWrite(asm: Asm810): void {
   asm.label("AudioWrite");
   asm.movImm32(VB_VSU + STOP_REG, REG.addr);
   // A five-bit immediate reaches −16…15 and the stop port is 48, so the

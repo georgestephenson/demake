@@ -237,6 +237,15 @@ export {
   type NdsGameAudioStats,
 } from "./rom/nds-game.js";
 export {
+  buildVbGameAudio,
+  resolveVbClock,
+  VB_AUDIO_BYTES,
+  STOP as VB_STOP,
+  type VbGameAudio,
+  type VbGameAudioInput,
+  type VbGameAudioStats,
+} from "./rom/vb-game.js";
+export {
   neogeoChannelOf,
   neogeoChannelTag,
   neogeoOwnerTag,
@@ -252,6 +261,7 @@ export {
 } from "./rom/neogeo-game.js";
 export { NDS_SPU_BASE, NDS_STATE_BASE } from "./rom/nds-driver.js";
 export { ndsChannelTag, ndsPackTag } from "./binding/nds.js";
+export { vbChannelTag, vbPackTag } from "./binding/vb.js";
 export { NDS_BANK_BASE, ndsBank, ndsSampleRam } from "./binding/nds-bank.js";
 export {
   GBA_AUDIO_IRQ,
