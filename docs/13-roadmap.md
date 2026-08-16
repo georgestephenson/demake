@@ -1895,17 +1895,17 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     lead, harmony) with confidences, plus the decoders. *Done means*: an MP3
     becomes a playable cartridge, and the parts it found are reported honestly
     enough that a wrong one can be corrected in one flag.
-  - **A5 — breadth** *(`nes`, `sms`, `gg`, `snes`, `md`, `gba` and `nds` done,
+  - **A5 — breadth** *(`nes`, `sms`, `gg`, `snes`, `md`, `gba`, `nds`, `pce`, `ngpc`, `ws`/`wsc`, `vb` and `neogeo` done,
     inside a game)*:
     the 2A03, the SN76489, the S-DSP, the YM2612, the Game Boy Advance's mixer and
     the Nintendo DS's SPU each have a chip model, a
     binding and a generated driver — 6502, Z80, SPC700, 68000 and ARM twice — and
     `demake build` puts music and
-    effects in the cartridge with doc 16's Level A proof over all of them. Seven of
-    them now also build a *standalone* audio cartridge — `demake gen … --format
-    rom` reaches the Game Boy, the NES, the PC Engine, both Sega 8-bits, the
-    Mega Drive, both ARM handhelds, the Virtual Boy and both WonderSwans — and
-    the rest do not,
+    effects in the cartridge with doc 16's Level A proof over all of them. All but
+    one of them now also build a *standalone* audio cartridge — `demake gen …
+    --format rom` reaches the Game Boy, the NES, the PC Engine, both Sega
+    8-bits, the Mega Drive, both ARM handhelds, the Virtual Boy, both Neo Geo
+    Pockets and both WonderSwans — and only the Super Nintendo does not,
     because a cartridge whose only job is one
     track is what a later caller needed and not what a game did. **The sixth is
     where the measurement stopped being a claim**: `wsc-driver.ts` moved not one
@@ -1926,6 +1926,20 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     the near miss: `demake arrange -c snes` writes an `.spc`, which is the same
     driver and the same schedules in the format that console's own players read,
     but it is a RAM image rather than a cartridge.
+
+    **The tenth is both Neo Geo Pockets, and its clock is the plainest statement
+    of the caller distinction in the set.** `ngp-driver.ts` moved not one
+    instruction — the seventh time that has been the whole answer — so
+    `rom/ngpc.ts` is a boot sequence, a clock and a wrapper. What is new is that
+    *which* clock is available depends on who is asking and *which timer* on the
+    hardware: this processor has four 8-bit interval timers, a game programmes
+    none of them because its two streams ride the picture, and a standalone
+    cartridge programmes an **upper** one because the two timers of a pair do
+    not offer the same prescaler outputs and only an upper one reaches the
+    bottom of a driver's useful band. And both machines get it for one byte in a
+    header, on the WonderSwan's terms, because their sound hardware is the same
+    hardware — which makes the mono Neo Geo Pocket the one console in the matrix
+    that builds an audio cartridge and no game.
 
     **The ninth is the Nintendo DS, and it cost what that estimate said it
     would.** `nds-driver.ts` already exported the console's whole share — the
@@ -1976,27 +1990,31 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     already asked for 128 Hz through `gameDriverRate` and the timer search
     happened to answer it exactly.
 
-    **The Neo Geo Pocket is the near miss with a named blocker, and finding it
-    cost a working cartridge.** Everything the seventh standalone needs is
-    already here — `ngp-driver.ts`, `packNgpRom`, a core to prove it in — and one
-    was written: two hundred and sixteen bytes of TLCS-900/H, the chip handed
-    over with `$55`/`$AA`, a vertical-blank handler installed as four bytes at
-    `$6FCC`, and an arranged track playing on both machines tick for tick against
-    the schedule. What it could not do is a *sound effect*, and the reason is a
-    line `binding/t6w28.ts` wrote long before there was a caller for it: this
-    chip's `fitRate` offers an on-chip timer as well as the frame, "which is how
-    a **standalone** driver holds a tempo the picture cannot express". A track
-    fits the frame at 59.95 Hz and an effect asks for the timer.
-    
-    So the cartridge that should exist rides a clock `@demake/ngp` does not
-    model — that core's timers are absent rather than half-implemented — and a
-    cartridge this project cannot boot in a core it owns is one whose Level A
-    proof does not exist. Building it anyway and refusing the timer by name would
-    ship the wrong cartridge and then have to change it, so it is held back
-    rather than half-landed. What it costs is the TLCS-900/H's timer block in
-    that core and its interrupt through the boot ROM's own dispatch, after which
-    the driver's clock is a reload and the file already written is most of the
-    rest.
+    **Both Neo Geo Pockets build one now** (`rom/ngpc.ts`), which makes ten
+    families over eight stream players and leaves this axis with nothing but the
+    Super Nintendo on it. `ngp-driver.ts` was not touched — a game already drove
+    it — so what the tenth standalone owns is a boot sequence, a clock and a
+    cartridge wrapper, which is the seventh time that has been the whole answer.
+
+    Getting there cost two things, and both were worth more than the cartridge.
+    The first was the **clock**, which is why this console was held back rather
+    than half-landed: a line `binding/t6w28.ts` wrote long before there was a
+    caller for it offers an on-chip timer as well as the frame, "which is how a
+    **standalone** driver holds a tempo the picture cannot express" — so a track
+    fits the frame at 59.95 Hz and an effect asks for the timer, and a cartridge
+    riding a clock `@demake/ngp` did not model is one whose Level A proof does
+    not exist. Building it anyway and refusing the timer by name would have
+    shipped the wrong cartridge and then had to change it. So the block was
+    described first (below), and the driver then took it: timer 1 — the *upper*
+    timer, because φT256 is the only prescaler output that reaches the bottom of
+    a driver's useful band and no single timer offers all four — with the reload
+    read off the schedule and the prescaler factored out of it, so the register a
+    cartridge programmes cannot disagree with the rate it declares. The frame is
+    accepted too, because refusing a source the binding legitimately produced
+    would be a build error about nothing.
+
+    The second was **four wrong addresses**, and they are the more interesting
+    half. See below.
 
     **And going after the source found the binding was wrong.** Toshiba's own
     TMP95C061 datasheet is on bitsavers, and it is not the scan it looks like —
@@ -2042,30 +2060,48 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     All of it is in `core/src/asm/ngp.ts` now, beside the vectors
     `ngpcspec.txt` had already settled.
 
-    **Implementing it then found the real blocker, which is neither a source nor
-    a piece of work: two cited descriptions of the same byte.** The timer block
-    is modelled — `packages/ngp/src/timer.ts`, with the prescaler gate, the
-    per-timer clock selections, the compare that clears the counter and the
-    priority-as-enable, each pinned against the datasheet — and the standalone
-    cartridge was written on top of it. It boots, takes the sound chip, programs
-    the timer and plays **nothing**, because `TRUN` is at I/O `$20` and this
-    console's sound chip answers `$20` as well: the datasheet says the first and
-    MAME's own Neo Geo Pocket driver says the second, and routing the page to
-    the timers swallows every write to the right-hand port.
+    **Implementing it then found four addresses this project had wrong, and the
+    way it presented is the lesson.** The timer block was modelled —
+    `packages/ngp/src/timer.ts`, with the prescaler gate, the per-timer clock
+    selections, the compare that clears the counter and the priority-as-enable,
+    each pinned against the datasheet — and the standalone cartridge was written
+    on top of it. It booted, took the sound chip, programmed the timer and played
+    **nothing**, because `TRUN` is at I/O `$20` and this project believed the
+    T6W28's right-hand write port was at `$20` as well. Two cited sources, one
+    byte: the datasheet said the first and MAME's own Neo Geo Pocket driver
+    appeared to say the second.
 
-    They cannot both be plain bytes of one 128-byte page. Either SNK's part is
-    not a stock TMP95C061 in its internal register map, or the sound ports are
-    decoded somewhere this project has mis-recorded — and nothing reachable here
-    settles which. So `@demake/ngp` keeps routing `$20` to the chip, which is
-    what every demade cartridge already depends on and what the whole in-game
-    audio battery proves; `timer.ts` stays a *tested description of the block*
-    rather than a peripheral; and the standalone cartridge is not registered,
-    because one built on a page with two answers is worse than none.
+    That read as a *collision* and was recorded as one — as a fact about the
+    hardware that nothing reachable could settle, with the cartridge held back
+    because one built on a page with two answers is worse than none. It was not.
+    MAME's I/O handler is **installed** at `$80`-`$BF`:
 
-    What unblocks it now is one fact: which device really answers `$20` on this
-    console. A second emulator's NGP driver, a homebrew that programs a timer,
-    or SNK's own documentation would each settle it. Everything else the
-    cartridge needs is written.
+    ```
+    map(0x000080, 0x0000bf).rw(FUNC(ngp_state::io_r), FUNC(ngp_state::io_w));
+    ```
+
+    so its `case 0x20:` is an offset into that window and the port is `$A0`.
+    beetle-ngp decodes the same addresses absolutely — `0xa0`/`0xa1` for the
+    chip, `0xb8`/`0xb9` for the pair that unlocks it, and `$20`-`$29` routed to
+    `timer_write8` ahead of everything else — and agrees. Four of demake's
+    constants were sixteen bytes low: both write ports, both unlock bytes, and
+    (separately) the two DAC ports.
+
+    **Nothing could see it**, which is the point and the reason it survived a
+    year. `@demake/ngp` read the same four addresses `@demake/audio`'s driver
+    wrote, so a demade cartridge wrote where a demade emulator read and the whole
+    in-game audio battery passed on a pair of ports no Neo Geo Pocket has —
+    §Gotchas' wrong-and-consistent failure, in a machine description, exactly
+    where AGENTS.md warns it lands. What surfaced it was describing a *second*
+    device on the same page: the timers really are at `$20`, so wiring them in
+    made the two descriptions contradict each other for the first time.
+
+    Two things follow for anyone reading a register map out of an emulator. A
+    memory map's `case` labels are offsets from wherever the handler was
+    installed, so a citation has to carry the install line and not only the
+    switch. And a collision between two sources is a reason to re-read both,
+    not a fact to record — the first version of this section wrote it down as
+    unresolvable and was wrong.
 
     The SN76489 is also the
     one that stretched the shared packing layer: its channel is in the data byte
@@ -2156,13 +2192,31 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     schematic settles the *board's* term exactly and says nothing about the two
     parts' full-scale output levels, which is the other term and which neither
     chip model measures. Moving the constant to 27 dB on half a derivation would
-    re-base every Mega Drive render on an inference. What it does do is remove
-    the doubt about *direction*: three independent lines now agree and this
-    project is the outlier on all three — the schematic's own network,
-    genesis-plus-gx's `psg_preamp` default, and the Level B spectrum that
-    measures the two against each other and puts the core about 17 dB below us
-    on this balance. Six decibels is too little; how much too little wants the
-    output levels, and the maintainer's call.
+    re-base every Mega Drive render on an inference — and it would be a *wrong*
+    inference, because the missing term runs the other way by roughly as much:
+    the PSG pin swings a logic-level square where `MOL`/`MOR` are low-level
+    analogue outputs, which is why the board has to knock the first one down by
+    twenty-seven decibels to reach a balance a listener recognises. A constant
+    at 27 dB would put the squares at four per cent of the mix.
+
+    **So the question was sized rather than closed, and it is 3.3 dB.** The one
+    reference that measures *both* terms against a real board is
+    genesis-plus-gx, and it says so in a comment rather than being inferred
+    from: `PSG_MAX_VOLUME` is 2800 "roughly adjusted to match VA4 MD1 PSG/FM
+    balance with 1.5x amplification of PSG output", which is the 1.5 its default
+    `psg_preamp` applies. Four squares therefore reach 16800 there against six
+    FM channels' 49146 — a ratio of **0.342** where `MD_CHIP_GAINS` applies
+    **0.5** — and the two numbers are directly comparable because both of our
+    models normalise the same way, `Sn76489` by `4 × 8191` and `Ym2612` by
+    `6 × 8192`. Six decibels is too little by **3.3**, not by twenty-one.
+
+    What is left is unchanged in kind and much smaller in size: a level
+    measurement of the two parts, or a board. Matching the emulator is still not
+    the way to close it — that is exactly what doc 16 §The proof says a
+    cross-check must never be used for, and 0.342 is a calibration somebody made
+    by ear as much as by meter. The constant stays at 0.5 and the comment on it
+    now states the gap, the direction and the reference, so the next person to
+    look at it starts from a number rather than from a suspicion.
 
     Getting there took two false starts worth recording. Sega's Genesis II
     manual is the wrong board — this console's audio circuit changed between

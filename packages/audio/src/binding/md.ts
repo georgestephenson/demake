@@ -74,27 +74,41 @@ const YM_SAMPLE_DIVIDER = 144;
  * FM voices. So something has to state the *board's* weighting, and putting it
  * here rather than in `Sn76489` is what keeps that model one model.
  *
- * **Six decibels is not what the board does, and the schematic says so.** On a
- * Model 1 the two chips meet at a passive summing node in front of the
+ * **The schematic settles one term of two, and on its own it is misleading.**
+ * On a Model 1 the two chips meet at a passive summing node in front of the
  * headphone amplifier, and they reach it through very different resistors: the
  * VDP's PSG pin drives a 2.2 kΩ load and a 220 pF cap, is coupled by 1 µF, and
  * is summed through **51 kΩ** — one for each channel, since that output is
  * mono — while each of the YM2612's MOL/MOR drives its own 2.2 kΩ load, is
- * coupled by 10 µF, and is summed through **2.2 kΩ**. That is a ratio of 23.2
- * to 1, or **27.3 dB**, where this constant applies 6.
+ * coupled by 10 µF, and is summed through **2.2 kΩ**. That is 23.2 to 1, or
+ * 27.3 dB. What it does *not* settle is the two parts' full-scale output
+ * levels, which is the other term and which neither chip model here measures —
+ * and it runs the other way by roughly as much, because the PSG pin swings a
+ * logic-level square where the FM chip's are low-level analogue outputs. A
+ * constant moved to 27 dB on the network alone would put the PSG four per cent
+ * of the way up the mix, which is not what a Mega Drive sounds like.
  *
- * What the schematic settles is the board's half exactly; what it does not
- * settle on its own is the two parts' full-scale output levels, which is the
- * other term and which no model here measures. So this is left where it was
- * rather than moved to 27 dB on a half-derivation — moving it re-bases every
- * Mega Drive render and is the maintainer's call (doc 13 §A5.5). Three
- * independent lines now point the same way, though, and this constant is the
- * outlier on all three: the schematic's network, genesis-plus-gx's own
- * `psg_preamp` default, and the Level B spectrum that measures the two against
- * each other.
+ * **End to end, the gap is 3.3 dB and this constant is the louder side.** The
+ * one reference that measures *both* terms against a real board is
+ * genesis-plus-gx, whose `PSG_MAX_VOLUME` of 2800 carries a comment saying it
+ * was adjusted to match a VA4 Model 1's PSG/FM balance with the 1.5× the
+ * default `psg_preamp` applies — so four channels reach 16800 against six FM
+ * channels' 49146, a ratio of 0.342 where this applies 0.5. Both models here
+ * normalise the same way (`Sn76489` by `4 × 8191`, `Ym2612` by `6 × 8192`), so
+ * the two numbers are directly comparable and the difference is 3.3 dB rather
+ * than the twenty-one the network alone would suggest.
  *
- * Source: Sega Genesis (Model 1) sound and video schematic — R31/C39/C40 and
- * R34/R37 on the PSG side, R53/R54 and the 2.2 kΩ pair on the FM side.
+ * It is left where it is deliberately. Moving it re-bases every Mega Drive
+ * render — an output-byte change with goldens and a changeset behind it — and
+ * the way to close it is a measurement of the two parts' output levels, not a
+ * match to somebody's emulator (AGENTS.md §Working on audio, doc 13 §A5.5).
+ * What has changed is that the size of the question is now known: 3.3 dB, in a
+ * known direction, against a stated reference.
+ *
+ * Sources: Sega Genesis (Model 1) sound and video schematic — R31/C39/C40 and
+ * R34/R37 on the PSG side, R53/R54 and the 2.2 kΩ pair on the FM side;
+ * genesis-plus-gx `core/sound/psg.c` (`PSG_MAX_VOLUME`) and `ym2612.c` (the
+ * ±8191 per-channel clamp).
  */
 export const MD_CHIP_GAINS: readonly number[] = [1, 0.5];
 

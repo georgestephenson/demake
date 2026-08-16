@@ -1077,20 +1077,19 @@ plan as a piano roll, the tournament as a strategy picker — and handing back t
 four pinned byte-identical to the CLI's by
 `packages/web/test/e2e/determinism.spec.ts`.
 
-Still to come for audio: `bin`/`asm`/`c` emit, a _standalone_ audio cartridge for
-the consoles that still have none — the Game Boy, the **NES**, the **PC Engine**,
-both **Sega 8-bits**, the **Mega Drive**, both **ARM handhelds**, the **Virtual
-Boy** and both **WonderSwans** build one today,
-and the Neo Geo Pocket Color has a driver only inside a
-game, while the Super Nintendo's writes an `.spc` rather than a cartridge. What
-each of
+Still to come for audio: `bin`/`asm`/`c` emit, and a _standalone_ audio cartridge
+for the one console that still has none — the Game Boy, the **NES**, the **PC
+Engine**, both **Sega 8-bits**, the **Mega Drive**, both **ARM handhelds**, the
+**Virtual Boy**, both **Neo Geo Pockets** and both **WonderSwans** build one
+today, and only the Super Nintendo's writes an `.spc` rather than a cartridge.
+What each of
 them costs is no longer an estimate but a measurement: the stream player belongs
 to the _processor_ and is already written, so a console adds a boot sequence, a
 clock and a cartridge wrapper and nothing else — which is why the third of them
 reused the second's player unchanged, the fourth reused a _game's_, the fifth
 changed not one instruction of one, the sixth changed not one instruction of
 a _game's_ either, and the seventh changed not one instruction of **two** shared
-files. What the fourth and fifth did was find, twice, the
+files, and the tenth changed not one instruction of a _game's_ either. What the fourth and fifth did was find, twice, the
 bill for a clock nobody had ever had to keep. The Sega binding would fit a rate
 to the VDP's line interrupt, and that interrupt fires only inside the active
 display, so the first cartridge to ride one would have played at half the rate it
@@ -1293,8 +1292,12 @@ packages/ngp/        @demake/ngp — a self-hosted Neo Geo Pocket core, mono *an
                      through two I/O bytes and refusing every port write until
                      the main CPU has *asked* for the chip — which is the one
                      thing about this console's audio no register diff could
-                     check. The Z80 sound processor itself and the on-chip timers
-                     and DMA are absent rather than half-implemented
+                     check. Its **8-bit interval timers** are here too, for the
+                     one caller that wants one: a standalone audio cartridge,
+                     whose clock the picture cannot express — and they raise
+                     through the boot ROM's own dispatch table exactly as the
+                     frame does. The Z80 sound processor itself and the DMA are
+                     absent rather than half-implemented
 packages/pce/        @demake/pce — a self-hosted PC Engine core. Its PSG is
                      @demake/chip's Huc6280Psg, not a second one, and `psgTap`
                      is the window doc 16's Level A proof reads through. The CPU
@@ -1741,10 +1744,20 @@ packages/audio/      @demake/audio — the music + sound demakers (docs 16, 17, 
                      set whose *main processor does nothing at all*: the sound
                      channels answer the ARM7 alone and the loader enters both
                      binaries, so the ARM9's whole program is a branch to itself.
-                     TLCS-900/H: ngp-driver.ts and ngp-game.ts, and the only
-                     driver that has to *ask* for its chip — a T6W28's own bus is
-                     the Z80 sound processor's, so two bytes of the main CPU's
-                     I/O page hand it over before anything else is listened to;
+                     TLCS-900/H: ngp-driver.ts, with two callers, a game
+                     (ngp-game.ts) and the tenth standalone cartridge (ngpc.ts,
+                     named for the family the way wsc.ts is),
+                     and the only driver that has to *ask* for its chip — a
+                     T6W28's own bus is the Z80 sound processor's, so two bytes
+                     of the console's I/O page hand it over before anything else
+                     is listened to. The pair is also where the *caller*
+                     distinction is at its plainest: a game rides the picture and
+                     a cartridge programmes an 8-bit timer, and because the two
+                     timers of a pair do not offer the same clocks, *which* timer
+                     the standalone takes is the hardware's decision rather than
+                     a preference. One file for *two* machines, on sms.ts's
+                     terms: the two Neo Geo Pockets have the same sound hardware,
+                     so all it asks the console is the header's system byte.
                      t6w28.ts is what the *chip* owns, psg.ts's file for a part
                      with two write ports carrying different registers.
                      The Neo Geo's is neogeo-driver.ts and neogeo-game.ts, and
@@ -3774,21 +3787,25 @@ that keep them from being undone. All of them come from doc 16.
   cartridge that programs one yet. Before recording a hardware fact as
   unobtainable, try pulling the text out of the PDF rather than asking a fetcher
   to read it.
-- **Two cited sources can describe the same byte, and one of them is wrong.**
-  Toshiba's datasheet puts the Neo Geo Pocket processor's `TRUN` at I/O `$20`;
-  MAME's own driver for that console puts the T6W28's right-hand write port
-  there, which is where `NGP_SOUND_RIGHT` comes from. Both are in the same
-  128-byte page and both are cited, so the standalone audio cartridge that
-  §A5 has wanted for months is blocked on a _fact_ rather than on work: the
-  timer block is modelled and tested (`packages/ngp/src/timer.ts`) and the
-  cartridge was written, and it boots, takes the chip, programs the timer and
-  plays nothing — because routing that page to the timers swallows the sound.
-  `@demake/ngp` therefore keeps `$20` for the chip, which every demade cartridge
-  already depends on, and the timer stays a description rather than a
-  peripheral. Before adding a register to a machine description, check whether
-  the address is already spoken for; two citations agreeing about a number and
-  disagreeing about what is at it is the wrong-and-consistent failure with the
-  consistency removed.
+- **A memory map's `case` labels are offsets, not addresses, and reading them as
+  addresses put four of the Neo Geo Pocket's ports sixteen bytes low.** MAME's
+  `ngp.cpp` installs its I/O handler with
+  `map(0x000080, 0x0000bf).rw(io_r, io_w)` and then switches on `address` inside
+  it, so `case 0x20: // t6w28 "right"` is the port at **`$A0`** — and demake had
+  `NGP_SOUND_RIGHT` at `$20`, `NGP_SOUND_LEFT` at `$21`, the two unlock bytes at
+  `$38`/`$39` and the DAC pair at `$22`/`$23`, all of them a window's worth
+  wrong. **Nothing could see it**, because `@demake/ngp` read the same four
+  addresses `@demake/audio`'s driver wrote: a demade cartridge wrote where a
+  demade emulator read, and the whole in-game audio battery passed on a pair of
+  ports no such console has. What surfaced it was describing a _second_ device
+  on the same page — the processor's timers, which really are at `$20`-`$29` —
+  because that made two descriptions of one byte contradict each other for the
+  first time. Two habits come out of it. Cite the **install line** along with the
+  `case`, or the citation does not say what address it means. And a collision
+  between two sources is a reason to re-read both rather than a fact to record:
+  this one was written down as unresolvable, in three files, and it was simply
+  an error in one of them — beetle-ngp's `mem.c` decodes the same ports
+  absolutely and settled it in a minute.
 - **And a register figure that really is an image is still readable, if it
   checks against something.** The three that text could not give — `TRUN`,
   `T01MOD` and the timer interrupt-enable byte — are 8-bit greyscale images
@@ -3801,20 +3818,26 @@ that keep them from being undone. All of them come from doc 16.
   agrees with nothing is worth nothing — find the cross-check before trusting
   the read, because this is the one place a plausible misread becomes a machine
   description that is wrong and consistent.
-- **`MD_CHIP_GAINS` is six decibels and the Model 1 schematic says twenty-seven,
-  which is a question in front of the maintainer rather than a number to
-  change.** The two chips meet at a passive summing node in front of the
-  headphone amplifier: the VDP's PSG pin arrives through **51 kΩ** (twice — that
-  output is mono) and each of the YM2612's `MOL`/`MOR` through **2.2 kΩ**, both
-  behind their own 2.2 kΩ load. That is the board's term settled exactly; what
-  it does not settle is the two parts' full-scale output levels, which is the
-  other term and which neither chip model measures. So the constant stays where
-  it is — moving it re-bases every Mega Drive render — but the _claim_ beside it
-  that six decibels is what the hardware does has gone, because it is false.
-  Three lines now agree that this project is the outlier and by roughly this
-  much: the schematic, genesis-plus-gx's `psg_preamp`, and Level B's spectrum.
-  Doc 13 §A5.5 records what is left; still do not close it by matching an
-  emulator.
+- **A resistor ratio is half a gain, and quoting it alone is worse than quoting
+  nothing.** `MD_CHIP_GAINS` puts a Mega Drive's PSG six decibels under its FM,
+  and the Model 1 schematic's summing network says twenty-seven: the VDP's PSG
+  pin arrives at the node through **51 kΩ** (twice — that output is mono) and
+  each of the YM2612's `MOL`/`MOR` through **2.2 kΩ**, all behind their own
+  2.2 kΩ load. That settles the _board's_ term exactly and it is not the gain,
+  because the other term — the two parts' full-scale output levels, which
+  neither chip model measures — runs the other way by roughly as much: this PSG
+  pin swings a logic-level square where `MOL`/`MOR` are low-level analogue
+  outputs, which is _why_ the board knocks it down so hard. A constant moved to
+  27 dB on the network alone would put the squares at four per cent of the mix.
+  **The end-to-end figure is 3.3 dB**, from the one reference that measures both
+  terms against a board and says so out loud: genesis-plus-gx's
+  `PSG_MAX_VOLUME` of 2800 is commented as matching a VA4 Model 1's balance with
+  its default 1.5× preamp, so four squares reach 16800 against six FM channels'
+  49146 — 0.342 where this applies 0.5, directly comparable because both our
+  models normalise by (channels × 8191). The constant stays: moving it re-bases
+  every Mega Drive render, and 0.342 is somebody's calibration rather than a
+  measurement. Doc 13 §A5.5 records what is left; still do not close it by
+  matching an emulator.
 - **Audio DSP is where determinism breaks first.** FFT twiddles, windows, mel
   banks, dB conversions and resampler kernels all come from
   `packages/core/src/math/kernels.ts`. An FFT seeded with `Math.cos` returns
@@ -4139,10 +4162,14 @@ says `—` for it because `GAME_DRIVERS` does not list the console. That list is
 the fourth registry the support matrix reads and it is keyed by _console_ rather
 than by chip, precisely so that describing hardware cannot claim a driver
 (§Iron rules — what each console supports is derived, never written down). One
-console is still in the neighbouring state, which is the same rule from the other
-side: the mono Neo Geo Pocket demakes music (`arrange -c ngp`) and the driver
-that would play it is already written, because that machine's sound hardware is
-the Color's — what it has no backend for is the _game_.
+console is in the neighbouring state, which is the same rule from the other
+side and is now the sharpest example of it: the mono Neo Geo Pocket demakes
+music, demakes sound, **and builds a bootable audio cartridge**
+(`demake gen … -c ngp --format rom`), because its sound hardware is the Colour
+machine's and both a demaker and a standalone cartridge are per-_domain_. What
+it has no backend for is the _game_ — so `demake build -c ngp` does not exist,
+and the matrix says `yes` in the audio-ROM column and `—` in the other two. Four
+questions, asked separately, per console.
 
 ## Testing truths
 
@@ -5090,7 +5117,13 @@ the Color's — what it has no backend for is the _game_.
   family from a static description and `import()`s the emitter only when
   something builds, and the page's `src/players/` does the same for the emulator
   cores. Chunks are matched to a family **by name**, so a module that
-  has to be per-family belongs in a file named after it; anything else counts as
+  has to be per-family belongs in a file named after it — which is why
+  `@demake/audio`'s standalone cartridge builders are named for the _codegen_
+  family and not for the chip or the console pair: `rom/ngpc.ts` serves both Neo
+  Geo Pockets and was called `ngp.ts` for exactly one build, in which its six
+  kilobytes of TLCS-900/H assembler were charged to every visitor because
+  `familyFor("ngp")` is undefined. A rename is the whole fix and the gate is what
+  finds it. Anything else counts as
   always-loaded, which fails loud rather than passing quietly — **unless the
   import graph proves only families reach it**, which is how a chunk _two_
   consoles share is charged to both of them rather than to everyone. That case is
@@ -5119,7 +5152,7 @@ the Color's — what it has no backend for is the _game_.
   `import()` like every other core, and they were charged to _every_ visitor for
   as long as the two lists disagreed. A budget that overstates itself fails the
   next honest change, which is what it did. Current figures:
-  398 KB for a visitor against a 400 KB budget, 696 KB for the whole site — and
+  399 KB for a visitor against a 400 KB budget, 704 KB for the whole site — and
   a new example game costs about fourteen of those kilobytes, because the page
   bundles every fixture SVG twice (raw text for the ROM build, a URL for the
   preview). The worst family is the Game Boy at 88 KB on top of the 311 every

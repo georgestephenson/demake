@@ -50,10 +50,10 @@ The web app's audio sections are live over the same engine, the browser's `.vgm`
 sidecar, WAV and cartridge are byte-identical to the CLI's (doc 07 §The audio
 sections), and the ROM pane plays whichever chip the running cartridge has. What
 is not built: the remaining chips (the handhelds), a *standalone* audio cartridge
-for the consoles that still have none (the Game Boy, the **NES**, the **PC
+for the one console that still has none (the Game Boy, the **NES**, the **PC
 Engine**, both **Sega 8-bits**, the **Mega Drive**, both **ARM handhelds**, the
-**Virtual Boy** and both **WonderSwans** build one; every other
-console with a driver plays it only from inside a game, and
+**Virtual Boy**, both **Neo Geo Pockets** and both **WonderSwans** build one;
+only the Super Nintendo plays it from inside a game alone, and
 [`console-support.md`](console-support.md)'s **audio ROM** column is where that
 is stated rather than here), driver backends for the remaining consoles,
 `bin`/`asm`/`c` emit, and the lossy encoders.
@@ -750,6 +750,20 @@ So `resolveMdClock` and `resolveMdAudioClock` refuse **opposite** sources, and
 `GAME_CLOCKS` marks this chip `frame` while `mdBinding.fitRate` goes on offering
 the timer. Neither is wrong; they are answers to different questions.
 
+**The Neo Geo Pocket is the same distinction reached by simpler hardware**, and
+it is the plainest statement of it in the set. That console's processor has four
+8-bit interval timers with interrupts of their own, and a *game* programmes none
+of them: its music and effects share one clock with the picture, so it takes the
+vertical blank the cartridge is already answering. A cartridge whose only job is
+a schedule has no picture to share with, so `rom/ngpc.ts` programmes one — and
+*which* one is the hardware's decision rather than a preference, because the two
+timers of a pair do not offer the same clocks. A lower timer takes φT1, φT4 or
+φT16 and an upper one φT1, φT16 or φT256, so only an upper timer reaches the
+bottom of a driver's useful band and only an upper timer can be the answer. The
+same pair of resolvers, one console along: `resolveNgpClock` refuses everything
+but the frame and `resolveNgpAudioClock` accepts the timer — and the frame too,
+because a track that happens to fit 59.95 Hz exactly is not a schedule to refuse.
+
 **And *which* interrupt is the console's answer, not the game's.** The NES has no
 general-purpose timer a driver can have without burning the DMC channel, so its
 one honest clock is the frame the picture already runs on, and its games run at
@@ -1111,7 +1125,11 @@ choice about a board. Changing ours to satisfy one emulator's preamp default is
 exactly what a cross-check must not be used for, so the row stays out until there
 is a reference to settle it — and the question is recorded in doc 13 §A5.5, since
 it decides how loud four squares sit against six FM voices in every render this
-tool makes.
+tool makes. What that section can now say is _how far apart_ the two choices are:
+3.3 dB, because the core's `PSG_MAX_VOLUME` comment states its own calibration
+and both models normalise the same way. The Model 1 schematic's summing network
+is 27 dB and is **not** the answer — it is one of two terms, and the other, the
+parts' full-scale output levels, runs the other way by roughly as much.
 
 The PC Engine's is the Game Boy Advance's shape one console over: the two agree
 to 0.9967 below 1 kHz and diverge upward — 0.9261 at 4–8 kHz, 0.8933 at
