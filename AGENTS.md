@@ -3761,6 +3761,22 @@ that keep them from being undone. All of them come from doc 16.
   reconstruction filter). Run `pnpm emulator` and the row before you add it, and
   if it does not pass, write down what you measured rather than lowering the
   gate — the gate is the only thing that makes the passing rows mean anything.
+- **Two of the audio roadmap's open items are blocked on a _source_, not on
+  work, and both have been looked for.** The Neo Geo Pocket's standalone
+  cartridge needs the TLCS-900/H's timer block in `@demake/ngp`, and the
+  register block behind it has no citable description this project could reach:
+  the reference the console's machine description already cites gives the four
+  timer vectors and nothing else, Toshiba's own datasheet is a 192-page **scan**
+  with no text layer, and emulator authors report the datasheets that circulate
+  disagree about the internal register addresses. `binding/t6w28.ts`'s four
+  prescalers are the one number in the audio path with nothing under them. And
+  the Mega Drive's FM-against-PSG balance needs a level off a board or the Model
+  1 schematic's own resistor values — the two chips are summed by a network, so
+  neither model can be asked and `MD_CHIP_GAINS` has to state something. In both
+  cases building the thing anyway produces an artifact that is right in our own
+  core and wrong on the hardware, with a perfect register diff either way, which
+  is §Gotchas' wrong-and-consistent description exactly. Doc 13 §A5 and §A5.5
+  record what each needs; do not close either by matching an emulator.
 - **Audio DSP is where determinism breaks first.** FFT twiddles, windows, mel
   banks, dB conversions and resampler kernels all come from
   `packages/core/src/math/kernels.ts`. An FFT seeded with `Math.cos` returns

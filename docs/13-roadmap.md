@@ -1996,7 +1996,27 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     rather than half-landed. What it costs is the TLCS-900/H's timer block in
     that core and its interrupt through the boot ROM's own dispatch, after which
     the driver's clock is a reload and the file already written is most of the
-    rest. The SN76489 is also the
+    rest.
+
+    **And what that costs is a source, which is where a second attempt stopped.**
+    The four timer *vectors* are confirmed by the reference this console's
+    machine description already cites — `ngpcspec.txt` lists `$6FD4`, `$6FD8`,
+    `$6FDC` and `$6FE0` for 8-bit timers 0 to 3 — and it says nothing at all
+    about the register block: no `TRUN`, no `T01MOD`, no prescaler list. Toshiba's
+    own TMP95C061 datasheet is on bitsavers and is a **scan**, 192 pages of
+    images with no text layer, and the page-by-page mirrors of it are images too.
+    Emulator authors report the datasheets that do circulate *disagree with each
+    other* about the internal register addresses. So the four prescalers
+    `binding/t6w28.ts` already offers — `[2, 8, 32, 128]` — are the one number in
+    this project's audio path with no citation under it, and a timer model built
+    on them would be the §Gotchas failure in its purest form: a driver that
+    programs a reload our core also believes in plays at the right tempo in our
+    core and at the wrong one on the board, with a perfect register diff either
+    way. What unblocks it is a datasheet with text in it, or an OCR of the scan
+    good enough to read a register table off. Neither is a day's work and neither
+    is guesswork.
+
+    The SN76489 is also the
     one that stretched the shared packing layer: its channel is in the data byte
     and latched, so `channelOf` became a factory over a per-schedule latch and a
     schedule that opens a tick with a bare data byte is refused rather than
@@ -2058,6 +2078,20 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     it is a level measurement off a board, and until there is one, changing our
     number to match an emulator's preamp is the thing doc 16 §The proof says a
     cross-check must never be used for.
+
+    **A schematic would settle it as well as a meter would, and that is the lead
+    to follow.** The two chips do not meet in software on this board: the PSG's
+    single output is summed into the YM2612's two through a resistor network on
+    the way to the mixing amplifier, so the ratio the hardware imposes is a pair
+    of component values rather than anything either chip decides — which is why
+    neither model can be asked and why `MD_CHIP_GAINS` has to say something. The
+    direction is at least not in doubt: this PSG is *far* louder at its own pins
+    than the FM chip is, and the board knocks it down hard, which is the same
+    direction genesis-plus-gx sits in relative to us. So our six decibels is
+    likely to be too little rather than too much. A number is not worth writing
+    down until the Model 1 schematic's own values are read off it rather than
+    off a summary of it, and the same question wants asking twice, because the
+    later boards changed this circuit.
 
     **The stereo line is closed, and it was wider than it was written down as.**
     It was recorded as the Neo Geo Pocket's — `ChannelFrame.pan` being a pair of
