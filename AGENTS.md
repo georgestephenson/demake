@@ -3786,17 +3786,20 @@ that keep them from being undone. All of them come from doc 16.
   agrees with nothing is worth nothing — find the cross-check before trusting
   the read, because this is the one place a plausible misread becomes a machine
   description that is wrong and consistent.
-- **One of those two items is still blocked on a _source_, and it has been
-  looked for.** The Mega Drive's FM-against-PSG balance needs a level off a
-  board or a **Model 1** schematic's own resistor values — the two chips are
-  summed by a resistor network on the way to the mixing amplifier, so neither
-  model can be asked and `MD_CHIP_GAINS` has to state something. Sega's Model 2
-  service manual extracts, but its schematic sheets are JBIG2 scans whose OCR
-  renders component values as `A73 5K`, the summing node is a drawing rather
-  than text, and it is the wrong board anyway. Building on that would be an
-  artifact right in our own core and wrong on the hardware, with a perfect
-  register diff either way — §Gotchas' wrong-and-consistent description exactly.
-  Doc 13 §A5.5 records it; do not close it by matching an emulator.
+- **`MD_CHIP_GAINS` is six decibels and the Model 1 schematic says twenty-seven,
+  which is a question in front of the maintainer rather than a number to
+  change.** The two chips meet at a passive summing node in front of the
+  headphone amplifier: the VDP's PSG pin arrives through **51 kΩ** (twice — that
+  output is mono) and each of the YM2612's `MOL`/`MOR` through **2.2 kΩ**, both
+  behind their own 2.2 kΩ load. That is the board's term settled exactly; what
+  it does not settle is the two parts' full-scale output levels, which is the
+  other term and which neither chip model measures. So the constant stays where
+  it is — moving it re-bases every Mega Drive render — but the _claim_ beside it
+  that six decibels is what the hardware does has gone, because it is false.
+  Three lines now agree that this project is the outlier and by roughly this
+  much: the schematic, genesis-plus-gx's `psg_preamp`, and Level B's spectrum.
+  Doc 13 §A5.5 records what is left; still do not close it by matching an
+  emulator.
 - **Audio DSP is where determinism breaks first.** FFT twiddles, windows, mel
   banks, dB conversions and resampler kernels all come from
   `packages/core/src/math/kernels.ts`. An FFT seeded with `Math.cos` returns

@@ -165,8 +165,16 @@
  * decibels down) and `psg_preamp = 150` is the core's, and *neither is a
  * hardware measurement*: both are a choice about a board. Changing ours to
  * satisfy one emulator's preamp default is what doc 16 §The proof says a
- * cross-check must not be used for, so the row stays out until there is a
- * hardware reference to settle it. Doc 13 §A5.5 records the question.
+ * cross-check must not be used for, so the row stays out.
+ *
+ * **The Model 1 schematic has since said what the board does, and it is neither
+ * of them.** The two chips meet at a passive summing node: the VDP's PSG pin
+ * arrives through 51 kΩ and each of the YM2612's outputs through 2.2 kΩ, which
+ * is 27.3 dB of relative attenuation where this project applies 6. That settles
+ * the board's term and not the chips' full-scale levels, so it is not yet a
+ * number to move `MD_CHIP_GAINS` to — but it does mean the disagreement
+ * measured above is *ours*, and in the direction the core sits. Doc 13 §A5.5
+ * records what is left.
  *
  * The PC Engine's is the Game Boy Advance's shape again, one console over: the
  * two agree to 0.9967 below 1 kHz and diverge upward — 0.9261 at 4–8 kHz and

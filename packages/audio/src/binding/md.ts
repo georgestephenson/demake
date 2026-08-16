@@ -71,8 +71,30 @@ const YM_SAMPLE_DIVIDER = 144;
  *
  * The chip models each normalise to their own full scale, which is right for a
  * Master System and wrong for a board where four tone generators sit beside six
- * FM voices. Six decibels down is the balance the hardware has, and putting it
+ * FM voices. So something has to state the *board's* weighting, and putting it
  * here rather than in `Sn76489` is what keeps that model one model.
+ *
+ * **Six decibels is not what the board does, and the schematic says so.** On a
+ * Model 1 the two chips meet at a passive summing node in front of the
+ * headphone amplifier, and they reach it through very different resistors: the
+ * VDP's PSG pin drives a 2.2 kΩ load and a 220 pF cap, is coupled by 1 µF, and
+ * is summed through **51 kΩ** — one for each channel, since that output is
+ * mono — while each of the YM2612's MOL/MOR drives its own 2.2 kΩ load, is
+ * coupled by 10 µF, and is summed through **2.2 kΩ**. That is a ratio of 23.2
+ * to 1, or **27.3 dB**, where this constant applies 6.
+ *
+ * What the schematic settles is the board's half exactly; what it does not
+ * settle on its own is the two parts' full-scale output levels, which is the
+ * other term and which no model here measures. So this is left where it was
+ * rather than moved to 27 dB on a half-derivation — moving it re-bases every
+ * Mega Drive render and is the maintainer's call (doc 13 §A5.5). Three
+ * independent lines now point the same way, though, and this constant is the
+ * outlier on all three: the schematic's network, genesis-plus-gx's own
+ * `psg_preamp` default, and the Level B spectrum that measures the two against
+ * each other.
+ *
+ * Source: Sega Genesis (Model 1) sound and video schematic — R31/C39/C40 and
+ * R34/R37 on the PSG side, R53/R54 and the 2.2 kΩ pair on the FM side.
  */
 export const MD_CHIP_GAINS: readonly number[] = [1, 0.5];
 

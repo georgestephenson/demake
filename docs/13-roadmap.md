@@ -2121,19 +2121,35 @@ Freeze CLI/API surfaces; full-corpus nightly green two weeks running; docs compl
     direction genesis-plus-gx sits in relative to us. So our six decibels is
     likely to be too little rather than too much.
 
-    Going after it got as far as a **service manual and no further**, and the
-    reason is worth writing down so the next attempt starts later. Sega's own
-    Genesis II / Mega Drive II manual is on Sega Retro with schematics and a
-    parts list, and it survives extraction — but its pages are JBIG2 scans under
-    an OCR layer, and on the schematic sheets that layer renders component
-    values as things like `A73 5K` and `R21 2.1!K`. Reading a ratio off that
-    would be the same wrong-and-consistent hazard with more steps in front of
-    it. Two things would have to be true and neither is yet: the sheet has to be
-    legible enough to *trace* the summing node, which is a drawing rather than
-    text and no OCR recovers it, and it has to be a **Model 1** board — that is
-    what `md.ts`'s spec describes, and this console's audio circuit changed
-    between revisions, which is the same reason the question wants asking twice
-    even once a number exists.
+    **And the schematic turned up, so the board's half of it is settled.** The
+    Model 1 sound-and-video sheet is a legible line drawing rather than a
+    photographic scan, and the summing network reads straight off it. The VDP's
+    `PSG` pin drives a 2.2 kΩ load and a 220 pF cap, is coupled by 1 µF, and is
+    summed through **51 kΩ** — twice, one per channel, because that output is
+    mono. Each of the YM2612's `MOL`/`MOR` drives its own 2.2 kΩ load, is
+    coupled by 10 µF, and is summed through **2.2 kΩ**. The cartridge and
+    expansion inputs join the same node through 47 kΩ. So the board weights the
+    PSG against the FM at 51 ÷ 2.2 — 23.2 to 1, or **27.3 dB** — where
+    `MD_CHIP_GAINS` applies 6.
+
+    That does not close the item by itself, and the reason is precise: the
+    schematic settles the *board's* term exactly and says nothing about the two
+    parts' full-scale output levels, which is the other term and which neither
+    chip model measures. Moving the constant to 27 dB on half a derivation would
+    re-base every Mega Drive render on an inference. What it does do is remove
+    the doubt about *direction*: three independent lines now agree and this
+    project is the outlier on all three — the schematic's own network,
+    genesis-plus-gx's `psg_preamp` default, and the Level B spectrum that
+    measures the two against each other and puts the core about 17 dB below us
+    on this balance. Six decibels is too little; how much too little wants the
+    output levels, and the maintainer's call.
+
+    Getting there took two false starts worth recording. Sega's Genesis II
+    manual is the wrong board — this console's audio circuit changed between
+    revisions — and its schematic sheets are JBIG2 scans whose OCR renders
+    component values as `A73 5K`. And the Model 1 *service* manual on Sega Retro
+    (No. 010, April 1994) is an IC-specification supplement: thirty-two pages of
+    pin layouts at 600 dpi and not one schematic in it.
 
     **The stereo line is closed, and it was wider than it was written down as.**
     It was recorded as the Neo Geo Pocket's — `ChannelFrame.pan` being a pair of
